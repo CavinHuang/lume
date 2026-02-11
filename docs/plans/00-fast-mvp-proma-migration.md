@@ -190,3 +190,30 @@ Deliver a usable local-first desktop MVP as fast as possible by directly migrati
 4. Streaming UX is stable.
 5. Critical operations are logged and debuggable.
 6. Deferred items are explicitly tracked, not silently dropped.
+
+## Execution Notes
+1. 2026-02-11: `MIG-001` completed.
+2. Verification:
+   - `bun install` succeeded.
+   - `bun run typecheck` succeeded (`shared`, `sidecar`, `web`).
+   - `bun run build` succeeded (`shared`, `sidecar`, `web`, `desktop`).
+3. 2026-02-11: `MIG-002` completed.
+4. Verification:
+   - Migrated shared contracts: `chat`, `agent`, `channel`, `runtime`.
+   - Migrated shared helper: `agent/tool-matching`.
+   - Added shared barrel exports (`src/types/index.ts`, `src/agent/index.ts`, `src/index.ts`).
+   - `bun run typecheck` succeeded (`shared`, `sidecar`, `web`).
+5. 2026-02-11: `MIG-003` completed.
+6. Verification:
+   - Migrated provider adapters to `apps/sidecar/src/providers/*`:
+     - `anthropic-adapter`
+     - `openai-adapter`
+     - `google-adapter`
+     - `types`
+     - `sse-reader`
+     - `url-utils`
+     - `index`
+   - Updated shared import scope `@proma/shared` -> `@lume/shared`.
+   - Normalized local imports to extensionless paths for TS compatibility.
+   - `bun run --filter @lume/sidecar build` succeeded.
+   - `bun run typecheck` succeeded (`shared`, `sidecar`, `web`).

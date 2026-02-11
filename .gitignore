@@ -5,4 +5,5 @@ out
 .next
 target
 *.log
-
+*.tsbuildinfo
+apps/desktop/src-tauri/gen
