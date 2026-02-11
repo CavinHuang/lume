@@ -100,3 +100,10 @@ If rules conflict, follow the higher-priority item.
 3. Errors are diagnosable.
 4. No obvious security regression.
 5. Docs and code remain aligned.
+
+## 15. git commit message
+1. 必须使用中文
+2. 必须符合conventional commit message规范
+3. 必须使用emoji
+4. commit message必须清晰明了，不要使用模糊的描述
+5. commit message必须包含具体的修改内容，不要使用“更新”、“修改”等模糊的描述
