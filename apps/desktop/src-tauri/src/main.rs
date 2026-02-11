@@ -101,6 +101,15 @@ fn open_file_dialog() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+fn open_folder_dialog() -> Result<serde_json::Value, String> {
+    let picked = rfd::FileDialog::new().pick_folder();
+    let path = picked
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
+    Ok(serde_json::json!({ "path": path }))
+}
+
+#[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("only http/https urls are allowed".to_string());
@@ -249,6 +258,7 @@ fn main() {
             sidecar_healthcheck,
             sidecar_call,
             open_file_dialog,
+            open_folder_dialog,
             open_external
         ])
         .build(tauri::generate_context!())

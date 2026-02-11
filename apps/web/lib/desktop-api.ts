@@ -274,6 +274,18 @@ export async function openChatFileDialog(): Promise<FileDialogResult> {
   });
 }
 
+export async function openFolderDialog(): Promise<{ path: string | null }> {
+  try {
+    const result = await invoke<{ path: string | null }>("open_folder_dialog");
+    if (result && "path" in result) {
+      return result;
+    }
+  } catch {
+    // Fall back to browser flow in caller.
+  }
+  return { path: null };
+}
+
 export async function generateConversationTitle(input: GenerateTitleInput): Promise<string | null> {
   return sidecarCall<string | null>(CHAT_IPC_CHANNELS.GENERATE_TITLE, input);
 }
