@@ -1,10 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::process::{Child, Command, Stdio};
+use std::io::{Read, Write};
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use tauri::Emitter;
 use tauri::Manager;
 
 struct SidecarProcess(Mutex<Option<Child>>);
+static NEXT_RPC_ID: AtomicU64 = AtomicU64::new(1);
 
 #[tauri::command]
 fn healthcheck() -> serde_json::Value {
@@ -12,6 +16,114 @@ fn healthcheck() -> serde_json::Value {
         "ok": true,
         "source": "desktop"
     })
+}
+
+#[tauri::command]
+fn sidecar_healthcheck(
+    state: tauri::State<SidecarProcess>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    sidecar_call_internal(&state, "healthcheck", serde_json::Value::Null, &app)
+}
+
+#[tauri::command]
+fn sidecar_call(
+    method: String,
+    params: Option<serde_json::Value>,
+    state: tauri::State<SidecarProcess>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    sidecar_call_internal(&state, &method, params.unwrap_or(serde_json::Value::Null), &app)
+}
+
+fn sidecar_call_internal(
+    state: &tauri::State<SidecarProcess>,
+    method: &str,
+    params: serde_json::Value,
+    app: &tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let request_id = NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed);
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|_| "sidecar lock poisoned".to_string())?;
+    let child = guard
+        .as_mut()
+        .ok_or_else(|| "sidecar is not running".to_string())?;
+
+    let request = serde_json::json!({
+        "id": request_id,
+        "method": method,
+        "params": params
+    });
+
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "sidecar stdin unavailable".to_string())?;
+    writeln!(stdin, "{}", request).map_err(|error| format!("write sidecar request failed: {error}"))?;
+    stdin
+        .flush()
+        .map_err(|error| format!("flush sidecar request failed: {error}"))?;
+
+    loop {
+        let stdout = child
+            .stdout
+            .as_mut()
+            .ok_or_else(|| "sidecar stdout unavailable".to_string())?;
+        let line = read_line(stdout)?;
+        let parsed = match serde_json::from_str::<serde_json::Value>(line.trim()) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        // Notification from sidecar: forward to web via Tauri event.
+        if parsed.get("id").is_none() {
+            if let Some(method) = parsed.get("method").and_then(serde_json::Value::as_str) {
+                let payload = serde_json::json!({
+                    "method": method,
+                    "params": parsed.get("params").cloned().unwrap_or(serde_json::Value::Null),
+                });
+                let _ = app.emit("sidecar:event", payload);
+            }
+            continue;
+        }
+
+        let response_id = parsed.get("id").and_then(serde_json::Value::as_u64);
+        if response_id != Some(request_id) {
+            continue;
+        }
+
+        if let Some(error) = parsed.get("error") {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown sidecar error");
+            return Err(message.to_string());
+        }
+
+        return Ok(parsed.get("result").cloned().unwrap_or(serde_json::Value::Null));
+    }
+}
+
+fn read_line(stdout: &mut ChildStdout) -> Result<String, String> {
+    let mut bytes = Vec::<u8>::new();
+    let mut one = [0u8; 1];
+
+    loop {
+        match stdout.read(&mut one) {
+            Ok(0) => return Err("sidecar closed stdout".to_string()),
+            Ok(_) => {
+                if one[0] == b'\n' {
+                    break;
+                }
+                bytes.push(one[0]);
+            }
+            Err(error) => return Err(format!("read sidecar response failed: {error}")),
+        }
+    }
+
+    String::from_utf8(bytes).map_err(|error| format!("invalid utf8 from sidecar: {error}"))
 }
 
 fn spawn_sidecar_from_env() -> Option<Child> {
@@ -31,8 +143,8 @@ fn spawn_sidecar_from_env() -> Option<Child> {
     };
 
     process
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null());
 
     match process.spawn() {
@@ -59,7 +171,11 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![healthcheck])
+        .invoke_handler(tauri::generate_handler![
+            healthcheck,
+            sidecar_healthcheck,
+            sidecar_call
+        ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
@@ -76,4 +192,3 @@ fn main() {
             }
         });
 }
-
