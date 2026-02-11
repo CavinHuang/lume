@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "src/index.ts",
+    "src/code-block/**/*",
+    "src/hooks/**/*",
+    "src/mermaid-block/**/*",
+    "src/highlight/**/*"
+  ]
+}

@@ -9,8 +9,8 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n web,sidecar,desktop -c cyan,magenta,green \"bun run --filter @lume/web dev\" \"bun run --filter @lume/sidecar dev\" \"bun run --filter @lume/desktop dev\"",
-    "build": "bun run --filter @lume/shared build && bun run --filter @lume/sidecar build && bun run --filter @lume/web build && bun run --filter @lume/desktop build",
-    "typecheck": "bun run --filter @lume/shared typecheck && bun run --filter @lume/sidecar typecheck && bun run --filter @lume/web typecheck"
+    "build": "bun run --filter @lume/shared build && bun run --filter @lume/ui build && bun run --filter @lume/sidecar build && bun run --filter @lume/web build && bun run --filter @lume/desktop build",
+    "typecheck": "bun run --filter @lume/shared typecheck && bun run --filter @lume/ui typecheck && bun run --filter @lume/sidecar typecheck && bun run --filter @lume/web typecheck"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
