@@ -7,6 +7,7 @@ import {
   statSync,
   writeFileSync
 } from "node:fs";
+import { spawn } from "node:child_process";
 import { dirname, join, resolve, sep } from "node:path";
 import type {
   AgentCopyFolderInput,
@@ -95,6 +96,60 @@ export function deleteAgentFile(
     rmSync(resolved, { recursive: true, force: true });
   } else {
     rmSync(resolved, { force: true });
+  }
+  return { ok: true };
+}
+
+function spawnDetached(command: string, args: string[]): void {
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+}
+
+function openInSystem(path: string): void {
+  if (process.platform === "win32") {
+    spawnDetached("cmd", ["/c", "start", "", path]);
+    return;
+  }
+  if (process.platform === "darwin") {
+    spawnDetached("open", [path]);
+    return;
+  }
+  spawnDetached("xdg-open", [path]);
+}
+
+export function openAgentPath(
+  workspaceSlug: string,
+  sessionId: string,
+  targetPath: string
+): { ok: true } {
+  const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+  openInSystem(resolved);
+  return { ok: true };
+}
+
+export function showAgentPathInFolder(
+  workspaceSlug: string,
+  sessionId: string,
+  targetPath: string
+): { ok: true } {
+  const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+
+  if (process.platform === "win32") {
+    spawnDetached("explorer", ["/select,", resolved]);
+  } else if (process.platform === "darwin") {
+    spawnDetached("open", ["-R", resolved]);
+  } else {
+    const parentPath = dirname(resolved);
+    openInSystem(parentPath);
   }
   return { ok: true };
 }

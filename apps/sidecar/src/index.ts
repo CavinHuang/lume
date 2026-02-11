@@ -1,6 +1,7 @@
 import { argv, stdin, stdout } from "node:process";
 import { AGENT_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS } from "@lume/shared";
 import type {
+  AttachmentSaveInput,
   AgentGenerateTitleInput,
   AgentSendInput,
   ChannelCreateInput,
@@ -32,6 +33,12 @@ import {
 } from "./services/conversation-manager";
 import { generateTitle, sendMessage, stopGeneration } from "./services/chat-service";
 import {
+  deleteAttachment,
+  readAttachmentAsBase64,
+  saveAttachment
+} from "./services/attachment-service";
+import { extractTextFromAttachment } from "./services/document-parser";
+import {
   createAgentSession,
   deleteAgentSession,
   getAgentSessionMessages,
@@ -48,7 +55,9 @@ import {
   deleteAgentFile,
   getAgentSessionPath,
   listAgentDirectory,
+  openAgentPath,
   saveFilesToAgentSession,
+  showAgentPathInFolder,
 } from "./services/agent-files-service";
 import {
   createAgentWorkspace,
@@ -207,7 +216,37 @@ const handlers: Record<string, RpcHandler> = {
     if (!conversationId) throw new Error("缺少 conversationId");
     return updateContextDividers(conversationId, dividers);
   },
+  [CHAT_IPC_CHANNELS.TOGGLE_PIN]: async (params) => {
+    const p = asObject(params);
+    const conversationId = asString(p.conversationId);
+    if (!conversationId) throw new Error("缺少 conversationId");
+    const list = listConversations();
+    const target = list.find((item) => item.id === conversationId);
+    if (!target) throw new Error("对话不存在");
+    return updateConversationMeta(conversationId, { pinned: !target.pinned });
+  },
   [CHAT_IPC_CHANNELS.GENERATE_TITLE]: async (params) => generateTitle(params as GenerateTitleInput),
+  [CHAT_IPC_CHANNELS.SAVE_ATTACHMENT]: async (params) => saveAttachment(params as AttachmentSaveInput),
+  [CHAT_IPC_CHANNELS.READ_ATTACHMENT]: async (params) => {
+    const p = asObject(params);
+    const localPath = asString(p.localPath);
+    if (!localPath) throw new Error("缺少 localPath");
+    return readAttachmentAsBase64(localPath);
+  },
+  [CHAT_IPC_CHANNELS.DELETE_ATTACHMENT]: async (params) => {
+    const p = asObject(params);
+    const localPath = asString(p.localPath);
+    if (!localPath) throw new Error("缺少 localPath");
+    deleteAttachment(localPath);
+    return { ok: true };
+  },
+  [CHAT_IPC_CHANNELS.OPEN_FILE_DIALOG]: async () => ({ files: [] }),
+  [CHAT_IPC_CHANNELS.EXTRACT_ATTACHMENT_TEXT]: async (params) => {
+    const p = asObject(params);
+    const localPath = asString(p.localPath);
+    if (!localPath) throw new Error("缺少 localPath");
+    return extractTextFromAttachment(localPath);
+  },
   [CHAT_IPC_CHANNELS.STOP_GENERATION]: async (params) => {
     const p = asObject(params);
     const conversationId = asString(p.conversationId);
@@ -328,6 +367,22 @@ const handlers: Record<string, RpcHandler> = {
     const path = asString(p.path);
     if (!workspaceSlug || !sessionId || !path) throw new Error("缺少 workspaceSlug/sessionId/path");
     return deleteAgentFile(workspaceSlug, sessionId, path);
+  },
+  [AGENT_IPC_CHANNELS.OPEN_FILE]: async (params) => {
+    const p = asObject(params);
+    const workspaceSlug = asString(p.workspaceSlug);
+    const sessionId = asString(p.sessionId);
+    const path = asString(p.path);
+    if (!workspaceSlug || !sessionId || !path) throw new Error("缺少 workspaceSlug/sessionId/path");
+    return openAgentPath(workspaceSlug, sessionId, path);
+  },
+  [AGENT_IPC_CHANNELS.SHOW_IN_FOLDER]: async (params) => {
+    const p = asObject(params);
+    const workspaceSlug = asString(p.workspaceSlug);
+    const sessionId = asString(p.sessionId);
+    const path = asString(p.path);
+    if (!workspaceSlug || !sessionId || !path) throw new Error("缺少 workspaceSlug/sessionId/path");
+    return showAgentPathInFolder(workspaceSlug, sessionId, path);
   },
   [AGENT_IPC_CHANNELS.SAVE_FILES_TO_SESSION]: async (params) =>
     saveFilesToAgentSession(params as import("@lume/shared").AgentSaveFilesInput),

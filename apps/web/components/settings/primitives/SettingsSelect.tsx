@@ -1,28 +1,43 @@
-"use client";
+/**
+ * SettingsSelect - 设置下拉选择控件
+ *
+ * 封装 ShadcnUI Select，集成标签和描述。
+ * 用于有限选项的设置项。
+ */
 
+import * as React from 'react'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue
-} from "@/components/ui/select";
-import { DESCRIPTION_CLASS, LABEL_CLASS } from "./SettingsUIConstants";
+  SelectValue,
+} from '@/components/ui/select'
+import { LABEL_CLASS, DESCRIPTION_CLASS } from './SettingsUIConstants'
+import { cn } from '@/lib/utils'
 
-type SelectOption = {
-  value: string;
-  label: string;
-};
+/** 选项定义 */
+interface SelectOption {
+  value: string
+  label: string
+}
 
-type SettingsSelectProps = {
-  label: string;
-  description?: string;
-  value: string;
-  onValueChange: (value: string) => void;
-  options: SelectOption[];
-  placeholder?: string;
-  disabled?: boolean;
-};
+interface SettingsSelectProps {
+  /** 标签文本 */
+  label: string
+  /** 描述文本（可选） */
+  description?: string
+  /** 当前值 */
+  value: string
+  /** 变更回调 */
+  onValueChange: (value: string) => void
+  /** 选项列表 */
+  options: SelectOption[]
+  /** 占位符 */
+  placeholder?: string
+  /** 是否禁用 */
+  disabled?: boolean
+}
 
 export function SettingsSelect({
   label,
@@ -31,14 +46,18 @@ export function SettingsSelect({
   onValueChange,
   options,
   placeholder,
-  disabled
+  disabled,
 }: SettingsSelectProps): React.ReactElement {
   return (
-    <div className="flex flex-col gap-1.5 px-1 py-1">
-      <div className={LABEL_CLASS}>{label}</div>
-      {description ? <div className={DESCRIPTION_CLASS}>{description}</div> : null}
+    <div className="px-4 py-3 space-y-2">
+      <div>
+        <div className={LABEL_CLASS}>{label}</div>
+        {description && (
+          <div className={cn(DESCRIPTION_CLASS, 'mt-0.5')}>{description}</div>
+        )}
+      </div>
       <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-        <SelectTrigger className="border-slate-700 bg-slate-950">
+        <SelectTrigger className="w-full">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
@@ -50,5 +69,5 @@ export function SettingsSelect({
         </SelectContent>
       </Select>
     </div>
-  );
+  )
 }

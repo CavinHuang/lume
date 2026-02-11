@@ -6,6 +6,8 @@ import {
   CHAT_IPC_CHANNELS
 } from "@lume/shared";
 import type {
+  AttachmentSaveInput,
+  AttachmentSaveResult,
   AgentGenerateTitleInput,
   AgentMessage,
   AgentSaveFilesInput,
@@ -15,6 +17,7 @@ import type {
   AgentStreamEvent,
   AgentWorkspace,
   FileEntry,
+  FileDialogResult,
   AgentCopyFolderInput,
   Channel,
   ChannelCreateInput,
@@ -48,6 +51,10 @@ export async function desktopHealthcheck(): Promise<HealthcheckResult> {
       source: "web"
     };
   }
+}
+
+export async function openExternalUrl(url: string): Promise<void> {
+  await invoke("open_external", { url });
 }
 
 export async function sidecarHealthcheck(): Promise<HealthcheckResult> {
@@ -195,6 +202,75 @@ export async function updateConversationContextDividers(
   return sidecarCall<ConversationMeta>(CHAT_IPC_CHANNELS.UPDATE_CONTEXT_DIVIDERS, {
     conversationId,
     dividers
+  });
+}
+
+export async function togglePinConversation(conversationId: string): Promise<ConversationMeta> {
+  return sidecarCall<ConversationMeta>(CHAT_IPC_CHANNELS.TOGGLE_PIN, { conversationId });
+}
+
+export async function saveChatAttachment(input: AttachmentSaveInput): Promise<AttachmentSaveResult> {
+  return sidecarCall<AttachmentSaveResult>(CHAT_IPC_CHANNELS.SAVE_ATTACHMENT, input);
+}
+
+export async function readChatAttachment(localPath: string): Promise<string> {
+  return sidecarCall<string>(CHAT_IPC_CHANNELS.READ_ATTACHMENT, { localPath });
+}
+
+export async function deleteChatAttachment(localPath: string): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(CHAT_IPC_CHANNELS.DELETE_ATTACHMENT, { localPath });
+}
+
+export async function extractChatAttachmentText(localPath: string): Promise<string> {
+  return sidecarCall<string>(CHAT_IPC_CHANNELS.EXTRACT_ATTACHMENT_TEXT, { localPath });
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      resolve(result.includes(",") ? result.split(",")[1] ?? "" : "");
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("read file failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function openChatFileDialog(): Promise<FileDialogResult> {
+  try {
+    const nativeResult = await invoke<FileDialogResult>("open_file_dialog");
+    if (nativeResult && Array.isArray(nativeResult.files)) {
+      return nativeResult;
+    }
+  } catch {
+    // Fall back to browser input for non-desktop environments.
+  }
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.accept = [
+    "image/*",
+    ".pdf,.txt,.md,.json,.csv,.xml,.html",
+    ".doc,.docx,.xls,.xlsx,.ppt,.pptx",
+    ".odt,.odp,.ods"
+  ].join(",");
+
+  return new Promise((resolve) => {
+    input.onchange = async () => {
+      const files = Array.from(input.files ?? []);
+      const parsed = await Promise.all(
+        files.map(async (file) => ({
+          filename: file.name,
+          mediaType: file.type || "application/octet-stream",
+          data: await readFileAsBase64(file),
+          size: file.size
+        }))
+      );
+      resolve({ files: parsed });
+    };
+    input.click();
   });
 }
 
@@ -381,6 +457,30 @@ export async function deleteAgentFile(
   path: string
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_FILE, {
+    workspaceSlug,
+    sessionId,
+    path
+  });
+}
+
+export async function openAgentFile(
+  workspaceSlug: string,
+  sessionId: string,
+  path: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.OPEN_FILE, {
+    workspaceSlug,
+    sessionId,
+    path
+  });
+}
+
+export async function showAgentFileInFolder(
+  workspaceSlug: string,
+  sessionId: string,
+  path: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SHOW_IN_FOLDER, {
     workspaceSlug,
     sessionId,
     path

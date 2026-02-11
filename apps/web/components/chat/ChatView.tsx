@@ -2,20 +2,27 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAtom, useSetAtom } from "jotai";
+import { AlertCircle, MessageSquare, X } from "lucide-react";
 import {
   chatStreamErrorsAtom,
+  currentChatErrorAtom,
   currentConversationAtom,
   contextDividersAtom,
   contextLengthAtom,
   conversationsAtom,
   currentConversationIdAtom,
   currentMessagesAtom,
+  hasMoreMessagesAtom,
+  INITIAL_MESSAGE_LIMIT,
+  pendingAttachmentsAtom,
   selectedModelAtom,
   streamingStatesAtom,
   thinkingEnabledAtom
 } from "@/atoms";
 import {
+  saveChatAttachment,
   getConversationMessages,
+  getRecentConversationMessages,
   deleteConversationMessage,
   listChannels,
   listConversations,
@@ -27,7 +34,7 @@ import {
   stopChatGeneration,
   updateConversationContextDividers
 } from "@/lib/desktop-api";
-import type { ChatMessage, ChatSendInput, ModelOption } from "@lume/shared";
+import type { AttachmentSaveInput, ChatMessage, ChatSendInput, FileAttachment, ModelOption } from "@lume/shared";
 import { ChatHeader } from "./ChatHeader";
 import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
@@ -41,6 +48,9 @@ export function ChatView(): React.ReactElement {
   const [contextLength] = useAtom(contextLengthAtom);
   const [contextDividers, setContextDividers] = useAtom(contextDividersAtom);
   const [thinkingEnabled] = useAtom(thinkingEnabledAtom);
+  const [pendingAttachments, setPendingAttachments] = useAtom(pendingAttachmentsAtom);
+  const setHasMoreMessages = useSetAtom(hasMoreMessagesAtom);
+  const [chatError] = useAtom(currentChatErrorAtom);
   const setErrors = useSetAtom(chatStreamErrorsAtom);
   const setConversations = useSetAtom(conversationsAtom);
 
@@ -52,12 +62,16 @@ export function ChatView(): React.ReactElement {
     if (!currentConversationId) {
       setCurrentMessages([]);
       setContextDividers([]);
+      setHasMoreMessages(false);
       return;
     }
 
-    void getConversationMessages(currentConversationId).then(setCurrentMessages);
+    void getRecentConversationMessages(currentConversationId, INITIAL_MESSAGE_LIMIT).then((result) => {
+      setCurrentMessages(result.messages);
+      setHasMoreMessages(result.hasMore);
+    });
     setContextDividers(currentConversation?.contextDividers ?? []);
-  }, [currentConversation?.contextDividers, currentConversationId, setContextDividers, setCurrentMessages]);
+  }, [currentConversation?.contextDividers, currentConversationId, setContextDividers, setCurrentMessages, setHasMoreMessages]);
 
   useEffect(() => {
     void listChannels().then((channels) => {
@@ -122,6 +136,7 @@ export function ChatView(): React.ReactElement {
       void getConversationMessages(event.conversationId).then((messages) => {
         if (event.conversationId === currentConversationId) {
           setCurrentMessages(messages);
+          setHasMoreMessages(false);
         }
       });
 
@@ -145,7 +160,7 @@ export function ChatView(): React.ReactElement {
     return () => {
       for (const fn of unsubs) fn();
     };
-  }, [currentConversationId, setConversations, setCurrentMessages, setErrors, setStreamingStates]);
+  }, [currentConversationId, setConversations, setCurrentMessages, setErrors, setHasMoreMessages, setStreamingStates]);
 
   const canSend = useMemo(
     () => !!currentConversationId && !!selectedModel,
@@ -155,11 +170,39 @@ export function ChatView(): React.ReactElement {
   const handleSend = async (content: string): Promise<void> => {
     if (!canSend || !currentConversationId || !selectedModel) return;
 
+    const currentPending = [...pendingAttachments];
+    const savedAttachments: FileAttachment[] = [];
+    for (const att of currentPending) {
+      const data = window.__pendingAttachmentData?.get(att.id);
+      if (!data) continue;
+      try {
+        const input: AttachmentSaveInput = {
+          conversationId: currentConversationId,
+          filename: att.filename,
+          mediaType: att.mediaType,
+          data
+        };
+        const result = await saveChatAttachment(input);
+        savedAttachments.push(result.attachment);
+      } catch (error) {
+        console.error("[ChatView] save attachment failed:", error);
+      }
+    }
+
+    for (const att of currentPending) {
+      if (att.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(att.previewUrl);
+      }
+      window.__pendingAttachmentData?.delete(att.id);
+    }
+    setPendingAttachments([]);
+
     const optimistic: ChatMessage = {
       id: `temp-${Date.now()}`,
       role: "user",
       content,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      attachments: savedAttachments.length > 0 ? savedAttachments : undefined
     };
     setCurrentMessages((prev) => [...prev, optimistic]);
 
@@ -177,6 +220,7 @@ export function ChatView(): React.ReactElement {
       modelId: selectedModel.modelId,
       contextLength,
       contextDividers,
+      attachments: savedAttachments.length > 0 ? savedAttachments : undefined,
       thinkingEnabled
     };
 
@@ -206,17 +250,29 @@ export function ChatView(): React.ReactElement {
     await updateConversationContextDividers(currentConversationId, next);
   };
 
+  const handleLoadMore = async (): Promise<void> => {
+    if (!currentConversationId) return;
+    const allMessages = await getConversationMessages(currentConversationId);
+    setCurrentMessages(allMessages);
+    setHasMoreMessages(false);
+  };
+
   if (!currentConversationId) {
     return (
-      <div className="flex h-full min-h-0 flex-col gap-3 p-5">
-        <h2 className="text-2xl font-semibold">Chat</h2>
-        <p className="text-sm text-muted-foreground">请选择或创建一个对话。</p>
+      <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] flex-col items-center justify-center gap-4 text-muted-foreground" style={{ zoom: 1.1 }}>
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+          <MessageSquare size={32} className="text-muted-foreground/60" />
+        </div>
+        <div className="space-y-2 text-center">
+          <h2 className="text-lg font-medium text-foreground">开始对话</h2>
+          <p className="max-w-[300px] text-sm">从左侧点击“新对话”按钮创建一个新对话</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-5">
+    <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] flex-col overflow-hidden">
       <ChatHeader
         modelOptions={modelOptions}
         onModelChange={setSelectedModel}
@@ -232,7 +288,29 @@ export function ChatView(): React.ReactElement {
           void updateConversationContextDividers(currentConversationId, next);
         }}
         streamingContent={streamState?.content}
+        streamingReasoning={streamState?.reasoning}
+        onLoadMore={handleLoadMore}
       />
+      {chatError ? (
+        <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+          <AlertCircle className="size-4 shrink-0" />
+          <span className="flex-1 break-all">{chatError}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded p-0.5 transition-colors hover:bg-destructive/10"
+            onClick={() => {
+              if (!currentConversationId) return;
+              setErrors((prev) => {
+                const map = new Map(prev);
+                map.delete(currentConversationId);
+                return map;
+              });
+            }}
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
       <ChatInput
         disabled={!canSend}
         onSend={handleSend}

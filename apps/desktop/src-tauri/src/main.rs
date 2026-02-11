@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use base64::Engine as _;
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -34,6 +35,78 @@ fn sidecar_call(
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
     sidecar_call_internal(&state, &method, params.unwrap_or(serde_json::Value::Null), &app)
+}
+
+#[tauri::command]
+fn open_file_dialog() -> Result<serde_json::Value, String> {
+    let files = rfd::FileDialog::new()
+        .add_filter(
+            "Supported Files",
+            &[
+                "png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "json", "csv", "xml",
+                "html", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "odp", "ods",
+            ],
+        )
+        .pick_files()
+        .unwrap_or_default();
+
+    let mut out = Vec::<serde_json::Value>::new();
+    for file_path in files {
+        let bytes = std::fs::read(&file_path)
+            .map_err(|e| format!("read selected file failed ({}): {e}", file_path.display()))?;
+        let filename = file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+        let ext = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let media_type = match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "pdf" => "application/pdf",
+            "txt" => "text/plain",
+            "md" => "text/markdown",
+            "json" => "application/json",
+            "csv" => "text/csv",
+            "xml" => "application/xml",
+            "html" => "text/html",
+            "doc" => "application/msword",
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls" => "application/vnd.ms-excel",
+            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "ppt" => "application/vnd.ms-powerpoint",
+            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "odt" => "application/vnd.oasis.opendocument.text",
+            "odp" => "application/vnd.oasis.opendocument.presentation",
+            "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+            _ => "application/octet-stream",
+        };
+        let size = bytes.len();
+        let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+        out.push(serde_json::json!({
+            "filename": filename,
+            "mediaType": media_type,
+            "data": data,
+            "size": size
+        }));
+    }
+
+    Ok(serde_json::json!({ "files": out }))
+}
+
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("only http/https urls are allowed".to_string());
+    }
+    webbrowser::open(&url).map_err(|e| format!("open external url failed: {e}"))?;
+    Ok(())
 }
 
 fn sidecar_call_internal(
@@ -174,7 +247,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             healthcheck,
             sidecar_healthcheck,
-            sidecar_call
+            sidecar_call,
+            open_file_dialog,
+            open_external
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

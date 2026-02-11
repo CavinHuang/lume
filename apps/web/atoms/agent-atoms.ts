@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import { atomWithStorage } from "jotai/utils";
 import type { AgentEvent, AgentMessage, AgentSessionMeta, AgentWorkspace } from "@lume/shared";
 
 export interface ToolActivity {
@@ -8,6 +9,10 @@ export interface ToolActivity {
   intent?: string;
   displayName?: string;
   parentToolUseId?: string;
+  taskId?: string;
+  shellId?: string;
+  isBackground?: boolean;
+  elapsedSeconds?: number;
   result?: string;
   isError?: boolean;
   done: boolean;
@@ -18,10 +23,17 @@ export interface AgentStreamState {
   content: string;
   toolActivities: ToolActivity[];
   model?: string;
+  inputTokens?: number;
+  contextWindow?: number;
+  isCompacting?: boolean;
 }
 
 export const agentSessionsAtom = atom<AgentSessionMeta[]>([]);
 export const agentWorkspacesAtom = atom<AgentWorkspace[]>([]);
+export const agentChannelIdAtom = atomWithStorage<string | null>("lume-agent-channel-id", null);
+export const agentModelIdAtom = atomWithStorage<string | null>("lume-agent-model-id", null);
+export const agentPendingPromptAtom = atom<{ sessionId: string; message: string } | null>(null);
+export const workspaceCapabilitiesVersionAtom = atom<number>(0);
 export const currentAgentWorkspaceIdAtom = atom<string | null>(null);
 export const currentAgentSessionIdAtom = atom<string | null>(null);
 export const currentAgentMessagesAtom = atom<AgentMessage[]>([]);
@@ -42,6 +54,12 @@ export const agentRunningSessionIdsAtom = atom<Set<string>>((get) => {
     if (state.running) ids.add(id);
   }
   return ids;
+});
+
+export const currentAgentErrorAtom = atom<string | null>((get) => {
+  const currentId = get(currentAgentSessionIdAtom);
+  if (!currentId) return null;
+  return get(agentStreamErrorsAtom).get(currentId) ?? null;
 });
 
 export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): AgentStreamState {
@@ -92,9 +110,52 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
             : item
         )
       };
+    case "task_backgrounded":
+      return {
+        ...prev,
+        toolActivities: prev.toolActivities.map((item) =>
+          item.toolUseId === event.toolUseId
+            ? { ...item, isBackground: true, taskId: event.taskId }
+            : item
+        )
+      };
+    case "task_progress":
+      return {
+        ...prev,
+        toolActivities: prev.toolActivities.map((item) =>
+          item.toolUseId === event.toolUseId
+            ? { ...item, elapsedSeconds: event.elapsedSeconds }
+            : item
+        )
+      };
+    case "usage_update":
+      return {
+        ...prev,
+        inputTokens: event.usage.inputTokens,
+        contextWindow: event.usage.contextWindow ?? prev.contextWindow
+      };
+    case "compacting":
+      return {
+        ...prev,
+        isCompacting: true
+      };
+    case "compact_complete":
+      return {
+        ...prev,
+        isCompacting: false
+      };
+    case "shell_backgrounded":
+      return {
+        ...prev,
+        toolActivities: prev.toolActivities.map((item) =>
+          item.toolUseId === event.toolUseId
+            ? { ...item, isBackground: true, shellId: event.shellId }
+            : item
+        )
+      };
     case "complete":
     case "error":
-      return { ...prev, running: false };
+      return { ...prev, running: false, isCompacting: false };
     default:
       return prev;
   }

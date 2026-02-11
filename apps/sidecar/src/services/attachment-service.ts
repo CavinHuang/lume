@@ -5,9 +5,35 @@
  * - Sidecar-only filesystem helper subset for MIG-004.
  */
 
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { extname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { extname, join } from "node:path";
+import type { AttachmentSaveInput, AttachmentSaveResult } from "@lume/shared";
 import { getConversationAttachmentsDir, resolveAttachmentPath } from "./config-paths";
+
+export function saveAttachment(input: AttachmentSaveInput): AttachmentSaveResult {
+  const { conversationId, filename, mediaType, data } = input;
+  const dir = getConversationAttachmentsDir(conversationId);
+
+  const ext = extname(filename) || ".bin";
+  const id = randomUUID();
+  const storedFilename = `${id}${ext}`;
+  const localPath = `${conversationId}/${storedFilename}`;
+  const fullPath = join(dir, storedFilename);
+
+  const buffer = Buffer.from(data, "base64");
+  writeFileSync(fullPath, buffer);
+
+  return {
+    attachment: {
+      id,
+      filename,
+      mediaType,
+      localPath,
+      size: buffer.length
+    }
+  };
+}
 
 export function readAttachmentAsBase64(localPath: string): string {
   const fullPath = resolveAttachmentPath(localPath);
@@ -17,7 +43,7 @@ export function readAttachmentAsBase64(localPath: string): string {
 export function deleteAttachment(localPath: string): void {
   const fullPath = resolveAttachmentPath(localPath);
   if (existsSync(fullPath)) {
-    rmSync(fullPath, { force: true });
+    unlinkSync(fullPath);
   }
 }
 
@@ -41,4 +67,3 @@ export function guessMediaTypeByFilename(filename: string): string {
   if (ext === ".pdf") return "application/pdf";
   return "application/octet-stream";
 }
-

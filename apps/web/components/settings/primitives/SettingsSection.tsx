@@ -1,31 +1,42 @@
-"use client";
+/**
+ * SettingsSection - 设置区块容器
+ *
+ * 提供区块标题、描述和可选的操作按钮插槽。
+ * 用于将相关的设置项分组显示。
+ */
 
-import type { ReactNode } from "react";
-import { SECTION_DESCRIPTION_CLASS, SECTION_TITLE_CLASS } from "./SettingsUIConstants";
+import * as React from 'react'
+import { SECTION_TITLE_CLASS, SECTION_DESCRIPTION_CLASS } from './SettingsUIConstants'
 
-type SettingsSectionProps = {
-  title: string;
-  description?: string;
-  action?: ReactNode;
-  children: ReactNode;
-};
+interface SettingsSectionProps {
+  /** 区块标题 */
+  title: string
+  /** 区块描述（可选） */
+  description?: string
+  /** 右侧操作按钮插槽（可选） */
+  action?: React.ReactNode
+  /** 子内容 */
+  children: React.ReactNode
+}
 
 export function SettingsSection({
   title,
   description,
   action,
-  children
+  children,
 }: SettingsSectionProps): React.ReactElement {
   return (
-    <section className="flex flex-col gap-2.5">
-      <div className="flex items-start justify-between gap-2.5">
+    <div className="space-y-3">
+      {/* 区块头部 */}
+      <div className="flex items-start justify-between">
         <div>
           <h4 className={SECTION_TITLE_CLASS}>{title}</h4>
-          {description ? <p className={SECTION_DESCRIPTION_CLASS}>{description}</p> : null}
+          {description && <p className={SECTION_DESCRIPTION_CLASS}>{description}</p>}
         </div>
-        {action ? <div>{action}</div> : null}
+        {action && <div className="flex-shrink-0 ml-4">{action}</div>}
       </div>
+      {/* 区块内容 */}
       {children}
-    </section>
-  );
+    </div>
+  )
 }

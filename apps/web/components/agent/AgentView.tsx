@@ -1,52 +1,116 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useAtom, useSetAtom } from "jotai";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { AlertCircle, Bot, CornerDownLeft, FolderPlus, Paperclip, Settings, Square, X } from "lucide-react";
+import type { AgentMessage, AgentPendingFile, AgentSavedFile, Channel, ModelOption } from "@lume/shared";
 import {
-  agentWorkspacesAtom,
+  activeViewAtom,
   agentSessionsAtom,
+  agentChannelIdAtom,
+  agentModelIdAtom,
+  agentStreamErrorsAtom,
   agentStreamingStatesAtom,
+  agentWorkspacesAtom,
   applyAgentEvent,
+  currentAgentErrorAtom,
   currentAgentMessagesAtom,
+  currentAgentSessionAtom,
   currentAgentSessionIdAtom,
   currentAgentWorkspaceIdAtom
 } from "@/atoms";
 import {
+  getAgentSessionMessages,
+  getAgentSessionPath,
   listAgentSessions,
   listChannels,
-  getAgentSessionPath,
-  getAgentSessionMessages,
   onAgentStreamComplete,
   onAgentStreamError,
   onAgentStreamEvent,
   onAgentTitleUpdated,
+  openChatFileDialog,
+  saveFilesToAgentSession,
   sendAgentMessage,
   stopAgentRun
 } from "@/lib/desktop-api";
+import { cn } from "@/lib/utils";
 import { AgentHeader } from "./AgentHeader";
-import { AgentInput } from "./AgentInput";
 import { AgentMessages } from "./AgentMessages";
+import { ContextUsageBadge } from "./ContextUsageBadge";
 import { FileBrowser } from "@/components/file-browser";
+import { AttachmentPreviewItem } from "@/components/chat/AttachmentPreviewItem";
+import { ModelSelector } from "@/components/chat/ModelSelector";
+import { RichTextInput } from "@/components/ai-elements/rich-text-input";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      resolve(result.includes(",") ? result.split(",")[1] ?? "" : "");
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("read file failed"));
+    reader.readAsDataURL(file);
+  });
+}
 
 export function AgentView(): React.ReactElement {
   const [sessionId] = useAtom(currentAgentSessionIdAtom);
+  const session = useAtomValue(currentAgentSessionAtom);
   const [workspaceId] = useAtom(currentAgentWorkspaceIdAtom);
   const [workspaces] = useAtom(agentWorkspacesAtom);
   const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
   const [streamingStates, setStreamingStates] = useAtom(agentStreamingStatesAtom);
+  const [agentError] = useAtom(currentAgentErrorAtom);
+  const setActiveView = useSetAtom(activeViewAtom);
   const setSessions = useSetAtom(agentSessionsAtom);
+  const setStreamErrors = useSetAtom(agentStreamErrorsAtom);
 
-  const [channelId, setChannelId] = useState<string | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
+  const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
+  const [inputContent, setInputContent] = useState("");
   const [sessionRootPath, setSessionRootPath] = useState<string | null>(null);
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<AgentPendingFile[]>([]);
+  const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
+
+  const streamState = sessionId ? streamingStates.get(sessionId) : undefined;
+  const streaming = !!streamState?.running;
 
   useEffect(() => {
-    void listChannels().then((channels) => {
-      const first = channels[0];
-      if (!channelId && first) {
-        setChannelId(first.id);
-      }
-    });
-  }, [channelId]);
+    void listChannels().then((next) => setChannels(next));
+  }, []);
+
+  useEffect(() => {
+    if (agentChannelId) return;
+    const enabled = channels.filter((item) => item.enabled);
+    const sessionChannel = session?.channelId ? enabled.find((item) => item.id === session.channelId) : undefined;
+    const target = sessionChannel ?? enabled[0];
+    if (!target) return;
+    setAgentChannelId(target.id);
+    const firstModel = target.models.find((model) => model.enabled);
+    setAgentModelId(firstModel?.id ?? null);
+  }, [agentChannelId, channels, session?.channelId]);
+
+  useEffect(() => {
+    if (!agentChannelId) {
+      setAgentModelId(null);
+      return;
+    }
+    const channel = channels.find((item) => item.id === agentChannelId && item.enabled);
+    if (!channel) {
+      setAgentModelId(null);
+      return;
+    }
+    const modelValid = !!agentModelId && channel.models.some((model) => model.enabled && model.id === agentModelId);
+    if (!modelValid) {
+      setAgentModelId(channel.models.find((model) => model.enabled)?.id ?? null);
+    }
+  }, [agentChannelId, agentModelId, channels]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -55,6 +119,9 @@ export function AgentView(): React.ReactElement {
       return;
     }
 
+    setPendingFiles([]);
+    setPendingFolderRefs([]);
+    setInputContent("");
     void getAgentSessionMessages(sessionId).then(setMessages);
   }, [sessionId, setMessages]);
 
@@ -90,28 +157,38 @@ export function AgentView(): React.ReactElement {
     }).then((fn) => unsubs.push(fn));
 
     void onAgentStreamComplete((payload) => {
-      setStreamingStates((prev) => {
-        const map = new Map(prev);
-        map.delete(payload.sessionId);
-        return map;
-      });
+      const finalize = (): void => {
+        setStreamingStates((prev) => {
+          const map = new Map(prev);
+          map.delete(payload.sessionId);
+          return map;
+        });
+        void listAgentSessions().then(setSessions);
+      };
 
-      void getAgentSessionMessages(payload.sessionId).then((next) => {
-        if (payload.sessionId === sessionId) {
-          setMessages(next);
-        }
-      });
-
-      void listAgentSessions().then(setSessions);
+      if (payload.sessionId === sessionId) {
+        void getAgentSessionMessages(payload.sessionId)
+          .then((next) => {
+            setMessages(next);
+            finalize();
+          })
+          .catch(() => finalize());
+      } else {
+        finalize();
+      }
     }).then((fn) => unsubs.push(fn));
 
     void onAgentStreamError((payload) => {
+      setStreamErrors((prev) => {
+        const map = new Map(prev);
+        map.set(payload.sessionId, payload.error);
+        return map;
+      });
       setStreamingStates((prev) => {
         const map = new Map(prev);
         map.delete(payload.sessionId);
         return map;
       });
-      console.error("[AgentView] stream error", payload.error);
     }).then((fn) => unsubs.push(fn));
 
     void onAgentTitleUpdated(() => {
@@ -121,58 +198,467 @@ export function AgentView(): React.ReactElement {
     return () => {
       for (const fn of unsubs) fn();
     };
-  }, [sessionId, setMessages, setSessions, setStreamingStates]);
+  }, [sessionId, setMessages, setSessions, setStreamErrors, setStreamingStates]);
 
-  const streamState = sessionId ? streamingStates.get(sessionId) : undefined;
-  const canSend = useMemo(() => !!sessionId && !!channelId, [sessionId, channelId]);
+  const addFilesAsAttachments = useCallback(async (files: File[]): Promise<void> => {
+    for (const file of files) {
+      try {
+        const base64 = await fileToBase64(file);
+        const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+        const pending: AgentPendingFile = {
+          id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          filename: file.name,
+          mediaType: file.type || "application/octet-stream",
+          size: file.size,
+          previewUrl
+        };
 
-  const handleSend = async (content: string): Promise<void> => {
-    if (!sessionId || !channelId || !canSend) return;
-    await sendAgentMessage({
+        if (!window.__pendingAgentFileData) {
+          window.__pendingAgentFileData = new Map<string, string>();
+        }
+        window.__pendingAgentFileData.set(pending.id, base64);
+        setPendingFiles((prev) => [...prev, pending]);
+      } catch (error) {
+        console.error("[AgentView] add attachment failed", error);
+      }
+    }
+  }, []);
+
+  const handleOpenFileDialog = useCallback(async (): Promise<void> => {
+    try {
+      const result = await openChatFileDialog();
+      if (result.files.length === 0) return;
+
+      const next: AgentPendingFile[] = [];
+      if (!window.__pendingAgentFileData) {
+        window.__pendingAgentFileData = new Map<string, string>();
+      }
+      for (const fileInfo of result.files) {
+        const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const previewUrl = fileInfo.mediaType.startsWith("image/")
+          ? `data:${fileInfo.mediaType};base64,${fileInfo.data}`
+          : undefined;
+        next.push({
+          id,
+          filename: fileInfo.filename,
+          mediaType: fileInfo.mediaType,
+          size: fileInfo.size,
+          previewUrl
+        });
+        window.__pendingAgentFileData.set(id, fileInfo.data);
+      }
+      setPendingFiles((prev) => [...prev, ...next]);
+    } catch (error) {
+      console.error("[AgentView] open file dialog failed", error);
+    }
+  }, []);
+
+  const handleOpenFolderDialog = useCallback(async (): Promise<void> => {
+    if (!sessionId || !workspaceId) return;
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    (input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean }).webkitdirectory = true;
+    (input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean }).directory = true;
+
+    input.onchange = async () => {
+      const files = Array.from(input.files ?? []);
+      if (files.length === 0) return;
+
+      try {
+        const payload = await Promise.all(
+          files.map(async (file) => {
+            const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+            return {
+              filename: relative,
+              data: await fileToBase64(file)
+            };
+          })
+        );
+
+        const saved = await saveFilesToAgentSession({
+          workspaceSlug: workspace.slug,
+          sessionId,
+          files: payload
+        });
+        setPendingFolderRefs((prev) => [...prev, ...saved]);
+      } catch (error) {
+        console.error("[AgentView] add folder failed", error);
+      }
+    };
+
+    input.click();
+  }, [sessionId, workspaceId, workspaces]);
+
+  const handleRemoveFile = useCallback((id: string): void => {
+    setPendingFiles((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      window.__pendingAgentFileData?.delete(id);
+      return prev.filter((item) => item.id !== id);
+    });
+  }, []);
+
+  const handleCompact = useCallback((): void => {
+    if (!sessionId || !agentChannelId || streaming) return;
+
+    setStreamingStates((prev) => {
+      const map = new Map(prev);
+      const current = map.get(sessionId) ?? { running: true, content: "", toolActivities: [] };
+      map.set(sessionId, { ...current, running: true });
+      return map;
+    });
+
+    void sendAgentMessage({
       sessionId,
-      userMessage: content,
-      channelId,
+      userMessage: "/compact",
+      channelId: agentChannelId,
+      modelId: agentModelId ?? undefined,
       workspaceId: workspaceId ?? undefined
     });
-  };
+  }, [sessionId, agentChannelId, agentModelId, workspaceId, streaming, setStreamingStates]);
+
+  const handleSend = useCallback(async (): Promise<void> => {
+    const text = inputContent.trim();
+    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !sessionId || !agentChannelId || streaming) {
+      return;
+    }
+
+    setStreamErrors((prev) => {
+      const map = new Map(prev);
+      map.delete(sessionId);
+      return map;
+    });
+
+    let fileReferences = "";
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+
+    if (pendingFiles.length > 0 && workspace) {
+      try {
+        const files = pendingFiles.map((file) => ({
+          filename: file.filename,
+          data: window.__pendingAgentFileData?.get(file.id) || ""
+        }));
+        const saved = await saveFilesToAgentSession({
+          workspaceSlug: workspace.slug,
+          sessionId,
+          files
+        });
+        const refs = saved.map((file) => `- ${file.filename}: ${file.targetPath}`).join("\n");
+        fileReferences += `<attached_files>\n${refs}\n</attached_files>\n\n`;
+      } catch (error) {
+        console.error("[AgentView] save pending files failed", error);
+      }
+
+      for (const file of pendingFiles) {
+        if (file.previewUrl?.startsWith("blob:")) {
+          URL.revokeObjectURL(file.previewUrl);
+        }
+        window.__pendingAgentFileData?.delete(file.id);
+      }
+      setPendingFiles([]);
+    }
+
+    if (pendingFolderRefs.length > 0) {
+      const refs = pendingFolderRefs.map((file) => `- ${file.filename}: ${file.targetPath}`).join("\n");
+      fileReferences += `<attached_files>\n${refs}\n</attached_files>\n\n`;
+      setPendingFolderRefs([]);
+    }
+
+    const finalMessage = `${fileReferences}${text}`;
+
+    setStreamingStates((prev) => {
+      const map = new Map(prev);
+      map.set(sessionId, {
+        running: true,
+        content: "",
+        toolActivities: [],
+        model: agentModelId ?? undefined
+      });
+      return map;
+    });
+
+    const tempMessage: AgentMessage = {
+      id: `temp-${Date.now()}`,
+      role: "user",
+      content: finalMessage,
+      createdAt: Date.now()
+    };
+    setMessages((prev) => [...prev, tempMessage]);
+    setInputContent("");
+
+    try {
+      await sendAgentMessage({
+        sessionId,
+        userMessage: finalMessage,
+        channelId: agentChannelId,
+        modelId: agentModelId ?? undefined,
+        workspaceId: workspaceId ?? undefined
+      });
+    } catch (error) {
+      console.error("[AgentView] send failed", error);
+      setStreamingStates((prev) => {
+        const map = new Map(prev);
+        map.delete(sessionId);
+        return map;
+      });
+    }
+  }, [
+    inputContent,
+    pendingFiles,
+    pendingFolderRefs,
+    sessionId,
+    agentChannelId,
+    agentModelId,
+    workspaceId,
+    workspaces,
+    streaming,
+    setStreamErrors,
+    setStreamingStates,
+    setMessages
+  ]);
+
+  const handleModelSelect = useCallback((option: ModelOption): void => {
+    setAgentChannelId(option.channelId);
+    setAgentModelId(option.modelId);
+  }, []);
+
+  const externalSelectedModel = useMemo(() => {
+    if (!agentChannelId) return null;
+    if (!agentModelId) return { channelId: agentChannelId, modelId: "" };
+    return { channelId: agentChannelId, modelId: agentModelId };
+  }, [agentChannelId, agentModelId]);
+
+  const canSend = (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
+    && agentChannelId !== null
+    && !streaming;
 
   if (!sessionId) {
     return (
-      <div className="flex h-full min-h-0 flex-col gap-3 p-5">
-        <h2 className="text-2xl font-semibold">Agent</h2>
-        <p className="text-sm text-muted-foreground">请选择或创建一个 Agent 会话。</p>
+      <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] flex-col items-center justify-center gap-4 text-muted-foreground" style={{ zoom: 1.1 }}>
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+          <Bot size={32} className="text-muted-foreground/60" />
+        </div>
+        <div className="space-y-2 text-center">
+          <h2 className="text-lg font-medium text-foreground">Agent 模式</h2>
+          <p className="max-w-[300px] text-sm">从左侧点击“新会话”按钮创建一个 Agent 会话</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-5">
-      <AgentHeader />
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 xl:grid-cols-[1fr_320px]">
+    <div className="flex h-full overflow-hidden">
+      <div className="mx-auto flex h-full min-w-0 max-w-[min(72rem,100%)] flex-1 flex-col">
+        <AgentHeader
+          onToggleFileBrowser={() => setFileBrowserOpen((prev) => !prev)}
+          fileBrowserOpen={fileBrowserOpen}
+        />
+
         <AgentMessages messages={messages} streamState={streamState} />
-        {sessionRootPath && workspaceId ? (
-          (() => {
-            const workspace = workspaces.find((item) => item.id === workspaceId);
-            if (!workspace) return null;
-            return (
+
+        {agentError ? (
+          <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+            <AlertCircle className="size-4 shrink-0" />
+            <span className="flex-1 break-all">{agentError}</span>
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 transition-colors hover:bg-destructive/10"
+              onClick={() => {
+                setStreamErrors((prev) => {
+                  const map = new Map(prev);
+                  map.delete(sessionId);
+                  return map;
+                });
+              }}
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
+
+        <div className="px-2.5 pb-2.5 pt-2 md:px-[18px] md:pb-[18px]">
+          <div
+            className={cn(
+              "rounded-[17px] border-[0.5px] border-border bg-background/70 pt-2 backdrop-blur-sm transition-all duration-200",
+              isDragOver && "border-[2px] border-dashed border-[#2ecc71] bg-[#2ecc71]/[0.03]"
+            )}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsDragOver(true);
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsDragOver(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsDragOver(false);
+              const files = Array.from(event.dataTransfer.files ?? []);
+              if (files.length > 0) {
+                void addFilesAsAttachments(files);
+              }
+            }}
+          >
+            {!agentChannelId ? (
+              <div className="flex items-center gap-2 px-4 py-2 text-sm text-amber-600 dark:text-amber-400">
+                <Settings size={14} />
+                <span>请在设置中选择 Agent 供应商</span>
+                <button
+                  type="button"
+                  className="text-xs underline underline-offset-2 transition-colors hover:text-foreground"
+                  onClick={() => setActiveView("settings")}
+                >
+                  前往设置
+                </button>
+              </div>
+            ) : null}
+
+            {pendingFiles.length > 0 ? (
+              <div className="flex flex-wrap gap-2 px-3 pb-1.5">
+                {pendingFiles.map((file) => (
+                  <AttachmentPreviewItem
+                    key={file.id}
+                    filename={file.filename}
+                    mediaType={file.mediaType}
+                    previewUrl={file.previewUrl}
+                    onRemove={() => handleRemoveFile(file.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
+
+            {pendingFolderRefs.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5 px-3 pb-1.5">
+                <div className="flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                  <FolderPlus className="size-3.5" />
+                  <span>已附加 {pendingFolderRefs.length} 个文件</span>
+                  <button
+                    type="button"
+                    className="ml-1 text-muted-foreground/60 transition-colors hover:text-foreground"
+                    onClick={() => setPendingFolderRefs([])}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <RichTextInput
+              value={inputContent}
+              onChange={setInputContent}
+              onSubmit={() => { void handleSend(); }}
+              onPasteFiles={(files) => { void addFilesAsAttachments(files); }}
+              placeholder={agentChannelId ? "输入消息... (Enter 发送，Shift+Enter 换行)" : "请先在设置中选择 Agent 供应商"}
+              disabled={!agentChannelId}
+            />
+
+            <div className="flex h-[40px] items-center justify-between gap-4 px-2 py-[5px]">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {agentChannelId ? (
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-[30px] rounded-full text-foreground/60 hover:text-foreground"
+                          onClick={() => { void handleOpenFileDialog(); }}
+                        >
+                          <Paperclip className="size-5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top"><p>添加附件</p></TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-[30px] rounded-full text-foreground/60 hover:text-foreground"
+                          onClick={() => { void handleOpenFolderDialog(); }}
+                        >
+                          <FolderPlus className="size-5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top"><p>添加文件夹</p></TooltipContent>
+                    </Tooltip>
+
+                    <ModelSelector
+                      filterChannelId={agentChannelId}
+                      externalSelectedModel={externalSelectedModel}
+                      onModelSelect={handleModelSelect}
+                    />
+
+                    <ContextUsageBadge
+                      inputTokens={streamState?.inputTokens}
+                      contextWindow={streamState?.contextWindow}
+                      isCompacting={!!streamState?.isCompacting}
+                      isProcessing={streaming}
+                      onCompact={handleCompact}
+                    />
+                  </>
+                ) : null}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                {streaming ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-[30px] rounded-full text-destructive hover:bg-destructive/10"
+                    onClick={() => { void stopAgentRun(sessionId); }}
+                  >
+                    <Square className="size-[22px]" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      "size-[30px] rounded-full",
+                      canSend ? "text-primary hover:bg-primary/10" : "cursor-not-allowed text-foreground/30"
+                    )}
+                    onClick={() => { void handleSend(); }}
+                    disabled={!canSend}
+                  >
+                    <CornerDownLeft className="size-[22px]" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {fileBrowserOpen && sessionRootPath && workspaceId ? (
+        (() => {
+          const workspace = workspaces.find((item) => item.id === workspaceId);
+          if (!workspace) return null;
+          return (
+            <div className="w-[300px] shrink-0 border-l">
               <FileBrowser
                 workspaceSlug={workspace.slug}
                 sessionId={sessionId}
                 rootPath={sessionRootPath}
               />
-            );
-          })()
-        ) : null}
-      </div>
-      <AgentInput
-        disabled={!canSend}
-        onRun={handleSend}
-        onStop={() => {
-          if (sessionId) {
-            void stopAgentRun(sessionId);
-          }
-        }}
-      />
+            </div>
+          );
+        })()
+      ) : null}
     </div>
   );
 }

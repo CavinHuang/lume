@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.lume.desktop",
   "build": {
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://127.0.0.1:3000",
     "frontendDist": "../../web/out"
   },
   "app": {

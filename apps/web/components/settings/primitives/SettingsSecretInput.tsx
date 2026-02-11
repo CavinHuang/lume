@@ -1,19 +1,31 @@
-"use client";
+/**
+ * SettingsSecretInput - API Key 专用密码输入控件
+ *
+ * 内置密码显隐切换，适用于 API Key 等敏感信息输入。
+ */
 
-import { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { DESCRIPTION_CLASS, LABEL_CLASS } from "./SettingsUIConstants";
+import * as React from 'react'
+import { Eye, EyeOff } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { LABEL_CLASS, DESCRIPTION_CLASS } from './SettingsUIConstants'
+import { cn } from '@/lib/utils'
 
-type SettingsSecretInputProps = {
-  label: string;
-  description?: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  required?: boolean;
-  disabled?: boolean;
-};
+interface SettingsSecretInputProps {
+  /** 标签文本 */
+  label: string
+  /** 描述文本（可选） */
+  description?: string
+  /** 输入值 */
+  value: string
+  /** 变更回调 */
+  onChange: (value: string) => void
+  /** 占位符 */
+  placeholder?: string
+  /** 是否必填 */
+  required?: boolean
+  /** 是否禁用 */
+  disabled?: boolean
+}
 
 export function SettingsSecretInput({
   label,
@@ -22,27 +34,37 @@ export function SettingsSecretInput({
   onChange,
   placeholder,
   required,
-  disabled
+  disabled,
 }: SettingsSecretInputProps): React.ReactElement {
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = React.useState(false)
+
   return (
-    <div className="flex flex-col gap-1.5 px-1 py-1">
-      <div className={LABEL_CLASS}>{label}</div>
-      {description ? <div className={DESCRIPTION_CLASS}>{description}</div> : null}
+    <div className="px-4 py-3 space-y-2">
+      <div>
+        <div className={LABEL_CLASS}>{label}</div>
+        {description && (
+          <div className={cn(DESCRIPTION_CLASS, 'mt-0.5')}>{description}</div>
+        )}
+      </div>
       <div className="relative">
         <Input
-          className="border-slate-700 bg-slate-950 pr-9"
-          type={visible ? "text" : "password"}
+          type={visible ? 'text' : 'password'}
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           required={required}
           disabled={disabled}
+          className="pr-10"
         />
-        <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-300" onClick={() => setVisible((prev) => !prev)}>
-          {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+        <button
+          type="button"
+          onClick={() => setVisible(!visible)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+          tabIndex={-1}
+        >
+          {visible ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>
       </div>
     </div>
-  );
+  )
 }

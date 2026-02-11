@@ -1,41 +1,62 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 
 type RichTextInputProps = {
+  value: string;
+  onChange: (value: string) => void;
+  onPasteFiles?: (files: File[]) => void;
   placeholder?: string;
   disabled?: boolean;
-  onSubmit: (value: string) => void | Promise<void>;
+  className?: string;
+  onSubmit: () => void;
 };
 
 export function RichTextInput({
+  value,
+  onChange,
+  onPasteFiles,
   placeholder = "输入内容...",
   disabled,
+  className,
   onSubmit
 }: RichTextInputProps): React.ReactElement {
-  const [value, setValue] = useState("");
+  const [isComposing, setIsComposing] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!textareaRef.current) return;
+    textareaRef.current.style.height = "0px";
+    textareaRef.current.style.height = `${Math.max(90, textareaRef.current.scrollHeight)}px`;
+  }, [value]);
+
   return (
-    <form
-      className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto]"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const text = value.trim();
-        if (!text || disabled) return;
-        setValue("");
-        void onSubmit(text);
-      }}
-    >
+    <div className={cn("px-4", className)}>
       <textarea
-        className="min-h-[76px] resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+        ref={textareaRef}
+        className="min-h-[90px] w-full resize-none bg-transparent px-0 py-2 text-sm outline-none placeholder:text-muted-foreground/50"
         rows={3}
         value={value}
-        onChange={(event) => setValue(event.target.value)}
+        onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         disabled={disabled}
+        onCompositionStart={() => setIsComposing(true)}
+        onCompositionEnd={() => setIsComposing(false)}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData.files ?? []);
+          if (files.length > 0 && onPasteFiles) {
+            event.preventDefault();
+            onPasteFiles(files);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey && !isComposing && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            onSubmit();
+          }
+        }}
       />
-      <button type="submit" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700 disabled:opacity-50" disabled={disabled || value.trim().length === 0}>
-        Send
-      </button>
-    </form>
+    </div>
   );
 }

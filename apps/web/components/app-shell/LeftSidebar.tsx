@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useAtom, useAtomValue } from "jotai";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { ChevronDown, ChevronRight, Pin, PinOff, Plus, Settings, Trash2, Pencil, Plug, Zap } from "lucide-react";
+import type { AgentSessionMeta, ConversationMeta } from "@lume/shared";
 import {
   activeViewAtom,
   agentRunningSessionIdsAtom,
@@ -12,11 +14,13 @@ import {
   currentAgentWorkspaceIdAtom,
   currentAgentSessionIdAtom,
   currentConversationIdAtom,
+  hasUpdateAtom,
+  selectedModelAtom,
+  streamingConversationIdsAtom,
   type ActiveView
 } from "@/atoms";
 import {
   createAgentSession,
-  createAgentWorkspace,
   createConversation,
   deleteAgentSessionById,
   deleteConversationById,
@@ -25,67 +29,118 @@ import {
   listAgentSessions,
   listAgentWorkspaces,
   listConversations,
+  togglePinConversation,
   updateAgentSessionTitle,
   updateConversationTitle
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
+import { WorkspaceSelector } from "@/components/agent";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from "@/components/ui/context-menu";
 import { ModeSwitcher } from "./ModeSwitcher";
 
-const NAV_ITEMS: Array<{ id: ActiveView; label: string }> = [
-  { id: "conversations", label: "Conversations" },
-  { id: "settings", label: "Settings" }
+type DateGroup = "今天" | "昨天" | "更早";
+type DeleteTarget = { id: string; type: "conversation" | "agent" } | null;
+type EditingTarget = { id: string; type: "conversation" | "agent"; draft: string } | null;
+
+function groupByDate<T extends { updatedAt: number }>(items: T[]): Array<{ label: DateGroup; items: T[] }> {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = todayStart - 86_400_000;
+  const today: T[] = [];
+  const yesterday: T[] = [];
+  const earlier: T[] = [];
+
+  for (const item of items) {
+    if (item.updatedAt >= todayStart) today.push(item);
+    else if (item.updatedAt >= yesterdayStart) yesterday.push(item);
+    else earlier.push(item);
+  }
+
+  const groups: Array<{ label: DateGroup; items: T[] }> = [];
+  if (today.length) groups.push({ label: "今天", items: today });
+  if (yesterday.length) groups.push({ label: "昨天", items: yesterday });
+  if (earlier.length) groups.push({ label: "更早", items: earlier });
+  return groups;
+}
+
+export interface LeftSidebarProps {
+  width?: number;
+}
+
+const NAV_ITEMS: Array<{ id: ActiveView; label: string; icon: ReactNode }> = [
+  { id: "conversations", label: "对话", icon: null },
+  { id: "settings", label: "设置", icon: <Settings size={14} /> }
 ];
 
-export function LeftSidebar(): React.ReactElement {
+export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const mode = useAtomValue(appModeAtom);
   const [activeView, setActiveView] = useAtom(activeViewAtom);
+  const hasUpdate = useAtomValue(hasUpdateAtom);
+  const streamingIds = useAtomValue(streamingConversationIdsAtom);
+  const runningIds = useAtomValue(agentRunningSessionIdsAtom);
+  const selectedModel = useAtomValue(selectedModelAtom);
 
   const [conversations, setConversations] = useAtom(conversationsAtom);
   const [currentConversationId, setCurrentConversationId] = useAtom(currentConversationIdAtom);
-
   const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom);
+  const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom);
   const [agentWorkspaces, setAgentWorkspaces] = useAtom(agentWorkspacesAtom);
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentAgentWorkspaceIdAtom);
-  const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom);
-  const runningIds = useAtomValue(agentRunningSessionIdsAtom);
-  const [capabilityText, setCapabilityText] = useState<string>("");
+
+  const [pinnedExpanded, setPinnedExpanded] = useState(true);
+  const [capabilityText, setCapabilityText] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<DeleteTarget>(null);
+  const [editing, setEditing] = useState<EditingTarget>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
 
   useEffect(() => {
     void listConversations().then((items) => {
       setConversations(items);
-      const first = items[0];
-      if (!currentConversationId && first) {
-        setCurrentConversationId(first.id);
-      }
+      if (!currentConversationId && items[0]) setCurrentConversationId(items[0].id);
     });
-
     void listAgentSessions().then((items) => {
       setAgentSessions(items);
-      const first = items[0];
-      if (!currentAgentSessionId && first) {
-        setCurrentAgentSessionId(first.id);
-      }
+      if (!currentAgentSessionId && items[0]) setCurrentAgentSessionId(items[0].id);
     });
-
     void (async () => {
       await ensureDefaultAgentWorkspace();
-      const workspaces = await listAgentWorkspaces();
-      setAgentWorkspaces(workspaces);
-      const firstWorkspace = workspaces[0];
-      if (!currentWorkspaceId && firstWorkspace) {
-        setCurrentWorkspaceId(firstWorkspace.id);
-      }
+      const ws = await listAgentWorkspaces();
+      setAgentWorkspaces(ws);
+      if (!currentWorkspaceId && ws[0]) setCurrentWorkspaceId(ws[0].id);
     })();
   }, [
-    currentWorkspaceId,
-    currentAgentSessionId,
     currentConversationId,
-    setAgentSessions,
-    setAgentWorkspaces,
-    setCurrentWorkspaceId,
+    currentAgentSessionId,
+    currentWorkspaceId,
     setConversations,
+    setCurrentConversationId,
+    setAgentSessions,
     setCurrentAgentSessionId,
-    setCurrentConversationId
+    setAgentWorkspaces,
+    setCurrentWorkspaceId
   ]);
 
   useEffect(() => {
@@ -93,254 +148,445 @@ export function LeftSidebar(): React.ReactElement {
       setCapabilityText("");
       return;
     }
-    const workspace = agentWorkspaces.find((item) => item.id === currentWorkspaceId);
-    if (!workspace) return;
-    void getAgentWorkspaceCapabilities(workspace.slug).then((capability) => {
-      const enabledMcp = capability.mcpServers.filter((item) => item.enabled).length;
-      setCapabilityText(`MCP ${enabledMcp} · Skills ${capability.skills.length}`);
+    const ws = agentWorkspaces.find((item) => item.id === currentWorkspaceId);
+    if (!ws) return;
+    void getAgentWorkspaceCapabilities(ws.slug).then((caps) => {
+      const enabledMcp = caps.mcpServers.filter((item) => item.enabled).length;
+      setCapabilityText(`MCP ${enabledMcp} · Skills ${caps.skills.length}`);
     });
-  }, [agentWorkspaces, currentWorkspaceId, mode]);
+  }, [mode, currentWorkspaceId, agentWorkspaces]);
 
-  const renameConversation = async (id: string, current: string): Promise<void> => {
-    const next = window.prompt("重命名对话", current)?.trim();
-    if (!next || next === current) return;
-    const updated = await updateConversationTitle(id, next);
-    setConversations((prev) => prev.map((item) => (item.id === id ? updated : item)));
+  const sortedConversations = useMemo(
+    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations]
+  );
+  const pinnedConversations = useMemo(
+    () => sortedConversations.filter((item) => item.pinned),
+    [sortedConversations]
+  );
+  const conversationGroups = useMemo(
+    () => groupByDate(sortedConversations),
+    [sortedConversations]
+  );
+
+  const filteredAgentSessions = useMemo(
+    () => [...agentSessions]
+      .filter((item) => !currentWorkspaceId || item.workspaceId === currentWorkspaceId)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+    [agentSessions, currentWorkspaceId]
+  );
+  const agentGroups = useMemo(() => groupByDate(filteredAgentSessions), [filteredAgentSessions]);
+
+  const beginEditConversation = (item: ConversationMeta): void => {
+    setEditing({ id: item.id, type: "conversation", draft: item.title });
+  };
+  const beginEditAgent = (item: AgentSessionMeta): void => {
+    setEditing({ id: item.id, type: "agent", draft: item.title });
   };
 
-  const removeConversation = async (id: string): Promise<void> => {
-    if (!window.confirm("确认删除这个对话？")) return;
-    await deleteConversationById(id);
-    const next = await listConversations();
-    setConversations(next);
-    if (currentConversationId === id) {
-      setCurrentConversationId(next[0]?.id ?? null);
+  const saveEdit = async (): Promise<void> => {
+    if (!editing) return;
+    const next = editing.draft.trim();
+    if (!next) {
+      setEditing(null);
+      return;
     }
-  };
-
-  const renameAgentSession = async (id: string, current: string): Promise<void> => {
-    const next = window.prompt("重命名会话", current)?.trim();
-    if (!next || next === current) return;
-    const updated = await updateAgentSessionTitle(id, next);
-    setAgentSessions((prev) => prev.map((item) => (item.id === id ? updated : item)));
-  };
-
-  const removeAgentSession = async (id: string): Promise<void> => {
-    if (!window.confirm("确认删除这个会话？")) return;
-    await deleteAgentSessionById(id);
-    const next = await listAgentSessions();
-    setAgentSessions(next);
-    if (currentAgentSessionId === id) {
-      setCurrentAgentSessionId(next[0]?.id ?? null);
+    if (editing.type === "conversation") {
+      const current = conversations.find((item) => item.id === editing.id);
+      if (!current || next === current.title) {
+        setEditing(null);
+        return;
+      }
+      const updated = await updateConversationTitle(editing.id, next);
+      setConversations((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    } else {
+      const current = agentSessions.find((item) => item.id === editing.id);
+      if (!current || next === current.title) {
+        setEditing(null);
+        return;
+      }
+      const updated = await updateAgentSessionTitle(editing.id, next);
+      setAgentSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
     }
+    setEditing(null);
   };
 
-  const navItemClass = (active: boolean): string =>
-    cn(
-      "w-full rounded-lg border border-transparent px-3 py-2 text-left text-sm transition-colors",
-      active
-        ? "border-slate-500/60 bg-slate-700/70 text-cyan-50"
-        : "text-muted-foreground hover:bg-slate-800/80 hover:text-foreground"
-    );
+  const createNew = async (): Promise<void> => {
+    if (mode === "chat") {
+      const created = await createConversation({
+        modelId: selectedModel?.modelId,
+        channelId: selectedModel?.channelId
+      });
+      setConversations((prev) => [created, ...prev]);
+      setCurrentConversationId(created.id);
+      setActiveView("conversations");
+      return;
+    }
+    const created = await createAgentSession({
+      title: "新 Agent 会话",
+      workspaceId: currentWorkspaceId ?? undefined
+    });
+    setAgentSessions((prev) => [created, ...prev]);
+    setCurrentAgentSessionId(created.id);
+    setActiveView("conversations");
+  };
 
-  const listItemClass = (active: boolean): string =>
-    cn(
-      "flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors",
-      active
-        ? "border-slate-500/70 bg-slate-800/80 text-cyan-50"
-        : "border-transparent text-muted-foreground hover:bg-slate-800/70 hover:text-foreground"
-    );
+  const confirmDelete = async (): Promise<void> => {
+    if (!pendingDelete) return;
+    if (pendingDelete.type === "conversation") {
+      await deleteConversationById(pendingDelete.id);
+      const next = await listConversations();
+      setConversations(next);
+      if (currentConversationId === pendingDelete.id) {
+        setCurrentConversationId(next[0]?.id ?? null);
+      }
+    } else {
+      await deleteAgentSessionById(pendingDelete.id);
+      const next = await listAgentSessions();
+      setAgentSessions(next);
+      if (currentAgentSessionId === pendingDelete.id) {
+        setCurrentAgentSessionId(next[0]?.id ?? null);
+      }
+    }
+    setPendingDelete(null);
+  };
 
-  const actionBtnClass =
-    "rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 transition-colors hover:bg-slate-800";
-  const dangerBtnClass =
-    "rounded-md border border-red-900 bg-red-950/30 px-2 py-0.5 text-[11px] text-red-300 transition-colors hover:bg-red-900/40";
+  const rowClass = (active: boolean): string =>
+    cn(
+      "group flex w-full items-center gap-2 rounded-[10px] px-3 py-[7px] text-left text-[13px] transition-colors duration-100",
+      active
+        ? "bg-foreground/[0.08] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]"
+        : "text-foreground/80 hover:bg-foreground/[0.04]"
+    );
 
   return (
-    <aside className="flex min-w-0 flex-col gap-3 rounded-2xl border border-border/60 bg-gradient-to-b from-slate-900 to-slate-950 p-3 lg:p-3.5">
-      <header className="flex items-center justify-between gap-2">
-        <h1 className="text-lg font-bold tracking-tight">Lume</h1>
-        <span className="rounded-full bg-cyan-700 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">
-          {mode.toUpperCase()}
-        </span>
-      </header>
+    <div
+      className="h-full flex flex-col bg-background"
+      style={{ width: width ?? 280, minWidth: 180, flexShrink: 1 }}
+    >
+      <div className="pt-[50px]">
+        <ModeSwitcher />
+      </div>
 
-      <section className="flex flex-col gap-2">
-        <p className="text-xs uppercase tracking-wider text-muted-foreground">Mode</p>
-        <div className="rounded-xl border border-border/60 bg-slate-900/60 p-1.5">
-          <ModeSwitcher />
+      {mode === "agent" ? (
+        <div className="px-3 pt-3">
+          <WorkspaceSelector
+            workspaces={agentWorkspaces}
+            value={currentWorkspaceId}
+            onChange={setCurrentWorkspaceId}
+            onWorkspaceChange={setAgentWorkspaces}
+          />
         </div>
-      </section>
+      ) : null}
 
-      <nav className="flex flex-col gap-2">
-        {NAV_ITEMS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={navItemClass(activeView === item.id)}
-            onClick={() => setActiveView(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
-
-      <section className="flex min-h-0 flex-1 flex-col gap-2.5 border-t border-border/60 pt-2.5">
+      <div className="px-3 pt-2">
         <button
           type="button"
-          className="rounded-lg border border-dashed border-blue-500/70 bg-blue-900/20 px-3 py-2 text-left text-sm text-blue-200 transition-colors hover:bg-blue-900/30"
-          onClick={async () => {
-            if (mode === "chat") {
-              const created = await createConversation();
-              setConversations((prev) => [created, ...prev]);
-              setCurrentConversationId(created.id);
-              setActiveView("conversations");
-              return;
-            }
-
-            const created = await createAgentSession({
-              title: "新 Agent 会话",
-              workspaceId: currentWorkspaceId ?? undefined
-            });
-            setAgentSessions((prev) => [created, ...prev]);
-            setCurrentAgentSessionId(created.id);
-            setActiveView("conversations");
-          }}
+          onClick={() => { void createNew(); }}
+          className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] border border-dashed border-foreground/15 bg-foreground/[0.04] px-3 py-2 text-[13px] font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.08]"
         >
-          {mode === "chat" ? "+ New Conversation" : "+ New Session"}
+          <Plus size={14} />
+          <span>{mode === "chat" ? "新对话" : "新会话"}</span>
         </button>
+      </div>
 
-        {mode === "agent" ? (
-          <div className="grid grid-cols-[1fr_auto] items-center gap-1.5">
-            <select
-              className="h-9 rounded-md border border-slate-700 bg-slate-950 px-2.5 text-sm text-slate-200 outline-none focus:border-cyan-400"
-              value={currentWorkspaceId ?? ""}
-              onChange={(event) => setCurrentWorkspaceId(event.target.value || null)}
-            >
-              <option value="">选择工作区</option>
-              {agentWorkspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className={actionBtnClass}
-              onClick={async () => {
-                const name = window.prompt("新工作区名称")?.trim();
-                if (!name) return;
-                const created = await createAgentWorkspace(name);
-                setAgentWorkspaces((prev) => [created, ...prev]);
-                setCurrentWorkspaceId(created.id);
-              }}
-            >
-              New WS
-            </button>
-          </div>
-        ) : null}
+      {mode === "chat" ? (
+        <div className="px-3 pt-3">
+          <button
+            type="button"
+            className="titlebar-no-drag flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-[13px] text-foreground/70 transition-colors hover:bg-foreground/[0.04]"
+            onClick={() => setPinnedExpanded((prev) => !prev)}
+          >
+            <span className="inline-flex items-center gap-2"><Pin size={14} />置顶对话</span>
+            {pinnedConversations.length > 0 ? (pinnedExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
+          </button>
+        </div>
+      ) : null}
 
-        {mode === "chat" ? (
-          <ul className="flex min-h-0 list-none flex-col gap-1.5 overflow-auto p-0">
-            {conversations.map((item) => (
-              <li key={item.id}>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  className={listItemClass(currentConversationId === item.id)}
+      {mode === "chat" && pinnedExpanded && pinnedConversations.length > 0 ? (
+        <div className="px-3 pb-1">
+          <div className="ml-2 flex flex-col gap-0.5 border-l-2 border-primary/25 pl-1">
+            {pinnedConversations.map((item) => (
+              <ContextMenu key={`pin-${item.id}`}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                  className={rowClass(currentConversationId === item.id)}
                   onClick={() => {
                     setCurrentConversationId(item.id);
                     setActiveView("conversations");
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setCurrentConversationId(item.id);
-                      setActiveView("conversations");
-                    }
-                  }}
+                  onDoubleClick={() => beginEditConversation(item)}
+                  onMouseEnter={() => setHoveredId(`pin-${item.id}`)}
+                  onMouseLeave={() => setHoveredId((prev) => (prev === `pin-${item.id}` ? null : prev))}
                 >
-                  <span className="min-w-0 truncate">{item.title}</span>
-                  <span className="ml-2 inline-flex items-center gap-1.5">
+                    {streamingIds.has(item.id) ? (
+                      <span className="relative flex-shrink-0 size-2">
+                        <span className="absolute inset-0 rounded-full bg-green-500/60 animate-ping" />
+                        <span className="relative block size-2 rounded-full bg-green-500" />
+                      </span>
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                      {editing?.type === "conversation" && editing.id === item.id ? (
+                        <input
+                          ref={inputRef}
+                          value={editing.draft}
+                          onChange={(event) => setEditing((prev) => (prev ? { ...prev, draft: event.target.value } : prev))}
+                          onBlur={() => { void saveEdit(); }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") { event.preventDefault(); void saveEdit(); }
+                            if (event.key === "Escape") setEditing(null);
+                          }}
+                          className="w-full border-b border-primary/50 bg-transparent text-[13px] outline-none"
+                        />
+                      ) : (
+                        <span className="truncate">{item.title}</span>
+                      )}
+                    </div>
                     <button
                       type="button"
-                      className={actionBtnClass}
+                      className={cn(
+                        "rounded-md p-1 text-foreground/30 transition-all hover:bg-destructive/10 hover:text-destructive",
+                        hoveredId === `pin-${item.id}` && !(editing?.type === "conversation" && editing.id === item.id)
+                          ? "opacity-100"
+                          : "pointer-events-none opacity-0"
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
-                        void renameConversation(item.id, item.title);
+                        setPendingDelete({ id: item.id, type: "conversation" });
                       }}
                     >
-                      Rename
+                      <Trash2 size={13} />
                     </button>
-                    <button
-                      type="button"
-                      className={dangerBtnClass}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void removeConversation(item.id);
-                      }}
-                    >
-                      Del
-                    </button>
-                  </span>
-                </div>
-              </li>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-40">
+                  <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => { void togglePinConversation(item.id).then((updated) => setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))); }}>
+                    <PinOff size={14} />取消置顶
+                  </ContextMenuItem>
+                  <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => beginEditConversation(item)}>
+                    <Pencil size={14} />重命名
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem className="gap-2 text-[13px] text-destructive focus:text-destructive" onSelect={() => setPendingDelete({ id: item.id, type: "conversation" })}>
+                    <Trash2 size={14} />删除
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             ))}
-          </ul>
-        ) : (
-          <ul className="flex min-h-0 list-none flex-col gap-1.5 overflow-auto p-0">
-            {agentSessions.map((item) => (
-              <li key={item.id}>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  className={listItemClass(currentAgentSessionId === item.id)}
-                  onClick={() => {
-                    setCurrentAgentSessionId(item.id);
-                    setActiveView("conversations");
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setCurrentAgentSessionId(item.id);
-                      setActiveView("conversations");
-                    }
-                  }}
-                >
-                  <span className="min-w-0 truncate">{item.title}</span>
-                  <span className="ml-2 inline-flex items-center gap-1.5">
-                    {runningIds.has(item.id) ? <span className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_0_4px_rgba(34,197,94,0.2)]" /> : null}
-                    <button
-                      type="button"
-                      className={actionBtnClass}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void renameAgentSession(item.id, item.title);
-                      }}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      className={dangerBtnClass}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void removeAgentSession(item.id);
-                      }}
-                    >
-                      Del
-                    </button>
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+          </div>
+        </div>
+      ) : null}
 
-        {mode === "agent" && capabilityText ? (
-          <p className="text-xs text-muted-foreground">{capabilityText}</p>
-        ) : null}
-      </section>
-    </aside>
+      <div className="scrollbar-none flex-1 overflow-y-auto px-3 pt-2 pb-3">
+        {mode === "chat"
+          ? conversationGroups.map((group) => (
+              <div key={group.label} className="mb-1">
+                <div className="select-none px-3 pt-2 pb-1 text-[11px] font-medium text-foreground/40">{group.label}</div>
+                <div className="flex flex-col gap-0.5">
+                  {group.items.map((item) => (
+                    <ContextMenu key={item.id}>
+                      <ContextMenuTrigger asChild>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          className={rowClass(currentConversationId === item.id)}
+                          onClick={() => {
+                            setCurrentConversationId(item.id);
+                            setActiveView("conversations");
+                          }}
+                          onDoubleClick={() => beginEditConversation(item)}
+                          onMouseEnter={() => setHoveredId(item.id)}
+                          onMouseLeave={() => setHoveredId((prev) => (prev === item.id ? null : prev))}
+                        >
+                          {streamingIds.has(item.id) ? (
+                            <span className="relative flex-shrink-0 size-2">
+                              <span className="absolute inset-0 rounded-full bg-green-500/60 animate-ping" />
+                              <span className="relative block size-2 rounded-full bg-green-500" />
+                            </span>
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            {editing?.type === "conversation" && editing.id === item.id ? (
+                              <input
+                                ref={inputRef}
+                                value={editing.draft}
+                                onChange={(event) => setEditing((prev) => (prev ? { ...prev, draft: event.target.value } : prev))}
+                                onBlur={() => { void saveEdit(); }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") { event.preventDefault(); void saveEdit(); }
+                                  if (event.key === "Escape") setEditing(null);
+                                }}
+                                className="w-full border-b border-primary/50 bg-transparent text-[13px] outline-none"
+                              />
+                            ) : (
+                              <span className="truncate">{item.title}</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className={cn(
+                              "rounded-md p-1 text-foreground/30 transition-all hover:bg-destructive/10 hover:text-destructive",
+                              hoveredId === item.id && !(editing?.type === "conversation" && editing.id === item.id)
+                                ? "opacity-100"
+                                : "pointer-events-none opacity-0"
+                            )}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setPendingDelete({ id: item.id, type: "conversation" });
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-40">
+                        <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => { void togglePinConversation(item.id).then((updated) => setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))); }}>
+                          {item.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                          {item.pinned ? "取消置顶" : "置顶对话"}
+                        </ContextMenuItem>
+                        <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => beginEditConversation(item)}>
+                          <Pencil size={14} />重命名
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem className="gap-2 text-[13px] text-destructive focus:text-destructive" onSelect={() => setPendingDelete({ id: item.id, type: "conversation" })}>
+                          <Trash2 size={14} />删除
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  ))}
+                </div>
+              </div>
+            ))
+          : agentGroups.map((group) => (
+              <div key={group.label} className="mb-1">
+                <div className="select-none px-3 pt-2 pb-1 text-[11px] font-medium text-foreground/40">{group.label}</div>
+                <div className="flex flex-col gap-0.5">
+                  {group.items.map((item) => (
+                    <ContextMenu key={item.id}>
+                      <ContextMenuTrigger asChild>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          className={rowClass(currentAgentSessionId === item.id)}
+                          onClick={() => {
+                            setCurrentAgentSessionId(item.id);
+                            setActiveView("conversations");
+                          }}
+                          onDoubleClick={() => beginEditAgent(item)}
+                          onMouseEnter={() => setHoveredId(item.id)}
+                          onMouseLeave={() => setHoveredId((prev) => (prev === item.id ? null : prev))}
+                        >
+                          {runningIds.has(item.id) ? (
+                            <span className="relative flex size-4 shrink-0 items-center justify-center">
+                              <span className="absolute size-2 rounded-full bg-blue-500/60 animate-ping" />
+                              <span className="relative block size-2 rounded-full bg-blue-500" />
+                            </span>
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            {editing?.type === "agent" && editing.id === item.id ? (
+                              <input
+                                ref={inputRef}
+                                value={editing.draft}
+                                onChange={(event) => setEditing((prev) => (prev ? { ...prev, draft: event.target.value } : prev))}
+                                onBlur={() => { void saveEdit(); }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") { event.preventDefault(); void saveEdit(); }
+                                  if (event.key === "Escape") setEditing(null);
+                                }}
+                                className="w-full border-b border-primary/50 bg-transparent text-[13px] outline-none"
+                              />
+                            ) : (
+                              <span className="truncate">{item.title}</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className={cn(
+                              "rounded-md p-1 text-foreground/30 transition-all hover:bg-destructive/10 hover:text-destructive",
+                              hoveredId === item.id && !(editing?.type === "agent" && editing.id === item.id)
+                                ? "opacity-100"
+                                : "pointer-events-none opacity-0"
+                            )}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setPendingDelete({ id: item.id, type: "agent" });
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-40">
+                        <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => beginEditAgent(item)}>
+                          <Pencil size={14} />重命名
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem className="gap-2 text-[13px] text-destructive focus:text-destructive" onSelect={() => setPendingDelete({ id: item.id, type: "agent" })}>
+                          <Trash2 size={14} />删除
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  ))}
+                </div>
+              </div>
+            ))}
+      </div>
+
+      {mode === "agent" && capabilityText ? (
+        <div className="px-3 pb-1">
+          <button
+            type="button"
+            className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-[12px] text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground/75"
+            onClick={() => setActiveView("settings")}
+          >
+            <span className="inline-flex items-center gap-1"><Plug size={13} />{capabilityText.split(" · ")[0]}</span>
+            <span className="text-foreground/30">·</span>
+            <span className="inline-flex items-center gap-1"><Zap size={13} />{capabilityText.split(" · ")[1]}</span>
+          </button>
+        </div>
+      ) : null}
+
+      <div className="px-3 pb-3">
+        <div className="flex flex-col gap-1">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={cn(
+                "titlebar-no-drag flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors",
+                activeView === item.id
+                  ? "bg-foreground/[0.08] text-foreground"
+                  : "text-foreground/65 hover:bg-foreground/[0.04] hover:text-foreground"
+              )}
+              onClick={() => setActiveView(item.id)}
+            >
+              <span className="inline-flex items-center gap-2">{item.icon}{item.label}</span>
+              {item.id === "settings" && hasUpdate ? <span className="h-2 w-2 rounded-full bg-red-500" /> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingDelete?.type === "agent" ? "确认删除会话" : "确认删除对话"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              删除后将无法恢复，确定继续吗？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { void confirmDelete(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }

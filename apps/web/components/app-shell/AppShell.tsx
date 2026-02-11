@@ -5,10 +5,13 @@ import { MainContentPanel } from "./MainContentPanel";
 
 export function AppShell(): React.ReactElement {
   return (
-    <main className="grid h-screen w-screen grid-cols-1 grid-rows-[auto_1fr] gap-3 p-3 lg:grid-cols-[280px_1fr] lg:grid-rows-1">
-      <LeftSidebar />
-      <div className="flex min-w-0">
-        <MainContentPanel />
+    <main className="h-screen w-screen overflow-hidden bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-950 dark:to-zinc-900">
+      <div className="titlebar-drag-region fixed left-0 right-0 top-0 z-50 h-[50px]" />
+      <div className="flex h-full overflow-hidden">
+        <LeftSidebar />
+        <div className="titlebar-no-drag relative z-[60] flex-1 min-w-0 p-2">
+          <MainContentPanel />
+        </div>
       </div>
     </main>
   );

@@ -14,6 +14,7 @@ export const CONTEXT_LENGTH_OPTIONS: ContextLengthValue[] = [0, 5, 10, 15, 20, "
 export const conversationsAtom = atom<ConversationMeta[]>([]);
 export const currentConversationIdAtom = atom<string | null>(null);
 export const currentMessagesAtom = atom<ChatMessage[]>([]);
+export const INITIAL_MESSAGE_LIMIT = 40;
 
 export interface ConversationStreamState {
   streaming: boolean;
@@ -36,6 +37,8 @@ export const selectedModelAtom = atomWithStorage<SelectedModel | null>(
   "lume-selected-model",
   null
 );
+
+export const parallelModeAtom = atomWithStorage<boolean>("lume-parallel-mode", false);
 
 export const currentConversationAtom = atom<ConversationMeta | null>((get) => {
   const conversations = get(conversationsAtom);
@@ -60,4 +63,23 @@ export const currentChatErrorAtom = atom<string | null>((get) => {
   const currentId = get(currentConversationIdAtom);
   if (!currentId) return null;
   return get(chatStreamErrorsAtom).get(currentId) ?? null;
+});
+
+export const streamingAtom = atom<boolean>((get) => {
+  const currentId = get(currentConversationIdAtom);
+  if (!currentId) return false;
+  const state = get(streamingStatesAtom).get(currentId);
+  return !!state?.streaming;
+});
+
+export const streamingContentAtom = atom<string>((get) => {
+  const currentId = get(currentConversationIdAtom);
+  if (!currentId) return "";
+  return get(streamingStatesAtom).get(currentId)?.content ?? "";
+});
+
+export const streamingReasoningAtom = atom<string>((get) => {
+  const currentId = get(currentConversationIdAtom);
+  if (!currentId) return "";
+  return get(streamingStatesAtom).get(currentId)?.reasoning ?? "";
 });

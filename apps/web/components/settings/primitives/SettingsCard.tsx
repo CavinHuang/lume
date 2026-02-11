@@ -1,29 +1,43 @@
-"use client";
+/**
+ * SettingsCard - 设置卡片容器
+ *
+ * 圆角卡片，自动在子元素间插入分隔线。
+ * 用于包裹 SettingsRow 或其他控件。
+ */
 
-import type { ReactNode } from "react";
-import { CARD_CLASS } from "./SettingsUIConstants";
+import * as React from 'react'
+import { cn } from '@/lib/utils'
+import { Separator } from '@/components/ui/separator'
+import { CARD_CLASS, DIVIDER_CLASS } from './SettingsUIConstants'
 
-type SettingsCardProps = {
-  children: ReactNode;
-  className?: string;
-  divided?: boolean;
-};
+interface SettingsCardProps {
+  /** 子内容 */
+  children: React.ReactNode
+  /** 额外 className */
+  className?: string
+  /** 是否自动在子元素间插入分隔线（默认 true） */
+  divided?: boolean
+}
 
 export function SettingsCard({
   children,
   className,
-  divided = true
+  divided = true,
 }: SettingsCardProps): React.ReactElement {
-  const items = Array.isArray(children) ? children.filter(Boolean) : [children];
+  const childArray = React.Children.toArray(children).filter(Boolean)
+
   return (
-    <div className={[CARD_CLASS, className].filter(Boolean).join(" ")}>
+    <div className={cn(CARD_CLASS, className)}>
       {divided
-        ? items.map((child, index) => (
-            <div key={index} className={index === 0 ? "p-2.5" : "border-t border-slate-700 p-2.5"}>
+        ? childArray.map((child, index) => (
+            <React.Fragment key={index}>
               {child}
-            </div>
+              {index < childArray.length - 1 && (
+                <Separator className={DIVIDER_CLASS} />
+              )}
+            </React.Fragment>
           ))
         : children}
     </div>
-  );
+  )
 }

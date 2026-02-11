@@ -13,22 +13,24 @@ export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom);
 
   return (
-    <div className="grid grid-cols-2 gap-1.5">
+    <div className="px-2 pt-2">
+      <div className="flex rounded-lg bg-muted p-1">
       {MODE_ITEMS.map((item) => (
         <button
           key={item.value}
           type="button"
           className={cn(
-            "rounded-md border border-transparent px-3 py-2 text-sm font-semibold transition-colors",
+            "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             mode === item.value
-              ? "border-cyan-300/60 bg-cyan-500 text-cyan-950"
-              : "text-muted-foreground hover:bg-slate-800/80 hover:text-foreground"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
           )}
           onClick={() => setMode(item.value)}
         >
           {item.label}
         </button>
       ))}
+      </div>
     </div>
   );
 }

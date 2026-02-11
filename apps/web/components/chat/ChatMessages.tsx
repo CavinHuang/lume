@@ -1,7 +1,25 @@
 "use client";
 
+import * as React from "react";
+import { useAtomValue } from "jotai";
+import { Loader2, MessageSquare } from "lucide-react";
+import { useSmoothStream } from "@lume/ui";
 import type { ChatMessage } from "@lume/shared";
-import { AIMessage, ReasoningBlock } from "@/components/ai-elements";
+import {
+  currentConversationIdAtom,
+  hasMoreMessagesAtom,
+  parallelModeAtom,
+  selectedModelAtom,
+} from "@/atoms/chat-atoms";
+import { ContextDivider } from "@/components/ai-elements/context-divider";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+  useConversationContext,
+} from "@/components/ai-elements/conversation";
+import { ParallelChatMessages } from "./ParallelChatMessages";
+import { ChatMessageItem } from "./ChatMessageItem";
 
 interface ChatMessagesProps {
   messages: ChatMessage[];
@@ -9,6 +27,63 @@ interface ChatMessagesProps {
   onDeleteMessage?: (messageId: string) => Promise<void>;
   onDeleteDivider?: (messageId: string) => void;
   streamingContent?: string;
+  streamingReasoning?: string;
+  onLoadMore?: () => Promise<void>;
+  loadingMore?: boolean;
+}
+
+function EmptyState(): React.ReactElement {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="flex flex-col items-center gap-3 text-muted-foreground">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+          <MessageSquare size={24} className="text-muted-foreground/60" />
+        </div>
+        <p className="text-sm">在下方输入框开始对话</p>
+      </div>
+    </div>
+  );
+}
+
+function ScrollTopLoader({ hasMore, loading, onLoadMore }: { hasMore: boolean; loading: boolean; onLoadMore: () => Promise<void> }): React.ReactElement | null {
+  const { scrollRef } = useConversationContext();
+  const triggeredRef = React.useRef(false);
+
+  React.useEffect(() => {
+    triggeredRef.current = false;
+  }, [hasMore]);
+
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !hasMore || triggeredRef.current) return;
+
+    const handleScroll = (): void => {
+      if (el.scrollTop < 100 && !triggeredRef.current) {
+        triggeredRef.current = true;
+        const prevHeight = el.scrollHeight;
+        void onLoadMore().then(() => {
+          requestAnimationFrame(() => {
+            el.scrollTop = el.scrollHeight - prevHeight;
+          });
+        });
+      }
+    };
+
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, [scrollRef, hasMore, onLoadMore]);
+
+  if (!hasMore) return null;
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-3">
+        <Loader2 className="size-4 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export function ChatMessages({
@@ -16,55 +91,133 @@ export function ChatMessages({
   contextDividers,
   onDeleteMessage,
   onDeleteDivider,
-  streamingContent
+  streamingContent,
+  streamingReasoning,
+  onLoadMore,
+  loadingMore
 }: ChatMessagesProps): React.ReactElement {
+  const parallelMode = useAtomValue(parallelModeAtom);
+  const selectedModel = useAtomValue(selectedModelAtom);
+  const hasMore = useAtomValue(hasMoreMessagesAtom);
+  const currentConversationId = useAtomValue(currentConversationIdAtom);
+
+  const { displayedContent: smoothContent } = useSmoothStream({
+    content: streamingContent ?? "",
+    isStreaming: !!streamingContent
+  });
+  const { displayedContent: smoothReasoning } = useSmoothStream({
+    content: streamingReasoning ?? "",
+    isStreaming: !!streamingReasoning
+  });
+
+  const [ready, setReady] = React.useState(false);
+  const [internalLoadingMore, setInternalLoadingMore] = React.useState(false);
+  const prevConversationIdRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (currentConversationId !== prevConversationIdRef.current) {
+      prevConversationIdRef.current = currentConversationId;
+      setReady(false);
+    }
+  }, [currentConversationId]);
+
+  React.useEffect(() => {
+    if (ready) return;
+    if (messages.length === 0 && !smoothContent && !smoothReasoning) {
+      setReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!cancelled) setReady(true);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, smoothContent, smoothReasoning, ready]);
+
+  const handleLoadMore = React.useCallback(async (): Promise<void> => {
+    if (!onLoadMore || internalLoadingMore || !hasMore) return;
+    setInternalLoadingMore(true);
+    try {
+      await onLoadMore();
+    } finally {
+      setInternalLoadingMore(false);
+    }
+  }, [onLoadMore, internalLoadingMore, hasMore]);
+
+  if (parallelMode) {
+    return (
+      <ParallelChatMessages
+        messages={messages}
+        contextDividers={contextDividers}
+        onDeleteDivider={onDeleteDivider}
+        onDeleteMessage={onDeleteMessage}
+        loadingMore={loadingMore ?? internalLoadingMore}
+        streamingContent={smoothContent}
+        streamingReasoning={smoothReasoning}
+        streamingModel={selectedModel?.modelId}
+      />
+    );
+  }
+
   const dividerSet = new Set(contextDividers);
-  const messageClass = (isUser: boolean): string =>
-    isUser
-      ? "flex flex-col gap-1 rounded-xl border border-teal-400/40 bg-teal-700/20 px-3 py-2.5"
-      : "flex flex-col gap-1 rounded-xl border border-slate-700 bg-slate-800/60 px-3 py-2.5";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto pr-0.5">
-      {messages.map((message) => (
-        <div key={message.id}>
-          <div className={messageClass(message.role === "user")}>
-            <div className="flex items-center justify-between gap-2">
-              <strong>{message.role === "user" ? "You" : "AI"}</strong>
-              {onDeleteMessage ? (
-                <button
-                  type="button"
-                  className="rounded-md border border-red-900 bg-red-950/30 px-2 py-0.5 text-xs text-red-300 transition-colors hover:bg-red-900/40"
-                  onClick={() => { void onDeleteMessage(message.id); }}
-                >
-                  Delete
-                </button>
-              ) : null}
-            </div>
-            <AIMessage content={message.content} />
-            {message.reasoning ? <ReasoningBlock content={message.reasoning} /> : null}
-          </div>
-          {dividerSet.has(message.id) ? (
-            <div className="my-1 flex items-center gap-2">
-              <span className="h-px flex-1 bg-slate-700" />
-              <button
-                type="button"
-                className="rounded-full border border-dashed border-slate-700 bg-slate-950 px-2.5 py-0.5 text-xs text-slate-400"
-                onClick={() => onDeleteDivider?.(message.id)}
-              >
-                Context Divider
-              </button>
-              <span className="h-px flex-1 bg-slate-700" />
-            </div>
-          ) : null}
-        </div>
-      ))}
-      {streamingContent ? (
-        <div className="flex flex-col gap-1 rounded-xl border border-dashed border-slate-600 bg-slate-800/60 px-3 py-2.5">
-          <strong>AI</strong>
-          <AIMessage content={streamingContent} />
-        </div>
-      ) : null}
-    </div>
+    <Conversation className={ready ? "opacity-100 transition-opacity duration-200" : "opacity-0"}>
+      <ScrollTopLoader
+        hasMore={hasMore}
+        loading={loadingMore ?? internalLoadingMore}
+        onLoadMore={handleLoadMore}
+      />
+
+      <ConversationContent>
+        {messages.length === 0 && !smoothContent && !smoothReasoning ? (
+          <EmptyState />
+        ) : (
+          <>
+            {messages.map((message, index) => {
+              const isLastAssistant = message.role === "assistant" && index === messages.length - 1;
+              return (
+                <React.Fragment key={message.id}>
+                  <ChatMessageItem
+                    message={message}
+                    isStreaming={false}
+                    isLastAssistant={isLastAssistant}
+                    onDeleteMessage={onDeleteMessage}
+                  />
+                  {dividerSet.has(message.id) ? (
+                    <ContextDivider
+                      messageId={message.id}
+                      onDelete={onDeleteDivider}
+                    />
+                  ) : null}
+                </React.Fragment>
+              );
+            })}
+
+            {(smoothContent || smoothReasoning) ? (
+              <ChatMessageItem
+                message={{
+                  id: "streaming-assistant",
+                  role: "assistant",
+                  content: smoothContent ?? "",
+                  reasoning: smoothReasoning ?? "",
+                  createdAt: Date.now(),
+                  model: selectedModel?.modelId ?? "Assistant"
+                }}
+                isStreaming
+                isLastAssistant
+              />
+            ) : null}
+          </>
+        )}
+      </ConversationContent>
+
+      <ConversationScrollButton />
+    </Conversation>
   );
 }
