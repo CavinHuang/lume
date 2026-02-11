@@ -27,8 +27,8 @@ type McpServerFormProps = {
 
 const TRANSPORT_OPTIONS = [
   { value: "stdio", label: "stdio（命令行）" },
-  { value: "http", label: "HTTP" },
-  { value: "sse", label: "SSE" }
+  { value: "http", label: "HTTP（Streamable HTTP）" },
+  { value: "sse", label: "SSE（Server-Sent Events）" }
 ];
 
 function parseKeyValueText(text: string, separator: "=" | ":"): Record<string, string> {
@@ -112,17 +112,17 @@ export function McpServerForm({
   };
 
   return (
-    <form className="flex flex-col gap-3.5" onSubmit={handleSubmit}>
-      <div className="flex items-center gap-2">
-        <Button type="button" variant="ghost" size="icon" onClick={onCancel}>
-          <ArrowLeft size={16} />
+    <form className="space-y-6" onSubmit={handleSubmit}>
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" className="h-8 w-8" type="button" onClick={onCancel}>
+          <ArrowLeft size={18} />
         </Button>
-        <h3 className="flex-1 text-lg font-semibold">{isEdit ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</h3>
-        <div className="flex items-center gap-1.5">
-          <Button type="button" variant="ghost" onClick={onCancel}>
+        <h3 className="flex-1 text-lg font-medium text-foreground">{isEdit ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</h3>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" type="button" onClick={onCancel}>
             取消
           </Button>
-          <Button type="submit" disabled={!canSubmit() || saving}>
+          <Button size="sm" type="submit" disabled={!canSubmit() || saving}>
             {saving ? <Loader2 size={14} className="animate-spin" /> : null}
             {isEdit ? "保存修改" : "创建服务器"}
           </Button>
@@ -153,30 +153,37 @@ export function McpServerForm({
                 label="参数"
                 value={argsText}
                 onChange={setArgsText}
-                placeholder="逗号分隔，例如: -y, @pkg/server"
+                placeholder="逗号分隔，例如: -y, @modelcontextprotocol/server-github"
+                description="多个参数用逗号分隔"
               />
-              <div className="flex flex-col gap-1.5 px-1 py-1">
-                <div className="text-sm font-semibold text-slate-200">环境变量</div>
-                <div className="text-xs text-slate-400">每行一个，格式: KEY=VALUE</div>
+              <div className="space-y-2 px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium text-foreground">环境变量</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">每行一个，格式: KEY=VALUE</div>
+                </div>
                 <textarea
                   value={envText}
                   onChange={(event) => setEnvText(event.target.value)}
-                  rows={4}
-                  className="min-h-[76px] resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                  placeholder="GITHUB_TOKEN=ghp_xxx&#10;DEBUG=true"
+                  rows={3}
+                  className="flex w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
               </div>
             </>
           ) : (
             <>
               <SettingsInput label="URL" value={url} onChange={setUrl} required />
-              <div className="flex flex-col gap-1.5 px-1 py-1">
-                <div className="text-sm font-semibold text-slate-200">请求头</div>
-                <div className="text-xs text-slate-400">每行一个，格式: Key: Value</div>
+              <div className="space-y-2 px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium text-foreground">请求头</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">每行一个，格式: Key: Value</div>
+                </div>
                 <textarea
                   value={headersText}
                   onChange={(event) => setHeadersText(event.target.value)}
-                  rows={4}
-                  className="min-h-[76px] resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                  placeholder="Authorization: Bearer xxx&#10;X-Custom-Header: value"
+                  rows={3}
+                  className="flex w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
               </div>
             </>
@@ -184,7 +191,7 @@ export function McpServerForm({
 
           <SettingsToggle
             label="启用此服务器"
-            description="关闭后此 MCP 不会在 Agent 会话加载"
+            description="关闭后该 MCP 服务器不会在 Agent 会话中加载"
             checked={enabled}
             onCheckedChange={setEnabled}
           />

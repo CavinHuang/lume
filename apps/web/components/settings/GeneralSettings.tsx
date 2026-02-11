@@ -3,13 +3,22 @@
 import { useRef, useState } from "react";
 import { useAtom } from "jotai";
 import { Camera, ImagePlus } from "lucide-react";
+import Picker from "@emoji-mart/react";
+import data from "@emoji-mart/data";
 import { userProfileAtom, persistUserProfile } from "@/atoms";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
 
-const QUICK_AVATARS = ["🙂", "😎", "🤖", "🧠", "🛠️", "🔥", "🚀", "🐱", "🦊", "🌟"];
+interface EmojiMartEmoji {
+  id: string;
+  name: string;
+  native: string;
+  unified: string;
+  keywords: string[];
+  shortcodes: string;
+}
 
 export function GeneralSettings(): React.ReactElement {
   const [userProfile, setUserProfile] = useAtom(userProfileAtom);
@@ -69,35 +78,41 @@ export function GeneralSettings(): React.ReactElement {
                   </div>
                 </div>
               </PopoverTrigger>
-              <PopoverContent side="right" align="start" sideOffset={12} className="w-[280px] p-3">
-                <div className="mb-2 text-xs text-muted-foreground">选择头像</div>
-                <div className="mb-3 grid grid-cols-5 gap-1.5">
-                  {QUICK_AVATARS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      className="rounded-md bg-muted px-2 py-1.5 text-lg transition-colors hover:bg-muted/70"
-                      onClick={() => handleAvatarChange(emoji)}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-[13px] text-foreground/60 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
-                >
-                  <ImagePlus className="size-4" />
-                  上传自定义图片
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/gif,image/webp"
-                  className="hidden"
-                  onChange={handleImageUpload}
+              <PopoverContent
+                side="right"
+                align="start"
+                sideOffset={12}
+                className="w-auto border-none p-0 shadow-xl"
+              >
+                <Picker
+                  data={data}
+                  onEmojiSelect={(emoji: EmojiMartEmoji) => handleAvatarChange(emoji.native)}
+                  locale="zh"
+                  theme="auto"
+                  previewPosition="none"
+                  skinTonePosition="search"
+                  perLine={8}
                 />
+                <div className="p-2 px-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className={cn(
+                      "flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-[13px]",
+                      "text-foreground/60 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+                    )}
+                  >
+                    <ImagePlus className="size-4" />
+                    上传自定义图片
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/gif,image/webp"
+                    className="hidden"
+                    onChange={handleImageUpload}
+                  />
+                </div>
               </PopoverContent>
             </Popover>
 
@@ -117,7 +132,7 @@ export function GeneralSettings(): React.ReactElement {
                   }}
                   maxLength={30}
                   autoFocus
-                  className="w-full max-w-[220px] border-b-2 border-primary bg-transparent pb-0.5 text-lg font-semibold text-foreground outline-none"
+                  className="w-full max-w-[200px] border-b-2 border-primary bg-transparent pb-0.5 text-lg font-semibold text-foreground outline-none"
                 />
               ) : (
                 <button

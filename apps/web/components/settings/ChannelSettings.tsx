@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAtom } from "jotai";
-import { ExternalLink, Pencil, PinOff, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Pencil, Plus, Trash2 } from "lucide-react";
 import { PROVIDER_LABELS, type Channel } from "@lume/shared";
 import { agentChannelIdAtom, agentModelIdAtom } from "@/atoms";
 import {
@@ -99,7 +99,7 @@ export function ChannelSettings(): React.ReactElement {
   return (
     <div className="space-y-8">
       <SettingsSection
-        title="聊天渠道"
+        title="聊天渠道供应商"
         description="管理 AI 对话的供应商连接，配置 API Key 和可用模型"
         action={
           <Button size="sm" type="button" onClick={() => setViewMode("create")}>

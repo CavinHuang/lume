@@ -9,6 +9,7 @@ import {
   agentSessionsAtom,
   agentChannelIdAtom,
   agentModelIdAtom,
+  agentPendingPromptAtom,
   agentStreamErrorsAtom,
   agentStreamingStatesAtom,
   agentWorkspacesAtom,
@@ -28,7 +29,9 @@ import {
   onAgentStreamError,
   onAgentStreamEvent,
   onAgentTitleUpdated,
+  openFolderDialog,
   openChatFileDialog,
+  copyFolderToAgentSession,
   saveFilesToAgentSession,
   sendAgentMessage,
   stopAgentRun
@@ -56,6 +59,48 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function readDirectoryRecursive(
+  dirEntry: FileSystemDirectoryEntry,
+  basePath: string
+): Promise<Array<{ relativePath: string; file: File }>> {
+  return new Promise((resolve, reject) => {
+    const results: Array<{ relativePath: string; file: File }> = [];
+    const reader = dirEntry.createReader();
+
+    const readBatch = (): void => {
+      reader.readEntries(
+        async (entries) => {
+          if (entries.length === 0) {
+            resolve(results);
+            return;
+          }
+
+          for (const entry of entries) {
+            if (entry.isFile) {
+              const fileEntry = entry as FileSystemFileEntry;
+              const file = await new Promise<File>((res, rej) => {
+                fileEntry.file(res, rej);
+              });
+              results.push({ relativePath: `${basePath}/${entry.name}`, file });
+            } else if (entry.isDirectory) {
+              const subResults = await readDirectoryRecursive(
+                entry as FileSystemDirectoryEntry,
+                `${basePath}/${entry.name}`
+              );
+              results.push(...subResults);
+            }
+          }
+
+          readBatch();
+        },
+        (error) => reject(error)
+      );
+    };
+
+    readBatch();
+  });
+}
+
 export function AgentView(): React.ReactElement {
   const [sessionId] = useAtom(currentAgentSessionIdAtom);
   const session = useAtomValue(currentAgentSessionAtom);
@@ -71,6 +116,7 @@ export function AgentView(): React.ReactElement {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
+  const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom);
   const [inputContent, setInputContent] = useState("");
   const [sessionRootPath, setSessionRootPath] = useState<string | null>(null);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
@@ -200,6 +246,58 @@ export function AgentView(): React.ReactElement {
     };
   }, [sessionId, setMessages, setSessions, setStreamErrors, setStreamingStates]);
 
+  useEffect(() => {
+    if (!pendingPrompt) return;
+    if (!sessionId || pendingPrompt.sessionId !== sessionId) return;
+    if (!agentChannelId || streaming) return;
+
+    const prompt = pendingPrompt;
+    setPendingPrompt(null);
+
+    const timer = setTimeout(() => {
+      setStreamingStates((prev) => {
+        const map = new Map(prev);
+        map.set(sessionId, { running: true, content: "", toolActivities: [] });
+        return map;
+      });
+
+      const tempUserMessage: AgentMessage = {
+        id: `temp-${Date.now()}`,
+        role: "user",
+        content: prompt.message,
+        createdAt: Date.now()
+      };
+      setMessages((prev) => [...prev, tempUserMessage]);
+
+      void sendAgentMessage({
+        sessionId,
+        userMessage: prompt.message,
+        channelId: agentChannelId,
+        modelId: agentModelId ?? undefined,
+        workspaceId: workspaceId ?? undefined
+      }).catch((error) => {
+        console.error("[AgentView] send pending prompt failed", error);
+        setStreamingStates((prev) => {
+          const map = new Map(prev);
+          map.delete(sessionId);
+          return map;
+        });
+      });
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [
+    pendingPrompt,
+    sessionId,
+    agentChannelId,
+    agentModelId,
+    workspaceId,
+    streaming,
+    setPendingPrompt,
+    setStreamingStates,
+    setMessages
+  ]);
+
   const addFilesAsAttachments = useCallback(async (files: File[]): Promise<void> => {
     for (const file of files) {
       try {
@@ -258,39 +356,19 @@ export function AgentView(): React.ReactElement {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (!workspace) return;
 
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    (input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean }).webkitdirectory = true;
-    (input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean }).directory = true;
-
-    input.onchange = async () => {
-      const files = Array.from(input.files ?? []);
-      if (files.length === 0) return;
-
-      try {
-        const payload = await Promise.all(
-          files.map(async (file) => {
-            const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-            return {
-              filename: relative,
-              data: await fileToBase64(file)
-            };
-          })
-        );
-
-        const saved = await saveFilesToAgentSession({
-          workspaceSlug: workspace.slug,
-          sessionId,
-          files: payload
-        });
-        setPendingFolderRefs((prev) => [...prev, ...saved]);
-      } catch (error) {
-        console.error("[AgentView] add folder failed", error);
-      }
-    };
-
-    input.click();
+    try {
+      const result = await openFolderDialog();
+      if (!result.path) return;
+      const saved = await copyFolderToAgentSession({
+        sourcePath: result.path,
+        workspaceSlug: workspace.slug,
+        sessionId
+      });
+      setPendingFolderRefs((prev) => [...prev, ...saved]);
+      return;
+    } catch (error) {
+      console.error("[AgentView] open native folder dialog failed", error);
+    }
   }, [sessionId, workspaceId, workspaces]);
 
   const handleRemoveFile = useCallback((id: string): void => {
@@ -502,9 +580,53 @@ export function AgentView(): React.ReactElement {
               event.preventDefault();
               event.stopPropagation();
               setIsDragOver(false);
-              const files = Array.from(event.dataTransfer.files ?? []);
-              if (files.length > 0) {
-                void addFilesAsAttachments(files);
+              const items = Array.from(event.dataTransfer.items ?? []);
+              const regularFiles: File[] = [];
+              const folderEntries: FileSystemDirectoryEntry[] = [];
+
+              for (const item of items) {
+                if (item.kind !== "file") continue;
+                const entry = item.webkitGetAsEntry?.();
+                if (entry?.isDirectory) {
+                  folderEntries.push(entry as FileSystemDirectoryEntry);
+                } else {
+                  const file = item.getAsFile();
+                  if (file) regularFiles.push(file);
+                }
+              }
+
+              if (regularFiles.length > 0) {
+                void addFilesAsAttachments(regularFiles);
+              }
+
+              if (folderEntries.length > 0 && sessionId && workspaceId) {
+                const workspace = workspaces.find((item) => item.id === workspaceId);
+                if (!workspace) return;
+
+                for (const dirEntry of folderEntries) {
+                  void (async () => {
+                    try {
+                      const files = await readDirectoryRecursive(dirEntry, dirEntry.name);
+                      if (files.length === 0) return;
+
+                      const payload = await Promise.all(
+                        files.map(async ({ relativePath, file }) => ({
+                          filename: relativePath,
+                          data: await fileToBase64(file)
+                        }))
+                      );
+
+                      const saved = await saveFilesToAgentSession({
+                        workspaceSlug: workspace.slug,
+                        sessionId,
+                        files: payload
+                      });
+                      setPendingFolderRefs((prev) => [...prev, ...saved]);
+                    } catch (error) {
+                      console.error("[AgentView] drop folder failed", error);
+                    }
+                  })();
+                }
               }
             }}
           >

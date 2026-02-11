@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { ChevronDown, ChevronRight, Pin, PinOff, Plus, Settings, Trash2, Pencil, Plug, Zap } from "lucide-react";
 import type { AgentSessionMeta, ConversationMeta } from "@lume/shared";
@@ -17,7 +17,7 @@ import {
   hasUpdateAtom,
   selectedModelAtom,
   streamingConversationIdsAtom,
-  type ActiveView
+  workspaceCapabilitiesVersionAtom
 } from "@/atoms";
 import {
   createAgentSession,
@@ -57,6 +57,7 @@ import { ModeSwitcher } from "./ModeSwitcher";
 type DateGroup = "今天" | "昨天" | "更早";
 type DeleteTarget = { id: string; type: "conversation" | "agent" } | null;
 type EditingTarget = { id: string; type: "conversation" | "agent"; draft: string } | null;
+type CapabilityCounts = { mcp: number; skills: number } | null;
 
 function groupByDate<T extends { updatedAt: number }>(items: T[]): Array<{ label: DateGroup; items: T[] }> {
   const now = new Date();
@@ -83,11 +84,6 @@ export interface LeftSidebarProps {
   width?: number;
 }
 
-const NAV_ITEMS: Array<{ id: ActiveView; label: string; icon: ReactNode }> = [
-  { id: "conversations", label: "对话", icon: null },
-  { id: "settings", label: "设置", icon: <Settings size={14} /> }
-];
-
 export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const mode = useAtomValue(appModeAtom);
   const [activeView, setActiveView] = useAtom(activeViewAtom);
@@ -95,6 +91,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const streamingIds = useAtomValue(streamingConversationIdsAtom);
   const runningIds = useAtomValue(agentRunningSessionIdsAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
+  const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom);
 
   const [conversations, setConversations] = useAtom(conversationsAtom);
   const [currentConversationId, setCurrentConversationId] = useAtom(currentConversationIdAtom);
@@ -104,7 +101,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentAgentWorkspaceIdAtom);
 
   const [pinnedExpanded, setPinnedExpanded] = useState(true);
-  const [capabilityText, setCapabilityText] = useState("");
+  const [capabilities, setCapabilities] = useState<CapabilityCounts>(null);
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget>(null);
   const [editing, setEditing] = useState<EditingTarget>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -145,16 +142,19 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
   useEffect(() => {
     if (mode !== "agent" || !currentWorkspaceId) {
-      setCapabilityText("");
+      setCapabilities(null);
       return;
     }
     const ws = agentWorkspaces.find((item) => item.id === currentWorkspaceId);
     if (!ws) return;
     void getAgentWorkspaceCapabilities(ws.slug).then((caps) => {
       const enabledMcp = caps.mcpServers.filter((item) => item.enabled).length;
-      setCapabilityText(`MCP ${enabledMcp} · Skills ${caps.skills.length}`);
+      setCapabilities({
+        mcp: enabledMcp,
+        skills: caps.skills.length
+      });
     });
-  }, [mode, currentWorkspaceId, agentWorkspaces]);
+  }, [mode, currentWorkspaceId, agentWorkspaces, activeView, capabilitiesVersion]);
 
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -283,7 +283,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         <button
           type="button"
           onClick={() => { void createNew(); }}
-          className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] border border-dashed border-foreground/15 bg-foreground/[0.04] px-3 py-2 text-[13px] font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.08]"
+          className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] border border-dashed border-foreground/10 bg-foreground/[0.04] px-3 py-2 text-[13px] font-medium text-foreground/70 transition-colors hover:border-foreground/20 hover:bg-foreground/[0.08]"
         >
           <Plus size={14} />
           <span>{mode === "chat" ? "新对话" : "新会话"}</span>
@@ -305,7 +305,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
       {mode === "chat" && pinnedExpanded && pinnedConversations.length > 0 ? (
         <div className="px-3 pb-1">
-          <div className="ml-2 flex flex-col gap-0.5 border-l-2 border-primary/25 pl-1">
+          <div className="ml-2 flex flex-col gap-0.5 border-l-2 border-primary/20 pl-1">
             {pinnedConversations.map((item) => (
               <ContextMenu key={`pin-${item.id}`}>
                 <ContextMenuTrigger asChild>
@@ -533,39 +533,49 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
             ))}
       </div>
 
-      {mode === "agent" && capabilityText ? (
+      {mode === "agent" && capabilities ? (
         <div className="px-3 pb-1">
           <button
             type="button"
-            className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-[12px] text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground/75"
+            className="titlebar-no-drag flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-[12px] text-foreground/50 transition-colors hover:bg-foreground/[0.04] hover:text-foreground/70"
             onClick={() => setActiveView("settings")}
           >
-            <span className="inline-flex items-center gap-1"><Plug size={13} />{capabilityText.split(" · ")[0]}</span>
-            <span className="text-foreground/30">·</span>
-            <span className="inline-flex items-center gap-1"><Zap size={13} />{capabilityText.split(" · ")[1]}</span>
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <span className="inline-flex items-center gap-1">
+                <Plug size={13} className="text-foreground/40" />
+                <span className="tabular-nums">{capabilities.mcp}</span>
+                <span className="text-foreground/30">MCP</span>
+              </span>
+              <span className="text-foreground/20">·</span>
+              <span className="inline-flex items-center gap-1">
+                <Zap size={13} className="text-foreground/40" />
+                <span className="tabular-nums">{capabilities.skills}</span>
+                <span className="text-foreground/30">Skills</span>
+              </span>
+            </div>
           </button>
         </div>
       ) : null}
 
       <div className="px-3 pb-3">
-        <div className="flex flex-col gap-1">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={cn(
-                "titlebar-no-drag flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors",
-                activeView === item.id
-                  ? "bg-foreground/[0.08] text-foreground"
-                  : "text-foreground/65 hover:bg-foreground/[0.04] hover:text-foreground"
-              )}
-              onClick={() => setActiveView(item.id)}
-            >
-              <span className="inline-flex items-center gap-2">{item.icon}{item.label}</span>
-              {item.id === "settings" && hasUpdate ? <span className="h-2 w-2 rounded-full bg-red-500" /> : null}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          className={cn(
+            "titlebar-no-drag flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors",
+            activeView === "settings"
+              ? "bg-foreground/[0.08] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]"
+              : "text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground"
+          )}
+          onClick={() => setActiveView("settings")}
+        >
+          <span className="inline-flex items-center gap-3">
+            <span className="inline-flex h-[18px] w-[18px] items-center justify-center">
+              <Settings size={18} />
+            </span>
+            <span>设置</span>
+          </span>
+          {hasUpdate ? <span className="h-2 w-2 rounded-full bg-red-500" /> : null}
+        </button>
       </div>
 
       <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
@@ -573,7 +583,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
           <AlertDialogHeader>
             <AlertDialogTitle>{pendingDelete?.type === "agent" ? "确认删除会话" : "确认删除对话"}</AlertDialogTitle>
             <AlertDialogDescription>
-              删除后将无法恢复，确定继续吗？
+              删除后将无法恢复，确定要删除这个对话吗？
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
