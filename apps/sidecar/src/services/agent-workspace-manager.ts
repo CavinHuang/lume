@@ -105,6 +105,10 @@ export function getAgentWorkspace(id: string): AgentWorkspace | undefined {
   return readIndex().workspaces.find((workspace) => workspace.id === id);
 }
 
+export function getAgentWorkspaceBySlug(slug: string): AgentWorkspace | undefined {
+  return readIndex().workspaces.find((workspace) => workspace.slug === slug);
+}
+
 export function createAgentWorkspace(name: string): AgentWorkspace {
   const index = readIndex();
   const existingSlugs = new Set(index.workspaces.map((workspace) => workspace.slug));

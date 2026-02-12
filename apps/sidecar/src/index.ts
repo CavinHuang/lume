@@ -1,6 +1,6 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
-import { AGENT_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
 import type {
   AttachmentSaveInput,
   AgentGenerateTitleInput,
@@ -85,6 +85,17 @@ import {
   importGlobalSkillToWorkspace
 } from "./services/global-discovery-service";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
+import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory-sync-watcher";
+import {
+  getWorkspaceMemoryFile,
+  getWorkspaceMemoryStatus,
+  saveWorkspaceMemory,
+  getWorkspaceMemoryStats,
+  indexWorkspaceMemory,
+  indexWorkspaceMemoryFile,
+  searchWorkspaceMemory,
+  closeMemoryManagers
+} from "./services/memory-service";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -290,6 +301,23 @@ const handlers: Record<string, RpcHandler> = {
       });
     });
     return { ok: true };
+  },
+  [MEMORY_IPC_CHANNELS.INDEX_WORKSPACE]: async (params) => indexWorkspaceMemory(params as import("@lume/shared").MemoryIndexWorkspaceInput),
+  [MEMORY_IPC_CHANNELS.INDEX_FILE]: async (params) => indexWorkspaceMemoryFile(params as import("@lume/shared").MemoryIndexFileInput),
+  [MEMORY_IPC_CHANNELS.SEARCH]: async (params) => searchWorkspaceMemory(params as import("@lume/shared").MemorySearchInput),
+  [MEMORY_IPC_CHANNELS.STATS]: async (params) => {
+    const p = asObject(params);
+    const workspaceSlug = asString(p.workspaceSlug);
+    if (!workspaceSlug) throw new Error("缺少 workspaceSlug");
+    return getWorkspaceMemoryStats(workspaceSlug);
+  },
+  [MEMORY_IPC_CHANNELS.GET]: async (params) => getWorkspaceMemoryFile(params as import("@lume/shared").MemoryGetInput),
+  [MEMORY_IPC_CHANNELS.SAVE]: async (params) => saveWorkspaceMemory(params as import("@lume/shared").MemorySaveInput),
+  [MEMORY_IPC_CHANNELS.STATUS]: async (params) => {
+    const p = asObject(params);
+    const workspaceSlug = asString(p.workspaceSlug);
+    if (!workspaceSlug) throw new Error("缺少 workspaceSlug");
+    return getWorkspaceMemoryStatus(workspaceSlug);
   },
 
   [AGENT_IPC_CHANNELS.LIST_SESSIONS]: async () => listAgentSessions(),
@@ -545,7 +573,12 @@ async function handleRpcLine(line: string): Promise<void> {
 function boot(): void {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
-  const stopWatcher = (): void => stopWorkspaceWatcher();
+  startMemorySyncWatcher();
+  const stopWatcher = (): void => {
+    stopWorkspaceWatcher();
+    stopMemorySyncWatcher();
+    closeMemoryManagers();
+  };
   process.once("exit", stopWatcher);
   process.once("SIGINT", () => {
     stopWatcher();

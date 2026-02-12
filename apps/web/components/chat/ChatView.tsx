@@ -22,6 +22,7 @@ import {
 import {
   saveChatAttachment,
   deleteChatAttachment,
+  listConversations,
   getConversationMessages,
   getRecentConversationMessages,
   deleteConversationMessage,
@@ -58,6 +59,7 @@ export function ChatView(): React.ReactElement {
   const setErrors = useSetAtom(chatStreamErrorsAtom);
   const setConversations = useSetAtom(conversationsAtom);
   const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const pendingTitleRef = useRef(new Map<string, { userMessage: string; channelId: string; modelId: string }>());
   const currentConversationIdRef = useRef<string | null>(currentConversationId);
   const conversationsRef = useRef(conversations);
@@ -89,7 +91,9 @@ export function ChatView(): React.ReactElement {
     setCurrentMessages([]);
     setHasMoreMessages(false);
 
-    void getRecentConversationMessages(currentConversationId, INITIAL_MESSAGE_LIMIT).then((result) => {
+    const targetConversationId = currentConversationId;
+    void getRecentConversationMessages(targetConversationId, INITIAL_MESSAGE_LIMIT).then((result) => {
+      if (currentConversationIdRef.current !== targetConversationId) return;
       setCurrentMessages(result.messages);
       setHasMoreMessages(result.hasMore);
     });
@@ -322,6 +326,12 @@ export function ChatView(): React.ReactElement {
 
     void sendChatMessage(input).catch((error) => {
       console.error("[ChatView] send failed", error);
+      const message = error instanceof Error ? error.message : String(error);
+      setErrors((prev) => {
+        const map = new Map(prev);
+        map.set(currentConversationId, `发送失败：${message}`);
+        return map;
+      });
       setStreamingStates((prev) => {
         if (!prev.has(currentConversationId)) return prev;
         const map = new Map(prev);
@@ -329,6 +339,39 @@ export function ChatView(): React.ReactElement {
         return map;
       });
     });
+  };
+
+  const handleReconnect = async (): Promise<void> => {
+    if (isReconnecting) return;
+    setIsReconnecting(true);
+    try {
+      const items = await listConversations();
+      setConversations(items);
+      if (currentConversationId) {
+        const result = await getRecentConversationMessages(currentConversationId, INITIAL_MESSAGE_LIMIT);
+        if (currentConversationIdRef.current === currentConversationId) {
+          setCurrentMessages(result.messages);
+          setHasMoreMessages(result.hasMore);
+        }
+      }
+      setErrors((prev) => {
+        if (!currentConversationId || !prev.has(currentConversationId)) return prev;
+        const map = new Map(prev);
+        map.delete(currentConversationId);
+        return map;
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (currentConversationId) {
+        setErrors((prev) => {
+          const map = new Map(prev);
+          map.set(currentConversationId, `重连失败：${message}`);
+          return map;
+        });
+      }
+    } finally {
+      setIsReconnecting(false);
+    }
   };
 
   const handleDeleteMessage = async (messageId: string): Promise<void> => {
@@ -510,6 +553,14 @@ export function ChatView(): React.ReactElement {
         <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
           <AlertCircle className="size-4 shrink-0" />
           <span className="flex-1 break-all">{chatError}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded px-2 py-0.5 text-xs font-medium transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => { void handleReconnect(); }}
+            disabled={isReconnecting}
+          >
+            {isReconnecting ? "重连中..." : "重连"}
+          </button>
           <button
             type="button"
             className="shrink-0 rounded p-0.5 transition-colors hover:bg-destructive/10"

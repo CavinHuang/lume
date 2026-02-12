@@ -7,11 +7,14 @@
  */
 
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
+import type { MemoryCitationsMode } from "./memory-policy";
 
 interface SystemPromptContext {
   workspaceName?: string;
   workspaceSlug?: string;
   sessionId: string;
+  availableTools?: string[];
+  memoryCitationsMode?: MemoryCitationsMode;
 }
 
 export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
@@ -53,6 +56,22 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
 1. 优先中文回复，保留必要英文技术术语
 2. 破坏性操作前先确认
 3. 输出保持结构化、可执行`);
+
+  const availableTools = new Set((ctx.availableTools ?? []).map((item) => item.trim().toLowerCase()));
+  if (availableTools.has("memory_search") || availableTools.has("memory_get")) {
+    const lines = [
+      "## Memory Recall",
+      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked."
+    ];
+    if (ctx.memoryCitationsMode === "off") {
+      lines.push(
+        "Citations are disabled: do not mention file paths or line numbers in replies unless the user explicitly asks."
+      );
+    } else {
+      lines.push("Citations: include Source: <path#line> when it helps the user verify memory snippets.");
+    }
+    sections.push(lines.join("\n"));
+  }
 
   return sections.join("\n\n");
 }

@@ -538,6 +538,7 @@ export function AgentView(): React.ReactElement {
         channelId: agentChannelId,
         modelId: agentModelId ?? undefined,
         workspaceId: workspaceId ?? undefined,
+        chatType: "direct",
         permissionMode: agentPermissionMode
       }).catch((error) => {
         console.error("[AgentView] send pending prompt failed", error);
@@ -662,6 +663,7 @@ export function AgentView(): React.ReactElement {
       channelId: agentChannelId,
       modelId: agentModelId ?? undefined,
       workspaceId: workspaceId ?? undefined,
+      chatType: "direct",
       permissionMode: agentPermissionMode
     });
   }, [sessionId, agentChannelId, agentModelId, agentPermissionMode, workspaceId, streaming, setStreamingStates]);
@@ -756,6 +758,7 @@ export function AgentView(): React.ReactElement {
       channelId: agentChannelId,
       modelId: agentModelId ?? undefined,
       workspaceId: workspaceId ?? undefined,
+      chatType: "direct",
       permissionMode: agentPermissionMode
     }).catch((error) => {
       console.error("[AgentView] send failed", error);

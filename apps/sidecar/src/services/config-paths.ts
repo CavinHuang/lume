@@ -138,3 +138,24 @@ export function getAgentSessionWorkspacePath(workspaceSlug: string, sessionId: s
     "Agent 会话工作目录"
   );
 }
+
+export function getWorkspaceMemoryDir(workspaceSlug: string): string {
+  return ensureDir(join(getAgentWorkspacePath(workspaceSlug), "memory"), "记忆目录");
+}
+
+export function getWorkspaceLongTermMemoryPath(workspaceSlug: string): string {
+  return join(getAgentWorkspacePath(workspaceSlug), "MEMORY.md");
+}
+
+export function getWorkspaceMemoryDbPath(workspaceSlug: string): string {
+  const safeSlug = assertSafeSegment(workspaceSlug, "workspace slug");
+  return join(getAgentWorkspacePath(safeSlug), `${safeSlug}.sqlite`);
+}
+
+export function getMemoryConfigDir(): string {
+  return ensureDir(join(getConfigDir(), "memory"), "记忆配置目录");
+}
+
+export function getMemoryConfigPath(): string {
+  return join(getMemoryConfigDir(), "config.json");
+}

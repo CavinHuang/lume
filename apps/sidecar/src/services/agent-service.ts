@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import type {
   AgentEvent,
   AgentAskUserQuestionQuestion,
@@ -49,6 +50,20 @@ import {
   getAgentWorkspacePath
 } from "./config-paths";
 import { buildDynamicContext, buildSystemPromptAppend } from "./agent-prompt-builder";
+import {
+  applyMemoryToolPolicy,
+  deriveChatTypeFromSessionKey,
+  normalizeMemoryChatType,
+  type MemoryCitationsMode,
+  resolveMemoryRuntimeConfig,
+  shouldIncludeCitations
+} from "./memory-policy";
+import {
+  getWorkspaceMemoryFile,
+  getWorkspaceMemoryStatus,
+  saveWorkspaceMemory,
+  searchWorkspaceMemory
+} from "./memory-service";
 
 type AgentEventEmitter = {
   onEvent: (event: AgentEvent) => void;
@@ -76,6 +91,30 @@ const MAX_CONTEXT_MESSAGES = 20;
 const RESUME_RETRY_ERROR_PREFIX = "__LUME_RESUME_RETRY__:";
 const EXIT_PLAN_TOOL_NAME = "ExitPlanMode";
 const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
+const MEMORY_SEARCH_TOOL_NAME = "memory_search";
+const MEMORY_GET_TOOL_NAME = "memory_get";
+const MEMORY_SAVE_TOOL_NAME = "memory_save";
+
+type ClaudeSdkModule = typeof import("@anthropic-ai/claude-agent-sdk");
+
+function formatCitation(path: string, startLine: number, endLine: number): string {
+  return startLine === endLine ? `${path}#L${startLine}` : `${path}#L${startLine}-L${endLine}`;
+}
+
+function decorateMemorySearchResults(params: {
+  includeCitations: boolean;
+  results: Awaited<ReturnType<typeof searchWorkspaceMemory>>;
+}): Awaited<ReturnType<typeof searchWorkspaceMemory>> {
+  if (!params.includeCitations) {
+    return params.results.map((entry) => ({ ...entry, citation: undefined }));
+  }
+  return params.results.map((entry) => {
+    const citation = entry.citation ?? formatCitation(entry.path, entry.startLine, entry.endLine);
+    const hasSourceLine = /\n\nSource:\s+/i.test(entry.snippet);
+    const snippet = hasSourceLine ? entry.snippet : `${entry.snippet.trim()}\n\nSource: ${citation}`;
+    return { ...entry, citation, snippet };
+  });
+}
 
 function normalizeAskUserQuestions(input: Record<string, unknown>): AgentAskUserQuestionQuestion[] {
   const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
@@ -311,10 +350,137 @@ function buildContextPrompt(sessionId: string, currentUserMessage: string): stri
   return `<conversation_history>\n${lines.join("\n")}\n</conversation_history>\n\n${currentUserMessage}`;
 }
 
-function buildMcpServers(workspaceSlug?: string): Record<string, McpServerConfig> {
+function buildMemoryMcpServer(
+  workspaceSlug: string,
+  sdk: ClaudeSdkModule,
+  options: {
+    enabledTools: Set<string>;
+    includeCitations: boolean;
+    citationsMode: MemoryCitationsMode;
+  }
+): McpServerConfig {
+  const asText = (payload: unknown): string => JSON.stringify(payload, null, 2);
+  const memorySearchSchema = z.object({
+    query: z.string().min(1),
+    maxResults: z.number().int().min(1).max(20).optional(),
+    minScore: z.number().min(0).max(1).optional()
+  });
+  const memoryGetSchema = z.object({
+    path: z.string().min(1),
+    from: z.number().int().min(1).optional(),
+    lines: z.number().int().min(1).max(2000).optional()
+  });
+  const memorySaveSchema = z.object({
+    content: z.string().min(1),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+  });
+
+  return sdk.createSdkMcpServer({
+    name: "lume-memory",
+    tools: [
+      ...(options.enabledTools.has(MEMORY_SEARCH_TOOL_NAME)
+        ? [{
+        name: MEMORY_SEARCH_TOOL_NAME,
+        description:
+          "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.",
+        inputSchema: memorySearchSchema.shape,
+        handler: async (rawArgs: unknown) => {
+          try {
+            const { query, maxResults, minScore } = memorySearchSchema.parse(rawArgs);
+            const [results, status] = await Promise.all([
+              searchWorkspaceMemory({ workspaceSlug, query, maxResults, minScore }),
+              Promise.resolve(getWorkspaceMemoryStatus(workspaceSlug))
+            ]);
+            const decorated = decorateMemorySearchResults({
+              includeCitations: options.includeCitations,
+              results
+            });
+            const payload = {
+              results: decorated,
+              provider: status.provider,
+              model: status.model,
+              fallback: status.fallback,
+              citations: options.citationsMode
+            };
+            return { content: [{ type: "text", text: asText(payload) }] };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              content: [{ type: "text", text: asText({ results: [], disabled: true, error: message }) }],
+              isError: true
+            };
+          }
+        }
+      }]
+        : []),
+      ...(options.enabledTools.has(MEMORY_GET_TOOL_NAME)
+        ? [{
+        name: MEMORY_GET_TOOL_NAME,
+        description:
+          "Safe snippet read from MEMORY.md or memory/*.md with optional from/lines; use after memory_search to pull only the needed lines and keep context small.",
+        inputSchema: memoryGetSchema.shape,
+        handler: async (rawArgs: unknown) => {
+          try {
+            const { path, from, lines } = memoryGetSchema.parse(rawArgs);
+            const result = getWorkspaceMemoryFile({ workspaceSlug, path, from, lines });
+            return { content: [{ type: "text", text: asText(result) }] };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const fallbackPath =
+              rawArgs && typeof rawArgs === "object" && typeof (rawArgs as { path?: unknown }).path === "string"
+                ? (rawArgs as { path: string }).path
+                : "";
+            return {
+              content: [{ type: "text", text: asText({ path: fallbackPath, text: "", disabled: true, error: message }) }],
+              isError: true
+            };
+          }
+        }
+      }]
+        : []),
+      ...(options.enabledTools.has(MEMORY_SAVE_TOOL_NAME)
+        ? [{
+        name: MEMORY_SAVE_TOOL_NAME,
+        description: "将新记忆写入 memory/YYYY-MM-DD.md 并立即索引。",
+        inputSchema: memorySaveSchema.shape,
+        handler: async (rawArgs: unknown) => {
+          try {
+            const { content, date } = memorySaveSchema.parse(rawArgs);
+            const result = await saveWorkspaceMemory({ workspaceSlug, content, date });
+            return { content: [{ type: "text", text: asText(result) }] };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              content: [{ type: "text", text: asText({ disabled: true, error: message }) }],
+              isError: true
+            };
+          }
+        }
+      }]
+        : [])
+    ]
+  });
+}
+
+function buildMcpServers(
+  workspaceSlug: string | undefined,
+  sdk: ClaudeSdkModule,
+  options: {
+    enabledMemoryTools: Set<string>;
+    includeCitations: boolean;
+    citationsMode: MemoryCitationsMode;
+  }
+): Record<string, McpServerConfig> {
   if (!workspaceSlug) return {};
 
   const mcpServers: Record<string, McpServerConfig> = {};
+  if (options.enabledMemoryTools.size > 0) {
+    mcpServers["lume-memory"] = buildMemoryMcpServer(workspaceSlug, sdk, {
+      enabledTools: options.enabledMemoryTools,
+      includeCitations: options.includeCitations,
+      citationsMode: options.citationsMode
+    });
+  }
   const mcpConfig = getWorkspaceMcpConfig(workspaceSlug);
 
   for (const [name, entry] of Object.entries(mcpConfig.servers ?? {})) {
@@ -434,13 +600,27 @@ export async function sendAgentMessage(
       `[Agent 服务] 启动 SDK — CLI: ${cliPath}, Bun: ${bunPath}, 模型: ${modelId}, 权限: ${permissionMode}, resume: ${existingSdkSessionId ?? "无"}`
     );
     const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
-    const mcpServers = buildMcpServers(workspaceSlug);
+    const runtimeConfig = resolveMemoryRuntimeConfig();
+    const chatType = normalizeMemoryChatType(input.chatType) ?? deriveChatTypeFromSessionKey(sessionId);
+    const includeCitations = shouldIncludeCitations(runtimeConfig.citationsMode, chatType);
+    const enabledMemoryToolNames = applyMemoryToolPolicy({
+      baseTools: [MEMORY_SEARCH_TOOL_NAME, MEMORY_GET_TOOL_NAME, MEMORY_SAVE_TOOL_NAME],
+      policy: runtimeConfig.toolPolicy
+    });
+    const enabledMemoryTools = new Set(enabledMemoryToolNames);
+    const mcpServers = buildMcpServers(workspaceSlug, sdk, {
+      enabledMemoryTools,
+      includeCitations,
+      citationsMode: runtimeConfig.citationsMode
+    });
     const dynamicContext = buildDynamicContext({
       workspaceName,
       workspaceSlug,
       agentCwd
     });
-    const contextualMessage = `${dynamicContext}\n\n${userMessage}`;
+    const contextualMessage = [dynamicContext, userMessage]
+      .filter((part) => part.trim().length > 0)
+      .join("\n\n");
 
     const isCompactCommand = userMessage.trim() === "/compact";
     const prompt = isCompactCommand
@@ -514,6 +694,17 @@ export async function sendAgentMessage(
               }
             };
           }
+          if (
+            (toolName === MEMORY_SEARCH_TOOL_NAME ||
+              toolName === MEMORY_GET_TOOL_NAME ||
+              toolName === MEMORY_SAVE_TOOL_NAME) &&
+            !enabledMemoryTools.has(toolName.toLowerCase())
+          ) {
+            return {
+              behavior: "deny",
+              message: `工具策略已禁用 ${toolName}`
+            };
+          }
           // Sidecar 当前无交互式权限确认 UI；保持非阻塞执行。
           return { behavior: "allow", updatedInput: {} };
         },
@@ -527,7 +718,9 @@ export async function sendAgentMessage(
           append: buildSystemPromptAppend({
             workspaceName,
             workspaceSlug,
-            sessionId
+            sessionId,
+            availableTools: enabledMemoryToolNames,
+            memoryCitationsMode: runtimeConfig.citationsMode
           })
         },
         ...(existingSdkSessionId ? { resume: existingSdkSessionId } : {}),

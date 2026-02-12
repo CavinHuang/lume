@@ -294,6 +294,8 @@ export interface AgentSendInput {
   modelId?: string
   /** 工作区 ID（用于确定 cwd） */
   workspaceId?: string
+  /** 会话类型（用于记忆 citations auto 行为） */
+  chatType?: 'direct' | 'group' | 'channel'
   /** Claude Agent SDK 权限模式 */
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
 }

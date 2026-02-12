@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.37",
-    "@lume/shared": "workspace:*"
+    "@lume/shared": "workspace:*",
+    "zod": "^4.3.6"
   }
 }
