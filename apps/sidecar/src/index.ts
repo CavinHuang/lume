@@ -4,6 +4,9 @@ import { AGENT_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS } from "@lu
 import type {
   AttachmentSaveInput,
   AgentGenerateTitleInput,
+  ImportGlobalMcpToWorkspaceInput,
+  InstallGlobalPluginInput,
+  ImportGlobalSkillToWorkspaceInput,
   AgentSendInput,
   ChannelCreateInput,
   ChannelUpdateInput,
@@ -74,6 +77,13 @@ import {
   updateAgentWorkspace,
   deleteWorkspaceSkill
 } from "./services/agent-workspace-manager";
+import {
+  getGlobalMarketplaceDetail,
+  getGlobalDiscoverySnapshot,
+  installGlobalPlugin,
+  importGlobalMcpToWorkspace,
+  importGlobalSkillToWorkspace
+} from "./services/global-discovery-service";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
@@ -362,6 +372,20 @@ const handlers: Record<string, RpcHandler> = {
     deleteWorkspaceSkill(workspaceSlug, skillSlug);
     return { ok: true };
   },
+  [AGENT_IPC_CHANNELS.GET_GLOBAL_DISCOVERY]: async () => getGlobalDiscoverySnapshot(),
+  [AGENT_IPC_CHANNELS.RESCAN_GLOBAL_DISCOVERY]: async () => getGlobalDiscoverySnapshot(),
+  [AGENT_IPC_CHANNELS.GET_GLOBAL_MARKETPLACE_DETAIL]: async (params) => {
+    const p = asObject(params);
+    const marketplaceId = asString(p.marketplaceId);
+    if (!marketplaceId) throw new Error("缺少 marketplaceId");
+    return getGlobalMarketplaceDetail(marketplaceId);
+  },
+  [AGENT_IPC_CHANNELS.INSTALL_GLOBAL_PLUGIN]: async (params) =>
+    installGlobalPlugin(params as InstallGlobalPluginInput),
+  [AGENT_IPC_CHANNELS.IMPORT_GLOBAL_MCP_TO_WORKSPACE]: async (params) =>
+    importGlobalMcpToWorkspace(params as ImportGlobalMcpToWorkspaceInput),
+  [AGENT_IPC_CHANNELS.IMPORT_GLOBAL_SKILL_TO_WORKSPACE]: async (params) =>
+    importGlobalSkillToWorkspace(params as ImportGlobalSkillToWorkspaceInput),
   [AGENT_IPC_CHANNELS.GET_SESSION_PATH]: async (params) => {
     const p = asObject(params);
     const workspaceSlug = asString(p.workspaceSlug);

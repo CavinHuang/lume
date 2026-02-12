@@ -2,8 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { FolderOpen, MessageSquare, Pencil, Plug, Plus, Sparkles, Trash2 } from "lucide-react";
-import type { McpServerEntry, SkillMeta, WorkspaceMcpConfig } from "@lume/shared";
+import { FolderOpen, Globe, MessageSquare, Pencil, Plug, Plus, Puzzle, RefreshCw, Sparkles, Store, Trash2 } from "lucide-react";
+import type {
+  GlobalDiscoverySnapshot,
+  GlobalPluginMarketplaceDetail,
+  McpServerEntry,
+  SkillMeta,
+  WorkspaceMcpConfig
+} from "@lume/shared";
 import {
   activeViewAtom,
   agentChannelIdAtom,
@@ -22,12 +28,20 @@ import {
   createAgentSession,
   deleteAgentWorkspaceSkill,
   getAgentWorkspaceMcpConfig,
+  getAgentGlobalDiscoverySnapshot,
+  getAgentGlobalMarketplaceDetail,
+  installAgentGlobalPlugin,
+  importGlobalMcpToWorkspace,
+  importGlobalSkillToWorkspace,
   listAgentSessions,
   listAgentWorkspaceSkills,
+  rescanAgentGlobalDiscoverySnapshot,
   saveAgentWorkspaceMcpConfig
 } from "@/lib/desktop-api";
 import { McpServerForm } from "./McpServerForm";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 type ViewMode = "list" | "create" | "edit";
 
@@ -66,23 +80,38 @@ export function AgentSettings(): React.ReactElement {
   const [mcpConfig, setMcpConfig] = useState<WorkspaceMcpConfig>({ servers: {} });
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [loading, setLoading] = useState(true);
+  const [globalDiscovery, setGlobalDiscovery] = useState<GlobalDiscoverySnapshot | null>(null);
+  const [globalLoading, setGlobalLoading] = useState(true);
+  const [globalRefreshing, setGlobalRefreshing] = useState(false);
+  const [importingGlobalMcpId, setImportingGlobalMcpId] = useState<string | null>(null);
+  const [importingGlobalSkillId, setImportingGlobalSkillId] = useState<string | null>(null);
+  const [loadingMarketplaceId, setLoadingMarketplaceId] = useState<string | null>(null);
+  const [selectedMarketplaceDetail, setSelectedMarketplaceDetail] = useState<GlobalPluginMarketplaceDetail | null>(null);
+  const [marketplaceDialogOpen, setMarketplaceDialogOpen] = useState(false);
+  const [marketplaceSearch, setMarketplaceSearch] = useState("");
+  const [installingPluginKey, setInstallingPluginKey] = useState<string | null>(null);
+  const [marketplaceActionError, setMarketplaceActionError] = useState<string | null>(null);
 
   const loadData = async (): Promise<void> => {
     if (!workspaceSlug) {
       setLoading(false);
+      setGlobalLoading(false);
       return;
     }
     try {
-      const [config, skillList] = await Promise.all([
+      const [config, skillList, globalSnapshot] = await Promise.all([
         getAgentWorkspaceMcpConfig(workspaceSlug),
-        listAgentWorkspaceSkills(workspaceSlug)
+        listAgentWorkspaceSkills(workspaceSlug),
+        getAgentGlobalDiscoverySnapshot()
       ]);
       setMcpConfig(config);
       setSkills(skillList);
+      setGlobalDiscovery(globalSnapshot);
     } catch (error) {
       console.error("[AgentSettings] load workspace data failed", error);
     } finally {
       setLoading(false);
+      setGlobalLoading(false);
     }
   };
 
@@ -212,6 +241,122 @@ ${skillList}
     bumpCapabilitiesVersion((v) => v + 1);
   };
 
+  const handleRefreshGlobalDiscovery = async (): Promise<void> => {
+    setGlobalRefreshing(true);
+    try {
+      const snapshot = await rescanAgentGlobalDiscoverySnapshot();
+      setGlobalDiscovery(snapshot);
+      if (selectedMarketplaceDetail) {
+        const exists = snapshot.pluginMarketplaces.some((item) => item.id === selectedMarketplaceDetail.marketplace.id);
+        if (!exists) {
+          setSelectedMarketplaceDetail(null);
+        }
+      }
+    } catch (error) {
+      console.error("[AgentSettings] refresh global discovery failed", error);
+    } finally {
+      setGlobalRefreshing(false);
+    }
+  };
+
+  const handleOpenMarketplaceDetail = async (marketplaceId: string): Promise<void> => {
+    setLoadingMarketplaceId(marketplaceId);
+    setMarketplaceActionError(null);
+    try {
+      const detail = await getAgentGlobalMarketplaceDetail(marketplaceId);
+      setSelectedMarketplaceDetail(detail);
+      setMarketplaceDialogOpen(true);
+      setMarketplaceSearch("");
+    } catch (error) {
+      console.error("[AgentSettings] load marketplace detail failed", error);
+    } finally {
+      setLoadingMarketplaceId(null);
+    }
+  };
+
+  const handleInstallMarketplacePlugin = async (pluginName: string): Promise<void> => {
+    if (!selectedMarketplaceDetail) return;
+    const pluginKey = `${selectedMarketplaceDetail.marketplace.id}:${pluginName}`;
+    setInstallingPluginKey(pluginKey);
+    setMarketplaceActionError(null);
+    try {
+      await installAgentGlobalPlugin({
+        marketplaceId: selectedMarketplaceDetail.marketplace.id,
+        pluginName,
+        scope: "user"
+      });
+      const [detail, snapshot] = await Promise.all([
+        getAgentGlobalMarketplaceDetail(selectedMarketplaceDetail.marketplace.id),
+        getAgentGlobalDiscoverySnapshot()
+      ]);
+      setSelectedMarketplaceDetail(detail);
+      setGlobalDiscovery(snapshot);
+      bumpCapabilitiesVersion((v) => v + 1);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setMarketplaceActionError(message);
+      console.error("[AgentSettings] install marketplace plugin failed", error);
+    } finally {
+      setInstallingPluginKey(null);
+    }
+  };
+
+  const handleImportGlobalMcp = async (mcpId: string, mcpName: string): Promise<void> => {
+    setImportingGlobalMcpId(mcpId);
+    try {
+      const firstTry = await importGlobalMcpToWorkspace({
+        workspaceSlug,
+        mcpId,
+        overwrite: false
+      });
+      if (firstTry.imported) {
+        await loadData();
+        bumpCapabilitiesVersion((v) => v + 1);
+        return;
+      }
+      if (!window.confirm(`工作区已存在同名 MCP「${mcpName}」，是否覆盖？`)) return;
+      await importGlobalMcpToWorkspace({
+        workspaceSlug,
+        mcpId,
+        overwrite: true
+      });
+      await loadData();
+      bumpCapabilitiesVersion((v) => v + 1);
+    } catch (error) {
+      console.error("[AgentSettings] import global MCP failed", error);
+    } finally {
+      setImportingGlobalMcpId(null);
+    }
+  };
+
+  const handleImportGlobalSkill = async (skillId: string, skillName: string): Promise<void> => {
+    setImportingGlobalSkillId(skillId);
+    try {
+      const firstTry = await importGlobalSkillToWorkspace({
+        workspaceSlug,
+        skillId,
+        overwrite: false
+      });
+      if (firstTry.imported) {
+        await loadData();
+        bumpCapabilitiesVersion((v) => v + 1);
+        return;
+      }
+      if (!window.confirm(`工作区已存在同名 Skill「${skillName}」，是否覆盖？`)) return;
+      await importGlobalSkillToWorkspace({
+        workspaceSlug,
+        skillId,
+        overwrite: true
+      });
+      await loadData();
+      bumpCapabilitiesVersion((v) => v + 1);
+    } catch (error) {
+      console.error("[AgentSettings] import global Skill failed", error);
+    } finally {
+      setImportingGlobalSkillId(null);
+    }
+  };
+
   if (!workspace) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -241,6 +386,22 @@ ${skillList}
   }
 
   const serverEntries = Object.entries(mcpConfig.servers ?? {});
+  const globalMcpServers = globalDiscovery?.mcpServers ?? [];
+  const globalSkills = globalDiscovery?.skills ?? [];
+  const globalPluginMarketplaces = globalDiscovery?.pluginMarketplaces ?? [];
+  const globalPlugins = globalDiscovery?.plugins ?? [];
+  const filteredMarketplacePlugins = useMemo(() => {
+    if (!selectedMarketplaceDetail) return [];
+    const q = marketplaceSearch.trim().toLowerCase();
+    if (!q) return selectedMarketplaceDetail.plugins;
+    return selectedMarketplaceDetail.plugins.filter((plugin) =>
+      plugin.name.toLowerCase().includes(q)
+      || (plugin.description ?? "").toLowerCase().includes(q)
+    );
+  }, [selectedMarketplaceDetail, marketplaceSearch]);
+  const globalScannedAt = globalDiscovery?.scannedAt
+    ? new Date(globalDiscovery.scannedAt).toLocaleString()
+    : "未扫描";
 
   return (
     <div className="space-y-8">
@@ -344,6 +505,242 @@ ${skillList}
           <span>跟 Lume Agent 对话完成配置</span>
         </Button>
       </SettingsSection>
+
+      <SettingsSection
+        title="全局发现"
+        description={`来源: ~/.claude · 最近扫描: ${globalScannedAt}`}
+        action={(
+          <Button size="sm" type="button" variant="outline" onClick={() => { void handleRefreshGlobalDiscovery(); }}>
+            <RefreshCw size={14} className={globalRefreshing ? "animate-spin" : ""} />
+            <span>重新扫描</span>
+          </Button>
+        )}
+      >
+        {globalLoading ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
+        ) : (
+          <div className="space-y-4">
+            <SettingsCard divided={false}>
+              <div className="px-4 py-3 text-xs text-muted-foreground">
+                已发现 {globalMcpServers.length} 个 MCP，{globalSkills.length} 个 Skill，{globalPluginMarketplaces.length} 个 Marketplace，{globalPlugins.length} 个 Plugin
+              </div>
+            </SettingsCard>
+
+            <SettingsSection title="全局 MCP" description="可一键导入到当前工作区">
+              {globalMcpServers.length === 0 ? (
+                <SettingsCard divided={false}>
+                  <div className="py-6 text-center text-sm text-muted-foreground">未发现全局 MCP</div>
+                </SettingsCard>
+              ) : (
+                <SettingsCard>
+                  {globalMcpServers.map((server) => (
+                    <SettingsRow
+                      key={server.id}
+                      label={server.name}
+                      icon={<Globe size={18} className="text-sky-500" />}
+                      description={server.type === "stdio" ? server.command : server.url}
+                    >
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        type="button"
+                        disabled={importingGlobalMcpId === server.id}
+                        onClick={() => { void handleImportGlobalMcp(server.id, server.name); }}
+                      >
+                        导入到工作区
+                      </Button>
+                    </SettingsRow>
+                  ))}
+                </SettingsCard>
+              )}
+            </SettingsSection>
+
+            <SettingsSection title="全局 Skills" description="可一键导入到当前工作区">
+              {globalSkills.length === 0 ? (
+                <SettingsCard divided={false}>
+                  <div className="py-6 text-center text-sm text-muted-foreground">未发现全局 Skills</div>
+                </SettingsCard>
+              ) : (
+                <SettingsCard>
+                  {globalSkills.map((skill) => (
+                    <SettingsRow
+                      key={skill.id}
+                      label={skill.name}
+                      icon={<Sparkles size={18} className="text-amber-500" />}
+                      description={skill.description ?? skill.slug}
+                    >
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        type="button"
+                        disabled={importingGlobalSkillId === skill.id}
+                        onClick={() => { void handleImportGlobalSkill(skill.id, skill.name); }}
+                      >
+                        导入到工作区
+                      </Button>
+                    </SettingsRow>
+                  ))}
+                </SettingsCard>
+              )}
+            </SettingsSection>
+
+            <SettingsSection title="Plugin Marketplace" description="全局已登记的插件市场">
+              {globalPluginMarketplaces.length === 0 ? (
+                <SettingsCard divided={false}>
+                  <div className="py-6 text-center text-sm text-muted-foreground">未发现 Marketplace</div>
+                </SettingsCard>
+              ) : (
+                <SettingsCard>
+                  {globalPluginMarketplaces.map((marketplace) => (
+                    <SettingsRow
+                      key={marketplace.id}
+                      label={marketplace.id}
+                      icon={<Store size={18} className="text-emerald-500" />}
+                      description={`${marketplace.sourceType}: ${marketplace.sourceRef || marketplace.installLocation}`}
+                    >
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        type="button"
+                        disabled={loadingMarketplaceId === marketplace.id}
+                        onClick={() => { void handleOpenMarketplaceDetail(marketplace.id); }}
+                      >
+                        {loadingMarketplaceId === marketplace.id ? "加载中..." : "查看详情"}
+                      </Button>
+                    </SettingsRow>
+                  ))}
+                </SettingsCard>
+              )}
+            </SettingsSection>
+
+            <SettingsSection title="Plugins" description="全局已安装插件（按 marketplace 聚合）">
+              {globalPlugins.length === 0 ? (
+                <SettingsCard divided={false}>
+                  <div className="py-6 text-center text-sm text-muted-foreground">未发现 Plugins</div>
+                </SettingsCard>
+              ) : (
+                <SettingsCard>
+                  {globalPlugins.map((plugin) => (
+                    <SettingsRow
+                      key={plugin.id}
+                      label={plugin.pluginName}
+                      icon={<Puzzle size={18} className="text-violet-500" />}
+                      description={`${plugin.marketplaceId} · 安装 ${plugin.installCount} 次 · 范围 ${plugin.scopes.join(", ") || "-"}`}
+                    />
+                  ))}
+                </SettingsCard>
+              )}
+            </SettingsSection>
+
+            {globalDiscovery?.warnings && globalDiscovery.warnings.length > 0 ? (
+              <SettingsCard divided={false}>
+                <div className="space-y-1 px-4 py-3 text-xs text-amber-700">
+                  {globalDiscovery.warnings.map((warning, index) => (
+                    <p key={`${warning.code}-${index}`}>
+                      [{warning.code}] {warning.message}
+                    </p>
+                  ))}
+                </div>
+              </SettingsCard>
+            ) : null}
+          </div>
+        )}
+      </SettingsSection>
+
+      <Dialog
+        open={marketplaceDialogOpen}
+        onOpenChange={(open) => {
+          setMarketplaceDialogOpen(open);
+          if (!open) {
+            setMarketplaceSearch("");
+            setMarketplaceActionError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-5xl overflow-hidden border-border/70 bg-background/95 p-0 backdrop-blur-md">
+          <DialogHeader className="border-b border-border/60 px-6 py-4">
+            <DialogTitle>
+              Marketplace 详情
+              {selectedMarketplaceDetail ? ` · ${selectedMarketplaceDetail.marketplace.id}` : ""}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedMarketplaceDetail
+                ? `可用插件 ${selectedMarketplaceDetail.plugins.length} 个，已安装 ${selectedMarketplaceDetail.installedPlugins.length} 个`
+                : "加载中..."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedMarketplaceDetail ? (
+            <div className="space-y-3 px-6 pb-6">
+              <Input
+                className="bg-muted/30"
+                value={marketplaceSearch}
+                onChange={(e) => setMarketplaceSearch(e.target.value)}
+                placeholder="搜索插件名称或描述"
+              />
+
+              <div className="max-h-[56vh] space-y-2 overflow-y-auto pr-1">
+                {filteredMarketplacePlugins.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground">没有匹配的插件</div>
+                ) : (
+                  filteredMarketplacePlugins.map((plugin) => {
+                    const installed = selectedMarketplaceDetail.installedPlugins.find(
+                      (item) => item.pluginName === plugin.name
+                    );
+                    const pluginKey = `${selectedMarketplaceDetail.marketplace.id}:${plugin.name}`;
+                    const installing = installingPluginKey === pluginKey;
+                    return (
+                      <div
+                        key={pluginKey}
+                        className="flex items-center gap-3 rounded-lg border border-border/60 bg-card/50 px-3 py-2 transition-colors hover:bg-muted/30"
+                      >
+                        <Puzzle size={16} className={installed ? "text-emerald-500" : "text-muted-foreground"} />
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-medium leading-5">{plugin.name}</p>
+                          <p className="break-words whitespace-normal text-xs leading-5 text-muted-foreground">
+                            {plugin.description ?? plugin.source ?? "-"}
+                          </p>
+                        </div>
+                        {installed ? (
+                          <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-500">
+                            已安装
+                          </span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="default"
+                            type="button"
+                            disabled={installing}
+                            onClick={() => { void handleInstallMarketplacePlugin(plugin.name); }}
+                          >
+                            {installing ? "安装中..." : "安装"}
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {marketplaceActionError ? (
+                <p className="text-xs text-destructive">{marketplaceActionError}</p>
+              ) : null}
+
+              {selectedMarketplaceDetail.warnings.length > 0 ? (
+                <div className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  {selectedMarketplaceDetail.warnings.map((warning, index) => (
+                    <p key={`${warning.code}-${index}`}>
+                      [{warning.code}] {warning.message}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

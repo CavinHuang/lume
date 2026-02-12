@@ -165,6 +165,119 @@ export interface WorkspaceCapabilities {
   skills: SkillMeta[]
 }
 
+// ===== 全局发现（Claude Code / Codex）=====
+
+export type GlobalDiscoveryProvider = 'claude' | 'codex'
+
+export interface GlobalDiscoveryWarning {
+  code: string
+  message: string
+  details?: string
+}
+
+export interface GlobalMcpServerMeta {
+  id: string
+  provider: GlobalDiscoveryProvider
+  name: string
+  type: McpTransportType
+  enabled: boolean
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
+  sourcePath: string
+}
+
+export interface GlobalPluginMarketplaceMeta {
+  id: string
+  provider: GlobalDiscoveryProvider
+  sourceType: 'github' | 'directory' | 'unknown'
+  sourceRef: string
+  installLocation: string
+  lastUpdated?: string
+  autoUpdate?: boolean
+}
+
+export interface GlobalMarketplacePluginMeta {
+  name: string
+  description?: string
+  version?: string
+  source?: string
+  homepage?: string
+  authorName?: string
+}
+
+export interface GlobalPluginMeta {
+  id: string
+  provider: GlobalDiscoveryProvider
+  pluginName: string
+  marketplaceId: string
+  installCount: number
+  scopes: string[]
+  versions: string[]
+  projectPaths: string[]
+  lastUpdated?: string
+}
+
+export interface GlobalSkillMeta {
+  id: string
+  provider: GlobalDiscoveryProvider
+  slug: string
+  name: string
+  description?: string
+  icon?: string
+  sourcePath: string
+}
+
+export interface GlobalDiscoverySnapshot {
+  version: number
+  scannedAt: number
+  providers: GlobalDiscoveryProvider[]
+  mcpServers: GlobalMcpServerMeta[]
+  pluginMarketplaces: GlobalPluginMarketplaceMeta[]
+  plugins: GlobalPluginMeta[]
+  skills: GlobalSkillMeta[]
+  warnings: GlobalDiscoveryWarning[]
+}
+
+export interface GlobalPluginMarketplaceDetail {
+  marketplace: GlobalPluginMarketplaceMeta
+  plugins: GlobalMarketplacePluginMeta[]
+  installedPlugins: GlobalPluginMeta[]
+  warnings: GlobalDiscoveryWarning[]
+}
+
+export interface InstallGlobalPluginInput {
+  marketplaceId: string
+  pluginName: string
+  scope?: 'user' | 'project' | 'local'
+}
+
+export interface InstallGlobalPluginResult {
+  ok: true
+  installed: boolean
+  message: string
+}
+
+export interface ImportGlobalMcpToWorkspaceInput {
+  workspaceSlug: string
+  mcpId: string
+  overwrite?: boolean
+}
+
+export interface ImportGlobalSkillToWorkspaceInput {
+  workspaceSlug: string
+  skillId: string
+  overwrite?: boolean
+}
+
+export interface GlobalImportResult {
+  ok: true
+  imported: boolean
+  reason?: string
+}
+
 // ===== Agent 发送输入 =====
 
 /**
@@ -317,6 +430,18 @@ export const AGENT_IPC_CHANNELS = {
   GET_SKILLS: 'agent:get-skills',
   /** 删除工作区 Skill */
   DELETE_SKILL: 'agent:delete-skill',
+  /** 获取全局发现快照（MCP/Plugin/Marketplace/Skills） */
+  GET_GLOBAL_DISCOVERY: 'agent:get-global-discovery',
+  /** 重新扫描全局发现来源 */
+  RESCAN_GLOBAL_DISCOVERY: 'agent:rescan-global-discovery',
+  /** 获取 marketplace 详情（包含插件清单） */
+  GET_GLOBAL_MARKETPLACE_DETAIL: 'agent:get-global-marketplace-detail',
+  /** 安装全局 marketplace 插件 */
+  INSTALL_GLOBAL_PLUGIN: 'agent:install-global-plugin',
+  /** 导入全局 MCP 到工作区 */
+  IMPORT_GLOBAL_MCP_TO_WORKSPACE: 'agent:import-global-mcp-to-workspace',
+  /** 导入全局 Skill 到工作区 */
+  IMPORT_GLOBAL_SKILL_TO_WORKSPACE: 'agent:import-global-skill-to-workspace',
 
   // 流式事件（主进程 → 渲染进程推送）
   /** Agent 流式事件 */

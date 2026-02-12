@@ -11,6 +11,13 @@ import type {
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
   AgentGenerateTitleInput,
+  GlobalDiscoverySnapshot,
+  GlobalPluginMarketplaceDetail,
+  GlobalImportResult,
+  ImportGlobalMcpToWorkspaceInput,
+  ImportGlobalSkillToWorkspaceInput,
+  InstallGlobalPluginInput,
+  InstallGlobalPluginResult,
   AgentMessage,
   AgentSaveFilesInput,
   AgentSavedFile,
@@ -446,6 +453,40 @@ export async function deleteAgentWorkspaceSkill(
   skillSlug: string
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_SKILL, { workspaceSlug, skillSlug });
+}
+
+export async function getAgentGlobalDiscoverySnapshot(): Promise<GlobalDiscoverySnapshot> {
+  return sidecarCall<GlobalDiscoverySnapshot>(AGENT_IPC_CHANNELS.GET_GLOBAL_DISCOVERY);
+}
+
+export async function rescanAgentGlobalDiscoverySnapshot(): Promise<GlobalDiscoverySnapshot> {
+  return sidecarCall<GlobalDiscoverySnapshot>(AGENT_IPC_CHANNELS.RESCAN_GLOBAL_DISCOVERY);
+}
+
+export async function getAgentGlobalMarketplaceDetail(
+  marketplaceId: string
+): Promise<GlobalPluginMarketplaceDetail> {
+  return sidecarCall<GlobalPluginMarketplaceDetail>(AGENT_IPC_CHANNELS.GET_GLOBAL_MARKETPLACE_DETAIL, {
+    marketplaceId
+  });
+}
+
+export async function installAgentGlobalPlugin(
+  input: InstallGlobalPluginInput
+): Promise<InstallGlobalPluginResult> {
+  return sidecarCall<InstallGlobalPluginResult>(AGENT_IPC_CHANNELS.INSTALL_GLOBAL_PLUGIN, input);
+}
+
+export async function importGlobalMcpToWorkspace(
+  input: ImportGlobalMcpToWorkspaceInput
+): Promise<GlobalImportResult> {
+  return sidecarCall<GlobalImportResult>(AGENT_IPC_CHANNELS.IMPORT_GLOBAL_MCP_TO_WORKSPACE, input);
+}
+
+export async function importGlobalSkillToWorkspace(
+  input: ImportGlobalSkillToWorkspaceInput
+): Promise<GlobalImportResult> {
+  return sidecarCall<GlobalImportResult>(AGENT_IPC_CHANNELS.IMPORT_GLOBAL_SKILL_TO_WORKSPACE, input);
 }
 
 export async function sendAgentMessage(input: AgentSendInput): Promise<{ ok: true }> {
