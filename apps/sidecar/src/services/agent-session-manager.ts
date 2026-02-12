@@ -10,7 +10,7 @@ import {
   appendFileSync,
   existsSync,
   readFileSync,
-  rmSync,
+  rm,
   unlinkSync,
   writeFileSync
 } from "node:fs";
@@ -172,8 +172,13 @@ export function deleteAgentSession(id: string): void {
       try {
         const sessionDir = getAgentSessionWorkspacePath(workspace.slug, id);
         if (existsSync(sessionDir)) {
-          rmSync(sessionDir, { recursive: true, force: true });
-          console.log(`[Agent 会话] 已清理 session 工作目录: ${sessionDir}`);
+          rm(sessionDir, { recursive: true, force: true }, (error) => {
+            if (error) {
+              console.warn(`[Agent 会话] 清理 session 工作目录失败 (${id}):`, error);
+              return;
+            }
+            console.log(`[Agent 会话] 已清理 session 工作目录: ${sessionDir}`);
+          });
         }
       } catch (error) {
         console.warn(`[Agent 会话] 清理 session 工作目录失败 (${id}):`, error);

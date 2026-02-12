@@ -7,6 +7,7 @@ import type { AgentSessionMeta, ConversationMeta } from "@lume/shared";
 import {
   activeViewAtom,
   agentRunningSessionIdsAtom,
+  agentChannelIdAtom,
   agentSessionsAtom,
   agentWorkspacesAtom,
   appModeAtom,
@@ -90,6 +91,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const hasUpdate = useAtomValue(hasUpdateAtom);
   const streamingIds = useAtomValue(streamingConversationIdsAtom);
   const runningIds = useAtomValue(agentRunningSessionIdsAtom);
+  const agentChannelId = useAtomValue(agentChannelIdAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
   const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom);
 
@@ -105,6 +107,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget>(null);
   const [editing, setEditing] = useState<EditingTarget>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [initError, setInitError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -116,29 +119,31 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   useEffect(() => {
     void listConversations().then((items) => {
       setConversations(items);
-      if (!currentConversationId && items[0]) setCurrentConversationId(items[0].id);
+      setCurrentConversationId((prev) => prev ?? items[0]?.id ?? null);
+    }).catch((error) => {
+      console.error("[LeftSidebar] 加载对话列表失败:", error);
+      setInitError(`加载对话失败: ${error instanceof Error ? error.message : String(error)}`);
     });
     void listAgentSessions().then((items) => {
       setAgentSessions(items);
-      if (!currentAgentSessionId && items[0]) setCurrentAgentSessionId(items[0].id);
+      setCurrentAgentSessionId((prev) => prev ?? items[0]?.id ?? null);
+    }).catch((error) => {
+      console.error("[LeftSidebar] 加载 Agent 会话失败:", error);
+      setInitError(`加载 Agent 会话失败: ${error instanceof Error ? error.message : String(error)}`);
     });
     void (async () => {
-      await ensureDefaultAgentWorkspace();
-      const ws = await listAgentWorkspaces();
-      setAgentWorkspaces(ws);
-      if (!currentWorkspaceId && ws[0]) setCurrentWorkspaceId(ws[0].id);
+      try {
+        await ensureDefaultAgentWorkspace();
+        const ws = await listAgentWorkspaces();
+        setAgentWorkspaces(ws);
+        setCurrentWorkspaceId((prev) => prev ?? ws[0]?.id ?? null);
+        setInitError(null);
+      } catch (error) {
+        console.error("[LeftSidebar] 初始化工作区失败:", error);
+        setInitError(`初始化工作区失败: ${error instanceof Error ? error.message : String(error)}`);
+      }
     })();
-  }, [
-    currentConversationId,
-    currentAgentSessionId,
-    currentWorkspaceId,
-    setConversations,
-    setCurrentConversationId,
-    setAgentSessions,
-    setCurrentAgentSessionId,
-    setAgentWorkspaces,
-    setCurrentWorkspaceId
-  ]);
+  }, [setConversations, setCurrentConversationId, setAgentSessions, setCurrentAgentSessionId, setAgentWorkspaces, setCurrentWorkspaceId]);
 
   useEffect(() => {
     if (mode !== "agent" || !currentWorkspaceId) {
@@ -224,6 +229,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     }
     const created = await createAgentSession({
       title: "新 Agent 会话",
+      channelId: agentChannelId ?? undefined,
       workspaceId: currentWorkspaceId ?? undefined
     });
     setAgentSessions((prev) => [created, ...prev]);
@@ -261,7 +267,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
   return (
     <div
-      className="h-full flex flex-col bg-background"
+      className="titlebar-no-drag h-full flex flex-col bg-background"
       style={{ width: width ?? 280, minWidth: 180, flexShrink: 1 }}
     >
       <div className="pt-[50px]">
@@ -276,6 +282,24 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
             onChange={setCurrentWorkspaceId}
             onWorkspaceChange={setAgentWorkspaces}
           />
+        </div>
+      ) : null}
+
+      {initError ? (
+        <div className="mx-3 mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[12px] text-destructive">
+          <div className="line-clamp-3">{initError}</div>
+          <button
+            type="button"
+            className="mt-1 text-[11px] underline underline-offset-2"
+            onClick={() => {
+              setInitError(null);
+              void listConversations().then(setConversations).catch((error) => {
+                setInitError(`重试加载对话失败: ${error instanceof Error ? error.message : String(error)}`);
+              });
+            }}
+          >
+            重试
+          </button>
         </div>
       ) : null}
 

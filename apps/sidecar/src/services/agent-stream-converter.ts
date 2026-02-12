@@ -102,6 +102,7 @@ export interface AgentStreamConverterState {
   emittedToolStarts: Set<string>;
   activeParentTools: Set<string>;
   pendingText: string | null;
+  streamedText: string;
   turnId: string | null;
   cachedContextWindow?: number;
 }
@@ -112,9 +113,20 @@ export function createAgentStreamConverterState(): AgentStreamConverterState {
     emittedToolStarts: new Set<string>(),
     activeParentTools: new Set<string>(),
     pendingText: null,
+    streamedText: "",
     turnId: null,
     cachedContextWindow: undefined
   };
+}
+
+function resolveMissingDelta(snapshotText: string, streamedText: string): string {
+  if (!snapshotText) return "";
+  if (!streamedText) return snapshotText;
+  if (snapshotText.startsWith(streamedText)) {
+    return snapshotText.slice(streamedText.length);
+  }
+  // 当 provider 的快照与增量存在漂移时，回退为整段快照，确保不丢内容。
+  return snapshotText;
 }
 
 export function convertAgentSdkMessage(
@@ -190,11 +202,21 @@ export function convertAgentSdkMessage(
       if (messageId) {
         state.turnId = messageId;
       }
+      state.streamedText = "";
     }
 
     if (streamEvent.type === "message_delta") {
       const stopReason = streamEvent.delta?.stop_reason;
       if (state.pendingText) {
+        const missingDelta = resolveMissingDelta(state.pendingText, state.streamedText);
+        if (missingDelta) {
+          events.push({
+            type: "text_delta",
+            text: missingDelta,
+            turnId: state.turnId ?? undefined,
+            parentToolUseId: streamMessage.parent_tool_use_id ?? undefined
+          });
+        }
         events.push({
           type: "text_complete",
           text: state.pendingText,
@@ -204,9 +226,11 @@ export function convertAgentSdkMessage(
         });
         state.pendingText = null;
       }
+      state.streamedText = "";
     }
 
     if (streamEvent.type === "content_block_delta" && streamEvent.delta?.type === "text_delta") {
+      state.streamedText += streamEvent.delta.text || "";
       events.push({
         type: "text_delta",
         text: streamEvent.delta.text || "",
@@ -333,6 +357,19 @@ export function convertAgentSdkMessage(
 
   if (message.type === "result") {
     const resultMessage = message as SDKResultMessage;
+
+    if (state.pendingText) {
+      const missingDelta = resolveMissingDelta(state.pendingText, state.streamedText);
+      if (missingDelta) {
+        events.push({
+          type: "text_delta",
+          text: missingDelta,
+          turnId: state.turnId ?? undefined
+        });
+      }
+      state.pendingText = null;
+    }
+    state.streamedText = "";
 
     const primaryModelUsage = Object.values(resultMessage.modelUsage || {})[0];
     if (primaryModelUsage?.contextWindow) {

@@ -59,13 +59,11 @@
 
 /* Draggable title bar region for Electron window */
 .titlebar-drag-region {
-  -webkit-app-region: drag;
-  app-region: drag;
+  /* Disabled for Tauri dev stability: keep class as semantic marker only. */
 }
 
 .titlebar-no-drag {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
+  /* Disabled for Tauri dev stability: keep class as semantic marker only. */
 }
 
 /* 细腻卡片阴影 */

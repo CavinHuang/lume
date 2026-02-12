@@ -133,6 +133,31 @@ export function deleteMessage(conversationId: string, messageId: string): ChatMe
   return filtered;
 }
 
+export function truncateMessagesFrom(
+  conversationId: string,
+  messageId: string,
+  preserveFirstMessageAttachments = false
+): ChatMessage[] {
+  const messages = getConversationMessages(conversationId);
+  const targetIndex = messages.findIndex((msg) => msg.id === messageId);
+  if (targetIndex === -1) return messages;
+
+  const kept = messages.slice(0, targetIndex);
+  const removed = messages.slice(targetIndex);
+
+  for (const [idx, msg] of removed.entries()) {
+    const shouldPreserve = preserveFirstMessageAttachments && idx === 0;
+    if (shouldPreserve) continue;
+    if (!msg.attachments) continue;
+    for (const attachment of msg.attachments) {
+      deleteAttachment(attachment.localPath);
+    }
+  }
+
+  saveConversationMessages(conversationId, kept);
+  return kept;
+}
+
 export function updateContextDividers(conversationId: string, dividers: string[]): ConversationMeta {
   return updateConversationMeta(conversationId, { contextDividers: dividers });
 }

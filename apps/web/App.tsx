@@ -1,12 +1,81 @@
 "use client";
 
+import { useEffect } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
+import { themeModeAtom, type ThemeMode, workspaceCapabilitiesVersionAtom } from "./atoms";
 import { AppShell } from "./components/app-shell/AppShell";
-import { TooltipProvider } from './components/ui/tooltip'
+import { TooltipProvider } from "./components/ui/tooltip";
+import type { AppShellContextType } from "./contexts/AppShellContext";
+import { onAgentCapabilitiesChanged } from "./lib/desktop-api";
+
+function resolveTheme(mode: ThemeMode): "dark" | "light" {
+  if (mode !== "system") {
+    return mode;
+  }
+  if (typeof window === "undefined") {
+    return "dark";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyThemeToDocument(theme: "dark" | "light"): void {
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.classList.toggle("dark", theme === "dark");
+}
 
 export default function App(): React.ReactElement {
+  const mode = useAtomValue(themeModeAtom);
+  const bumpCapabilitiesVersion = useSetAtom(workspaceCapabilitiesVersionAtom);
+  const contextValue: AppShellContextType = {};
+
+  useEffect(() => {
+    applyThemeToDocument(resolveTheme(mode));
+
+    if (mode !== "system") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const onSystemThemeChange = (): void => {
+      applyThemeToDocument(mediaQuery.matches ? "dark" : "light");
+    };
+
+    mediaQuery.addEventListener("change", onSystemThemeChange);
+    return () => {
+      mediaQuery.removeEventListener("change", onSystemThemeChange);
+    };
+  }, [mode]);
+
+  useEffect(() => {
+    let dispose: UnlistenHandle | null = null;
+    let destroyed = false;
+
+    void onAgentCapabilitiesChanged(() => {
+      bumpCapabilitiesVersion((value) => value + 1);
+    }).then((unlisten) => {
+      if (destroyed) {
+        void unlisten();
+        return;
+      }
+      dispose = unlisten;
+    }).catch((error) => {
+      console.error("[App] subscribe capabilities changed failed:", error);
+    });
+
+    return () => {
+      destroyed = true;
+      if (dispose) {
+        void dispose();
+      }
+    };
+  }, [bumpCapabilitiesVersion]);
+
   return (
-    <TooltipProvider>
-      <AppShell />
+    <TooltipProvider delayDuration={200}>
+      <AppShell contextValue={contextValue} />
     </TooltipProvider>
   );
 }
+
+type UnlistenHandle = () => void | Promise<void>;

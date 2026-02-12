@@ -1,14 +1,34 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::io::{Read, Write};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
+
 use base64::Engine as _;
 use tauri::Emitter;
 use tauri::Manager;
 
-struct SidecarProcess(Mutex<Option<Child>>);
+type PendingResponseMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
+const SIDECAR_RESPONSE_TIMEOUT_SECS: u64 = 45;
+
+struct SidecarProcess {
+    child: Mutex<Option<Child>>,
+    pending: PendingResponseMap,
+}
+
+impl SidecarProcess {
+    fn new() -> Self {
+        Self {
+            child: Mutex::new(None),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
 static NEXT_RPC_ID: AtomicU64 = AtomicU64::new(1);
 
 #[tauri::command]
@@ -20,21 +40,27 @@ fn healthcheck() -> serde_json::Value {
 }
 
 #[tauri::command]
-fn sidecar_healthcheck(
-    state: tauri::State<SidecarProcess>,
+async fn sidecar_healthcheck(
+    state: tauri::State<'_, SidecarProcess>,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    sidecar_call_internal(&state, "healthcheck", serde_json::Value::Null, &app)
+    sidecar_call_internal(&state, "healthcheck", serde_json::Value::Null, &app).await
 }
 
 #[tauri::command]
-fn sidecar_call(
+async fn sidecar_call(
     method: String,
     params: Option<serde_json::Value>,
-    state: tauri::State<SidecarProcess>,
+    state: tauri::State<'_, SidecarProcess>,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    sidecar_call_internal(&state, &method, params.unwrap_or(serde_json::Value::Null), &app)
+    sidecar_call_internal(
+        &state,
+        &method,
+        params.unwrap_or(serde_json::Value::Null),
+        &app,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -103,9 +129,7 @@ fn open_file_dialog() -> Result<serde_json::Value, String> {
 #[tauri::command]
 fn open_folder_dialog() -> Result<serde_json::Value, String> {
     let picked = rfd::FileDialog::new().pick_folder();
-    let path = picked
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
+    let path = picked.as_ref().map(|p| p.to_string_lossy().to_string());
     Ok(serde_json::json!({ "path": path }))
 }
 
@@ -118,94 +142,151 @@ fn open_external(url: String) -> Result<(), String> {
     Ok(())
 }
 
-fn sidecar_call_internal(
-    state: &tauri::State<SidecarProcess>,
+async fn sidecar_call_internal(
+    state: &tauri::State<'_, SidecarProcess>,
     method: &str,
     params: serde_json::Value,
-    app: &tauri::AppHandle,
+    _app: &tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
+    eprintln!("[desktop] sidecar_call: {method}");
     let request_id = NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed);
-    let mut guard = state
-        .0
-        .lock()
-        .map_err(|_| "sidecar lock poisoned".to_string())?;
-    let child = guard
-        .as_mut()
-        .ok_or_else(|| "sidecar is not running".to_string())?;
+
+    let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
+    {
+        let mut pending = state
+            .pending
+            .lock()
+            .map_err(|_| "sidecar pending map lock poisoned".to_string())?;
+        pending.insert(request_id, tx);
+    }
 
     let request = serde_json::json!({
         "id": request_id,
         "method": method,
         "params": params
     });
+    let request_line = format!("{request}\n");
 
-    let stdin = child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "sidecar stdin unavailable".to_string())?;
-    writeln!(stdin, "{}", request).map_err(|error| format!("write sidecar request failed: {error}"))?;
-    stdin
-        .flush()
-        .map_err(|error| format!("flush sidecar request failed: {error}"))?;
-
-    loop {
-        let stdout = child
-            .stdout
+    {
+        let mut guard = state
+            .child
+            .lock()
+            .map_err(|_| "sidecar lock poisoned".to_string())?;
+        let child = guard
             .as_mut()
-            .ok_or_else(|| "sidecar stdout unavailable".to_string())?;
-        let line = read_line(stdout)?;
-        let parsed = match serde_json::from_str::<serde_json::Value>(line.trim()) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
+            .ok_or_else(|| "sidecar is not running".to_string())?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "sidecar stdin unavailable".to_string())?;
 
-        // Notification from sidecar: forward to web via Tauri event.
-        if parsed.get("id").is_none() {
+        if let Err(error) = stdin.write_all(request_line.as_bytes()) {
+            remove_pending_request(state, request_id);
+            return Err(format!("write sidecar request failed: {error}"));
+        }
+
+        if let Err(error) = stdin.flush() {
+            remove_pending_request(state, request_id);
+            return Err(format!("flush sidecar request failed: {error}"));
+        }
+    }
+    eprintln!("[desktop] sidecar_write_ok: id={request_id} method={method}");
+
+    let recv_result = tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(Duration::from_secs(SIDECAR_RESPONSE_TIMEOUT_SECS))
+    })
+    .await
+    .map_err(|error| format!("sidecar wait task join failed: {error}"))?;
+
+    match recv_result {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            remove_pending_request(state, request_id);
+            Err(format!("sidecar response timeout for method: {method}"))
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("sidecar response channel disconnected".to_string())
+        }
+    }
+}
+
+fn remove_pending_request(state: &tauri::State<'_, SidecarProcess>, request_id: u64) {
+    if let Ok(mut waiters) = state.pending.lock() {
+        waiters.remove(&request_id);
+    }
+}
+
+fn spawn_sidecar_stdout_reader(
+    stdout: ChildStdout,
+    pending: PendingResponseMap,
+    app: tauri::AppHandle,
+) {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let mut close_reason = "sidecar closed stdout".to_string();
+
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    close_reason = format!("read sidecar response failed: {error}");
+                    break;
+                }
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let parsed = match serde_json::from_str::<serde_json::Value>(trimmed) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            if let Some(response_id) = parsed.get("id").and_then(serde_json::Value::as_u64) {
+                eprintln!("[desktop] sidecar_response: id={response_id}");
+                let sender = pending
+                    .lock()
+                    .ok()
+                    .and_then(|mut waiters| waiters.remove(&response_id));
+                if let Some(tx) = sender {
+                    if let Some(error) = parsed.get("error") {
+                        let message = error
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown sidecar error");
+                        let _ = tx.send(Err(message.to_string()));
+                    } else {
+                        let result = parsed
+                            .get("result")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        let _ = tx.send(Ok(result));
+                    }
+                }
+                continue;
+            }
+
             if let Some(method) = parsed.get("method").and_then(serde_json::Value::as_str) {
+                eprintln!("[desktop] sidecar_event: {method}");
                 let payload = serde_json::json!({
                     "method": method,
                     "params": parsed.get("params").cloned().unwrap_or(serde_json::Value::Null),
                 });
                 let _ = app.emit("sidecar:event", payload);
             }
-            continue;
         }
 
-        let response_id = parsed.get("id").and_then(serde_json::Value::as_u64);
-        if response_id != Some(request_id) {
-            continue;
-        }
-
-        if let Some(error) = parsed.get("error") {
-            let message = error
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown sidecar error");
-            return Err(message.to_string());
-        }
-
-        return Ok(parsed.get("result").cloned().unwrap_or(serde_json::Value::Null));
-    }
-}
-
-fn read_line(stdout: &mut ChildStdout) -> Result<String, String> {
-    let mut bytes = Vec::<u8>::new();
-    let mut one = [0u8; 1];
-
-    loop {
-        match stdout.read(&mut one) {
-            Ok(0) => return Err("sidecar closed stdout".to_string()),
-            Ok(_) => {
-                if one[0] == b'\n' {
-                    break;
-                }
-                bytes.push(one[0]);
+        if let Ok(mut waiters) = pending.lock() {
+            for (_, tx) in waiters.drain() {
+                let _ = tx.send(Err(close_reason.clone()));
             }
-            Err(error) => return Err(format!("read sidecar response failed: {error}")),
         }
-    }
-
-    String::from_utf8(bytes).map_err(|error| format!("invalid utf8 from sidecar: {error}"))
+    });
 }
 
 fn spawn_sidecar_from_env() -> Option<Child> {
@@ -227,7 +308,7 @@ fn spawn_sidecar_from_env() -> Option<Child> {
     process
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
 
     match process.spawn() {
         Ok(child) => {
@@ -241,15 +322,79 @@ fn spawn_sidecar_from_env() -> Option<Child> {
     }
 }
 
+fn resolve_bun_binary() -> String {
+    if let Ok(home) = std::env::var("HOME") {
+        let volta_bun = PathBuf::from(home).join(".volta/tools/image/packages/bun/bin/bun");
+        if volta_bun.exists() {
+            return volta_bun.to_string_lossy().to_string();
+        }
+    }
+    "bun".to_string()
+}
+
+fn spawn_sidecar_default() -> Option<Child> {
+    let sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar");
+    if !sidecar_dir.exists() {
+        eprintln!(
+            "[desktop] default sidecar dir not found: {}",
+            sidecar_dir.display()
+        );
+        return None;
+    }
+
+    let mut process = Command::new("node");
+    let bun_bin = resolve_bun_binary();
+    process
+        .arg("scripts/stdin-bridge.mjs")
+        .env("LUME_BUN_BIN", bun_bin.clone())
+        .current_dir(&sidecar_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+
+    match process.spawn() {
+        Ok(child) => {
+            println!(
+                "[desktop] sidecar process booted from default path: {} (runtime=node-bridge, bun={})",
+                sidecar_dir.display(),
+                bun_bin
+            );
+            Some(child)
+        }
+        Err(error) => {
+            eprintln!("[desktop] failed to spawn default sidecar: {error}");
+            None
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
-        .manage(SidecarProcess(Mutex::new(None)))
+        .manage(SidecarProcess::new())
         .setup(|app| {
             let state = app.state::<SidecarProcess>();
-            if let Some(child) = spawn_sidecar_from_env() {
-                if let Ok(mut slot) = state.0.lock() {
-                    *slot = Some(child);
-                }
+            let mut child = match spawn_sidecar_from_env().or_else(spawn_sidecar_default) {
+                Some(child) => child,
+                None => return Ok(()),
+            };
+
+            if let Some(stdout) = child.stdout.take() {
+                spawn_sidecar_stdout_reader(
+                    stdout,
+                    Arc::clone(&state.pending),
+                    app.handle().clone(),
+                );
+            } else {
+                eprintln!("[desktop] sidecar stdout unavailable after spawn");
+            }
+
+            if let Ok(mut slot) = state.child.lock() {
+                *slot = Some(child);
+            }
+
+            #[cfg(debug_assertions)]
+            if let Some(window) = app.get_webview_window("main") {
+                window.open_devtools();
             }
             Ok(())
         })
@@ -266,7 +411,7 @@ fn main() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app.try_state::<SidecarProcess>() {
-                    if let Ok(mut slot) = state.0.lock() {
+                    if let Ok(mut slot) = state.child.lock() {
                         if let Some(child) = slot.as_mut() {
                             let _ = child.kill();
                             println!("[desktop] sidecar process terminated");

@@ -2,16 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAtom } from "jotai";
-import { ExternalLink, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { PROVIDER_LABELS, type Channel } from "@lume/shared";
 import { agentChannelIdAtom, agentModelIdAtom } from "@/atoms";
 import {
   deleteChannel,
   listChannels,
-  openExternalUrl,
   updateChannel
 } from "@/lib/desktop-api";
-import { getChannelLogo, PromaLogo } from "@/lib/model-logo";
+import { getChannelLogo } from "@/lib/model-logo";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ChannelForm } from "./ChannelForm";
@@ -108,10 +107,6 @@ export function ChannelSettings(): React.ReactElement {
           </Button>
         }
       >
-        <SettingsCard>
-          <PromaProviderCard />
-        </SettingsCard>
-
         {loading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
         ) : channels.length === 0 ? (
@@ -146,10 +141,6 @@ export function ChannelSettings(): React.ReactElement {
         title="Agent 供应商"
         description="选择一个 Anthropic 兼容格式的渠道作为 Agent 模式的默认供应商"
       >
-        <SettingsCard>
-          <PromaProviderCard />
-        </SettingsCard>
-
         {loading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
         ) : anthropicChannels.length === 0 ? (
@@ -254,29 +245,6 @@ function AgentProviderRow({ channel, selected, onSelect }: AgentProviderRowProps
           <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "hsl(var(--primary))" }} />
         ) : null}
       </button>
-    </SettingsRow>
-  );
-}
-
-function PromaProviderCard(): React.ReactElement {
-  return (
-    <SettingsRow
-      label="Proma"
-      icon={<img src={PromaLogo} alt="Proma" className="h-8 w-8 rounded" />}
-      description="Proma 官方供应｜稳定｜靠谱｜丝滑｜简单｜优惠套餐"
-    >
-      <Button
-        size="sm"
-        variant="outline"
-        className="gap-1.5"
-        type="button"
-        onClick={() => {
-          void openExternalUrl("http://proma.cool/download");
-        }}
-      >
-        <ExternalLink size={13} />
-        <span>下载后启动</span>
-      </Button>
     </SettingsRow>
   );
 }

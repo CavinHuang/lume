@@ -20,11 +20,18 @@ import {
 } from "@/components/ai-elements/conversation";
 import { ParallelChatMessages } from "./ParallelChatMessages";
 import { ChatMessageItem } from "./ChatMessageItem";
+import type { InlineEditSubmitPayload } from "./ChatMessageItem";
 
 interface ChatMessagesProps {
   messages: ChatMessage[];
+  isStreaming?: boolean;
   contextDividers: string[];
   onDeleteMessage?: (messageId: string) => Promise<void>;
+  onResendMessage?: (message: ChatMessage) => Promise<void>;
+  onStartInlineEdit?: (message: ChatMessage) => void;
+  onSubmitInlineEdit?: (message: ChatMessage, payload: InlineEditSubmitPayload) => Promise<void>;
+  onCancelInlineEdit?: () => void;
+  inlineEditingMessageId?: string | null;
   onDeleteDivider?: (messageId: string) => void;
   streamingContent?: string;
   streamingReasoning?: string;
@@ -88,8 +95,14 @@ function ScrollTopLoader({ hasMore, loading, onLoadMore }: { hasMore: boolean; l
 
 export function ChatMessages({
   messages,
+  isStreaming = false,
   contextDividers,
   onDeleteMessage,
+  onResendMessage,
+  onStartInlineEdit,
+  onSubmitInlineEdit,
+  onCancelInlineEdit,
+  inlineEditingMessageId,
   onDeleteDivider,
   streamingContent,
   streamingReasoning,
@@ -103,11 +116,11 @@ export function ChatMessages({
 
   const { displayedContent: smoothContent } = useSmoothStream({
     content: streamingContent ?? "",
-    isStreaming: !!streamingContent
+    isStreaming
   });
   const { displayedContent: smoothReasoning } = useSmoothStream({
     content: streamingReasoning ?? "",
-    isStreaming: !!streamingReasoning
+    isStreaming
   });
 
   const [ready, setReady] = React.useState(false);
@@ -123,7 +136,7 @@ export function ChatMessages({
 
   React.useEffect(() => {
     if (ready) return;
-    if (messages.length === 0 && !smoothContent && !smoothReasoning) {
+    if (messages.length === 0 && !isStreaming) {
       setReady(true);
       return;
     }
@@ -137,7 +150,7 @@ export function ChatMessages({
     return () => {
       cancelled = true;
     };
-  }, [messages, smoothContent, smoothReasoning, ready]);
+  }, [messages, isStreaming, ready]);
 
   const handleLoadMore = React.useCallback(async (): Promise<void> => {
     if (!onLoadMore || internalLoadingMore || !hasMore) return;
@@ -175,7 +188,7 @@ export function ChatMessages({
       />
 
       <ConversationContent>
-        {messages.length === 0 && !smoothContent && !smoothReasoning ? (
+        {messages.length === 0 && !isStreaming ? (
           <EmptyState />
         ) : (
           <>
@@ -188,6 +201,11 @@ export function ChatMessages({
                     isStreaming={false}
                     isLastAssistant={isLastAssistant}
                     onDeleteMessage={onDeleteMessage}
+                    onResendMessage={onResendMessage}
+                    onStartInlineEdit={onStartInlineEdit}
+                    onSubmitInlineEdit={onSubmitInlineEdit}
+                    onCancelInlineEdit={onCancelInlineEdit}
+                    isInlineEditing={inlineEditingMessageId === message.id}
                   />
                   {dividerSet.has(message.id) ? (
                     <ContextDivider
@@ -199,7 +217,7 @@ export function ChatMessages({
               );
             })}
 
-            {(smoothContent || smoothReasoning) ? (
+            {(isStreaming || smoothContent || smoothReasoning) ? (
               <ChatMessageItem
                 message={{
                   id: "streaming-assistant",

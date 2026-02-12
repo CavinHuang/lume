@@ -4,8 +4,15 @@ import { Bot, FileImage, FileText } from "lucide-react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
 import { useAtomValue } from "jotai";
-import type { AgentStreamState, ToolActivity } from "@/atoms";
-import { userProfileAtom } from "@/atoms";
+import {
+  agentModelIdAtom,
+  agentStreamingAtom,
+  agentStreamingContentAtom,
+  agentToolActivitiesAtom,
+  currentAgentMessagesAtom,
+  type ToolActivity,
+  userProfileAtom
+} from "@/atoms";
 import {
   Conversation,
   ConversationContent,
@@ -22,11 +29,6 @@ import { formatMessageTime } from "@/components/chat/ChatMessageItem";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { getModelLogo } from "@/lib/model-logo";
 import { ToolActivityList } from "./ToolActivityItem";
-
-interface AgentMessagesProps {
-  messages: AgentMessage[];
-  streamState?: AgentStreamState;
-}
 
 function EmptyState(): React.ReactElement {
   return (
@@ -206,16 +208,22 @@ function AgentMessageItem({ message }: { message: AgentMessage }): React.ReactEl
   return null;
 }
 
-export function AgentMessages({ messages, streamState }: AgentMessagesProps): React.ReactElement {
+export function AgentMessages(): React.ReactElement {
+  const messages = useAtomValue(currentAgentMessagesAtom);
+  const streaming = useAtomValue(agentStreamingAtom);
+  const streamingContent = useAtomValue(agentStreamingContentAtom);
+  const toolActivities = useAtomValue(agentToolActivitiesAtom);
+  const agentModelId = useAtomValue(agentModelIdAtom);
+
   const { displayedContent: smoothContent } = useSmoothStream({
-    content: streamState?.content ?? "",
-    isStreaming: !!streamState?.running
+    content: streamingContent,
+    isStreaming: streaming
   });
 
   return (
     <Conversation>
       <ConversationContent>
-        {messages.length === 0 && !smoothContent && !(streamState?.toolActivities.length) ? (
+        {messages.length === 0 && !streaming ? (
           <EmptyState />
         ) : (
           <>
@@ -223,27 +231,27 @@ export function AgentMessages({ messages, streamState }: AgentMessagesProps): Re
               <AgentMessageItem key={message.id} message={message} />
             ))}
 
-            {(streamState?.running || smoothContent || (streamState?.toolActivities.length ?? 0) > 0) ? (
+            {(streaming || smoothContent || toolActivities.length > 0) ? (
               <Message from="assistant">
                 <MessageHeader
-                  model={streamState?.model ?? undefined}
+                  model={agentModelId ?? undefined}
                   time={formatMessageTime(Date.now())}
-                  logo={<AssistantLogo model={streamState?.model ?? undefined} />}
+                  logo={<AssistantLogo model={agentModelId ?? undefined} />}
                 />
                 <MessageContent>
-                  {(streamState?.toolActivities.length ?? 0) > 0 ? (
+                  {toolActivities.length > 0 ? (
                     <div className="mb-3">
-                      <ToolActivityList activities={streamState?.toolActivities ?? []} animate />
+                      <ToolActivityList activities={toolActivities} animate />
                     </div>
                   ) : null}
 
                   {smoothContent ? (
                     <>
                       <MessageResponse>{smoothContent}</MessageResponse>
-                      {streamState?.running ? <StreamingIndicator /> : null}
+                      {streaming ? <StreamingIndicator /> : null}
                     </>
                   ) : (
-                    streamState?.running && (streamState?.toolActivities.length ?? 0) === 0 ? <MessageLoading /> : null
+                    streaming && toolActivities.length === 0 ? <MessageLoading /> : null
                   )}
                 </MessageContent>
               </Message>

@@ -13,7 +13,6 @@ import {
   Globe,
   ListTodo,
   Loader2,
-  MessageCircleDashed,
   Pencil,
   Search,
   Terminal,
@@ -72,11 +71,18 @@ function getActivityStatus(activity: ToolActivity): ActivityStatus {
 }
 
 function groupActivities(activities: ToolActivity[]): Array<ToolActivity | ActivityGroup> {
+  const parentIds = new Set<string>();
+  for (const activity of activities) {
+    if (activity.toolName === "Task") {
+      parentIds.add(activity.toolUseId);
+    }
+  }
+
   const childMap = new Map<string, ToolActivity[]>();
   const topLevel: ToolActivity[] = [];
 
   for (const activity of activities) {
-    if (activity.parentToolUseId) {
+    if (activity.parentToolUseId && parentIds.has(activity.parentToolUseId)) {
       const children = childMap.get(activity.parentToolUseId) ?? [];
       children.push(activity);
       childMap.set(activity.parentToolUseId, children);
@@ -88,7 +94,7 @@ function groupActivities(activities: ToolActivity[]): Array<ToolActivity | Activ
   const grouped: Array<ToolActivity | ActivityGroup> = [];
   for (const item of topLevel) {
     const children = childMap.get(item.toolUseId) ?? [];
-    if (children.length > 0) {
+    if (parentIds.has(item.toolUseId)) {
       grouped.push({ parent: item, children });
     } else {
       grouped.push(item);

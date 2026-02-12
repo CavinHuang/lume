@@ -116,11 +116,11 @@ export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInpu
     }
   }, [setPendingAttachments]);
 
-  const sendNow = useCallback(async (): Promise<void> => {
+  const sendNow = useCallback((): void => {
     if (!canSend) return;
     const next = content.trim();
     setContent("");
-    await onSend(next);
+    void onSend(next);
   }, [canSend, content, onSend]);
 
   const handleSpeechTranscript = useCallback((text: string): void => {

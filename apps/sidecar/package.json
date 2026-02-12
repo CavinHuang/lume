@@ -9,6 +9,7 @@
     "smoke:rpc": "bun scripts/smoke-rpc.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.37",
     "@lume/shared": "workspace:*"
   }
 }

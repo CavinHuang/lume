@@ -1,6 +1,6 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import type { AgentEvent, AgentMessage, AgentSessionMeta, AgentWorkspace } from "@lume/shared";
+import type { AgentEvent, AgentMessage, AgentPendingFile, AgentSessionMeta, AgentWorkspace } from "@lume/shared";
 
 export interface ToolActivity {
   toolUseId: string;
@@ -33,12 +33,38 @@ export const agentWorkspacesAtom = atom<AgentWorkspace[]>([]);
 export const agentChannelIdAtom = atomWithStorage<string | null>("lume-agent-channel-id", null);
 export const agentModelIdAtom = atomWithStorage<string | null>("lume-agent-model-id", null);
 export const agentPendingPromptAtom = atom<{ sessionId: string; message: string } | null>(null);
+export const agentPendingFilesAtom = atom<AgentPendingFile[]>([]);
 export const workspaceCapabilitiesVersionAtom = atom<number>(0);
 export const currentAgentWorkspaceIdAtom = atom<string | null>(null);
 export const currentAgentSessionIdAtom = atom<string | null>(null);
 export const currentAgentMessagesAtom = atom<AgentMessage[]>([]);
 export const agentStreamingStatesAtom = atom<Map<string, AgentStreamState>>(new Map());
 export const agentStreamErrorsAtom = atom<Map<string, string>>(new Map());
+
+export const currentAgentStreamStateAtom = atom<AgentStreamState | null>((get) => {
+  const currentId = get(currentAgentSessionIdAtom);
+  if (!currentId) return null;
+  return get(agentStreamingStatesAtom).get(currentId) ?? null;
+});
+
+export const agentStreamingAtom = atom<boolean>((get) => !!get(currentAgentStreamStateAtom)?.running);
+
+export const agentStreamingContentAtom = atom<string>((get) => get(currentAgentStreamStateAtom)?.content ?? "");
+
+export const agentToolActivitiesAtom = atom<ToolActivity[]>((get) => get(currentAgentStreamStateAtom)?.toolActivities ?? []);
+
+export const agentContextStatusAtom = atom<{
+  inputTokens?: number;
+  contextWindow?: number;
+  isCompacting: boolean;
+}>((get) => {
+  const state = get(currentAgentStreamStateAtom);
+  return {
+    inputTokens: state?.inputTokens,
+    contextWindow: state?.contextWindow,
+    isCompacting: !!state?.isCompacting
+  };
+});
 
 export const currentAgentSessionAtom = atom<AgentSessionMeta | null>((get) => {
   const sessions = get(agentSessionsAtom);
