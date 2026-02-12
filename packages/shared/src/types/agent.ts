@@ -181,6 +181,33 @@ export interface AgentSendInput {
   modelId?: string
   /** 工作区 ID（用于确定 cwd） */
   workspaceId?: string
+  /** Claude Agent SDK 权限模式 */
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+}
+
+export interface AgentAskUserQuestionOption {
+  label: string
+  description: string
+}
+
+export interface AgentAskUserQuestionQuestion {
+  header: string
+  question: string
+  options: AgentAskUserQuestionOption[]
+  multiSelect: boolean
+}
+
+export interface AgentAskUserQuestionRequest {
+  sessionId: string
+  toolUseId: string
+  questions: AgentAskUserQuestionQuestion[]
+}
+
+export interface AgentAskUserQuestionResponseInput {
+  sessionId: string
+  toolUseId: string
+  answers?: Record<string, string>
+  canceled?: boolean
 }
 
 // ===== Agent 流式事件载荷 =====
@@ -298,6 +325,10 @@ export const AGENT_IPC_CHANNELS = {
   STREAM_COMPLETE: 'agent:stream:complete',
   /** Agent 流式错误 */
   STREAM_ERROR: 'agent:stream:error',
+  /** AskUserQuestion 请求（sidecar -> web） */
+  ASK_USER_QUESTION: 'agent:ask-user-question',
+  /** AskUserQuestion 回答提交（web -> sidecar） */
+  SUBMIT_ASK_USER_QUESTION: 'agent:submit-ask-user-question',
 
   // 附件
   /** 保存文件到 Agent session 工作目录 */

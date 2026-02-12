@@ -8,8 +8,10 @@ import {
   agentModelIdAtom,
   agentStreamingAtom,
   agentStreamingContentAtom,
-  agentToolActivitiesAtom,
+  agentStreamingTimelineEventsAtom,
   currentAgentMessagesAtom,
+  extractTimelineEvents,
+  type TimelineEvent,
   type ToolActivity,
   userProfileAtom
 } from "@/atoms";
@@ -28,7 +30,7 @@ import {
 import { formatMessageTime } from "@/components/chat/ChatMessageItem";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { getModelLogo } from "@/lib/model-logo";
-import { ToolActivityList } from "./ToolActivityItem";
+import { EventTimeline } from "./EventTimeline";
 
 function EmptyState(): React.ReactElement {
   return (
@@ -184,7 +186,9 @@ function AgentMessageItem({ message }: { message: AgentMessage }): React.ReactEl
   }
 
   if (message.role === "assistant") {
-    const toolActivities = extractToolActivities(message.events);
+    // 使用新的时序事件提取函数
+    const timelineEvents = extractTimelineEvents(message);
+
     return (
       <Message from="assistant">
         <MessageHeader
@@ -194,12 +198,15 @@ function AgentMessageItem({ message }: { message: AgentMessage }): React.ReactEl
         />
 
         <MessageContent>
-          {toolActivities.length > 0 ? (
+          {timelineEvents.length > 0 ? (
             <div className="mb-3">
-              <ToolActivityList activities={toolActivities} />
+              <EventTimeline events={timelineEvents} />
             </div>
           ) : null}
-          {message.content ? <MessageResponse>{message.content}</MessageResponse> : null}
+          {/* 兼容：如果有 content 但没有 events，直接显示（用于旧消息） */}
+          {message.content && timelineEvents.length === 0 ? (
+            <MessageResponse>{message.content}</MessageResponse>
+          ) : null}
         </MessageContent>
       </Message>
     );
@@ -212,7 +219,7 @@ export function AgentMessages(): React.ReactElement {
   const messages = useAtomValue(currentAgentMessagesAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const streamingContent = useAtomValue(agentStreamingContentAtom);
-  const toolActivities = useAtomValue(agentToolActivitiesAtom);
+  const streamingTimelineEvents = useAtomValue(agentStreamingTimelineEventsAtom);
   const agentModelId = useAtomValue(agentModelIdAtom);
 
   const { displayedContent: smoothContent } = useSmoothStream({
@@ -231,7 +238,7 @@ export function AgentMessages(): React.ReactElement {
               <AgentMessageItem key={message.id} message={message} />
             ))}
 
-            {(streaming || smoothContent || toolActivities.length > 0) ? (
+            {(streaming || smoothContent) ? (
               <Message from="assistant">
                 <MessageHeader
                   model={agentModelId ?? undefined}
@@ -239,20 +246,21 @@ export function AgentMessages(): React.ReactElement {
                   logo={<AssistantLogo model={agentModelId ?? undefined} />}
                 />
                 <MessageContent>
-                  {toolActivities.length > 0 ? (
+                  {streamingTimelineEvents.length > 0 ? (
                     <div className="mb-3">
-                      <ToolActivityList activities={toolActivities} animate />
+                      <EventTimeline events={streamingTimelineEvents} isStreaming={streaming} />
                     </div>
                   ) : null}
 
-                  {smoothContent ? (
+                  {smoothContent && streamingTimelineEvents.length === 0 ? (
                     <>
                       <MessageResponse>{smoothContent}</MessageResponse>
                       {streaming ? <StreamingIndicator /> : null}
                     </>
                   ) : (
-                    streaming && toolActivities.length === 0 ? <MessageLoading /> : null
+                    streaming && streamingTimelineEvents.length === 0 ? <MessageLoading /> : null
                   )}
+                  {streaming && streamingTimelineEvents.length > 0 && !smoothContent ? <StreamingIndicator /> : null}
                 </MessageContent>
               </Message>
             ) : null}

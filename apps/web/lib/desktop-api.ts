@@ -8,6 +8,8 @@ import {
 import type {
   AttachmentSaveInput,
   AttachmentSaveResult,
+  AgentAskUserQuestionRequest,
+  AgentAskUserQuestionResponseInput,
   AgentGenerateTitleInput,
   AgentMessage,
   AgentSaveFilesInput,
@@ -480,6 +482,20 @@ export async function onAgentStreamError(
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.STREAM_ERROR, (params) => {
     handler(params as { sessionId: string; error: string });
   });
+}
+
+export async function onAgentAskUserQuestion(
+  handler: (event: AgentAskUserQuestionRequest) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, (params) => {
+    handler(params as AgentAskUserQuestionRequest);
+  });
+}
+
+export async function submitAgentAskUserQuestionAnswers(
+  input: AgentAskUserQuestionResponseInput
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, input);
 }
 
 export async function onAgentTitleUpdated(

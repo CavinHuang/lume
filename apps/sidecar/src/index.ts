@@ -50,6 +50,7 @@ import {
 import {
   generateAgentTitle,
   sendAgentMessage,
+  submitAskUserQuestionAnswers,
   stopAgent
 } from "./services/agent-service";
 import {
@@ -412,6 +413,24 @@ const handlers: Record<string, RpcHandler> = {
     stopAgent(sessionId);
     return { ok: true };
   },
+  [AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION]: async (params) => {
+    const p = asObject(params);
+    const sessionId = asString(p.sessionId);
+    const toolUseId = asString(p.toolUseId);
+    const canceled = p.canceled === true;
+    const answers = p.answers && typeof p.answers === "object"
+      ? (p.answers as Record<string, string>)
+      : undefined;
+    if (!sessionId || !toolUseId) {
+      throw new Error("缺少 sessionId 或 toolUseId");
+    }
+    return submitAskUserQuestionAnswers({
+      sessionId,
+      toolUseId,
+      canceled,
+      answers
+    });
+  },
   "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
   [AGENT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
     const input = params as AgentSendInput;
@@ -434,7 +453,9 @@ const handlers: Record<string, RpcHandler> = {
         writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
           sessionId: input.sessionId,
           title
-        })
+        }),
+      onAskUserQuestion: (request) =>
+        writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request)
     }).catch((error) => {
       writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
         sessionId: input.sessionId,

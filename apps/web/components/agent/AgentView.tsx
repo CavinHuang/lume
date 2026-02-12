@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { AlertCircle, Bot, CornerDownLeft, FolderPlus, Paperclip, Settings, Square, X } from "lucide-react";
-import type { AgentMessage, AgentPendingFile, AgentSavedFile, Channel, ModelOption } from "@lume/shared";
+import { AlertCircle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, CornerDownLeft, FolderPlus, Loader2, Paperclip, Settings, Square, X } from "lucide-react";
+import type {
+  AgentAskUserQuestionRequest,
+  AgentMessage,
+  AgentPendingFile,
+  AgentSavedFile,
+  Channel,
+  ModelOption
+} from "@lume/shared";
 import {
   activeViewAtom,
   agentContextStatusAtom,
@@ -12,8 +19,10 @@ import {
   agentModelIdAtom,
   agentPendingFilesAtom,
   agentPendingPromptAtom,
+  agentPermissionModeAtom,
   agentStreamingAtom,
   agentStreamErrorsAtom,
+  agentToolActivitiesAtom,
   agentStreamingStatesAtom,
   agentWorkspacesAtom,
   applyAgentEvent,
@@ -31,12 +40,14 @@ import {
   onAgentStreamComplete,
   onAgentStreamError,
   onAgentStreamEvent,
+  onAgentAskUserQuestion,
   onAgentTitleUpdated,
   openFolderDialog,
   openChatFileDialog,
   copyFolderToAgentSession,
   saveFilesToAgentSession,
   sendAgentMessage,
+  submitAgentAskUserQuestionAnswers,
   stopAgentRun
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
@@ -48,6 +59,8 @@ import { AttachmentPreviewItem } from "@/components/chat/AttachmentPreviewItem";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 function fileToBase64(file: File): Promise<string> {
@@ -104,14 +117,17 @@ function readDirectoryRecursive(
   });
 }
 
+const ASK_USER_OTHER_OPTION = "__other__";
+
 export function AgentView(): React.ReactElement {
   const [sessionId] = useAtom(currentAgentSessionIdAtom);
   const session = useAtomValue(currentAgentSessionAtom);
   const [workspaceId] = useAtom(currentAgentWorkspaceIdAtom);
   const [workspaces] = useAtom(agentWorkspacesAtom);
-  const [, setMessages] = useAtom(currentAgentMessagesAtom);
+  const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
   const streaming = useAtomValue(agentStreamingAtom);
+  const toolActivities = useAtomValue(agentToolActivitiesAtom);
   const contextStatus = useAtomValue(agentContextStatusAtom);
   const [agentError] = useAtom(currentAgentErrorAtom);
   const setActiveView = useSetAtom(activeViewAtom);
@@ -121,6 +137,7 @@ export function AgentView(): React.ReactElement {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
+  const [agentPermissionMode, setAgentPermissionMode] = useAtom(agentPermissionModeAtom);
   const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtom);
   const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom);
   const [inputContent, setInputContent] = useState("");
@@ -128,11 +145,190 @@ export function AgentView(): React.ReactElement {
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
+  const [modeNotice, setModeNotice] = useState<string | null>(null);
+  const [askUserQuestionRequest, setAskUserQuestionRequest] = useState<AgentAskUserQuestionRequest | null>(null);
+  const [askUserAnswers, setAskUserAnswers] = useState<Record<string, { selected: string[]; otherText: string }>>({});
+  const [askUserError, setAskUserError] = useState<string | null>(null);
+  const [askUserSubmitting, setAskUserSubmitting] = useState(false);
+  const [todoPanelExpanded, setTodoPanelExpanded] = useState(true);
+
+  type TodoItem = {
+    content: string;
+    status: "pending" | "in_progress" | "completed";
+    activeForm?: string;
+  };
+
+  const parseTodoItemsFromInput = useCallback((input: Record<string, unknown>): TodoItem[] | null => {
+    if (!Array.isArray(input.todos)) return null;
+    const todos = (input.todos as Array<Record<string, unknown>>).map((todo) => ({
+      content: String(todo.subject ?? todo.content ?? ""),
+      status: (todo.status as TodoItem["status"]) ?? "pending",
+      activeForm: typeof todo.activeForm === "string" ? todo.activeForm : undefined
+    })).filter((todo) => todo.content.trim().length > 0);
+    return todos.length > 0 ? todos : null;
+  }, []);
+
+  const latestTodoItems = useMemo(() => {
+    for (let i = toolActivities.length - 1; i >= 0; i--) {
+      const activity = toolActivities[i];
+      if (!activity) continue;
+      if (activity.toolName !== "TodoWrite" && activity.toolName !== "TaskCreate") continue;
+      const todos = parseTodoItemsFromInput(activity.input);
+      if (todos) return todos;
+    }
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (!message || message.role !== "assistant" || !message.events) continue;
+      for (let j = message.events.length - 1; j >= 0; j--) {
+        const event = message.events[j];
+        if (!event || event.type !== "tool_start") continue;
+        if (event.toolName !== "TodoWrite" && event.toolName !== "TaskCreate") continue;
+        const todos = parseTodoItemsFromInput(event.input);
+        if (todos) return todos;
+      }
+    }
+
+    return null;
+  }, [messages, parseTodoItemsFromInput, toolActivities]);
+
+  const todoProgressText = useMemo(() => {
+    if (!latestTodoItems || latestTodoItems.length === 0) return null;
+    const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
+    return `${completed}/${latestTodoItems.length}`;
+  }, [latestTodoItems]);
 
   const currentSessionIdRef = useRef<string | null>(sessionId);
+  const lastNonPlanPermissionModeRef = useRef(agentPermissionMode);
+  const modeNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     currentSessionIdRef.current = sessionId;
   }, [sessionId]);
+  useEffect(() => {
+    if (agentPermissionMode !== "plan") {
+      lastNonPlanPermissionModeRef.current = agentPermissionMode;
+    }
+  }, [agentPermissionMode]);
+  const showModeNotice = useCallback((text: string): void => {
+    setModeNotice(text);
+    if (modeNoticeTimerRef.current) {
+      clearTimeout(modeNoticeTimerRef.current);
+    }
+    modeNoticeTimerRef.current = setTimeout(() => {
+      setModeNotice(null);
+      modeNoticeTimerRef.current = null;
+    }, 2600);
+  }, []);
+  useEffect(() => () => {
+    if (modeNoticeTimerRef.current) {
+      clearTimeout(modeNoticeTimerRef.current);
+    }
+  }, []);
+  useEffect(() => {
+    if (!askUserQuestionRequest) return;
+    const initial: Record<string, { selected: string[]; otherText: string }> = {};
+    for (const question of askUserQuestionRequest.questions) {
+      initial[question.header] = { selected: [], otherText: "" };
+    }
+    setAskUserAnswers(initial);
+    setAskUserError(null);
+    setAskUserSubmitting(false);
+  }, [askUserQuestionRequest]);
+
+  const updateAskAnswerOption = useCallback((header: string, label: string, checked: boolean, multiSelect: boolean): void => {
+    setAskUserAnswers((prev) => {
+      const current = prev[header] ?? { selected: [], otherText: "" };
+      let nextSelected: string[];
+      if (multiSelect) {
+        nextSelected = checked
+          ? [...new Set([...current.selected, label])]
+          : current.selected.filter((item) => item !== label);
+      } else {
+        nextSelected = checked ? [label] : [];
+      }
+      return {
+        ...prev,
+        [header]: {
+          ...current,
+          selected: nextSelected
+        }
+      };
+    });
+  }, []);
+
+  const updateAskOtherText = useCallback((header: string, text: string): void => {
+    setAskUserAnswers((prev) => {
+      const current = prev[header] ?? { selected: [], otherText: "" };
+      return {
+        ...prev,
+        [header]: {
+          ...current,
+          otherText: text
+        }
+      };
+    });
+  }, []);
+
+  const submitAskUserQuestion = useCallback(async (): Promise<void> => {
+    if (!askUserQuestionRequest) return;
+    const answers: Record<string, string> = {};
+    for (const question of askUserQuestionRequest.questions) {
+      const value = askUserAnswers[question.header] ?? { selected: [], otherText: "" };
+      const selectedLabels = value.selected.filter((item) => item !== ASK_USER_OTHER_OPTION);
+      const otherText = value.otherText.trim();
+      let answerText = "";
+      if (question.multiSelect) {
+        const merged = [...selectedLabels];
+        if (value.selected.includes(ASK_USER_OTHER_OPTION) && otherText) {
+          merged.push(otherText);
+        }
+        answerText = merged.join(", ").trim();
+      } else {
+        const first = value.selected[0];
+        answerText = first === ASK_USER_OTHER_OPTION ? otherText : (first ?? "");
+      }
+      if (!answerText) {
+        setAskUserError(`请先回答「${question.header}」`);
+        return;
+      }
+      answers[question.header] = answerText;
+    }
+
+    setAskUserSubmitting(true);
+    setAskUserError(null);
+    try {
+      await submitAgentAskUserQuestionAnswers({
+        sessionId: askUserQuestionRequest.sessionId,
+        toolUseId: askUserQuestionRequest.toolUseId,
+        answers
+      });
+      setAskUserQuestionRequest(null);
+      setAskUserAnswers({});
+    } catch (error) {
+      setAskUserError(error instanceof Error ? error.message : "提交回答失败");
+    } finally {
+      setAskUserSubmitting(false);
+    }
+  }, [askUserQuestionRequest, askUserAnswers]);
+
+  const cancelAskUserQuestion = useCallback(async (): Promise<void> => {
+    if (!askUserQuestionRequest || askUserSubmitting) return;
+    setAskUserSubmitting(true);
+    setAskUserError(null);
+    try {
+      await submitAgentAskUserQuestionAnswers({
+        sessionId: askUserQuestionRequest.sessionId,
+        toolUseId: askUserQuestionRequest.toolUseId,
+        canceled: true
+      });
+      setAskUserQuestionRequest(null);
+      setAskUserAnswers({});
+    } catch (error) {
+      setAskUserError(error instanceof Error ? error.message : "取消提问失败");
+    } finally {
+      setAskUserSubmitting(false);
+    }
+  }, [askUserQuestionRequest, askUserSubmitting]);
 
   useEffect(() => {
     void listChannels().then((next) => setChannels(next));
@@ -218,13 +414,39 @@ export function AgentView(): React.ReactElement {
       });
     };
 
+    const markStreamCompleted = (targetSessionId: string): void => {
+      setStreamingStates((prev) => {
+        const current = prev.get(targetSessionId);
+        if (!current) return prev;
+        const map = new Map(prev);
+        map.set(targetSessionId, { ...current, running: false });
+        return map;
+      });
+    };
+
     trackUnlisten(onAgentStreamEvent((payload) => {
+      // Plan Mode 工具事件触发权限模式切换：Enter -> plan，Exit(success) -> 恢复编辑模式
+      if (payload.sessionId === currentSessionIdRef.current) {
+        const event = payload.event;
+        if (event.type === "tool_start" && event.toolName === "EnterPlanMode") {
+          setAgentPermissionMode("plan");
+          showModeNotice("已进入 Plan Mode");
+        } else if (event.type === "tool_result" && !event.isError && event.toolName === "ExitPlanMode") {
+          const fallbackMode = lastNonPlanPermissionModeRef.current === "plan"
+            ? "bypassPermissions"
+            : lastNonPlanPermissionModeRef.current;
+          setAgentPermissionMode(fallbackMode);
+          showModeNotice(`已退出 Plan Mode，切换到 ${fallbackMode}`);
+        }
+      }
+
       setStreamingStates((prev) => {
         const map = new Map(prev);
         const current = map.get(payload.sessionId) ?? {
           running: true,
           content: "",
-          toolActivities: []
+          toolActivities: [],
+          events: []
         };
         map.set(payload.sessionId, applyAgentEvent(current, payload.event));
         return map;
@@ -232,6 +454,8 @@ export function AgentView(): React.ReactElement {
     }));
 
     trackUnlisten(onAgentStreamComplete((payload) => {
+      markStreamCompleted(payload.sessionId);
+
       const finalize = (): void => {
         removeState(payload.sessionId);
         void listAgentSessions().then(setSessions);
@@ -240,7 +464,13 @@ export function AgentView(): React.ReactElement {
       if (payload.sessionId === currentSessionIdRef.current) {
         void getAgentSessionMessages(payload.sessionId)
           .then((next) => {
-            setMessages(next);
+            // 去重：移除与新消息 ID 冲突的旧消息
+            setMessages((prev) => {
+              const nextIds = new Set(next.map(m => m.id));
+              // 先过滤掉临时消息，再过滤重复的正式消息
+              const filteredPrev = prev.filter(m => !m.id.startsWith('temp-'));
+              return [...filteredPrev.filter(m => !nextIds.has(m.id)), ...next];
+            });
             finalize();
           })
           .catch(() => finalize());
@@ -255,30 +485,29 @@ export function AgentView(): React.ReactElement {
         map.set(payload.sessionId, payload.error);
         return map;
       });
-
-      const finalize = (): void => removeState(payload.sessionId);
-
-      if (payload.sessionId === currentSessionIdRef.current) {
-        void getAgentSessionMessages(payload.sessionId)
-          .then((next) => {
-            setMessages(next);
-            finalize();
-          })
-          .catch(() => finalize());
-      } else {
-        finalize();
-      }
     }));
 
     trackUnlisten(onAgentTitleUpdated(() => {
       void listAgentSessions().then(setSessions);
     }));
 
+    trackUnlisten(onAgentAskUserQuestion((payload) => {
+      setAskUserError(null);
+      setAskUserQuestionRequest(payload);
+    }));
+
     return () => {
       disposed = true;
       for (const fn of unsubs) fn();
     };
-  }, [setMessages, setSessions, setStreamErrors, setStreamingStates]);
+  }, [
+    setMessages,
+    setSessions,
+    setStreamErrors,
+    setStreamingStates,
+    setAgentPermissionMode,
+    showModeNotice
+  ]);
 
   useEffect(() => {
     if (!pendingPrompt) return;
@@ -291,7 +520,7 @@ export function AgentView(): React.ReactElement {
     const timer = setTimeout(() => {
       setStreamingStates((prev) => {
         const map = new Map(prev);
-        map.set(sessionId, { running: true, content: "", toolActivities: [] });
+        map.set(sessionId, { running: true, content: "", toolActivities: [], events: [] });
         return map;
       });
 
@@ -308,7 +537,8 @@ export function AgentView(): React.ReactElement {
         userMessage: prompt.message,
         channelId: agentChannelId,
         modelId: agentModelId ?? undefined,
-        workspaceId: workspaceId ?? undefined
+        workspaceId: workspaceId ?? undefined,
+        permissionMode: agentPermissionMode
       }).catch((error) => {
         console.error("[AgentView] send pending prompt failed", error);
         setStreamingStates((prev) => {
@@ -325,6 +555,7 @@ export function AgentView(): React.ReactElement {
     sessionId,
     agentChannelId,
     agentModelId,
+    agentPermissionMode,
     workspaceId,
     streaming,
     setPendingPrompt,
@@ -421,8 +652,7 @@ export function AgentView(): React.ReactElement {
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
-      const current = map.get(sessionId) ?? { running: true, content: "", toolActivities: [] };
-      map.set(sessionId, { ...current, running: true });
+      map.set(sessionId, { running: true, content: "", toolActivities: [], events: [] });
       return map;
     });
 
@@ -431,9 +661,10 @@ export function AgentView(): React.ReactElement {
       userMessage: "/compact",
       channelId: agentChannelId,
       modelId: agentModelId ?? undefined,
-      workspaceId: workspaceId ?? undefined
+      workspaceId: workspaceId ?? undefined,
+      permissionMode: agentPermissionMode
     });
-  }, [sessionId, agentChannelId, agentModelId, workspaceId, streaming, setStreamingStates]);
+  }, [sessionId, agentChannelId, agentModelId, agentPermissionMode, workspaceId, streaming, setStreamingStates]);
 
   const handleStop = useCallback((): void => {
     if (!sessionId) return;
@@ -504,6 +735,7 @@ export function AgentView(): React.ReactElement {
         running: true,
         content: "",
         toolActivities: [],
+        events: [],
         model: agentModelId ?? undefined
       });
       return map;
@@ -523,7 +755,8 @@ export function AgentView(): React.ReactElement {
       userMessage: finalMessage,
       channelId: agentChannelId,
       modelId: agentModelId ?? undefined,
-      workspaceId: workspaceId ?? undefined
+      workspaceId: workspaceId ?? undefined,
+      permissionMode: agentPermissionMode
     }).catch((error) => {
       console.error("[AgentView] send failed", error);
       setStreamingStates((prev) => {
@@ -540,6 +773,7 @@ export function AgentView(): React.ReactElement {
     sessionId,
     agentChannelId,
     agentModelId,
+    agentPermissionMode,
     workspaceId,
     workspaces,
     streaming,
@@ -578,14 +812,61 @@ export function AgentView(): React.ReactElement {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <div className="mx-auto flex h-full min-w-0 max-w-[min(72rem,100%)] flex-1 flex-col">
-        <AgentHeader
-          onToggleFileBrowser={() => setFileBrowserOpen((prev) => !prev)}
-          fileBrowserOpen={fileBrowserOpen}
-        />
+    <>
+      <div className="flex h-full overflow-hidden">
+        <div className="mx-auto flex h-full min-w-0 max-w-[min(72rem,100%)] flex-1 flex-col">
+          <AgentHeader
+            onToggleFileBrowser={() => setFileBrowserOpen((prev) => !prev)}
+            fileBrowserOpen={fileBrowserOpen}
+          />
 
-        <AgentMessages />
+          <AgentMessages />
+
+          {latestTodoItems && latestTodoItems.length > 0 ? (
+            <div className="mb-2 ml-[72px] mr-4 inline-flex max-w-[calc(100%-5.5rem)] flex-col rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setTodoPanelExpanded((prev) => !prev)}
+                className="inline-flex items-center gap-2 text-left"
+              >
+                {todoPanelExpanded ? (
+                  <ChevronDown className="size-3.5 text-muted-foreground/70" />
+                ) : (
+                  <ChevronRight className="size-3.5 text-muted-foreground/70" />
+                )}
+                <span className="text-xs font-medium text-foreground/70">当前 Todo</span>
+                {todoProgressText ? (
+                  <span className="ml-2 text-[11px] tabular-nums text-foreground/50">{todoProgressText}</span>
+                ) : null}
+              </button>
+              {todoPanelExpanded ? (
+                <div className="mt-2 space-y-1">
+                  {latestTodoItems.map((todo, index) => (
+                    <div
+                      key={`${todo.content}-${index}`}
+                      className={cn(
+                        "flex items-center gap-2 text-[13px]",
+                        todo.status === "completed" && "opacity-60"
+                      )}
+                    >
+                      {todo.status === "pending" ? <Circle className="size-3 text-muted-foreground/60" /> : null}
+                      {todo.status === "in_progress" ? <Loader2 className="size-3 animate-spin text-blue-500" /> : null}
+                      {todo.status === "completed" ? <CheckCircle2 className="size-3 text-green-500" /> : null}
+                      <span className={cn("break-words", todo.status === "completed" && "line-through")}>
+                        {todo.status === "in_progress" && todo.activeForm ? todo.activeForm : todo.content}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+        {modeNotice ? (
+          <div className="mx-4 mb-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-foreground/80">
+            {modeNotice}
+          </div>
+        ) : null}
 
         {agentError ? (
           <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
@@ -770,6 +1051,20 @@ export function AgentView(): React.ReactElement {
                       onModelSelect={handleModelSelect}
                     />
 
+                    <select
+                      value={agentPermissionMode}
+                      onChange={(event) => {
+                        setAgentPermissionMode(event.target.value as typeof agentPermissionMode);
+                      }}
+                      className="h-[28px] rounded-md border border-border bg-background px-2 text-xs text-foreground/80"
+                      title="Agent 权限模式"
+                    >
+                      <option value="default">default</option>
+                      <option value="acceptEdits">acceptEdits</option>
+                      <option value="bypassPermissions">bypassPermissions</option>
+                      <option value="plan">plan</option>
+                    </select>
+
                     <ContextUsageBadge
                       inputTokens={contextStatus.inputTokens}
                       contextWindow={contextStatus.contextWindow}
@@ -813,21 +1108,121 @@ export function AgentView(): React.ReactElement {
         </div>
       </div>
 
-      {fileBrowserOpen && sessionRootPath && workspaceId ? (
-        (() => {
-          const workspace = workspaces.find((item) => item.id === workspaceId);
-          if (!workspace) return null;
-          return (
-            <div className="w-[300px] shrink-0 border-l">
-              <FileBrowser
-                workspaceSlug={workspace.slug}
-                sessionId={sessionId}
-                rootPath={sessionRootPath}
-              />
+          {fileBrowserOpen && sessionRootPath && workspaceId ? (
+            (() => {
+              const workspace = workspaces.find((item) => item.id === workspaceId);
+              if (!workspace) return null;
+              return (
+                <div className="w-[300px] shrink-0 border-l">
+                  <FileBrowser
+                    workspaceSlug={workspace.slug}
+                    sessionId={sessionId}
+                    rootPath={sessionRootPath}
+                  />
+                </div>
+              );
+            })()
+          ) : null}
+        </div>
+      <Dialog
+        open={!!askUserQuestionRequest}
+        onOpenChange={(open) => {
+          if (!open) {
+            void cancelAskUserQuestion();
+          }
+        }}
+      >
+        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-[760px]">
+          <DialogHeader>
+            <DialogTitle>需要你确认几个问题</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {askUserQuestionRequest?.questions.map((question, questionIndex) => {
+              const answerState = askUserAnswers[question.header] ?? { selected: [], otherText: "" };
+              const hasOtherOption = question.options.some((item) => item.label.trim() === "其他");
+              const withOtherOption = hasOtherOption
+                ? question.options
+                : [
+                    ...question.options,
+                    {
+                      label: "其他",
+                      description: "手动输入自定义回答"
+                    }
+                  ];
+              const inputName = `${question.header}-${questionIndex}`;
+              return (
+                <div key={`${question.header}-${questionIndex}`} className="rounded-md border border-border p-3">
+                  <div className="mb-1 text-xs text-muted-foreground">{question.header}</div>
+                  <div className="mb-3 text-sm text-foreground">{question.question}</div>
+                  <div className="space-y-2">
+                    {withOtherOption.map((option, optionIndex) => {
+                      const optionValue = option.label === "其他" ? ASK_USER_OTHER_OPTION : option.label;
+                      const checked = answerState.selected.includes(optionValue);
+                      const inputType = question.multiSelect ? "checkbox" : "radio";
+                      return (
+                        <label key={`${question.header}-${optionValue}-${optionIndex}`} className="flex cursor-pointer items-start gap-2 rounded border border-border/70 px-2 py-1.5 text-sm hover:bg-accent/40">
+                          <input
+                            type={inputType}
+                            name={inputName}
+                            checked={checked}
+                            onChange={(event) => {
+                              updateAskAnswerOption(
+                                question.header,
+                                optionValue,
+                                event.target.checked,
+                                question.multiSelect
+                              );
+                            }}
+                            className="mt-0.5"
+                          />
+                          <span className="flex-1">
+                            <span className="block text-foreground">{option.label}</span>
+                            <span className="block text-xs text-muted-foreground">{option.description}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                    {answerState.selected.includes(ASK_USER_OTHER_OPTION) ? (
+                      <Input
+                        value={answerState.otherText}
+                        onChange={(event) => updateAskOtherText(question.header, event.target.value)}
+                        placeholder="请输入自定义回答"
+                        disabled={askUserSubmitting}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+            {askUserError ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {askUserError}
+              </div>
+            ) : null}
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  void cancelAskUserQuestion();
+                }}
+                disabled={askUserSubmitting}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  void submitAskUserQuestion();
+                }}
+                disabled={askUserSubmitting}
+              >
+                {askUserSubmitting ? "提交中..." : "提交回答"}
+              </Button>
             </div>
-          );
-        })()
-      ) : null}
-    </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

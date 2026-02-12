@@ -7,13 +7,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentEvent,
+  AgentAskUserQuestionQuestion,
+  AgentAskUserQuestionRequest,
+  AgentAskUserQuestionResponseInput,
   AgentGenerateTitleInput,
   AgentMessage
 } from "@lume/shared";
@@ -52,9 +55,17 @@ type AgentEventEmitter = {
   onComplete: () => void;
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
+  onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
 };
 
 const activeControllers = new Map<string, AbortController>();
+const pendingAskUserQuestionResolvers = new Map<
+  string,
+  {
+    sessionId: string;
+    resolve: (answers: Record<string, string> | null) => void;
+  }
+>();
 
 const AGENT_TITLE_PROMPT =
   "根据用户的第一条消息，生成一个简短的会话标题（10字以内）。只输出标题，不要有任何其他内容、标点符号或引号。\n\n用户消息：";
@@ -63,6 +74,183 @@ const DEFAULT_AGENT_TITLE = "新 Agent 会话";
 const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 const MAX_CONTEXT_MESSAGES = 20;
 const RESUME_RETRY_ERROR_PREFIX = "__LUME_RESUME_RETRY__:";
+const EXIT_PLAN_TOOL_NAME = "ExitPlanMode";
+const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
+
+function normalizeAskUserQuestions(input: Record<string, unknown>): AgentAskUserQuestionQuestion[] {
+  const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
+  const normalized: AgentAskUserQuestionQuestion[] = [];
+  for (const item of rawQuestions) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const header = typeof record.header === "string" ? record.header.trim() : "";
+    const question = typeof record.question === "string" ? record.question.trim() : "";
+    const multiSelect = record.multiSelect === true;
+    const rawOptions = Array.isArray(record.options) ? record.options : [];
+    const options = rawOptions
+      .filter((option): option is { label: string; description: string } => {
+        if (!option || typeof option !== "object") return false;
+        const value = option as Record<string, unknown>;
+        return typeof value.label === "string" && typeof value.description === "string";
+      })
+      .map((option) => ({
+        label: option.label.trim(),
+        description: option.description.trim()
+      }))
+      .filter((option) => option.label.length > 0);
+    if (!header || !question || options.length < 2) continue;
+    normalized.push({
+      header,
+      question,
+      options,
+      multiSelect
+    });
+  }
+  return normalized;
+}
+
+function toReadableString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function sanitizeAskUserQuestionInput(input: Record<string, unknown>): Record<string, unknown> {
+  const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
+  const questions = rawQuestions.slice(0, 4).map((item, questionIndex) => {
+    const questionRecord = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const rawOptions = Array.isArray(questionRecord.options) ? questionRecord.options : [];
+    const options = rawOptions.slice(0, 4).map((option, optionIndex) => {
+      const optionRecord = option && typeof option === "object" ? (option as Record<string, unknown>) : {};
+      const rawLabel =
+        toReadableString(optionRecord.label) ||
+        toReadableString(optionRecord.text) ||
+        toReadableString(optionRecord.title) ||
+        toReadableString(optionRecord.name) ||
+        toReadableString(optionRecord.value);
+      const rawDescription =
+        toReadableString(optionRecord.description) ||
+        toReadableString(optionRecord.desc) ||
+        toReadableString(optionRecord.detail) ||
+        toReadableString(optionRecord.reason);
+      const fallbackLabel = rawLabel || rawDescription || `选项${optionIndex + 1}`;
+      const fallbackDescription = rawDescription || fallbackLabel;
+      return {
+        label: fallbackLabel,
+        description: fallbackDescription
+      };
+    });
+
+    while (options.length < 2) {
+      const index = options.length + 1;
+      options.push({
+        label: `选项${index}`,
+        description: `候选项${index}`
+      });
+    }
+
+    const header = toReadableString(questionRecord.header) || `问题${questionIndex + 1}`;
+    const question = toReadableString(questionRecord.question) || `${header}？`;
+    const multiSelect = questionRecord.multiSelect === true;
+    return {
+      header: header.slice(0, 12),
+      question,
+      options,
+      multiSelect
+    };
+  });
+
+  return {
+    ...input,
+    questions
+  };
+}
+
+function waitForAskUserQuestionAnswers(
+  sessionId: string,
+  toolUseId: string,
+  questions: AgentAskUserQuestionQuestion[],
+  signal: AbortSignal,
+  emit: AgentEventEmitter
+): Promise<Record<string, string> | null> {
+  return new Promise((resolve) => {
+    const done = (answers: Record<string, string> | null): void => {
+      pendingAskUserQuestionResolvers.delete(toolUseId);
+      signal.removeEventListener("abort", onAbort);
+      resolve(answers);
+    };
+
+    const onAbort = (): void => {
+      done(null);
+    };
+
+    pendingAskUserQuestionResolvers.set(toolUseId, {
+      sessionId,
+      resolve: done
+    });
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    emit.onAskUserQuestion({
+      sessionId,
+      toolUseId,
+      questions
+    });
+  });
+}
+
+export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): { ok: true } {
+  const pending = pendingAskUserQuestionResolvers.get(input.toolUseId);
+  if (!pending) {
+    throw new Error("未找到待确认的 AskUserQuestion 请求");
+  }
+  if (pending.sessionId !== input.sessionId) {
+    throw new Error("AskUserQuestion 会话不匹配");
+  }
+  if (input.canceled) {
+    pending.resolve(null);
+    return { ok: true };
+  }
+  pending.resolve(input.answers ?? {});
+  return { ok: true };
+}
+
+function extractPlanText(value: unknown): string | null {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized ? normalized : null;
+  }
+  if (Array.isArray(value)) {
+    const lines = value
+      .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+      .filter((item) => item && item !== "null")
+      .join("\n")
+      .trim();
+    return lines || null;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const candidateKeys = ["plan", "content", "markdown", "text"];
+    for (const key of candidateKeys) {
+      const candidate = extractPlanText(record[key]);
+      if (candidate) return candidate;
+    }
+    try {
+      const serialized = JSON.stringify(record, null, 2).trim();
+      return serialized || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function persistExitPlan(agentCwd: string, planText: string): void {
+  const plansDir = join(agentCwd, "plans");
+  const planPath = join(plansDir, "plan.md");
+  mkdirSync(plansDir, { recursive: true });
+  writeFileSync(planPath, planText.endsWith("\n") ? planText : `${planText}\n`, "utf-8");
+  console.log(`[Agent 服务] 已保存计划文件: ${planPath}`);
+}
 
 function isResumeSessionNotFoundError(message: string): boolean {
   return /No conversation found with session ID/i.test(message);
@@ -165,6 +353,7 @@ export async function sendAgentMessage(
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean } = {}
 ): Promise<void> {
   const { sessionId, userMessage, channelId, workspaceId } = input;
+  const permissionMode = input.permissionMode ?? "bypassPermissions";
 
   const channel = listChannels().find((item) => item.id === channelId);
   if (!channel) {
@@ -203,6 +392,7 @@ export async function sendAgentMessage(
   const stderrChunks: string[] = [];
   let resolvedModel = modelId;
   let streamCompleted = false;
+  const pendingExitPlans = new Map<string, string>();
 
   let existingSdkSessionId = getAgentSessionMeta(sessionId)?.sdkSessionId;
 
@@ -241,7 +431,7 @@ export async function sendAgentMessage(
 
     const bunPath = getBunExecutablePath();
     console.log(
-      `[Agent 服务] 启动 SDK — CLI: ${cliPath}, Bun: ${bunPath}, 模型: ${modelId}, resume: ${existingSdkSessionId ?? "无"}`
+      `[Agent 服务] 启动 SDK — CLI: ${cliPath}, Bun: ${bunPath}, 模型: ${modelId}, 权限: ${permissionMode}, resume: ${existingSdkSessionId ?? "无"}`
     );
     const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
     const mcpServers = buildMcpServers(workspaceSlug);
@@ -281,8 +471,52 @@ export async function sendAgentMessage(
         // SDK 0.2.37 默认会传入空的 --setting-sources，导致后续参数被错误解析。
         // 显式设置有效值，避免 "Invalid setting source: --permission-mode"。
         settingSources: ["user", "project", "local"],
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        extraArgs: {
+          settings: JSON.stringify({
+            plansDirectory: "./plans"
+          })
+        },
+        permissionMode,
+        ...(permissionMode === "bypassPermissions"
+          ? { allowDangerouslySkipPermissions: true }
+          : {}),
+        canUseTool: async (toolName, toolInput, permissionOptions) => {
+          if (toolName === EXIT_PLAN_TOOL_NAME) {
+            return { behavior: "allow", updatedInput: {} };
+          }
+          if (toolName === ASK_USER_QUESTION_TOOL_NAME) {
+            const sanitizedInput = sanitizeAskUserQuestionInput(toolInput);
+            const questions = normalizeAskUserQuestions(sanitizedInput);
+            if (questions.length === 0) {
+              return {
+                behavior: "deny",
+                message: "AskUserQuestion 缺少有效问题，已拒绝执行"
+              };
+            }
+            const answers = await waitForAskUserQuestionAnswers(
+              sessionId,
+              permissionOptions.toolUseID,
+              questions,
+              permissionOptions.signal,
+              emit
+            );
+            if (!answers) {
+              return {
+                behavior: "deny",
+                message: "用户取消了 AskUserQuestion"
+              };
+            }
+            return {
+              behavior: "allow",
+              updatedInput: {
+                ...sanitizedInput,
+                answers
+              }
+            };
+          }
+          // Sidecar 当前无交互式权限确认 UI；保持非阻塞执行。
+          return { behavior: "allow", updatedInput: {} };
+        },
         includePartialMessages: true,
         cwd: agentCwd,
         abortController: controller,
@@ -333,6 +567,30 @@ export async function sendAgentMessage(
       }
 
       const events = convertAgentSdkMessage(message, converterState);
+      for (const event of events) {
+        if (event.type === "tool_start" && event.toolName === EXIT_PLAN_TOOL_NAME) {
+          const planText = extractPlanText(event.input);
+          if (planText) {
+            pendingExitPlans.set(event.toolUseId, planText);
+          }
+          continue;
+        }
+
+        if (event.type === "tool_result") {
+          const pendingPlan = pendingExitPlans.get(event.toolUseId);
+          const isExitPlanResult = event.toolName === EXIT_PLAN_TOOL_NAME || pendingPlan !== undefined;
+          if (isExitPlanResult) {
+            if (!event.isError) {
+              const planText = pendingPlan ?? extractPlanText(event.result);
+              if (planText) {
+                persistExitPlan(agentCwd, planText);
+              }
+            }
+            pendingExitPlans.delete(event.toolUseId);
+          }
+        }
+      }
+
       const resumeNotFound = events.find((event): event is Extract<AgentEvent, { type: "error" }> =>
         event.type === "error" && isResumeSessionNotFoundError(event.message)
       );
@@ -413,6 +671,12 @@ export async function sendAgentMessage(
 
     emit.onError(detailedError);
   } finally {
+    for (const [toolUseId, pending] of pendingAskUserQuestionResolvers) {
+      if (pending.sessionId === sessionId) {
+        pending.resolve(null);
+        pendingAskUserQuestionResolvers.delete(toolUseId);
+      }
+    }
     activeControllers.delete(sessionId);
   }
 }

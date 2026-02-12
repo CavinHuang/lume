@@ -2,7 +2,7 @@
 
 import { ArrowDownIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactNode, RefObject } from "react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -63,12 +63,22 @@ export function Conversation({ className, children, ...props }: ConversationProp
     }
   }, [children, isAtBottom]);
 
+  // 分离滚动按钮和其他内容
+  const content = React.Children.toArray(children);
+  const scrollButton = content.find(
+    (child): child is React.ReactElement => React.isValidElement(child) && child.type === ConversationScrollButton
+  );
+  const otherChildren = content.filter(
+    (child) => !(React.isValidElement(child) && child.type === ConversationScrollButton)
+  );
+
   return (
     <ConversationContext.Provider value={{ scrollRef, isAtBottom, scrollToBottom }}>
-      <div className={cn("relative flex-1 overflow-y-hidden scrollbar-none", className)} role="log" {...props}>
+      <div className={cn("relative flex-1 overflow-y-hidden", className)} role="log" {...props}>
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain">
-          {children}
+          {otherChildren}
         </div>
+        {scrollButton}
       </div>
     </ConversationContext.Provider>
   );
@@ -121,7 +131,7 @@ export function ConversationScrollButton({ className, ...props }: ConversationSc
       type="button"
       variant="outline"
       size="icon"
-      className={cn("absolute bottom-4 left-[50%] -translate-x-1/2 rounded-full", className)}
+      className={cn("absolute bottom-8 left-[50%] -translate-x-1/2 rounded-full shadow-md", className)}
       onClick={scrollToBottom}
       {...props}
     >

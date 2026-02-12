@@ -9,14 +9,17 @@
 import {
   appendFileSync,
   existsSync,
+  readdirSync,
   readFileSync,
-  rm,
+  rmSync,
   unlinkSync,
   writeFileSync
 } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import type { AgentMessage, AgentSessionMeta } from "@lume/shared";
 import {
+  getAgentWorkspacesDir,
   getAgentSessionMessagesPath,
   getAgentSessionWorkspacePath,
   getAgentSessionsDir,
@@ -166,24 +169,18 @@ export function deleteAgentSession(id: string): void {
     }
   }
 
-  if (removed.workspaceId) {
-    const workspace = getAgentWorkspace(removed.workspaceId);
-    if (workspace) {
-      try {
-        const sessionDir = getAgentSessionWorkspacePath(workspace.slug, id);
-        if (existsSync(sessionDir)) {
-          rm(sessionDir, { recursive: true, force: true }, (error) => {
-            if (error) {
-              console.warn(`[Agent 会话] 清理 session 工作目录失败 (${id}):`, error);
-              return;
-            }
-            console.log(`[Agent 会话] 已清理 session 工作目录: ${sessionDir}`);
-          });
-        }
-      } catch (error) {
-        console.warn(`[Agent 会话] 清理 session 工作目录失败 (${id}):`, error);
-      }
+  try {
+    const workspacesDir = getAgentWorkspacesDir();
+    const workspaceEntries = readdirSync(workspacesDir, { withFileTypes: true });
+    for (const entry of workspaceEntries) {
+      if (!entry.isDirectory()) continue;
+      const sessionDir = join(workspacesDir, entry.name, id);
+      if (!existsSync(sessionDir)) continue;
+      rmSync(sessionDir, { recursive: true, force: true });
+      console.log(`[Agent 会话] 已清理 session 工作目录: ${sessionDir}`);
     }
+  } catch (error) {
+    console.warn(`[Agent 会话] 清理 session 工作目录失败 (${id}):`, error);
   }
 
   console.log(`[Agent 会话] 已删除会话: ${removed.title} (${removed.id})`);

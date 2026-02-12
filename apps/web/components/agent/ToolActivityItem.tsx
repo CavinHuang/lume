@@ -71,10 +71,11 @@ function getActivityStatus(activity: ToolActivity): ActivityStatus {
 }
 
 function groupActivities(activities: ToolActivity[]): Array<ToolActivity | ActivityGroup> {
+  const toolIds = new Set(activities.map((activity) => activity.toolUseId));
   const parentIds = new Set<string>();
   for (const activity of activities) {
-    if (activity.toolName === "Task") {
-      parentIds.add(activity.toolUseId);
+    if (activity.parentToolUseId && toolIds.has(activity.parentToolUseId)) {
+      parentIds.add(activity.parentToolUseId);
     }
   }
 
@@ -246,11 +247,11 @@ function ActivityDetails({ activity, onClose }: { activity: ToolActivity; onClos
         </button>
       </div>
 
-      <div className="max-h-[300px] space-y-2 overflow-y-auto px-3 py-2">
+      <div className="max-h-[300px] space-y-2 overflow-y-auto px-3 py-2 custom-scrollbar">
         {Object.keys(activity.input).length > 0 ? (
           <div>
             <div className="mb-1 text-[10px] font-medium text-foreground/40">输入</div>
-            <pre className="max-h-[150px] overflow-x-auto overflow-y-auto whitespace-pre-wrap break-all rounded bg-background/50 p-2 text-[11px] text-foreground/60">
+            <pre className="max-h-[150px] overflow-x-auto overflow-y-auto whitespace-pre-wrap break-all rounded bg-background/50 p-2 text-[11px] text-foreground/60 custom-scrollbar">
               {formatInput(activity.input)}
             </pre>
           </div>
@@ -260,7 +261,7 @@ function ActivityDetails({ activity, onClose }: { activity: ToolActivity; onClos
           <div>
             <div className="mb-1 text-[10px] font-medium text-foreground/40">结果</div>
             <pre className={cn(
-              "max-h-[150px] overflow-x-auto overflow-y-auto whitespace-pre-wrap break-all rounded p-2 text-[11px]",
+              "max-h-[150px] overflow-x-auto overflow-y-auto whitespace-pre-wrap break-all rounded p-2 text-[11px] custom-scrollbar",
               activity.isError ? "bg-destructive/5 text-destructive/80" : "bg-background/50 text-foreground/60"
             )}>
               {activity.result.length > 2000 ? `${activity.result.slice(0, 2000)}\n… [截断]` : activity.result}
@@ -420,23 +421,6 @@ function parseTodoItems(input: Record<string, unknown>): Array<{ content: string
   return null;
 }
 
-function TodoList({ items }: { items: Array<{ content: string; status: "pending" | "in_progress" | "completed"; activeForm?: string }> }): React.ReactElement {
-  return (
-    <div className="ml-[5px] space-y-0.5 border-l-2 border-muted pl-5">
-      {items.map((todo, idx) => (
-        <div key={idx} className={cn("flex items-center gap-2 text-[13px]", SIZE.row, todo.status === "completed" && "opacity-50")}>
-          {todo.status === "pending" ? <Circle className={cn(SIZE.icon, "text-muted-foreground/50")} /> : null}
-          {todo.status === "in_progress" ? <Loader2 className={cn(SIZE.spinner, "animate-spin text-blue-500")} /> : null}
-          {todo.status === "completed" ? <CheckCircle2 className={cn(SIZE.icon, "text-green-500")} /> : null}
-          <span className={cn("flex-1 truncate", todo.status === "completed" && "line-through")}>
-            {todo.status === "in_progress" && todo.activeForm ? todo.activeForm : todo.content}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 interface ToolActivityListProps {
   activities: ToolActivity[];
   animate?: boolean;
@@ -447,7 +431,26 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
   const [expanded, setExpanded] = React.useState(false);
   const listRef = React.useRef<HTMLDivElement>(null);
 
-  const grouped = React.useMemo(() => groupActivities(activities), [activities]);
+  const latestTodoActivityIndex = React.useMemo(() => {
+    for (let i = activities.length - 1; i >= 0; i--) {
+      const activity = activities[i];
+      if (!activity) continue;
+      if (activity.toolName !== "TodoWrite" && activity.toolName !== "TaskCreate") continue;
+      const todos = parseTodoItems(activity.input);
+      if (todos && todos.length > 0) return i;
+    }
+    return -1;
+  }, [activities]);
+
+  const normalizedActivities = React.useMemo(() => {
+    if (latestTodoActivityIndex < 0) return activities;
+    return activities.filter((activity, index) => {
+      if (activity.toolName !== "TodoWrite" && activity.toolName !== "TaskCreate") return true;
+      return index === latestTodoActivityIndex;
+    });
+  }, [activities, latestTodoActivityIndex]);
+
+  const grouped = React.useMemo(() => groupActivities(normalizedActivities), [normalizedActivities]);
 
   const visibleRows = React.useMemo(() => {
     let count = 0;
@@ -468,9 +471,9 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
     }
   }, [visibleRows, needsCollapse, animate]);
 
-  if (activities.length === 0) return null;
+  if (normalizedActivities.length === 0) return null;
 
-  const detailActivity = detailsId ? activities.find((activity) => activity.toolUseId === detailsId) : null;
+  const detailActivity = detailsId ? normalizedActivities.find((activity) => activity.toolUseId === detailsId) : null;
   const handleOpenDetails = (activity: ToolActivity): void => {
     setDetailsId((prev) => (prev === activity.toolUseId ? null : activity.toolUseId));
   };
@@ -481,7 +484,7 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
     <div className="w-full">
       <div
         ref={listRef}
-        className={cn("space-y-0", animate && needsCollapse && "overflow-y-auto", isCollapsed && "overflow-hidden")}
+        className={cn("space-y-0 custom-scrollbar", animate && needsCollapse && "overflow-y-auto", isCollapsed && "overflow-hidden")}
         style={animate && needsCollapse
           ? { maxHeight: SIZE.autoScrollThreshold * SIZE.rowHeight }
           : isCollapsed
@@ -504,18 +507,6 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
           }
 
           const activity = item as ToolActivity;
-
-          if (activity.toolName === "TodoWrite" || activity.toolName === "TaskCreate") {
-            const todos = parseTodoItems(activity.input);
-            if (todos && todos.length > 0) {
-              return (
-                <React.Fragment key={activity.toolUseId}>
-                  <ActivityRow activity={activity} index={index} animate={animate} onOpenDetails={handleOpenDetails} />
-                  <TodoList items={todos} />
-                </React.Fragment>
-              );
-            }
-          }
 
           return (
             <React.Fragment key={activity.toolUseId}>
