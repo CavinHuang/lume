@@ -1,9 +1,8 @@
 "use client";
 
 import * as React from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Brain, ChevronDown } from "lucide-react";
+import { Streamdown } from "streamdown";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { openExternalUrl } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
@@ -119,7 +118,10 @@ export const ReasoningTrigger = React.memo(function ReasoningTrigger({
 
   return (
     <CollapsibleTrigger
-      className={cn("flex w-full items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground", className)}
+      className={cn(
+        "flex w-full items-center gap-2 text-sm text-gray-400 transition-colors hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300",
+        className
+      )}
       {...props}
     >
       {children ?? (
@@ -142,7 +144,7 @@ export const ReasoningContent = React.memo(
     return (
       <CollapsibleContent
         className={cn(
-          "mt-4 text-sm text-muted-foreground outline-none",
+          "mt-4 text-sm text-gray-400 dark:text-gray-500 outline-none",
           "data-[state=closed]:animate-out data-[state=open]:animate-in",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           "data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2",
@@ -150,9 +152,16 @@ export const ReasoningContent = React.memo(
         )}
         {...props}
       >
-        <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-          <Markdown
-            remarkPlugins={[remarkGfm]}
+        <div
+          className={cn(
+            "prose prose-sm dark:prose-invert max-w-none prose-p:my-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+            "prose-p:text-gray-400 prose-li:text-gray-400 prose-strong:text-gray-400 prose-code:text-gray-400 prose-headings:text-gray-400 prose-a:text-gray-500 hover:prose-a:text-gray-600",
+            "dark:prose-p:text-gray-500 dark:prose-li:text-gray-500 dark:prose-strong:text-gray-500 dark:prose-code:text-gray-500 dark:prose-headings:text-gray-500 dark:prose-a:text-gray-400 dark:hover:prose-a:text-gray-300"
+          )}
+        >
+          <Streamdown
+            parseIncompleteMarkdown
+            mode="streaming"
             components={{
               a: ({ href, children: linkChildren, ...linkProps }) => (
                 <a
@@ -173,7 +182,7 @@ export const ReasoningContent = React.memo(
             }}
           >
             {children}
-          </Markdown>
+          </Streamdown>
         </div>
       </CollapsibleContent>
     );

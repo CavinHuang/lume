@@ -1,15 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AlertCircle, Bot, CornerDownLeft, FolderPlus, Paperclip, Settings, Square, X } from "lucide-react";
 import type { AgentMessage, AgentPendingFile, AgentSavedFile, Channel, ModelOption } from "@lume/shared";
 import {
   activeViewAtom,
+  agentContextStatusAtom,
   agentSessionsAtom,
   agentChannelIdAtom,
   agentModelIdAtom,
+  agentPendingFilesAtom,
   agentPendingPromptAtom,
+  agentStreamingAtom,
   agentStreamErrorsAtom,
   agentStreamingStatesAtom,
   agentWorkspacesAtom,
@@ -106,8 +109,10 @@ export function AgentView(): React.ReactElement {
   const session = useAtomValue(currentAgentSessionAtom);
   const [workspaceId] = useAtom(currentAgentWorkspaceIdAtom);
   const [workspaces] = useAtom(agentWorkspacesAtom);
-  const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
-  const [streamingStates, setStreamingStates] = useAtom(agentStreamingStatesAtom);
+  const [, setMessages] = useAtom(currentAgentMessagesAtom);
+  const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
+  const streaming = useAtomValue(agentStreamingAtom);
+  const contextStatus = useAtomValue(agentContextStatusAtom);
   const [agentError] = useAtom(currentAgentErrorAtom);
   const setActiveView = useSetAtom(activeViewAtom);
   const setSessions = useSetAtom(agentSessionsAtom);
@@ -116,20 +121,22 @@ export function AgentView(): React.ReactElement {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
+  const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtom);
   const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom);
   const [inputContent, setInputContent] = useState("");
   const [sessionRootPath, setSessionRootPath] = useState<string | null>(null);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<AgentPendingFile[]>([]);
   const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
 
-  const streamState = sessionId ? streamingStates.get(sessionId) : undefined;
-  const streaming = !!streamState?.running;
+  const currentSessionIdRef = useRef<string | null>(sessionId);
+  useEffect(() => {
+    currentSessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   useEffect(() => {
     void listChannels().then((next) => setChannels(next));
-  }, []);
+  }, [setPendingFiles]);
 
   useEffect(() => {
     if (agentChannelId) return;
@@ -143,6 +150,7 @@ export function AgentView(): React.ReactElement {
   }, [agentChannelId, channels, session?.channelId]);
 
   useEffect(() => {
+    if (channels.length === 0) return;
     if (!agentChannelId) {
       setAgentModelId(null);
       return;
@@ -156,7 +164,7 @@ export function AgentView(): React.ReactElement {
     if (!modelValid) {
       setAgentModelId(channel.models.find((model) => model.enabled)?.id ?? null);
     }
-  }, [agentChannelId, agentModelId, channels]);
+  }, [agentChannelId, agentModelId, channels, setAgentModelId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -188,8 +196,29 @@ export function AgentView(): React.ReactElement {
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
+    let disposed = false;
 
-    void onAgentStreamEvent((payload) => {
+    const trackUnlisten = (promise: Promise<() => void>): void => {
+      void promise.then((fn) => {
+        if (disposed) {
+          void fn();
+          return;
+        }
+        unsubs.push(fn);
+      }).catch((error) => {
+        console.error("[AgentView] subscribe stream failed:", error);
+      });
+    };
+
+    const removeState = (targetSessionId: string): void => {
+      setStreamingStates((prev) => {
+        const map = new Map(prev);
+        map.delete(targetSessionId);
+        return map;
+      });
+    };
+
+    trackUnlisten(onAgentStreamEvent((payload) => {
       setStreamingStates((prev) => {
         const map = new Map(prev);
         const current = map.get(payload.sessionId) ?? {
@@ -200,19 +229,15 @@ export function AgentView(): React.ReactElement {
         map.set(payload.sessionId, applyAgentEvent(current, payload.event));
         return map;
       });
-    }).then((fn) => unsubs.push(fn));
+    }));
 
-    void onAgentStreamComplete((payload) => {
+    trackUnlisten(onAgentStreamComplete((payload) => {
       const finalize = (): void => {
-        setStreamingStates((prev) => {
-          const map = new Map(prev);
-          map.delete(payload.sessionId);
-          return map;
-        });
+        removeState(payload.sessionId);
         void listAgentSessions().then(setSessions);
       };
 
-      if (payload.sessionId === sessionId) {
+      if (payload.sessionId === currentSessionIdRef.current) {
         void getAgentSessionMessages(payload.sessionId)
           .then((next) => {
             setMessages(next);
@@ -222,29 +247,38 @@ export function AgentView(): React.ReactElement {
       } else {
         finalize();
       }
-    }).then((fn) => unsubs.push(fn));
+    }));
 
-    void onAgentStreamError((payload) => {
+    trackUnlisten(onAgentStreamError((payload) => {
       setStreamErrors((prev) => {
         const map = new Map(prev);
         map.set(payload.sessionId, payload.error);
         return map;
       });
-      setStreamingStates((prev) => {
-        const map = new Map(prev);
-        map.delete(payload.sessionId);
-        return map;
-      });
-    }).then((fn) => unsubs.push(fn));
 
-    void onAgentTitleUpdated(() => {
+      const finalize = (): void => removeState(payload.sessionId);
+
+      if (payload.sessionId === currentSessionIdRef.current) {
+        void getAgentSessionMessages(payload.sessionId)
+          .then((next) => {
+            setMessages(next);
+            finalize();
+          })
+          .catch(() => finalize());
+      } else {
+        finalize();
+      }
+    }));
+
+    trackUnlisten(onAgentTitleUpdated(() => {
       void listAgentSessions().then(setSessions);
-    }).then((fn) => unsubs.push(fn));
+    }));
 
     return () => {
+      disposed = true;
       for (const fn of unsubs) fn();
     };
-  }, [sessionId, setMessages, setSessions, setStreamErrors, setStreamingStates]);
+  }, [setMessages, setSessions, setStreamErrors, setStreamingStates]);
 
   useEffect(() => {
     if (!pendingPrompt) return;
@@ -320,7 +354,7 @@ export function AgentView(): React.ReactElement {
         console.error("[AgentView] add attachment failed", error);
       }
     }
-  }, []);
+  }, [setPendingFiles]);
 
   const handleOpenFileDialog = useCallback(async (): Promise<void> => {
     try {
@@ -349,7 +383,7 @@ export function AgentView(): React.ReactElement {
     } catch (error) {
       console.error("[AgentView] open file dialog failed", error);
     }
-  }, []);
+  }, [setPendingFiles]);
 
   const handleOpenFolderDialog = useCallback(async (): Promise<void> => {
     if (!sessionId || !workspaceId) return;
@@ -400,6 +434,20 @@ export function AgentView(): React.ReactElement {
       workspaceId: workspaceId ?? undefined
     });
   }, [sessionId, agentChannelId, agentModelId, workspaceId, streaming, setStreamingStates]);
+
+  const handleStop = useCallback((): void => {
+    if (!sessionId) return;
+
+    setStreamingStates((prev) => {
+      const current = prev.get(sessionId);
+      if (!current) return prev;
+      const map = new Map(prev);
+      map.set(sessionId, { ...current, running: false });
+      return map;
+    });
+
+    void stopAgentRun(sessionId);
+  }, [sessionId, setStreamingStates]);
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputContent.trim();
@@ -470,22 +518,21 @@ export function AgentView(): React.ReactElement {
     setMessages((prev) => [...prev, tempMessage]);
     setInputContent("");
 
-    try {
-      await sendAgentMessage({
-        sessionId,
-        userMessage: finalMessage,
-        channelId: agentChannelId,
-        modelId: agentModelId ?? undefined,
-        workspaceId: workspaceId ?? undefined
-      });
-    } catch (error) {
+    void sendAgentMessage({
+      sessionId,
+      userMessage: finalMessage,
+      channelId: agentChannelId,
+      modelId: agentModelId ?? undefined,
+      workspaceId: workspaceId ?? undefined
+    }).catch((error) => {
       console.error("[AgentView] send failed", error);
       setStreamingStates((prev) => {
+        if (!prev.has(sessionId)) return prev;
         const map = new Map(prev);
         map.delete(sessionId);
         return map;
       });
-    }
+    });
   }, [
     inputContent,
     pendingFiles,
@@ -538,7 +585,7 @@ export function AgentView(): React.ReactElement {
           fileBrowserOpen={fileBrowserOpen}
         />
 
-        <AgentMessages messages={messages} streamState={streamState} />
+        <AgentMessages />
 
         {agentError ? (
           <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
@@ -724,9 +771,9 @@ export function AgentView(): React.ReactElement {
                     />
 
                     <ContextUsageBadge
-                      inputTokens={streamState?.inputTokens}
-                      contextWindow={streamState?.contextWindow}
-                      isCompacting={!!streamState?.isCompacting}
+                      inputTokens={contextStatus.inputTokens}
+                      contextWindow={contextStatus.contextWindow}
+                      isCompacting={contextStatus.isCompacting}
                       isProcessing={streaming}
                       onCompact={handleCompact}
                     />
@@ -741,7 +788,7 @@ export function AgentView(): React.ReactElement {
                     variant="ghost"
                     size="icon"
                     className="size-[30px] rounded-full text-destructive hover:bg-destructive/10"
-                    onClick={() => { void stopAgentRun(sessionId); }}
+                    onClick={handleStop}
                   >
                     <Square className="size-[22px]" />
                   </Button>

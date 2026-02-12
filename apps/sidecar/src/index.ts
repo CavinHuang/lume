@@ -1,4 +1,5 @@
 import { argv, stdin, stdout } from "node:process";
+import { createInterface } from "node:readline";
 import { AGENT_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS } from "@lume/shared";
 import type {
   AttachmentSaveInput,
@@ -28,6 +29,7 @@ import {
   getConversationMessages,
   getRecentMessages,
   listConversations,
+  truncateMessagesFrom,
   updateContextDividers,
   updateConversationMeta
 } from "./services/conversation-manager";
@@ -71,6 +73,7 @@ import {
   updateAgentWorkspace,
   deleteWorkspaceSkill
 } from "./services/agent-workspace-manager";
+import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -209,6 +212,14 @@ const handlers: Record<string, RpcHandler> = {
     if (!conversationId || !messageId) throw new Error("缺少 conversationId 或 messageId");
     return deleteMessage(conversationId, messageId);
   },
+  [CHAT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM]: async (params) => {
+    const p = asObject(params);
+    const conversationId = asString(p.conversationId);
+    const messageId = asString(p.messageId);
+    const preserveFirstMessageAttachments = p.preserveFirstMessageAttachments === true;
+    if (!conversationId || !messageId) throw new Error("缺少 conversationId 或 messageId");
+    return truncateMessagesFrom(conversationId, messageId, preserveFirstMessageAttachments);
+  },
   [CHAT_IPC_CHANNELS.UPDATE_CONTEXT_DIVIDERS]: async (params) => {
     const p = asObject(params);
     const conversationId = asString(p.conversationId);
@@ -256,11 +267,16 @@ const handlers: Record<string, RpcHandler> = {
   },
   [CHAT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
     const input = params as ChatSendInput;
-    await sendMessage(input, {
+    void sendMessage(input, {
       onChunk: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_CHUNK, event),
       onReasoning: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_REASONING, event),
       onComplete: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_COMPLETE, event),
       onError: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_ERROR, event)
+    }).catch((error) => {
+      writeNotification(CHAT_IPC_CHANNELS.STREAM_ERROR, {
+        conversationId: input.conversationId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
     return { ok: true };
   },
@@ -399,7 +415,7 @@ const handlers: Record<string, RpcHandler> = {
   "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
   [AGENT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
     const input = params as AgentSendInput;
-    await sendAgentMessage(input, {
+    void sendAgentMessage(input, {
       onEvent: (event) =>
         writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
           sessionId: input.sessionId,
@@ -419,6 +435,11 @@ const handlers: Record<string, RpcHandler> = {
           sessionId: input.sessionId,
           title
         })
+    }).catch((error) => {
+      writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
+        sessionId: input.sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
     return { ok: true };
   }
@@ -460,9 +481,12 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   try {
+    console.error(`[sidecar] rpc_in method=${method} id=${String(payload.id)}`);
     const result = await handler(payload.params);
+    console.error(`[sidecar] rpc_out ok method=${method} id=${String(payload.id)}`);
     writeResponse({ id: payload.id, result });
   } catch (error) {
+    console.error(`[sidecar] rpc_out err method=${method} id=${String(payload.id)} error=${error instanceof Error ? error.message : String(error)}`);
     writeResponse({
       id: payload.id,
       error: {
@@ -475,19 +499,27 @@ async function handleRpcLine(line: string): Promise<void> {
 
 function boot(): void {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
+  startWorkspaceWatcher((method, params) => writeNotification(method, params));
+  const stopWatcher = (): void => stopWorkspaceWatcher();
+  process.once("exit", stopWatcher);
+  process.once("SIGINT", () => {
+    stopWatcher();
+    process.exit(0);
+  });
+  process.once("SIGTERM", () => {
+    stopWatcher();
+    process.exit(0);
+  });
+
   stdin.setEncoding("utf8");
-
-  let buffer = "";
-  stdin.on("data", (chunk: string) => {
-    buffer += chunk;
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      void handleRpcLine(trimmed);
-    }
+  const rl = createInterface({
+    input: stdin,
+    crlfDelay: Infinity
+  });
+  rl.on("line", (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    void handleRpcLine(trimmed);
   });
 }
 

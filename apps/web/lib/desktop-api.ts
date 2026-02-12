@@ -41,6 +41,20 @@ import type {
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+const SIDECAR_CALL_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} 超时 (${timeoutMs}ms)`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 export async function desktopHealthcheck(): Promise<HealthcheckResult> {
   try {
     const result = await invoke<HealthcheckResult>("healthcheck");
@@ -70,10 +84,25 @@ export async function sidecarHealthcheck(): Promise<HealthcheckResult> {
 }
 
 export async function sidecarCall<T>(method: string, params?: unknown): Promise<T> {
-  return invoke<T>("sidecar_call", {
-    method,
-    params: params ?? null
-  });
+  const invokeOnce = (): Promise<T> =>
+    withTimeout(
+      invoke<T>("sidecar_call", {
+        method,
+        params: params ?? null
+      }),
+      SIDECAR_CALL_TIMEOUT_MS,
+      `sidecar_call(${method})`
+    );
+
+  try {
+    return await invokeOnce();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const shouldRetry = message.includes("超时") || message.includes("sidecar is not running");
+    if (!shouldRetry) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    return invokeOnce();
+  }
 }
 
 export type SidecarNotification = {
@@ -84,9 +113,14 @@ export type SidecarNotification = {
 export async function onSidecarEvent(
   handler: (event: SidecarNotification) => void
 ): Promise<UnlistenFn> {
-  return listen<SidecarNotification>("sidecar:event", (event) => {
-    handler(event.payload);
-  });
+  try {
+    return await listen<SidecarNotification>("sidecar:event", (event) => {
+      handler(event.payload);
+    });
+  } catch (error) {
+    console.error("[desktop-api] 订阅 sidecar:event 失败:", error);
+    return async () => {};
+  }
 }
 
 type SidecarMethod = string;
@@ -193,6 +227,18 @@ export async function deleteConversationMessage(
   messageId: string
 ): Promise<ChatMessage[]> {
   return sidecarCall<ChatMessage[]>(CHAT_IPC_CHANNELS.DELETE_MESSAGE, { conversationId, messageId });
+}
+
+export async function truncateConversationMessagesFrom(
+  conversationId: string,
+  messageId: string,
+  preserveFirstMessageAttachments = false
+): Promise<ChatMessage[]> {
+  return sidecarCall<ChatMessage[]>(CHAT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM, {
+    conversationId,
+    messageId,
+    preserveFirstMessageAttachments
+  });
 }
 
 export async function updateConversationContextDividers(
@@ -441,6 +487,14 @@ export async function onAgentTitleUpdated(
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.TITLE_UPDATED, (params) => {
     handler(params as { sessionId: string; title: string });
+  });
+}
+
+export async function onAgentCapabilitiesChanged(
+  handler: () => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.CAPABILITIES_CHANGED, () => {
+    handler();
   });
 }
 

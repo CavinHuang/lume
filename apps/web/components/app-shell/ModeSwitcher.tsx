@@ -13,14 +13,14 @@ export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom);
 
   return (
-    <div className="px-2 pt-2">
+    <div className="titlebar-no-drag px-2 pt-2">
       <div className="flex rounded-lg bg-muted p-1">
       {MODE_ITEMS.map((item) => (
         <button
           key={item.value}
           type="button"
           className={cn(
-            "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            "titlebar-no-drag flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             mode === item.value
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"

@@ -6,18 +6,11 @@ import { Check, Columns2, Pencil, Pin, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { conversationsAtom, currentConversationAtom, parallelModeAtom, selectedModelAtom } from "@/atoms/chat-atoms";
+import { conversationsAtom, currentConversationAtom, parallelModeAtom } from "@/atoms/chat-atoms";
 import { togglePinConversation, updateConversationTitle } from "@/lib/desktop-api";
-import type { ModelOption } from "@lume/shared";
 
-interface ChatHeaderProps {
-  modelOptions: ModelOption[];
-  onModelChange: (value: { channelId: string; modelId: string } | null) => void;
-}
-
-export function ChatHeader({ modelOptions, onModelChange }: ChatHeaderProps): React.ReactElement | null {
+export function ChatHeader(): React.ReactElement | null {
   const conversation = useAtomValue(currentConversationAtom);
-  const selectedModel = useAtomValue(selectedModelAtom);
   const [parallelMode, setParallelMode] = useAtom(parallelModeAtom);
   const setConversations = useSetAtom(conversationsAtom);
   const [editing, setEditing] = useState(false);
@@ -31,8 +24,6 @@ export function ChatHeader({ modelOptions, onModelChange }: ChatHeaderProps): Re
   }, [editing]);
 
   if (!conversation) return null;
-
-  const selectedValue = selectedModel ? `${selectedModel.channelId}::${selectedModel.modelId}` : "";
 
   const saveTitle = async (): Promise<void> => {
     const next = titleDraft.trim();
@@ -86,25 +77,6 @@ export function ChatHeader({ modelOptions, onModelChange }: ChatHeaderProps): Re
         </button>
       )}
 
-      <select
-        className="h-8 min-w-[220px] rounded-md border border-border bg-background px-2.5 text-xs outline-none focus:border-primary/50"
-        value={selectedValue}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (!value) return onModelChange(null);
-          const [channelId, modelId] = value.split("::");
-          if (!channelId || !modelId) return onModelChange(null);
-          onModelChange({ channelId, modelId });
-        }}
-      >
-        <option value="">选择模型</option>
-        {modelOptions.map((option) => (
-          <option key={`${option.channelId}::${option.modelId}`} value={`${option.channelId}::${option.modelId}`}>
-            {option.channelName} / {option.modelName}
-          </option>
-        ))}
-      </select>
-
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -145,4 +117,3 @@ export function ChatHeader({ modelOptions, onModelChange }: ChatHeaderProps): Re
     </div>
   );
 }
-

@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Streamdown } from "streamdown";
 import { ChevronDown, ChevronUp, Paperclip } from "lucide-react";
 import { CodeBlock, MermaidBlock } from "@lume/ui";
 import type { FileAttachment } from "@lume/shared";
@@ -126,14 +125,15 @@ export const MessageResponse = React.memo(
     return (
       <div
         className={cn(
-          "prose prose-sm dark:prose-invert max-w-none text-[14px]",
+          "prose dark:prose-invert max-w-none text-[14px]",
           "prose-p:my-1.5 prose-p:leading-[1.6] prose-li:leading-[1.6] prose-pre:my-0 prose-headings:my-2",
           "[&_.code-block-wrapper+.code-block-wrapper]:mt-4 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
           className
         )}
       >
-        <Markdown
-          remarkPlugins={[remarkGfm]}
+        <Streamdown
+          parseIncompleteMarkdown
+          mode="streaming"
           components={{
             a: ({ href, children: linkChildren, ...linkProps }) => (
               <a
@@ -179,7 +179,7 @@ export const MessageResponse = React.memo(
           }}
         >
           {children}
-        </Markdown>
+        </Streamdown>
       </div>
     );
   },

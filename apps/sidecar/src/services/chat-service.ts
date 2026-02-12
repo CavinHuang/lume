@@ -260,4 +260,3 @@ export async function generateTitle(input: GenerateTitleInput): Promise<string |
 }
 
 export { CHAT_IPC_CHANNELS };
-

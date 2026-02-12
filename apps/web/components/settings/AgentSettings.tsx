@@ -58,6 +58,7 @@ export function AgentSettings(): React.ReactElement {
   const setActiveView = useSetAtom(activeViewAtom);
   const setAppMode = useSetAtom(appModeAtom);
   const bumpCapabilitiesVersion = useSetAtom(workspaceCapabilitiesVersionAtom);
+  const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom);
 
   const workspaceSlug = workspace?.slug ?? "";
   const [viewMode, setViewMode] = useState<ViewMode>("list");
@@ -87,10 +88,10 @@ export function AgentSettings(): React.ReactElement {
 
   useEffect(() => {
     void loadData();
-  }, [workspaceSlug]);
+  }, [workspaceSlug, capabilitiesVersion]);
 
   const buildMcpPrompt = (): string => {
-    const configPath = `~/.proma/agent-workspaces/${workspaceSlug}/mcp.json`;
+    const configPath = `~/.lume/agent-workspaces/${workspaceSlug}/mcp.json`;
     const currentConfig = JSON.stringify(mcpConfig, null, 2);
 
     return `请帮我配置当前工作区的 MCP 服务器，你要主动来帮我实现，你可以采用联网搜索深度研究来尝试，当前环境已经有 Claude Agent SDK 了，除非不确定的时候才来问我，否则默认将帮我完成安装，而不是指导我。
@@ -127,7 +128,7 @@ mcp.json 格式如下：
   };
 
   const buildSkillPrompt = (): string => {
-    const skillsDir = `~/.proma/agent-workspaces/${workspaceSlug}/skills/`;
+    const skillsDir = `~/.lume/agent-workspaces/${workspaceSlug}/skills/`;
     const skillList = skills.length > 0
       ? skills.map((item) => `- ${item.name}: ${item.description ?? "无描述"}`).join("\n")
       : "暂无 Skill";
@@ -304,7 +305,7 @@ ${skillList}
 
       <Button size="sm" className="w-full" type="button" onClick={() => { void handleConfigViaChat(buildMcpPrompt()); }}>
         <MessageSquare size={14} />
-        <span>跟 Proma Agent 对话完成配置</span>
+        <span>跟 Lume Agent 对话完成配置</span>
       </Button>
 
       <SettingsSection title="Skills" description="将 SKILL.md 放入工作区 skills/ 目录即可被 Agent 自动发现">
@@ -336,11 +337,11 @@ ${skillList}
             ))}
           </SettingsCard>
         )}
-        <p className="px-1 text-xs text-muted-foreground">路径: ~/.proma/agent-workspaces/{workspaceSlug}/skills/</p>
+        <p className="px-1 text-xs text-muted-foreground">路径: ~/.lume/agent-workspaces/{workspaceSlug}/skills/</p>
 
         <Button size="sm" className="w-full" type="button" onClick={() => { void handleConfigViaChat(buildSkillPrompt()); }}>
           <MessageSquare size={14} />
-          <span>跟 Proma Agent 对话完成配置</span>
+          <span>跟 Lume Agent 对话完成配置</span>
         </Button>
       </SettingsSection>
     </div>

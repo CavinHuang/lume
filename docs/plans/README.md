@@ -7,6 +7,7 @@ This folder contains closed-loop implementation tasks for the V1 desktop agent a
 ## Active Track (Fast MVP)
 1. `docs/plans/00-fast-mvp-proma-migration.md`
 2. Includes full Proma frontend interface migration to `apps/web`.
+3. Frontend parity execution checklist: `docs/plans/13-frontend-parity-checklist.md`.
 
 ## Legacy Track (Full V1 Plan)
 1. `docs/plans/01-monorepo-bootstrap.md`

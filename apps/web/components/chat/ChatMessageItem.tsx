@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useAtomValue } from "jotai";
-import { Trash2 } from "lucide-react";
+import { Pencil, RotateCcw, Trash2 } from "lucide-react";
 import type { ChatMessage } from "@lume/shared";
 import { userProfileAtom } from "@/atoms";
 import {
@@ -13,6 +13,7 @@ import {
   MessageContent,
   MessageHeader,
   MessageResponse,
+  MessageStopped,
   StreamingIndicator,
   UserMessageContent,
   Reasoning,
@@ -22,6 +23,8 @@ import {
 import { getModelLogo } from "@/lib/model-logo";
 import { CopyButton } from "./CopyButton";
 import { DeleteMessageDialog } from "./DeleteMessageDialog";
+import type { InlineEditSubmitPayload } from "./InlineEditForm";
+import { InlineEditForm } from "./InlineEditForm";
 import { UserAvatar } from "./UserAvatar";
 
 export function formatMessageTime(timestamp: number): string {
@@ -40,15 +43,29 @@ type ChatMessageItemProps = {
   message: ChatMessage;
   isStreaming?: boolean;
   isLastAssistant?: boolean;
+  allMessages?: ChatMessage[];
+  messageIndex?: number;
   onDeleteMessage?: (messageId: string) => Promise<void>;
+  onResendMessage?: (message: ChatMessage) => Promise<void>;
+  onStartInlineEdit?: (message: ChatMessage) => void;
+  onSubmitInlineEdit?: (message: ChatMessage, payload: InlineEditSubmitPayload) => Promise<void>;
+  onCancelInlineEdit?: () => void;
+  isInlineEditing?: boolean;
   isParallelMode?: boolean;
 };
+
+export type { InlineEditSubmitPayload } from "./InlineEditForm";
 
 export function ChatMessageItem({
   message,
   isStreaming = false,
   isLastAssistant = false,
   onDeleteMessage,
+  onResendMessage,
+  onStartInlineEdit,
+  onSubmitInlineEdit,
+  onCancelInlineEdit,
+  isInlineEditing = false,
   isParallelMode = false
 }: ChatMessageItemProps): React.ReactElement {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -65,6 +82,14 @@ export function ChatMessageItem({
       setDeleteDialogOpen(false);
     }
   };
+
+  const handleInlineEditSubmit = useCallback(
+    (payload: InlineEditSubmitPayload): void => {
+      if (!onSubmitInlineEdit) return;
+      void onSubmitInlineEdit(message, payload);
+    },
+    [message, onSubmitInlineEdit]
+  );
 
   const messageFrom = isParallelMode ? "assistant" : message.role;
 
@@ -112,26 +137,39 @@ export function ChatMessageItem({
                 </>
               ) : null}
 
-              {message.stopped && !message.content ? (
-                <div className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
-                  <span className="size-2 rounded-full bg-muted-foreground/40" />
-                  <span>已停止生成</span>
-                </div>
-              ) : null}
+              {message.stopped && !message.content ? <MessageStopped /> : null}
             </>
           ) : (
             <>
-              {message.attachments && message.attachments.length > 0 ? (
+              {!isInlineEditing && message.attachments && message.attachments.length > 0 ? (
                 <MessageAttachments attachments={message.attachments} />
               ) : null}
-              {message.content ? <UserMessageContent>{message.content}</UserMessageContent> : null}
+              {isInlineEditing ? (
+                <InlineEditForm
+                  message={message}
+                  onSubmit={handleInlineEditSubmit}
+                  onCancel={() => onCancelInlineEdit?.()}
+                />
+              ) : message.content ? (
+                <UserMessageContent>{message.content}</UserMessageContent>
+              ) : null}
             </>
           )}
         </MessageContent>
 
-        {(message.content || (message.attachments && message.attachments.length > 0)) && !isStreaming ? (
-          <MessageActions className="pl-[46px]">
+        {(message.content || (message.attachments && message.attachments.length > 0)) && !isStreaming && !isInlineEditing ? (
+          <MessageActions className="mt-0.5 pl-[46px]">
             <CopyButton content={message.content} />
+            {message.role === "user" && onResendMessage ? (
+              <MessageAction tooltip="重新发送" onClick={() => void onResendMessage(message)}>
+                <RotateCcw className="size-3.5" />
+              </MessageAction>
+            ) : null}
+            {message.role === "user" && onStartInlineEdit ? (
+              <MessageAction tooltip="编辑后重发" onClick={() => onStartInlineEdit(message)}>
+                <Pencil className="size-3.5" />
+              </MessageAction>
+            ) : null}
             {onDeleteMessage ? (
               <MessageAction tooltip="删除" onClick={() => setDeleteDialogOpen(true)}>
                 <Trash2 className="size-3.5" />
@@ -146,15 +184,9 @@ export function ChatMessageItem({
 
       <DeleteMessageDialog
         open={deleteDialogOpen}
-        title={isDeleting ? "正在删除..." : "确认删除该消息？"}
-        onCancel={() => {
-          if (!isDeleting) setDeleteDialogOpen(false);
-        }}
-        onConfirm={() => {
-          if (!isDeleting) {
-            void handleDeleteConfirm();
-          }
-        }}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={() => { void handleDeleteConfirm(); }}
+        isDeleting={isDeleting}
       />
     </>
   );
