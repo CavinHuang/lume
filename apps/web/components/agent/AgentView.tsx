@@ -55,14 +55,13 @@ import { cn } from "@/lib/utils";
 import { AgentHeader } from "./AgentHeader";
 import { AgentMessages } from "./AgentMessages";
 import type { AgentInlineEditSubmitPayload } from "./AgentMessages";
+import { AskUserQuestionPanel } from "./AskUserQuestionPanel";
 import { ContextUsageBadge } from "./ContextUsageBadge";
 import { FileBrowser } from "@/components/file-browser";
 import { AttachmentPreviewItem } from "@/components/chat/AttachmentPreviewItem";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 function fileToBase64(file: File): Promise<string> {
@@ -163,13 +162,15 @@ export function AgentView(): React.ReactElement {
   const [askUserAnswers, setAskUserAnswers] = useState<Record<string, { selected: string[]; otherText: string }>>({});
   const [askUserError, setAskUserError] = useState<string | null>(null);
   const [askUserSubmitting, setAskUserSubmitting] = useState(false);
-  const [todoPanelExpanded, setTodoPanelExpanded] = useState(true);
 
   type TodoItem = {
     content: string;
     status: "pending" | "in_progress" | "completed";
     activeForm?: string;
   };
+
+  const [todoPanelExpanded, setTodoPanelExpanded] = useState(true);
+  const prevTodoItemsRef = useRef<TodoItem[] | null>(null);
 
   const parseTodoItemsFromInput = useCallback((input: Record<string, unknown>): TodoItem[] | null => {
     if (!Array.isArray(input.todos)) return null;
@@ -209,6 +210,38 @@ export function AgentView(): React.ReactElement {
     if (!latestTodoItems || latestTodoItems.length === 0) return null;
     const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
     return `${completed}/${latestTodoItems.length}`;
+  }, [latestTodoItems]);
+
+  // 自动展开/收起 todo 面板
+  useEffect(() => {
+    if (!latestTodoItems || latestTodoItems.length === 0) return;
+
+    const allCompleted = latestTodoItems.every((todo) => todo.status === "completed");
+    const prevItems = prevTodoItemsRef.current;
+    const isInitialLoad = prevItems === null;
+
+    if (isInitialLoad) {
+      // 首次加载：全部完成则收起，否则展开
+      setTodoPanelExpanded(!allCompleted);
+    } else {
+      // 后续更新：检测状态变化
+      // 检查是否是新的 todo 写入（内容不同）
+      const isNewTodo = prevItems.length !== latestTodoItems.length ||
+        prevItems.some((prev, idx) => prev.content !== latestTodoItems[idx]?.content);
+
+      // 检查是否从非完成状态变为完成状态
+      const wasNotAllCompleted = !prevItems.every((todo) => todo.status === "completed");
+
+      if (isNewTodo && !allCompleted) {
+        // 新的 todo 写入，展开面板
+        setTodoPanelExpanded(true);
+      } else if (wasNotAllCompleted && allCompleted) {
+        // 所有 todo 完成，收起面板
+        setTodoPanelExpanded(false);
+      }
+    }
+
+    prevTodoItemsRef.current = latestTodoItems;
   }, [latestTodoItems]);
   const backendReady = agentChannelId !== null;
   const outgoingModelId = useMemo(() => {
@@ -505,6 +538,21 @@ export function AgentView(): React.ReactElement {
         map.set(payload.sessionId, payload.error);
         return map;
       });
+
+      const finalize = (): void => {
+        removeState(payload.sessionId);
+      };
+
+      if (payload.sessionId === currentSessionIdRef.current) {
+        void getAgentSessionMessages(payload.sessionId)
+          .then((next) => {
+            setMessages(next);
+            finalize();
+          })
+          .catch(() => finalize());
+      } else {
+        finalize();
+      }
     }));
 
     trackUnlisten(onAgentTitleUpdated(() => {
@@ -938,7 +986,7 @@ export function AgentView(): React.ReactElement {
   }
 
   return (
-    <>
+    <div className="relative h-full">
       <div className="flex h-full overflow-hidden">
         <div className="mx-auto flex h-full min-w-0 max-w-[min(72rem,100%)] flex-1 flex-col">
           <AgentHeader
@@ -1262,105 +1310,18 @@ export function AgentView(): React.ReactElement {
             })()
           ) : null}
         </div>
-      <Dialog
-        open={!!askUserQuestionRequest}
-        onOpenChange={(open) => {
-          if (!open) {
-            void cancelAskUserQuestion();
-          }
-        }}
-      >
-        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-[760px]">
-          <DialogHeader>
-            <DialogTitle>需要你确认几个问题</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {askUserQuestionRequest?.questions.map((question, questionIndex) => {
-              const answerState = askUserAnswers[question.header] ?? { selected: [], otherText: "" };
-              const hasOtherOption = question.options.some((item) => item.label.trim() === "其他");
-              const withOtherOption = hasOtherOption
-                ? question.options
-                : [
-                    ...question.options,
-                    {
-                      label: "其他",
-                      description: "手动输入自定义回答"
-                    }
-                  ];
-              const inputName = `${question.header}-${questionIndex}`;
-              return (
-                <div key={`${question.header}-${questionIndex}`} className="rounded-md border border-border p-3">
-                  <div className="mb-1 text-xs text-muted-foreground">{question.header}</div>
-                  <div className="mb-3 text-sm text-foreground">{question.question}</div>
-                  <div className="space-y-2">
-                    {withOtherOption.map((option, optionIndex) => {
-                      const optionValue = option.label === "其他" ? ASK_USER_OTHER_OPTION : option.label;
-                      const checked = answerState.selected.includes(optionValue);
-                      const inputType = question.multiSelect ? "checkbox" : "radio";
-                      return (
-                        <label key={`${question.header}-${optionValue}-${optionIndex}`} className="flex cursor-pointer items-start gap-2 rounded border border-border/70 px-2 py-1.5 text-sm hover:bg-accent/40">
-                          <input
-                            type={inputType}
-                            name={inputName}
-                            checked={checked}
-                            onChange={(event) => {
-                              updateAskAnswerOption(
-                                question.header,
-                                optionValue,
-                                event.target.checked,
-                                question.multiSelect
-                              );
-                            }}
-                            className="mt-0.5"
-                          />
-                          <span className="flex-1">
-                            <span className="block text-foreground">{option.label}</span>
-                            <span className="block text-xs text-muted-foreground">{option.description}</span>
-                          </span>
-                        </label>
-                      );
-                    })}
-                    {answerState.selected.includes(ASK_USER_OTHER_OPTION) ? (
-                      <Input
-                        value={answerState.otherText}
-                        onChange={(event) => updateAskOtherText(question.header, event.target.value)}
-                        placeholder="请输入自定义回答"
-                        disabled={askUserSubmitting}
-                      />
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-            {askUserError ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                {askUserError}
-              </div>
-            ) : null}
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  void cancelAskUserQuestion();
-                }}
-                disabled={askUserSubmitting}
-              >
-                取消
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  void submitAskUserQuestion();
-                }}
-                disabled={askUserSubmitting}
-              >
-                {askUserSubmitting ? "提交中..." : "提交回答"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+      {askUserQuestionRequest ? (
+        <AskUserQuestionPanel
+          request={askUserQuestionRequest}
+          answers={askUserAnswers}
+          error={askUserError}
+          submitting={askUserSubmitting}
+          onUpdateAnswerOption={updateAskAnswerOption}
+          onUpdateOtherText={updateAskOtherText}
+          onSubmit={() => { void submitAskUserQuestion(); }}
+          onCancel={() => { void cancelAskUserQuestion(); }}
+        />
+      ) : null}
+    </div>
   );
 }
