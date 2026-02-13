@@ -22,7 +22,7 @@ const MEMORY_CONFIG_VERSION = 1;
 
 const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | "tools" | "citations">> = {
   version: MEMORY_CONFIG_VERSION,
-  tools: { allow: ["group:memory"] },
+  tools: { allow: ["group:memory", "memory_save"] },
   citations: "auto"
 };
 const DEFAULT_SOURCES: MemorySourceMode[] = ["memory"];
