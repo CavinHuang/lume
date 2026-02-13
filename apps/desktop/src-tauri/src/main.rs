@@ -332,7 +332,29 @@ fn resolve_bun_binary() -> String {
     "bun".to_string()
 }
 
-fn spawn_sidecar_default() -> Option<Child> {
+fn resolve_default_skills_dir(app: &tauri::AppHandle, sidecar_dir: &PathBuf) -> Option<String> {
+    if let Ok(configured) = std::env::var("LUME_DEFAULT_SKILLS_DIR") {
+        if !configured.trim().is_empty() && PathBuf::from(&configured).exists() {
+            return Some(configured);
+        }
+    }
+
+    let dev_dir = sidecar_dir.join("default-skills");
+    if dev_dir.exists() {
+        return Some(dev_dir.to_string_lossy().to_string());
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let packaged_dir = resource_dir.join("default-skills");
+        if packaged_dir.exists() {
+            return Some(packaged_dir.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
+fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
     let sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar");
     if !sidecar_dir.exists() {
         eprintln!(
@@ -344,6 +366,7 @@ fn spawn_sidecar_default() -> Option<Child> {
 
     let mut process = Command::new("node");
     let bun_bin = resolve_bun_binary();
+    let default_skills_dir = resolve_default_skills_dir(app, &sidecar_dir);
     process
         .arg("scripts/stdin-bridge.mjs")
         .env("LUME_BUN_BIN", bun_bin.clone())
@@ -351,13 +374,17 @@ fn spawn_sidecar_default() -> Option<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
+    if let Some(skills_dir) = default_skills_dir.as_ref() {
+        process.env("LUME_DEFAULT_SKILLS_DIR", skills_dir);
+    }
 
     match process.spawn() {
         Ok(child) => {
             println!(
-                "[desktop] sidecar process booted from default path: {} (runtime=node-bridge, bun={})",
+                "[desktop] sidecar process booted from default path: {} (runtime=node-bridge, bun={}, default-skills={})",
                 sidecar_dir.display(),
-                bun_bin
+                bun_bin,
+                default_skills_dir.as_deref().unwrap_or("not-found")
             );
             Some(child)
         }
@@ -373,7 +400,7 @@ fn main() {
         .manage(SidecarProcess::new())
         .setup(|app| {
             let state = app.state::<SidecarProcess>();
-            let mut child = match spawn_sidecar_from_env().or_else(spawn_sidecar_default) {
+            let mut child = match spawn_sidecar_from_env().or_else(|| spawn_sidecar_default(&app.handle())) {
                 Some(child) => child,
                 None => return Ok(()),
             };

@@ -397,6 +397,16 @@ export async function deleteAgentSessionById(sessionId: string): Promise<{ ok: t
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_SESSION, { sessionId });
 }
 
+export async function truncateAgentMessagesFrom(
+  sessionId: string,
+  messageId: string
+): Promise<AgentMessage[]> {
+  return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM, {
+    sessionId,
+    messageId
+  });
+}
+
 export async function listAgentWorkspaces(): Promise<AgentWorkspace[]> {
   return sidecarCall<AgentWorkspace[]>(AGENT_IPC_CHANNELS.LIST_WORKSPACES);
 }
@@ -551,6 +561,14 @@ export async function onAgentCapabilitiesChanged(
   handler: () => void
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.CAPABILITIES_CHANGED, () => {
+    handler();
+  });
+}
+
+export async function onAgentWorkspaceFilesChanged(
+  handler: () => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED, () => {
     handler();
   });
 }

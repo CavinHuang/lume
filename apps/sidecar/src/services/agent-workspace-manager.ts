@@ -30,6 +30,7 @@ import {
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
 } from "./config-paths";
+import { seedDefaultSkills } from "./default-skills-seeder";
 
 interface AgentWorkspacesIndex {
   version: number;
@@ -83,6 +84,8 @@ function slugify(name: string, existingSlugs: Set<string>): string {
 }
 
 function copyDefaultSkills(workspaceSlug: string): void {
+  // Ensure ~/.lume/default-skills has been populated from bundled defaults.
+  seedDefaultSkills();
   const defaultDir = getDefaultSkillsDir();
   const targetDir = getWorkspaceSkillsDir(workspaceSlug);
 
@@ -90,15 +93,35 @@ function copyDefaultSkills(workspaceSlug: string): void {
     const entries = readdirSync(defaultDir, { withFileTypes: true });
     if (entries.length === 0) return;
 
-    cpSync(defaultDir, targetDir, { recursive: true });
-    console.log(`[Agent 工作区] 已复制默认 Skills 到: ${workspaceSlug}`);
+    let copiedCount = 0;
+    for (const entry of entries) {
+      const source = join(defaultDir, entry.name);
+      const target = join(targetDir, entry.name);
+      if (existsSync(target)) continue;
+      cpSync(source, target, { recursive: true });
+      copiedCount += 1;
+    }
+    if (copiedCount > 0) {
+      console.log(`[Agent 工作区] 已补齐默认 Skills (${copiedCount}) 到: ${workspaceSlug}`);
+    }
   } catch {
     // default-skills 不存在或复制失败时跳过
   }
 }
 
+export function ensureWorkspaceAgentAssets(workspaceSlug: string, workspaceName?: string): void {
+  if (workspaceName) {
+    ensurePluginManifest(workspaceSlug, workspaceName);
+  }
+  copyDefaultSkills(workspaceSlug);
+}
+
 export function listAgentWorkspaces(): AgentWorkspace[] {
-  return readIndex().workspaces.sort((a, b) => b.updatedAt - a.updatedAt);
+  const workspaces = readIndex().workspaces;
+  for (const workspace of workspaces) {
+    ensureWorkspaceAgentAssets(workspace.slug, workspace.name);
+  }
+  return workspaces.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function getAgentWorkspace(id: string): AgentWorkspace | undefined {
@@ -124,8 +147,7 @@ export function createAgentWorkspace(name: string): AgentWorkspace {
   };
 
   getAgentWorkspacePath(slug);
-  ensurePluginManifest(slug, name);
-  copyDefaultSkills(slug);
+  ensureWorkspaceAgentAssets(slug, name);
 
   index.workspaces.push(workspace);
   writeIndex(index);
@@ -173,7 +195,7 @@ export function ensureDefaultWorkspace(): AgentWorkspace {
   const existing = index.workspaces.find((workspace) => workspace.slug === "default");
 
   if (existing) {
-    ensurePluginManifest(existing.slug, existing.name);
+    ensureWorkspaceAgentAssets(existing.slug, existing.name);
     return existing;
   }
 
@@ -187,8 +209,7 @@ export function ensureDefaultWorkspace(): AgentWorkspace {
   };
 
   getAgentWorkspacePath("default");
-  ensurePluginManifest("default", "默认工作区");
-  copyDefaultSkills("default");
+  ensureWorkspaceAgentAssets("default", "默认工作区");
 
   index.workspaces.push(workspace);
   writeIndex(index);

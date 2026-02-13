@@ -2,11 +2,11 @@
 
 import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { themeModeAtom, type ThemeMode, workspaceCapabilitiesVersionAtom } from "./atoms";
+import { themeModeAtom, type ThemeMode, workspaceCapabilitiesVersionAtom, workspaceFilesVersionAtom } from "./atoms";
 import { AppShell } from "./components/app-shell/AppShell";
 import { TooltipProvider } from "./components/ui/tooltip";
 import type { AppShellContextType } from "./contexts/AppShellContext";
-import { onAgentCapabilitiesChanged } from "./lib/desktop-api";
+import { onAgentCapabilitiesChanged, onAgentWorkspaceFilesChanged } from "./lib/desktop-api";
 
 function resolveTheme(mode: ThemeMode): "dark" | "light" {
   if (mode !== "system") {
@@ -27,6 +27,7 @@ function applyThemeToDocument(theme: "dark" | "light"): void {
 export default function App(): React.ReactElement {
   const mode = useAtomValue(themeModeAtom);
   const bumpCapabilitiesVersion = useSetAtom(workspaceCapabilitiesVersionAtom);
+  const bumpFilesVersion = useSetAtom(workspaceFilesVersionAtom);
   const contextValue: AppShellContextType = {};
 
   useEffect(() => {
@@ -70,6 +71,30 @@ export default function App(): React.ReactElement {
       }
     };
   }, [bumpCapabilitiesVersion]);
+
+  useEffect(() => {
+    let dispose: UnlistenHandle | null = null;
+    let destroyed = false;
+
+    void onAgentWorkspaceFilesChanged(() => {
+      bumpFilesVersion((value) => value + 1);
+    }).then((unlisten) => {
+      if (destroyed) {
+        void unlisten();
+        return;
+      }
+      dispose = unlisten;
+    }).catch((error) => {
+      console.error("[App] subscribe workspace files changed failed:", error);
+    });
+
+    return () => {
+      destroyed = true;
+      if (dispose) {
+        void dispose();
+      }
+    };
+  }, [bumpFilesVersion]);
 
   return (
     <TooltipProvider delayDuration={200}>

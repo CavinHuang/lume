@@ -25,7 +25,7 @@ import {
   getAgentSessionsDir,
   getAgentSessionsIndexPath
 } from "./config-paths";
-import { getAgentWorkspace } from "./agent-workspace-manager";
+import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 
 interface AgentSessionsIndex {
   version: number;
@@ -91,6 +91,7 @@ export function createAgentSession(
   if (workspaceId) {
     const workspace = getAgentWorkspace(workspaceId);
     if (workspace) {
+      ensureWorkspaceAgentAssets(workspace.slug, workspace.name);
       getAgentSessionWorkspacePath(workspace.slug, meta.id);
     }
   }
@@ -186,4 +187,21 @@ export function deleteAgentSession(id: string): void {
   }
 
   console.log(`[Agent 会话] 已删除会话: ${removed.title} (${removed.id})`);
+}
+
+export function truncateAgentMessagesFrom(sessionId: string, messageId: string): AgentMessage[] {
+  const messages = getAgentSessionMessages(sessionId);
+  const targetIndex = messages.findIndex((msg) => msg.id === messageId);
+  if (targetIndex === -1) {
+    return messages;
+  }
+
+  const kept = messages.slice(0, targetIndex);
+  const content = kept.map((msg) => JSON.stringify(msg)).join("\n");
+  const payload = content ? `${content}\n` : "";
+  writeFileSync(getAgentSessionMessagesPath(sessionId), payload, "utf-8");
+
+  // 截断会话后重置 SDK 会话衔接，避免 resume 命中旧上下文。
+  updateAgentSessionMeta(sessionId, { sdkSessionId: undefined });
+  return kept;
 }

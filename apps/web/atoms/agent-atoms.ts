@@ -288,6 +288,7 @@ export const agentPermissionModeAtom = atomWithStorage<NonNullable<AgentSendInpu
 export const agentPendingPromptAtom = atom<{ sessionId: string; message: string } | null>(null);
 export const agentPendingFilesAtom = atom<AgentPendingFile[]>([]);
 export const workspaceCapabilitiesVersionAtom = atom<number>(0);
+export const workspaceFilesVersionAtom = atom<number>(0);
 export const currentAgentWorkspaceIdAtom = atom<string | null>(null);
 export const currentAgentSessionIdAtom = atom<string | null>(null);
 export const currentAgentMessagesAtom = atom<AgentMessage[]>([]);

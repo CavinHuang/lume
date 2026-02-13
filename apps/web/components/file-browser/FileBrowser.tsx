@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { FileEntry } from "@lume/shared";
+import { useAtomValue } from "jotai";
 import {
   ChevronDown,
   ChevronRight,
@@ -33,6 +34,7 @@ import {
   showAgentFileInFolder
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
+import { workspaceFilesVersionAtom } from "@/atoms";
 
 interface ContextMenuState {
   x: number;
@@ -53,6 +55,7 @@ export function FileBrowser({
   rootPath,
   onClose
 }: FileBrowserProps): React.ReactElement {
+  const filesVersion = useAtomValue(workspaceFilesVersionAtom);
   const [entries, setEntries] = React.useState<FileEntry[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -76,7 +79,7 @@ export function FileBrowser({
 
   React.useEffect(() => {
     void loadRoot();
-  }, [loadRoot]);
+  }, [loadRoot, filesVersion]);
 
   React.useEffect(() => {
     if (!contextMenu) return;

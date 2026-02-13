@@ -1,9 +1,10 @@
 "use client";
 
-import { Bot, FileImage, FileText } from "lucide-react";
+import * as React from "react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
 import { useAtomValue } from "jotai";
+import { Bot, FileImage, FileText, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import {
   agentModelIdAtom,
   agentStreamingAtom,
@@ -11,7 +12,6 @@ import {
   agentStreamingTimelineEventsAtom,
   currentAgentMessagesAtom,
   extractTimelineEvents,
-  type TimelineEvent,
   type ToolActivity,
   userProfileAtom
 } from "@/atoms";
@@ -20,6 +20,8 @@ import {
   ConversationContent,
   ConversationScrollButton,
   Message,
+  MessageAction,
+  MessageActions,
   MessageContent,
   MessageHeader,
   MessageLoading,
@@ -28,9 +30,25 @@ import {
   UserMessageContent,
 } from "@/components/ai-elements";
 import { formatMessageTime } from "@/components/chat/ChatMessageItem";
+import { CopyButton } from "@/components/chat/CopyButton";
+import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { getModelLogo } from "@/lib/model-logo";
 import { EventTimeline } from "./EventTimeline";
+
+export interface AgentInlineEditSubmitPayload {
+  content: string;
+}
+
+interface AgentMessagesProps {
+  isStreaming?: boolean;
+  inlineEditingMessageId?: string | null;
+  onDeleteMessage?: (message: AgentMessage) => Promise<void>;
+  onResendMessage?: (message: AgentMessage) => Promise<void>;
+  onStartInlineEdit?: (message: AgentMessage) => void;
+  onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
+  onCancelInlineEdit?: () => void;
+}
 
 function EmptyState(): React.ReactElement {
   return (
@@ -122,14 +140,14 @@ interface AttachedFileRef {
   path: string;
 }
 
-function parseAttachedFiles(content: string): { files: AttachedFileRef[]; text: string } {
+function splitAttachedFiles(content: string): { block: string | null; files: AttachedFileRef[]; text: string } {
   const regex = /<attached_files>\n?([\s\S]*?)\n?<\/attached_files>\n*/;
   const match = content.match(regex);
-  if (!match) return { files: [], text: content };
+  if (!match) return { block: null, files: [], text: content };
 
   const files: AttachedFileRef[] = [];
-  const block = match[1] ?? "";
-  for (const line of block.split("\n")) {
+  const blockBody = match[1] ?? "";
+  for (const line of blockBody.split("\n")) {
     const lineMatch = line.match(/^-\s+(.+?):\s+(.+)$/);
     if (lineMatch && lineMatch.length >= 3) {
       const [, filename = "", path = ""] = lineMatch;
@@ -137,8 +155,9 @@ function parseAttachedFiles(content: string): { files: AttachedFileRef[]; text: 
     }
   }
 
+  const block = `<attached_files>\n${blockBody}\n</attached_files>`;
   const text = content.replace(regex, "").trim();
-  return { files, text };
+  return { block, files, text };
 }
 
 function isImageFile(filename: string): boolean {
@@ -155,11 +174,70 @@ function AttachedFileChip({ file }: { file: AttachedFileRef }): React.ReactEleme
   );
 }
 
-function AgentMessageItem({ message }: { message: AgentMessage }): React.ReactElement | null {
+function InlineEditForm({
+  initialValue,
+  onSubmit,
+  onCancel
+}: {
+  initialValue: string;
+  onSubmit: (payload: AgentInlineEditSubmitPayload) => void;
+  onCancel: () => void;
+}): React.ReactElement {
+  const [value, setValue] = React.useState(initialValue);
+
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        className="min-h-[84px] w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+        placeholder="编辑消息..."
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onSubmit({ content: value })}
+          className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          保存并重发
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs text-muted-foreground hover:bg-muted"
+        >
+          取消
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgentMessageItem({
+  message,
+  isStreaming,
+  isInlineEditing,
+  onDeleteMessage,
+  onResendMessage,
+  onStartInlineEdit,
+  onSubmitInlineEdit,
+  onCancelInlineEdit
+}: {
+  message: AgentMessage;
+  isStreaming: boolean;
+  isInlineEditing: boolean;
+  onDeleteMessage?: (message: AgentMessage) => Promise<void>;
+  onResendMessage?: (message: AgentMessage) => Promise<void>;
+  onStartInlineEdit?: (message: AgentMessage) => void;
+  onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
+  onCancelInlineEdit?: () => void;
+}): React.ReactElement | null {
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
   const userProfile = useAtomValue(userProfileAtom);
 
   if (message.role === "user") {
-    const { files: attachedFiles, text: messageText } = parseAttachedFiles(message.content);
+    const { files: attachedFiles, text: messageText } = splitAttachedFiles(message.content);
 
     return (
       <Message from="user">
@@ -179,15 +257,61 @@ function AgentMessageItem({ message }: { message: AgentMessage }): React.ReactEl
               ))}
             </div>
           ) : null}
-          {messageText ? <UserMessageContent>{messageText}</UserMessageContent> : null}
+          {isInlineEditing ? (
+            <InlineEditForm
+              initialValue={messageText}
+              onSubmit={(payload) => {
+                if (!onSubmitInlineEdit) return;
+                void onSubmitInlineEdit(message, payload);
+              }}
+              onCancel={() => onCancelInlineEdit?.()}
+            />
+          ) : messageText ? (
+            <UserMessageContent>{messageText}</UserMessageContent>
+          ) : null}
         </MessageContent>
+
+        {!isInlineEditing && !isStreaming ? (
+          <MessageActions className="mt-0.5 pl-[46px]">
+            <CopyButton content={messageText || message.content} />
+            {onResendMessage ? (
+              <MessageAction tooltip="重新发送" onClick={() => void onResendMessage(message)}>
+                <RotateCcw className="size-3.5" />
+              </MessageAction>
+            ) : null}
+            {onStartInlineEdit ? (
+              <MessageAction tooltip="编辑后重发" onClick={() => onStartInlineEdit(message)}>
+                <Pencil className="size-3.5" />
+              </MessageAction>
+            ) : null}
+            {onDeleteMessage ? (
+              <MessageAction tooltip="删除" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="size-3.5" />
+              </MessageAction>
+            ) : null}
+          </MessageActions>
+        ) : null}
+
+        <DeleteMessageDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={() => {
+            if (!onDeleteMessage) return;
+            setIsDeleting(true);
+            void onDeleteMessage(message).finally(() => {
+              setIsDeleting(false);
+              setDeleteDialogOpen(false);
+            });
+          }}
+          isDeleting={isDeleting}
+        />
       </Message>
     );
   }
 
   if (message.role === "assistant") {
-    // 使用新的时序事件提取函数
     const timelineEvents = extractTimelineEvents(message);
+    const toolActivities = extractToolActivities(message.events);
 
     return (
       <Message from="assistant">
@@ -203,8 +327,7 @@ function AgentMessageItem({ message }: { message: AgentMessage }): React.ReactEl
               <EventTimeline events={timelineEvents} />
             </div>
           ) : null}
-          {/* 兼容：如果有 content 但没有 events，直接显示（用于旧消息） */}
-          {message.content && timelineEvents.length === 0 ? (
+          {message.content && timelineEvents.length === 0 && toolActivities.length === 0 ? (
             <MessageResponse>{message.content}</MessageResponse>
           ) : null}
         </MessageContent>
@@ -215,7 +338,15 @@ function AgentMessageItem({ message }: { message: AgentMessage }): React.ReactEl
   return null;
 }
 
-export function AgentMessages(): React.ReactElement {
+export function AgentMessages({
+  isStreaming = false,
+  inlineEditingMessageId = null,
+  onDeleteMessage,
+  onResendMessage,
+  onStartInlineEdit,
+  onSubmitInlineEdit,
+  onCancelInlineEdit
+}: AgentMessagesProps): React.ReactElement {
   const messages = useAtomValue(currentAgentMessagesAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const streamingContent = useAtomValue(agentStreamingContentAtom);
@@ -227,6 +358,8 @@ export function AgentMessages(): React.ReactElement {
     isStreaming: streaming
   });
 
+  const actionsDisabled = isStreaming || streaming;
+
   return (
     <Conversation>
       <ConversationContent>
@@ -235,7 +368,17 @@ export function AgentMessages(): React.ReactElement {
         ) : (
           <>
             {messages.map((message) => (
-              <AgentMessageItem key={message.id} message={message} />
+              <AgentMessageItem
+                key={message.id}
+                message={message}
+                isStreaming={actionsDisabled}
+                isInlineEditing={inlineEditingMessageId === message.id}
+                onDeleteMessage={actionsDisabled ? undefined : onDeleteMessage}
+                onResendMessage={actionsDisabled ? undefined : onResendMessage}
+                onStartInlineEdit={actionsDisabled ? undefined : onStartInlineEdit}
+                onSubmitInlineEdit={onSubmitInlineEdit}
+                onCancelInlineEdit={onCancelInlineEdit}
+              />
             ))}
 
             {(streaming || smoothContent) ? (

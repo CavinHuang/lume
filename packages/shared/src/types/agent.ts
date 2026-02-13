@@ -400,6 +400,8 @@ export const AGENT_IPC_CHANNELS = {
   UPDATE_TITLE: 'agent:update-title',
   /** 删除会话 */
   DELETE_SESSION: 'agent:delete-session',
+  /** 从指定消息开始截断会话（包含该消息） */
+  TRUNCATE_MESSAGES_FROM: 'agent:truncate-messages-from',
 
   // 工作区管理
   /** 获取工作区列表 */

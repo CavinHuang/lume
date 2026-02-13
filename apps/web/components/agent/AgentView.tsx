@@ -47,12 +47,14 @@ import {
   copyFolderToAgentSession,
   saveFilesToAgentSession,
   sendAgentMessage,
+  truncateAgentMessagesFrom,
   submitAgentAskUserQuestionAnswers,
   stopAgentRun
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
 import { AgentHeader } from "./AgentHeader";
 import { AgentMessages } from "./AgentMessages";
+import type { AgentInlineEditSubmitPayload } from "./AgentMessages";
 import { ContextUsageBadge } from "./ContextUsageBadge";
 import { FileBrowser } from "@/components/file-browser";
 import { AttachmentPreviewItem } from "@/components/chat/AttachmentPreviewItem";
@@ -119,6 +121,16 @@ function readDirectoryRecursive(
 
 const ASK_USER_OTHER_OPTION = "__other__";
 
+function splitAttachedFiles(content: string): { block: string | null; text: string } {
+  const regex = /<attached_files>\n?([\s\S]*?)\n?<\/attached_files>\n*/;
+  const match = content.match(regex);
+  if (!match) return { block: null, text: content };
+  const blockBody = match[1] ?? "";
+  const block = `<attached_files>\n${blockBody}\n</attached_files>`;
+  const text = content.replace(regex, "").trim();
+  return { block, text };
+}
+
 export function AgentView(): React.ReactElement {
   const [sessionId] = useAtom(currentAgentSessionIdAtom);
   const session = useAtomValue(currentAgentSessionAtom);
@@ -145,6 +157,7 @@ export function AgentView(): React.ReactElement {
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
+  const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
   const [modeNotice, setModeNotice] = useState<string | null>(null);
   const [askUserQuestionRequest, setAskUserQuestionRequest] = useState<AgentAskUserQuestionRequest | null>(null);
   const [askUserAnswers, setAskUserAnswers] = useState<Record<string, { selected: string[]; otherText: string }>>({});
@@ -377,6 +390,7 @@ export function AgentView(): React.ReactElement {
 
     setPendingFiles([]);
     setPendingFolderRefs([]);
+    setInlineEditingMessageId(null);
     setInputContent("");
     void getAgentSessionMessages(sessionId).then(setMessages);
   }, [sessionId, setMessages]);
@@ -793,6 +807,107 @@ export function AgentView(): React.ReactElement {
     setMessages
   ]);
 
+  const sendFromMessageContent = useCallback((content: string): void => {
+    if (!sessionId || !backendReady || streaming) return;
+
+    setStreamErrors((prev) => {
+      const map = new Map(prev);
+      map.delete(sessionId);
+      return map;
+    });
+    setStreamingStates((prev) => {
+      const map = new Map(prev);
+      map.set(sessionId, {
+        running: true,
+        content: "",
+        toolActivities: [],
+        events: [],
+        model: outgoingModelId
+      });
+      return map;
+    });
+
+    const tempMessage: AgentMessage = {
+      id: `temp-${Date.now()}`,
+      role: "user",
+      content,
+      createdAt: Date.now()
+    };
+    setMessages((prev) => [...prev, tempMessage]);
+
+    void sendAgentMessage({
+      sessionId,
+      userMessage: content,
+      channelId: agentChannelId ?? undefined,
+      modelId: outgoingModelId,
+      workspaceId: workspaceId ?? undefined,
+      chatType: "direct",
+      permissionMode: agentPermissionMode
+    }).catch((error) => {
+      console.error("[AgentView] resend failed", error);
+      setStreamingStates((prev) => {
+        if (!prev.has(sessionId)) return prev;
+        const map = new Map(prev);
+        map.delete(sessionId);
+        return map;
+      });
+    });
+  }, [
+    sessionId,
+    backendReady,
+    streaming,
+    agentChannelId,
+    outgoingModelId,
+    workspaceId,
+    agentPermissionMode,
+    setStreamErrors,
+    setStreamingStates,
+    setMessages
+  ]);
+
+  const truncateFromMessage = useCallback(async (messageId: string): Promise<void> => {
+    if (!sessionId) return;
+    const updated = await truncateAgentMessagesFrom(sessionId, messageId);
+    setMessages(updated);
+  }, [sessionId, setMessages]);
+
+  const handleResendMessage = useCallback(async (message: AgentMessage): Promise<void> => {
+    if (streaming || !sessionId) return;
+    await truncateFromMessage(message.id);
+    sendFromMessageContent(message.content ?? "");
+  }, [sessionId, streaming, sendFromMessageContent, truncateFromMessage]);
+
+  const handleDeleteMessage = useCallback(async (message: AgentMessage): Promise<void> => {
+    if (streaming || !sessionId) return;
+    await truncateFromMessage(message.id);
+    setInlineEditingMessageId(null);
+  }, [sessionId, streaming, truncateFromMessage]);
+
+  const handleStartInlineEdit = useCallback((message: AgentMessage): void => {
+    if (streaming) return;
+    setInlineEditingMessageId(message.id);
+  }, [streaming]);
+
+  const handleCancelInlineEdit = useCallback((): void => {
+    setInlineEditingMessageId(null);
+  }, []);
+
+  const handleSubmitInlineEdit = useCallback(async (
+    message: AgentMessage,
+    payload: AgentInlineEditSubmitPayload
+  ): Promise<void> => {
+    if (streaming || !sessionId) return;
+    const { block } = splitAttachedFiles(message.content ?? "");
+    const text = payload.content.trim();
+    const nextContent = block
+      ? (text ? `${block}\n\n${text}` : block)
+      : text;
+    if (!nextContent) return;
+    await truncateFromMessage(message.id);
+    sendFromMessageContent(nextContent);
+    setInlineEditingMessageId(null);
+  }, [sessionId, streaming, truncateFromMessage, sendFromMessageContent]);
+
   const handleModelSelect = useCallback((option: ModelOption): void => {
     setAgentChannelId(option.channelId);
     setAgentModelId(option.modelId);
@@ -831,7 +946,15 @@ export function AgentView(): React.ReactElement {
             fileBrowserOpen={fileBrowserOpen}
           />
 
-          <AgentMessages />
+          <AgentMessages
+            isStreaming={streaming}
+            inlineEditingMessageId={inlineEditingMessageId}
+            onDeleteMessage={handleDeleteMessage}
+            onResendMessage={handleResendMessage}
+            onStartInlineEdit={handleStartInlineEdit}
+            onSubmitInlineEdit={handleSubmitInlineEdit}
+            onCancelInlineEdit={handleCancelInlineEdit}
+          />
 
           {latestTodoItems && latestTodoItems.length > 0 ? (
             <div className="mb-2 ml-[72px] mr-4 inline-flex max-w-[calc(100%-5.5rem)] flex-col rounded-md border border-border/60 bg-muted/20 px-3 py-2">

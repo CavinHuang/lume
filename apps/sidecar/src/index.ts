@@ -48,6 +48,7 @@ import {
   deleteAgentSession,
   getAgentSessionMessages,
   listAgentSessions,
+  truncateAgentMessagesFrom,
   updateAgentSessionMeta
 } from "./services/agent-session-manager";
 import {
@@ -86,6 +87,7 @@ import {
 } from "./services/global-discovery-service";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory-sync-watcher";
+import { seedDefaultSkills } from "./services/default-skills-seeder";
 import {
   getWorkspaceMemoryFile,
   getWorkspaceMemoryStatus,
@@ -349,6 +351,13 @@ const handlers: Record<string, RpcHandler> = {
     deleteAgentSession(sessionId);
     return { ok: true };
   },
+  [AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM]: async (params) => {
+    const p = asObject(params);
+    const sessionId = asString(p.sessionId);
+    const messageId = asString(p.messageId);
+    if (!sessionId || !messageId) throw new Error("缺少 sessionId 或 messageId");
+    return truncateAgentMessagesFrom(sessionId, messageId);
+  },
 
   [AGENT_IPC_CHANNELS.LIST_WORKSPACES]: async () => listAgentWorkspaces(),
   [AGENT_IPC_CHANNELS.CREATE_WORKSPACE]: async (params) => {
@@ -576,6 +585,7 @@ async function handleRpcLine(line: string): Promise<void> {
 
 function boot(): void {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
+  seedDefaultSkills();
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
   startMemorySyncWatcher();
   const stopWatcher = (): void => {
