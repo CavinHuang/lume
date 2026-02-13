@@ -9,8 +9,10 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
+use log::{error, info, warn};
 use tauri::Emitter;
 use tauri::Manager;
+use tauri_plugin_log::{Target, TargetKind};
 
 type PendingResponseMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
 const SIDECAR_RESPONSE_TIMEOUT_SECS: u64 = 45;
@@ -148,7 +150,7 @@ async fn sidecar_call_internal(
     params: serde_json::Value,
     _app: &tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    eprintln!("[desktop] sidecar_call: {method}");
+    info!("[desktop] sidecar_call: {method}");
     let request_id = NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed);
 
     let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
@@ -190,7 +192,7 @@ async fn sidecar_call_internal(
             return Err(format!("flush sidecar request failed: {error}"));
         }
     }
-    eprintln!("[desktop] sidecar_write_ok: id={request_id} method={method}");
+    info!("[desktop] sidecar_write_ok: id={request_id} method={method}");
 
     let recv_result = tauri::async_runtime::spawn_blocking(move || {
         rx.recv_timeout(Duration::from_secs(SIDECAR_RESPONSE_TIMEOUT_SECS))
@@ -248,7 +250,7 @@ fn spawn_sidecar_stdout_reader(
             };
 
             if let Some(response_id) = parsed.get("id").and_then(serde_json::Value::as_u64) {
-                eprintln!("[desktop] sidecar_response: id={response_id}");
+                info!("[desktop] sidecar_response: id={response_id}");
                 let sender = pending
                     .lock()
                     .ok()
@@ -272,7 +274,7 @@ fn spawn_sidecar_stdout_reader(
             }
 
             if let Some(method) = parsed.get("method").and_then(serde_json::Value::as_str) {
-                eprintln!("[desktop] sidecar_event: {method}");
+                info!("[desktop] sidecar_event: {method}");
                 let payload = serde_json::json!({
                     "method": method,
                     "params": parsed.get("params").cloned().unwrap_or(serde_json::Value::Null),
@@ -312,11 +314,11 @@ fn spawn_sidecar_from_env() -> Option<Child> {
 
     match process.spawn() {
         Ok(child) => {
-            println!("[desktop] sidecar process booted from LUME_SIDECAR_CMD");
+            info!("[desktop] sidecar process booted from LUME_SIDECAR_CMD");
             Some(child)
         }
         Err(error) => {
-            eprintln!("[desktop] failed to spawn sidecar: {error}");
+            error!("[desktop] failed to spawn sidecar: {error}");
             None
         }
     }
@@ -357,7 +359,7 @@ fn resolve_default_skills_dir(app: &tauri::AppHandle, sidecar_dir: &PathBuf) -> 
 fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
     let sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar");
     if !sidecar_dir.exists() {
-        eprintln!(
+        warn!(
             "[desktop] default sidecar dir not found: {}",
             sidecar_dir.display()
         );
@@ -380,7 +382,7 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
 
     match process.spawn() {
         Ok(child) => {
-            println!(
+            info!(
                 "[desktop] sidecar process booted from default path: {} (runtime=node-bridge, bun={}, default-skills={})",
                 sidecar_dir.display(),
                 bun_bin,
@@ -389,14 +391,38 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
             Some(child)
         }
         Err(error) => {
-            eprintln!("[desktop] failed to spawn default sidecar: {error}");
+            error!("[desktop] failed to spawn default sidecar: {error}");
             None
         }
     }
 }
 
+fn get_logs_dir() -> PathBuf {
+    // 统一使用 ~/.lume/logs 目录
+    if let Some(home) = dirs::home_dir() {
+        let logs_dir = home.join(".lume").join("logs");
+        if !logs_dir.exists() {
+            let _ = std::fs::create_dir_all(&logs_dir);
+        }
+        return logs_dir;
+    }
+    PathBuf::from(".")
+}
+
 fn main() {
+    // 获取日志目录
+    let logs_dir = get_logs_dir();
+
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::Stderr),  // 控制台输出
+                    Target::new(TargetKind::Folder { path: logs_dir.clone(), file_name: Some("desktop.log".into()) }),  // 文件输出
+                ])
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .manage(SidecarProcess::new())
         .setup(|app| {
             let state = app.state::<SidecarProcess>();
@@ -412,7 +438,7 @@ fn main() {
                     app.handle().clone(),
                 );
             } else {
-                eprintln!("[desktop] sidecar stdout unavailable after spawn");
+                error!("[desktop] sidecar stdout unavailable after spawn");
             }
 
             if let Ok(mut slot) = state.child.lock() {
@@ -441,7 +467,7 @@ fn main() {
                     if let Ok(mut slot) = state.child.lock() {
                         if let Some(child) = slot.as_mut() {
                             let _ = child.kill();
-                            println!("[desktop] sidecar process terminated");
+                            info!("[desktop] sidecar process terminated");
                         }
                         *slot = None;
                     }
