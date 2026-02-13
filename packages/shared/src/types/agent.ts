@@ -488,4 +488,10 @@ export const AGENT_IPC_CHANNELS = {
   CAPABILITIES_CHANGED: 'agent:capabilities-changed',
   /** 工作区文件变化（session 目录文件监听触发，用于文件浏览器刷新） */
   WORKSPACE_FILES_CHANGED: 'agent:workspace-files-changed',
+
+  // 日志
+  /** 写入日志（前端 -> sidecar） */
+  WRITE_LOG: 'agent:write-log',
+  /** 获取日志目录路径 */
+  GET_LOGS_DIR: 'agent:get-logs-dir',
 } as const

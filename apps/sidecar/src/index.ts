@@ -98,6 +98,7 @@ import {
   searchWorkspaceMemory,
   closeMemoryManagers
 } from "./services/memory-service";
+import { createLogger, getLogsDir } from "./services/logger";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -528,7 +529,29 @@ const handlers: Record<string, RpcHandler> = {
       });
     });
     return { ok: true };
-  }
+  },
+
+  // 日志相关
+  [AGENT_IPC_CHANNELS.WRITE_LOG]: async (params) => {
+    const p = asObject(params);
+    const level = asString(p.level) || "info";
+    const context = asString(p.context) || "web";
+    const message = asString(p.message);
+    const sessionId = asString(p.sessionId);
+    const data = p.data as Record<string, unknown> | undefined;
+
+    if (!message) return { ok: false };
+
+    const log = createLogger(context, sessionId);
+    const logMethod = level as "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+    if (typeof log[logMethod] === "function") {
+      log[logMethod](message, data);
+    } else {
+      log.info(message, data);
+    }
+    return { ok: true };
+  },
+  [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: getLogsDir() })
 };
 
 async function handleRpcLine(line: string): Promise<void> {

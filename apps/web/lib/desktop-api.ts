@@ -639,3 +639,34 @@ export async function copyFolderToAgentSession(
 ): Promise<AgentSavedFile[]> {
   return sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.COPY_FOLDER_TO_SESSION, input);
 }
+
+// 日志相关
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
+export interface WriteLogInput {
+  level?: LogLevel;
+  context?: string;
+  message: string;
+  sessionId?: string;
+  data?: Record<string, unknown>;
+}
+
+export async function writeLog(input: WriteLogInput): Promise<{ ok: boolean }> {
+  return sidecarCall<{ ok: boolean }>(AGENT_IPC_CHANNELS.WRITE_LOG, input);
+}
+
+export async function getLogsDir(): Promise<{ path: string }> {
+  return sidecarCall<{ path: string }>(AGENT_IPC_CHANNELS.GET_LOGS_DIR);
+}
+
+// 便捷日志函数
+export const log = {
+  debug: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "debug", message, data, sessionId }),
+  info: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "info", message, data, sessionId }),
+  warn: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "warn", message, data, sessionId }),
+  error: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "error", message, data, sessionId })
+};

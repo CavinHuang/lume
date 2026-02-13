@@ -45,6 +45,7 @@ import {
   getAgentWorkspace,
   getWorkspaceMcpConfig
 } from "./agent-workspace-manager";
+import { createLogger } from "./logger";
 import {
   getAgentSessionWorkspacePath,
   getAgentWorkspacePath
@@ -94,6 +95,9 @@ const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 const MEMORY_SEARCH_TOOL_NAME = "memory_search";
 const MEMORY_GET_TOOL_NAME = "memory_get";
 const MEMORY_SAVE_TOOL_NAME = "memory_save";
+
+// 创建日志器
+const log = createLogger("agent-service");
 
 type ClaudeSdkModule = typeof import("@anthropic-ai/claude-agent-sdk");
 
@@ -288,7 +292,7 @@ function persistExitPlan(agentCwd: string, planText: string): void {
   const planPath = join(plansDir, "plan.md");
   mkdirSync(plansDir, { recursive: true });
   writeFileSync(planPath, planText.endsWith("\n") ? planText : `${planText}\n`, "utf-8");
-  console.log(`[Agent 服务] 已保存计划文件: ${planPath}`);
+  log.info("已保存计划文件", { planPath });
 }
 
 function isResumeSessionNotFoundError(message: string): boolean {
@@ -312,7 +316,7 @@ function resolveSdkCliPath(): string {
     const sdkEntryPath = cjsRequire.resolve("@anthropic-ai/claude-agent-sdk");
     cliPath = join(dirname(sdkEntryPath), "cli.js");
   } catch (error) {
-    console.warn("[Agent 服务] createRequire 解析 SDK 路径失败:", error);
+    log.warn("createRequire 解析 SDK 路径失败", { error: String(error) });
   }
 
   if (!cliPath) {
@@ -591,7 +595,7 @@ export async function sendAgentMessage(
     try {
       const contents = readdirSync(agentCwd);
       if (contents.length === 0) {
-        console.warn("[Agent 服务] 会话目录为空，但保留 sdkSessionId，避免每轮都回填历史上下文");
+        log.warn("会话目录为空，但保留 sdkSessionId", { sessionId: sessionId.slice(0, 8) });
       }
     } catch {
       // 目录探测失败不影响主流程
@@ -610,9 +614,12 @@ export async function sendAgentMessage(
     }
 
     const bunPath = getBunExecutablePath();
-    console.log(
-      `[Agent 服务] 启动 SDK — CLI: ${cliPath}, Bun: ${bunPath}, 模型: ${resolvedModelId}, 权限: ${permissionMode}, resume: ${existingSdkSessionId ?? "无"}`
-    );
+    log.info("启动 SDK 查询", {
+      sessionId: sessionId.slice(0, 8),
+      model: resolvedModelId,
+      permission: permissionMode,
+      resume: existingSdkSessionId ? "yes" : "no"
+    });
     const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
     const mcpServers = buildMcpServers(workspaceSlug, sdk, {
       enabledMemoryTools,
@@ -736,7 +743,7 @@ export async function sendAgentMessage(
           : {}),
         stderr: (data: string) => {
           stderrChunks.push(data);
-          console.error(`[Agent SDK stderr] ${data}`);
+          log.debug("SDK stderr", { sessionId: sessionId.slice(0, 8), stderr: data.slice(0, 200) });
         }
       }
     });
