@@ -197,39 +197,12 @@ export function AgentView(): React.ReactElement {
     const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
     return `${completed}/${latestTodoItems.length}`;
   }, [latestTodoItems]);
-  const modelBackendHint = useMemo(() => {
-    const raw = agentModelId?.trim().toLowerCase();
-    if (!raw) return null;
-    if (raw.startsWith("claude-cli/") || raw.startsWith("claude_cli/")) return "claude_cli" as const;
-    if (raw.startsWith("codex-cli/") || raw.startsWith("codex_cli/")) return "codex_cli" as const;
-    const slashIndex = raw.indexOf("/");
-    if (slashIndex > 0) {
-      const provider = raw.slice(0, slashIndex);
-      if (provider.endsWith("cli")) {
-        return "custom_cli" as const;
-      }
-    }
-    if (
-      raw.includes("/") &&
-      !raw.startsWith("claude-cli/") &&
-      !raw.startsWith("claude_cli/") &&
-      !raw.startsWith("codex-cli/") &&
-      !raw.startsWith("codex_cli/")
-    ) {
-      return "claude_sdk" as const;
-    }
-    return null;
-  }, [agentModelId]);
-  const effectiveBackend = modelBackendHint ?? session?.executionBackend ?? (agentChannelId ? "claude_sdk" : "claude_cli");
-  const requiresChannel = effectiveBackend === "claude_sdk";
-  const backendReady = !requiresChannel || agentChannelId !== null;
+  const backendReady = agentChannelId !== null;
   const outgoingModelId = useMemo(() => {
     const trimmed = agentModelId?.trim();
     if (trimmed) return trimmed;
-    if (effectiveBackend === "claude_cli") return "claude-cli/sonnet";
-    if (effectiveBackend === "codex_cli") return "codex-cli/gpt-5-codex";
     return undefined;
-  }, [agentModelId, effectiveBackend]);
+  }, [agentModelId]);
 
   const currentSessionIdRef = useRef<string | null>(sessionId);
   const lastNonPlanPermissionModeRef = useRef(agentPermissionMode);
@@ -368,7 +341,6 @@ export function AgentView(): React.ReactElement {
   }, [setPendingFiles]);
 
   useEffect(() => {
-    if (!requiresChannel) return;
     if (agentChannelId) return;
     const enabled = channels.filter((item) => item.enabled);
     const sessionChannel = session?.channelId ? enabled.find((item) => item.id === session.channelId) : undefined;
@@ -377,10 +349,9 @@ export function AgentView(): React.ReactElement {
     setAgentChannelId(target.id);
     const firstModel = target.models.find((model) => model.enabled);
     setAgentModelId(firstModel?.id ?? null);
-  }, [requiresChannel, agentChannelId, channels, session?.channelId]);
+  }, [agentChannelId, channels, session?.channelId]);
 
   useEffect(() => {
-    if (!requiresChannel) return;
     if (channels.length === 0) return;
     if (!agentChannelId) {
       setAgentModelId(null);
@@ -395,7 +366,7 @@ export function AgentView(): React.ReactElement {
     if (!modelValid) {
       setAgentModelId(channel.models.find((model) => model.enabled)?.id ?? null);
     }
-  }, [requiresChannel, agentChannelId, agentModelId, channels, setAgentModelId]);
+  }, [agentChannelId, agentModelId, channels, setAgentModelId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -570,7 +541,7 @@ export function AgentView(): React.ReactElement {
       void sendAgentMessage({
         sessionId,
         userMessage: prompt.message,
-        channelId: requiresChannel ? (agentChannelId ?? undefined) : undefined,
+        channelId: agentChannelId ?? undefined,
         modelId: agentModelId ?? undefined,
         workspaceId: workspaceId ?? undefined,
         chatType: "direct",
@@ -590,7 +561,6 @@ export function AgentView(): React.ReactElement {
     pendingPrompt,
     sessionId,
     backendReady,
-    requiresChannel,
     agentChannelId,
     agentModelId,
     agentPermissionMode,
@@ -686,7 +656,7 @@ export function AgentView(): React.ReactElement {
   }, []);
 
   const handleCompact = useCallback((): void => {
-    if (!sessionId || !requiresChannel || !agentChannelId || streaming) return;
+    if (!sessionId || !agentChannelId || streaming) return;
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
@@ -703,7 +673,7 @@ export function AgentView(): React.ReactElement {
       chatType: "direct",
       permissionMode: agentPermissionMode
     });
-  }, [sessionId, requiresChannel, agentChannelId, outgoingModelId, agentPermissionMode, workspaceId, streaming, setStreamingStates]);
+  }, [sessionId, agentChannelId, outgoingModelId, agentPermissionMode, workspaceId, streaming, setStreamingStates]);
 
   const handleStop = useCallback((): void => {
     if (!sessionId) return;
@@ -792,7 +762,7 @@ export function AgentView(): React.ReactElement {
     void sendAgentMessage({
       sessionId,
       userMessage: finalMessage,
-      channelId: requiresChannel ? (agentChannelId ?? undefined) : undefined,
+      channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: workspaceId ?? undefined,
       chatType: "direct",
@@ -812,7 +782,6 @@ export function AgentView(): React.ReactElement {
     pendingFolderRefs,
     sessionId,
     backendReady,
-    requiresChannel,
     agentChannelId,
     outgoingModelId,
     agentPermissionMode,
@@ -830,11 +799,10 @@ export function AgentView(): React.ReactElement {
   }, []);
 
   const externalSelectedModel = useMemo(() => {
-    if (!requiresChannel) return null;
     if (!agentChannelId) return null;
     if (!agentModelId) return { channelId: agentChannelId, modelId: "" };
     return { channelId: agentChannelId, modelId: agentModelId };
-  }, [requiresChannel, agentChannelId, agentModelId]);
+  }, [agentChannelId, agentModelId]);
 
   const canSend = (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
     && backendReady
@@ -1001,7 +969,7 @@ export function AgentView(): React.ReactElement {
               }
             }}
           >
-            {requiresChannel && !agentChannelId ? (
+            {!agentChannelId ? (
               <div className="flex items-center gap-2 px-4 py-2 text-sm text-amber-600 dark:text-amber-400">
                 <Settings size={14} />
                 <span>请在设置中选择 Agent 供应商</span>
@@ -1090,40 +1058,7 @@ export function AgentView(): React.ReactElement {
                   </>
                 ) : null}
 
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-[24px] px-2 text-[11px]"
-                    onClick={() => setAgentModelId("claude-cli/sonnet")}
-                  >
-                    Claude Code
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-[24px] px-2 text-[11px]"
-                    onClick={() => setAgentModelId("codex-cli/gpt-5-codex")}
-                  >
-                    Codex
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-[24px] px-2 text-[11px]"
-                    onClick={() => setAgentModelId(null)}
-                  >
-                    SDK
-                  </Button>
-                </div>
-                <span className="text-[11px] text-muted-foreground">
-                  当前: {outgoingModelId ?? "自动"}
-                </span>
-
-                {backendReady && requiresChannel ? (
+                {backendReady ? (
                   <ModelSelector
                     filterChannelId={agentChannelId ?? undefined}
                     externalSelectedModel={externalSelectedModel}

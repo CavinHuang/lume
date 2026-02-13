@@ -1,7 +1,7 @@
 /**
  * Global discovery service
  *
- * Discover Claude Code global MCP / plugin marketplaces / plugins / skills,
+ * Discover Claude global MCP / plugin marketplaces / plugins / skills,
  * and provide import helpers to workspace-scoped config.
  */
 

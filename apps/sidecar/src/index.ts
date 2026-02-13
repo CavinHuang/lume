@@ -323,16 +323,10 @@ const handlers: Record<string, RpcHandler> = {
   [AGENT_IPC_CHANNELS.LIST_SESSIONS]: async () => listAgentSessions(),
   [AGENT_IPC_CHANNELS.CREATE_SESSION]: async (params) => {
     const p = asObject(params);
-    const backendRaw = asString(p.executionBackend);
-    const executionBackend =
-      backendRaw === "claude_sdk" || backendRaw === "claude_cli" || backendRaw === "codex_cli" || backendRaw === "custom_cli"
-        ? backendRaw
-        : undefined;
     return createAgentSession(
       asString(p.title),
       asString(p.channelId),
-      asString(p.workspaceId),
-      executionBackend
+      asString(p.workspaceId)
     );
   },
   [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {

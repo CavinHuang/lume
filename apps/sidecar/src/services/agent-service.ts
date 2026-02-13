@@ -14,7 +14,6 @@ import { dirname, join } from "node:path";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type {
-  AgentExecutionBackend,
   AgentEvent,
   AgentAskUserQuestionQuestion,
   AgentAskUserQuestionRequest,
@@ -65,8 +64,6 @@ import {
   saveWorkspaceMemory,
   searchWorkspaceMemory
 } from "./memory-service";
-import { runAgentCliBackend } from "./agent-cli-runner";
-import { resolveAgentRuntimeConfig, resolveCliBackendIdsFromRuntimeConfig } from "./agent-runtime-config";
 
 type AgentEventEmitter = {
   onEvent: (event: AgentEvent) => void;
@@ -97,8 +94,6 @@ const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 const MEMORY_SEARCH_TOOL_NAME = "memory_search";
 const MEMORY_GET_TOOL_NAME = "memory_get";
 const MEMORY_SAVE_TOOL_NAME = "memory_save";
-const DEFAULT_EXECUTION_BACKEND: AgentExecutionBackend = "claude_sdk";
-const CLI_BACKEND_TIMEOUT_MS = 10 * 60 * 1000;
 
 type ClaudeSdkModule = typeof import("@anthropic-ai/claude-agent-sdk");
 
@@ -298,60 +293,6 @@ function persistExitPlan(agentCwd: string, planText: string): void {
 
 function isResumeSessionNotFoundError(message: string): boolean {
   return /No conversation found with session ID/i.test(message);
-}
-
-function normalizeExecutionBackend(value: unknown): AgentExecutionBackend {
-  if (value === "claude_cli" || value === "codex_cli" || value === "claude_sdk" || value === "custom_cli") {
-    return value;
-  }
-  return DEFAULT_EXECUTION_BACKEND;
-}
-
-function parseModelProviderRef(rawModelId: string | undefined, cliBackendIds: Set<string>): {
-  backend?: AgentExecutionBackend;
-  cliBackendId?: string;
-  modelId?: string;
-} {
-  const trimmed = rawModelId?.trim();
-  if (!trimmed) return {};
-  const slash = trimmed.indexOf("/");
-  if (slash <= 0) return { modelId: trimmed };
-  const provider = trimmed.slice(0, slash).trim().toLowerCase();
-  const normalizedProvider = provider.replaceAll("_", "-");
-  const modelPart = trimmed.slice(slash + 1).trim();
-  if (!modelPart) return { modelId: trimmed };
-  if (normalizedProvider === "claude-cli") {
-    return { backend: "claude_cli", cliBackendId: "claude-cli", modelId: modelPart };
-  }
-  if (normalizedProvider === "codex-cli") {
-    return { backend: "codex_cli", cliBackendId: "codex-cli", modelId: modelPart };
-  }
-  if (cliBackendIds.has(normalizedProvider)) {
-    return { backend: "custom_cli", cliBackendId: normalizedProvider, modelId: modelPart };
-  }
-  return { modelId: trimmed };
-}
-
-function extractAttachedImagePaths(message: string): string[] {
-  const matches = message.matchAll(/^- [^:\n]+:\s*(.+)$/gm);
-  const imageExt = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
-  const paths: string[] = [];
-  for (const match of matches) {
-    const rawPath = (match[1] ?? "").trim();
-    if (!rawPath) continue;
-    if (!imageExt.test(rawPath)) continue;
-    paths.push(rawPath);
-  }
-  return Array.from(new Set(paths));
-}
-
-function classifyCliFailoverReason(message: string): string {
-  const lower = message.toLowerCase();
-  if (lower.includes("timeout") || lower.includes("超时")) return "timeout";
-  if (lower.includes("not found") || lower.includes("enoent")) return "backend_not_found";
-  if (lower.includes("permission") || lower.includes("denied")) return "permission_denied";
-  if (lower.includes("rate limit")) return "rate_limited";
-  return "unknown";
 }
 
 function pickModelId(channelId: string | undefined, requestedModelId?: string): string {
@@ -581,17 +522,8 @@ export async function sendAgentMessage(
   const { sessionId, userMessage, workspaceId } = input;
   const permissionMode = input.permissionMode ?? "bypassPermissions";
   const sessionMeta = getAgentSessionMeta(sessionId);
-  const agentRuntimeConfig = resolveAgentRuntimeConfig();
-  const cliBackendIds = resolveCliBackendIdsFromRuntimeConfig(agentRuntimeConfig);
-  const parsedModelRef = parseModelProviderRef(input.modelId, cliBackendIds);
-  const executionBackend = normalizeExecutionBackend(
-    parsedModelRef.backend ?? input.executionBackend ?? sessionMeta?.executionBackend
-  );
-  const cliBackendId = parsedModelRef.cliBackendId
-    ?? (executionBackend === "claude_cli" ? "claude-cli" : executionBackend === "codex_cli" ? "codex-cli" : undefined);
-  const resolvedChannelId =
-    cliBackendId ? undefined : (input.channelId ?? sessionMeta?.channelId);
-  const resolvedModelId = pickModelId(resolvedChannelId, parsedModelRef.modelId ?? input.modelId);
+  const resolvedChannelId = input.channelId ?? sessionMeta?.channelId;
+  const resolvedModelId = pickModelId(resolvedChannelId, input.modelId);
 
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
   const allowResumeRetry = options.allowResumeRetry ?? true;
@@ -633,120 +565,6 @@ export async function sendAgentMessage(
   });
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
 
-  if (cliBackendId) {
-    const cliModelLabel = resolvedModelId || (cliBackendId.includes("claude") ? "sonnet" : "gpt-5-codex");
-    const dynamicContext = buildDynamicContext({
-      workspaceName,
-      workspaceSlug,
-      agentCwd
-    });
-    const contextualMessage = [dynamicContext, userMessage]
-      .filter((part) => part.trim().length > 0)
-      .join("\n\n");
-    const existingCliSessionId = sessionMeta?.cliSessionIds?.[cliBackendId];
-    const basePrompt = existingCliSessionId ? contextualMessage : buildContextPrompt(sessionId, contextualMessage);
-    const systemAppend = buildSystemPromptAppend({
-      workspaceName,
-      workspaceSlug,
-      sessionId,
-      availableTools: enabledMemoryToolNames,
-      memoryCitationsMode: runtimeConfig.citationsMode
-    });
-    const prompt = basePrompt;
-    const extraSystemPrompt = [systemAppend, "Tools are disabled in this session. Do not call tools."]
-      .filter((part) => part.trim().length > 0)
-      .join("\n\n");
-    const imagePaths = extractAttachedImagePaths(userMessage);
-
-    try {
-      const cliResult = await runAgentCliBackend({
-        backend: cliBackendId,
-        modelId: resolvedModelId,
-        prompt,
-        systemPrompt: extraSystemPrompt,
-        imagePaths,
-        cwd: agentCwd,
-        signal: controller.signal,
-        sessionId: existingCliSessionId,
-        timeoutMs: CLI_BACKEND_TIMEOUT_MS,
-        runtimeConfig: agentRuntimeConfig
-      });
-      const cliText = cliResult.text.trim();
-
-      if (cliResult.sessionId && cliResult.sessionId !== existingCliSessionId) {
-        const nextCliSessions = {
-          ...(sessionMeta?.cliSessionIds ?? {}),
-          [cliBackendId]: cliResult.sessionId
-        };
-        updateAgentSessionMeta(sessionId, {
-          cliSessionIds: nextCliSessions,
-          executionBackend
-        });
-      } else {
-        updateAgentSessionMeta(sessionId, {
-          executionBackend
-        });
-      }
-
-      if (cliText) {
-        const textDeltaEvent: AgentEvent = {
-          type: "text_delta",
-          text: cliText
-        };
-        appendAgentEvents(accumulator, [textDeltaEvent]);
-        emit.onEvent(textDeltaEvent);
-
-        const textCompleteEvent: AgentEvent = {
-          type: "text_complete",
-          text: cliText,
-          isIntermediate: false
-        };
-        appendAgentEvents(accumulator, [textCompleteEvent]);
-        emit.onEvent(textCompleteEvent);
-
-        appendAgentMessage(sessionId, {
-          id: randomUUID(),
-          role: "assistant",
-          content: cliText,
-          createdAt: Date.now(),
-          model: cliModelLabel
-        });
-      }
-
-      const completeEvent: AgentEvent = {
-        type: "complete",
-        stopReason: "end_turn",
-        usage: cliResult.usage
-          ? {
-              inputTokens: cliResult.usage.input ?? 0,
-              outputTokens: cliResult.usage.output,
-              cacheReadTokens: cliResult.usage.cacheRead,
-              cacheCreationTokens: cliResult.usage.cacheWrite
-            }
-          : undefined
-      };
-      appendAgentEvents(accumulator, [completeEvent]);
-      emit.onEvent(completeEvent);
-      emit.onComplete();
-
-      if (resolvedChannelId) {
-        void autoGenerateAgentTitle(sessionId, userMessage, resolvedChannelId, cliModelLabel, emit);
-      }
-      return;
-    } catch (error) {
-      if (controller.signal.aborted) {
-        emit.onComplete();
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : "未知错误";
-      const reason = classifyCliFailoverReason(errorMessage);
-      emit.onError(`[CLI_FAILOVER:${reason}] ${errorMessage}`);
-      return;
-    } finally {
-      activeControllers.delete(sessionId);
-    }
-  }
-
   const channel = resolvedChannelId ? listChannels().find((item) => item.id === resolvedChannelId) : undefined;
   if (!channel || !resolvedChannelId) {
     activeControllers.delete(sessionId);
@@ -780,7 +598,6 @@ export async function sendAgentMessage(
     }
   }
   updateAgentSessionMeta(sessionId, {
-    executionBackend,
     channelId: resolvedChannelId
   });
 
