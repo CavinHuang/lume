@@ -82,6 +82,10 @@ export interface AgentSessionMeta {
   channelId?: string
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
   sdkSessionId?: string
+  /** CLI 会话 ID（按 backend 保存，用于 resume） */
+  cliSessionIds?: Record<string, string>
+  /** 最近一次执行后端 */
+  executionBackend?: AgentExecutionBackend
   /** 所属工作区 ID */
   workspaceId?: string
   /** 创建时间戳 */
@@ -89,6 +93,8 @@ export interface AgentSessionMeta {
   /** 更新时间戳 */
   updatedAt: number
 }
+
+export type AgentExecutionBackend = 'claude_sdk' | 'claude_cli' | 'codex_cli' | 'custom_cli'
 
 /**
  * Agent 持久化消息
@@ -288,8 +294,8 @@ export interface AgentSendInput {
   sessionId: string
   /** 用户消息内容 */
   userMessage: string
-  /** 渠道 ID（用于获取 API Key） */
-  channelId: string
+  /** 渠道 ID（Claude SDK 路径用于获取 API Key） */
+  channelId?: string
   /** 模型 ID */
   modelId?: string
   /** 工作区 ID（用于确定 cwd） */
@@ -298,6 +304,8 @@ export interface AgentSendInput {
   chatType?: 'direct' | 'group' | 'channel'
   /** Claude Agent SDK 权限模式 */
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+  /** 执行后端（默认 claude_sdk） */
+  executionBackend?: AgentExecutionBackend
 }
 
 export interface AgentAskUserQuestionOption {

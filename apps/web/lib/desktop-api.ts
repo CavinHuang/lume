@@ -381,6 +381,7 @@ export async function createAgentSession(params?: {
   title?: string;
   channelId?: string;
   workspaceId?: string;
+  executionBackend?: "claude_sdk" | "claude_cli" | "codex_cli" | "custom_cli";
 }): Promise<AgentSessionMeta> {
   return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.CREATE_SESSION, params ?? {});
 }

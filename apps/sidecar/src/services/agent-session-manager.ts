@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { AgentMessage, AgentSessionMeta } from "@lume/shared";
+import type { AgentExecutionBackend, AgentMessage, AgentSessionMeta } from "@lume/shared";
 import {
   getAgentWorkspacesDir,
   getAgentSessionMessagesPath,
@@ -69,7 +69,8 @@ export function getAgentSessionMeta(id: string): AgentSessionMeta | undefined {
 export function createAgentSession(
   title?: string,
   channelId?: string,
-  workspaceId?: string
+  workspaceId?: string,
+  executionBackend?: AgentExecutionBackend
 ): AgentSessionMeta {
   const index = readIndex();
   const now = Date.now();
@@ -78,6 +79,7 @@ export function createAgentSession(
     id: randomUUID(),
     title: title || "新 Agent 会话",
     channelId,
+    executionBackend,
     workspaceId,
     createdAt: now,
     updatedAt: now
@@ -128,7 +130,9 @@ export function appendAgentMessage(id: string, message: AgentMessage): void {
 
 export function updateAgentSessionMeta(
   id: string,
-  updates: Partial<Pick<AgentSessionMeta, "title" | "channelId" | "sdkSessionId" | "workspaceId">>
+  updates: Partial<
+    Pick<AgentSessionMeta, "title" | "channelId" | "sdkSessionId" | "workspaceId" | "cliSessionIds" | "executionBackend">
+  >
 ): AgentSessionMeta {
   const index = readIndex();
   const idx = index.sessions.findIndex((session) => session.id === id);

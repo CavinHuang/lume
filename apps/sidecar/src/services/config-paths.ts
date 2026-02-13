@@ -159,3 +159,11 @@ export function getMemoryConfigDir(): string {
 export function getMemoryConfigPath(): string {
   return join(getMemoryConfigDir(), "config.json");
 }
+
+export function getAgentConfigDir(): string {
+  return ensureDir(join(getConfigDir(), "agent"), "Agent 配置目录");
+}
+
+export function getAgentRuntimeConfigPath(): string {
+  return join(getAgentConfigDir(), "config.json");
+}

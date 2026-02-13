@@ -197,6 +197,39 @@ export function AgentView(): React.ReactElement {
     const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
     return `${completed}/${latestTodoItems.length}`;
   }, [latestTodoItems]);
+  const modelBackendHint = useMemo(() => {
+    const raw = agentModelId?.trim().toLowerCase();
+    if (!raw) return null;
+    if (raw.startsWith("claude-cli/") || raw.startsWith("claude_cli/")) return "claude_cli" as const;
+    if (raw.startsWith("codex-cli/") || raw.startsWith("codex_cli/")) return "codex_cli" as const;
+    const slashIndex = raw.indexOf("/");
+    if (slashIndex > 0) {
+      const provider = raw.slice(0, slashIndex);
+      if (provider.endsWith("cli")) {
+        return "custom_cli" as const;
+      }
+    }
+    if (
+      raw.includes("/") &&
+      !raw.startsWith("claude-cli/") &&
+      !raw.startsWith("claude_cli/") &&
+      !raw.startsWith("codex-cli/") &&
+      !raw.startsWith("codex_cli/")
+    ) {
+      return "claude_sdk" as const;
+    }
+    return null;
+  }, [agentModelId]);
+  const effectiveBackend = modelBackendHint ?? session?.executionBackend ?? (agentChannelId ? "claude_sdk" : "claude_cli");
+  const requiresChannel = effectiveBackend === "claude_sdk";
+  const backendReady = !requiresChannel || agentChannelId !== null;
+  const outgoingModelId = useMemo(() => {
+    const trimmed = agentModelId?.trim();
+    if (trimmed) return trimmed;
+    if (effectiveBackend === "claude_cli") return "claude-cli/sonnet";
+    if (effectiveBackend === "codex_cli") return "codex-cli/gpt-5-codex";
+    return undefined;
+  }, [agentModelId, effectiveBackend]);
 
   const currentSessionIdRef = useRef<string | null>(sessionId);
   const lastNonPlanPermissionModeRef = useRef(agentPermissionMode);
@@ -335,6 +368,7 @@ export function AgentView(): React.ReactElement {
   }, [setPendingFiles]);
 
   useEffect(() => {
+    if (!requiresChannel) return;
     if (agentChannelId) return;
     const enabled = channels.filter((item) => item.enabled);
     const sessionChannel = session?.channelId ? enabled.find((item) => item.id === session.channelId) : undefined;
@@ -343,9 +377,10 @@ export function AgentView(): React.ReactElement {
     setAgentChannelId(target.id);
     const firstModel = target.models.find((model) => model.enabled);
     setAgentModelId(firstModel?.id ?? null);
-  }, [agentChannelId, channels, session?.channelId]);
+  }, [requiresChannel, agentChannelId, channels, session?.channelId]);
 
   useEffect(() => {
+    if (!requiresChannel) return;
     if (channels.length === 0) return;
     if (!agentChannelId) {
       setAgentModelId(null);
@@ -360,7 +395,7 @@ export function AgentView(): React.ReactElement {
     if (!modelValid) {
       setAgentModelId(channel.models.find((model) => model.enabled)?.id ?? null);
     }
-  }, [agentChannelId, agentModelId, channels, setAgentModelId]);
+  }, [requiresChannel, agentChannelId, agentModelId, channels, setAgentModelId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -512,7 +547,7 @@ export function AgentView(): React.ReactElement {
   useEffect(() => {
     if (!pendingPrompt) return;
     if (!sessionId || pendingPrompt.sessionId !== sessionId) return;
-    if (!agentChannelId || streaming) return;
+    if (!backendReady || streaming) return;
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
@@ -535,7 +570,7 @@ export function AgentView(): React.ReactElement {
       void sendAgentMessage({
         sessionId,
         userMessage: prompt.message,
-        channelId: agentChannelId,
+        channelId: requiresChannel ? (agentChannelId ?? undefined) : undefined,
         modelId: agentModelId ?? undefined,
         workspaceId: workspaceId ?? undefined,
         chatType: "direct",
@@ -554,6 +589,8 @@ export function AgentView(): React.ReactElement {
   }, [
     pendingPrompt,
     sessionId,
+    backendReady,
+    requiresChannel,
     agentChannelId,
     agentModelId,
     agentPermissionMode,
@@ -649,7 +686,7 @@ export function AgentView(): React.ReactElement {
   }, []);
 
   const handleCompact = useCallback((): void => {
-    if (!sessionId || !agentChannelId || streaming) return;
+    if (!sessionId || !requiresChannel || !agentChannelId || streaming) return;
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
@@ -661,12 +698,12 @@ export function AgentView(): React.ReactElement {
       sessionId,
       userMessage: "/compact",
       channelId: agentChannelId,
-      modelId: agentModelId ?? undefined,
+      modelId: outgoingModelId,
       workspaceId: workspaceId ?? undefined,
       chatType: "direct",
       permissionMode: agentPermissionMode
     });
-  }, [sessionId, agentChannelId, agentModelId, agentPermissionMode, workspaceId, streaming, setStreamingStates]);
+  }, [sessionId, requiresChannel, agentChannelId, outgoingModelId, agentPermissionMode, workspaceId, streaming, setStreamingStates]);
 
   const handleStop = useCallback((): void => {
     if (!sessionId) return;
@@ -684,7 +721,7 @@ export function AgentView(): React.ReactElement {
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputContent.trim();
-    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !sessionId || !agentChannelId || streaming) {
+    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !sessionId || !backendReady || streaming) {
       return;
     }
 
@@ -738,7 +775,7 @@ export function AgentView(): React.ReactElement {
         content: "",
         toolActivities: [],
         events: [],
-        model: agentModelId ?? undefined
+        model: outgoingModelId
       });
       return map;
     });
@@ -755,8 +792,8 @@ export function AgentView(): React.ReactElement {
     void sendAgentMessage({
       sessionId,
       userMessage: finalMessage,
-      channelId: agentChannelId,
-      modelId: agentModelId ?? undefined,
+      channelId: requiresChannel ? (agentChannelId ?? undefined) : undefined,
+      modelId: outgoingModelId,
       workspaceId: workspaceId ?? undefined,
       chatType: "direct",
       permissionMode: agentPermissionMode
@@ -774,8 +811,10 @@ export function AgentView(): React.ReactElement {
     pendingFiles,
     pendingFolderRefs,
     sessionId,
+    backendReady,
+    requiresChannel,
     agentChannelId,
-    agentModelId,
+    outgoingModelId,
     agentPermissionMode,
     workspaceId,
     workspaces,
@@ -791,13 +830,14 @@ export function AgentView(): React.ReactElement {
   }, []);
 
   const externalSelectedModel = useMemo(() => {
+    if (!requiresChannel) return null;
     if (!agentChannelId) return null;
     if (!agentModelId) return { channelId: agentChannelId, modelId: "" };
     return { channelId: agentChannelId, modelId: agentModelId };
-  }, [agentChannelId, agentModelId]);
+  }, [requiresChannel, agentChannelId, agentModelId]);
 
   const canSend = (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
-    && agentChannelId !== null
+    && backendReady
     && !streaming;
 
   if (!sessionId) {
@@ -961,7 +1001,7 @@ export function AgentView(): React.ReactElement {
               }
             }}
           >
-            {!agentChannelId ? (
+            {requiresChannel && !agentChannelId ? (
               <div className="flex items-center gap-2 px-4 py-2 text-sm text-amber-600 dark:text-amber-400">
                 <Settings size={14} />
                 <span>请在设置中选择 Agent 供应商</span>
@@ -1010,13 +1050,13 @@ export function AgentView(): React.ReactElement {
               onChange={setInputContent}
               onSubmit={() => { void handleSend(); }}
               onPasteFiles={(files) => { void addFilesAsAttachments(files); }}
-              placeholder={agentChannelId ? "输入消息... (Enter 发送，Shift+Enter 换行)" : "请先在设置中选择 Agent 供应商"}
-              disabled={!agentChannelId}
+              placeholder={backendReady ? "输入消息... (Enter 发送，Shift+Enter 换行)" : "请先在设置中选择 Agent 供应商"}
+              disabled={!backendReady}
             />
 
             <div className="flex h-[40px] items-center justify-between gap-4 px-2 py-[5px]">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                {agentChannelId ? (
+                {backendReady ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -1047,35 +1087,72 @@ export function AgentView(): React.ReactElement {
                       </TooltipTrigger>
                       <TooltipContent side="top"><p>添加文件夹</p></TooltipContent>
                     </Tooltip>
-
-                    <ModelSelector
-                      filterChannelId={agentChannelId}
-                      externalSelectedModel={externalSelectedModel}
-                      onModelSelect={handleModelSelect}
-                    />
-
-                    <select
-                      value={agentPermissionMode}
-                      onChange={(event) => {
-                        setAgentPermissionMode(event.target.value as typeof agentPermissionMode);
-                      }}
-                      className="h-[28px] rounded-md border border-border bg-background px-2 text-xs text-foreground/80"
-                      title="Agent 权限模式"
-                    >
-                      <option value="default">default</option>
-                      <option value="acceptEdits">acceptEdits</option>
-                      <option value="bypassPermissions">bypassPermissions</option>
-                      <option value="plan">plan</option>
-                    </select>
-
-                    <ContextUsageBadge
-                      inputTokens={contextStatus.inputTokens}
-                      contextWindow={contextStatus.contextWindow}
-                      isCompacting={contextStatus.isCompacting}
-                      isProcessing={streaming}
-                      onCompact={handleCompact}
-                    />
                   </>
+                ) : null}
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-[24px] px-2 text-[11px]"
+                    onClick={() => setAgentModelId("claude-cli/sonnet")}
+                  >
+                    Claude Code
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-[24px] px-2 text-[11px]"
+                    onClick={() => setAgentModelId("codex-cli/gpt-5-codex")}
+                  >
+                    Codex
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-[24px] px-2 text-[11px]"
+                    onClick={() => setAgentModelId(null)}
+                  >
+                    SDK
+                  </Button>
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  当前: {outgoingModelId ?? "自动"}
+                </span>
+
+                {backendReady && requiresChannel ? (
+                  <ModelSelector
+                    filterChannelId={agentChannelId ?? undefined}
+                    externalSelectedModel={externalSelectedModel}
+                    onModelSelect={handleModelSelect}
+                  />
+                ) : null}
+
+                <select
+                  value={agentPermissionMode}
+                  onChange={(event) => {
+                    setAgentPermissionMode(event.target.value as typeof agentPermissionMode);
+                  }}
+                  className="h-[28px] rounded-md border border-border bg-background px-2 text-xs text-foreground/80"
+                  title="Agent 权限模式"
+                >
+                  <option value="default">default</option>
+                  <option value="acceptEdits">acceptEdits</option>
+                  <option value="bypassPermissions">bypassPermissions</option>
+                  <option value="plan">plan</option>
+                </select>
+
+                {backendReady ? (
+                  <ContextUsageBadge
+                    inputTokens={contextStatus.inputTokens}
+                    contextWindow={contextStatus.contextWindow}
+                    isCompacting={contextStatus.isCompacting}
+                    isProcessing={streaming}
+                    onCompact={handleCompact}
+                  />
                 ) : null}
               </div>
 

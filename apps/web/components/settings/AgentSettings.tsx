@@ -195,7 +195,7 @@ ${skillList}
 
     try {
       const session = await createAgentSession({
-        channelId: agentChannelId,
+        channelId: agentChannelId ?? undefined,
         workspaceId: currentWorkspaceId ?? undefined
       });
 
