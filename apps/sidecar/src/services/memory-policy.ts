@@ -31,9 +31,14 @@ const DEFAULT_EXTRA_PATHS: string[] = [];
 const MEMORY_TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory_search", "memory_get"]
 };
+const TOOL_NAME_ALIASES: Record<string, string> = {
+  "apply-patch": "apply_patch",
+  bash: "exec"
+};
 
 function normalizeEntry(value: string): string {
-  return value.trim().toLowerCase();
+  const normalized = value.trim().toLowerCase();
+  return TOOL_NAME_ALIASES[normalized] ?? normalized;
 }
 
 function expandToolEntries(entries?: string[]): string[] {
@@ -50,6 +55,44 @@ function expandToolEntries(entries?: string[]): string[] {
     expanded.push(normalized);
   }
   return Array.from(new Set(expanded));
+}
+
+type CompiledPattern =
+  | { kind: "all" }
+  | { kind: "exact"; value: string }
+  | { kind: "regex"; value: RegExp };
+
+function compilePattern(pattern: string): CompiledPattern {
+  const normalized = normalizeEntry(pattern);
+  if (!normalized) {
+    return { kind: "exact", value: "" };
+  }
+  if (normalized === "*") {
+    return { kind: "all" };
+  }
+  if (!normalized.includes("*")) {
+    return { kind: "exact", value: normalized };
+  }
+  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return {
+    kind: "regex",
+    value: new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`)
+  };
+}
+
+function compilePatterns(entries?: string[]): CompiledPattern[] {
+  return expandToolEntries(entries)
+    .map((entry) => compilePattern(entry))
+    .filter((entry) => entry.kind !== "exact" || entry.value);
+}
+
+function matchesAny(name: string, patterns: CompiledPattern[]): boolean {
+  for (const pattern of patterns) {
+    if (pattern.kind === "all") return true;
+    if (pattern.kind === "exact" && pattern.value === name) return true;
+    if (pattern.kind === "regex" && pattern.value.test(name)) return true;
+  }
+  return false;
 }
 
 export function deriveChatTypeFromSessionKey(sessionKey?: string): MemoryChatType {
@@ -128,18 +171,14 @@ export function applyMemoryToolPolicy(params: {
 }): string[] {
   const base = params.baseTools.map((item) => normalizeEntry(item)).filter(Boolean);
   const baseSet = new Set(base);
-
-  const allowExpanded = expandToolEntries(params.policy?.allow);
-  const denyExpanded = new Set(expandToolEntries(params.policy?.deny));
-
-  const allowWildcard = (params.policy?.allow ?? []).some((entry) => normalizeEntry(entry) === "*");
-  const allowActive = !allowWildcard && allowExpanded.length > 0;
-  const allowSet = new Set(allowExpanded);
+  const allowPatterns = compilePatterns(params.policy?.allow);
+  const denyPatterns = compilePatterns(params.policy?.deny);
+  const allowActive = allowPatterns.length > 0;
   const result: string[] = [];
 
   for (const tool of baseSet) {
-    if (allowActive && !allowSet.has(tool)) continue;
-    if (denyExpanded.has(tool)) continue;
+    if (matchesAny(tool, denyPatterns)) continue;
+    if (allowActive && !matchesAny(tool, allowPatterns)) continue;
     result.push(tool);
   }
   return result;

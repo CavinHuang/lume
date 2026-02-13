@@ -32,6 +32,22 @@ describe("memory-policy", () => {
     expect(result).toEqual(["memory_search", "memory_save"]);
   });
 
+  test("allow 支持通配符", () => {
+    const result = applyMemoryToolPolicy({
+      baseTools: ["memory_search", "memory_get", "memory_save"],
+      policy: { allow: ["memory_*"] }
+    });
+    expect(result).toEqual(["memory_search", "memory_get", "memory_save"]);
+  });
+
+  test("deny 支持通配符，且优先于 allow", () => {
+    const result = applyMemoryToolPolicy({
+      baseTools: ["memory_search", "memory_get", "memory_save"],
+      policy: { allow: ["memory_*"], deny: ["*_save"] }
+    });
+    expect(result).toEqual(["memory_search", "memory_get"]);
+  });
+
   test("citation auto 仅 direct 为 true", () => {
     expect(shouldIncludeCitations("auto", "direct")).toBe(true);
     expect(shouldIncludeCitations("auto", "group")).toBe(false);
