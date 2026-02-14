@@ -4,10 +4,15 @@
  * Adaptation:
  * - Removed user-profile dependency; default to generic user label.
  * - Updated paths and branding to Lume.
+ * - Integrated Soul/Memory system from OpenClaw design.
  */
 
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
 import type { MemoryCitationsMode } from "./memory-policy";
+import {
+  readSystemPromptComponents,
+  buildSystemPrompt,
+} from "./workspace-bootstrap-service";
 
 interface SystemPromptContext {
   workspaceName?: string;
@@ -71,6 +76,26 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
       lines.push("Citations: include Source: <path#line> when it helps the user verify memory snippets.");
     }
     sections.push(lines.join("\n"));
+  }
+
+  // 读取工作区的 Soul/Memory 系统提示词
+  if (ctx.workspaceSlug) {
+    try {
+      const components = readSystemPromptComponents(ctx.workspaceSlug, {
+        sessionType: 'main',
+        includeMemory: true,
+        includeDailyMemory: true,
+        dailyMemoryDays: 2,
+      });
+
+      const soulPrompt = buildSystemPrompt(components);
+      if (soulPrompt.trim()) {
+        sections.push(`## 工作区上下文\n\n${soulPrompt}`);
+      }
+    } catch (error) {
+      // 读取失败不影响主流程
+      console.warn("[Agent Prompt] 读取 Soul/Memory 组件失败:", error);
+    }
   }
 
   return sections.join("\n\n");

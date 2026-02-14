@@ -65,6 +65,11 @@ import {
   saveWorkspaceMemory,
   searchWorkspaceMemory
 } from "./memory-service";
+import {
+  getSessionStateManager,
+  startSessionHeartbeat,
+  stopSessionHeartbeat,
+} from "./session-state-manager";
 
 type AgentEventEmitter = {
   onEvent: (event: AgentEvent) => void;
@@ -569,6 +574,19 @@ export async function sendAgentMessage(
   });
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
 
+  // 初始化会话状态（用于 Memory Flush 和 Heartbeat）
+  const sessionStateManager = getSessionStateManager();
+  sessionStateManager.getOrCreate(sessionId, workspaceSlug);
+
+  // 启动 Heartbeat 定时器（如果工作区有 HEARTBEAT.md）
+  if (workspaceSlug) {
+    startSessionHeartbeat(sessionId, workspaceSlug, async () => {
+      // Heartbeat 回调：可以在这里执行定期检查任务
+      // 目前仅记录状态，实际任务由 HEARTBEAT.md 定义
+      log.info("Heartbeat 检查完成", { sessionId: sessionId.slice(0, 8), workspaceSlug });
+    });
+  }
+
   const channel = resolvedChannelId ? listChannels().find((item) => item.id === resolvedChannelId) : undefined;
   if (!channel || !resolvedChannelId) {
     activeControllers.delete(sessionId);
@@ -795,6 +813,37 @@ export async function sendAgentMessage(
             pendingExitPlans.delete(event.toolUseId);
           }
         }
+
+        // 处理 usage_update 事件：更新 token 使用量并检查 Memory Flush
+        if (event.type === "usage_update") {
+          sessionStateManager.updateTokens(
+            sessionId,
+            event.usage.inputTokens,
+            event.usage.contextWindow
+          );
+
+          // 检查是否需要触发 Memory Flush
+          const flushCheck = sessionStateManager.checkMemoryFlush(sessionId);
+          if (flushCheck.executed && flushCheck.prompt) {
+            log.info("Memory Flush 触发条件满足", {
+              sessionId: sessionId.slice(0, 8),
+              reason: flushCheck.reason,
+            });
+            // 注意：这里只记录日志，实际的 Memory Flush 由 Agent 自动处理
+            // 因为 SDK 会自动压缩，我们只需要确保 Agent 知道要写记忆
+          }
+        }
+
+        // 处理 compacting 事件：增加压缩计数
+        if (event.type === "compacting") {
+          sessionStateManager.incrementCompaction(sessionId);
+          log.info("会话开始压缩", { sessionId: sessionId.slice(0, 8) });
+        }
+
+        // 处理 compact_complete 事件：可以在这里执行压缩后的清理
+        if (event.type === "compact_complete") {
+          log.info("会话压缩完成", { sessionId: sessionId.slice(0, 8) });
+        }
       }
 
       const resumeNotFound = events.find((event): event is Extract<AgentEvent, { type: "error" }> =>
@@ -884,6 +933,12 @@ export async function sendAgentMessage(
       }
     }
     activeControllers.delete(sessionId);
+
+    // 清理会话状态（可选：保留状态用于后续查询）
+    // sessionStateManager.delete(sessionId);
+
+    // 注意：不在这里停止 Heartbeat，因为 Heartbeat 应该持续运行
+    // 即使当前会话结束，Heartbeat 也应该定期检查
   }
 }
 
@@ -899,6 +954,11 @@ export function stopAllAgents(): void {
     controller.abort();
     activeControllers.delete(sessionId);
   }
+
+  // 停止所有 Heartbeat 定时器
+  const { getHeartbeatService } = require("./heartbeat-service");
+  const heartbeatService = getHeartbeatService();
+  heartbeatService.stopAllTimers();
 }
 
 export async function generateAgentTitle(input: AgentGenerateTitleInput): Promise<string | null> {

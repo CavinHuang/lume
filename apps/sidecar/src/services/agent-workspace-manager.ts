@@ -31,6 +31,7 @@ import {
   getWorkspaceSkillsDir
 } from "./config-paths";
 import { seedDefaultSkills } from "./default-skills-seeder";
+import { ensureBootstrapFiles } from "./workspace-bootstrap-service";
 
 interface AgentWorkspacesIndex {
   version: number;
@@ -149,6 +150,9 @@ export function createAgentWorkspace(name: string): AgentWorkspace {
   getAgentWorkspacePath(slug);
   ensureWorkspaceAgentAssets(slug, name);
 
+  // 创建 Bootstrap 文件
+  ensureBootstrapFiles(slug);
+
   index.workspaces.push(workspace);
   writeIndex(index);
 
@@ -196,6 +200,8 @@ export function ensureDefaultWorkspace(): AgentWorkspace {
 
   if (existing) {
     ensureWorkspaceAgentAssets(existing.slug, existing.name);
+    // 确保 Bootstrap 文件存在（幂等操作）
+    ensureBootstrapFiles(existing.slug);
     return existing;
   }
 
@@ -210,6 +216,9 @@ export function ensureDefaultWorkspace(): AgentWorkspace {
 
   getAgentWorkspacePath("default");
   ensureWorkspaceAgentAssets("default", "默认工作区");
+
+  // 创建 Bootstrap 文件
+  ensureBootstrapFiles("default");
 
   index.workspaces.push(workspace);
   writeIndex(index);
