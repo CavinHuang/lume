@@ -52,8 +52,12 @@ export function parseHeartbeatInterval(interval: string): number {
     return 30 * 60 * 1000; // 默认 30 分钟
   }
 
-  const value = parseInt(match[1], 10);
+  const valueText = match[1];
   const unit = match[2];
+  if (!valueText || !unit) {
+    return 30 * 60 * 1000;
+  }
+  const value = parseInt(valueText, 10);
 
   switch (unit) {
     case 's':

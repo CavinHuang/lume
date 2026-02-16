@@ -255,9 +255,18 @@ apps/sidecar/src/services/
 
 ## 阶段七：测试与验证
 
-**状态**: ⏸️ 待开始
+**状态**: ✅ 已完成
 
 **目标**: 确保系统正常工作
+
+### 已完成验证项（2026-02-16）
+
+- `memory_search / memory_get / memory_save` 工具行为对齐 OpenClaw（失败降级返回 disabled payload，不抛 tool error）。
+- Prompt 注入顺序对齐（Session Bootstrap + Project Context + Memory Recall）。
+- subagent 文件注入白名单对齐（仅 AGENTS/TOOLS）。
+- `MEMORY.md` / `memory.md` 双文件兼容与真实文件名回显（含大小写不敏感文件系统修正）。
+- `sessionType -> chatType` 回退映射对齐（citations auto 判定一致）。
+- 关键测试全部通过（包括此前受 `~/.lume` 写权限影响的用例，已通过 `LUME_CONFIG_DIR` 隔离修复）。
 
 ### 测试项
 

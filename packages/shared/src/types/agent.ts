@@ -296,6 +296,8 @@ export interface AgentSendInput {
   workspaceId?: string
   /** 会话类型（用于记忆 citations auto 行为） */
   chatType?: 'direct' | 'group' | 'channel'
+  /** Bootstrap 会话类型（用于系统提示词文件注入策略） */
+  sessionType?: 'main' | 'subagent' | 'group' | 'channel'
   /** Claude Agent SDK 权限模式 */
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
 }

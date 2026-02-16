@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   applyMemoryToolPolicy,
   deriveChatTypeFromSessionKey,
+  deriveChatTypeFromSessionType,
   normalizeMemoryChatType,
   parseMemoryRuntimeConfigPayload,
   shouldIncludeCitations
@@ -58,6 +59,14 @@ describe("memory-policy", () => {
     expect(deriveChatTypeFromSessionKey("agent:main:discord:group:c123")).toBe("group");
     expect(deriveChatTypeFromSessionKey("agent:main:slack:channel:c123")).toBe("channel");
     expect(deriveChatTypeFromSessionKey("session-uuid")).toBe("direct");
+  });
+
+  test("从 sessionType 解析 chat type", () => {
+    expect(deriveChatTypeFromSessionType("main")).toBe("direct");
+    expect(deriveChatTypeFromSessionType("subagent")).toBe("direct");
+    expect(deriveChatTypeFromSessionType("group")).toBe("group");
+    expect(deriveChatTypeFromSessionType("channel")).toBe("channel");
+    expect(deriveChatTypeFromSessionType("other")).toBeUndefined();
   });
 
   test("normalizeMemoryChatType 仅接受 direct/group/channel", () => {

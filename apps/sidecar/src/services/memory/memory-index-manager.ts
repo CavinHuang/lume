@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { resolve, relative, extname } from "node:path";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { resolve, relative } from "node:path";
 import { Database } from "bun:sqlite";
 import {
   DEFAULT_HYBRID_CANDIDATE_MULTIPLIER,
@@ -10,12 +10,27 @@ import {
   DEFAULT_TEXT_WEIGHT,
   DEFAULT_VECTOR_WEIGHT
 } from "./constants";
-import { chunkMarkdown } from "./memory-chunker";
+import { chunkMarkdown, remapChunkLines } from "./memory-chunker";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid-search";
 import { createLiteEmbedding } from "./embeddings-lite";
 import { embedTextWithProvider, embedTextsWithProvider, resolveEmbeddingProvider, type ResolvedEmbeddingProvider } from "./embedding-provider";
+import { embedTextWithCache, embedTextsWithCache } from "./embedding-ops";
+import { ensureInsideRoot, ensurePathAllowed } from "./path-ops";
+import { searchDenseFallbackRows, searchKeywordRows, searchVectorRows } from "./search-ops";
+import {
+  countChunksBySource,
+  countChunksForWorkspace,
+  countFilesBySource,
+  countFilesForWorkspace
+} from "./status-ops";
+import { collectWorkspaceMemoryEntries, pruneStaleIndexedRows, type SyncTargetEntry } from "./sync-ops";
 import type { HybridSearchResult } from "./types";
 import { listSessionEntriesForWorkspace } from "./session-files";
+import {
+  isMarkdownFile,
+  isMemoryPath,
+  normalizeExtraMemoryPaths
+} from "../openclaw/memory-path-utils";
 import type {
   MemoryGetResult,
   MemorySearchResult,
@@ -29,16 +44,6 @@ interface FileMetaRow {
   mtime: number;
   size: number;
   source?: string;
-}
-
-interface ChunkSearchRow {
-  id: string;
-  path: string;
-  start_line: number;
-  end_line: number;
-  text: string;
-  rank?: number;
-  embedding?: string;
 }
 
 const SQLITE_VEC_DIMS = 1536;
@@ -79,70 +84,9 @@ function formatCitation(path: string, startLine: number, endLine: number): strin
   return `${path}#L${startLine}-L${endLine}`;
 }
 
-function ensureInsideRoot(root: string, target: string): string {
-  const resolvedRoot = resolve(root);
-  const resolvedTarget = resolve(target);
-  const rel = relative(resolvedRoot, resolvedTarget);
-  if (rel.startsWith("..") || rel.startsWith("../") || rel === "..") {
-    throw new Error("目标路径超出工作区允许范围");
-  }
-  return resolvedTarget;
-}
-
-function normalizeExtraMemoryPaths(workspaceRoot: string, extraPaths: string[]): string[] {
-  const resolved = extraPaths
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .map((value) => resolve(workspaceRoot, value));
-  return Array.from(new Set(resolved));
-}
-
-function ensurePathAllowed(params: {
-  workspaceRoot: string;
-  absPath: string;
-  extraRoots: string[];
-}): void {
-  const resolvedTarget = resolve(params.absPath);
-  const resolvedWorkspace = resolve(params.workspaceRoot);
-  const relWorkspace = relative(resolvedWorkspace, resolvedTarget);
-  if (!relWorkspace.startsWith("..") && relWorkspace !== "..") return;
-
-  for (const extraRoot of params.extraRoots) {
-    const rel = relative(extraRoot, resolvedTarget);
-    if (!rel.startsWith("..") && rel !== "..") {
-      return;
-    }
-  }
-
-  throw new Error("目标路径超出允许范围");
-}
-
-function isMarkdownFile(path: string): boolean {
-  const ext = extname(path).toLowerCase();
-  return ext === ".md" || ext === ".markdown";
-}
-
-function collectMarkdownFiles(baseDir: string): string[] {
-  if (!existsSync(baseDir)) return [];
-  const entries = readdirSync(baseDir, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    const fullPath = resolve(baseDir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...collectMarkdownFiles(fullPath));
-      continue;
-    }
-    if (entry.isFile() && isMarkdownFile(fullPath)) {
-      files.push(fullPath);
-    }
-  }
-
-  return files;
-}
-
 export class MemoryIndexManager {
   private readonly db: Database;
+  private readonly dbPath: string;
   private readonly workspaceRoot: string;
   private readonly workspaceSlug: string;
   private readonly ftsEnabled: boolean;
@@ -163,6 +107,7 @@ export class MemoryIndexManager {
   }) {
     this.workspaceRoot = resolve(params.workspaceRoot);
     this.workspaceSlug = params.workspaceSlug;
+    this.dbPath = params.dbPath;
     this.workspaceId = params.workspaceId;
     this.sources = new Set((params.sources ?? ["memory"]).filter((item) => item === "memory" || item === "sessions"));
     if (this.sources.size === 0) this.sources.add("memory");
@@ -257,15 +202,54 @@ export class MemoryIndexManager {
   }
 
   status(): {
+    backend: "builtin";
     provider: string;
     model: string;
+    files: number;
+    chunks: number;
+    workspaceDir: string;
+    dbPath: string;
+    sources: Array<"memory" | "sessions">;
+    extraPaths: string[];
+    sourceCounts: Array<{ source: "memory" | "sessions"; files: number; chunks: number }>;
     fallback?: { from?: string; reason?: string };
     ftsEnabled: boolean;
     vecEnabled: boolean;
   } {
+    const sourceCounts = Array.from(this.sources).map((source) => {
+      const dbSource = source === "sessions" ? "session" : "memory";
+      return {
+        source,
+        files: countFilesBySource({
+          db: this.db,
+          workspaceSlug: this.workspaceSlug,
+          dbSource
+        }),
+        chunks: countChunksBySource({
+          db: this.db,
+          workspaceSlug: this.workspaceSlug,
+          dbSource
+        })
+      };
+    });
+
     return {
+      backend: "builtin",
       provider: this.embedding.provider,
       model: this.embedding.model,
+      files: countFilesForWorkspace({
+        db: this.db,
+        workspaceSlug: this.workspaceSlug
+      }),
+      chunks: countChunksForWorkspace({
+        db: this.db,
+        workspaceSlug: this.workspaceSlug
+      }),
+      workspaceDir: this.workspaceRoot,
+      dbPath: this.dbPath,
+      sources: Array.from(this.sources),
+      extraPaths: [...this.extraPaths],
+      sourceCounts,
       ...(this.embedding.fallbackFrom || this.embedding.fallbackReason
         ? {
             fallback: {
@@ -276,6 +260,20 @@ export class MemoryIndexManager {
         : {}),
       ftsEnabled: this.ftsEnabled,
       vecEnabled: this.vecEnabled
+    };
+  }
+
+  private buildDbSourceFilter(column: string): { sql: string; params: string[] } {
+    const dbSources = Array.from(this.sources).map((source) =>
+      source === "sessions" ? "session" : "memory"
+    );
+    if (dbSources.length === 0) {
+      return { sql: "", params: [] };
+    }
+    const placeholders = dbSources.map(() => "?").join(", ");
+    return {
+      sql: ` AND ${column} IN (${placeholders})`,
+      params: dbSources
     };
   }
 
@@ -307,6 +305,9 @@ export class MemoryIndexManager {
   removeFile(filePath: string): void {
     const resolvedPath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, filePath));
     const relativePath = relative(this.workspaceRoot, resolvedPath).replace(/\\/g, "/");
+    if (!isMemoryPath(relativePath)) {
+      throw new Error("仅允许移除 MEMORY.md、memory.md 或 memory/*.md 的索引");
+    }
     this.removeFileChunks(relativePath);
     this.db.query("DELETE FROM files WHERE path = ?1").run(relativePath);
   }
@@ -318,6 +319,7 @@ export class MemoryIndexManager {
     content: string;
     mtimeMs: number;
     size: number;
+    lineMap?: number[];
   }, force: boolean): Promise<number> {
     const hash = sha256(entry.content);
     const existing = this.getFileMeta(entry.logicalPath);
@@ -326,6 +328,9 @@ export class MemoryIndexManager {
     }
 
     const chunks = chunkMarkdown(entry.content, entry.logicalPath, { model: this.embedding.model });
+    if (entry.source === "session") {
+      remapChunkLines(chunks, entry.lineMap);
+    }
     const now = Date.now();
     const embeddings = await this.embedTexts(chunks.map((chunk) => chunk.text));
 
@@ -395,110 +400,70 @@ export class MemoryIndexManager {
     return chunks.length;
   }
 
-  private getCachedEmbedding(text: string): number[] | null {
-    const hash = sha256(text);
-    const row = this.db
-      .query(
-        `SELECT embedding FROM embedding_cache
-         WHERE provider = ?1 AND model = ?2 AND provider_key = ?3 AND hash = ?4`
-      )
-      .get(this.embedding.provider, this.embedding.model, this.embedding.providerKey, hash) as { embedding?: string } | null;
-
-    if (!row?.embedding) return null;
-    try {
-      const parsed = JSON.parse(row.embedding) as unknown;
-      if (Array.isArray(parsed)) {
-        return parsed.filter((item): item is number => typeof item === "number");
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  }
-
-  private setCachedEmbedding(text: string, embedding: number[]): void {
-    const hash = sha256(text);
-    this.db
-      .query(
-        `INSERT OR REPLACE INTO embedding_cache
-        (provider, model, provider_key, hash, embedding, dims, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
-      )
-      .run(
-        this.embedding.provider,
-        this.embedding.model,
-        this.embedding.providerKey,
-        hash,
-        JSON.stringify(embedding),
-        embedding.length,
-        Date.now()
-      );
-  }
-
   private async embedText(text: string): Promise<number[]> {
-    const cached = this.getCachedEmbedding(text);
-    if (cached && cached.length > 0) {
-      return cached;
-    }
-
-    let embedding: number[];
-    try {
-      embedding = await embedTextWithProvider(text, this.embedding);
-    } catch (error) {
-      console.warn("[记忆索引] 远程 embedding 失败，回退 Lite:", error);
-      embedding = createLiteEmbedding(text);
-    }
-
-    this.setCachedEmbedding(text, embedding);
-    return embedding;
+    return embedTextWithCache({
+      text,
+      hashText: sha256,
+      cache: {
+        db: this.db,
+        provider: this.embedding.provider,
+        model: this.embedding.model,
+        providerKey: this.embedding.providerKey
+      },
+      embedSingle: async (value) => {
+        try {
+          return await embedTextWithProvider(value, this.embedding);
+        } catch (error) {
+          console.warn("[记忆索引] 远程 embedding 失败，回退 Lite:", error);
+          throw error;
+        }
+      },
+      fallbackLite: (value) => createLiteEmbedding(value)
+    });
   }
 
   private async embedTexts(texts: string[]): Promise<number[][]> {
-    if (texts.length === 0) return [];
-
-    const result = Array.from({ length: texts.length }, () => [] as number[]);
-    const misses: Array<{ index: number; text: string }> = [];
-
-    texts.forEach((text, index) => {
-      const cached = this.getCachedEmbedding(text);
-      if (cached && cached.length > 0) {
-        result[index] = cached;
-      } else {
-        misses.push({ index, text });
-      }
+    return embedTextsWithCache({
+      texts,
+      hashText: sha256,
+      cache: {
+        db: this.db,
+        provider: this.embedding.provider,
+        model: this.embedding.model,
+        providerKey: this.embedding.providerKey
+      },
+      embedBatch: async (batchTexts) => {
+        try {
+          return await embedTextsWithProvider(
+            batchTexts,
+            this.embedding,
+            {
+              concurrency: EMBEDDING_INDEX_CONCURRENCY,
+              batchSize: EMBEDDING_BATCH_SIZE
+            }
+          );
+        } catch (error) {
+          console.warn("[记忆索引] batch embedding 失败，回退 Lite:", error);
+          throw error;
+        }
+      },
+      embedSingle: async (value) => embedTextWithProvider(value, this.embedding),
+      fallbackLite: (value) => createLiteEmbedding(value)
     });
-
-    if (misses.length > 0) {
-      let missEmbeddings: number[][];
-      try {
-        missEmbeddings = await embedTextsWithProvider(
-          misses.map((item) => item.text),
-          this.embedding,
-          {
-            concurrency: EMBEDDING_INDEX_CONCURRENCY,
-            batchSize: EMBEDDING_BATCH_SIZE
-          }
-        );
-      } catch (error) {
-        console.warn("[记忆索引] batch embedding 失败，回退 Lite:", error);
-        missEmbeddings = misses.map((item) => createLiteEmbedding(item.text));
-      }
-
-      misses.forEach((item, missIndex) => {
-        const embedding = missEmbeddings[missIndex] ?? createLiteEmbedding(item.text);
-        result[item.index] = embedding;
-        this.setCachedEmbedding(item.text, embedding);
-      });
-    }
-
-    return result;
   }
 
   async indexFile(filePath: string, force = false): Promise<number> {
     const resolvedPath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, filePath));
     const relativePath = relative(this.workspaceRoot, resolvedPath).replace(/\\/g, "/");
+    if (!isMemoryPath(relativePath)) {
+      return 0;
+    }
 
     if (!existsSync(resolvedPath) || !isMarkdownFile(resolvedPath)) {
+      return 0;
+    }
+    const st = lstatSync(resolvedPath);
+    if (st.isSymbolicLink() || !st.isFile()) {
       return 0;
     }
 
@@ -518,53 +483,15 @@ export class MemoryIndexManager {
   }
 
   async indexWorkspace(force = false): Promise<number> {
-    const targetEntries: Array<{
-      source: "memory" | "session";
-      logicalPath: string;
-      absPath: string;
-      content: string;
-      mtimeMs: number;
-      size: number;
-    }> = [];
+    const targetEntries: SyncTargetEntry[] = [];
 
     if (this.sources.has("memory")) {
-      const memoryFiles = new Set<string>();
-      const longTerm = resolve(this.workspaceRoot, "MEMORY.md");
-      if (existsSync(longTerm)) memoryFiles.add(longTerm);
-      const memoryDir = resolve(this.workspaceRoot, "memory");
-      for (const file of collectMarkdownFiles(memoryDir)) {
-        memoryFiles.add(file);
-      }
-      for (const extraPath of this.extraPaths) {
-        if (!existsSync(extraPath)) continue;
-        const st = statSync(extraPath);
-        if (st.isDirectory()) {
-          for (const file of collectMarkdownFiles(extraPath)) {
-            memoryFiles.add(file);
-          }
-          continue;
-        }
-        if (st.isFile() && isMarkdownFile(extraPath)) {
-          memoryFiles.add(extraPath);
-        }
-      }
-
-      for (const absPath of memoryFiles) {
-        const stat = statSync(absPath);
-        const content = readFileSync(absPath, "utf-8");
-        let logicalPath = relative(this.workspaceRoot, absPath).replace(/\\/g, "/");
-        if (logicalPath.startsWith("..")) {
-          logicalPath = `extra:${resolve(absPath).replace(/\\/g, "/")}`;
-        }
-        targetEntries.push({
-          source: "memory",
-          logicalPath,
-          absPath: resolve(absPath),
-          content,
-          mtimeMs: stat.mtimeMs,
-          size: stat.size
-        });
-      }
+      targetEntries.push(
+        ...collectWorkspaceMemoryEntries({
+          workspaceRoot: this.workspaceRoot,
+          extraPaths: this.extraPaths
+        })
+      );
     }
 
     if (this.sources.has("sessions") && this.workspaceId) {
@@ -575,7 +502,8 @@ export class MemoryIndexManager {
           absPath: entry.absPath,
           content: entry.content,
           mtimeMs: entry.mtimeMs,
-          size: entry.size
+          size: entry.size,
+          lineMap: entry.lineMap
         });
       }
     }
@@ -586,18 +514,14 @@ export class MemoryIndexManager {
     }
 
     const targetSet = new Set(targetEntries.map((item) => item.logicalPath));
-    const indexedRows = this.db
-      .query(
-        `SELECT path, source FROM files
-         WHERE workspace_slug = ?1`
-      )
-      .all(this.workspaceSlug) as Array<{ path: string; source: string }>;
-    for (const row of indexedRows) {
-      if (!targetSet.has(row.path) && (row.source === "memory" || row.source === "session")) {
-        this.removeFileChunks(row.path);
-        this.db.query("DELETE FROM files WHERE path = ?1").run(row.path);
+    pruneStaleIndexedRows({
+      db: this.db,
+      workspaceSlug: this.workspaceSlug,
+      targetPaths: targetSet,
+      onDeletePath: (path) => {
+        this.removeFileChunks(path);
       }
-    }
+    });
 
     return total;
   }
@@ -619,20 +543,19 @@ export class MemoryIndexManager {
     if (this.ftsEnabled) {
       const ftsQuery = buildFtsQuery(query);
       if (ftsQuery) {
-        const rows = this.db
-          .query(
-            `SELECT id, path, start_line, end_line, text, bm25(chunks_fts) AS rank
-             FROM chunks_fts
-             WHERE chunks_fts MATCH ?1
-             ORDER BY rank
-             LIMIT ?2`
-          )
-          .all(ftsQuery, candidates) as ChunkSearchRow[];
+        const sourceFilter = this.buildDbSourceFilter("source");
+        const rows = searchKeywordRows({
+          db: this.db,
+          query: ftsQuery,
+          candidates,
+          sourceFilter
+        });
 
         for (const row of rows) {
           keywordResults.push({
             id: row.id,
             path: row.path,
+            source: row.source === "session" ? "sessions" : "memory",
             startLine: row.start_line,
             endLine: row.end_line,
             text: row.text,
@@ -649,34 +572,21 @@ export class MemoryIndexManager {
     const vectorResults: HybridSearchResult[] = [];
     if (this.vecEnabled && this.vecSearchReady && queryEmbedding.length === SQLITE_VEC_DIMS) {
       try {
-        const rows = this.db
-          .query(
-            `SELECT c.id, c.path, c.start_line, c.end_line, c.text,
-                    vec_distance_cosine(v.embedding, ?1) AS dist
-             FROM chunks_vec v
-             JOIN chunks c ON c.id = v.id
-             WHERE c.workspace_slug = ?2 AND c.model = ?3
-             ORDER BY dist ASC
-             LIMIT ?4`
-          )
-          .all(
-            vectorToBlob(queryEmbedding),
-            this.workspaceSlug,
-            this.embedding.model,
-            candidates
-          ) as Array<{
-            id: string;
-            path: string;
-            start_line: number;
-            end_line: number;
-            text: string;
-            dist: number;
-          }>;
+        const sourceFilter = this.buildDbSourceFilter("c.source");
+        const rows = searchVectorRows({
+          db: this.db,
+          queryEmbeddingBlob: vectorToBlob(queryEmbedding),
+          workspaceSlug: this.workspaceSlug,
+          model: this.embedding.model,
+          candidates,
+          sourceFilter
+        });
 
         for (const row of rows) {
           vectorResults.push({
             id: row.id,
             path: row.path,
+            source: row.source === "session" ? "sessions" : "memory",
             startLine: row.start_line,
             endLine: row.end_line,
             text: row.text,
@@ -689,14 +599,13 @@ export class MemoryIndexManager {
     }
 
     if (vectorResults.length === 0 && queryEmbedding.length > 0) {
-      const rows = this.db
-        .query(
-          `SELECT id, path, start_line, end_line, text, embedding
-           FROM chunks
-           WHERE workspace_slug = ?1
-           LIMIT ?2`
-        )
-        .all(this.workspaceSlug, candidates * 4) as ChunkSearchRow[];
+      const sourceFilter = this.buildDbSourceFilter("source");
+      const rows = searchDenseFallbackRows({
+        db: this.db,
+        workspaceSlug: this.workspaceSlug,
+        candidates,
+        sourceFilter
+      });
 
       for (const row of rows) {
         let embedding: number[] = [];
@@ -713,6 +622,7 @@ export class MemoryIndexManager {
         vectorResults.push({
           id: row.id,
           path: row.path,
+          source: row.source === "session" ? "sessions" : "memory",
           startLine: row.start_line,
           endLine: row.end_line,
           text: row.text,
@@ -744,7 +654,7 @@ export class MemoryIndexManager {
         snippet: truncateUtf16Safe(item.text ?? "", SNIPPET_MAX_CHARS),
         citation: formatCitation(item.path ?? "", item.startLine ?? 1, item.endLine ?? 1),
         score: item.score,
-        source: item.source
+        source: item.source ?? "memory"
       }));
   }
 
@@ -757,6 +667,15 @@ export class MemoryIndexManager {
         absPath: resolvedPath,
         extraRoots: this.extraPaths
       });
+      if (!isMarkdownFile(resolvedPath)) {
+        throw new Error("仅允许读取 Markdown 记忆文件");
+      }
+      if (existsSync(resolvedPath)) {
+        const st = lstatSync(resolvedPath);
+        if (st.isSymbolicLink() || !st.isFile()) {
+          throw new Error("仅允许读取普通 Markdown 记忆文件");
+        }
+      }
     } else if (input.path.startsWith("sessions/")) {
       if (!this.workspaceId) {
         return { path: input.path, from: input.from ?? 1, lines: input.lines ?? 0, text: "" };
@@ -766,12 +685,25 @@ export class MemoryIndexManager {
         return { path: input.path, from: input.from ?? 1, lines: input.lines ?? 0, text: "" };
       }
       const allLines = session.content.split("\n");
+      if (input.from === undefined && input.lines === undefined) {
+        return { path: input.path, from: 1, lines: allLines.length, text: session.content };
+      }
       const from = Math.max(1, input.from ?? 1);
-      const lines = Math.max(1, input.lines ?? 200);
+      const lines = Math.max(1, input.lines ?? allLines.length);
       const selected = allLines.slice(from - 1, from - 1 + lines);
       return { path: input.path, from, lines, text: selected.join("\n") };
     } else {
       resolvedPath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, input.path));
+      const relPath = relative(this.workspaceRoot, resolvedPath).replace(/\\/g, "/");
+      if (!isMemoryPath(relPath)) {
+        throw new Error("仅允许读取 MEMORY.md、memory.md、memory/*.md 或 sessions/*");
+      }
+      if (existsSync(resolvedPath)) {
+        const st = lstatSync(resolvedPath);
+        if (st.isSymbolicLink() || !st.isFile()) {
+          throw new Error("仅允许读取普通 Markdown 记忆文件");
+        }
+      }
     }
     if (!existsSync(resolvedPath)) {
       return { path: input.path, from: input.from ?? 1, lines: input.lines ?? 0, text: "" };
@@ -779,8 +711,16 @@ export class MemoryIndexManager {
 
     const content = readFileSync(resolvedPath, "utf-8");
     const allLines = content.split("\n");
+    if (input.from === undefined && input.lines === undefined) {
+      return {
+        path: input.path,
+        from: 1,
+        lines: allLines.length,
+        text: content
+      };
+    }
     const from = Math.max(1, input.from ?? 1);
-    const lines = Math.max(1, input.lines ?? 200);
+    const lines = Math.max(1, input.lines ?? allLines.length);
     const startIndex = from - 1;
     const selected = allLines.slice(startIndex, startIndex + lines);
 
@@ -793,13 +733,16 @@ export class MemoryIndexManager {
   }
 
   getStats(): MemoryStats {
-    const fileRow = this.db.query("SELECT COUNT(*) AS count FROM files WHERE workspace_slug = ?1").get(this.workspaceSlug) as { count?: number } | null;
-    const chunkRow = this.db.query("SELECT COUNT(*) AS count FROM chunks WHERE workspace_slug = ?1").get(this.workspaceSlug) as { count?: number } | null;
-
     return {
       workspaceSlug: this.workspaceSlug,
-      fileCount: fileRow?.count ?? 0,
-      chunkCount: chunkRow?.count ?? 0,
+      fileCount: countFilesForWorkspace({
+        db: this.db,
+        workspaceSlug: this.workspaceSlug
+      }),
+      chunkCount: countChunksForWorkspace({
+        db: this.db,
+        workspaceSlug: this.workspaceSlug
+      }),
       ftsEnabled: this.ftsEnabled,
       vecEnabled: this.vecEnabled
     };

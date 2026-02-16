@@ -38,7 +38,7 @@ export function mergeHybridResults(params: Partial<MergeHybridResultsParams> & {
       ...result,
       vectorScore: result.score,
       textScore: 0,
-      source: "vector",
+      rankSource: "vector",
       score: result.score
     });
   }
@@ -47,7 +47,16 @@ export function mergeHybridResults(params: Partial<MergeHybridResultsParams> & {
     const existing = byId.get(result.id);
     if (existing) {
       existing.textScore = result.score;
-      existing.source = "hybrid";
+      existing.rankSource = "hybrid";
+      if (!existing.source && result.source) {
+        existing.source = result.source;
+      }
+      if (result.text && result.text.length > 0) {
+        existing.text = result.text;
+        if (result.path) existing.path = result.path;
+        if (result.startLine) existing.startLine = result.startLine;
+        if (result.endLine) existing.endLine = result.endLine;
+      }
       continue;
     }
 
@@ -55,7 +64,7 @@ export function mergeHybridResults(params: Partial<MergeHybridResultsParams> & {
       ...result,
       vectorScore: 0,
       textScore: result.score,
-      source: "text",
+      rankSource: "text",
       score: result.score
     });
   }
@@ -65,7 +74,7 @@ export function mergeHybridResults(params: Partial<MergeHybridResultsParams> & {
     merged.push({
       ...result,
       score: vectorWeight * result.vectorScore + textWeight * result.textScore,
-      source: result.vectorScore > 0 && result.textScore > 0 ? "hybrid" : result.source
+      rankSource: result.vectorScore > 0 && result.textScore > 0 ? "hybrid" : result.rankSource
     });
   }
 

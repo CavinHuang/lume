@@ -19,7 +19,8 @@
       "Bash(apps/web/lib/desktop-api.ts)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat\\(agent\\): 支持多执行后端与 CLI 运行时配置\n\n- 新增 agent-cli-runner 支持 claude-cli 和 codex-cli 后端执行\n- 新增 agent-runtime-config 管理 CLI 后端运行时配置\n- 扩展 AgentExecutionBackend 类型支持 claude_sdk/claude_cli/codex_cli/custom_cli\n- 更新 AgentView 支持基于模型 ID 前缀自动切换后端\n- 会话管理支持保存 cliSessionIds 和 executionBackend\n\nRefs: openclaw-memory-cli-alignment-task\nEOF\n\\)\")",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git remote set-url:*)"
     ]
   }
 }

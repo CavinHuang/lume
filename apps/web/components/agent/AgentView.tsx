@@ -606,6 +606,7 @@ export function AgentView(): React.ReactElement {
         channelId: agentChannelId ?? undefined,
         modelId: agentModelId ?? undefined,
         workspaceId: workspaceId ?? undefined,
+        sessionType: "main",
         chatType: "direct",
         permissionMode: agentPermissionMode
       }).catch((error) => {
@@ -732,6 +733,7 @@ export function AgentView(): React.ReactElement {
       channelId: agentChannelId,
       modelId: outgoingModelId,
       workspaceId: workspaceId ?? undefined,
+      sessionType: "main",
       chatType: "direct",
       permissionMode: agentPermissionMode
     });
@@ -827,6 +829,7 @@ export function AgentView(): React.ReactElement {
       channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: workspaceId ?? undefined,
+      sessionType: "main",
       chatType: "direct",
       permissionMode: agentPermissionMode
     }).catch((error) => {
@@ -889,6 +892,7 @@ export function AgentView(): React.ReactElement {
       channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: workspaceId ?? undefined,
+      sessionType: "main",
       chatType: "direct",
       permissionMode: agentPermissionMode
     }).catch((error) => {

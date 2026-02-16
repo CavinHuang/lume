@@ -10,7 +10,7 @@
  * - 读取 Bootstrap 文件内容
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -25,6 +25,7 @@ import type {
 import {
   getAgentWorkspacePath,
 } from "./config-paths";
+import { stripFrontMatter } from "./openclaw/workspace-template-utils";
 
 // ===== 常量 =====
 
@@ -82,6 +83,8 @@ const BOOTSTRAP_FILE_CONFIGS: BootstrapFileMeta[] = [
   },
 ];
 
+const CORE_WORKSPACE_FILE_TYPES: BootstrapFileType[] = ['AGENTS', 'SOUL', 'TOOLS', 'IDENTITY', 'USER'];
+
 // ===== 模板路径 =====
 
 /**
@@ -127,11 +130,15 @@ export function readTemplateContent(fileType: BootstrapFileType, devMode: boolea
   }
 
   try {
-    return readFileSync(templatePath, 'utf-8');
+    return stripFrontMatter(readFileSync(templatePath, 'utf-8'));
   } catch (error) {
     console.error(`[Bootstrap] 读取模板失败: ${templatePath}`, error);
     return '';
   }
+}
+
+function isBrandNewWorkspace(workspaceSlug: string): boolean {
+  return CORE_WORKSPACE_FILE_TYPES.every((type) => !bootstrapFileExists(workspaceSlug, type));
 }
 
 /**
@@ -161,7 +168,7 @@ export function readBootstrapFile(workspaceSlug: string, fileType: BootstrapFile
   }
 
   try {
-    return readFileSync(filePath, 'utf-8');
+    return stripFrontMatter(readFileSync(filePath, 'utf-8'));
   } catch (error) {
     console.error(`[Bootstrap] 读取文件失败: ${filePath}`, error);
     return '';
@@ -222,7 +229,7 @@ export function deleteBootstrapFile(workspaceSlug: string, fileType: BootstrapFi
  */
 export function ensureBootstrapFiles(
   workspaceSlug: string,
-  fileTypes: BootstrapFileType[] = ['SOUL', 'USER', 'IDENTITY', 'AGENTS', 'TOOLS', 'HEARTBEAT', 'MEMORY', 'BOOTSTRAP'],
+  fileTypes: BootstrapFileType[] = ['SOUL', 'USER', 'IDENTITY', 'AGENTS', 'TOOLS', 'BOOTSTRAP'],
   devMode: boolean = false
 ): BootstrapResult {
   const result: BootstrapResult = {
@@ -231,10 +238,17 @@ export function ensureBootstrapFiles(
     failed: [],
   };
 
+  const shouldCreateBootstrap = isBrandNewWorkspace(workspaceSlug);
+
   for (const fileType of fileTypes) {
     const config = BOOTSTRAP_FILE_CONFIGS.find(c => c.type === fileType);
     if (!config) {
       result.failed.push({ file: fileType, error: '未知的文件类型' });
+      continue;
+    }
+
+    if (fileType === 'BOOTSTRAP' && !shouldCreateBootstrap) {
+      result.skipped.push(config.filename);
       continue;
     }
 
@@ -332,12 +346,91 @@ export function readSystemPromptComponents(
     }
   }
 
+  if (!components.memory && includeMemory) {
+    const altMemoryPath = join(getAgentWorkspacePath(workspaceSlug), 'memory.md');
+    if (existsSync(altMemoryPath)) {
+      try {
+        const altMemory = stripFrontMatter(readFileSync(altMemoryPath, 'utf-8'));
+        if (altMemory.trim()) {
+          components.memory = altMemory;
+        }
+      } catch (error) {
+        console.warn(`[Bootstrap] 读取备用记忆文件失败: ${altMemoryPath}`, error);
+      }
+    }
+  }
+
   // 读取每日记忆文件（如果需要）
   if (includeDailyMemory) {
     components.dailyMemory = readDailyMemoryFiles(workspaceSlug, options.dailyMemoryDays ?? 2);
   }
 
-  return components;
+  return filterComponentsForSessionType(components, sessionType);
+}
+
+export function resolveLoadedLongTermMemoryPath(
+  workspaceSlug: string
+): "MEMORY.md" | "memory.md" | null {
+  const workspacePath = getAgentWorkspacePath(workspaceSlug);
+  let entries: Set<string> = new Set();
+  try {
+    entries = new Set(readdirSync(workspacePath));
+  } catch {
+    entries = new Set();
+  }
+
+  const hasPrimaryExact = entries.has("MEMORY.md");
+  const hasAltExact = entries.has("memory.md");
+
+  // 在大小写不敏感文件系统上（如默认 macOS），existsSync("MEMORY.md") 可能命中 memory.md。
+  // 这里优先依据目录中的真实文件名，保证提示词显示的文件名与磁盘实际一致。
+  if (!hasPrimaryExact && hasAltExact) {
+    const altPath = join(workspacePath, "memory.md");
+    try {
+      if (stripFrontMatter(readFileSync(altPath, "utf-8")).trim()) {
+        return "memory.md";
+      }
+    } catch {
+      // ignore read failure
+    }
+  }
+
+  const primaryPath = join(workspacePath, "MEMORY.md");
+  if (existsSync(primaryPath)) {
+    try {
+      if (stripFrontMatter(readFileSync(primaryPath, "utf-8")).trim()) {
+        return "MEMORY.md";
+      }
+    } catch {
+      // ignore read failure
+    }
+  }
+
+  const altPath = join(workspacePath, "memory.md");
+  if (existsSync(altPath)) {
+    try {
+      if (stripFrontMatter(readFileSync(altPath, "utf-8")).trim()) {
+        return "memory.md";
+      }
+    } catch {
+      // ignore read failure
+    }
+  }
+
+  return null;
+}
+
+export function filterComponentsForSessionType(
+  components: SystemPromptComponents,
+  sessionType: SessionType
+): SystemPromptComponents {
+  if (sessionType !== "subagent") {
+    return components;
+  }
+  return {
+    agents: components.agents,
+    tools: components.tools
+  };
 }
 
 /**
@@ -356,11 +449,17 @@ export function readDailyMemoryFiles(workspaceSlug: string, days: number = 2): s
 
   const contents: string[] = [];
   const today = new Date();
+  const formatLocalDate = (date: Date): string => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
 
   for (let i = 0; i < days; i++) {
     const date = new Date(today);
     date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
+    const dateStr = formatLocalDate(date);
     const filePath = join(memoryDir, `${dateStr}.md`);
 
     if (existsSync(filePath)) {

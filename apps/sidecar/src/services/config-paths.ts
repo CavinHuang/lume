@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, normalize, sep } from "node:path";
+import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 
 const CONFIG_DIR_NAME = ".lume";
 
@@ -51,6 +51,11 @@ function assertSafeRelativePath(value: string, label: string): string {
 }
 
 export function getConfigDir(): string {
+  const fromEnv = process.env.LUME_CONFIG_DIR?.trim();
+  if (fromEnv) {
+    const resolved = isAbsolute(fromEnv) ? fromEnv : resolve(process.cwd(), fromEnv);
+    return ensureDir(resolved, "配置目录");
+  }
   return ensureDir(join(homedir(), CONFIG_DIR_NAME), "配置目录");
 }
 

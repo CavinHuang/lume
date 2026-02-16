@@ -22,7 +22,7 @@ const MEMORY_CONFIG_VERSION = 1;
 
 const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | "tools" | "citations">> = {
   version: MEMORY_CONFIG_VERSION,
-  tools: { allow: ["group:memory", "memory_save"] },
+  tools: { allow: ["group:memory"] },
   citations: "auto"
 };
 const DEFAULT_SOURCES: MemorySourceMode[] = ["memory"];
@@ -102,6 +102,16 @@ export function deriveChatTypeFromSessionKey(sessionKey?: string): MemoryChatTyp
   if (tokens.has("channel")) return "channel";
   if (tokens.has("group")) return "group";
   return "direct";
+}
+
+export function deriveChatTypeFromSessionType(sessionType?: unknown): MemoryChatType | undefined {
+  if (sessionType === "group" || sessionType === "channel") {
+    return sessionType;
+  }
+  if (sessionType === "main" || sessionType === "subagent") {
+    return "direct";
+  }
+  return undefined;
 }
 
 export function normalizeMemoryChatType(value: unknown): MemoryChatType | undefined {

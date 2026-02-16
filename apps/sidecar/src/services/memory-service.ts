@@ -7,6 +7,7 @@ import {
 import { MemoryIndexManager } from "./memory/memory-index-manager";
 import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import { resolveMemoryRuntimeConfig } from "./memory-policy";
+import { isMemoryPath, normalizeRelPath } from "./openclaw/memory-path-utils";
 import type {
   MemoryGetInput,
   MemoryGetResult,
@@ -129,14 +130,13 @@ export async function syncWorkspaceMemoryPath(input: {
   const workspaceRoot = getAgentWorkspacePath(input.workspaceSlug);
   const resolvedRoot = resolve(workspaceRoot);
   const resolvedTarget = resolve(input.absolutePath);
-  const rel = relative(resolvedRoot, resolvedTarget).replace(/\\/g, "/");
+  const rel = normalizeRelPath(relative(resolvedRoot, resolvedTarget));
 
   if (rel.startsWith("..") || rel === "" || rel.startsWith(".claude-plugin/")) {
     return { indexedChunks: 0 };
   }
 
-  const isMemoryPath = rel === "MEMORY.md" || rel.startsWith("memory/");
-  if (!isMemoryPath) {
+  if (!isMemoryPath(rel)) {
     return { indexedChunks: 0 };
   }
 

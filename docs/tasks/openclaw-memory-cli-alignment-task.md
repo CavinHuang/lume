@@ -76,6 +76,22 @@
   - 20 pass / 0 fail（agent-runtime-config + agent-cli-runner + memory-policy）
 
 ## 更新日志
+- 2026-02-16：
+  - Soul/Memory 对齐收口完成：
+    - Session Bootstrap 读取顺序、Project Context 注入顺序与 OpenClaw 对齐。
+    - subagent 上下文白名单对齐（仅 AGENTS/TOOLS）。
+    - `memory.md` fallback 全链路对齐（读取、索引、提示词注入、工具描述）。
+    - `memory_search/memory_get/memory_save` 异常降级语义对齐（disabled payload，非 tool error）。
+    - 抽离 `memory-mcp-service`，实现 memory 工具模块复用与独立单测。
+    - 增加 `sessionType` 合同字段并在主前端发送入口显式透传。
+    - 修复大小写不敏感文件系统下 `MEMORY.md/memory.md` 回显偏差。
+  - 测试补齐并通过：
+    - `memory-mcp-service.test.ts`
+    - `agent-prompt-builder.test.ts`
+    - `workspace-bootstrap-service.test.ts`
+    - `memory-service.test.ts`
+    - `memory-policy.test.ts`
+    - `config-paths.test.ts`
 - 2026-02-12：
   - 建立本任务进度文件并补录当前全量进展。
   - 完成 memory 策略通配符对齐。

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chunkMarkdown } from "./memory-chunker";
+import { chunkMarkdown, remapChunkLines } from "./memory-chunker";
 
 describe("memory-chunker", () => {
   test("按 token 估算和 overlap 进行分块", () => {
@@ -34,5 +34,17 @@ describe("memory-chunker", () => {
   test("空内容不产生 chunk", () => {
     const chunks = chunkMarkdown("   \n\n", "MEMORY.md");
     expect(chunks).toEqual([]);
+  });
+
+  test("remapChunkLines 应将 chunk 行号映射回源文件行号", () => {
+    const chunks = chunkMarkdown("User: hi\nAssistant: hello", "sessions/a.jsonl", {
+      tokens: 64,
+      overlap: 0,
+      model: "test-model"
+    });
+    expect(chunks.length).toBe(1);
+    remapChunkLines(chunks, [10, 25]);
+    expect(chunks[0]?.startLine).toBe(10);
+    expect(chunks[0]?.endLine).toBe(25);
   });
 });

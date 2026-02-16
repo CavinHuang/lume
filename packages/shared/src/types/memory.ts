@@ -26,7 +26,7 @@ export interface MemorySearchResult {
   snippet: string;
   citation?: string;
   score: number;
-  source: "vector" | "text" | "hybrid";
+  source: "memory" | "sessions";
 }
 
 export interface MemoryGetInput {
@@ -74,8 +74,17 @@ export interface MemoryStats {
 }
 
 export interface MemoryProviderStatus {
+  backend?: "builtin" | "qmd";
   provider: string;
   model: string;
+  files?: number;
+  chunks?: number;
+  dirty?: boolean;
+  workspaceDir?: string;
+  dbPath?: string;
+  sources?: Array<"memory" | "sessions">;
+  extraPaths?: string[];
+  sourceCounts?: Array<{ source: "memory" | "sessions"; files: number; chunks: number }>;
   fallback?: {
     from?: string;
     reason?: string;

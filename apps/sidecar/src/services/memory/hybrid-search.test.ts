@@ -16,12 +16,12 @@ describe("hybrid-search", () => {
   test("mergeHybridResults 应采用并集并加权", () => {
     const merged = mergeHybridResults({
       vector: [
-        { id: "a", score: 0.9, path: "MEMORY.md" },
-        { id: "b", score: 0.6, path: "memory/2026-02-12.md" }
+        { id: "a", score: 0.9, path: "MEMORY.md", text: "vector-a" },
+        { id: "b", score: 0.6, path: "memory/2026-02-12.md", text: "vector-b" }
       ],
       keyword: [
-        { id: "b", score: 0.5, path: "memory/2026-02-12.md" },
-        { id: "c", score: 0.8, path: "memory/2026-02-11.md" }
+        { id: "b", score: 0.5, path: "memory/2026-02-12.md", text: "keyword-b" },
+        { id: "c", score: 0.8, path: "memory/2026-02-11.md", text: "keyword-c" }
       ],
       vectorWeight: 0.7,
       textWeight: 0.3
@@ -34,7 +34,8 @@ describe("hybrid-search", () => {
     const c = merged.find((item) => item.id === "c");
 
     expect(b?.score).toBeCloseTo(0.57, 6);
-    expect(b?.source).toBe("hybrid");
+    expect(b?.rankSource).toBe("hybrid");
+    expect(b?.text).toBe("keyword-b");
     expect(c?.score).toBeCloseTo(0.24, 6);
   });
 });

@@ -115,3 +115,23 @@ export function chunkMarkdown(content: string, path: string, input?: Partial<Chu
 
   return chunks;
 }
+
+/**
+ * Remap chunk startLine/endLine from content-relative positions to original
+ * source file positions using a lineMap.
+ *
+ * Migrated from:
+ * /Users/cavinhuang/workspace/projects/test/openclaw/src/memory/internal.ts
+ */
+export function remapChunkLines(
+  chunks: Array<{ startLine: number; endLine: number }>,
+  lineMap: number[] | undefined
+): void {
+  if (!lineMap || lineMap.length === 0) {
+    return;
+  }
+  for (const chunk of chunks) {
+    chunk.startLine = lineMap[chunk.startLine - 1] ?? chunk.startLine;
+    chunk.endLine = lineMap[chunk.endLine - 1] ?? chunk.endLine;
+  }
+}

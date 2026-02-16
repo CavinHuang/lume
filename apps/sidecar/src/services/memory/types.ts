@@ -17,6 +17,7 @@ export interface MemoryChunk {
 export interface HybridSearchResult {
   id: string;
   score: number;
+  source?: "memory" | "sessions";
   path?: string;
   text?: string;
   startLine?: number;
@@ -33,5 +34,5 @@ export interface MergeHybridResultsParams {
 export interface MergedHybridResult extends HybridSearchResult {
   vectorScore: number;
   textScore: number;
-  source: "vector" | "text" | "hybrid";
+  rankSource: "vector" | "text" | "hybrid";
 }
