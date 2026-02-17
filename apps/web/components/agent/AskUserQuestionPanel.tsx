@@ -35,6 +35,7 @@ export function AskUserQuestionPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const questions = request.questions;
   const totalQuestions = questions.length;
+  const isSingleQuestion = totalQuestions <= 1;
   const currentQuestion = questions[activeIndex];
   const currentAnswer = currentQuestion ? (answers[currentQuestion.header] ?? { selected: [], otherText: "" }) : { selected: [], otherText: "" };
 
@@ -47,6 +48,13 @@ export function AskUserQuestionPanel({
   // Tab 键切换
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isSingleQuestion) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        }
+        return;
+      }
       if (event.key === "Tab" && !event.shiftKey && !submitting) {
         event.preventDefault();
         // 切换到下一个问题
@@ -63,7 +71,7 @@ export function AskUserQuestionPanel({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [totalQuestions, submitting, onCancel]);
+  }, [isSingleQuestion, totalQuestions, submitting, onCancel]);
 
   // 处理选项选择
   const handleOptionSelect = useCallback((optionValue: string, checked: boolean, multiSelect: boolean) => {
@@ -104,6 +112,12 @@ export function AskUserQuestionPanel({
     return <></>;
   }
 
+  const submitBlockedReason = !allAnswered
+    ? "请先选择答案后再提交"
+    : hasEmptyOtherText
+    ? "已选择“其他”，请补充自定义回答"
+    : null;
+
   const hasOtherOption = currentQuestion.options.some((item) => item.label.trim() === "其他");
   const displayOptions = hasOtherOption
     ? currentQuestion.options
@@ -119,8 +133,8 @@ export function AskUserQuestionPanel({
     <div
       ref={panelRef}
       className={cn(
-        "absolute inset-x-0 bottom-0 z-50 transition-all duration-300 ease-out",
-        visible ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"
+        "absolute inset-0 z-50 flex items-center justify-center p-2 transition-all duration-300 ease-out md:p-4",
+        visible ? "opacity-100" : "opacity-0"
       )}
     >
       {/* 背景遮罩 */}
@@ -130,7 +144,7 @@ export function AskUserQuestionPanel({
       />
 
       {/* 面板内容 */}
-      <div className="relative mx-2 mb-2 overflow-hidden rounded-t-2xl border border-border/80 bg-background shadow-2xl md:mx-4 md:mb-4">
+      <div className="relative w-full max-w-5xl overflow-hidden rounded-xl border border-border/80 bg-background shadow-2xl">
         {/* 头部 */}
         <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
           <div className="flex items-center gap-3">
@@ -150,7 +164,8 @@ export function AskUserQuestionPanel({
         </div>
 
         {/* 问题 Tab 指示器 */}
-        <div className="flex items-center gap-1 border-b border-border/40 bg-muted/30 px-3 py-2">
+        {!isSingleQuestion ? (
+          <div className="flex items-center gap-1 border-b border-border/40 bg-muted/30 px-3 py-2">
           {questions.map((q, idx) => {
             const answer = answers[q.header];
             const answered = answer && answer.selected.length > 0;
@@ -172,12 +187,15 @@ export function AskUserQuestionPanel({
               </button>
             );
           })}
-        </div>
+          </div>
+        ) : null}
 
         {/* 当前问题内容 */}
-        <div className="max-h-[40vh] overflow-y-auto px-4 py-4">
-          <div className="mb-1 text-xs text-muted-foreground">{currentQuestion.header}</div>
-          <div className="mb-4 text-sm font-medium text-foreground">{currentQuestion.question}</div>
+        <div className="max-h-[48vh] overflow-y-auto px-4 py-4">
+          {!isSingleQuestion ? (
+            <div className="mb-1 text-xs text-muted-foreground">{currentQuestion.header}</div>
+          ) : null}
+          <div className="mb-4 text-base font-medium text-foreground">{currentQuestion.question}</div>
 
           <div className="space-y-2">
             {displayOptions.map((option, optionIndex) => {
@@ -236,31 +254,40 @@ export function AskUserQuestionPanel({
         {/* 底部操作栏 */}
         <div className="flex items-center justify-between border-t border-border/60 px-4 py-3">
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setActiveIndex((prev) => Math.max(0, prev - 1))}
-              disabled={activeIndex === 0 || submitting}
-              className="gap-1"
-            >
-              <ChevronLeft className="size-4" />
-              上一题
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setActiveIndex((prev) => Math.min(totalQuestions - 1, prev + 1))}
-              disabled={activeIndex === totalQuestions - 1 || submitting}
-              className="gap-1"
-            >
-              下一题
-              <ChevronRight className="size-4" />
-            </Button>
+            {!isSingleQuestion ? (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setActiveIndex((prev) => Math.max(0, prev - 1))}
+                  disabled={activeIndex === 0 || submitting}
+                  className="gap-1"
+                >
+                  <ChevronLeft className="size-4" />
+                  上一题
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setActiveIndex((prev) => Math.min(totalQuestions - 1, prev + 1))}
+                  disabled={activeIndex === totalQuestions - 1 || submitting}
+                  className="gap-1"
+                >
+                  下一题
+                  <ChevronRight className="size-4" />
+                </Button>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">请选择一个选项后提交</span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
+            {submitBlockedReason ? (
+              <span className="hidden text-xs text-muted-foreground md:inline">{submitBlockedReason}</span>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -282,11 +309,13 @@ export function AskUserQuestionPanel({
         </div>
 
         {/* Tab 键提示 */}
-        <div className="border-t border-border/40 bg-muted/20 px-4 py-1.5 text-center text-[11px] text-muted-foreground">
-          按 <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">Tab</kbd> 切换问题
-          <span className="mx-2">|</span>
-          按 <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">Esc</kbd> 取消
-        </div>
+        {!isSingleQuestion ? (
+          <div className="border-t border-border/40 bg-muted/20 px-4 py-1.5 text-center text-[11px] text-muted-foreground">
+            按 <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">Tab</kbd> 切换问题
+            <span className="mx-2">|</span>
+            按 <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">Esc</kbd> 取消
+          </div>
+        ) : null}
       </div>
     </div>
   );

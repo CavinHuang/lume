@@ -10,6 +10,8 @@ import type {
   AttachmentSaveResult,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
+  AgentToolPermissionRequest,
+  AgentToolPermissionResponseInput,
   AgentGenerateTitleInput,
   GlobalDiscoverySnapshot,
   GlobalPluginMarketplaceDetail,
@@ -123,9 +125,20 @@ export async function onSidecarEvent(
   handler: (event: SidecarNotification) => void
 ): Promise<UnlistenFn> {
   try {
-    return await listen<SidecarNotification>("sidecar:event", (event) => {
+    const rawUnlisten = await listen<SidecarNotification>("sidecar:event", (event) => {
       handler(event.payload);
     });
+    // 部分运行时会触发重复注销，包装为幂等 unlisten，避免前端崩溃。
+    let released = false;
+    return async () => {
+      if (released) return;
+      released = true;
+      try {
+        await rawUnlisten();
+      } catch (error) {
+        console.warn("[desktop-api] 重复注销 sidecar:event 监听器，已忽略:", error);
+      }
+    };
   } catch (error) {
     console.error("[desktop-api] 订阅 sidecar:event 失败:", error);
     return async () => {};
@@ -547,6 +560,20 @@ export async function submitAgentAskUserQuestionAnswers(
   input: AgentAskUserQuestionResponseInput
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, input);
+}
+
+export async function onAgentToolPermissionRequest(
+  handler: (event: AgentToolPermissionRequest) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, (params) => {
+    handler(params as AgentToolPermissionRequest);
+  });
+}
+
+export async function submitAgentToolPermission(
+  input: AgentToolPermissionResponseInput
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION, input);
 }
 
 export async function onAgentTitleUpdated(

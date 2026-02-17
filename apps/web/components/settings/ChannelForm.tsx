@@ -17,6 +17,8 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  PROVIDER_API_FAMILIES,
+  PROVIDER_API_FAMILY_LABELS,
   PROVIDER_DEFAULT_URLS,
   PROVIDER_LABELS,
   type Channel,
@@ -50,43 +52,40 @@ type ChannelFormProps = {
 const PROVIDER_OPTIONS: ProviderType[] = [
   "anthropic",
   "openai",
+  "openrouter",
   "deepseek",
   "google",
+  "zai",
   "moonshot",
   "zhipu",
   "minimax",
+  "minimax-cn",
   "doubao",
   "qwen",
+  "qwen-portal",
+  "kimi-coding",
+  "opencode",
   "custom"
 ];
 
 const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((provider) => ({
   value: provider,
-  label: PROVIDER_LABELS[provider]
-}));
-
-const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
-  anthropic: "/v1/messages",
-  openai: "/chat/completions",
-  deepseek: "/chat/completions",
-  google: "/v1beta/models/{model}:generateContent",
-  moonshot: "/chat/completions",
-  zhipu: "/chat/completions",
-  minimax: "/chat/completions",
-  doubao: "/chat/completions",
-  qwen: "/chat/completions",
-  custom: "/chat/completions"
-};
+  label: `${PROVIDER_LABELS[provider]} · ${PROVIDER_API_FAMILY_LABELS[PROVIDER_API_FAMILIES[provider]]}`
+})).sort((a, b) => a.label.localeCompare(b.label));
 
 function buildPreviewUrl(baseUrl: string, provider: ProviderType): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  if (provider === "anthropic") {
+  const family = PROVIDER_API_FAMILIES[provider];
+  if (family === "anthropic") {
     if (trimmed.match(/\/v\d+$/)) {
       return `${trimmed}/messages`;
     }
     return `${trimmed}/v1/messages`;
   }
-  return `${trimmed}${PROVIDER_CHAT_PATHS[provider]}`;
+  if (family === "google") {
+    return `${trimmed}/v1beta/models/{model}:generateContent`;
+  }
+  return `${trimmed}/chat/completions`;
 }
 
 export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): React.ReactElement {
@@ -98,10 +97,13 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [models, setModels] = useState<ChannelModel[]>(channel?.models ?? []);
+  const [defaultModelId, setDefaultModelId] = useState<string | null>(channel?.defaultModelId ?? null);
+  const [fallbackModelIds, setFallbackModelIds] = useState<string[]>(channel?.fallbackModelIds ?? []);
   const [enabled, setEnabled] = useState(channel?.enabled ?? true);
 
   const [newModelId, setNewModelId] = useState("");
   const [newModelName, setNewModelName] = useState("");
+  const [newModelAlias, setNewModelAlias] = useState("");
 
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -136,21 +138,43 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
     const model: ChannelModel = {
       id: newModelId.trim(),
       name: newModelName.trim() || newModelId.trim(),
+      alias: newModelAlias.trim() || undefined,
       enabled: true
     };
     setModels((prev) => [...prev, model]);
+    if (!defaultModelId) {
+      setDefaultModelId(model.id);
+    }
     setNewModelId("");
     setNewModelName("");
+    setNewModelAlias("");
   };
 
   const handleRemoveModel = (modelId: string): void => {
-    setModels((prev) => prev.filter((model) => model.id !== modelId));
+    setModels((prev) => {
+      const next = prev.filter((model) => model.id !== modelId);
+      if (defaultModelId === modelId) {
+        const nextDefault = next.find((model) => model.enabled)?.id ?? next[0]?.id ?? null;
+        setDefaultModelId(nextDefault);
+      }
+      return next;
+    });
+    setFallbackModelIds((prev) => prev.filter((id) => id !== modelId));
   };
 
   const handleToggleModel = (modelId: string): void => {
     setModels((prev) =>
       prev.map((model) => (model.id === modelId ? { ...model, enabled: !model.enabled } : model))
     );
+  };
+
+  const handleToggleFallbackModel = (modelId: string): void => {
+    setFallbackModelIds((prev) => {
+      if (prev.includes(modelId)) {
+        return prev.filter((id) => id !== modelId);
+      }
+      return [...prev, modelId];
+    });
   };
 
   const handleFetchModels = async (): Promise<void> => {
@@ -198,6 +222,8 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
         baseUrl,
         apiKey: apiKey || undefined,
         models,
+        defaultModelId: defaultModelId ?? undefined,
+        fallbackModelIds,
         enabled
       });
       return;
@@ -209,6 +235,8 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
       baseUrl,
       apiKey,
       models,
+      defaultModelId: defaultModelId ?? undefined,
+      fallbackModelIds,
       enabled
     };
     await createChannel(input);
@@ -244,7 +272,7 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
         </div>
       </div>
 
-      <SettingsSection title="基本信息">
+      <SettingsSection title="Provider Profile" description="配置供应商身份、协议家族与连接凭据。">
         <SettingsCard>
           <SettingsInput
             label="渠道名称"
@@ -255,6 +283,7 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
           />
           <SettingsSelect
             label="供应商类型"
+            description={`协议家族：${PROVIDER_API_FAMILY_LABELS[PROVIDER_API_FAMILIES[provider]]}`}
             value={provider}
             onValueChange={handleProviderChange}
             options={PROVIDER_SELECT_OPTIONS}
@@ -324,7 +353,8 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
       </SettingsSection>
 
       <SettingsSection
-        title="模型列表"
+        title="Model Policy"
+        description="维护模型目录、别名、默认模型与回退链路。"
         action={
           <Button
             variant="outline"
@@ -364,7 +394,27 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
                 <span className="flex-1 text-sm text-foreground">
                   {model.name}
                   {model.name !== model.id ? <span className="ml-1 text-muted-foreground">({model.id})</span> : null}
+                  {model.alias ? <span className="ml-1 text-muted-foreground">#{model.alias}</span> : null}
                 </span>
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <input
+                    type="radio"
+                    name="default-model"
+                    checked={defaultModelId === model.id}
+                    onChange={() => setDefaultModelId(model.id)}
+                    className="h-3.5 w-3.5 accent-foreground"
+                  />
+                  默认
+                </label>
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={fallbackModelIds.includes(model.id)}
+                    onChange={() => handleToggleFallbackModel(model.id)}
+                    className="h-3.5 w-3.5 accent-foreground"
+                  />
+                  回退
+                </label>
                 <button
                   type="button"
                   onClick={() => handleRemoveModel(model.id)}
@@ -393,6 +443,18 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
                 onChange={(e) => setNewModelName(e.target.value)}
                 placeholder="显示名称（可选）"
                 className="h-8 flex-1 text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddModel();
+                  }
+                }}
+              />
+              <Input
+                value={newModelAlias}
+                onChange={(e) => setNewModelAlias(e.target.value)}
+                placeholder="Alias（可选）"
+                className="h-8 w-36 text-sm"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();

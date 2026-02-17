@@ -9,6 +9,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { getChannelsPath } from "./config-paths";
+import { PROVIDER_API_FAMILIES } from "@lume/shared";
 import type {
   Channel,
   ChannelCreateInput,
@@ -17,10 +18,11 @@ import type {
   ChannelTestResult,
   ChannelUpdateInput,
   FetchModelsInput,
-  FetchModelsResult
+  FetchModelsResult,
+  ProviderApiFamily
 } from "@lume/shared";
 
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
 const AES_ALGO = "aes-256-gcm";
 
 function getEncryptionKey(): Buffer {
@@ -51,7 +53,12 @@ function readConfig(): ChannelsConfig {
   if (!existsSync(configPath)) return { version: CONFIG_VERSION, channels: [] };
   try {
     const raw = readFileSync(configPath, "utf-8");
-    return JSON.parse(raw) as ChannelsConfig;
+    const parsed = JSON.parse(raw) as ChannelsConfig;
+    const normalized = normalizeChannelsConfig(parsed);
+    if (normalized.changed) {
+      writeConfig(normalized.config);
+    }
+    return normalized.config;
   } catch (error) {
     console.error("[渠道管理] 读取配置文件失败:", error);
     return { version: CONFIG_VERSION, channels: [] };
@@ -61,6 +68,73 @@ function readConfig(): ChannelsConfig {
 function writeConfig(config: ChannelsConfig): void {
   const configPath = getChannelsPath();
   writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+}
+
+function normalizeProviderForStorage(provider: Channel["provider"]): Channel["provider"] {
+  if (provider === "zhipu") return "zai";
+  if (provider === "qwen") return "qwen-portal";
+  if (provider === "moonshot") return "kimi-coding";
+  return provider;
+}
+
+function normalizeChannelsConfig(config: ChannelsConfig): { config: ChannelsConfig; changed: boolean } {
+  let changed = false;
+  const normalizedChannels = config.channels.map((channel) => {
+    const normalizedProvider = normalizeProviderForStorage(channel.provider);
+    const normalizedBaseUrl = channel.baseUrl.trim().replace(/\/+$/, "");
+    const normalizedModels = channel.models.map((model) => {
+      const trimmedId = model.id.trim();
+      const trimmedName = model.name.trim() || trimmedId;
+      const trimmedAlias = model.alias?.trim();
+      const hasAlias = typeof trimmedAlias === "string" && trimmedAlias.length > 0;
+      if (
+        trimmedId !== model.id ||
+        trimmedName !== model.name ||
+        normalizedProvider !== channel.provider ||
+        normalizedBaseUrl !== channel.baseUrl ||
+        model.alias !== (hasAlias ? trimmedAlias : undefined)
+      ) {
+        changed = true;
+      }
+      return {
+        ...model,
+        id: trimmedId,
+        name: trimmedName,
+        ...(hasAlias ? { alias: trimmedAlias } : { alias: undefined })
+      };
+    });
+    const normalizedDefaultModelId = channel.defaultModelId?.trim() || undefined;
+    const normalizedFallbackModelIds = (channel.fallbackModelIds ?? [])
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+    if (
+      normalizedDefaultModelId !== channel.defaultModelId ||
+      JSON.stringify(normalizedFallbackModelIds) !== JSON.stringify(channel.fallbackModelIds ?? [])
+    ) {
+      changed = true;
+    }
+    return {
+      ...channel,
+      provider: normalizedProvider,
+      baseUrl: normalizedBaseUrl,
+      models: normalizedModels,
+      defaultModelId: normalizedDefaultModelId,
+      fallbackModelIds: normalizedFallbackModelIds
+    };
+  });
+
+  const normalizedVersion = Math.max(config.version ?? 1, CONFIG_VERSION);
+  if (normalizedVersion !== config.version) {
+    changed = true;
+  }
+  return {
+    changed,
+    config: {
+      ...config,
+      version: normalizedVersion,
+      channels: normalizedChannels
+    }
+  };
 }
 
 export function listChannels(): Channel[] {
@@ -74,13 +148,25 @@ export function getChannelById(id: string): Channel | undefined {
 export function createChannel(input: ChannelCreateInput): Channel {
   const config = readConfig();
   const now = Date.now();
+  const normalizedProvider = normalizeProviderForStorage(input.provider);
+  const normalizedDefaultModelId = input.defaultModelId?.trim() || undefined;
+  const normalizedFallbackModelIds = (input.fallbackModelIds ?? [])
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
   const channel: Channel = {
     id: randomUUID(),
     name: input.name,
-    provider: input.provider,
+    provider: normalizedProvider,
     baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
     apiKey: encryptApiKey(input.apiKey),
-    models: input.models,
+    models: input.models.map((model) => ({
+      ...model,
+      id: model.id.trim(),
+      name: model.name.trim() || model.id.trim(),
+      alias: model.alias?.trim() || undefined
+    })),
+    defaultModelId: normalizedDefaultModelId,
+    fallbackModelIds: normalizedFallbackModelIds,
     enabled: input.enabled,
     createdAt: now,
     updatedAt: now
@@ -98,8 +184,29 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
   const updated: Channel = {
     ...existing,
     ...input,
+    ...(input.provider ? { provider: normalizeProviderForStorage(input.provider) } : {}),
     baseUrl: input.baseUrl ? input.baseUrl.trim().replace(/\/+$/, "") : existing.baseUrl,
     apiKey: input.apiKey ? encryptApiKey(input.apiKey) : existing.apiKey,
+    ...(input.models
+      ? {
+          models: input.models.map((model) => ({
+            ...model,
+            id: model.id.trim(),
+            name: model.name.trim() || model.id.trim(),
+            alias: model.alias?.trim() || undefined
+          }))
+        }
+      : {}),
+    ...(input.defaultModelId !== undefined
+      ? { defaultModelId: input.defaultModelId.trim() || undefined }
+      : {}),
+    ...(input.fallbackModelIds !== undefined
+      ? {
+          fallbackModelIds: input.fallbackModelIds
+            .map((id) => id.trim())
+            .filter((id) => id.length > 0)
+        }
+      : {}),
     updatedAt: Date.now()
   };
   config.channels[idx] = updated;
@@ -129,6 +236,15 @@ function normalizeAnthropicBaseUrl(baseUrl: string): string {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
+}
+
+function resolveProviderApiFamily(provider: Channel["provider"], baseUrl: string): ProviderApiFamily {
+  const normalizedBaseUrl = baseUrl.trim().toLowerCase();
+  const byProvider = PROVIDER_API_FAMILIES[provider];
+  if (normalizedBaseUrl.includes("/anthropic")) {
+    return "anthropic";
+  }
+  return byProvider;
 }
 
 async function testAnthropic(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
@@ -175,14 +291,16 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
   const channel = getChannelById(channelId);
   if (!channel) return { success: false, message: "渠道不存在" };
   const apiKey = decryptKey(channel.apiKey);
-  if (channel.provider === "anthropic") return testAnthropic(channel.baseUrl, apiKey);
-  if (channel.provider === "google") return testGoogle(channel.baseUrl, apiKey);
+  const family = resolveProviderApiFamily(channel.provider, channel.baseUrl);
+  if (family === "anthropic") return testAnthropic(channel.baseUrl, apiKey);
+  if (family === "google") return testGoogle(channel.baseUrl, apiKey);
   return testOpenAICompatible(channel.baseUrl, apiKey);
 }
 
 export async function testChannelDirect(input: FetchModelsInput): Promise<ChannelTestResult> {
-  if (input.provider === "anthropic") return testAnthropic(input.baseUrl, input.apiKey);
-  if (input.provider === "google") return testGoogle(input.baseUrl, input.apiKey);
+  const family = resolveProviderApiFamily(input.provider, input.baseUrl);
+  if (family === "anthropic") return testAnthropic(input.baseUrl, input.apiKey);
+  if (family === "google") return testGoogle(input.baseUrl, input.apiKey);
   return testOpenAICompatible(input.baseUrl, input.apiKey);
 }
 
@@ -244,7 +362,8 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<Fetch
 }
 
 export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsResult> {
-  if (input.provider === "anthropic") return fetchAnthropicModels(input.baseUrl, input.apiKey);
-  if (input.provider === "google") return fetchGoogleModels(input.baseUrl, input.apiKey);
+  const family = resolveProviderApiFamily(input.provider, input.baseUrl);
+  if (family === "anthropic") return fetchAnthropicModels(input.baseUrl, input.apiKey);
+  if (family === "google") return fetchGoogleModels(input.baseUrl, input.apiKey);
   return fetchOpenAICompatibleModels(input.baseUrl, input.apiKey);
 }

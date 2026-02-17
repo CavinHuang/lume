@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useAtom } from "jotai";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { PROVIDER_LABELS, type Channel } from "@lume/shared";
+import {
+  PROVIDER_API_FAMILIES,
+  PROVIDER_API_FAMILY_LABELS,
+  PROVIDER_LABELS,
+  type Channel
+} from "@lume/shared";
 import { agentChannelIdAtom, agentModelIdAtom } from "@/atoms";
 import {
   deleteChannel,
@@ -73,11 +78,6 @@ export function ChannelSettings(): React.ReactElement {
     setAgentModelId(null);
   };
 
-  const anthropicChannels = useMemo(
-    () => channels.filter((channel) => channel.provider === "anthropic" && channel.enabled),
-    [channels]
-  );
-
   if (viewMode === "create" || viewMode === "edit") {
     return (
       <ChannelForm
@@ -98,8 +98,8 @@ export function ChannelSettings(): React.ReactElement {
   return (
     <div className="space-y-8">
       <SettingsSection
-        title="聊天渠道供应商"
-        description="管理 AI 对话的供应商连接，配置 API Key 和可用模型"
+        title="Provider & Model"
+        description="统一管理运行渠道、模型目录与策略；Chat 和 Agent 共用同一套配置。"
         action={
           <Button size="sm" type="button" onClick={() => setViewMode("create")}>
             <Plus size={16} />
@@ -121,6 +121,7 @@ export function ChannelSettings(): React.ReactElement {
               <ChannelRow
                 key={channel.id}
                 channel={channel}
+                selectedForAgent={agentChannelId === channel.id}
                 onEdit={() => {
                   setEditingChannel(channel);
                   setViewMode("edit");
@@ -131,32 +132,9 @@ export function ChannelSettings(): React.ReactElement {
                 onToggle={() => {
                   void handleToggle(channel);
                 }}
-              />
-            ))}
-          </SettingsCard>
-        )}
-      </SettingsSection>
-
-      <SettingsSection
-        title="Agent 供应商"
-        description="选择一个 Anthropic 兼容格式的渠道作为 Agent 模式的默认供应商"
-      >
-        {loading ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
-        ) : anthropicChannels.length === 0 ? (
-          <SettingsCard divided={false}>
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              暂无可用的 Anthropic 兼容格式渠道，请先在上方添加 Anthropic 渠道并启用
-            </div>
-          </SettingsCard>
-        ) : (
-          <SettingsCard>
-            {anthropicChannels.map((channel) => (
-              <AgentProviderRow
-                key={channel.id}
-                channel={channel}
-                selected={agentChannelId === channel.id}
-                onSelect={() => handleSelectAgentProvider(channel.id)}
+                onSelectAgentDefault={() => {
+                  handleSelectAgentProvider(channel.id);
+                }}
               />
             ))}
           </SettingsCard>
@@ -168,16 +146,29 @@ export function ChannelSettings(): React.ReactElement {
 
 type ChannelRowProps = {
   channel: Channel;
+  selectedForAgent: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onToggle: () => void;
+  onSelectAgentDefault: () => void;
 };
 
-function ChannelRow({ channel, onEdit, onDelete, onToggle }: ChannelRowProps): React.ReactElement {
+function ChannelRow({
+  channel,
+  selectedForAgent,
+  onEdit,
+  onDelete,
+  onToggle,
+  onSelectAgentDefault
+}: ChannelRowProps): React.ReactElement {
   const enabledCount = channel.models.filter((model) => model.enabled).length;
+  const defaultModel = channel.models.find((model) => model.id === channel.defaultModelId);
+  const fallbackCount = (channel.fallbackModelIds ?? []).length;
   const description = [
-    PROVIDER_LABELS[channel.provider],
-    enabledCount > 0 ? `${enabledCount} 个模型已启用` : undefined
+    `${PROVIDER_LABELS[channel.provider]} (${PROVIDER_API_FAMILY_LABELS[PROVIDER_API_FAMILIES[channel.provider]]})`,
+    enabledCount > 0 ? `${enabledCount} 个模型已启用` : undefined,
+    defaultModel ? `默认: ${defaultModel.name}` : undefined,
+    fallbackCount > 0 ? `回退: ${fallbackCount}` : undefined
   ]
     .filter(Boolean)
     .join(" · ");
@@ -190,6 +181,15 @@ function ChannelRow({ channel, onEdit, onDelete, onToggle }: ChannelRowProps): R
       className="group"
     >
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onSelectAgentDefault}
+          disabled={!channel.enabled}
+          className="rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          title="设为默认运行渠道"
+        >
+          {selectedForAgent ? "运行默认" : "设为运行默认"}
+        </button>
         <button
           type="button"
           onClick={onEdit}
@@ -208,43 +208,6 @@ function ChannelRow({ channel, onEdit, onDelete, onToggle }: ChannelRowProps): R
         </button>
         <Switch checked={channel.enabled} onCheckedChange={onToggle} />
       </div>
-    </SettingsRow>
-  );
-}
-
-type AgentProviderRowProps = {
-  channel: Channel;
-  selected: boolean;
-  onSelect: () => void;
-};
-
-function AgentProviderRow({ channel, selected, onSelect }: AgentProviderRowProps): React.ReactElement {
-  const enabledCount = channel.models.filter((model) => model.enabled).length;
-  const description = [
-    PROVIDER_LABELS[channel.provider],
-    enabledCount > 0 ? `${enabledCount} 个模型可用` : undefined
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <SettingsRow
-      label={channel.name}
-      icon={<img src={getChannelLogo(channel.baseUrl)} alt="" className="h-8 w-8 rounded" />}
-      description={description}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        className="flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors"
-        style={{
-          borderColor: selected ? "hsl(var(--primary))" : "hsl(var(--border))"
-        }}
-      >
-        {selected ? (
-          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "hsl(var(--primary))" }} />
-        ) : null}
-      </button>
     </SettingsRow>
   );
 }

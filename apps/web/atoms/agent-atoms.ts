@@ -263,6 +263,17 @@ export function extractTimelineEvents(message: AgentMessage): TimelineEvent[] {
     });
   }
 
+  // Pi Agent 对齐兜底：某些路径可能只产生工具事件，但 message.content 已有最终文本。
+  // 此时补一个文本事件，避免 UI 因 timeline 存在而隐藏正文。
+  const hasTextEvent = timelineEvents.some((event) => event.type === "text" && event.content.trim().length > 0);
+  if (!hasTextEvent && message.content.trim().length > 0) {
+    timelineEvents.push({
+      type: "text",
+      content: message.content,
+      eventId: `${message.id}-content-fallback`
+    });
+  }
+
   return timelineEvents;
 }
 
@@ -362,6 +373,12 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
   switch (event.type) {
     case "text_delta":
       return { ...prev, content: prev.content + event.text, events: nextEvents };
+    case "text_complete":
+      return {
+        ...prev,
+        content: mergeStreamingText(prev.content, event.text),
+        events: nextEvents
+      };
     case "tool_start":
       {
         const exists = prev.toolActivities.find((item) => item.toolUseId === event.toolUseId);
@@ -481,4 +498,20 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
     default:
       return { ...prev, events: nextEvents };
   }
+}
+
+function mergeStreamingText(current: string, next: string): string {
+  if (!next) return current;
+  if (!current) return next;
+  if (current === next) return current;
+  if (next.startsWith(current)) return next;
+  if (current.startsWith(next)) return current;
+
+  const maxOverlap = Math.min(current.length, next.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (current.endsWith(next.slice(0, overlap))) {
+      return current + next.slice(overlap);
+    }
+  }
+  return current + next;
 }

@@ -18,14 +18,23 @@
 export type ProviderType =
   | 'anthropic'
   | 'openai'
+  | 'openrouter'
   | 'deepseek'
   | 'google'
+  | 'zai'
   | 'moonshot'
   | 'zhipu'
   | 'minimax'
+  | 'minimax-cn'
   | 'doubao'
   | 'qwen'
+  | 'qwen-portal'
+  | 'kimi-coding'
+  | 'opencode'
   | 'custom'
+
+/** Provider 协议家族（决定请求格式） */
+export type ProviderApiFamily = 'anthropic' | 'openai' | 'google'
 
 /**
  * 各供应商的默认 Base URL
@@ -33,13 +42,19 @@ export type ProviderType =
 export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
   deepseek: 'https://api.deepseek.com',
   google: 'https://generativelanguage.googleapis.com',
+  zai: 'https://open.bigmodel.cn/api/paas/v4',
   moonshot: 'https://api.moonshot.cn/v1',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimax.chat/v1',
+  'minimax-cn': 'https://api.minimax.chat/v1',
   doubao: 'https://ark.cn-beijing.volces.com/api/v3',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  'qwen-portal': 'https://portal.qwen.ai/v1',
+  'kimi-coding': 'https://api.moonshot.cn/v1',
+  opencode: '',
   custom: '',
 }
 
@@ -49,14 +64,47 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
 export const PROVIDER_LABELS: Record<ProviderType, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  openrouter: 'OpenRouter',
   deepseek: 'DeepSeek',
   google: 'Google',
+  zai: '智谱 Z.ai',
   moonshot: 'Moonshot / Kimi',
   zhipu: '智谱 AI',
   minimax: 'MiniMax',
+  'minimax-cn': 'MiniMax CN',
   doubao: '豆包',
   qwen: '通义千问',
+  'qwen-portal': '通义千问 Portal',
+  'kimi-coding': 'Kimi Coding',
+  opencode: 'OpenCode',
   custom: 'OpenAI 兼容格式',
+}
+
+/** Provider 对应协议家族 */
+export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  openrouter: 'openai',
+  deepseek: 'openai',
+  google: 'google',
+  zai: 'openai',
+  moonshot: 'openai',
+  zhipu: 'openai',
+  minimax: 'openai',
+  'minimax-cn': 'openai',
+  doubao: 'openai',
+  qwen: 'openai',
+  'qwen-portal': 'openai',
+  'kimi-coding': 'openai',
+  opencode: 'openai',
+  custom: 'openai',
+}
+
+/** 协议家族显示名 */
+export const PROVIDER_API_FAMILY_LABELS: Record<ProviderApiFamily, string> = {
+  anthropic: 'Anthropic Messages',
+  openai: 'OpenAI Compatible',
+  google: 'Google Generative AI',
 }
 
 /**
@@ -67,6 +115,8 @@ export interface ChannelModel {
   id: string
   /** 模型显示名称 */
   name: string
+  /** 可选别名（用于 provider/model 之外的短名称切换） */
+  alias?: string
   /** 是否启用 */
   enabled: boolean
 }
@@ -89,6 +139,10 @@ export interface Channel {
   apiKey: string
   /** 可用模型列表 */
   models: ChannelModel[]
+  /** 默认模型 ID（可选，未配置时使用第一个 enabled 模型） */
+  defaultModelId?: string
+  /** 回退模型 ID 列表（按顺序） */
+  fallbackModelIds?: string[]
   /** 是否启用 */
   enabled: boolean
   /** 创建时间戳 */
@@ -107,6 +161,8 @@ export interface ChannelCreateInput {
   /** 明文 API Key，主进程会加密后存储 */
   apiKey: string
   models: ChannelModel[]
+  defaultModelId?: string
+  fallbackModelIds?: string[]
   enabled: boolean
 }
 
@@ -120,6 +176,8 @@ export interface ChannelUpdateInput {
   /** 明文 API Key，为空字符串表示不更新 */
   apiKey?: string
   models?: ChannelModel[]
+  defaultModelId?: string
+  fallbackModelIds?: string[]
   enabled?: boolean
 }
 

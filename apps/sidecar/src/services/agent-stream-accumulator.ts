@@ -29,10 +29,29 @@ export function appendAgentEvents(
     if (event.type === "text_delta") {
       state.text += event.text;
     }
+    if (event.type === "text_complete") {
+      state.text = mergeAccumulatedText(state.text, event.text);
+    }
     state.events.push(event);
   }
 
   return state;
+}
+
+function mergeAccumulatedText(current: string, next: string): string {
+  if (!next) return current;
+  if (!current) return next;
+  if (current === next) return current;
+  if (next.startsWith(current)) return next;
+  if (current.startsWith(next)) return current;
+
+  const maxOverlap = Math.min(current.length, next.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (current.endsWith(next.slice(0, overlap))) {
+      return current + next.slice(overlap);
+    }
+  }
+  return current + next;
 }
 
 export function buildAssistantAgentMessage(
@@ -40,7 +59,7 @@ export function buildAssistantAgentMessage(
   modelId: string,
   now = Date.now()
 ): AgentMessage | null {
-  if (!state.text && state.events.length === 0) {
+  if (!hasRenderableAssistantOutput(state)) {
     return null;
   }
 
@@ -52,4 +71,16 @@ export function buildAssistantAgentMessage(
     model: modelId,
     events: state.events
   };
+}
+
+export function hasRenderableAssistantOutput(state: AgentStreamAccumulatorState): boolean {
+  if (state.text.trim().length > 0) {
+    return true;
+  }
+  return state.events.some((event) =>
+    event.type === "text_delta"
+    || event.type === "text_complete"
+    || event.type === "tool_start"
+    || event.type === "tool_result"
+  );
 }

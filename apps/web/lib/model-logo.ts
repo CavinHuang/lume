@@ -102,13 +102,19 @@ const MODEL_LOGO_MAP: Record<string, string> = {
 const PROVIDER_LOGO_MAP: Record<ProviderType, string> = {
   anthropic: MODEL.claude,
   openai: MODEL.openai,
+  openrouter: MODEL.openai,
   deepseek: MODEL.deepseek,
   google: MODEL.gemini,
+  zai: MODEL.zhipu,
   moonshot: MODEL.moonshot,
   zhipu: MODEL.zhipu,
   minimax: MODEL.minimax,
+  "minimax-cn": MODEL.minimax,
   doubao: MODEL.doubao,
   qwen: MODEL.qwen,
+  "qwen-portal": MODEL.qwen,
+  "kimi-coding": MODEL.moonshot,
+  opencode: MODEL.default,
   custom: MODEL.default
 };
 

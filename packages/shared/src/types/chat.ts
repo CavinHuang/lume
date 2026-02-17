@@ -237,8 +237,16 @@ export interface ModelOption {
   channelName: string
   /** 模型 ID */
   modelId: string
+  /** 规范化模型引用（provider/model） */
+  modelRef?: string
   /** 模型显示名称 */
   modelName: string
+  /** 模型别名 */
+  modelAlias?: string
+  /** 是否该渠道默认模型 */
+  isDefault?: boolean
+  /** 是否该渠道回退模型 */
+  isFallback?: boolean
   /** AI 供应商类型 */
   provider: ProviderType
 }

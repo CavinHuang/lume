@@ -42,6 +42,12 @@ export interface AgentInlineEditSubmitPayload {
 
 interface AgentMessagesProps {
   isStreaming?: boolean;
+  suppressAssistantText?: boolean;
+  suppressStreamingAssistantText?: boolean;
+  suppressLastAssistantMessage?: boolean;
+  supplementalContent?: React.ReactNode;
+  supplementalFrom?: "assistant" | "none";
+  planOnlyMode?: boolean;
   inlineEditingMessageId?: string | null;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
@@ -160,6 +166,10 @@ function splitAttachedFiles(content: string): { block: string | null; files: Att
   return { block, files, text };
 }
 
+function stripPlanExecutionMarker(content: string): string {
+  return content.replace(/\n?<lume_plan_execution key=\"[^\"]+\" \/>/g, "").trim();
+}
+
 function isImageFile(filename: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(filename);
 }
@@ -221,7 +231,8 @@ function AgentMessageItem({
   onResendMessage,
   onStartInlineEdit,
   onSubmitInlineEdit,
-  onCancelInlineEdit
+  onCancelInlineEdit,
+  suppressAssistantText = false
 }: {
   message: AgentMessage;
   isStreaming: boolean;
@@ -231,13 +242,15 @@ function AgentMessageItem({
   onStartInlineEdit?: (message: AgentMessage) => void;
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
+  suppressAssistantText?: boolean;
 }): React.ReactElement | null {
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const userProfile = useAtomValue(userProfileAtom);
 
   if (message.role === "user") {
-    const { files: attachedFiles, text: messageText } = splitAttachedFiles(message.content);
+    const sanitizedContent = stripPlanExecutionMarker(message.content);
+    const { files: attachedFiles, text: messageText } = splitAttachedFiles(sanitizedContent);
 
     return (
       <Message from="user">
@@ -312,6 +325,12 @@ function AgentMessageItem({
   if (message.role === "assistant") {
     const timelineEvents = extractTimelineEvents(message);
     const toolActivities = extractToolActivities(message.events);
+    const shouldHideAssistantMessage =
+      suppressAssistantText &&
+      Boolean(message.content) &&
+      timelineEvents.length === 0 &&
+      toolActivities.length === 0;
+    if (shouldHideAssistantMessage) return null;
 
     return (
       <Message from="assistant">
@@ -327,7 +346,7 @@ function AgentMessageItem({
               <EventTimeline events={timelineEvents} />
             </div>
           ) : null}
-          {message.content && timelineEvents.length === 0 && toolActivities.length === 0 ? (
+          {message.content && !suppressAssistantText && timelineEvents.length === 0 && toolActivities.length === 0 ? (
             <MessageResponse>{message.content}</MessageResponse>
           ) : null}
         </MessageContent>
@@ -340,6 +359,12 @@ function AgentMessageItem({
 
 export function AgentMessages({
   isStreaming = false,
+  suppressAssistantText = false,
+  suppressStreamingAssistantText = false,
+  suppressLastAssistantMessage = false,
+  supplementalContent,
+  supplementalFrom = "none",
+  planOnlyMode = false,
   inlineEditingMessageId = null,
   onDeleteMessage,
   onResendMessage,
@@ -359,15 +384,34 @@ export function AgentMessages({
   });
 
   const actionsDisabled = isStreaming || streaming;
+  const lastAssistantMessageId = React.useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.role === "assistant") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
+  const shouldShowStreamingMessage =
+    (streaming || Boolean(smoothContent)) &&
+    (!suppressStreamingAssistantText || streamingTimelineEvents.length > 0) &&
+    !planOnlyMode;
 
   return (
     <Conversation>
       <ConversationContent>
-        {messages.length === 0 && !streaming ? (
+        {messages.length === 0 && !streaming && !supplementalContent ? (
           <EmptyState />
         ) : (
           <>
-            {messages.map((message) => (
+            {planOnlyMode ? null : messages.map((message) => (
+              suppressLastAssistantMessage &&
+              lastAssistantMessageId !== null &&
+              message.id === lastAssistantMessageId &&
+              message.role === "assistant"
+                ? null
+                : (
               <AgentMessageItem
                 key={message.id}
                 message={message}
@@ -378,10 +422,25 @@ export function AgentMessages({
                 onStartInlineEdit={actionsDisabled ? undefined : onStartInlineEdit}
                 onSubmitInlineEdit={onSubmitInlineEdit}
                 onCancelInlineEdit={onCancelInlineEdit}
+                suppressAssistantText={suppressAssistantText}
               />
+                )
             ))}
-
-            {(streaming || smoothContent) ? (
+            {supplementalContent ? (
+              supplementalFrom === "assistant" ? (
+                <Message from="assistant">
+                  <MessageHeader
+                    model={agentModelId ?? undefined}
+                    time={formatMessageTime(Date.now())}
+                    logo={<AssistantLogo model={agentModelId ?? undefined} />}
+                  />
+                  <MessageContent>{supplementalContent}</MessageContent>
+                </Message>
+              ) : (
+                supplementalContent
+              )
+            ) : null}
+            {shouldShowStreamingMessage ? (
               <Message from="assistant">
                 <MessageHeader
                   model={agentModelId ?? undefined}
@@ -395,13 +454,15 @@ export function AgentMessages({
                     </div>
                   ) : null}
 
-                  {smoothContent && streamingTimelineEvents.length === 0 ? (
+                  {smoothContent && !suppressStreamingAssistantText && streamingTimelineEvents.length === 0 ? (
                     <>
                       <MessageResponse>{smoothContent}</MessageResponse>
                       {streaming ? <StreamingIndicator /> : null}
                     </>
                   ) : (
-                    streaming && streamingTimelineEvents.length === 0 ? <MessageLoading /> : null
+                    streaming && streamingTimelineEvents.length === 0
+                      ? (suppressStreamingAssistantText ? null : <MessageLoading />)
+                      : null
                   )}
                   {streaming && streamingTimelineEvents.length > 0 && !smoothContent ? <StreamingIndicator /> : null}
                 </MessageContent>

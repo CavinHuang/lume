@@ -54,6 +54,7 @@ import {
 import {
   generateAgentTitle,
   sendAgentMessage,
+  submitAgentToolPermission,
   submitAskUserQuestionAnswers,
   stopAgent
 } from "./services/agent-service";
@@ -497,6 +498,23 @@ const handlers: Record<string, RpcHandler> = {
       answers
     });
   },
+  [AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION]: async (params) => {
+    const p = asObject(params);
+    const sessionId = asString(p.sessionId);
+    const requestId = asString(p.requestId);
+    const decision = asString(p.decision);
+    if (!sessionId || !requestId || !decision) {
+      throw new Error("缺少 sessionId/requestId/decision");
+    }
+    if (decision !== "allow_once" && decision !== "allow_always" && decision !== "deny") {
+      throw new Error(`无效 decision: ${decision}`);
+    }
+    return submitAgentToolPermission({
+      sessionId,
+      requestId,
+      decision
+    });
+  },
   "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
   [AGENT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
     const input = params as AgentSendInput;
@@ -521,7 +539,9 @@ const handlers: Record<string, RpcHandler> = {
           title
         }),
       onAskUserQuestion: (request) =>
-        writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request)
+        writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request),
+      onToolPermissionRequest: (request) =>
+        writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request)
     }).catch((error) => {
       writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
         sessionId: input.sessionId,

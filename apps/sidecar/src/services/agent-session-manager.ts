@@ -130,7 +130,10 @@ export function appendAgentMessage(id: string, message: AgentMessage): void {
 export function updateAgentSessionMeta(
   id: string,
   updates: Partial<
-    Pick<AgentSessionMeta, "title" | "channelId" | "sdkSessionId" | "workspaceId">
+    Pick<
+      AgentSessionMeta,
+      "title" | "channelId" | "sdkSessionId" | "piSessionId" | "workspaceId"
+    >
   >
 ): AgentSessionMeta {
   const index = readIndex();
@@ -202,6 +205,9 @@ export function truncateAgentMessagesFrom(sessionId: string, messageId: string):
   writeFileSync(getAgentSessionMessagesPath(sessionId), payload, "utf-8");
 
   // 截断会话后重置 SDK 会话衔接，避免 resume 命中旧上下文。
-  updateAgentSessionMeta(sessionId, { sdkSessionId: undefined });
+  updateAgentSessionMeta(sessionId, {
+    sdkSessionId: undefined,
+    piSessionId: undefined
+  });
   return kept;
 }

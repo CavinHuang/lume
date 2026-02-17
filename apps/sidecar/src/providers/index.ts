@@ -32,12 +32,18 @@ export { GoogleAdapter } from './google-adapter'
 const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
   ['anthropic', new AnthropicAdapter()],
   ['openai', new OpenAIAdapter()],
+  ['openrouter', new OpenAIAdapter()],    // OpenRouter 使用 OpenAI 兼容协议
   ['deepseek', new OpenAIAdapter()],      // DeepSeek 使用 OpenAI 兼容协议
   ['moonshot', new OpenAIAdapter()],      // Moonshot/Kimi 使用 OpenAI 兼容协议
   ['zhipu', new OpenAIAdapter()],         // 智谱 AI 使用 OpenAI 兼容协议
+  ['zai', new OpenAIAdapter()],           // Z.ai 使用 OpenAI 兼容协议
   ['minimax', new OpenAIAdapter()],       // MiniMax 使用 OpenAI 兼容协议
+  ['minimax-cn', new OpenAIAdapter()],    // MiniMax CN 使用 OpenAI 兼容协议
   ['doubao', new OpenAIAdapter()],        // 豆包使用 OpenAI 兼容协议
   ['qwen', new OpenAIAdapter()],          // 通义千问使用 OpenAI 兼容协议
+  ['qwen-portal', new OpenAIAdapter()],   // Qwen Portal 使用 OpenAI 兼容协议
+  ['kimi-coding', new OpenAIAdapter()],   // Kimi Coding 使用 OpenAI 兼容协议
+  ['opencode', new OpenAIAdapter()],      // OpenCode 统一走 OpenAI 兼容协议
   ['custom', new OpenAIAdapter()],        // 自定义也使用 OpenAI 兼容协议
   ['google', new GoogleAdapter()],
 ])

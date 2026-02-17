@@ -15,13 +15,27 @@ function buildModelOptions(channels: Channel[], filterChannelId?: string): Model
   for (const channel of channels) {
     if (!channel.enabled) continue;
     if (filterChannelId && channel.id !== filterChannelId) continue;
-    for (const model of channel.models) {
+    const fallbackIds = new Set(channel.fallbackModelIds ?? []);
+    const sortedModels = [...channel.models].sort((a, b) => {
+      const aDefault = channel.defaultModelId === a.id ? 1 : 0;
+      const bDefault = channel.defaultModelId === b.id ? 1 : 0;
+      if (aDefault !== bDefault) return bDefault - aDefault;
+      const aEnabled = a.enabled ? 1 : 0;
+      const bEnabled = b.enabled ? 1 : 0;
+      if (aEnabled !== bEnabled) return bEnabled - aEnabled;
+      return a.name.localeCompare(b.name);
+    });
+    for (const model of sortedModels) {
       if (!model.enabled) continue;
       options.push({
         channelId: channel.id,
         channelName: channel.name,
         modelId: model.id,
+        modelRef: model.id.includes("/") ? model.id : `${channel.provider}/${model.id}`,
         modelName: model.name,
+        modelAlias: model.alias,
+        isDefault: channel.defaultModelId === model.id,
+        isFallback: fallbackIds.has(model.id),
         provider: channel.provider
       });
     }
@@ -81,7 +95,10 @@ export function ModelSelector({
       const matched = options.filter(
         (item) =>
           item.modelName.toLowerCase().includes(query) ||
-          item.channelName.toLowerCase().includes(query)
+          item.channelName.toLowerCase().includes(query) ||
+          item.modelId.toLowerCase().includes(query) ||
+          item.modelRef?.toLowerCase().includes(query) ||
+          item.modelAlias?.toLowerCase().includes(query)
       );
       if (matched.length) filtered.set(channelId, matched);
     }
@@ -176,7 +193,9 @@ export function ModelSelector({
           <Cpu className="size-3.5" />
         )}
         <span className="max-w-[200px] truncate">
-          {currentModelInfo ? currentModelInfo.modelName : "选择模型"}
+          {currentModelInfo
+            ? `${currentModelInfo.modelName}${currentModelInfo.modelAlias ? ` #${currentModelInfo.modelAlias}` : ""}`
+            : "选择模型"}
         </span>
         <ChevronDown className="size-3" />
       </button>
@@ -246,8 +265,16 @@ export function ModelSelector({
                             alt={option.modelName}
                             className="size-5 shrink-0 rounded object-cover"
                           />
-                          <span className={cn("flex-1 truncate text-sm", isSelected ? "font-medium text-foreground" : "text-foreground/80")}>
-                            {option.modelName}
+                          <span className="min-w-0 flex-1">
+                            <span className={cn("block truncate text-sm", isSelected ? "font-medium text-foreground" : "text-foreground/80")}>
+                              {option.modelName}
+                              {option.modelAlias ? <span className="ml-1 text-xs text-muted-foreground">#{option.modelAlias}</span> : null}
+                              {option.isDefault ? <span className="ml-1 text-xs text-emerald-600">默认</span> : null}
+                              {!option.isDefault && option.isFallback ? <span className="ml-1 text-xs text-amber-600">回退</span> : null}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground/80">
+                              {option.modelRef ?? option.modelId}
+                            </span>
                           </span>
                         </button>
                       );

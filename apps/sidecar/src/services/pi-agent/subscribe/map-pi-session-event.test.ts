@@ -1,0 +1,115 @@
+import { describe, expect, test } from "bun:test";
+import type { AgentEvent as PiCoreAgentEvent } from "@mariozechner/pi-agent-core";
+import { mapPiSessionEventToAgentEvents } from "./map-pi-session-event";
+
+describe("map-pi-session-event", () => {
+  test("message_update text_delta 应映射为 text_delta", () => {
+    const event = {
+      type: "message_update",
+      message: {} as never,
+      assistantMessageEvent: { type: "text_delta", delta: "你好" }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped).toEqual([{ type: "text_delta", text: "你好" }]);
+  });
+
+  test("message_update text_end 应映射为 text_complete", () => {
+    const event = {
+      type: "message_update",
+      message: {} as never,
+      assistantMessageEvent: { type: "text_end", content: "你好，世界" }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped).toEqual([{
+      type: "text_complete",
+      text: "你好，世界",
+      isIntermediate: false
+    }]);
+  });
+
+  test("tool_execution_start 应映射为 tool_start", () => {
+    const event = {
+      type: "tool_execution_start",
+      toolName: "Read",
+      toolCallId: "call_1",
+      args: { path: "README.md" }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped[0]?.type).toBe("tool_start");
+    if (mapped[0]?.type !== "tool_start") {
+      throw new Error("unexpected type");
+    }
+    expect(mapped[0].toolName).toBe("Read");
+    expect(mapped[0].toolUseId).toBe("call_1");
+  });
+
+  test("tool_execution_end 应映射为 tool_result", () => {
+    const event = {
+      type: "tool_execution_end",
+      toolName: "Read",
+      toolCallId: "call_2",
+      result: { ok: true },
+      isError: false
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped[0]?.type).toBe("tool_result");
+    if (mapped[0]?.type !== "tool_result") {
+      throw new Error("unexpected type");
+    }
+    expect(mapped[0].toolUseId).toBe("call_2");
+    expect(mapped[0].isError).toBeFalse();
+  });
+
+  test("message_end assistant 应映射 text_complete + usage_update", () => {
+    const event = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "最终答案" }],
+        usage: {
+          input: 10,
+          output: 20,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 30,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+        }
+      }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event, { contextWindow: 200000 });
+    expect(mapped).toEqual([
+      {
+        type: "text_complete",
+        text: "最终答案",
+        isIntermediate: false
+      },
+      {
+        type: "usage_update",
+        usage: {
+          inputTokens: 30,
+          contextWindow: 200000
+        }
+      }
+    ]);
+  });
+
+  test("message_update done 应回填完整文本", () => {
+    const event = {
+      type: "message_update",
+      message: {} as never,
+      assistantMessageEvent: {
+        type: "done",
+        message: {
+          content: [{ type: "text", text: "done-text" }]
+        }
+      }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped).toEqual([{
+      type: "text_complete",
+      text: "done-text",
+      isIntermediate: false
+    }]);
+  });
+
+});

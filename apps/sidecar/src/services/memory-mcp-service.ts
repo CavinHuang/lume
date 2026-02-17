@@ -1,4 +1,3 @@
-import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { MemorySearchResult } from "@lume/shared";
 import type { MemoryCitationsMode } from "./memory-policy";
@@ -14,7 +13,10 @@ export const MEMORY_SEARCH_TOOL_NAME = "memory_search";
 export const MEMORY_GET_TOOL_NAME = "memory_get";
 export const MEMORY_SAVE_TOOL_NAME = "memory_save";
 
-type ClaudeSdkModule = typeof import("@anthropic-ai/claude-agent-sdk");
+type McpServerConfig = Record<string, unknown>;
+type SdkMcpFactory = {
+  createSdkMcpServer: (config: Record<string, unknown>) => McpServerConfig;
+};
 
 function formatCitation(path: string, startLine: number, endLine: number): string {
   return startLine === endLine ? `${path}#L${startLine}` : `${path}#L${startLine}-L${endLine}`;
@@ -37,7 +39,7 @@ function decorateMemorySearchResults(params: {
 
 export function buildMemoryMcpServer(
   workspaceSlug: string,
-  sdk: ClaudeSdkModule,
+  sdk: SdkMcpFactory,
   options: {
     enabledTools: Set<string>;
     includeCitations: boolean;

@@ -23,6 +23,10 @@ import { isImageAttachment, readAttachmentAsBase64 } from "./attachment-service"
 import { decryptApiKey, listChannels } from "./channel-manager";
 import { extractTextFromAttachment, isDocumentAttachment } from "./document-parser";
 import { appendMessage, getConversationMessages, updateConversationMeta } from "./conversation-manager";
+import {
+  resolveChannelModelSelection,
+  resolveRequestedModelIdForChannel
+} from "./model-selection";
 
 type ChatEventEmitter = {
   onChunk: (event: StreamChunkEvent) => void;
@@ -111,6 +115,29 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     thinkingEnabled
   } = input;
 
+  if (process.env.LUME_CHAT_MOCK_SUCCESS === "1") {
+    const mockDelta = (process.env.LUME_CHAT_MOCK_TEXT || "chat-mock-success").trim();
+    appendMessage(conversationId, {
+      id: randomUUID(),
+      role: "user",
+      content: userMessage,
+      createdAt: Date.now(),
+      attachments: attachments && attachments.length > 0 ? attachments : undefined
+    });
+    emit.onChunk({ conversationId, delta: mockDelta });
+    const assistantMsgId = randomUUID();
+    appendMessage(conversationId, {
+      id: assistantMsgId,
+      role: "assistant",
+      content: mockDelta,
+      createdAt: Date.now(),
+      model: modelId
+    });
+    updateConversationMeta(conversationId, {});
+    emit.onComplete({ conversationId, model: modelId, messageId: assistantMsgId });
+    return;
+  }
+
   const channels = listChannels();
   const channel = channels.find((c) => c.id === channelId);
   if (!channel) {
@@ -144,13 +171,19 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
 
   let accumulatedContent = "";
   let accumulatedReasoning = "";
+  const selectedModelId = resolveRequestedModelIdForChannel(channel, modelId) ?? modelId;
+  const modelSelection = resolveChannelModelSelection({
+    channelProvider: channel.provider,
+    baseUrl: channel.baseUrl,
+    modelId: selectedModelId
+  });
 
   try {
-    const adapter = getAdapter(channel.provider);
+    const adapter = getAdapter(modelSelection.adapterProvider);
     const request = adapter.buildStreamRequest({
       baseUrl: channel.baseUrl,
       apiKey,
-      modelId,
+      modelId: modelSelection.resolvedModelId,
       history: enrichedHistory,
       userMessage: enrichedUserMessage,
       systemMessage,
@@ -182,11 +215,11 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
       role: "assistant",
       content,
       createdAt: Date.now(),
-      model: modelId,
+      model: modelSelection.modelRef,
       reasoning: reasoning || undefined
     });
     updateConversationMeta(conversationId, {});
-    emit.onComplete({ conversationId, model: modelId, messageId: assistantMsgId });
+    emit.onComplete({ conversationId, model: modelSelection.modelRef, messageId: assistantMsgId });
   } catch (error) {
     if (controller.signal.aborted) {
       if (accumulatedContent) {
@@ -196,14 +229,14 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
           role: "assistant",
           content: accumulatedContent,
           createdAt: Date.now(),
-          model: modelId,
+          model: modelSelection.modelRef,
           reasoning: accumulatedReasoning || undefined,
           stopped: true
         });
         updateConversationMeta(conversationId, {});
-        emit.onComplete({ conversationId, model: modelId, messageId: assistantMsgId });
+        emit.onComplete({ conversationId, model: modelSelection.modelRef, messageId: assistantMsgId });
       } else {
-        emit.onComplete({ conversationId, model: modelId, messageId: "" });
+        emit.onComplete({ conversationId, model: modelSelection.modelRef, messageId: "" });
       }
       return;
     }
@@ -243,11 +276,17 @@ export async function generateTitle(input: GenerateTitleInput): Promise<string |
     return null;
   }
   try {
-    const adapter = getAdapter(channel.provider);
+    const selectedModelId = resolveRequestedModelIdForChannel(channel, modelId) ?? modelId;
+    const modelSelection = resolveChannelModelSelection({
+      channelProvider: channel.provider,
+      baseUrl: channel.baseUrl,
+      modelId: selectedModelId
+    });
+    const adapter = getAdapter(modelSelection.adapterProvider);
     const request = adapter.buildTitleRequest({
       baseUrl: channel.baseUrl,
       apiKey,
-      modelId,
+      modelId: modelSelection.resolvedModelId,
       prompt: TITLE_PROMPT + userMessage
     });
     const title = await fetchTitle(request, adapter);

@@ -28,11 +28,18 @@ const PROMPT_TOOL_ORDER = [
   "ls",
   "glob",
   "grep",
-  "webfetch",
-  "websearch",
+  "web_fetch",
+  "web_search",
   "todowrite",
   "task",
+  "agents_list",
+  "sessions_list",
+  "sessions_history",
+  "sessions_send",
+  "sessions_spawn",
+  "session_status",
   "askuserquestion",
+  "enterplanmode",
   "exitplanmode",
   "memory_search",
   "memory_get",
@@ -222,7 +229,7 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 
   sections.push(`## Lume Agent
 
-你是 Lume Agent，一个集成在 Lume 桌面应用中的通用 AI 助手，由 Claude Agent SDK 驱动。
+你是 Lume Agent，一个集成在 Lume 桌面应用中的通用 AI 助手，由 Pi Agent Runtime 驱动。
 
 核心能力:
 - 代码编辑（Read/Edit/Write 等）

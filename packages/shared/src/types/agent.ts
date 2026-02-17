@@ -82,6 +82,8 @@ export interface AgentSessionMeta {
   channelId?: string
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
   sdkSessionId?: string
+  /** Pi Agent 会话 ID（用于显式恢复） */
+  piSessionId?: string
   /** 所属工作区 ID */
   workspaceId?: string
   /** 创建时间戳 */
@@ -106,6 +108,8 @@ export interface AgentMessage {
   createdAt: number
   /** 使用的模型 ID（assistant 消息） */
   model?: string
+  /** 消息扩展元数据（用于 UI/流程标记） */
+  metadata?: Record<string, unknown>
   /** 工具活动数据（agent 事件列表，用于回放工具调用） */
   events?: AgentEvent[]
 }
@@ -288,7 +292,7 @@ export interface AgentSendInput {
   sessionId: string
   /** 用户消息内容 */
   userMessage: string
-  /** 渠道 ID（Claude SDK 路径用于获取 API Key） */
+  /** 渠道 ID（用于解析 provider/baseUrl/api key） */
   channelId?: string
   /** 模型 ID */
   modelId?: string
@@ -298,8 +302,10 @@ export interface AgentSendInput {
   chatType?: 'direct' | 'group' | 'channel'
   /** Bootstrap 会话类型（用于系统提示词文件注入策略） */
   sessionType?: 'main' | 'subagent' | 'group' | 'channel'
-  /** Claude Agent SDK 权限模式 */
+  /** Agent 权限模式（plan 为只读规划模式） */
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+  /** 用户消息元数据（用于结构化流程标记） */
+  messageMetadata?: Record<string, unknown>
 }
 
 export interface AgentAskUserQuestionOption {
@@ -325,6 +331,26 @@ export interface AgentAskUserQuestionResponseInput {
   toolUseId: string
   answers?: Record<string, string>
   canceled?: boolean
+}
+
+export type AgentToolPermissionRiskLevel = 'low' | 'medium' | 'high'
+
+export type AgentToolPermissionDecision = 'allow_once' | 'allow_always' | 'deny'
+
+export interface AgentToolPermissionRequest {
+  sessionId: string
+  requestId: string
+  toolUseId: string
+  toolName: string
+  risk: AgentToolPermissionRiskLevel
+  reason: string
+  input: Record<string, unknown>
+}
+
+export interface AgentToolPermissionResponseInput {
+  sessionId: string
+  requestId: string
+  decision: AgentToolPermissionDecision
 }
 
 // ===== Agent 流式事件载荷 =====
@@ -460,6 +486,10 @@ export const AGENT_IPC_CHANNELS = {
   ASK_USER_QUESTION: 'agent:ask-user-question',
   /** AskUserQuestion 回答提交（web -> sidecar） */
   SUBMIT_ASK_USER_QUESTION: 'agent:submit-ask-user-question',
+  /** 工具权限确认请求（sidecar -> web） */
+  TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
+  /** 工具权限确认结果（web -> sidecar） */
+  SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
 
   // 附件
   /** 保存文件到 Agent session 工作目录 */
