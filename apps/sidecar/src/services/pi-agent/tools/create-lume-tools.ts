@@ -37,29 +37,8 @@ export interface CreateLumePiToolsOutput {
   availableToolNames: string[];
 }
 
-const PLAN_MODE_ALLOWED_CUSTOM_TOOLS = new Set([
-  "memory_search",
-  "memory_get",
-  "AskUserQuestion",
-  "EnterPlanMode",
-  "ExitPlanMode",
-  "agents_list",
-  "sessions_list",
-  "sessions_history",
-  "session_status",
-  "web_search",
-  "web_fetch"
-]);
-
-function filterCustomToolsForPermissionMode(
-  tools: AgentTool[],
-  permissionMode: AgentSendInput["permissionMode"]
-): AgentTool[] {
-  if (permissionMode !== "plan") {
-    return tools;
-  }
-  return tools.filter((tool) => PLAN_MODE_ALLOWED_CUSTOM_TOOLS.has(tool.name));
-}
+// Plan 模式工具过滤现在由 tool-permission-gate.ts 基于 tool-metadata.ts 处理
+// 不再需要硬编码的白名单
 
 export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiToolsOutput {
   const enabledMemoryToolNames = resolveEnabledPiMemoryToolNames(input.memoryToolPolicy);
@@ -81,10 +60,9 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     workspaceId: input.workspaceId,
     channelId: input.channelId
   });
-  const customTools = filterCustomToolsForPermissionMode(
-    [...memoryTools, ...controlTools, ...openClawAlignedTools],
-    input.permissionMode
-  );
+
+  // 不再在这里过滤，由 tool-permission-gate.ts 基于 tool-metadata.ts 处理
+  const customTools = [...memoryTools, ...controlTools, ...openClawAlignedTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {

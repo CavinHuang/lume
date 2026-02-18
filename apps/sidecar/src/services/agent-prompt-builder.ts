@@ -19,6 +19,26 @@ import type { SessionType } from "@lume/shared";
 export const LUME_AGENT_IDENTITY_LINE = "You are a personal assistant running inside Lume.";
 export type SystemPromptMode = "full" | "minimal" | "none";
 
+const CLAUDE_PLAN_MODE_SECTION = `## Plan Mode Protocol (Claude Code Aligned)
+
+Tool intent:
+- EnterPlanMode: transition into read-only planning before implementation.
+- AskUserQuestion: clarify requirements/choices during planning or execution.
+- ExitPlanMode: submit finalized plan for approval and transition to implementation.
+
+Rules:
+1. For non-trivial implementation tasks, call EnterPlanMode first.
+2. In plan mode, keep actions read-only; do not perform file writes or command execution.
+3. Use AskUserQuestion only for requirement clarification or trade-off choice.
+4. Do NOT use AskUserQuestion to ask whether to execute the plan.
+5. When plan is complete and unambiguous, call ExitPlanMode once.
+6. ExitPlanMode is the approval handoff. After approval, continue execution in non-plan mode.
+
+When to skip EnterPlanMode:
+- tiny obvious fix
+- single-file/single-step clear change
+- pure Q&A or pure exploration task`;
+
 const PROMPT_TOOL_ORDER = [
   "read",
   "write",
@@ -156,6 +176,7 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   }
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
+  lines.push("", CLAUDE_PLAN_MODE_SECTION);
 
   return lines;
 }
@@ -264,6 +285,8 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
 1. 优先中文回复，保留必要英文技术术语
 2. 破坏性操作前先确认
 3. 输出保持结构化、可执行`);
+
+  sections.push(CLAUDE_PLAN_MODE_SECTION);
 
   sections.push(`## Safety
 

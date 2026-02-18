@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type {
@@ -7,12 +7,105 @@ import type {
 } from "@lume/shared";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { waitForPiAskUserQuestionAnswers } from "./ask-user-question-bridge";
+import { randomBytes } from "node:crypto";
 
 const EXIT_PLAN_TOOL_NAME = "ExitPlanMode";
 const ENTER_PLAN_TOOL_NAME = "EnterPlanMode";
 const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 const MAX_ASK_QUESTIONS = 4;
 const MAX_ASK_OPTIONS = 4;
+
+// ============ 随机 Slug 生成器 ============
+// 参考 Claude Code SDK 的命名规则
+
+const ADJECTIVES = [
+  "ancient", "bright", "calm", "clever", "cosmic", "crisp", "curious", "dapper",
+  "dazzling", "deep", "eager", "elegant", "enchanted", "fancy", "gentle", "golden",
+  "happy", "hidden", "humble", "jolly", "joyful", "keen", "kind", "lively",
+  "lovely", "lucky", "magical", "majestic", "mellow", "merry", "mighty", "misty",
+  "noble", "peaceful", "playful", "proud", "quiet", "quirky", "radiant", "serene",
+  "shiny", "swift", "tender", "tidy", "tranquil", "valiant", "vast", "vivid",
+  "warm", "whimsical", "wild", "wise", "witty", "wondrous", "zesty", "zippy"
+];
+
+const VERBS = [
+  "baking", "beaming", "bouncing", "brewing", "bubbling", "chasing", "conjuring",
+  "cooking", "crafting", "crunching", "dancing", "dazzling", "discovering", "dreaming",
+  "drifting", "enchanting", "exploring", "finding", "floating", "gathering", "giggling",
+  "gliding", "growing", "hatching", "hopping", "hugging", "humming", "imagining",
+  "inventing", "jingling", "juggling", "jumping", "mapping", "mixing", "moseying",
+  "napping", "noodling", "orbiting", "painting", "pondering", "popping", "prancing",
+  "purring", "puzzling", "questing", "riding", "roaming", "rolling", "singing",
+  "skipping", "sleeping", "snacking", "soaring", "spinning", "splashing", "stargazing",
+  "stirring", "strolling", "swimming", "swinging", "tickling", "tinkering", "tumbling",
+  "twirling", "waddling", "wandering", "watching", "weaving", "whistling", "wishing",
+  "wobbling", "wondering", "zooming"
+];
+
+const NOUNS = [
+  "aurora", "avalanche", "blossom", "breeze", "brook", "bubble", "canyon", "cascade",
+  "cloud", "clover", "comet", "coral", "cosmos", "creek", "crystal", "dawn", "dusk",
+  "eclipse", "ember", "feather", "fern", "firefly", "flame", "flurry", "fog", "forest",
+  "frost", "galaxy", "garden", "glacier", "glade", "grove", "harbor", "horizon",
+  "island", "lagoon", "lake", "leaf", "meadow", "meteor", "mist", "moon", "moonbeam",
+  "mountain", "nebula", "nova", "ocean", "orbit", "pebble", "petal", "pine", "planet",
+  "pond", "quasar", "rain", "rainbow", "reef", "ripple", "river", "shore", "sky",
+  "snowflake", "spark", "spring", "star", "stardust", "starlight", "storm", "stream",
+  "summit", "sun", "sunbeam", "sunrise", "sunset", "thunder", "tide", "twilight",
+  "valley", "volcano", "waterfall", "wave", "willow", "wind"
+];
+
+function generatePlanSlug(): string {
+  const rand = randomBytes(3);
+  const adjective = ADJECTIVES[(rand[0] ?? 0) % ADJECTIVES.length] ?? "cosmic";
+  const verb = VERBS[(rand[1] ?? 0) % VERBS.length] ?? "drifting";
+  const noun = NOUNS[(rand[2] ?? 0) % NOUNS.length] ?? "aurora";
+  return `${adjective}-${verb}-${noun}`;
+}
+
+const ASK_USER_QUESTION_PROMPT = `Use this tool when you need to ask the user questions during execution. This allows you to:
+1. Gather user preferences or requirements
+2. Clarify ambiguous instructions
+3. Get decisions on implementation choices as you work
+4. Offer choices to the user about what direction to take.
+
+Usage notes:
+- Users can provide custom text input
+- If you recommend a specific option, put it first and suffix "(Recommended)"
+- In plan mode, use this tool only to clarify requirements BEFORE finalizing the plan
+- Do NOT use this tool to ask "是否开始执行计划" - use ExitPlanMode for plan approval.`;
+
+const ENTER_PLAN_MODE_PROMPT = `Use this tool proactively before non-trivial implementation work.
+
+When to use EnterPlanMode:
+1. New feature implementation
+2. Multiple valid approaches
+3. Architectural or trade-off decisions
+4. Multi-file changes
+5. Unclear scope that needs exploration first
+
+When NOT to use EnterPlanMode:
+1. Single-line/small obvious fix
+2. Purely informational or exploratory request
+3. User provided very specific step-by-step edits
+
+After entering plan mode:
+- Keep work read-only
+- Explore code and form an implementation plan
+- Use AskUserQuestion only for requirement clarification if needed
+- Finish by calling ExitPlanMode for user approval`;
+
+const EXIT_PLAN_MODE_PROMPT = `Use this tool only after a complete, unambiguous implementation plan is ready.
+
+Before calling ExitPlanMode:
+1. Ensure plan steps are concrete and executable
+2. Ensure unclear requirements are resolved (AskUserQuestion earlier if needed)
+3. Ensure no pending ambiguity remains
+
+Important:
+- Do NOT ask user "是否执行计划" via AskUserQuestion
+- ExitPlanMode itself is the plan approval handoff
+- allowedPrompts should describe semantic command categories needed for implementation`;
 
 interface NormalizedAskOption {
   label: string;
@@ -258,12 +351,174 @@ function extractPlanText(value: unknown): string | null {
   return null;
 }
 
-function persistExitPlan(agentCwd: string, planText: string): string {
+function stripFrontMatter(content: string): string {
+  const match = content.match(/^---\n[\s\S]*?\n---\n?/);
+  if (!match) return content;
+  return content.slice(match[0].length);
+}
+
+/**
+ * 计划元数据接口
+ */
+interface PlanFrontMatter {
+  summary?: string;
+  created: string;
+  slug: string;
+  estimatedFiles?: number;
+  estimatedLines?: number;
+}
+
+function persistExitPlan(
+  agentCwd: string,
+  planText: string,
+  options?: {
+    summary?: string;
+    estimatedFiles?: number;
+    estimatedLines?: number;
+  }
+): { planPath: string; slug: string } {
   const plansDir = join(agentCwd, "plans");
-  const planPath = join(plansDir, "plan.md");
   mkdirSync(plansDir, { recursive: true });
-  writeFileSync(planPath, planText.endsWith("\n") ? planText : `${planText}\n`, "utf-8");
-  return planPath;
+
+  // 生成随机 slug
+  const slug = generatePlanSlug();
+  const planFileName = `${slug}.md`;
+  const planPath = join(plansDir, planFileName);
+
+  // 构建 YAML front matter
+  const frontMatter: PlanFrontMatter = {
+    created: new Date().toISOString(),
+    slug
+  };
+
+  if (options?.summary) {
+    frontMatter.summary = options.summary;
+  }
+  if (options?.estimatedFiles !== undefined) {
+    frontMatter.estimatedFiles = options.estimatedFiles;
+  }
+  if (options?.estimatedLines !== undefined) {
+    frontMatter.estimatedLines = options.estimatedLines;
+  }
+
+  // 格式化 front matter
+  const frontMatterLines = ["---"];
+  for (const [key, value] of Object.entries(frontMatter)) {
+    if (typeof value === "string") {
+      // 转义包含特殊字符的字符串
+      const escaped = value.includes(":") || value.includes('"') || value.includes("\n")
+        ? `"${value.replace(/"/g, '\\"')}"`
+        : value;
+      frontMatterLines.push(`${key}: ${escaped}`);
+    } else {
+      frontMatterLines.push(`${key}: ${value}`);
+    }
+  }
+  frontMatterLines.push("---", "");
+
+  const content = `${frontMatterLines.join("\n")}${planText.endsWith("\n") ? planText : `${planText}\n`}`;
+
+  writeFileSync(planPath, content, "utf-8");
+
+  // 同时更新 plan.md 作为最新计划
+  const latestPlanPath = join(plansDir, "plan.md");
+  writeFileSync(latestPlanPath, content, "utf-8");
+
+  return { planPath, slug };
+}
+
+// ============ 计划恢复机制 ============
+
+/**
+ * 解析计划文件的 YAML front matter
+ */
+export function parsePlanFrontMatter(content: string): {
+  frontMatter: Partial<PlanFrontMatter> | null;
+  body: string;
+} {
+  const frontMatterMatch = content.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!frontMatterMatch) {
+    return { frontMatter: null, body: content };
+  }
+
+  const frontMatterText = frontMatterMatch[1];
+  if (!frontMatterText) {
+    return { frontMatter: null, body: content.slice(frontMatterMatch[0].length) };
+  }
+
+  const body = content.slice(frontMatterMatch[0].length);
+  const frontMatter: Partial<PlanFrontMatter> = {};
+
+  // 简单的 YAML 解析（仅支持键值对）
+  const lines = frontMatterText.split("\n");
+  for (const line of lines) {
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) continue;
+
+    const key = line.slice(0, colonIndex).trim();
+    let value: string | number = line.slice(colonIndex + 1).trim();
+
+    // 处理引号包裹的字符串
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1).replace(/\\"/g, '"');
+    }
+
+    // 转换数字
+    if (/^\d+$/.test(value)) {
+      value = parseInt(value, 10);
+    }
+
+    if (key === "summary" && typeof value === "string") {
+      frontMatter.summary = value;
+    } else if (key === "created" && typeof value === "string") {
+      frontMatter.created = value;
+    } else if (key === "slug" && typeof value === "string") {
+      frontMatter.slug = value;
+    } else if (key === "estimatedFiles" && typeof value === "number") {
+      frontMatter.estimatedFiles = value;
+    } else if (key === "estimatedLines" && typeof value === "number") {
+      frontMatter.estimatedLines = value;
+    }
+  }
+
+  return { frontMatter, body };
+}
+
+/**
+ * 尝试从文件系统恢复计划
+ */
+export function tryRecoverPlanFromFile(agentCwd: string, slug?: string): {
+  success: boolean;
+  planPath: string | null;
+  planContent: string | null;
+  frontMatter: Partial<PlanFrontMatter> | null;
+} {
+  const plansDir = join(agentCwd, "plans");
+
+  // 优先尝试指定的 slug
+  if (slug) {
+    const slugPath = join(plansDir, `${slug}.md`);
+    try {
+      const content = readFileSync(slugPath, "utf-8");
+      const { frontMatter, body } = parsePlanFrontMatter(content);
+      return { success: true, planPath: slugPath, planContent: body, frontMatter };
+    } catch {
+      // 文件不存在，继续尝试其他方式
+    }
+  }
+
+  // 尝试读取最新的 plan.md
+  const latestPlanPath = join(plansDir, "plan.md");
+  try {
+    const content = readFileSync(latestPlanPath, "utf-8");
+    const { frontMatter, body } = parsePlanFrontMatter(content);
+    return { success: true, planPath: latestPlanPath, planContent: body, frontMatter };
+  } catch {
+    // plan.md 不存在
+  }
+
+  return { success: false, planPath: null, planContent: null, frontMatter: null };
 }
 
 export function createPiControlTools(params: {
@@ -275,8 +530,7 @@ export function createPiControlTools(params: {
     {
       name: ASK_USER_QUESTION_TOOL_NAME,
       label: ASK_USER_QUESTION_TOOL_NAME,
-      description:
-        "Ask the user focused questions and wait for answers. Input schema: { questions: [{ header, question, options:[{label,description}], multiSelect }] }. header must be short and unique.",
+      description: ASK_USER_QUESTION_PROMPT,
       parameters: Type.Object({
         questions: Type.Optional(
           Type.Union([
@@ -317,39 +571,90 @@ export function createPiControlTools(params: {
     {
       name: ENTER_PLAN_TOOL_NAME,
       label: ENTER_PLAN_TOOL_NAME,
-      description: "Switch to plan mode (read-only planning workflow).",
+      description: ENTER_PLAN_MODE_PROMPT,
       parameters: Type.Object({
-        reason: Type.Optional(Type.String()),
-        goal: Type.Optional(Type.String())
+        reason: Type.Optional(Type.String({
+          description: "Brief explanation of why planning mode is needed"
+        })),
+        goal: Type.Optional(Type.String({
+          description: "The goal or objective to plan for"
+        })),
+        context: Type.Optional(Type.String({
+          description: "Additional context about the task"
+        }))
       }, { additionalProperties: true }),
       async execute(_toolCallId, args) {
         const input = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+        const reason = toReadableString(input.reason) || toReadableString(input.goal) || "complex_task_planning";
         return toTextResult({
           ok: true,
           mode: "plan",
-          reason: toReadableString(input.reason) || toReadableString(input.goal) || "enter_plan_mode"
+          reason,
+          message: "已进入 Plan 模式。将生成详细的实施计划供您审核。在审核前不会执行任何写操作。",
+          context: toReadableString(input.context)
         });
       }
     },
     {
       name: EXIT_PLAN_TOOL_NAME,
       label: EXIT_PLAN_TOOL_NAME,
-      description: "Persist the generated plan markdown into plans/plan.md",
+      description: EXIT_PLAN_MODE_PROMPT,
       parameters: Type.Object({
-        plan: Type.Optional(Type.String()),
-        content: Type.Optional(Type.String()),
-        markdown: Type.Optional(Type.String()),
-        text: Type.Optional(Type.String())
+        allowedPrompts: Type.Optional(Type.Array(Type.Object({
+          tool: Type.Literal("Bash"),
+          prompt: Type.String({ description: "Semantic action, e.g. run tests/install dependencies" })
+        }))),
+        pushToRemote: Type.Optional(Type.Boolean()),
+        remoteSessionId: Type.Optional(Type.String()),
+        remoteSessionUrl: Type.Optional(Type.String()),
+        remoteSessionTitle: Type.Optional(Type.String())
       }, { additionalProperties: true }),
       async execute(_toolCallId, args) {
-        const planText = extractPlanText(args);
-        if (!planText) {
-          throw new Error("ExitPlanMode 未提供可保存的计划内容");
+        const input = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+        const inlinePlanCandidates = [input.plan, input.content, input.markdown, input.text];
+        let planText: string | null = null;
+        for (const candidate of inlinePlanCandidates) {
+          const parsed = extractPlanText(candidate);
+          if (parsed) {
+            planText = parsed;
+            break;
+          }
         }
-        const planPath = persistExitPlan(params.agentCwd, planText);
+        if (!planText) {
+          const recovered = tryRecoverPlanFromFile(params.agentCwd);
+          if (recovered.success && recovered.planContent) {
+            planText = stripFrontMatter(recovered.planContent).trim();
+          }
+        }
+        if (!planText) {
+          throw new Error("ExitPlanMode 未找到计划内容，请先提供完整 plan 文本");
+        }
+
+        const allowedPrompts = Array.isArray(input.allowedPrompts)
+          ? input.allowedPrompts
+            .map((item) => (item && typeof item === "object" ? item as Record<string, unknown> : null))
+            .filter((item): item is Record<string, unknown> => Boolean(item))
+            .map((item) => ({
+              tool: item.tool === "Bash" ? "Bash" : "Bash",
+              prompt: toReadableString(item.prompt)
+            }))
+            .filter((item) => item.prompt.length > 0)
+          : [];
+
+        const { planPath, slug } = persistExitPlan(params.agentCwd, planText);
+
         return toTextResult({
           ok: true,
-          planPath
+          mode: "default",
+          planPath,
+          slug,
+          plan: planText,
+          allowedPrompts,
+          pushToRemote: input.pushToRemote === true,
+          remoteSessionId: toReadableString(input.remoteSessionId) || undefined,
+          remoteSessionUrl: toReadableString(input.remoteSessionUrl) || undefined,
+          remoteSessionTitle: toReadableString(input.remoteSessionTitle) || undefined,
+          message: "计划已完成并提交审核。请确认后进入实现阶段。"
         });
       }
     }

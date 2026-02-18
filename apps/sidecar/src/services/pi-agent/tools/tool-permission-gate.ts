@@ -1,7 +1,6 @@
 import type {
   AgentSendInput,
-  AgentToolPermissionRequest,
-  AgentToolPermissionRiskLevel
+  AgentToolPermissionRequest
 } from "@lume/shared";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import {
@@ -9,6 +8,11 @@ import {
   markToolAlwaysAllowed,
   waitForToolPermissionDecision
 } from "./tool-permission-bridge";
+import {
+  getToolMetadata,
+  inferToolMetadata,
+  isToolAllowedInPlanMode
+} from "./tool-metadata";
 
 interface ToolPermissionGateInput {
   sessionId: string;
@@ -16,50 +20,46 @@ interface ToolPermissionGateInput {
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 }
 
-function classifyToolRisk(toolName: string): AgentToolPermissionRiskLevel {
-  const normalized = toolName.trim().toLowerCase();
-  if (normalized === "bash" || normalized === "exec" || normalized === "process") {
-    return "high";
-  }
-  if (
-    normalized === "write" ||
-    normalized === "edit" ||
-    normalized === "multiedit" ||
-    normalized === "memory_save" ||
-    normalized === "sessions_send" ||
-    normalized === "sessions_spawn"
-  ) {
-    return "medium";
-  }
-  return "low";
-}
-
 function shouldRequireConfirmation(params: {
   permissionMode?: AgentSendInput["permissionMode"];
   toolName: string;
-  risk: AgentToolPermissionRiskLevel;
 }): boolean {
   const mode = params.permissionMode ?? "default";
   if (mode === "bypassPermissions") {
     return false;
   }
-  if (params.risk === "low") {
+
+  // 使用元数据获取风险等级
+  const metadata = getToolMetadata(params.toolName) ?? inferToolMetadata(params.toolName);
+  const risk = metadata.riskLevel;
+
+  if (risk === "low") {
     return false;
   }
   if (mode === "acceptEdits") {
-    const normalized = params.toolName.trim().toLowerCase();
-    if (normalized === "write" || normalized === "edit" || normalized === "multiedit") {
+    const category = metadata.category;
+    if (category === "write") {
       return false;
     }
   }
   return true;
 }
 
-function buildReason(toolName: string, risk: AgentToolPermissionRiskLevel): string {
+function buildReason(toolName: string): string {
+  const metadata = getToolMetadata(toolName) ?? inferToolMetadata(toolName);
+  const risk = metadata.riskLevel;
+  const category = metadata.category;
+
   if (risk === "high") {
     return `${toolName} 可能执行系统命令或高风险操作，需要你确认。`;
   }
-  return `${toolName} 将修改数据或触发执行流程，需要你确认。`;
+  if (category === "write") {
+    return `${toolName} 将修改文件或数据，需要你确认。`;
+  }
+  if (category === "execute") {
+    return `${toolName} 将执行操作，需要你确认。`;
+  }
+  return `${toolName} 将触发操作，需要你确认。`;
 }
 
 function sanitizeToolInput(input: unknown): Record<string, unknown> {
@@ -93,21 +93,24 @@ export function wrapToolsWithPermissionGate(
       ...tool,
       async execute(toolCallId, args, signal) {
         const toolName = tool.name || "unknown_tool";
-        const risk = classifyToolRisk(toolName);
+        const metadata = getToolMetadata(toolName) ?? inferToolMetadata(toolName);
         const mode = input.permissionMode ?? "default";
         const effectivePlanMode = runtimeState.inPlanMode || mode === "plan";
-        if (effectivePlanMode && risk !== "low") {
+
+        // 使用元数据检查 Plan 模式权限
+        if (effectivePlanMode && !isToolAllowedInPlanMode(toolName)) {
           throw new Error(`当前是 plan 模式，只允许规划与只读工具，禁止执行: ${toolName}`);
         }
-        if (shouldRequireConfirmation({ permissionMode: effectivePlanMode ? "plan" : mode, toolName, risk })) {
+
+        if (shouldRequireConfirmation({ permissionMode: effectivePlanMode ? "plan" : mode, toolName })) {
           if (!isToolAlwaysAllowed(input.sessionId, toolName)) {
             const request: AgentToolPermissionRequest = {
               sessionId: input.sessionId,
               requestId: toolCallId,
               toolUseId: toolCallId,
               toolName,
-              risk,
-              reason: buildReason(toolName, risk),
+              risk: metadata.riskLevel,
+              reason: buildReason(toolName),
               input: sanitizeToolInput(args)
             };
             const decision = await waitForToolPermissionDecision(

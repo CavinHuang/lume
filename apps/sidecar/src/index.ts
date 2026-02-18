@@ -4,6 +4,7 @@ import { AGENT_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC
 import type {
   AttachmentSaveInput,
   AgentGenerateTitleInput,
+  PlanStep,
   ImportGlobalMcpToWorkspaceInput,
   InstallGlobalPluginInput,
   ImportGlobalSkillToWorkspaceInput,
@@ -60,10 +61,14 @@ import {
 } from "./services/agent-service";
 import {
   copyFolderToSession,
+  deleteAgentPlan,
   deleteAgentFile,
   getAgentSessionPath,
   listAgentDirectory,
+  listAgentPlans,
   openAgentPath,
+  readAgentPlan,
+  resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
   showAgentPathInFolder,
 } from "./services/agent-files-service";
@@ -100,6 +105,7 @@ import {
   closeMemoryManagers
 } from "./services/memory-service";
 import { createLogger, getLogsDir } from "./services/logger";
+import { PlanStateTracker } from "./services/plan-state-tracker";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -144,6 +150,18 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+const planStateTracker = new PlanStateTracker();
+
+function notifyPlanStateChange(
+  sessionId: string,
+  phase: "idle" | "planning" | "review" | "executing" | "executed",
+  extras?: { planPath?: string; steps?: PlanStep[] }
+): void {
+  const event = planStateTracker.updatePhase(sessionId, phase, extras);
+  if (!event) return;
+  writeNotification(AGENT_IPC_CHANNELS.PLAN_STATE_CHANGED, event);
 }
 
 const handlers: Record<string, RpcHandler> = {
@@ -351,6 +369,7 @@ const handlers: Record<string, RpcHandler> = {
     const sessionId = asString(p.sessionId);
     if (!sessionId) throw new Error("缺少 sessionId");
     deleteAgentSession(sessionId);
+    planStateTracker.clearSession(sessionId);
     return { ok: true };
   },
   [AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM]: async (params) => {
@@ -468,6 +487,39 @@ const handlers: Record<string, RpcHandler> = {
     if (!workspaceSlug || !sessionId || !path) throw new Error("缺少 workspaceSlug/sessionId/path");
     return showAgentPathInFolder(workspaceSlug, sessionId, path);
   },
+  [AGENT_IPC_CHANNELS.LIST_PLANS]: async (params) => {
+    const p = asObject(params);
+    const workspaceSlug = asString(p.workspaceSlug);
+    const sessionId = asString(p.sessionId);
+    if (!sessionId) throw new Error("缺少 sessionId");
+    const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugBySessionId(sessionId);
+    if (!resolvedWorkspaceSlug) throw new Error("未找到会话对应的 workspace");
+    return listAgentPlans(resolvedWorkspaceSlug, sessionId);
+  },
+  [AGENT_IPC_CHANNELS.READ_PLAN]: async (params) => {
+    const p = asObject(params);
+    const workspaceSlug = asString(p.workspaceSlug);
+    const sessionId = asString(p.sessionId);
+    const planPath = asString(p.planPath);
+    if (!sessionId || !planPath) {
+      throw new Error("缺少 sessionId/planPath");
+    }
+    const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugBySessionId(sessionId);
+    if (!resolvedWorkspaceSlug) throw new Error("未找到会话对应的 workspace");
+    return readAgentPlan(resolvedWorkspaceSlug, sessionId, planPath);
+  },
+  [AGENT_IPC_CHANNELS.DELETE_PLAN]: async (params) => {
+    const p = asObject(params);
+    const workspaceSlug = asString(p.workspaceSlug);
+    const sessionId = asString(p.sessionId);
+    const planPath = asString(p.planPath);
+    if (!sessionId || !planPath) {
+      throw new Error("缺少 sessionId/planPath");
+    }
+    const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugBySessionId(sessionId);
+    if (!resolvedWorkspaceSlug) throw new Error("未找到会话对应的 workspace");
+    return deleteAgentPlan(resolvedWorkspaceSlug, sessionId, planPath);
+  },
   [AGENT_IPC_CHANNELS.SAVE_FILES_TO_SESSION]: async (params) =>
     saveFilesToAgentSession(params as import("@lume/shared").AgentSaveFilesInput),
   [AGENT_IPC_CHANNELS.COPY_FOLDER_TO_SESSION]: async (params) =>
@@ -478,6 +530,10 @@ const handlers: Record<string, RpcHandler> = {
     const sessionId = asString(p.sessionId);
     if (!sessionId) throw new Error("缺少 sessionId");
     stopAgent(sessionId);
+    if (planStateTracker.getPhase(sessionId) === "executing") {
+      const steps = planStateTracker.markCurrentStepFailed(sessionId, "用户已停止当前执行");
+      notifyPlanStateChange(sessionId, "review", steps ? { steps } : undefined);
+    }
     return { ok: true };
   },
   [AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION]: async (params) => {
@@ -518,21 +574,46 @@ const handlers: Record<string, RpcHandler> = {
   "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
   [AGENT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
     const input = params as AgentSendInput;
+    if (planStateTracker.isLikelyExecutionRequest(input)) {
+      const steps = planStateTracker.syncExecutionFromUserMessage(input.sessionId, input.userMessage);
+      notifyPlanStateChange(input.sessionId, "executing", steps ? { steps } : undefined);
+    }
     void sendAgentMessage(input, {
-      onEvent: (event) =>
+      onEvent: (event) => {
         writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
           sessionId: input.sessionId,
           event
-        }),
-      onComplete: () =>
+        });
+        if (event.type !== "tool_result") return;
+        if (event.toolName === "EnterPlanMode") {
+          notifyPlanStateChange(input.sessionId, "planning");
+          return;
+        }
+        if (event.toolName === "ExitPlanMode") {
+          const planPath = planStateTracker.parsePlanPathFromToolResult(event.result);
+          notifyPlanStateChange(input.sessionId, "review", planPath ? { planPath } : undefined);
+        }
+      },
+      onComplete: () => {
         writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
           sessionId: input.sessionId
-        }),
+        });
+        if (planStateTracker.getPhase(input.sessionId) === "executing") {
+          const steps = planStateTracker.markCurrentStepCompleted(input.sessionId);
+          notifyPlanStateChange(input.sessionId, "executed", steps ? { steps } : undefined);
+        }
+      },
       onError: (error) =>
+      {
         writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
           sessionId: input.sessionId,
           error
-        }),
+        });
+        if (planStateTracker.getPhase(input.sessionId) === "executing") {
+          const steps = planStateTracker.markCurrentStepFailed(input.sessionId, error);
+          notifyPlanStateChange(input.sessionId, "review", steps ? { steps } : undefined);
+        }
+      },
       onTitleUpdated: (title) =>
         writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
           sessionId: input.sessionId,
@@ -547,6 +628,13 @@ const handlers: Record<string, RpcHandler> = {
         sessionId: input.sessionId,
         error: error instanceof Error ? error.message : String(error)
       });
+      if (planStateTracker.getPhase(input.sessionId) === "executing") {
+        const steps = planStateTracker.markCurrentStepFailed(
+          input.sessionId,
+          error instanceof Error ? error.message : String(error)
+        );
+        notifyPlanStateChange(input.sessionId, "review", steps ? { steps } : undefined);
+      }
     });
     return { ok: true };
   },

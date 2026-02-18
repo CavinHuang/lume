@@ -1,6 +1,7 @@
 import {
   cpSync,
   existsSync,
+  readFileSync,
   mkdirSync,
   readdirSync,
   rmSync,
@@ -13,9 +14,10 @@ import type {
   AgentCopyFolderInput,
   AgentSaveFilesInput,
   AgentSavedFile,
-  FileEntry
+  FileEntry,
+  PlanFileMeta
 } from "@lume/shared";
-import { getAgentSessionWorkspacePath } from "./config-paths";
+import { getAgentSessionWorkspacePath, getAgentWorkspacesDir } from "./config-paths";
 
 function validatePathSegment(value: string, label: string): void {
   if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
@@ -40,6 +42,19 @@ function resolveSessionDir(workspaceSlug: string, sessionId: string): string {
   return getAgentSessionWorkspacePath(workspaceSlug, sessionId);
 }
 
+export function resolveWorkspaceSlugBySessionId(sessionId: string): string | null {
+  validatePathSegment(sessionId, "sessionId");
+  const workspacesDir = getAgentWorkspacesDir();
+  if (!existsSync(workspacesDir)) return null;
+  for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = join(workspacesDir, entry.name, sessionId);
+    if (!existsSync(candidate)) continue;
+    return entry.name;
+  }
+  return null;
+}
+
 function resolveSafeTarget(workspaceSlug: string, sessionId: string, targetPath?: string): string {
   const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
   if (!targetPath || targetPath.trim().length === 0) return sessionDir;
@@ -48,6 +63,43 @@ function resolveSafeTarget(workspaceSlug: string, sessionId: string, targetPath?
     throw new Error("目标路径超出会话工作目录");
   }
   return resolved;
+}
+
+function resolveSessionPlansDir(workspaceSlug: string, sessionId: string): string {
+  return join(resolveSessionDir(workspaceSlug, sessionId), "plans");
+}
+
+function parsePlanSummary(content: string): string | undefined {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match || !match[1]) return undefined;
+  const line = match[1]
+    .split("\n")
+    .find((item) => item.trim().startsWith("summary:"));
+  if (!line) return undefined;
+  const value = line.slice(line.indexOf(":") + 1).trim();
+  if (!value) return undefined;
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1).trim() || undefined;
+  }
+  return value;
+}
+
+function resolveSafePlanPath(
+  workspaceSlug: string,
+  sessionId: string,
+  planPath: string
+): string {
+  if (!planPath || !planPath.trim()) {
+    throw new Error("缺少 planPath");
+  }
+  const plansDir = resolveSessionPlansDir(workspaceSlug, sessionId);
+  const directResolved = resolve(planPath);
+  const filenameResolved = resolve(join(plansDir, planPath));
+  const resolvedCandidate = isWithin(plansDir, directResolved) ? directResolved : filenameResolved;
+  if (!isWithin(plansDir, resolvedCandidate)) {
+    throw new Error("Plan 路径超出会话 plans 目录");
+  }
+  return resolvedCandidate;
 }
 
 export function getAgentSessionPath(workspaceSlug: string, sessionId: string): string {
@@ -151,6 +203,60 @@ export function showAgentPathInFolder(
     const parentPath = dirname(resolved);
     openInSystem(parentPath);
   }
+  return { ok: true };
+}
+
+export function listAgentPlans(workspaceSlug: string, sessionId: string): PlanFileMeta[] {
+  const plansDir = resolveSessionPlansDir(workspaceSlug, sessionId);
+  if (!existsSync(plansDir)) return [];
+
+  const plans = readdirSync(plansDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"))
+    .map((entry) => {
+      const planPath = join(plansDir, entry.name);
+      const stat = statSync(planPath);
+      let summary: string | undefined;
+      try {
+        summary = parsePlanSummary(readFileSync(planPath, "utf-8"));
+      } catch {
+        summary = undefined;
+      }
+      return {
+        name: entry.name,
+        path: planPath,
+        createdAt: stat.birthtimeMs || stat.mtimeMs,
+        size: stat.size,
+        summary
+      } satisfies PlanFileMeta;
+    });
+
+  plans.sort((a, b) => b.createdAt - a.createdAt);
+  return plans;
+}
+
+export function readAgentPlan(
+  workspaceSlug: string,
+  sessionId: string,
+  planPath: string
+): { path: string; content: string } {
+  const resolvedPlanPath = resolveSafePlanPath(workspaceSlug, sessionId, planPath);
+  if (!existsSync(resolvedPlanPath)) {
+    throw new Error("Plan 文件不存在");
+  }
+  return {
+    path: resolvedPlanPath,
+    content: readFileSync(resolvedPlanPath, "utf-8")
+  };
+}
+
+export function deleteAgentPlan(
+  workspaceSlug: string,
+  sessionId: string,
+  planPath: string
+): { ok: true } {
+  const resolvedPlanPath = resolveSafePlanPath(workspaceSlug, sessionId, planPath);
+  if (!existsSync(resolvedPlanPath)) return { ok: true };
+  rmSync(resolvedPlanPath, { force: true });
   return { ok: true };
 }
 

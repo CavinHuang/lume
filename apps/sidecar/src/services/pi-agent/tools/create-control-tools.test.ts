@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { __testing, createPiControlTools } from "./create-control-tools";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("create-control-tools AskUserQuestion normalize", () => {
   test("应兼容字符串化 questions 并产出可渲染结构", () => {
@@ -56,5 +59,37 @@ describe("create-control-tools AskUserQuestion normalize", () => {
     const details = result.details as { ok?: boolean; mode?: string };
     expect(details.ok).toBeTrue();
     expect(details.mode).toBe("plan");
+  });
+
+  test("ExitPlanMode 应保存计划并返回 allowedPrompts", async () => {
+    const agentCwd = mkdtempSync(join(tmpdir(), "lume-plan-"));
+    const tools = createPiControlTools({
+      sessionId: "s2",
+      agentCwd,
+      emitAskUserQuestion: () => {}
+    });
+    const exitPlan = tools.find((tool) => tool.name === "ExitPlanMode");
+    expect(Boolean(exitPlan)).toBeTrue();
+    if (!exitPlan) return;
+    const result = await exitPlan.execute("tool-call-2", {
+      plan: "## 计划\n1. 读取代码\n2. 提交修改",
+      allowedPrompts: [
+        { tool: "Bash", prompt: "run tests" }
+      ]
+    }, new AbortController().signal);
+
+    const details = result.details as {
+      ok?: boolean;
+      planPath?: string;
+      plan?: string;
+      allowedPrompts?: Array<{ tool: string; prompt: string }>;
+    };
+    expect(details.ok).toBeTrue();
+    expect(typeof details.planPath).toBe("string");
+    expect(details.plan?.includes("## 计划")).toBeTrue();
+    expect(details.allowedPrompts?.length).toBe(1);
+    expect(details.allowedPrompts?.[0]?.prompt).toBe("run tests");
+    const content = readFileSync(details.planPath!, "utf-8");
+    expect(content.includes("## 计划")).toBeTrue();
   });
 });

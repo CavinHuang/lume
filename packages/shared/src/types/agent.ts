@@ -353,6 +353,49 @@ export interface AgentToolPermissionResponseInput {
   decision: AgentToolPermissionDecision
 }
 
+// ===== Plan 模式 =====
+
+/** Plan 阶段 */
+export type PlanPhase = 'idle' | 'planning' | 'review' | 'executing' | 'executed'
+
+/** Plan 步骤状态 */
+export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
+
+/** Plan 步骤 */
+export interface PlanStep {
+  id: string
+  text: string
+  status: PlanStepStatus
+  failCount: number
+  lastError: string | null
+}
+
+/** Plan 文件元数据 */
+export interface PlanFileMeta {
+  /** 文件名 */
+  name: string
+  /** 完整路径 */
+  path: string
+  /** 创建时间 */
+  createdAt: number
+  /** 文件大小（字节） */
+  size: number
+  /** 摘要（从 front matter 提取） */
+  summary?: string
+}
+
+/** Plan 状态变化事件 */
+export interface PlanStateChangedEvent {
+  /** 会话 ID */
+  sessionId: string
+  /** 当前阶段 */
+  phase: PlanPhase
+  /** Plan 文件路径 */
+  planPath?: string
+  /** 执行步骤 */
+  steps?: PlanStep[]
+}
+
 // ===== Agent 流式事件载荷 =====
 
 /**
@@ -520,6 +563,16 @@ export const AGENT_IPC_CHANNELS = {
   CAPABILITIES_CHANGED: 'agent:capabilities-changed',
   /** 工作区文件变化（session 目录文件监听触发，用于文件浏览器刷新） */
   WORKSPACE_FILES_CHANGED: 'agent:workspace-files-changed',
+
+  // Plan 模式
+  /** 获取 Plan 文件列表 */
+  LIST_PLANS: 'agent:list-plans',
+  /** 读取 Plan 文件内容 */
+  READ_PLAN: 'agent:read-plan',
+  /** 删除 Plan 文件 */
+  DELETE_PLAN: 'agent:delete-plan',
+  /** Plan 状态变化通知（主进程 → 渲染进程推送） */
+  PLAN_STATE_CHANGED: 'agent:plan-state-changed',
 
   // 日志
   /** 写入日志（前端 -> sidecar） */

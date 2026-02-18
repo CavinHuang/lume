@@ -13,6 +13,8 @@ import type {
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
   AgentGenerateTitleInput,
+  PlanFileMeta,
+  PlanStateChangedEvent,
   GlobalDiscoverySnapshot,
   GlobalPluginMarketplaceDetail,
   GlobalImportResult,
@@ -665,6 +667,48 @@ export async function copyFolderToAgentSession(
   input: AgentCopyFolderInput
 ): Promise<AgentSavedFile[]> {
   return sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.COPY_FOLDER_TO_SESSION, input);
+}
+
+export async function listAgentPlans(
+  workspaceSlug: string | undefined,
+  sessionId: string
+): Promise<PlanFileMeta[]> {
+  return sidecarCall<PlanFileMeta[]>(AGENT_IPC_CHANNELS.LIST_PLANS, {
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    sessionId
+  });
+}
+
+export async function readAgentPlan(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+  planPath: string
+): Promise<{ path: string; content: string }> {
+  return sidecarCall<{ path: string; content: string }>(AGENT_IPC_CHANNELS.READ_PLAN, {
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    sessionId,
+    planPath
+  });
+}
+
+export async function deleteAgentPlan(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+  planPath: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_PLAN, {
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    sessionId,
+    planPath
+  });
+}
+
+export async function onAgentPlanStateChanged(
+  handler: (event: PlanStateChangedEvent) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.PLAN_STATE_CHANGED, (params) => {
+    handler(params as PlanStateChangedEvent);
+  });
 }
 
 // 日志相关
