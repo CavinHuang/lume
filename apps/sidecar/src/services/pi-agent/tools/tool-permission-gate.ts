@@ -2,7 +2,7 @@ import type {
   AgentSendInput,
   AgentToolPermissionRequest
 } from "@lume/shared";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import {
   isToolAlwaysAllowed,
   markToolAlwaysAllowed,
@@ -13,6 +13,53 @@ import {
   inferToolMetadata,
   isToolAllowedInPlanMode
 } from "./tool-metadata";
+import { createLogger } from "../../logger";
+
+const auditLog = createLogger("tool-audit");
+
+// 参数级危险模式规则
+const PARAM_DENY_RULES: Array<{ tool: string; param: string; pattern: RegExp; reason: string }> = [
+  { tool: "bash", param: "command", pattern: /rm\s+-rf\s+\/(?:\s|$)/, reason: "禁止删除根目录" },
+  { tool: "bash", param: "command", pattern: /:\s*\(\s*\)\s*\{.*\}\s*;.*:/, reason: "禁止 fork bomb" },
+  { tool: "bash", param: "command", pattern: />\s*\/dev\/sd[a-z]/, reason: "禁止写入块设备" },
+  {
+    tool: "read",
+    param: "path",
+    pattern: /(^|[\\/])(MEMORY\.md|memory\.md)$|(^|[\\/])memory[\\/].+\.md$|(^|[\\/])sessions[\\/].+/i,
+    reason: "memory 文件请使用 memory_get（先 memory_search，再 memory_get）"
+  },
+  {
+    tool: "read",
+    param: "file_path",
+    pattern: /(^|[\\/])(MEMORY\.md|memory\.md)$|(^|[\\/])memory[\\/].+\.md$|(^|[\\/])sessions[\\/].+/i,
+    reason: "memory 文件请使用 memory_get（先 memory_search，再 memory_get）"
+  },
+  {
+    tool: "read",
+    param: "filePath",
+    pattern: /(^|[\\/])(MEMORY\.md|memory\.md)$|(^|[\\/])memory[\\/].+\.md$|(^|[\\/])sessions[\\/].+/i,
+    reason: "memory 文件请使用 memory_get（先 memory_search，再 memory_get）"
+  },
+  {
+    tool: "read",
+    param: "filepath",
+    pattern: /(^|[\\/])(MEMORY\.md|memory\.md)$|(^|[\\/])memory[\\/].+\.md$|(^|[\\/])sessions[\\/].+/i,
+    reason: "memory 文件请使用 memory_get（先 memory_search，再 memory_get）"
+  },
+];
+
+function checkParamDenyRules(toolName: string, args: unknown): string | null {
+  const normalized = toolName.trim().toLowerCase();
+  const record = args && typeof args === "object" ? args as Record<string, unknown> : {};
+  for (const rule of PARAM_DENY_RULES) {
+    if (rule.tool !== normalized) continue;
+    const val = record[rule.param];
+    if (typeof val === "string" && rule.pattern.test(val)) {
+      return rule.reason;
+    }
+  }
+  return null;
+}
 
 interface ToolPermissionGateInput {
   sessionId: string;
@@ -88,10 +135,10 @@ export function wrapToolsWithPermissionGate(
     if (typeof tool.execute !== "function") {
       return tool;
     }
-    const originalExecute = tool.execute.bind(tool);
+    const originalExecute = tool.execute.bind(tool) as AgentTool["execute"];
     return {
       ...tool,
-      async execute(toolCallId, args, signal) {
+      async execute(toolCallId, args, signal, onUpdate): Promise<AgentToolResult<any>> {
         const toolName = tool.name || "unknown_tool";
         const metadata = getToolMetadata(toolName) ?? inferToolMetadata(toolName);
         const mode = input.permissionMode ?? "default";
@@ -100,6 +147,13 @@ export function wrapToolsWithPermissionGate(
         // 使用元数据检查 Plan 模式权限
         if (effectivePlanMode && !isToolAllowedInPlanMode(toolName)) {
           throw new Error(`当前是 plan 模式，只允许规划与只读工具，禁止执行: ${toolName}`);
+        }
+
+        // 参数级权限检查
+        const paramDenyReason = checkParamDenyRules(toolName, args);
+        if (paramDenyReason) {
+          auditLog.warn("tool_param_denied", { tool: toolName, sessionId: input.sessionId, reason: paramDenyReason });
+          throw new Error(`工具参数被拒绝: ${paramDenyReason}`);
         }
 
         if (shouldRequireConfirmation({ permissionMode: effectivePlanMode ? "plan" : mode, toolName })) {
@@ -126,12 +180,25 @@ export function wrapToolsWithPermissionGate(
             }
           }
         }
-        const result = await originalExecute(toolCallId, args, signal);
+        const startTs = Date.now();
+        auditLog.info("tool_call", { tool: toolName, sessionId: input.sessionId, ts: startTs });
+        let success = true;
+        let result: AgentToolResult<any>;
+        try {
+          result = await originalExecute(toolCallId, args, signal, onUpdate);
+        } catch (err) {
+          success = false;
+          auditLog.info("tool_result", { tool: toolName, sessionId: input.sessionId, success: false, durationMs: Date.now() - startTs });
+          throw err;
+        }
+        auditLog.info("tool_result", { tool: toolName, sessionId: input.sessionId, success, durationMs: Date.now() - startTs });
         const normalizedToolName = toolName.trim().toLowerCase();
         if (normalizedToolName === "enterplanmode") {
           runtimeState.inPlanMode = true;
+          try { const { getSessionStateManager } = await import("../../session-state-manager"); getSessionStateManager().setPlanMode(input.sessionId, true); } catch { /* ignore */ }
         } else if (normalizedToolName === "exitplanmode") {
           runtimeState.inPlanMode = false;
+          try { const { getSessionStateManager } = await import("../../session-state-manager"); getSessionStateManager().setPlanMode(input.sessionId, false); } catch { /* ignore */ }
         }
         return result;
       }
