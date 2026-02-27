@@ -3,26 +3,16 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"]
     },
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "allowJs": true,
     "noEmit": true,
-    "incremental": true,
     "isolatedModules": true
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx",
-    "next-env.d.ts",
-    ".next/types/**/*.ts"
+    "**/*.tsx"
   ],
   "exclude": [
     "node_modules"

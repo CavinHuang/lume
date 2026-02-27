@@ -2,11 +2,12 @@
 
 import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
+import { IPC_PROTOCOL_VERSION } from "@lume/shared";
 import { themeModeAtom, type ThemeMode, workspaceCapabilitiesVersionAtom, workspaceFilesVersionAtom } from "./atoms";
 import { AppShell } from "./components/app-shell/AppShell";
 import { TooltipProvider } from "./components/ui/tooltip";
 import type { AppShellContextType } from "./contexts/AppShellContext";
-import { onAgentCapabilitiesChanged, onAgentWorkspaceFilesChanged } from "./lib/desktop-api";
+import { onAgentCapabilitiesChanged, onAgentWorkspaceFilesChanged, sidecarCall } from "./lib/desktop-api";
 
 function resolveTheme(mode: ThemeMode): "dark" | "light" {
   if (mode !== "system") {
@@ -29,6 +30,14 @@ export default function App(): React.ReactElement {
   const bumpCapabilitiesVersion = useSetAtom(workspaceCapabilitiesVersionAtom);
   const bumpFilesVersion = useSetAtom(workspaceFilesVersionAtom);
   const contextValue: AppShellContextType = {};
+
+  useEffect(() => {
+    void sidecarCall<{ version?: number }>("healthcheck").then((result) => {
+      if (result.version !== IPC_PROTOCOL_VERSION) {
+        console.warn(`[App] IPC 协议版本不匹配: 前端=${IPC_PROTOCOL_VERSION}, sidecar=${result.version ?? "未知"}`);
+      }
+    }).catch(() => {/* sidecar 未就绪，忽略 */});
+  }, []);
 
   useEffect(() => {
     applyThemeToDocument(resolveTheme(mode));
