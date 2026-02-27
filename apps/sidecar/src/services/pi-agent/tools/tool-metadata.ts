@@ -148,21 +148,21 @@ export function inferToolMetadata(toolName: string): ToolMetadata {
 
 // 基础工具
 registerToolMetadata({
-  name: "Read",
+  name: "read",
   category: "read",
   riskLevel: "low",
   description: "读取文件内容"
 });
 
 registerToolMetadata({
-  name: "Write",
+  name: "write",
   category: "write",
   riskLevel: "medium",
   description: "创建或覆盖文件"
 });
 
 registerToolMetadata({
-  name: "Edit",
+  name: "edit",
   category: "write",
   riskLevel: "medium",
   description: "编辑文件内容"
@@ -176,28 +176,28 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "Bash",
+  name: "bash",
   category: "execute",
   riskLevel: "high",
   description: "执行 Shell 命令"
 });
 
 registerToolMetadata({
-  name: "Glob",
+  name: "find",
   category: "read",
   riskLevel: "low",
   description: "按模式搜索文件"
 });
 
 registerToolMetadata({
-  name: "Grep",
+  name: "grep",
   category: "read",
   riskLevel: "low",
   description: "在文件中搜索文本"
 });
 
 registerToolMetadata({
-  name: "LS",
+  name: "ls",
   category: "read",
   riskLevel: "low",
   description: "列出目录内容"
