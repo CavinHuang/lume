@@ -118,8 +118,10 @@ export interface AgentMessage {
 
 /** Agent 标题生成输入 */
 export interface AgentGenerateTitleInput {
-  /** 用户第一条消息内容 */
-  userMessage: string
+  /** 标题来源文本（优先使用 Agent 总结） */
+  sourceText?: string
+  /** 兼容旧字段：用户消息 */
+  userMessage?: string
   /** 渠道 ID（用于获取 API Key） */
   channelId: string
   /** 模型 ID */
@@ -161,12 +163,52 @@ export interface SkillMeta {
   name: string
   description?: string
   icon?: string
+  version?: string
 }
 
 /** 工作区能力摘要（MCP + Skill 计数） */
 export interface WorkspaceCapabilities {
   mcpServers: Array<{ name: string; enabled: boolean; type: McpTransportType }>
   skills: SkillMeta[]
+}
+
+// ===== Agent Tool Policy =====
+
+export interface AgentToolPolicy {
+  allow?: string[]
+  deny?: string[]
+}
+
+export interface AgentRuntimeToolPolicyConfig {
+  version?: number
+  tools?: {
+    allow?: string[]
+    deny?: string[]
+    byProvider?: Record<string, AgentToolPolicy>
+    bySessionType?: Record<string, AgentToolPolicy>
+    byChatType?: Record<string, AgentToolPolicy>
+    subagent?: AgentToolPolicy
+  }
+}
+
+export type AgentProxyMode = 'off' | 'system' | 'custom'
+
+export interface AgentProxySettings {
+  version: 1
+  enabled: boolean
+  mode: AgentProxyMode
+  httpProxy?: string
+  httpsProxy?: string
+  noProxy?: string
+}
+
+export interface AgentProxyStatus {
+  settings: AgentProxySettings
+  systemProxy: {
+    httpProxy?: string
+    httpsProxy?: string
+    noProxy?: string
+  }
 }
 
 // ===== 全局发现（Claude）=====
@@ -501,6 +543,14 @@ export const AGENT_IPC_CHANNELS = {
   GET_MCP_CONFIG: 'agent:get-mcp-config',
   /** 保存工作区 MCP 配置 */
   SAVE_MCP_CONFIG: 'agent:save-mcp-config',
+  /** 获取 Agent runtime tool policy */
+  GET_TOOL_POLICY: 'agent:get-tool-policy',
+  /** 保存 Agent runtime tool policy */
+  SAVE_TOOL_POLICY: 'agent:save-tool-policy',
+  /** 获取 Agent 网络代理配置 */
+  GET_PROXY_SETTINGS: 'agent:get-proxy-settings',
+  /** 保存 Agent 网络代理配置 */
+  SAVE_PROXY_SETTINGS: 'agent:save-proxy-settings',
   /** 获取工作区 Skill 列表 */
   GET_SKILLS: 'agent:get-skills',
   /** 删除工作区 Skill */

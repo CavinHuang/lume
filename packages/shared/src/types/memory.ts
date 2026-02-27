@@ -46,6 +46,8 @@ export interface MemoryGetResult {
 export interface MemorySaveInput {
   workspaceSlug: string;
   content: string;
+  /** 指定写入路径，如 "MEMORY.md" 表示长期记忆；省略则写入 memory/YYYY-MM-DD.md */
+  path?: string;
   date?: string;
 }
 

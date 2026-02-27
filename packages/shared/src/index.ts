@@ -10,5 +10,9 @@ export type AppMode = "chat" | "agent";
 
 export interface HealthcheckResult {
   ok: true;
-  source: "desktop" | "web";
+  source: "desktop" | "web" | "sidecar";
+  version?: number;
 }
+
+/** 当前 IPC 协议版本，前后端必须一致 */
+export const IPC_PROTOCOL_VERSION = 1;
