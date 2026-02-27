@@ -153,21 +153,16 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     return;
   }
 
-  appendMessage(conversationId, {
-    id: randomUUID(),
-    role: "user",
-    content: userMessage,
-    createdAt: Date.now(),
-    attachments: attachments && attachments.length > 0 ? attachments : undefined
-  });
+  const controller = new AbortController();
+  // 先中止同一对话的旧请求，防止 AbortController 泄漏
+  const existing = activeControllers.get(conversationId);
+  if (existing) existing.abort();
+  activeControllers.set(conversationId, controller);
 
   const fullHistory = getConversationMessages(conversationId);
   const filteredHistory = filterHistory(fullHistory, contextDividers, contextLength);
   const enrichedHistory = await enrichHistoryWithDocuments(filteredHistory);
   const enrichedUserMessage = await enrichMessageWithDocuments(userMessage, attachments);
-
-  const controller = new AbortController();
-  activeControllers.set(conversationId, controller);
 
   let accumulatedContent = "";
   let accumulatedReasoning = "";
@@ -209,6 +204,14 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
       }
     });
 
+    // AI 调用成功后再写入用户消息和 AI 回复，保证一致性
+    appendMessage(conversationId, {
+      id: randomUUID(),
+      role: "user",
+      content: userMessage,
+      createdAt: Date.now(),
+      attachments: attachments && attachments.length > 0 ? attachments : undefined
+    });
     const assistantMsgId = randomUUID();
     appendMessage(conversationId, {
       id: assistantMsgId,
@@ -223,6 +226,14 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
   } catch (error) {
     if (controller.signal.aborted) {
       if (accumulatedContent) {
+        // 中止时已有部分内容，写入用户消息和部分 AI 回复
+        appendMessage(conversationId, {
+          id: randomUUID(),
+          role: "user",
+          content: userMessage,
+          createdAt: Date.now(),
+          attachments: attachments && attachments.length > 0 ? attachments : undefined
+        });
         const assistantMsgId = randomUUID();
         appendMessage(conversationId, {
           id: assistantMsgId,

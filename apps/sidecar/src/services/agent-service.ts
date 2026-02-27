@@ -21,6 +21,7 @@ import { fetchTitle, getAdapter } from "../providers";
 import { decryptApiKey, listChannels } from "./channel-manager";
 import {
   appendAgentMessage,
+  getAgentSessionMessages,
   getAgentSessionMeta,
   updateAgentSessionMeta
 } from "./agent-session-manager";
@@ -29,6 +30,7 @@ import { createLogger } from "./logger";
 import {
   getSessionStateManager,
   startSessionHeartbeat,
+  stopSessionHeartbeat,
 } from "./session-state-manager";
 import { submitPiAskUserQuestionAnswers } from "./pi-agent/tools/ask-user-question-bridge";
 import { submitToolPermissionDecision } from "./pi-agent/tools/tool-permission-bridge";
@@ -36,6 +38,14 @@ import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
 } from "./model-selection";
+import {
+  AGENT_TITLE_PROMPT_FROM_SUMMARY,
+  deriveFallbackAgentTitleFromSourceText,
+  isWeakGeneratedTitle,
+  resolveAgentTitleSourceText,
+  sanitizeGeneratedTitle,
+  shouldAutoGenerateSessionTitle
+} from "./session-title-summarizer";
 
 type AgentEventEmitter = {
   onEvent: (event: AgentEvent) => void;
@@ -46,10 +56,15 @@ type AgentEventEmitter = {
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 };
 
-const AGENT_TITLE_PROMPT =
-  "根据用户的第一条消息，生成一个简短的会话标题（10字以内）。只输出标题，不要有任何其他内容、标点符号或引号。\n\n用户消息：";
-const MAX_TITLE_LENGTH = 20;
-const DEFAULT_AGENT_TITLE = "新 Agent 会话";
+// Memory Flush 待发送队列：sessionId -> prompt
+const pendingMemoryFlushPrompts = new Map<string, string>();
+
+export function consumeMemoryFlushPrompt(sessionId: string): string | undefined {
+  const prompt = pendingMemoryFlushPrompts.get(sessionId);
+  if (prompt) pendingMemoryFlushPrompts.delete(sessionId);
+  return prompt;
+}
+
 const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 
 const log = createLogger("agent-service");
@@ -68,10 +83,12 @@ function handleRuntimeSessionStateEvent(
 
     const flushCheck = sessionStateManager.checkMemoryFlush(sessionId);
     if (flushCheck.executed && flushCheck.prompt) {
-      log.info("Memory Flush 触发条件满足", {
+      log.info("Memory Flush 触发条件满足，已加入待发送队列", {
         sessionId: sessionId.slice(0, 8),
         reason: flushCheck.reason,
       });
+      pendingMemoryFlushPrompts.set(sessionId, flushCheck.prompt);
+      sessionStateManager.markMemoryFlushExecuted(sessionId);
     }
   }
 
@@ -115,11 +132,14 @@ export async function sendAgentMessage(
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean } = {}
 ): Promise<void> {
   const { sessionId, userMessage, workspaceId } = input;
+  const messageHistoryBeforeSend = getAgentSessionMessages(sessionId);
+  const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const sessionMeta = getAgentSessionMeta(sessionId);
   const resolvedChannelId = input.channelId ?? sessionMeta?.channelId;
   const resolvedModelId = pickModelId(resolvedChannelId, input.modelId);
 
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
+  const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
   if (shouldAppendUserMessage) {
     const userMessageRecord: AgentMessage = {
@@ -167,13 +187,19 @@ export async function sendAgentMessage(
     onAskUserQuestion: emit.onAskUserQuestion,
     onToolPermissionRequest: emit.onToolPermissionRequest
   });
-  if (piResult.status === "completed" && resolvedChannelId) {
+  if (piResult.status === "completed" && shouldTryAutoTitle) {
     void autoGenerateAgentTitle(sessionId, userMessage, resolvedChannelId, resolvedModelId, emit);
   }
   return;
 }
 
 export function stopAgent(sessionId: string): void {
+  const sessionStateManager = getSessionStateManager();
+  const state = sessionStateManager.getAll().find((s) => s.sessionId === sessionId);
+  if (state?.workspaceSlug) {
+    stopSessionHeartbeat(state.workspaceSlug);
+  }
+  sessionStateManager.delete(sessionId);
   void import("./pi-agent/runner/run")
     .then((module) => module.stopPiAgent(sessionId))
     .catch(() => undefined);
@@ -190,6 +216,10 @@ export function stopAllAgents(): void {
 }
 
 export async function generateAgentTitle(input: AgentGenerateTitleInput): Promise<string | null> {
+  const sourceText = (input.sourceText ?? input.userMessage ?? "").trim();
+  if (!sourceText) {
+    return null;
+  }
   const channel = listChannels().find((item) => item.id === input.channelId);
   if (!channel) {
     log.warn("自动标题生成失败：渠道不存在", {
@@ -220,12 +250,15 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
       baseUrl: channel.baseUrl,
       apiKey,
       modelId: modelSelection.resolvedModelId,
-      prompt: AGENT_TITLE_PROMPT + input.userMessage
+      prompt: AGENT_TITLE_PROMPT_FROM_SUMMARY + sourceText
     });
     const title = await fetchTitle(request, adapter);
     if (!title) return null;
-    const cleaned = title.trim().replace(/^["']+|["']+$/g, "").trim();
-    return cleaned.slice(0, MAX_TITLE_LENGTH) || null;
+    const cleaned = sanitizeGeneratedTitle(title);
+    if (!cleaned || isWeakGeneratedTitle(cleaned)) {
+      return null;
+    }
+    return cleaned;
   } catch (error) {
     log.warn("自动标题生成失败：模型调用异常", {
       channelId: input.channelId,
@@ -239,20 +272,62 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
 
 async function autoGenerateAgentTitle(
   sessionId: string,
-  userMessage: string,
-  channelId: string,
-  modelId: string,
+  fallbackUserMessage: string,
+  channelId: string | undefined,
+  modelId: string | undefined,
   emit: AgentEventEmitter
 ): Promise<void> {
   try {
     const meta = getAgentSessionMeta(sessionId);
-    if (!meta || meta.title !== DEFAULT_AGENT_TITLE) return;
+    if (!meta) {
+      log.debug("自动标题跳过：会话不存在", { sessionId });
+      return;
+    }
+    if (!shouldAutoGenerateSessionTitle(meta.title)) {
+      log.debug("自动标题跳过：会话标题不是默认值", {
+        sessionId,
+        currentTitle: meta.title
+      });
+      return;
+    }
+    const sessionMessages = getAgentSessionMessages(sessionId);
+    const sourceText = resolveAgentTitleSourceText(sessionMessages, fallbackUserMessage);
+    const fallbackTitle = sanitizeGeneratedTitle(deriveFallbackAgentTitleFromSourceText(sourceText) ?? "");
+    if (!fallbackTitle) {
+      log.debug("自动标题跳过：未能生成可用标题", { sessionId });
+      return;
+    }
 
-    const title = await generateAgentTitle({ userMessage, channelId, modelId });
-    if (!title) return;
+    updateAgentSessionMeta(sessionId, { title: fallbackTitle });
+    log.info("自动标题更新成功", {
+      sessionId,
+      title: fallbackTitle,
+      source: "fallback"
+    });
+    emit.onTitleUpdated(fallbackTitle);
 
-    updateAgentSessionMeta(sessionId, { title });
-    emit.onTitleUpdated(title);
+    if (!channelId || !modelId) {
+      return;
+    }
+
+    const modelTitle = await withTimeout(
+      generateAgentTitle({ sourceText, channelId, modelId }),
+      4_000
+    );
+    if (!modelTitle || modelTitle === fallbackTitle) {
+      return;
+    }
+    const latestMeta = getAgentSessionMeta(sessionId);
+    if (!latestMeta || !shouldAutoGenerateSessionTitle(latestMeta.title) && latestMeta.title !== fallbackTitle) {
+      return;
+    }
+    updateAgentSessionMeta(sessionId, { title: modelTitle });
+    log.info("自动标题模型覆盖成功", {
+      sessionId,
+      title: modelTitle,
+      source: "model"
+    });
+    emit.onTitleUpdated(modelTitle);
   } catch (error) {
     log.warn("自动标题生成流程异常", {
       sessionId,
@@ -260,5 +335,17 @@ async function autoGenerateAgentTitle(
       modelId,
       error: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    return await Promise.race([task, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

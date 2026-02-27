@@ -11,6 +11,7 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync
@@ -34,6 +35,23 @@ interface AgentSessionsIndex {
 
 const INDEX_VERSION = 1;
 
+function writeTextAtomic(path: string, payload: string): void {
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, payload, "utf-8");
+  renameSync(tmpPath, path);
+}
+
+function backupCorruptFile(filePath: string, label: string): void {
+  if (!existsSync(filePath)) return;
+  const backupPath = `${filePath}.corrupt-${Date.now()}`;
+  try {
+    renameSync(filePath, backupPath);
+    console.warn(`[${label}] 检测到损坏文件，已备份: ${backupPath}`);
+  } catch (error) {
+    console.warn(`[${label}] 备份损坏文件失败:`, error);
+  }
+}
+
 function readIndex(): AgentSessionsIndex {
   const indexPath = getAgentSessionsIndexPath();
   if (!existsSync(indexPath)) {
@@ -44,6 +62,7 @@ function readIndex(): AgentSessionsIndex {
     return JSON.parse(readFileSync(indexPath, "utf-8")) as AgentSessionsIndex;
   } catch (error) {
     console.error("[Agent 会话] 读取索引文件失败:", error);
+    backupCorruptFile(indexPath, "Agent 会话");
     return { version: INDEX_VERSION, sessions: [] };
   }
 }
@@ -51,7 +70,7 @@ function readIndex(): AgentSessionsIndex {
 function writeIndex(index: AgentSessionsIndex): void {
   const indexPath = getAgentSessionsIndexPath();
   try {
-    writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
+    writeTextAtomic(indexPath, JSON.stringify(index, null, 2));
   } catch (error) {
     console.error("[Agent 会话] 写入索引文件失败:", error);
     throw new Error("写入 Agent 会话索引失败");
@@ -113,6 +132,7 @@ export function getAgentSessionMessages(id: string): AgentMessage[] {
       .map((line) => JSON.parse(line) as AgentMessage);
   } catch (error) {
     console.error(`[Agent 会话] 读取消息失败 (${id}):`, error);
+    backupCorruptFile(filePath, "Agent 会话消息");
     return [];
   }
 }
@@ -202,7 +222,8 @@ export function truncateAgentMessagesFrom(sessionId: string, messageId: string):
   const kept = messages.slice(0, targetIndex);
   const content = kept.map((msg) => JSON.stringify(msg)).join("\n");
   const payload = content ? `${content}\n` : "";
-  writeFileSync(getAgentSessionMessagesPath(sessionId), payload, "utf-8");
+  const filePath = getAgentSessionMessagesPath(sessionId);
+  writeTextAtomic(filePath, payload);
 
   // 截断会话后重置 SDK 会话衔接，避免 resume 命中旧上下文。
   updateAgentSessionMeta(sessionId, {

@@ -115,6 +115,10 @@ export function getAgentWorkspacesIndexPath(): string {
   return join(getConfigDir(), "agent-workspaces.json");
 }
 
+export function getSessionStatesPath(): string {
+  return join(getConfigDir(), "session-states.json");
+}
+
 export function getAgentWorkspacesDir(): string {
   return ensureDir(join(getConfigDir(), "agent-workspaces"), "Agent 工作区目录");
 }

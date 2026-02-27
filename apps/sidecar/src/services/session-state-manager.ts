@@ -4,9 +4,11 @@
  * 管理会话状态，用于 Memory Flush 和 Heartbeat 功能
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { MemoryFlushCheckParams, MemoryFlushResult } from "@lume/shared";
 import { getMemoryFlushService } from "./memory-flush-service";
 import { getHeartbeatService } from "./heartbeat-service";
+import { getSessionStatesPath } from "./config-paths";
 import { createLogger } from "./logger";
 
 const log = createLogger("session-state");
@@ -27,6 +29,8 @@ export interface SessionState {
   compactionCount: number;
   /** 上次 Memory Flush 时的压缩次数 */
   memoryFlushCompactionCount: number | null;
+  /** Plan 模式状态 */
+  planMode?: boolean;
   /** 会话创建时间 */
   createdAt: number;
   /** 最后更新时间 */
@@ -39,6 +43,35 @@ export interface SessionState {
 class SessionStateManager {
   private states: Map<string, SessionState> = new Map();
 
+  constructor() {
+    this.loadFromDisk();
+  }
+
+  private loadFromDisk(): void {
+    const path = getSessionStatesPath();
+    if (!existsSync(path)) return;
+    try {
+      const data = JSON.parse(readFileSync(path, "utf-8")) as Record<string, SessionState>;
+      for (const [id, state] of Object.entries(data)) {
+        this.states.set(id, state);
+      }
+    } catch {
+      // 读取失败忽略，从空状态开始
+    }
+  }
+
+  private saveToDisk(): void {
+    try {
+      const data: Record<string, SessionState> = {};
+      for (const [id, state] of this.states) {
+        data[id] = state;
+      }
+      writeFileSync(getSessionStatesPath(), JSON.stringify(data), "utf-8");
+    } catch {
+      // 持久化失败不影响主流程
+    }
+  }
+
   /**
    * 创建或获取会话状态
    */
@@ -49,7 +82,7 @@ class SessionStateManager {
         sessionId,
         workspaceSlug,
         totalTokens: 0,
-        contextWindow: 200000, // 默认 200k
+        contextWindow: 200000,
         compactionCount: 0,
         memoryFlushCompactionCount: null,
         createdAt: Date.now(),
@@ -92,6 +125,7 @@ class SessionStateManager {
 
     state.compactionCount += 1;
     state.updatedAt = Date.now();
+    this.saveToDisk();
 
     log.info("压缩计数增加", {
       sessionId: sessionId.slice(0, 8),
@@ -110,6 +144,7 @@ class SessionStateManager {
 
     state.memoryFlushCompactionCount = state.compactionCount;
     state.updatedAt = Date.now();
+    this.saveToDisk();
 
     log.info("Memory Flush 已执行", {
       sessionId: sessionId.slice(0, 8),
@@ -145,6 +180,17 @@ class SessionStateManager {
     };
 
     return memoryFlushService.check(params);
+  }
+
+  /**
+   * 设置 Plan 模式状态
+   */
+  setPlanMode(sessionId: string, planMode: boolean): void {
+    const state = this.states.get(sessionId);
+    if (!state) return;
+    state.planMode = planMode;
+    state.updatedAt = Date.now();
+    this.saveToDisk();
   }
 
   /**

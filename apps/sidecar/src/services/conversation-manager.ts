@@ -6,7 +6,7 @@
  * - Attachment hooks mapped to sidecar attachment helpers.
  */
 
-import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { ChatMessage, ConversationMeta, RecentMessagesResult } from "@lume/shared";
 import { deleteAttachment, deleteConversationAttachments } from "./attachment-service";
@@ -19,6 +19,23 @@ interface ConversationsIndex {
 
 const INDEX_VERSION = 1;
 
+function writeTextAtomic(path: string, payload: string): void {
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, payload, "utf-8");
+  renameSync(tmpPath, path);
+}
+
+function backupCorruptFile(filePath: string, label: string): void {
+  if (!existsSync(filePath)) return;
+  const backupPath = `${filePath}.corrupt-${Date.now()}`;
+  try {
+    renameSync(filePath, backupPath);
+    console.warn(`[${label}] 检测到损坏文件，已备份: ${backupPath}`);
+  } catch (error) {
+    console.warn(`[${label}] 备份损坏文件失败:`, error);
+  }
+}
+
 function readIndex(): ConversationsIndex {
   const indexPath = getConversationsIndexPath();
   if (!existsSync(indexPath)) return { version: INDEX_VERSION, conversations: [] };
@@ -30,8 +47,26 @@ function readIndex(): ConversationsIndex {
   }
 }
 
+// 简单的写锁，防止并发写入竞态
+let indexWriteLock = false;
+const indexWriteQueue: Array<() => void> = [];
+
 function writeIndex(index: ConversationsIndex): void {
-  writeFileSync(getConversationsIndexPath(), JSON.stringify(index, null, 2), "utf-8");
+  const indexPath = getConversationsIndexPath();
+  writeTextAtomic(indexPath, JSON.stringify(index, null, 2));
+}
+
+function withIndexLock<T>(fn: () => T): T {
+  if (indexWriteLock) {
+    // 等待锁释放（同步场景下直接执行，锁仅防止逻辑上的并发读-改-写）
+    return fn();
+  }
+  indexWriteLock = true;
+  try {
+    return fn();
+  } finally {
+    indexWriteLock = false;
+  }
 }
 
 export function listConversations(): ConversationMeta[] {
@@ -39,20 +74,22 @@ export function listConversations(): ConversationMeta[] {
 }
 
 export function createConversation(title?: string, modelId?: string, channelId?: string): ConversationMeta {
-  const index = readIndex();
-  const now = Date.now();
-  const meta: ConversationMeta = {
-    id: randomUUID(),
-    title: title || "新对话",
-    modelId,
-    channelId,
-    createdAt: now,
-    updatedAt: now
-  };
-  index.conversations.push(meta);
-  writeIndex(index);
-  getConversationsDir();
-  return meta;
+  return withIndexLock(() => {
+    const index = readIndex();
+    const now = Date.now();
+    const meta: ConversationMeta = {
+      id: randomUUID(),
+      title: title || "新对话",
+      modelId,
+      channelId,
+      createdAt: now,
+      updatedAt: now
+    };
+    index.conversations.push(meta);
+    writeIndex(index);
+    getConversationsDir();
+    return meta;
+  });
 }
 
 export function getConversationMessages(id: string): ChatMessage[] {
@@ -65,6 +102,7 @@ export function getConversationMessages(id: string): ChatMessage[] {
       .map((line) => JSON.parse(line) as ChatMessage);
   } catch (error) {
     console.error(`[对话管理] 读取消息失败 (${id}):`, error);
+    backupCorruptFile(filePath, "对话消息");
     return [];
   }
 }
@@ -82,6 +120,7 @@ export function getRecentMessages(id: string, limit: number): RecentMessagesResu
     return { messages: recent, total, hasMore: true };
   } catch (error) {
     console.error(`[对话管理] 读取最近消息失败 (${id}):`, error);
+    backupCorruptFile(filePath, "对话消息");
     return { messages: [], total: 0, hasMore: false };
   }
 }
@@ -92,29 +131,33 @@ export function appendMessage(id: string, message: ChatMessage): void {
 
 export function saveConversationMessages(id: string, messages: ChatMessage[]): void {
   const content = messages.map((msg) => JSON.stringify(msg)).join("\n") + (messages.length > 0 ? "\n" : "");
-  writeFileSync(getConversationMessagesPath(id), content, "utf-8");
+  writeTextAtomic(getConversationMessagesPath(id), content);
 }
 
 export function updateConversationMeta(
   id: string,
   updates: Partial<Pick<ConversationMeta, "title" | "modelId" | "channelId" | "contextDividers" | "contextLength" | "pinned">>
 ): ConversationMeta {
-  const index = readIndex();
-  const idx = index.conversations.findIndex((c) => c.id === id);
-  if (idx === -1) throw new Error(`对话不存在: ${id}`);
-  const existing = index.conversations[idx] as ConversationMeta;
-  const updated: ConversationMeta = { ...existing, ...updates, updatedAt: Date.now() };
-  index.conversations[idx] = updated;
-  writeIndex(index);
-  return updated;
+  return withIndexLock(() => {
+    const index = readIndex();
+    const idx = index.conversations.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error(`对话不存在: ${id}`);
+    const existing = index.conversations[idx] as ConversationMeta;
+    const updated: ConversationMeta = { ...existing, ...updates, updatedAt: Date.now() };
+    index.conversations[idx] = updated;
+    writeIndex(index);
+    return updated;
+  });
 }
 
 export function deleteConversation(id: string): void {
-  const index = readIndex();
-  const idx = index.conversations.findIndex((c) => c.id === id);
-  if (idx === -1) throw new Error(`对话不存在: ${id}`);
-  index.conversations.splice(idx, 1);
-  writeIndex(index);
+  withIndexLock(() => {
+    const index = readIndex();
+    const idx = index.conversations.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error(`对话不存在: ${id}`);
+    index.conversations.splice(idx, 1);
+    writeIndex(index);
+  });
   const filePath = getConversationMessagesPath(id);
   if (existsSync(filePath)) unlinkSync(filePath);
   deleteConversationAttachments(id);
