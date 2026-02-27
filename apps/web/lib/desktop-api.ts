@@ -3,16 +3,20 @@
 import {
   AGENT_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
-  CHAT_IPC_CHANNELS
+  CHAT_IPC_CHANNELS,
+  MEMORY_IPC_CHANNELS
 } from "@lume/shared";
 import type {
   AttachmentSaveInput,
   AttachmentSaveResult,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
+  AgentProxySettings,
+  AgentProxyStatus,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
   AgentGenerateTitleInput,
+  AgentRuntimeToolPolicyConfig,
   PlanFileMeta,
   PlanStateChangedEvent,
   GlobalDiscoverySnapshot,
@@ -49,7 +53,9 @@ import type {
   StreamErrorEvent,
   StreamReasoningEvent,
   WorkspaceCapabilities,
-  WorkspaceMcpConfig
+  WorkspaceMcpConfig,
+  MemorySearchResult,
+  MemoryStats
 } from "@lume/shared";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -111,7 +117,15 @@ export async function sidecarCall<T>(method: string, params?: unknown): Promise<
     return await invokeOnce();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const shouldRetry = message.includes("超时") || message.includes("sidecar is not running");
+    const shouldRetry = (
+      message.includes("超时")
+      || message.includes("sidecar is not running")
+      || message.includes("sidecar stdin unavailable")
+      || message.includes("response channel disconnected")
+      || message.includes("write sidecar request failed")
+      || message.toLowerCase().includes("broken pipe")
+      || message.toLowerCase().includes("os error 32")
+    );
     if (!shouldRetry) throw error;
     await new Promise((resolve) => setTimeout(resolve, 250));
     return invokeOnce();
@@ -464,6 +478,24 @@ export async function saveAgentWorkspaceMcpConfig(
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SAVE_MCP_CONFIG, { workspaceSlug, config });
 }
 
+export async function getAgentToolPolicyConfig(): Promise<AgentRuntimeToolPolicyConfig> {
+  return sidecarCall<AgentRuntimeToolPolicyConfig>(AGENT_IPC_CHANNELS.GET_TOOL_POLICY);
+}
+
+export async function saveAgentToolPolicyConfig(
+  input: AgentRuntimeToolPolicyConfig
+): Promise<AgentRuntimeToolPolicyConfig> {
+  return sidecarCall<AgentRuntimeToolPolicyConfig>(AGENT_IPC_CHANNELS.SAVE_TOOL_POLICY, input);
+}
+
+export async function getAgentProxySettings(): Promise<AgentProxyStatus> {
+  return sidecarCall<AgentProxyStatus>(AGENT_IPC_CHANNELS.GET_PROXY_SETTINGS);
+}
+
+export async function saveAgentProxySettings(input: AgentProxySettings): Promise<AgentProxyStatus> {
+  return sidecarCall<AgentProxyStatus>(AGENT_IPC_CHANNELS.SAVE_PROXY_SETTINGS, input);
+}
+
 export async function listAgentWorkspaceSkills(
   workspaceSlug: string
 ): Promise<Array<{ slug: string; name: string; description?: string; icon?: string }>> {
@@ -728,6 +760,27 @@ export async function writeLog(input: WriteLogInput): Promise<{ ok: boolean }> {
 
 export async function getLogsDir(): Promise<{ path: string }> {
   return sidecarCall<{ path: string }>(AGENT_IPC_CHANNELS.GET_LOGS_DIR);
+}
+
+export async function readAgentBootstrapFile(
+  workspaceSlug: string,
+  fileType: string
+): Promise<{ content: string }> {
+  return sidecarCall<{ content: string }>("agent:read-bootstrap-file", { workspaceSlug, fileType });
+}
+
+export async function searchWorkspaceMemory(
+  workspaceSlug: string,
+  query: string,
+  maxResults = 10
+): Promise<MemorySearchResult[]> {
+  return sidecarCall<MemorySearchResult[]>(MEMORY_IPC_CHANNELS.SEARCH, { workspaceSlug, query, maxResults });
+}
+
+export async function getWorkspaceMemoryStats(
+  workspaceSlug: string
+): Promise<MemoryStats> {
+  return sidecarCall<MemoryStats>(MEMORY_IPC_CHANNELS.STATS, { workspaceSlug });
 }
 
 // 便捷日志函数

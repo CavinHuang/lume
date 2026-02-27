@@ -883,8 +883,15 @@ export function AgentView(): React.ReactElement {
       }
     }));
 
-    trackUnlisten(onAgentTitleUpdated(() => {
-      void listAgentSessions().then(setSessions);
+    trackUnlisten(onAgentTitleUpdated((payload) => {
+      setSessions((prev) => prev.map((item) => (
+        item.id === payload.sessionId
+          ? { ...item, title: payload.title, updatedAt: Date.now() }
+          : item
+      )));
+      void listAgentSessions().then(setSessions).catch((error) => {
+        console.warn("[AgentView] 刷新会话标题失败", error);
+      });
     }));
     trackUnlisten(onAgentPlanStateChanged((payload) => {
       if (payload.sessionId !== currentSessionIdRef.current) return;
@@ -910,7 +917,7 @@ export function AgentView(): React.ReactElement {
             ? "default"
             : lastNonPlanPermissionModeRef.current;
           setAgentPermissionMode(fallbackMode);
-          showModeNotice(`已退出 Plan Mode，切换到 ${fallbackMode}`);
+          showModeNotice("计划已完成，进入执行阶段");
         } else {
           showModeNotice("计划执行已暂停，已回到待确认阶段。");
         }
@@ -1330,10 +1337,33 @@ export function AgentView(): React.ReactElement {
 
     let disposed = false;
     let pending = false;
+    const streamStartedAt = Date.now();
 
     const timer = setInterval(() => {
       if (disposed || pending) return;
       const lastEventAt = lastAgentEventAtRef.current.get(sessionId) ?? 0;
+      const lastActiveAt = lastEventAt > 0 ? lastEventAt : streamStartedAt;
+      const activeTools = toolActivities.filter((item) => !item.done);
+      const hasRunningWebSearch = activeTools.some((item) => item.toolName === "web_search");
+      const idleTimeoutMs = hasRunningWebSearch
+        ? 180_000
+        : activeTools.length > 0
+          ? 120_000
+          : 45_000;
+      if (!askUserQuestionRequest && !toolPermissionRequest && Date.now() - lastActiveAt > idleTimeoutMs) {
+        setStreamErrors((prev) => {
+          const map = new Map(prev);
+          map.set(sessionId, "Agent 长时间无响应，已自动停止本次生成，请重试。");
+          return map;
+        });
+        setStreamingStates((prev) => {
+          if (!prev.has(sessionId)) return prev;
+          const map = new Map(prev);
+          map.delete(sessionId);
+          return map;
+        });
+        return;
+      }
       // 事件流健康时不介入，避免打断正常流式渲染。
       if (Date.now() - lastEventAt < 6000) return;
       pending = true;
@@ -1377,7 +1407,16 @@ export function AgentView(): React.ReactElement {
       disposed = true;
       clearInterval(timer);
     };
-  }, [sessionId, streaming, setMessages, setStreamingStates]);
+  }, [
+    sessionId,
+    streaming,
+    askUserQuestionRequest,
+    toolPermissionRequest,
+    toolActivities,
+    setMessages,
+    setStreamErrors,
+    setStreamingStates
+  ]);
 
   const truncateFromMessage = useCallback(async (messageId: string): Promise<void> => {
     if (!sessionId) return;
@@ -1702,20 +1741,6 @@ export function AgentView(): React.ReactElement {
                     onModelSelect={handleModelSelect}
                   />
                 ) : null}
-
-                <select
-                  value={agentPermissionMode}
-                  onChange={(event) => {
-                    setAgentPermissionMode(event.target.value as typeof agentPermissionMode);
-                  }}
-                  className="h-[28px] rounded-md border border-border bg-background px-2 text-xs text-foreground/80"
-                  title="Agent 权限模式"
-                >
-                  <option value="default">default</option>
-                  <option value="acceptEdits">acceptEdits</option>
-                  <option value="bypassPermissions">bypassPermissions</option>
-                  <option value="plan">plan</option>
-                </select>
 
                 {backendReady ? (
                   <ContextUsageBadge

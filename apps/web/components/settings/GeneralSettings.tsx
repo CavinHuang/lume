@@ -1,15 +1,18 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAtom } from "jotai";
 import { Camera, ImagePlus } from "lucide-react";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
+import type { AgentProxySettings, AgentProxyStatus } from "@lume/shared";
 import { userProfileAtom, persistUserProfile } from "@/atoms";
 import { UserAvatar } from "@/components/chat/UserAvatar";
+import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
+import { getAgentProxySettings, saveAgentProxySettings } from "@/lib/desktop-api";
+import { SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect } from "./primitives";
 
 interface EmojiMartEmoji {
   id: string;
@@ -25,6 +28,14 @@ export function GeneralSettings(): React.ReactElement {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(userProfile.userName);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [proxyStatus, setProxyStatus] = useState<AgentProxyStatus | null>(null);
+  const [proxyDraft, setProxyDraft] = useState<AgentProxySettings>({
+    version: 1,
+    enabled: false,
+    mode: "off"
+  });
+  const [savingProxy, setSavingProxy] = useState(false);
+  const [proxyError, setProxyError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const commitProfile = (next: typeof userProfile): void => {
@@ -58,6 +69,34 @@ export function GeneralSettings(): React.ReactElement {
     commitProfile({ ...userProfile, userName: trimmed });
     setIsEditingName(false);
   };
+
+  const loadProxySettings = async (): Promise<void> => {
+    try {
+      const status = await getAgentProxySettings();
+      setProxyStatus(status);
+      setProxyDraft(status.settings);
+    } catch (error) {
+      setProxyError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const persistProxySettings = async (next: AgentProxySettings): Promise<void> => {
+    setSavingProxy(true);
+    setProxyError(null);
+    try {
+      const status = await saveAgentProxySettings(next);
+      setProxyStatus(status);
+      setProxyDraft(status.settings);
+    } catch (error) {
+      setProxyError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingProxy(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadProxySettings();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -157,6 +196,98 @@ export function GeneralSettings(): React.ReactElement {
           <SettingsRow label="语言" description="更多语言支持即将推出">
             <span className="text-[13px] text-foreground/40">简体中文</span>
           </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="网络代理" description="用于 web_search / web_fetch 等网络工具请求">
+        <SettingsCard>
+          <SettingsRow
+            label="启用代理"
+            description="开启后默认使用系统代理配置（环境变量）。"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant={proxyDraft.enabled ? "default" : "outline"}
+              disabled={savingProxy}
+              onClick={() => {
+                const enabled = !proxyDraft.enabled;
+                const next: AgentProxySettings = enabled
+                  ? { ...proxyDraft, enabled: true, mode: proxyDraft.mode === "off" ? "system" : proxyDraft.mode }
+                  : { ...proxyDraft, enabled: false, mode: "off" };
+                setProxyDraft(next);
+                void persistProxySettings(next);
+              }}
+            >
+              {proxyDraft.enabled ? "已开启" : "已关闭"}
+            </Button>
+          </SettingsRow>
+
+          <SettingsSelect
+            label="代理模式"
+            description="system: 跟随系统/环境变量；custom: 手动填写代理地址。"
+            value={proxyDraft.mode}
+            disabled={!proxyDraft.enabled || savingProxy}
+            onValueChange={(value) => {
+              const mode = value === "custom" ? "custom" : value === "system" ? "system" : "off";
+              const next: AgentProxySettings = {
+                ...proxyDraft,
+                mode,
+                enabled: mode !== "off"
+              };
+              setProxyDraft(next);
+              void persistProxySettings(next);
+            }}
+            options={[
+              { value: "system", label: "系统代理（推荐）" },
+              { value: "custom", label: "自定义代理" },
+              { value: "off", label: "关闭代理" }
+            ]}
+          />
+
+          {proxyDraft.mode === "custom" && proxyDraft.enabled ? (
+            <>
+              <SettingsInput
+                label="HTTP_PROXY"
+                description="示例: http://127.0.0.1:7890"
+                value={proxyDraft.httpProxy ?? ""}
+                onChange={(value) => setProxyDraft((prev) => ({ ...prev, httpProxy: value }))}
+                disabled={savingProxy}
+              />
+              <SettingsInput
+                label="HTTPS_PROXY"
+                description="为空时自动复用 HTTP_PROXY"
+                value={proxyDraft.httpsProxy ?? ""}
+                onChange={(value) => setProxyDraft((prev) => ({ ...prev, httpsProxy: value }))}
+                disabled={savingProxy}
+              />
+              <SettingsInput
+                label="NO_PROXY"
+                description="逗号分隔域名，如 localhost,127.0.0.1"
+                value={proxyDraft.noProxy ?? ""}
+                onChange={(value) => setProxyDraft((prev) => ({ ...prev, noProxy: value }))}
+                disabled={savingProxy}
+              />
+              <div className="px-4 pb-4">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={savingProxy}
+                  onClick={() => void persistProxySettings(proxyDraft)}
+                >
+                  保存代理配置
+                </Button>
+              </div>
+            </>
+          ) : null}
+
+          {proxyStatus?.systemProxy ? (
+            <div className="px-4 pb-4 text-xs text-muted-foreground">
+              系统代理
+              {`: http=${proxyStatus.systemProxy.httpProxy ?? "-"}, https=${proxyStatus.systemProxy.httpsProxy ?? "-"}, no_proxy=${proxyStatus.systemProxy.noProxy ?? "-"}`}
+            </div>
+          ) : null}
+          {proxyError ? <div className="px-4 pb-4 text-xs text-destructive">{proxyError}</div> : null}
         </SettingsCard>
       </SettingsSection>
     </div>

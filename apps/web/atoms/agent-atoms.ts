@@ -83,6 +83,26 @@ export function extractTimelineEvents(message: AgentMessage): TimelineEvent[] {
 
   function appendOrMergeTextEvent(next: Omit<TimelineTextEvent, "type">): void {
     const last = timelineEvents[timelineEvents.length - 1];
+    const canMergeByPrefix = (
+      last?.type === "text"
+      && last.parentToolUseId === next.parentToolUseId
+      && (
+        next.content.startsWith(last.content)
+        || last.content.startsWith(next.content)
+      )
+    );
+    if (canMergeByPrefix) {
+      timelineEvents[timelineEvents.length - 1] = {
+        ...last,
+        content: next.content.length >= last.content.length ? next.content : last.content,
+        eventId: next.eventId,
+        turnId: next.turnId ?? last.turnId
+      };
+      if (next.turnId) {
+        textCompleteIndexByTurnId.set(next.turnId, timelineEvents.length - 1);
+      }
+      return;
+    }
     if (
       last?.type === "text"
       && last.content === next.content

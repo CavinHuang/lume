@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 
 const COMPACT_THRESHOLD_RATIO = 0.775;
 const WARNING_RATIO = 0.8;
+const MEMORY_FLUSH_RATIO = 0.7; // Memory Flush 提示阈值
 
 interface ContextUsageBadgeProps {
   inputTokens?: number;
@@ -42,12 +43,13 @@ export function ContextUsageBadge({
   const compactThreshold = contextWindow ? Math.floor(contextWindow * COMPACT_THRESHOLD_RATIO) : undefined;
   const usageRatio = compactThreshold ? inputTokens / compactThreshold : undefined;
   const isWarning = usageRatio !== undefined && usageRatio >= WARNING_RATIO;
+  const isFlushHint = usageRatio !== undefined && usageRatio >= MEMORY_FLUSH_RATIO && !isWarning;
   const displayText = compactThreshold
     ? `${formatTokens(inputTokens)} / ${formatTokens(compactThreshold)}`
     : formatTokens(inputTokens);
   const percentText = usageRatio !== undefined ? `${Math.round(usageRatio * 100)}%` : undefined;
   const tooltipText = contextWindow
-    ? `上下文: ${inputTokens.toLocaleString()} / ${compactThreshold?.toLocaleString()} tokens (窗口 ${contextWindow.toLocaleString()})${isWarning ? "\n点击手动压缩" : ""}`
+    ? `上下文: ${inputTokens.toLocaleString()} / ${compactThreshold?.toLocaleString()} tokens (窗口 ${contextWindow.toLocaleString()})${isWarning ? "\n点击手动压缩" : isFlushHint ? "\n上下文即将达到上限" : ""}`
     : `上下文: ${inputTokens.toLocaleString()} tokens`;
 
   return (
@@ -59,6 +61,8 @@ export function ContextUsageBadge({
             "flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs transition-colors",
             isWarning
               ? "cursor-pointer text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+              : isFlushHint
+              ? "cursor-default text-blue-500 dark:text-blue-400"
               : "cursor-default text-muted-foreground"
           )}
           onClick={isWarning && !isProcessing ? onCompact : undefined}
