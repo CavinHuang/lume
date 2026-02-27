@@ -7,6 +7,40 @@
 
 import { Database } from "bun:sqlite";
 
+// 内存 LRU 缓存：Map 保持插入顺序，超限时删除最旧条目
+const LRU_MAX = 500;
+const lruCache = new Map<string, number[]>();
+
+// 缓存命中率统计
+const cacheStats = { hits: 0, misses: 0 };
+
+export function getEmbeddingCacheStats(): { hits: number; misses: number; hitRate: number } {
+  const total = cacheStats.hits + cacheStats.misses;
+  return { ...cacheStats, hitRate: total > 0 ? cacheStats.hits / total : 0 };
+}
+
+function lruKey(provider: string, model: string, providerKey: string, hash: string): string {
+  return `${provider}:${model}:${providerKey}:${hash}`;
+}
+
+function lruGet(key: string): number[] | undefined {
+  const val = lruCache.get(key);
+  if (val !== undefined) {
+    // 移到末尾（最近使用）
+    lruCache.delete(key);
+    lruCache.set(key, val);
+  }
+  return val;
+}
+
+function lruSet(key: string, val: number[]): void {
+  if (lruCache.size >= LRU_MAX) {
+    // 删除最旧条目（Map 迭代顺序 = 插入顺序）
+    lruCache.delete(lruCache.keys().next().value!);
+  }
+  lruCache.set(key, val);
+}
+
 export interface EmbeddingCacheContext {
   db: Database;
   provider: string;
@@ -30,6 +64,10 @@ export function getCachedEmbedding(params: {
   cache: EmbeddingCacheContext;
   hash: string;
 }): number[] | null {
+  const key = lruKey(params.cache.provider, params.cache.model, params.cache.providerKey, params.hash);
+  const hot = lruGet(key);
+  if (hot) { cacheStats.hits++; return hot; }
+
   const row = params.cache.db
     .query(
       `SELECT embedding FROM embedding_cache
@@ -42,9 +80,15 @@ export function getCachedEmbedding(params: {
       params.hash
     ) as { embedding?: string } | null;
 
-  if (!row?.embedding) return null;
+  if (!row?.embedding) { cacheStats.misses++; return null; }
   const parsed = parseEmbedding(row.embedding);
-  return parsed.length > 0 ? parsed : null;
+  if (parsed.length > 0) {
+    lruSet(key, parsed);
+    cacheStats.hits++;
+    return parsed;
+  }
+  cacheStats.misses++;
+  return null;
 }
 
 export function setCachedEmbedding(params: {
@@ -52,6 +96,9 @@ export function setCachedEmbedding(params: {
   hash: string;
   embedding: number[];
 }): void {
+  const key = lruKey(params.cache.provider, params.cache.model, params.cache.providerKey, params.hash);
+  lruSet(key, params.embedding);
+
   params.cache.db
     .query(
       `INSERT OR REPLACE INTO embedding_cache

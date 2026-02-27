@@ -8,6 +8,7 @@ import { MemoryIndexManager } from "./memory/memory-index-manager";
 import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import { resolveMemoryRuntimeConfig } from "./memory-policy";
 import { isMemoryPath, normalizeRelPath } from "./openclaw/memory-path-utils";
+import { getEmbeddingCacheStats } from "./memory/embedding-ops";
 import type {
   MemoryGetInput,
   MemoryGetResult,
@@ -23,33 +24,12 @@ import type {
 
 const managerCache = new Map<string, MemoryIndexManager>();
 
-function buildManagerCacheKey(params: {
-  workspaceSlug: string;
-  workspaceId?: string;
-  sources: string[];
-  extraPaths: string[];
-}): string {
-  return [
-    params.workspaceSlug,
-    params.workspaceId ?? "",
-    params.sources.slice().sort().join(","),
-    params.extraPaths.slice().sort().join(",")
-  ].join("|");
-}
-
 function getManager(workspaceSlug: string): MemoryIndexManager {
-  const workspace = getAgentWorkspaceBySlug(workspaceSlug);
-  const runtimeConfig = resolveMemoryRuntimeConfig();
-  const cacheKey = buildManagerCacheKey({
-    workspaceSlug,
-    workspaceId: workspace?.id,
-    sources: runtimeConfig.sources,
-    extraPaths: runtimeConfig.extraPaths
-  });
-
-  const cached = managerCache.get(cacheKey);
+  const cached = managerCache.get(workspaceSlug);
   if (cached) return cached;
 
+  const workspace = getAgentWorkspaceBySlug(workspaceSlug);
+  const runtimeConfig = resolveMemoryRuntimeConfig();
   const manager = new MemoryIndexManager({
     workspaceSlug,
     workspaceRoot: getAgentWorkspacePath(workspaceSlug),
@@ -58,7 +38,7 @@ function getManager(workspaceSlug: string): MemoryIndexManager {
     sources: runtimeConfig.sources,
     extraPaths: runtimeConfig.extraPaths
   });
-  managerCache.set(cacheKey, manager);
+  managerCache.set(workspaceSlug, manager);
   return manager;
 }
 
@@ -115,11 +95,16 @@ export function getWorkspaceMemoryStatus(workspaceSlug: string): MemoryProviderS
   return manager.status();
 }
 
+export function getEmbeddingCacheHitStats(): { hits: number; misses: number; hitRate: number } {
+  return getEmbeddingCacheStats();
+}
+
 export async function saveWorkspaceMemory(input: MemorySaveInput): Promise<MemorySaveResult> {
   const manager = getManager(input.workspaceSlug);
   return manager.saveMemory({
     content: input.content,
-    date: input.date
+    date: input.date,
+    path: input.path
   });
 }
 

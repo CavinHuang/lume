@@ -53,7 +53,7 @@ export function startMemorySyncWatcher(): void {
       if (
         normalized.endsWith("/MEMORY.md") ||
         normalized.endsWith("/memory.md") ||
-        normalized.includes("/memory/")
+        (normalized.includes("/memory/") && normalized.endsWith(".md"))
       ) {
         scheduleSync(relativeFilename);
       }

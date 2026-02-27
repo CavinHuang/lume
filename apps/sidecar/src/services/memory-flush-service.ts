@@ -27,7 +27,7 @@ import {
 /**
  * 默认压缩保留 token 底线
  */
-const DEFAULT_COMPACTION_RESERVE_TOKENS_FLOOR = 8000;
+const DEFAULT_COMPACTION_RESERVE_TOKENS_FLOOR = 16000;
 
 // ===== 工具函数 =====
 
