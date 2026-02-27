@@ -10,6 +10,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  renameSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -40,6 +41,23 @@ interface AgentWorkspacesIndex {
 
 const INDEX_VERSION = 1;
 
+function writeJsonAtomic(path: string, payload: string): void {
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, payload, "utf-8");
+  renameSync(tmpPath, path);
+}
+
+function backupCorruptIndex(indexPath: string, label: string): void {
+  if (!existsSync(indexPath)) return;
+  const backupPath = `${indexPath}.corrupt-${Date.now()}`;
+  try {
+    renameSync(indexPath, backupPath);
+    console.warn(`[${label}] 检测到损坏索引，已备份: ${backupPath}`);
+  } catch (error) {
+    console.warn(`[${label}] 备份损坏索引失败:`, error);
+  }
+}
+
 function readIndex(): AgentWorkspacesIndex {
   const indexPath = getAgentWorkspacesIndexPath();
   if (!existsSync(indexPath)) {
@@ -50,6 +68,7 @@ function readIndex(): AgentWorkspacesIndex {
     return JSON.parse(readFileSync(indexPath, "utf-8")) as AgentWorkspacesIndex;
   } catch (error) {
     console.error("[Agent 工作区] 读取索引文件失败:", error);
+    backupCorruptIndex(indexPath, "Agent 工作区");
     return { version: INDEX_VERSION, workspaces: [] };
   }
 }
@@ -57,7 +76,7 @@ function readIndex(): AgentWorkspacesIndex {
 function writeIndex(index: AgentWorkspacesIndex): void {
   const indexPath = getAgentWorkspacesIndexPath();
   try {
-    writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
+    writeJsonAtomic(indexPath, JSON.stringify(index, null, 2));
   } catch (error) {
     console.error("[Agent 工作区] 写入索引文件失败:", error);
     throw new Error("写入 Agent 工作区索引失败");
@@ -84,8 +103,29 @@ function slugify(name: string, existingSlugs: Set<string>): string {
   return slug;
 }
 
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] ?? 0;
+    const nb = pb[i] ?? 0;
+    if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
+function readSkillVersion(skillDir: string): string {
+  try {
+    const content = readFileSync(join(skillDir, "SKILL.md"), "utf-8");
+    const m = content.match(/^---\s*\n[\s\S]*?^version:\s*["']?([^"'\n]+)["']?/m);
+    return m?.[1]?.trim() ?? "0";
+  } catch {
+    return "0";
+  }
+}
+
 function copyDefaultSkills(workspaceSlug: string): void {
-  // Ensure ~/.lume/default-skills has been populated from bundled defaults.
   seedDefaultSkills();
   const defaultDir = getDefaultSkillsDir();
   const targetDir = getWorkspaceSkillsDir(workspaceSlug);
@@ -98,7 +138,11 @@ function copyDefaultSkills(workspaceSlug: string): void {
     for (const entry of entries) {
       const source = join(defaultDir, entry.name);
       const target = join(targetDir, entry.name);
-      if (existsSync(target)) continue;
+      if (existsSync(target)) {
+        const sourceVersion = readSkillVersion(source);
+        const targetVersion = readSkillVersion(target);
+        if (compareVersions(sourceVersion, targetVersion) <= 0) continue;
+      }
       cpSync(source, target, { recursive: true });
       copiedCount += 1;
     }
@@ -117,10 +161,16 @@ export function ensureWorkspaceAgentAssets(workspaceSlug: string, workspaceName?
   copyDefaultSkills(workspaceSlug);
 }
 
+// 记录已初始化过的工作区，避免每次列表查询都触发文件系统操作
+const initializedWorkspaceSlugs = new Set<string>();
+
 export function listAgentWorkspaces(): AgentWorkspace[] {
   const workspaces = readIndex().workspaces;
   for (const workspace of workspaces) {
-    ensureWorkspaceAgentAssets(workspace.slug, workspace.name);
+    if (!initializedWorkspaceSlugs.has(workspace.slug)) {
+      ensureWorkspaceAgentAssets(workspace.slug, workspace.name);
+      initializedWorkspaceSlugs.add(workspace.slug);
+    }
   }
   return workspaces.sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -266,7 +316,7 @@ export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig
 export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceMcpConfig): void {
   const mcpPath = getWorkspaceMcpPath(workspaceSlug);
   try {
-    writeFileSync(mcpPath, JSON.stringify(config, null, 2), "utf-8");
+    writeJsonAtomic(mcpPath, JSON.stringify(config, null, 2));
     console.log(`[Agent 工作区] 已保存 MCP 配置: ${workspaceSlug}`);
   } catch (error) {
     console.error("[Agent 工作区] 保存 MCP 配置失败:", error);
@@ -318,6 +368,7 @@ function parseSkillFrontmatter(content: string, slug: string): SkillMeta {
     if (key === "name" && value) meta.name = value;
     if (key === "description" && value) meta.description = value;
     if (key === "icon" && value) meta.icon = value;
+    if (key === "version" && value) meta.version = value;
   }
 
   return meta;

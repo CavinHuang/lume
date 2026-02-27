@@ -33,6 +33,71 @@ impl SidecarProcess {
 
 static NEXT_RPC_ID: AtomicU64 = AtomicU64::new(1);
 
+fn is_broken_pipe_error_message(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("broken pipe") || lower.contains("os error 32")
+}
+
+fn spawn_managed_sidecar(
+    state: &tauri::State<'_, SidecarProcess>,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let mut child = spawn_sidecar_from_env()
+        .or_else(|| spawn_sidecar_default(app))
+        .ok_or_else(|| "sidecar spawn failed".to_string())?;
+
+    if let Some(stdout) = child.stdout.take() {
+        spawn_sidecar_stdout_reader(stdout, Arc::clone(&state.pending), app.clone());
+    } else {
+        warn!("[desktop] sidecar stdout unavailable after spawn");
+    }
+
+    let mut slot = state
+        .child
+        .lock()
+        .map_err(|_| "sidecar lock poisoned".to_string())?;
+    *slot = Some(child);
+    Ok(())
+}
+
+fn ensure_sidecar_running(
+    state: &tauri::State<'_, SidecarProcess>,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let mut should_respawn = false;
+    {
+        let mut slot = state
+            .child
+            .lock()
+            .map_err(|_| "sidecar lock poisoned".to_string())?;
+        match slot.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => {
+                    warn!("[desktop] sidecar exited before request: {status}");
+                    *slot = None;
+                    should_respawn = true;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!("[desktop] sidecar try_wait failed: {error}");
+                    *slot = None;
+                    should_respawn = true;
+                }
+            },
+            None => {
+                should_respawn = true;
+            }
+        }
+    }
+
+    if should_respawn {
+        info!("[desktop] respawning sidecar");
+        spawn_managed_sidecar(state, app)?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 fn healthcheck() -> serde_json::Value {
     serde_json::json!({
@@ -148,8 +213,9 @@ async fn sidecar_call_internal(
     state: &tauri::State<'_, SidecarProcess>,
     method: &str,
     params: serde_json::Value,
-    _app: &tauri::AppHandle,
+    app: &tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
+    ensure_sidecar_running(state, app)?;
     info!("[desktop] sidecar_call: {method}");
     let request_id = NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed);
 
@@ -184,11 +250,21 @@ async fn sidecar_call_internal(
 
         if let Err(error) = stdin.write_all(request_line.as_bytes()) {
             remove_pending_request(state, request_id);
+            if is_broken_pipe_error_message(&error.to_string()) {
+                if let Ok(mut slot) = state.child.lock() {
+                    *slot = None;
+                }
+            }
             return Err(format!("write sidecar request failed: {error}"));
         }
 
         if let Err(error) = stdin.flush() {
             remove_pending_request(state, request_id);
+            if is_broken_pipe_error_message(&error.to_string()) {
+                if let Ok(mut slot) = state.child.lock() {
+                    *slot = None;
+                }
+            }
             return Err(format!("flush sidecar request failed: {error}"));
         }
     }

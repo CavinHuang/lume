@@ -8,14 +8,28 @@
 import pino from "pino";
 import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
+import { getConfigDir } from "./config-paths";
 
-const LOGS_DIR = join(homedir(), ".lume", "logs");
-
-// 确保日志目录存在
-if (!existsSync(LOGS_DIR)) {
-  mkdirSync(LOGS_DIR, { recursive: true });
+function resolveLogsDir(): string {
+  const candidates = [
+    join(getConfigDir(), "logs"),
+    join(tmpdir(), "lume-logs")
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (!existsSync(candidate)) {
+        mkdirSync(candidate, { recursive: true });
+      }
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return join(tmpdir(), "lume-logs");
 }
+
+const LOGS_DIR = resolveLogsDir();
 
 // 获取当前日期字符串
 function getDateStr(): string {

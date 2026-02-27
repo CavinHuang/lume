@@ -100,9 +100,10 @@ export function createPiMemoryTools(params: {
     tools.push({
       name: MEMORY_SAVE_TOOL_NAME,
       label: MEMORY_SAVE_TOOL_NAME,
-      description: "将新记忆写入 memory/YYYY-MM-DD.md 并立即索引。",
+      description: "将新记忆写入 memory/YYYY-MM-DD.md（短期）或 MEMORY.md（长期，需指定 path='MEMORY.md'）并立即索引。",
       parameters: Type.Object({
         content: Type.String({ minLength: 1 }),
+        path: Type.Optional(Type.String({ description: "写入路径，如 'MEMORY.md' 表示长期记忆；省略则写入今日短期记忆" })),
         date: Type.Optional(Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }))
       }),
       async execute(_toolCallId, args) {
@@ -110,6 +111,7 @@ export function createPiMemoryTools(params: {
         const result = await saveWorkspaceMemory({
           workspaceSlug: params.workspaceSlug,
           content: String(input.content ?? ""),
+          path: typeof input.path === "string" ? input.path : undefined,
           date: typeof input.date === "string" ? input.date : undefined
         });
         return toTextResult(result);

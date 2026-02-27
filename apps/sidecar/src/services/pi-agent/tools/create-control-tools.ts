@@ -63,17 +63,33 @@ function generatePlanSlug(): string {
   return `${adjective}-${verb}-${noun}`;
 }
 
-const ASK_USER_QUESTION_PROMPT = `Use this tool when you need to ask the user questions during execution. This allows you to:
-1. Gather user preferences or requirements
-2. Clarify ambiguous instructions
-3. Get decisions on implementation choices as you work
-4. Offer choices to the user about what direction to take.
+const ASK_USER_QUESTION_PROMPT = `Use this tool to ask the user questions during execution.
 
-Usage notes:
-- Users can provide custom text input
-- If you recommend a specific option, put it first and suffix "(Recommended)"
-- In plan mode, use this tool only to clarify requirements BEFORE finalizing the plan
-- Do NOT use this tool to ask "是否开始执行计划" - use ExitPlanMode for plan approval.`;
+REQUIRED FORMAT - Each question MUST have:
+1. question: The question text (required)
+2. header: Short label, max 12 chars (required)
+3. options: Array of 2-4 choices (REQUIRED), each with { label, description }
+4. multiSelect: boolean (optional, default false)
+
+Example:
+{
+  "questions": [{
+    "header": "方案选择",
+    "question": "您希望使用哪种实现方式？",
+    "options": [
+      { "label": "React Context (推荐)", "description": "轻量级，适合中小型应用" },
+      { "label": "Redux", "description": "功能强大，适合大型应用" },
+      { "label": "Zustand", "description": "简洁 API，性能优秀" }
+    ],
+    "multiSelect": false
+  }]
+}
+
+IMPORTANT RULES:
+- You MUST provide 2-4 meaningful, specific options for EACH question
+- Options must be actionable choices, NOT generic like "继续/调整/确认"
+- Put recommended option first with "(推荐)" suffix in label
+- Do NOT use this tool to ask "是否执行计划" - use ExitPlanMode instead`;
 
 const ENTER_PLAN_MODE_PROMPT = `Use this tool proactively before non-trivial implementation work.
 
@@ -193,12 +209,11 @@ function normalizeOptions(rawOptions: unknown): NormalizedAskOption[] {
       description: option.description.trim() || label
     });
   }
-  while (deduped.length < 2) {
-    const index = deduped.length + 1;
-    deduped.push({
-      label: `选项${index}`,
-      description: `候选项${index}`
-    });
+  if (deduped.length < 2) {
+    throw new Error(
+      "AskUserQuestion 选项不足：每个问题必须提供 2-4 个有意义的选项。" +
+      "请重新调用并提供具体选项，格式：{ \"options\": [{ \"label\": \"选项A\", \"description\": \"描述\" }, ...] }"
+    );
   }
   return deduped;
 }
@@ -532,11 +547,20 @@ export function createPiControlTools(params: {
       label: ASK_USER_QUESTION_TOOL_NAME,
       description: ASK_USER_QUESTION_PROMPT,
       parameters: Type.Object({
-        questions: Type.Optional(
-          Type.Union([
-            Type.Array(Type.Unknown()),
-            Type.String()
-          ])
+        questions: Type.Array(
+          Type.Object({
+            header: Type.String({ maxLength: 12, description: "Short label for the question" }),
+            question: Type.String({ description: "The question text to display" }),
+            options: Type.Array(
+              Type.Object({
+                label: Type.String({ description: "Option label, add (推荐) suffix for recommended" }),
+                description: Type.String({ description: "Brief explanation of this option" })
+              }),
+              { minItems: 2, maxItems: 4, description: "2-4 meaningful choices" }
+            ),
+            multiSelect: Type.Optional(Type.Boolean({ description: "Allow multiple selections" }))
+          }),
+          { minItems: 1, maxItems: 4 }
         )
       }),
       async execute(toolCallId, args, signal) {

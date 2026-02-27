@@ -26,22 +26,20 @@ export async function runPiAgentMessage(
   });
   const channelId = input.channelId;
   const modelId = input.modelId;
-  return withPiAiBunCompatibility(async () => {
-    const { runPiAgent } = await import("./runner/run");
-    return runPiAgent(
-      {
-        input,
-        runtime: {
-          sessionId: input.sessionId,
-          channelId,
-          modelId,
-          workspaceId: input.workspaceId,
-          sessionType: input.sessionType
-        }
-      },
-      emit
-    );
-  });
+  const { runPiAgent } = await withPiAiBunCompatibility(async () => import("./runner/run"));
+  return runPiAgent(
+    {
+      input,
+      runtime: {
+        sessionId: input.sessionId,
+        channelId,
+        modelId,
+        workspaceId: input.workspaceId,
+        sessionType: input.sessionType
+      }
+    },
+    emit
+  );
 }
 
 async function withPiAiBunCompatibility<T>(task: () => Promise<T>): Promise<T> {

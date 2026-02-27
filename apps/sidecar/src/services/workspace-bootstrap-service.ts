@@ -11,7 +11,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { parseAieos, aieosToSystemPrompt } from "./aieos-identity";
 import { fileURLToPath } from "node:url";
 import type {
   BootstrapFileType,
@@ -330,6 +331,7 @@ export function readSystemPromptComponents(
         case 'IDENTITY':
           components.identity = content;
           break;
+
         case 'AGENTS':
           components.agents = content;
           break;
@@ -342,6 +344,24 @@ export function readSystemPromptComponents(
         case 'MEMORY':
           components.memory = content;
           break;
+      }
+    }
+  }
+
+  // AIEOS JSON 身份格式支持：检测 IDENTITY.json 或 aieos.json
+  if (!components.identity) {
+    const workspacePath = getAgentWorkspacePath(workspaceSlug);
+    for (const jsonFile of ['IDENTITY.json', 'aieos.json']) {
+      const jsonPath = resolve(workspacePath, jsonFile);
+      if (existsSync(jsonPath)) {
+        try {
+          const parsed = parseAieos(readFileSync(jsonPath, 'utf-8'));
+          const prompt = aieosToSystemPrompt(parsed);
+          if (prompt.trim()) {
+            components.identity = prompt;
+            break;
+          }
+        } catch { /* ignore */ }
       }
     }
   }

@@ -41,6 +41,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Memory Recall");
     expect(prompt).toContain("memory_search");
     expect(prompt).toContain("memory_get");
+    expect(prompt).toContain("Do not use generic read for memory files");
     expect(prompt).toContain("Citations:");
   });
 
@@ -61,6 +62,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Session Bootstrap (Mandatory)");
     expect(prompt).toContain("1. AGENTS.md");
     expect(prompt).toContain("2. SOUL.md");
+    expect(prompt).toContain("6. memory/YYYY-MM-DD.md (today + yesterday)");
     expect(prompt).toContain("7. MEMORY.md (or memory.md fallback, main/direct session only)");
     expect(prompt).toContain("## Workspace Files (injected)");
     expect(prompt).toContain("## Safety");

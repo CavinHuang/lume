@@ -5,9 +5,10 @@ import type { MemoryToolPolicy } from "../../memory-policy";
 import { createPiControlTools } from "./create-control-tools";
 import { createPiMemoryTools } from "./create-memory-tools";
 import { createOpenClawAlignedTools } from "./create-openclaw-aligned-tools";
+import { createBrowserTool } from "./browser-tool";
 import { resolveEnabledPiMemoryToolNames } from "./tool-policy";
 
-const BASE_PI_TOOL_NAMES = ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep", "LS"];
+const BASE_PI_TOOL_NAMES = ["read", "write", "edit", "bash", "find", "grep", "ls"];
 const CONTROL_PI_TOOL_NAMES = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"];
 const OPENCLAW_ALIGNED_TOOL_NAMES = [
   "agents_list",
@@ -25,6 +26,8 @@ export interface CreateLumePiToolsInput {
   sessionId: string;
   workspaceId?: string;
   channelId?: string;
+  sessionType?: AgentSendInput["sessionType"];
+  chatType?: AgentSendInput["chatType"];
   workspaceSlug?: string;
   permissionMode?: AgentSendInput["permissionMode"];
   memoryToolPolicy?: MemoryToolPolicy;
@@ -58,11 +61,14 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
   const openClawAlignedTools = createOpenClawAlignedTools({
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
-    channelId: input.channelId
+    channelId: input.channelId,
+    sessionType: input.sessionType,
+    chatType: input.chatType
   });
 
   // 不再在这里过滤，由 tool-permission-gate.ts 基于 tool-metadata.ts 处理
-  const customTools = [...memoryTools, ...controlTools, ...openClawAlignedTools];
+  const browserTool = createBrowserTool();
+  const customTools = [...memoryTools, ...controlTools, ...openClawAlignedTools, browserTool];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {

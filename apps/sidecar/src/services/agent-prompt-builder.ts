@@ -43,10 +43,9 @@ const PROMPT_TOOL_ORDER = [
   "read",
   "write",
   "edit",
-  "multiedit",
   "bash",
   "ls",
-  "glob",
+  "find",
   "grep",
   "web_fetch",
   "web_search",
@@ -301,7 +300,7 @@ At the beginning of each session, silently check workspace memory files in this 
 3. TOOLS.md
 4. IDENTITY.md
 5. USER.md
-6. memory/(today + yesterday)
+6. memory/YYYY-MM-DD.md (today + yesterday)
 7. MEMORY.md (or memory.md fallback, main/direct session only)
 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
@@ -310,7 +309,7 @@ Do this before answering requests that depend on identity, continuity, prior dec
   if (availableTools.has("memory_search") || availableTools.has("memory_get")) {
     const lines = [
       "## Memory Recall",
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md/memory.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked."
+      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md/memory.md + memory/*.md; then use memory_get to pull only the needed lines. Do not use generic read for memory files. If low confidence after search, say you checked."
     ];
     if (ctx.memoryCitationsMode === "off") {
       lines.push(
@@ -320,6 +319,24 @@ Do this before answering requests that depend on identity, continuity, prior dec
       lines.push("Citations: include Source: <path#line> when it helps the user verify memory snippets.");
     }
     sections.push(lines.join("\n"));
+  }
+
+  if (availableTools.has("memory_save")) {
+    sections.push(`## Memory Write Rules
+
+Short-term memory (daily log) — write to memory/YYYY-MM-DD.md via memory_save:
+- After completing any non-trivial task, decision, or learning in this session
+- When the user states a preference, constraint, or important fact
+- When you finish a multi-step task (summarize what was done and the outcome)
+- At natural conversation breakpoints when meaningful work has occurred
+Format: concise bullet points. Date defaults to today if omitted.
+
+Long-term memory — write to MEMORY.md via memory_save with path=MEMORY.md:
+- Only for durable facts: user identity, persistent preferences, project-level decisions, recurring patterns
+- APPEND only; never overwrite existing entries
+- Threshold: only if the information would still be relevant weeks from now
+
+Do NOT save: trivial exchanges, greetings, or information already in MEMORY.md.`);
   }
 
   sections.push(`## Workspace Files (injected)

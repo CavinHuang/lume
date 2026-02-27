@@ -12,12 +12,16 @@
     "smoke:chat-stream": "bun scripts/smoke-chat-stream.mjs"
   },
   "dependencies": {
+    "@lume/shared": "workspace:*",
     "@mariozechner/pi-agent-core": "0.52.10",
     "@mariozechner/pi-ai": "0.52.10",
     "@mariozechner/pi-coding-agent": "0.52.10",
-    "@lume/shared": "workspace:*",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",
+    "playwright": "^1.58.2",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

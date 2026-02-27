@@ -33,11 +33,13 @@ import { ensurePluginManifest, getAgentWorkspace } from "../../agent-workspace-m
 import { cancelPendingPiAskUserQuestionBySession } from "../tools/ask-user-question-bridge";
 import { createCoreCodingTools } from "../tools/create-core-coding-tools";
 import { createLumePiTools } from "../tools/create-lume-tools";
+import { applyPiToolPolicies } from "../tools/tool-policy";
 import { wrapToolsWithPermissionGate } from "../tools/tool-permission-gate";
 import { cancelPendingToolPermissionBySession } from "../tools/tool-permission-bridge";
 import { handlePiSessionEvent } from "../subscribe/handlers";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "./types";
 import { resolvePiProviderCandidates } from "./provider-resolution";
+import { consumeMemoryFlushPrompt } from "../../agent-service";
 
 const MAX_CONTEXT_MESSAGES = 20;
 
@@ -103,6 +105,8 @@ export async function runPiAgentAttempt(
     sessionId: runtime.sessionId,
     workspaceId: runtime.workspaceId,
     channelId: runtime.channelId,
+    sessionType: input.sessionType,
+    chatType: input.chatType,
     workspaceSlug,
     permissionMode: input.permissionMode,
     includeCitations,
@@ -139,9 +143,20 @@ export async function runPiAgentAttempt(
     appendAgentEvents(accumulator, [{ type: "compacting" }]);
     emit.onEvent({ type: "compacting" });
   }
+  let silentMode = false;
   const existingMeta = getAgentSessionMeta(runtime.sessionId);
+  const toolsBeforePolicy = [
+    ...createCoreCodingTools(agentCwd, input.permissionMode),
+    ...lumeTools.customTools
+  ];
+  const toolsWithPolicy = applyPiToolPolicies(toolsBeforePolicy, {
+    provider: channel.provider,
+    sessionType: input.sessionType,
+    chatType: input.chatType,
+    messageMetadata: input.messageMetadata
+  });
   const allTools = wrapToolsWithPermissionGate(
-    [...createCoreCodingTools(agentCwd, input.permissionMode), ...lumeTools.customTools],
+    toolsWithPolicy,
     {
       sessionId: runtime.sessionId,
       permissionMode: input.permissionMode,
@@ -172,7 +187,7 @@ export async function runPiAgentAttempt(
       event,
       contextWindow: (model as { contextWindow?: number }).contextWindow,
       accumulator,
-      onEvent: emit.onEvent
+      onEvent: silentMode ? () => {} : emit.onEvent
     });
   });
 
@@ -181,6 +196,19 @@ export async function runPiAgentAttempt(
   });
 
   try {
+    // 检查是否有待执行的 Memory Flush 提示词（由 usage_update 事件触发）
+    const memoryFlushPrompt = consumeMemoryFlushPrompt(runtime.sessionId);
+    if (memoryFlushPrompt) {
+      silentMode = true;
+      try {
+        await agent.prompt(memoryFlushPrompt);
+      } finally {
+        silentMode = false;
+        // 重置 accumulator，避免 flush 响应污染后续消息持久化
+        accumulator.text = "";
+        accumulator.events = [];
+      }
+    }
     await agent.prompt(contextualMessage);
     backfillAssistantTextFromAgentState(agent.state.messages, accumulator, emit.onEvent);
     if (!hasRenderableAssistantOutput(accumulator)) {
@@ -338,6 +366,34 @@ function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?:
   };
 }
 
+function formatAgentMessage(message: ReturnType<typeof getAgentSessionMessages>[number]): string {
+  if (message.role === "user") return `[user]: ${message.content}`;
+  if (message.role !== "assistant") return "";
+
+  const parts: string[] = [];
+  if (message.content) parts.push(message.content);
+
+  // 附加工具调用摘要，保留上下文
+  if (message.events && message.events.length > 0) {
+    const toolSummaries: string[] = [];
+    for (const event of message.events) {
+      if (event.type === "tool_start") {
+        toolSummaries.push(`[tool: ${event.toolName}(${JSON.stringify(event.input ?? {})})]`);
+      } else if (event.type === "tool_result") {
+        const resultText = typeof event.result === "string"
+          ? event.result.slice(0, 500)
+          : JSON.stringify(event.result ?? "").slice(0, 500);
+        toolSummaries.push(`[tool_result: ${resultText}]`);
+      }
+    }
+    if (toolSummaries.length > 0) {
+      parts.push(toolSummaries.join("\n"));
+    }
+  }
+
+  return `[assistant]: ${parts.join("\n")}`;
+}
+
 function buildContextPrompt(
   sessionId: string,
   currentUserMessage: string
@@ -354,7 +410,8 @@ function buildContextPrompt(
   const recent = history.slice(-MAX_CONTEXT_MESSAGES);
   const lines = recent
     .filter((message) => (message.role === "user" || message.role === "assistant") && message.content)
-    .map((message) => `[${message.role}]: ${message.content}`);
+    .map((message) => formatAgentMessage(message))
+    .filter((line) => line.length > 0);
   if (lines.length === 0) {
     return { text: currentUserMessage, compacted };
   }
