@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { FolderOpen, MessageSquare, Pencil, Plug, Plus, Sparkles, Trash2 } from "lucide-react";
 import type {
+  AutomationJob,
+  AutomationRun,
   McpServerEntry,
   SkillMeta,
   WorkspaceMcpConfig
@@ -20,15 +22,27 @@ import {
   workspaceCapabilitiesVersionAtom
 } from "@/atoms";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
+  createAutomationJob,
   createAgentSession,
+  deleteAutomationJob,
+  listAutomationJobs,
+  getBrowserExtensionInfo,
+  getBrowserRelayStatus,
   deleteAgentWorkspaceSkill,
   getAgentWorkspaceMcpConfig,
   listAgentSessions,
   listAgentWorkspaceSkills,
+  openExternalUrl,
   saveAgentWorkspaceMcpConfig,
-  readAgentBootstrapFile
+  readAgentBootstrapFile,
+  installBrowserExtension,
+  listAutomationRuns,
+  startBrowserRelay,
+  runAutomationJobNow,
+  updateAutomationJob
 } from "@/lib/desktop-api";
 import { McpServerForm } from "./McpServerForm";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
@@ -72,6 +86,18 @@ export function AgentSettings(): React.ReactElement {
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [identityContent, setIdentityContent] = useState<Record<string, string>>({});
+  const [browserInfo, setBrowserInfo] = useState<Awaited<ReturnType<typeof getBrowserExtensionInfo>> | null>(null);
+  const [relayStatus, setRelayStatus] = useState<Awaited<ReturnType<typeof getBrowserRelayStatus>> | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
+  const [browserMessage, setBrowserMessage] = useState("");
+  const [automationJobs, setAutomationJobs] = useState<AutomationJob[]>([]);
+  const [automationLoading, setAutomationLoading] = useState(false);
+  const [automationBusy, setAutomationBusy] = useState(false);
+  const [automationName, setAutomationName] = useState("");
+  const [automationCronExpr, setAutomationCronExpr] = useState("30 8 * * 1-5");
+  const [automationPrompt, setAutomationPrompt] = useState("");
+  const [automationMessage, setAutomationMessage] = useState("");
+  const [automationRuns, setAutomationRuns] = useState<AutomationRun[]>([]);
 
   const loadData = async (): Promise<void> => {
     if (!workspaceSlug) {
@@ -92,9 +118,47 @@ export function AgentSettings(): React.ReactElement {
     }
   };
 
+  const refreshBrowserBridge = async (): Promise<void> => {
+    try {
+      const [info, relay] = await Promise.all([
+        getBrowserExtensionInfo(),
+        getBrowserRelayStatus()
+      ]);
+      setBrowserInfo(info);
+      setRelayStatus(relay);
+    } catch (error) {
+      console.error("[AgentSettings] load browser bridge failed", error);
+    }
+  };
+
+  const loadAutomationData = async (): Promise<void> => {
+    setAutomationLoading(true);
+    try {
+      const [jobs, runs] = await Promise.all([
+        listAutomationJobs(),
+        listAutomationRuns({ limit: 20 })
+      ]);
+      setAutomationJobs(jobs);
+      setAutomationRuns(runs);
+    } catch (error) {
+      console.error("[AgentSettings] load automation jobs failed", error);
+      setAutomationMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAutomationLoading(false);
+    }
+  };
+
   useEffect(() => {
     void loadData();
   }, [workspaceSlug, capabilitiesVersion]);
+
+  useEffect(() => {
+    void refreshBrowserBridge();
+  }, []);
+
+  useEffect(() => {
+    void loadAutomationData();
+  }, [workspaceSlug]);
 
   useEffect(() => {
     if (!workspaceSlug) return;
@@ -234,6 +298,106 @@ ${skillList}
     bumpCapabilitiesVersion((v) => v + 1);
   };
 
+  const handleInstallBrowserExtension = async (): Promise<void> => {
+    setBrowserBusy(true);
+    setBrowserMessage("");
+    try {
+      const result = await installBrowserExtension();
+      setBrowserMessage(`扩展已安装: ${result.path}`);
+      await refreshBrowserBridge();
+    } catch (error) {
+      setBrowserMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
+  const handleStartRelay = async (): Promise<void> => {
+    setBrowserBusy(true);
+    setBrowserMessage("");
+    try {
+      await startBrowserRelay();
+      setBrowserMessage("Relay 已启动");
+      await refreshBrowserBridge();
+    } catch (error) {
+      setBrowserMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
+  const handleCreateAutomationJob = async (): Promise<void> => {
+    if (!automationName.trim() || !automationCronExpr.trim() || !automationPrompt.trim()) {
+      setAutomationMessage("任务名称、Cron 表达式和提示词不能为空");
+      return;
+    }
+    setAutomationBusy(true);
+    setAutomationMessage("");
+    try {
+      await createAutomationJob({
+        name: automationName.trim(),
+        workspaceId: currentWorkspaceId ?? undefined,
+        schedule: {
+          type: "cron",
+          cronExpr: automationCronExpr.trim()
+        },
+        prompt: automationPrompt.trim()
+      });
+      setAutomationName("");
+      setAutomationPrompt("");
+      setAutomationMessage("任务创建成功");
+      await loadAutomationData();
+    } catch (error) {
+      setAutomationMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const handleToggleAutomationJob = async (job: AutomationJob): Promise<void> => {
+    setAutomationBusy(true);
+    setAutomationMessage("");
+    try {
+      await updateAutomationJob({
+        id: job.id,
+        enabled: !job.enabled
+      });
+      await loadAutomationData();
+    } catch (error) {
+      setAutomationMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const handleDeleteAutomationJob = async (job: AutomationJob): Promise<void> => {
+    if (!window.confirm(`确定删除任务「${job.name}」？此操作不可恢复。`)) return;
+    setAutomationBusy(true);
+    setAutomationMessage("");
+    try {
+      await deleteAutomationJob(job.id);
+      await loadAutomationData();
+    } catch (error) {
+      setAutomationMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const handleRunAutomationJobNow = async (job: AutomationJob): Promise<void> => {
+    setAutomationBusy(true);
+    setAutomationMessage("");
+    try {
+      const run = await runAutomationJobNow(job.id);
+      setAutomationMessage(`任务已触发: ${run.status}`);
+      await loadAutomationData();
+    } catch (error) {
+      setAutomationMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
   if (!workspace) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -263,6 +427,12 @@ ${skillList}
   }
 
   const serverEntries = Object.entries(mcpConfig.servers ?? {});
+  const workspaceAutomationJobs = automationJobs.filter(
+    (job) => !job.workspaceId || job.workspaceId === currentWorkspaceId
+  );
+  const workspaceAutomationRuns = automationRuns.filter((run) =>
+    workspaceAutomationJobs.some((job) => job.id === run.jobId)
+  );
 
   return (
     <div className="space-y-8">
@@ -329,6 +499,154 @@ ${skillList}
         <MessageSquare size={14} />
         <span>跟 Lume Agent 对话完成配置</span>
       </Button>
+
+      <SettingsSection title="Chrome Extension 模式" description="对齐 OpenClaw：先启动 relay，再在 Chrome 扩展里附加标签页">
+        <SettingsCard divided={false}>
+          <div className="space-y-3 p-3 text-sm">
+            <div className="rounded-md border bg-muted/20 p-3">
+              <p className="font-medium">Relay 状态</p>
+              <p className="mt-1 text-muted-foreground">
+                运行: {relayStatus?.running ? "是" : "否"} · 扩展连接: {relayStatus?.connected ? "已连接" : "未连接"} · 连接数: {relayStatus?.connectionCount ?? 0} · 已附加标签页: {relayStatus?.tabs.length ?? 0}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                端口: {relayStatus?.port ?? browserInfo?.relay.port ?? "-"} · URL: {browserInfo?.relay.httpUrl ?? "http://127.0.0.1:18792/"}
+              </p>
+              {(relayStatus?.diagnostics?.lastRejectReason || relayStatus?.diagnostics?.lastCloseReason) ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  诊断: {relayStatus?.diagnostics?.lastRejectReason || "无拒绝"} · {relayStatus?.diagnostics?.lastCloseReason || "无断开"}
+                </p>
+              ) : null}
+              {(relayStatus?.tokenRequired || browserInfo?.relay.tokenRequired) ? (
+                <p className="mt-1 text-xs text-amber-600">
+                  当前 Relay 已启用 token 鉴权，请在扩展 Options 中填写与 `LUME_BROWSER_RELAY_TOKEN` 相同的值。
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-md border bg-muted/20 p-3">
+              <p className="font-medium">扩展安装</p>
+              <p className="mt-1 text-muted-foreground">
+                已安装: {browserInfo?.installed ? "是" : "否"}
+              </p>
+              <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                路径: {browserInfo?.installedPath ?? "~/.lume/browser/chrome-extension"}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" type="button" disabled={browserBusy} onClick={() => { void handleInstallBrowserExtension(); }}>
+                安装扩展到稳定目录
+              </Button>
+              <Button size="sm" type="button" variant="secondary" disabled={browserBusy} onClick={() => { void handleStartRelay(); }}>
+                启动 Relay
+              </Button>
+              <Button size="sm" type="button" variant="outline" onClick={() => { void openExternalUrl("chrome://extensions/"); }}>
+                打开 chrome://extensions
+              </Button>
+              <Button size="sm" type="button" variant="ghost" onClick={() => { void refreshBrowserBridge(); }}>
+                刷新状态
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              操作顺序: 1) 安装扩展 2) 启动 Relay 3) Chrome 开启 Developer mode 并 Load unpacked 指向上方路径 4) 点击扩展图标附加当前标签页。
+            </p>
+            {browserMessage ? <p className="text-xs text-foreground">{browserMessage}</p> : null}
+          </div>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="自动化任务（MVP）" description="当前先支持 Cron 任务创建、启停与删除">
+        <SettingsCard divided={false}>
+          <div className="space-y-3 p-3 text-sm">
+            <div className="grid gap-2">
+              <Input
+                value={automationName}
+                onChange={(event) => setAutomationName(event.target.value)}
+                placeholder="任务名称，例如：工作日早报准备"
+              />
+              <Input
+                value={automationCronExpr}
+                onChange={(event) => setAutomationCronExpr(event.target.value)}
+                placeholder="Cron 表达式，例如：30 8 * * 1-5"
+              />
+              <textarea
+                value={automationPrompt}
+                onChange={(event) => setAutomationPrompt(event.target.value)}
+                placeholder="执行提示词，例如：汇总昨天工作区代码变更并生成早报"
+                rows={4}
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <div className="flex justify-end">
+                <Button size="sm" type="button" disabled={automationBusy} onClick={() => { void handleCreateAutomationJob(); }}>
+                  创建任务
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-md border bg-muted/20 p-3">
+              <p className="font-medium">任务列表（当前工作区）</p>
+              {automationLoading ? (
+                <p className="mt-2 text-muted-foreground">加载中...</p>
+              ) : workspaceAutomationJobs.length === 0 ? (
+                <p className="mt-2 text-muted-foreground">暂无任务</p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {workspaceAutomationJobs.map((job) => (
+                    <div key={job.id} className="rounded-md border bg-background/80 p-2">
+                      <p className="font-medium">{job.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Cron: {job.schedule.cronExpr ?? "-"} · 更新时间: {new Date(job.updatedAt).toLocaleString()}
+                      </p>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{job.prompt}</p>
+                      <div className="mt-2 flex items-center justify-end gap-2">
+                        <Switch checked={job.enabled} onCheckedChange={() => { void handleToggleAutomationJob(job); }} />
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                          onClick={() => { void handleRunAutomationJobNow(job); }}
+                        >
+                          立即执行
+                        </Button>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                          onClick={() => { void handleDeleteAutomationJob(job); }}
+                        >
+                          <Trash2 size={14} />
+                          <span>删除</span>
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="rounded-md border bg-muted/20 p-3">
+              <p className="font-medium">最近运行记录</p>
+              {workspaceAutomationRuns.length === 0 ? (
+                <p className="mt-2 text-muted-foreground">暂无记录</p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {workspaceAutomationRuns.slice(0, 8).map((run) => (
+                    <div key={run.id} className="rounded-md border bg-background/80 p-2">
+                      <p className="text-xs font-medium">
+                        {run.jobName} · {run.status}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        触发: {run.trigger} · {new Date(run.startedAt).toLocaleString()}
+                      </p>
+                      {run.sessionId ? (
+                        <p className="text-xs text-muted-foreground">会话: {run.sessionId}</p>
+                      ) : null}
+                      <p className="mt-1 text-xs text-muted-foreground">{run.message}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {automationMessage ? <p className="text-xs text-foreground">{automationMessage}</p> : null}
+          </div>
+        </SettingsCard>
+      </SettingsSection>
 
       {Object.keys(identityContent).length > 0 && (
         <SettingsSection title="Identity" description="工作区身份与人格文件（只读）">

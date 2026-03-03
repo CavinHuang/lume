@@ -43,6 +43,7 @@ import {
   resetPlanStateAtom
 } from "@/atoms/plan-atoms";
 import {
+  createAutomationJob,
   getAgentSessionMessages,
   getAgentSessionPath,
   listAgentSessions,
@@ -1461,6 +1462,30 @@ export function AgentView(): React.ReactElement {
     setInlineEditingMessageId(null);
   }, [sessionId, streaming, truncateFromMessage, sendFromMessageContent]);
 
+  const handleSaveAsTask = useCallback(async (message: AgentMessage): Promise<void> => {
+    const prompt = (message.content ?? "").trim();
+    if (!prompt) {
+      window.alert("消息内容为空，无法保存为任务");
+      return;
+    }
+    const defaultName = `Agent任务-${new Date().toLocaleDateString()}`;
+    const name = window.prompt("请输入任务名称", defaultName)?.trim();
+    if (!name) return;
+    const cronExpr = window.prompt("请输入 Cron 表达式", "30 8 * * 1-5")?.trim();
+    if (!cronExpr) return;
+
+    await createAutomationJob({
+      name,
+      workspaceId: currentWorkspace?.id ?? session?.workspaceId,
+      schedule: {
+        type: "cron",
+        cronExpr
+      },
+      prompt
+    });
+    window.alert("已保存为自动化任务，可在设置页查看");
+  }, [currentWorkspace?.id, session?.workspaceId]);
+
   const handleModelSelect = useCallback((option: ModelOption): void => {
     setAgentChannelId(option.channelId);
     setAgentModelId(option.modelId);
@@ -1504,6 +1529,7 @@ export function AgentView(): React.ReactElement {
             inlineEditingMessageId={inlineEditingMessageId}
             onDeleteMessage={handleDeleteMessage}
             onResendMessage={handleResendMessage}
+            onSaveAsTask={handleSaveAsTask}
             onStartInlineEdit={handleStartInlineEdit}
             onSubmitInlineEdit={handleSubmitInlineEdit}
             onCancelInlineEdit={handleCancelInlineEdit}

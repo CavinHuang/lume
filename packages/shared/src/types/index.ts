@@ -10,3 +10,4 @@ export * from "./memory";
 export * from "./workspace-bootstrap";
 export * from "./memory-flush";
 export * from "./heartbeat";
+export * from "./automation";

@@ -4,10 +4,18 @@ import {
   getAttachedTabs,
   startRelayServer,
   stopRelayServer,
-  sendCDPCommand
+  sendCDPCommand,
+  getRelayStatus,
+  type RelayStatus
 } from "./extension-relay";
+import {
+  getChromeExtensionInfo,
+  installChromeExtension,
+  type ChromeExtensionInfo
+} from "./chrome-extension-manager";
 
 type BrowserMode = "playwright" | "relay";
+type BrowserStartMode = BrowserMode | "auto";
 let currentMode: BrowserMode = "playwright";
 
 let browser: Browser | null = null;
@@ -22,6 +30,8 @@ export interface BrowserStatus {
   url?: string;
   title?: string;
   tabs?: Array<{ sessionId: string; url?: string; title?: string }>;
+  extension?: ChromeExtensionInfo;
+  relay?: RelayStatus;
 }
 
 export async function getBrowserStatus(): Promise<BrowserStatus> {
@@ -31,7 +41,9 @@ export async function getBrowserStatus(): Promise<BrowserStatus> {
     return {
       running: connected && tabs.length > 0,
       mode: "relay",
-      tabs: tabs.map(t => ({ sessionId: t.sessionId, url: t.url, title: t.title }))
+      tabs: tabs.map(t => ({ sessionId: t.sessionId, url: t.url, title: t.title })),
+      extension: getChromeExtensionInfo(),
+      relay: getRelayStatus()
     };
   }
   if (!browser || !activePage) {
@@ -49,16 +61,35 @@ export async function getBrowserStatus(): Promise<BrowserStatus> {
   }
 }
 
-export async function startBrowser(mode: BrowserMode = "playwright"): Promise<BrowserStatus> {
-  currentMode = mode;
-  if (mode === "relay") {
-    await startRelayServer();
-    return getBrowserStatus();
-  }
-  if (browser) return getBrowserStatus();
+async function ensurePlaywrightStarted(): Promise<void> {
+  if (browser) return;
   browser = await chromium.launch({ headless: false });
   context = await browser.newContext();
   activePage = await context.newPage();
+}
+
+export async function startBrowser(mode: BrowserStartMode = "auto"): Promise<BrowserStatus> {
+  if (mode === "relay") {
+    currentMode = "relay";
+    await startRelayServer();
+    return getBrowserStatus();
+  }
+  if (mode === "playwright") {
+    currentMode = "playwright";
+    await ensurePlaywrightStarted();
+    return getBrowserStatus();
+  }
+
+  // auto 模式：优先使用 extension relay，若不可用则回退到 Playwright。
+  await startRelayServer();
+  const relayTabs = getAttachedTabs();
+  if (isRelayConnected() && relayTabs.length > 0) {
+    currentMode = "relay";
+    return getBrowserStatus();
+  }
+
+  currentMode = "playwright";
+  await ensurePlaywrightStarted();
   return getBrowserStatus();
 }
 
@@ -194,7 +225,7 @@ export interface TabInfo {
 export async function getTabs(): Promise<TabInfo[]> {
   if (currentMode === "relay") {
     return getAttachedTabs().map(t => ({
-      targetId: t.sessionId,
+      targetId: t.targetId || t.sessionId,
       url: t.url || "",
       title: t.title || "",
       active: true
@@ -215,11 +246,13 @@ export async function getTabs(): Promise<TabInfo[]> {
 
 export async function openTab(url: string): Promise<TabInfo> {
   if (currentMode === "relay") {
-    await sendCDPCommand("Target.createTarget", { url });
-    await new Promise(r => setTimeout(r, 500));
+    const created = await sendCDPCommand("Target.createTarget", { url }) as { targetId?: string };
+    await new Promise(r => setTimeout(r, 300));
     const tabs = getAttachedTabs();
-    const tab = tabs[tabs.length - 1];
-    return { targetId: tab?.sessionId || "", url, title: "", active: true };
+    const tab = created?.targetId
+      ? tabs.find((item) => item.targetId === created.targetId)
+      : tabs[tabs.length - 1];
+    return { targetId: tab?.targetId || tab?.sessionId || created?.targetId || "", url: tab?.url || url, title: tab?.title || "", active: true };
   }
   if (!context) await startBrowser();
   const page = await context!.newPage();
@@ -295,12 +328,20 @@ export async function browserDrag(startSelector: string, endSelector: string): P
 }
 
 export async function browserEvaluate(fn: string): Promise<{ result: unknown }> {
+  const source = fn.trim();
+  const expression = (
+    (source.startsWith("() =>") || source.startsWith("async () =>") || source.startsWith("function"))
+    && !source.endsWith(")()")
+  )
+    ? `(${source})()`
+    : source;
+
   if (currentMode === "relay") {
-    const res = await sendCDPCommand("Runtime.evaluate", { expression: fn, returnByValue: true }) as { result?: { value?: unknown } };
+    const res = await sendCDPCommand("Runtime.evaluate", { expression, returnByValue: true }) as { result?: { value?: unknown } };
     return { result: res.result?.value };
   }
   if (!activePage) throw new Error("Browser not started");
-  const result = await activePage.evaluate(fn);
+  const result = await activePage.evaluate(expression);
   return { result };
 }
 
@@ -361,6 +402,18 @@ export async function browserFill(fields: Array<{ selector: string; value: strin
 // === Profiles ===
 export async function getProfiles(): Promise<{ profiles: string[] }> {
   return { profiles: ["playwright", "relay"] };
+}
+
+export async function getBrowserExtensionInfo(): Promise<ChromeExtensionInfo> {
+  return getChromeExtensionInfo();
+}
+
+export async function installBrowserExtension(): Promise<{ path: string }> {
+  return installChromeExtension();
+}
+
+export async function getBrowserRelayStatus(): Promise<RelayStatus> {
+  return getRelayStatus();
 }
 
 // === Act 统一入口 ===

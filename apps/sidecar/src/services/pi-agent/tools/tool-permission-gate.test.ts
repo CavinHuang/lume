@@ -24,9 +24,10 @@ describe("tool-permission-gate memory read guard", () => {
       permissionMode: "default",
       emitToolPermissionRequest: () => {}
     });
+    if (!tool?.execute) throw new Error("tool execute 不存在");
 
     await expect(
-      tool.execute?.("call-1", { path: "MEMORY.md" }, new AbortController().signal)
+      tool.execute("call-1", { path: "MEMORY.md" }, new AbortController().signal)
     ).rejects.toThrow("memory_get");
   });
 
@@ -36,8 +37,9 @@ describe("tool-permission-gate memory read guard", () => {
       permissionMode: "default",
       emitToolPermissionRequest: () => {}
     });
+    if (!tool?.execute) throw new Error("tool execute 不存在");
 
-    const result = await tool.execute?.(
+    const result = await tool.execute(
       "call-2",
       { path: "SOUL.md" },
       new AbortController().signal

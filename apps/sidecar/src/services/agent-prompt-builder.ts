@@ -306,6 +306,18 @@ At the beginning of each session, silently check workspace memory files in this 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
 
   const availableTools = new Set((ctx.availableTools ?? []).map((item) => item.trim().toLowerCase()));
+  if (availableTools.has("browser") && availableTools.has("web_search")) {
+    sections.push(`## Browser-First Tool Policy (Mandatory)
+
+当用户请求“使用我的浏览器 / 使用浏览器 profile / 在当前页面继续操作 / 继续上一步浏览器任务”时：
+1. 必须优先使用 browser 工具，不要直接改用 web_search。
+2. 如果 browser 执行失败，先调用 browser status 或 relay_status 判断是否连接问题，再尝试修复（如 start(mode=relay)）。
+3. 仅在以下情况才回退 web_search：
+   - 用户明确要求“不要用浏览器，直接联网搜索”
+   - 已确认 browser/relay 当前不可用，且重试后仍失败
+4. 回退到 web_search 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器会话不可用）。`);
+  }
+
   if (availableTools.has("memory_search") || availableTools.has("memory_get")) {
     const lines = [
       "## Memory Recall",

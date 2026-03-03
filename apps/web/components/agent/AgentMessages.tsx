@@ -4,7 +4,7 @@ import * as React from "react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
 import { useAtomValue } from "jotai";
-import { Bot, FileImage, FileText, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, CalendarClock, FileImage, FileText, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import {
   agentModelIdAtom,
   agentStreamingAtom,
@@ -45,6 +45,7 @@ interface AgentMessagesProps {
   inlineEditingMessageId?: string | null;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
+  onSaveAsTask?: (message: AgentMessage) => Promise<void>;
   onStartInlineEdit?: (message: AgentMessage) => void;
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
@@ -223,6 +224,7 @@ function AgentMessageItem({
   isInlineEditing,
   onDeleteMessage,
   onResendMessage,
+  onSaveAsTask,
   onStartInlineEdit,
   onSubmitInlineEdit,
   onCancelInlineEdit
@@ -232,6 +234,7 @@ function AgentMessageItem({
   isInlineEditing: boolean;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
+  onSaveAsTask?: (message: AgentMessage) => Promise<void>;
   onStartInlineEdit?: (message: AgentMessage) => void;
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
@@ -336,6 +339,16 @@ function AgentMessageItem({
             <MessageResponse>{message.content}</MessageResponse>
           ) : null}
         </MessageContent>
+        {!isStreaming && (message.content ?? "").trim().length > 0 ? (
+          <MessageActions className="mt-0.5 pl-[46px]">
+            <CopyButton content={message.content} />
+            {onSaveAsTask ? (
+              <MessageAction tooltip="保存为任务" onClick={() => void onSaveAsTask(message)}>
+                <CalendarClock className="size-3.5" />
+              </MessageAction>
+            ) : null}
+          </MessageActions>
+        ) : null}
       </Message>
     );
   }
@@ -348,6 +361,7 @@ export function AgentMessages({
   inlineEditingMessageId = null,
   onDeleteMessage,
   onResendMessage,
+  onSaveAsTask,
   onStartInlineEdit,
   onSubmitInlineEdit,
   onCancelInlineEdit
@@ -382,6 +396,7 @@ export function AgentMessages({
                 isInlineEditing={inlineEditingMessageId === message.id}
                 onDeleteMessage={actionsDisabled ? undefined : onDeleteMessage}
                 onResendMessage={actionsDisabled ? undefined : onResendMessage}
+                onSaveAsTask={actionsDisabled ? undefined : onSaveAsTask}
                 onStartInlineEdit={actionsDisabled ? undefined : onStartInlineEdit}
                 onSubmitInlineEdit={onSubmitInlineEdit}
                 onCancelInlineEdit={onCancelInlineEdit}

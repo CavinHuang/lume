@@ -16,7 +16,7 @@ interface ActRequest {
   fields?: Array<{ selector: string; value: string }>;
 }
 
-const ACTIONS = ["status", "start", "stop", "navigate", "snapshot", "screenshot", "click", "type", "press", "wait", "tabs", "open", "focus", "close", "console", "hover", "select", "drag", "evaluate", "pdf", "upload", "dialog", "resize", "fill", "profiles", "act"] as const;
+const ACTIONS = ["status", "start", "stop", "navigate", "snapshot", "screenshot", "click", "type", "press", "wait", "tabs", "open", "focus", "close", "console", "hover", "select", "drag", "evaluate", "pdf", "upload", "dialog", "resize", "fill", "profiles", "act", "extension_info", "extension_install", "relay_status"] as const;
 
 function toResult<T>(details: T): AgentToolResult<T> {
   return {
@@ -27,7 +27,7 @@ function toResult<T>(details: T): AgentToolResult<T> {
 
 const BrowserToolSchema = Type.Object({
   action: Type.Union(ACTIONS.map(a => Type.Literal(a))),
-  mode: Type.Optional(Type.Union([Type.Literal("playwright"), Type.Literal("relay")])),
+  mode: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("playwright"), Type.Literal("relay")])),
   url: Type.Optional(Type.String({ description: "URL for navigate/open action" })),
   selector: Type.Optional(Type.String({ description: "CSS selector" })),
   text: Type.Optional(Type.String({ description: "Text for type action" })),
@@ -70,10 +70,14 @@ export function createBrowserTool(): AgentTool {
     label: "Browser",
     description: `Browser automation tool.
 
-Actions: status, start, stop, navigate, snapshot, screenshot, click, type, press, wait, tabs, open, focus, close, console, hover, select, drag, evaluate, pdf, upload, dialog, resize, fill
+Actions: status, start, stop, navigate, snapshot, screenshot, click, type, press, wait, tabs, open, focus, close, console, hover, select, drag, evaluate, pdf, upload, dialog, resize, fill, extension_info, extension_install, relay_status
 
 Examples:
+- { "action": "start" } // 默认 auto: 先 relay, 失败再 playwright
 - { "action": "start", "mode": "relay" }
+- { "action": "extension_info" }
+- { "action": "extension_install" }
+- { "action": "relay_status" }
 - { "action": "navigate", "url": "https://example.com" }
 - { "action": "click", "selector": "#btn" }
 - { "action": "upload", "selector": "input[type=file]", "paths": ["/tmp/a.png"] }
@@ -89,7 +93,11 @@ Examples:
           case "status":
             return toResult(await browserApi.getBrowserStatus());
           case "start": {
-            const mode = params.mode === "relay" ? "relay" : "playwright";
+            const mode = params.mode === "relay"
+              ? "relay"
+              : params.mode === "playwright"
+                ? "playwright"
+                : "auto";
             return toResult(await browserApi.startBrowser(mode));
           }
           case "stop":
@@ -193,6 +201,12 @@ Examples:
           }
           case "profiles":
             return toResult(await browserApi.getProfiles());
+          case "extension_info":
+            return toResult(await browserApi.getBrowserExtensionInfo());
+          case "extension_install":
+            return toResult(await browserApi.installBrowserExtension());
+          case "relay_status":
+            return toResult(await browserApi.getBrowserRelayStatus());
           case "act": {
             const request = params.request as ActRequest;
             if (!request) return toResult({ error: "request required" });

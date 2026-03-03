@@ -54,6 +54,16 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("Citations are disabled");
   });
 
+  test("同时具备 browser 与 web_search 时应注入 Browser-First 策略", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-browser-first",
+      availableTools: ["browser", "web_search"]
+    });
+    expect(prompt).toContain("## Browser-First Tool Policy (Mandatory)");
+    expect(prompt).toContain("必须优先使用 browser 工具");
+    expect(prompt).toContain("仅在以下情况才回退 web_search");
+  });
+
   test("buildSystemPromptAppend 应包含 session bootstrap 读取顺序", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-2",

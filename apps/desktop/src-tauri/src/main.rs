@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -32,6 +32,41 @@ impl SidecarProcess {
 }
 
 static NEXT_RPC_ID: AtomicU64 = AtomicU64::new(1);
+static LOGGED_ENV_CMD_IGNORED: AtomicBool = AtomicBool::new(false);
+
+fn env_flag_enabled(key: &str) -> bool {
+    std::env::var(key)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn has_env_sidecar_cmd() -> bool {
+    std::env::var("LUME_SIDECAR_CMD")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn spawn_sidecar_with_strategy(app: &tauri::AppHandle) -> Option<Child> {
+    let prefer_env = env_flag_enabled("LUME_SIDECAR_PREFER_ENV");
+    if prefer_env {
+        return spawn_sidecar_from_env().or_else(|| spawn_sidecar_default(app));
+    }
+
+    if has_env_sidecar_cmd()
+        && !LOGGED_ENV_CMD_IGNORED.swap(true, Ordering::Relaxed)
+    {
+        warn!(
+            "[desktop] LUME_SIDECAR_CMD detected but ignored by default; set LUME_SIDECAR_PREFER_ENV=1 to prefer env sidecar command"
+        );
+    }
+
+    spawn_sidecar_default(app).or_else(|| spawn_sidecar_from_env())
+}
 
 fn is_broken_pipe_error_message(message: &str) -> bool {
     let lower = message.to_lowercase();
@@ -42,8 +77,7 @@ fn spawn_managed_sidecar(
     state: &tauri::State<'_, SidecarProcess>,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut child = spawn_sidecar_from_env()
-        .or_else(|| spawn_sidecar_default(app))
+    let mut child = spawn_sidecar_with_strategy(app)
         .ok_or_else(|| "sidecar spawn failed".to_string())?;
 
     if let Some(stdout) = child.stdout.take() {
@@ -502,7 +536,7 @@ fn main() {
         .manage(SidecarProcess::new())
         .setup(|app| {
             let state = app.state::<SidecarProcess>();
-            let mut child = match spawn_sidecar_from_env().or_else(|| spawn_sidecar_default(&app.handle())) {
+            let mut child = match spawn_sidecar_with_strategy(&app.handle()) {
                 Some(child) => child,
                 None => return Ok(()),
             };

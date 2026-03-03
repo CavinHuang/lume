@@ -176,3 +176,19 @@ export function getAgentConfigDir(): string {
 export function getAgentRuntimeConfigPath(): string {
   return join(getAgentConfigDir(), "config.json");
 }
+
+export function getAutomationConfigDir(): string {
+  return ensureDir(join(getConfigDir(), "automation"), "自动化配置目录");
+}
+
+export function getAutomationJobsPath(): string {
+  return join(getAutomationConfigDir(), "jobs.json");
+}
+
+export function getAutomationRunsDir(): string {
+  return ensureDir(join(getAutomationConfigDir(), "runs"), "自动化运行记录目录");
+}
+
+export function getAutomationRunsPath(): string {
+  return join(getAutomationRunsDir(), "all.jsonl");
+}

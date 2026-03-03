@@ -1,10 +1,15 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { z } from "zod";
-import { AGENT_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type {
   AttachmentSaveInput,
   AgentGenerateTitleInput,
+  AutomationCreateJobInput,
+  AutomationDeleteJobInput,
+  AutomationListRunsInput,
+  AutomationRunNowInput,
+  AutomationUpdateJobInput,
   AgentProxySettings,
   PlanStep,
   AgentRuntimeToolPolicyConfig,
@@ -98,6 +103,7 @@ import {
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory-sync-watcher";
 import { seedDefaultSkills } from "./services/default-skills-seeder";
+import { startRelayServer, stopRelayServer } from "./services/browser/extension-relay";
 import {
   getWorkspaceMemoryFile,
   getWorkspaceMemoryStatus,
@@ -119,6 +125,25 @@ import {
   initProxySettings,
   saveAgentProxySettings
 } from "./services/proxy-settings-manager";
+import {
+  getBrowserExtensionInfo,
+  getBrowserRelayStatus,
+  installBrowserExtension,
+  startBrowser
+} from "./services/browser/browser-service";
+import {
+  createAutomationJob,
+  deleteAutomationJob,
+  listAutomationJobs,
+  updateAutomationJob
+} from "./services/automation-manager";
+import {
+  listAutomationRuns,
+  refreshAutomationRunnerJobs,
+  runAutomationJobNow,
+  startAutomationRunner,
+  stopAutomationRunner
+} from "./services/automation-runner-service";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -445,6 +470,44 @@ const proxySettingsInputSchema = z.object({
   noProxy: z.string().optional()
 });
 
+const automationScheduleSchema = z.object({
+  type: z.enum(["cron", "once", "interval"]),
+  cronExpr: z.string().optional(),
+  runAt: z.number().optional(),
+  intervalMs: z.number().optional(),
+  timezone: z.string().optional()
+});
+
+const automationCreateInputSchema = z.object({
+  name: z.string().min(1),
+  enabled: z.boolean().optional(),
+  workspaceId: z.string().optional(),
+  schedule: automationScheduleSchema,
+  prompt: z.string().min(1)
+});
+
+const automationUpdateInputSchema = z.object({
+  id: idSchema,
+  name: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  workspaceId: z.string().optional(),
+  schedule: automationScheduleSchema.optional(),
+  prompt: z.string().min(1).optional()
+});
+
+const automationDeleteInputSchema = z.object({
+  id: idSchema
+});
+
+const automationListRunsInputSchema = z.object({
+  jobId: z.string().optional(),
+  limit: z.number().int().min(1).max(200).optional()
+});
+
+const automationRunNowInputSchema = z.object({
+  id: idSchema
+});
+
 function validateInput<T>(schema: z.ZodType<T>, payload: unknown, method: string): T {
   const parsed = schema.safeParse(payload);
   if (parsed.success) {
@@ -617,6 +680,37 @@ const handlers: Record<string, RpcHandler> = {
     const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.STATUS);
     return getWorkspaceMemoryStatus(input.workspaceSlug);
   },
+
+  [AUTOMATION_IPC_CHANNELS.LIST_JOBS]: async () => listAutomationJobs(),
+  [AUTOMATION_IPC_CHANNELS.CREATE_JOB]: async (params) => {
+    const created = createAutomationJob(
+      validateInput(automationCreateInputSchema, params, AUTOMATION_IPC_CHANNELS.CREATE_JOB) as AutomationCreateJobInput
+    );
+    await refreshAutomationRunnerJobs();
+    return created;
+  },
+  [AUTOMATION_IPC_CHANNELS.UPDATE_JOB]: async (params) => {
+    const updated = updateAutomationJob(
+      validateInput(automationUpdateInputSchema, params, AUTOMATION_IPC_CHANNELS.UPDATE_JOB) as AutomationUpdateJobInput
+    );
+    await refreshAutomationRunnerJobs();
+    return updated;
+  },
+  [AUTOMATION_IPC_CHANNELS.DELETE_JOB]: async (params) => {
+    const result = deleteAutomationJob(
+      validateInput(automationDeleteInputSchema, params, AUTOMATION_IPC_CHANNELS.DELETE_JOB) as AutomationDeleteJobInput
+    );
+    await refreshAutomationRunnerJobs();
+    return result;
+  },
+  [AUTOMATION_IPC_CHANNELS.LIST_RUNS]: async (params) =>
+    listAutomationRuns(
+      validateInput(automationListRunsInputSchema, params ?? {}, AUTOMATION_IPC_CHANNELS.LIST_RUNS) as AutomationListRunsInput
+    ),
+  [AUTOMATION_IPC_CHANNELS.RUN_NOW]: async (params) =>
+    runAutomationJobNow(
+      validateInput(automationRunNowInputSchema, params, AUTOMATION_IPC_CHANNELS.RUN_NOW) as AutomationRunNowInput
+    ),
 
   [AGENT_IPC_CHANNELS.LIST_SESSIONS]: async () => listAgentSessions(),
   [AGENT_IPC_CHANNELS.CREATE_SESSION]: async (params) => {
@@ -865,7 +959,11 @@ const handlers: Record<string, RpcHandler> = {
     }
     return { ok: true };
   },
-  [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: getLogsDir() })
+  [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: getLogsDir() }),
+  "browser:get-extension-info": async () => getBrowserExtensionInfo(),
+  "browser:install-extension": async () => installBrowserExtension(),
+  "browser:get-relay-status": async () => getBrowserRelayStatus(),
+  "browser:start-relay": async () => startBrowser("relay")
 };
 
 async function handleRpcLine(line: string): Promise<void> {
@@ -922,8 +1020,19 @@ async function handleRpcLine(line: string): Promise<void> {
 
 function boot(): void {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
+  const relayAutostart = process.env.LUME_BROWSER_RELAY_AUTOSTART?.toLowerCase() !== "0";
   void initProxySettings().catch((error) => {
     console.error(`[代理配置] 启动初始化失败: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  if (relayAutostart) {
+    void startRelayServer().then(({ port }) => {
+      console.error(`[浏览器 Relay] 已启动: http://127.0.0.1:${port}/`);
+    }).catch((error) => {
+      console.error(`[浏览器 Relay] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  void startAutomationRunner().catch((error) => {
+    console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
   });
   seedDefaultSkills();
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
@@ -932,6 +1041,8 @@ function boot(): void {
     stopWorkspaceWatcher();
     stopMemorySyncWatcher();
     closeMemoryManagers();
+    void stopAutomationRunner().catch(() => {});
+    void stopRelayServer().catch(() => {});
   };
   process.once("exit", stopWatcher);
   process.once("SIGINT", () => {

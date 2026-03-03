@@ -2,6 +2,7 @@
 
 import {
   AGENT_IPC_CHANNELS,
+  AUTOMATION_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
   CHAT_IPC_CHANNELS,
   MEMORY_IPC_CHANNELS
@@ -17,6 +18,11 @@ import type {
   AgentToolPermissionResponseInput,
   AgentGenerateTitleInput,
   AgentRuntimeToolPolicyConfig,
+  AutomationCreateJobInput,
+  AutomationJob,
+  AutomationListRunsInput,
+  AutomationRun,
+  AutomationUpdateJobInput,
   PlanFileMeta,
   PlanStateChangedEvent,
   GlobalDiscoverySnapshot,
@@ -137,6 +143,36 @@ export type SidecarNotification = {
   params: unknown;
 };
 
+export interface BrowserExtensionInfo {
+  installedPath: string;
+  installed: boolean;
+  bundledPath: string | null;
+  bundledAvailable: boolean;
+  relay: {
+    port: number;
+    httpUrl: string;
+    wsUrl: string;
+    tokenRequired: boolean;
+  };
+  links: {
+    chromeExtensions: string;
+    chromeLoadUnpackedHint: string;
+  };
+}
+
+export interface BrowserRelayStatus {
+  running: boolean;
+  port: number | null;
+  connected: boolean;
+  connectionCount?: number;
+  tokenRequired: boolean;
+  diagnostics?: {
+    lastRejectReason: string;
+    lastCloseReason: string;
+  };
+  tabs: Array<{ sessionId: string; tabId: number; url?: string; title?: string }>;
+}
+
 export async function onSidecarEvent(
   handler: (event: SidecarNotification) => void
 ): Promise<UnlistenFn> {
@@ -172,6 +208,54 @@ export async function onSidecarMethodEvent(
       handler(event.params);
     }
   });
+}
+
+export async function getBrowserExtensionInfo(): Promise<BrowserExtensionInfo> {
+  return sidecarCall<BrowserExtensionInfo>("browser:get-extension-info");
+}
+
+export async function installBrowserExtension(): Promise<{ path: string }> {
+  return sidecarCall<{ path: string }>("browser:install-extension");
+}
+
+export async function getBrowserRelayStatus(): Promise<BrowserRelayStatus> {
+  return sidecarCall<BrowserRelayStatus>("browser:get-relay-status");
+}
+
+export async function listAutomationJobs(): Promise<AutomationJob[]> {
+  return sidecarCall<AutomationJob[]>(AUTOMATION_IPC_CHANNELS.LIST_JOBS);
+}
+
+export async function createAutomationJob(input: AutomationCreateJobInput): Promise<AutomationJob> {
+  return sidecarCall<AutomationJob>(AUTOMATION_IPC_CHANNELS.CREATE_JOB, input);
+}
+
+export async function updateAutomationJob(input: AutomationUpdateJobInput): Promise<AutomationJob> {
+  return sidecarCall<AutomationJob>(AUTOMATION_IPC_CHANNELS.UPDATE_JOB, input);
+}
+
+export async function deleteAutomationJob(id: string): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AUTOMATION_IPC_CHANNELS.DELETE_JOB, { id });
+}
+
+export async function listAutomationRuns(input?: AutomationListRunsInput): Promise<AutomationRun[]> {
+  return sidecarCall<AutomationRun[]>(AUTOMATION_IPC_CHANNELS.LIST_RUNS, input ?? {});
+}
+
+export async function runAutomationJobNow(id: string): Promise<AutomationRun> {
+  return sidecarCall<AutomationRun>(AUTOMATION_IPC_CHANNELS.RUN_NOW, { id });
+}
+
+export async function startBrowserRelay(): Promise<{
+  running: boolean;
+  mode: "relay";
+  tabs: Array<{ sessionId: string; url?: string; title?: string }>;
+}> {
+  return sidecarCall<{
+    running: boolean;
+    mode: "relay";
+    tabs: Array<{ sessionId: string; url?: string; title?: string }>;
+  }>("browser:start-relay");
 }
 
 export async function listChannels(): Promise<Channel[]> {

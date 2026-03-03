@@ -21,7 +21,15 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(git remote set-url:*)",
-      "Bash(bun run typecheck:*)"
+      "Bash(bun run typecheck:*)",
+      "WebSearch",
+      "Bash(tree:*)",
+      "Bash(ls:*)",
+      "Bash(python3:*)",
+      "Bash(bun run:*)",
+      "Bash(bun add:*)",
+      "Bash(bun scripts/test-browser.ts:*)",
+      "Bash(npx playwright install:*)"
     ]
   }
 }
