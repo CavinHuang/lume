@@ -87,7 +87,7 @@ export interface ChatToolChangedEvent {
   /** 变更工具 ID */
   toolId: string
   /** 变更类型 */
-  changeType: "state" | "credentials" | "create" | "delete"
+  changeType: "state" | "credentials" | "create" | "delete" | "external"
 }
 
 export const CHAT_TOOL_IPC_CHANNELS = {

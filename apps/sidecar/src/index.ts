@@ -125,6 +125,7 @@ import {
 } from "./services/global-discovery-service";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory-sync-watcher";
+import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat-tools-watcher";
 import { seedDefaultSkills } from "./services/default-skills-seeder";
 import { startRelayServer, stopRelayServer } from "./services/browser/extension-relay";
 import {
@@ -1360,9 +1361,11 @@ function boot(): void {
   seedDefaultSkills();
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
   startMemorySyncWatcher();
+  startChatToolsWatcher((method, params) => writeNotification(method, params));
   const stopWatcher = (): void => {
     stopWorkspaceWatcher();
     stopMemorySyncWatcher();
+    stopChatToolsWatcher();
     closeMemoryManagers();
     void stopAutomationRunner().catch(() => {});
     void stopRelayServer().catch(() => {});
