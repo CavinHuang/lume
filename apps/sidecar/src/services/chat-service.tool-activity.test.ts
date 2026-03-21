@@ -227,4 +227,53 @@ describe("chat-service tool activity", () => {
     const persisted = lastAssistant?.toolActivities ?? [];
     expect(persisted.some((item) => item.toolName === "jira_search" && item.type === "result")).toBeTrue();
   });
+
+  test("自定义工具缺少必填凭据时不应执行", async () => {
+    createCustomChatTool({
+      id: "internal_search",
+      name: "内部搜索",
+      description: "查询内部检索接口",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/search?q={{query}}",
+        method: "GET",
+        headers: {
+          Authorization: "Bearer {{credential.apiToken}}"
+        }
+      }
+    });
+    updateChatToolState("internal_search", { enabled: true });
+
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      requestedUrls.push(url);
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("不可用工具不执行");
+    const toolEvents: StreamToolActivityEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "帮我查一下内部系统状态",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["internal_search"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestedUrls.length).toBe(0);
+    expect(toolEvents.length).toBe(0);
+  });
 });

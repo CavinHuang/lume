@@ -395,6 +395,7 @@ async function runEnabledToolsForChat(input: {
     (tool) =>
       tool.meta.category === "custom" &&
       tool.enabled &&
+      tool.available &&
       enabled.has(tool.meta.id)
   );
 
