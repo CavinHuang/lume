@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   createCustomChatTool,
   deleteCustomChatTool,
+  getEnabledChatToolSystemPromptAppend,
   getAllChatToolInfos,
   getChatToolCredentials,
   testChatTool,
@@ -181,5 +182,47 @@ describe("chat-tool-manager", () => {
     tools = getAllChatToolInfos();
     custom = tools.find((item) => item.meta.id === "internal_search");
     expect(custom?.available).toBeTrue();
+  });
+
+  test("应按启用工具汇总 systemPromptAppend", () => {
+    createCustomChatTool({
+      id: "jira_search",
+      name: "Jira 搜索",
+      description: "查询 Jira issue",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/issues?query={{query}}",
+        method: "GET"
+      },
+      systemPromptAppend: "当问题与项目排期相关时，优先使用 jira_search。"
+    });
+    updateChatToolState("jira_search", { enabled: true });
+
+    const append = getEnabledChatToolSystemPromptAppend(["memory_search", "jira_search"]);
+    expect(append).toContain("memory_search");
+    expect(append).toContain("jira_search");
+  });
+
+  test("不可用自定义工具不应出现在 systemPromptAppend 汇总中", () => {
+    createCustomChatTool({
+      id: "internal_search",
+      name: "内部搜索",
+      description: "查询内部检索接口",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/search?q={{query}}",
+        method: "GET",
+        headers: {
+          Authorization: "Bearer {{credential.apiToken}}"
+        }
+      },
+      systemPromptAppend: "调用 internal_search 需要有效 apiToken。"
+    });
+    updateChatToolState("internal_search", { enabled: true });
+
+    const append = getEnabledChatToolSystemPromptAppend(["internal_search"]);
+    expect(append).toBeUndefined();
   });
 });

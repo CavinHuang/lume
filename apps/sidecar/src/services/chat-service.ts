@@ -32,7 +32,11 @@ import {
 } from "./model-selection";
 import { ensureDefaultWorkspace } from "./agent-workspace-manager";
 import { searchWorkspaceMemory } from "./memory-service";
-import { getAllChatToolInfos, getChatToolCredentials } from "./chat-tool-manager";
+import {
+  getAllChatToolInfos,
+  getChatToolCredentials,
+  getEnabledChatToolSystemPromptAppend
+} from "./chat-tool-manager";
 import { executeHttpChatTool } from "./chat-tool-http-executor";
 
 type ChatEventEmitter = {
@@ -464,7 +468,10 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     enabledToolIds,
     emitToolActivity
   });
-  const effectiveSystemMessage = [systemMessage, toolContextAppendix].filter(Boolean).join("\n\n") || undefined;
+  const toolSystemPromptAppend = getEnabledChatToolSystemPromptAppend(enabledToolIds);
+  const effectiveSystemMessage = [systemMessage, toolSystemPromptAppend, toolContextAppendix]
+    .filter(Boolean)
+    .join("\n\n") || undefined;
 
   if (process.env.LUME_CHAT_MOCK_SUCCESS === "1") {
     const mockDelta = (process.env.LUME_CHAT_MOCK_TEXT || "chat-mock-success").trim();

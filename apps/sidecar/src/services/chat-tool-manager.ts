@@ -29,7 +29,8 @@ const BUILTIN_CHAT_TOOLS: ChatToolMeta[] = [
     description: "基于工作区记忆索引检索历史事实和偏好信息",
     icon: "Brain",
     category: "builtin",
-    executorType: "builtin"
+    executorType: "builtin",
+    systemPromptAppend: "涉及历史偏好、已确认决策或长期上下文时，请优先参考 memory_search 工具结果。"
   },
   {
     id: "web_search",
@@ -37,7 +38,8 @@ const BUILTIN_CHAT_TOOLS: ChatToolMeta[] = [
     description: "使用 Web 搜索获取最新公开信息",
     icon: "Globe",
     category: "builtin",
-    executorType: "builtin"
+    executorType: "builtin",
+    systemPromptAppend: "涉及时效性信息时，请优先使用 web_search 获取最新公开资料，再基于结果回答。"
   }
 ];
 
@@ -297,6 +299,29 @@ export function getAllChatToolInfos(): ChatToolInfo[] {
       available: isToolAvailable(meta, credentials)
     };
   });
+}
+
+export function getEnabledChatToolMetas(enabledToolIds?: string[]): ChatToolMeta[] {
+  const config = readConfig();
+  const allMetas = getAllToolMetas(config);
+  const explicitIds = enabledToolIds?.filter((item) => typeof item === "string");
+  const explicitSet = new Set(explicitIds ?? []);
+
+  return allMetas.filter((meta) => {
+    const enabledByUser = explicitIds === undefined
+      ? config.toolStates[meta.id]?.enabled === true
+      : explicitSet.has(meta.id);
+    if (!enabledByUser) return false;
+    const credentials = config.toolCredentials[meta.id] ?? {};
+    return isToolAvailable(meta, credentials);
+  });
+}
+
+export function getEnabledChatToolSystemPromptAppend(enabledToolIds?: string[]): string | undefined {
+  const parts = getEnabledChatToolMetas(enabledToolIds)
+    .map((meta) => meta.systemPromptAppend?.trim())
+    .filter((item): item is string => !!item && item.length > 0);
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
 export function getChatToolCredentials(toolId: string): Record<string, string> {
