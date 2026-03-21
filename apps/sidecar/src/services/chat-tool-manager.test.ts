@@ -117,4 +117,43 @@ describe("chat-tool-manager", () => {
     expect(tools.some((item) => item.meta.id === "jira_search")).toBeFalse();
     expect(() => getChatToolCredentials("jira_search")).toThrow();
   });
+
+  test("应支持测试自定义 HTTP 工具", async () => {
+    createCustomChatTool({
+      id: "jira_search",
+      name: "Jira 搜索",
+      description: "查询 Jira issue",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/issues?query={{query}}",
+        method: "GET",
+        resultPath: "data.summary"
+      }
+    });
+
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      requestedUrls.push(url);
+      return new Response(
+        JSON.stringify({
+          data: {
+            summary: "custom tool ok"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    const result = await testChatTool("jira_search");
+    expect(result.success).toBeTrue();
+    expect(result.message).toContain("custom tool ok");
+    expect(requestedUrls[0]).toContain(encodeURIComponent("test connection"));
+  });
 });

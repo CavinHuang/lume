@@ -17,6 +17,7 @@ import type {
   ChatToolTestResult
 } from "@lume/shared";
 import { getChatToolsPath } from "./config-paths";
+import { executeHttpChatTool } from "./chat-tool-http-executor";
 
 const CHAT_TOOL_CONFIG_VERSION = 1;
 const TOOL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
@@ -426,7 +427,22 @@ export async function testChatTool(toolId: string): Promise<ChatToolTestResult> 
     return { success: false, message: `工具 ${toolId} 暂不支持测试` };
   }
 
-  return { success: false, message: `工具 ${toolId} 暂不支持自动测试，请在对话中实际调用验证` };
+  try {
+    const result = await executeHttpChatTool(customMeta, {
+      userMessage: "test connection",
+      credentials: config.toolCredentials[toolId] ?? {}
+    });
+    return {
+      success: true,
+      message: result.slice(0, 240) || `连接成功，工具 ${toolId} 可用`
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      message: `工具 ${toolId} 测试失败: ${message}`
+    };
+  }
 }
 
 export { BUILTIN_CHAT_TOOLS };

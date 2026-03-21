@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAtom } from "jotai";
 import { Brain, Globe, Trash2, Wrench } from "lucide-react";
+import type { ChatToolInfo } from "@lume/shared";
 import { chatToolsAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,16 +28,55 @@ function getToolIcon(iconName?: string): React.ReactElement {
   return <Wrench className="size-4 text-muted-foreground" />;
 }
 
+function extractCredentialKeysFromTemplate(template?: string): string[] {
+  if (!template) return [];
+  const regex = /\{\{\s*credential\.([a-zA-Z0-9_-]+)\s*\}\}/g;
+  const keys: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(template)) !== null) {
+    const key = (match[1] ?? "").trim();
+    if (key.length > 0) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
+function inferCredentialKeys(tool: ChatToolInfo): string[] {
+  const keys = new Set<string>();
+  const httpConfig = tool.meta.httpConfig;
+  for (const key of extractCredentialKeysFromTemplate(httpConfig?.urlTemplate)) {
+    keys.add(key);
+  }
+  for (const key of extractCredentialKeysFromTemplate(httpConfig?.bodyTemplate)) {
+    keys.add(key);
+  }
+  for (const headerValue of Object.values(httpConfig?.headers ?? {})) {
+    for (const key of extractCredentialKeysFromTemplate(headerValue)) {
+      keys.add(key);
+    }
+  }
+  return Array.from(keys);
+}
+
 export function ToolSettings(): React.ReactElement {
   const [tools, setTools] = useAtom(chatToolsAtom);
   const [loading, setLoading] = useState(false);
   const [testingWebSearch, setTestingWebSearch] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [credentialsDialogOpen, setCredentialsDialogOpen] = useState(false);
   const [creatingCustomTool, setCreatingCustomTool] = useState(false);
+  const [savingCustomCredentials, setSavingCustomCredentials] = useState(false);
+  const [testingCustomToolId, setTestingCustomToolId] = useState<string | null>(null);
+  const [customToolTestResults, setCustomToolTestResults] = useState<Record<string, { success: boolean; message: string }>>({});
   const [webSearchTestResult, setWebSearchTestResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
+  const [credentialToolId, setCredentialToolId] = useState<string | null>(null);
+  const [credentialDraft, setCredentialDraft] = useState<Record<string, string>>({});
+  const [credentialFieldNames, setCredentialFieldNames] = useState<string[]>([]);
+  const [newCredentialKey, setNewCredentialKey] = useState("");
   const [newCustomTool, setNewCustomTool] = useState<{
     id: string;
     name: string;
@@ -117,6 +157,10 @@ export function ToolSettings(): React.ReactElement {
   );
   const builtinTools = useMemo(() => tools.filter((item) => item.meta.category === "builtin"), [tools]);
   const customTools = useMemo(() => tools.filter((item) => item.meta.category === "custom"), [tools]);
+  const credentialTargetTool = useMemo(
+    () => customTools.find((tool) => tool.meta.id === credentialToolId) ?? null,
+    [customTools, credentialToolId]
+  );
 
   const refreshTools = async (): Promise<void> => {
     const next = await getChatTools();
@@ -131,6 +175,43 @@ export function ToolSettings(): React.ReactElement {
       urlTemplate: "",
       method: "GET"
     });
+  };
+
+  const openCustomCredentialsDialog = async (tool: ChatToolInfo): Promise<void> => {
+    try {
+      const credentials = await getChatToolCredentials(tool.meta.id);
+      const inferred = inferCredentialKeys(tool);
+      const keys = Array.from(new Set([...inferred, ...Object.keys(credentials)])).sort();
+      setCredentialToolId(tool.meta.id);
+      setCredentialDraft(credentials);
+      setCredentialFieldNames(keys);
+      setNewCredentialKey("");
+      setCredentialsDialogOpen(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const saveCustomCredentials = async (): Promise<void> => {
+    if (!credentialToolId) return;
+    setSavingCustomCredentials(true);
+    try {
+      await updateChatToolCredentials(credentialToolId, credentialDraft);
+      setErrorMessage(null);
+      setCredentialsDialogOpen(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingCustomCredentials(false);
+    }
+  };
+
+  const handleAddCredentialField = (): void => {
+    const key = newCredentialKey.trim();
+    if (!key) return;
+    setCredentialFieldNames((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    setCredentialDraft((prev) => ({ ...prev, [key]: prev[key] ?? "" }));
+    setNewCredentialKey("");
   };
 
   return (
@@ -376,6 +457,67 @@ export function ToolSettings(): React.ReactElement {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={credentialsDialogOpen} onOpenChange={setCredentialsDialogOpen}>
+          <DialogContent className="sm:max-w-[520px]">
+            <DialogHeader>
+              <DialogTitle>配置工具凭据{credentialTargetTool ? ` · ${credentialTargetTool.meta.name}` : ""}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              {credentialFieldNames.length === 0 ? (
+                <div className="rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  未检测到模板中的 `credential.*` 占位符，可手动新增凭据键。
+                </div>
+              ) : null}
+              {credentialFieldNames.map((key) => (
+                <div key={key} className="space-y-1.5">
+                  <Label htmlFor={`custom-credential-${key}`}>{key}</Label>
+                  <Input
+                    id={`custom-credential-${key}`}
+                    value={credentialDraft[key] ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setCredentialDraft((prev) => ({ ...prev, [key]: value }));
+                    }}
+                    placeholder={`请输入 ${key}`}
+                  />
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <Input
+                  value={newCredentialKey}
+                  onChange={(event) => setNewCredentialKey(event.target.value)}
+                  placeholder="新增凭据键名，例如 apiKey"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleAddCredentialField}
+                >
+                  新增
+                </Button>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setCredentialsDialogOpen(false);
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="button"
+                  disabled={savingCustomCredentials}
+                  onClick={() => { void saveCustomCredentials(); }}
+                >
+                  {savingCustomCredentials ? "保存中..." : "保存凭据"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <SettingsCard divided={false} className="p-0">
           {customTools.length === 0 ? (
             <div className="px-4 py-3 text-sm text-muted-foreground">暂无自定义工具</div>
@@ -394,8 +536,57 @@ export function ToolSettings(): React.ReactElement {
                     {tool.meta.httpConfig?.urlTemplate ? (
                       <p className="truncate text-xs text-muted-foreground/70">{tool.meta.httpConfig.urlTemplate}</p>
                     ) : null}
+                    {customToolTestResults[tool.meta.id] ? (
+                      <p className={customToolTestResults[tool.meta.id]?.success ? "mt-1 text-xs text-green-600" : "mt-1 text-xs text-destructive"}>
+                        {customToolTestResults[tool.meta.id]?.message}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { void openCustomCredentialsDialog(tool); }}
+                    >
+                      凭据
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={testingCustomToolId === tool.meta.id}
+                      onClick={() => {
+                        setTestingCustomToolId(tool.meta.id);
+                        setCustomToolTestResults((prev) => {
+                          const next = { ...prev };
+                          delete next[tool.meta.id];
+                          return next;
+                        });
+                        void testChatTool(tool.meta.id)
+                          .then((result) => {
+                            setCustomToolTestResults((prev) => ({
+                              ...prev,
+                              [tool.meta.id]: result
+                            }));
+                            setErrorMessage(null);
+                          })
+                          .catch((error) => {
+                            setCustomToolTestResults((prev) => ({
+                              ...prev,
+                              [tool.meta.id]: {
+                                success: false,
+                                message: error instanceof Error ? error.message : String(error)
+                              }
+                            }));
+                          })
+                          .finally(() => {
+                            setTestingCustomToolId((current) => (current === tool.meta.id ? null : current));
+                          });
+                      }}
+                    >
+                      {testingCustomToolId === tool.meta.id ? "测试中..." : "测试"}
+                    </Button>
                     <Switch
                       checked={tool.enabled}
                       onCheckedChange={(checked) => {
@@ -408,9 +599,9 @@ export function ToolSettings(): React.ReactElement {
                     />
                     <Button
                       type="button"
-                      size="icon"
+                      size="sm"
                       variant="ghost"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      className="text-muted-foreground hover:text-destructive"
                       onClick={() => {
                         void deleteCustomChatTool(tool.meta.id)
                           .then(refreshTools)
