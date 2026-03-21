@@ -93,6 +93,9 @@ export function ToolSelectorPopover(): React.ReactElement {
                       <span className={cn("truncate text-sm", !tool.available && "text-muted-foreground")}>
                         {tool.meta.name}
                       </span>
+                      {!tool.available ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">需配置</span>
+                      ) : null}
                     </div>
                     <p className="truncate text-[11px] text-muted-foreground">{tool.meta.description}</p>
                   </div>

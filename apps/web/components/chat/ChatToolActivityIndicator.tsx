@@ -1,8 +1,11 @@
 "use client";
 
+import { useMemo } from "react";
+import { useAtomValue } from "jotai";
 import { Brain, CheckCircle2, ChevronRight, Globe, Loader2, Sparkles, Wrench, XCircle } from "lucide-react";
 import type { ChatToolActivity } from "@lume/shared";
 import type { ReactElement } from "react";
+import { chatToolsAtom } from "@/atoms";
 import { MessageResponse } from "@/components/ai-elements";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
@@ -68,6 +71,12 @@ export function ChatToolActivityIndicator({
 }: {
   activities: ChatToolActivity[];
 }): ReactElement | null {
+  const toolInfos = useAtomValue(chatToolsAtom);
+  const toolNameMap = useMemo(
+    () => new Map(toolInfos.map((item) => [item.meta.id, item.meta.name] as const)),
+    [toolInfos]
+  );
+
   if (activities.length === 0) return null;
 
   const merged = new Map<string, MergedToolActivity>();
@@ -91,7 +100,11 @@ export function ChatToolActivityIndicator({
   return (
     <div className="mb-2 space-y-1">
       {items.map(([callId, item]) => {
-        const label = TOOL_LABELS[item.toolName] ?? { running: item.toolName, done: item.toolName };
+        const displayName = toolNameMap.get(item.toolName) ?? item.toolName;
+        const label = TOOL_LABELS[item.toolName] ?? {
+          running: `正在执行 ${displayName}...`,
+          done: `${displayName} 完成`
+        };
         const hasResult = item.done && item.result;
 
         if (hasResult) {
