@@ -12,16 +12,19 @@ import type {
 } from "@lume/shared";
 import { createConversation, getConversationMessages } from "./conversation-manager";
 import { sendMessage } from "./chat-service";
+import { updateChatToolCredentials } from "./chat-tool-manager";
 
 describe("chat-service tool activity", () => {
   let prevConfigDir: string | undefined;
   let prevMock: string | undefined;
   let prevMockText: string | undefined;
+  let prevFetch: typeof globalThis.fetch | undefined;
 
   beforeEach(() => {
     prevConfigDir = process.env.LUME_CONFIG_DIR;
     prevMock = process.env.LUME_CHAT_MOCK_SUCCESS;
     prevMockText = process.env.LUME_CHAT_MOCK_TEXT;
+    prevFetch = globalThis.fetch;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-chat-tool-activity-"));
     process.env.LUME_CHAT_MOCK_SUCCESS = "1";
     process.env.LUME_CHAT_MOCK_TEXT = "mock-response";
@@ -42,6 +45,9 @@ describe("chat-service tool activity", () => {
       delete process.env.LUME_CHAT_MOCK_TEXT;
     } else {
       process.env.LUME_CHAT_MOCK_TEXT = prevMockText;
+    }
+    if (prevFetch) {
+      globalThis.fetch = prevFetch;
     }
   });
 
@@ -84,5 +90,69 @@ describe("chat-service tool activity", () => {
     const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
     expect(lastAssistant).toBeDefined();
     expect(lastAssistant?.toolActivities?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  test("web_search 配置 brave key 后应优先使用 brave provider", async () => {
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      requestedUrls.push(url);
+      if (url.includes("api.search.brave.com")) {
+        return new Response(
+          JSON.stringify({
+            web: {
+              results: [
+                {
+                  title: "Brave Result",
+                  url: "https://example.com",
+                  description: "ok"
+                }
+              ]
+            }
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json"
+            }
+          }
+        );
+      }
+      return new Response("unexpected endpoint", { status: 500 });
+    }) as typeof fetch;
+
+    updateChatToolCredentials("web_search", {
+      braveApiKey: "brave-key",
+      tavilyApiKey: ""
+    });
+
+    const conversation = createConversation("工具活动 web_search provider 优先级");
+    const toolEvents: StreamToolActivityEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "查询今天最新的 AI 新闻",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestedUrls.length).toBeGreaterThan(0);
+    expect(requestedUrls[0]).toContain("api.search.brave.com");
+    expect(requestedUrls.some((url) => url.includes("duckduckgo.com"))).toBeFalse();
+
+    const resultEvent = toolEvents.find((event) => event.activity.type === "result");
+    expect(resultEvent).toBeDefined();
+    expect(resultEvent?.activity.result).toContain("[provider=brave]");
   });
 });

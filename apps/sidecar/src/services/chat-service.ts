@@ -268,32 +268,42 @@ async function searchWeb(query: string): Promise<{ provider: "duckduckgo" | "bra
   const braveApiKey = credentials.braveApiKey?.trim();
   const tavilyApiKey = credentials.tavilyApiKey?.trim();
 
-  try {
-    return {
-      provider: "duckduckgo",
-      result: await searchWebByDuckDuckGo(query)
-    };
-  } catch (primaryError) {
-    if (braveApiKey) {
-      try {
-        return {
-          provider: "brave",
-          result: await searchWebByBrave(query, braveApiKey)
-        };
-      } catch (fallbackError) {
-        if (!tavilyApiKey) throw fallbackError;
-      }
-    }
+  const attempts: Array<{
+    provider: "duckduckgo" | "brave" | "tavily";
+    run: () => Promise<string>;
+  }> = [];
 
-    if (tavilyApiKey) {
-      return {
-        provider: "tavily",
-        result: await searchWebByTavily(query, tavilyApiKey)
-      };
-    }
-
-    throw primaryError;
+  // 配置了 API Key 时优先使用对应 provider；未配置时默认 DuckDuckGo。
+  if (braveApiKey) {
+    attempts.push({
+      provider: "brave",
+      run: () => searchWebByBrave(query, braveApiKey)
+    });
   }
+  if (tavilyApiKey) {
+    attempts.push({
+      provider: "tavily",
+      run: () => searchWebByTavily(query, tavilyApiKey)
+    });
+  }
+  attempts.push({
+    provider: "duckduckgo",
+    run: () => searchWebByDuckDuckGo(query)
+  });
+
+  let lastError: unknown;
+  for (const attempt of attempts) {
+    try {
+      return {
+        provider: attempt.provider,
+        result: await attempt.run()
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw (lastError ?? new Error("web_search 未命中可用 provider"));
 }
 
 async function runEnabledToolsForChat(input: {

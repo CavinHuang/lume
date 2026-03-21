@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { cn } from "@/lib/utils";
 
 const TOOL_LABELS: Record<string, { running: string; done: string }> = {
+  memory_search: { running: "正在检索记忆...", done: "记忆检索完成" },
   recall_memory: { running: "正在回忆...", done: "回忆完成" },
   add_memory: { running: "正在记住...", done: "已记住" },
   web_search: { running: "正在搜索...", done: "搜索完成" },
@@ -15,7 +16,7 @@ const TOOL_LABELS: Record<string, { running: string; done: string }> = {
 };
 
 function getToolIcon(toolName: string): ReactElement {
-  if (toolName === "recall_memory" || toolName === "add_memory") {
+  if (toolName === "memory_search" || toolName === "recall_memory" || toolName === "add_memory") {
     return <Brain className="size-3" />;
   }
   if (toolName === "web_search") {
