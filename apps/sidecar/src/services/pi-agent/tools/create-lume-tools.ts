@@ -16,6 +16,7 @@ const OPENCLAW_ALIGNED_TOOL_NAMES = [
   "sessions_list",
   "sessions_history",
   "sessions_send",
+  "sessions_delete",
   "sessions_spawn",
   "session_status",
   "web_search",

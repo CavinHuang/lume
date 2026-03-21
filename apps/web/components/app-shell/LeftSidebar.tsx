@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { ChevronDown, ChevronRight, Pin, PinOff, Plus, Settings, Trash2, Pencil, Plug, Zap } from "lucide-react";
+import { ChevronDown, ChevronRight, Pin, PinOff, Plus, Settings, Trash2, Pencil, Plug, Zap, RefreshCw } from "lucide-react";
 import type { AgentSessionMeta, ConversationMeta } from "@lume/shared";
 import {
   activeViewAtom,
@@ -108,7 +108,25 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [editing, setEditing] = useState<EditingTarget>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  const [isRefreshingSessions, setIsRefreshingSessions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const refreshAgentSessions = async (): Promise<void> => {
+    try {
+      setIsRefreshingSessions(true);
+      const items = await listAgentSessions();
+      setAgentSessions(items);
+      setCurrentAgentSessionId((prev) => {
+        if (prev && items.some((item) => item.id === prev)) return prev;
+        return items[0]?.id ?? null;
+      });
+    } catch (error) {
+      console.error("[LeftSidebar] 刷新 Agent 会话失败:", error);
+      setInitError(`刷新 Agent 会话失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsRefreshingSessions(false);
+    }
+  };
 
   useEffect(() => {
     if (!editing) return;
@@ -124,13 +142,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       console.error("[LeftSidebar] 加载对话列表失败:", error);
       setInitError(`加载对话失败: ${error instanceof Error ? error.message : String(error)}`);
     });
-    void listAgentSessions().then((items) => {
-      setAgentSessions(items);
-      setCurrentAgentSessionId((prev) => prev ?? items[0]?.id ?? null);
-    }).catch((error) => {
-      console.error("[LeftSidebar] 加载 Agent 会话失败:", error);
-      setInitError(`加载 Agent 会话失败: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    void refreshAgentSessions();
     void (async () => {
       try {
         await ensureDefaultAgentWorkspace();
@@ -304,14 +316,28 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       ) : null}
 
       <div className="px-3 pt-2">
-        <button
-          type="button"
-          onClick={() => { void createNew(); }}
-          className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] border border-dashed border-foreground/10 bg-foreground/[0.04] px-3 py-2 text-[13px] font-medium text-foreground/70 transition-colors hover:border-foreground/20 hover:bg-foreground/[0.08]"
-        >
-          <Plus size={14} />
-          <span>{mode === "chat" ? "新对话" : "新会话"}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { void createNew(); }}
+            className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] border border-dashed border-foreground/10 bg-foreground/[0.04] px-3 py-2 text-[13px] font-medium text-foreground/70 transition-colors hover:border-foreground/20 hover:bg-foreground/[0.08]"
+          >
+            <Plus size={14} />
+            <span>{mode === "chat" ? "新对话" : "新会话"}</span>
+          </button>
+          {mode === "agent" ? (
+            <button
+              type="button"
+              title="刷新会话列表"
+              aria-label="刷新会话列表"
+              disabled={isRefreshingSessions}
+              onClick={() => { void refreshAgentSessions(); }}
+              className="titlebar-no-drag inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] border border-foreground/10 bg-foreground/[0.04] text-foreground/60 transition-colors hover:border-foreground/20 hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={cn(isRefreshingSessions ? "animate-spin" : "")} />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {mode === "chat" ? (

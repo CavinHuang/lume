@@ -3,7 +3,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { appendAgentMessage, createAgentSession } from "../../agent-session-manager";
+import {
+  appendAgentMessage,
+  createAgentSession,
+  getAgentSessionMeta
+} from "../../agent-session-manager";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 mock.module("undici", () => ({
@@ -69,6 +73,14 @@ describe("create-openclaw-aligned-tools", () => {
       const listDetails = listResult.details as { status?: string; error?: string };
       expect(listDetails.status).toBe("error");
       expect(listDetails.error).toContain("agents_list is not allowed from sub-agent sessions");
+
+      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
+      const deleteResult = await deleteTool.execute("tool-call-delete", {
+        sessionKey: "main"
+      });
+      const deleteDetails = deleteResult.details as { status?: string; error?: string };
+      expect(deleteDetails.status).toBe("error");
+      expect(deleteDetails.error).toContain("sessions_delete is not allowed from sub-agent sessions");
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -141,6 +153,178 @@ describe("create-openclaw-aligned-tools", () => {
       expect(details.count).toBe(2);
       expect(details.messages?.[0]?.content).toBe("hello");
       expect(details.messages?.[1]?.content).toBe("world");
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("sessions_delete 应支持通过 label 删除目标会话", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话");
+      const target = createAgentSession("目标会话");
+      appendAgentMessage(target.id, {
+        id: randomUUID(),
+        role: "user",
+        content: "待删除消息",
+        createdAt: Date.now()
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
+      const result = await deleteTool.execute("tool-call-4", {
+        label: "目标会话"
+      });
+      const details = result.details as {
+        status?: string;
+        deleted?: boolean;
+        sessionKey?: string;
+      };
+      expect(details.status).toBe("ok");
+      expect(details.deleted).toBe(true);
+      expect(details.sessionKey).toBe(target.id);
+      expect(getAgentSessionMeta(target.id)).toBeUndefined();
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("sessions_delete 不允许删除当前会话", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话");
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
+      const result = await deleteTool.execute("tool-call-5", {
+        sessionKey: current.id
+      });
+      const details = result.details as {
+        status?: string;
+        error?: string;
+      };
+      expect(details.status).toBe("error");
+      expect(details.error).toContain("不能删除当前会话");
+      expect(getAgentSessionMeta(current.id)?.id).toBe(current.id);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("sessions_delete 应支持通过 sessionKeys 批量删除", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话");
+      const targetA = createAgentSession("目标会话-A");
+      const targetB = createAgentSession("目标会话-B");
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
+      const result = await deleteTool.execute("tool-call-6", {
+        sessionKeys: [targetA.id, targetB.id]
+      });
+      const details = result.details as {
+        status?: string;
+        deleted?: boolean;
+        deletedCount?: number;
+        sessionKeys?: string[];
+      };
+      expect(details.status).toBe("ok");
+      expect(details.deleted).toBe(true);
+      expect(details.deletedCount).toBe(2);
+      expect(details.sessionKeys).toEqual([targetA.id, targetB.id]);
+      expect(getAgentSessionMeta(targetA.id)).toBeUndefined();
+      expect(getAgentSessionMeta(targetB.id)).toBeUndefined();
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("sessions_delete 输入 label 时应删除所有同名会话", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话");
+      const targetA = createAgentSession("同名会话");
+      const targetB = createAgentSession("同名会话");
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
+      const result = await deleteTool.execute("tool-call-7", {
+        label: "同名会话"
+      });
+      const details = result.details as {
+        status?: string;
+        deleted?: boolean;
+        deletedCount?: number;
+        sessionKeys?: string[];
+      };
+      expect(details.status).toBe("ok");
+      expect(details.deleted).toBe(true);
+      expect(details.deletedCount).toBe(2);
+      expect([...(details.sessionKeys ?? [])].sort()).toEqual([targetA.id, targetB.id].sort());
+      expect(getAgentSessionMeta(targetA.id)).toBeUndefined();
+      expect(getAgentSessionMeta(targetB.id)).toBeUndefined();
+      expect(getAgentSessionMeta(current.id)?.id).toBe(current.id);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("sessions_delete 批量删除包含当前会话时应拒绝", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话");
+      const target = createAgentSession("目标会话");
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
+      const result = await deleteTool.execute("tool-call-8", {
+        sessionKeys: [target.id, current.id]
+      });
+      const details = result.details as {
+        status?: string;
+        error?: string;
+      };
+      expect(details.status).toBe("error");
+      expect(details.error).toContain("不能删除当前会话");
+      expect(getAgentSessionMeta(current.id)?.id).toBe(current.id);
+      expect(getAgentSessionMeta(target.id)?.id).toBe(target.id);
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;

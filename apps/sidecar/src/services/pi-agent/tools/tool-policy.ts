@@ -32,6 +32,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
     "sessions_list",
     "sessions_history",
     "sessions_send",
+    "sessions_delete",
     "sessions_spawn",
     "session_status"
   ],
@@ -44,6 +45,7 @@ const DEFAULT_SUBAGENT_POLICY: ToolPolicy = {
     "sessions_list",
     "sessions_history",
     "sessions_send",
+    "sessions_delete",
     "sessions_spawn",
     "session_status"
   ]

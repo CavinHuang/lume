@@ -81,6 +81,7 @@ const SUBAGENT_BLOCKED_TOOL_NAMES = new Set([
   "sessions_list",
   "sessions_history",
   "sessions_send",
+  "sessions_delete",
   "sessions_spawn",
   "session_status"
 ]);
@@ -368,6 +369,14 @@ function resolveSessionByLabel(label: string): string | null {
   if (!normalized) return null;
   const matched = listAgentSessions().find((session) => session.title.trim().toLowerCase() === normalized);
   return matched?.id ?? null;
+}
+
+function resolveSessionIdsByLabel(label: string): string[] {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized) return [];
+  return listAgentSessions()
+    .filter((session) => session.title.trim().toLowerCase() === normalized)
+    .map((session) => session.id);
 }
 
 function resolveSessionTarget(input: ResolveSessionTargetInput): {
@@ -811,6 +820,143 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           usageEvents: runResult.usageEvents,
           output: runResult.runText,
           ...(runResult.error ? { error: runResult.error } : {})
+        });
+      }
+    },
+    {
+      name: "sessions_delete",
+      label: "sessions_delete",
+      description: "Delete an existing session and its persisted data.",
+      parameters: Type.Object({
+        sessionKey: Type.Optional(Type.String()),
+        sessionKeys: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+        label: Type.Optional(Type.String()),
+        labels: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+        agentId: Type.Optional(Type.String())
+      }),
+      async execute(_toolCallId, args) {
+        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_delete")) {
+          return buildSubagentBlockedResult("sessions_delete");
+        }
+        const params = (args ?? {}) as Record<string, unknown>;
+        const singleSessionKey = typeof params.sessionKey === "string" ? params.sessionKey.trim() : "";
+        const hasSessionKey = singleSessionKey.length > 0;
+        const sessionKeys = Array.isArray(params.sessionKeys)
+          ? params.sessionKeys
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+          : [];
+        const singleLabel = typeof params.label === "string" ? params.label.trim() : "";
+        const hasLabel = singleLabel.length > 0;
+        const labels = Array.isArray(params.labels)
+          ? params.labels
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+          : [];
+        const hasBatchSessionKeys = sessionKeys.length > 0;
+        const hasBatchLabels = labels.length > 0;
+        if (!hasSessionKey && !hasLabel && !hasBatchSessionKeys && !hasBatchLabels) {
+          return toTextResult({
+            status: "error",
+            error: "Either sessionKey/label or sessionKeys/labels is required"
+          });
+        }
+
+        const resolvedSessionIds: string[] = [];
+        const seen = new Set<string>();
+        const agentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
+
+        const appendSessionId = (sessionId: string): void => {
+          if (seen.has(sessionId)) return;
+          seen.add(sessionId);
+          resolvedSessionIds.push(sessionId);
+        };
+
+        if (hasSessionKey) {
+          appendSessionId(pickSessionId(singleSessionKey, input.sessionId));
+        }
+        for (const item of sessionKeys) {
+          appendSessionId(pickSessionId(item, input.sessionId));
+        }
+
+        const allLabels: string[] = [];
+        if (hasLabel) allLabels.push(singleLabel);
+        allLabels.push(...labels);
+        for (const targetLabel of allLabels) {
+          if (agentId) {
+            return toTextResult({
+              status: "error",
+              error: "当前 Lume 尚未实现 label + agentId 的联合解析，请直接传 sessionKey。"
+            });
+          }
+          const matchedIds = resolveSessionIdsByLabel(targetLabel);
+          if (matchedIds.length === 0) {
+            return toTextResult({
+              status: "error",
+              error: `No session found with label: ${targetLabel}`
+            });
+          }
+          for (const matchedId of matchedIds) {
+            appendSessionId(matchedId);
+          }
+        }
+        if (resolvedSessionIds.length === 0) {
+          return toTextResult({
+            status: "error",
+            error: "未解析到可删除的会话"
+          });
+        }
+        if (resolvedSessionIds.includes(input.sessionId)) {
+          return toTextResult({
+            status: "error",
+            error: "不能删除当前会话"
+          });
+        }
+
+        const metas = resolvedSessionIds.map((sessionId) => ({
+          sessionId,
+          meta: getAgentSessionMeta(sessionId)
+        }));
+        const missing = metas.find((item) => !item.meta);
+        if (missing) {
+          return toTextResult({
+            status: "not_found",
+            error: `Session not found: ${missing.sessionId}`
+          });
+        }
+
+        const deletedSessionKeys: string[] = [];
+        const deletedTitles: string[] = [];
+        try {
+          for (const item of metas) {
+            deleteAgentSession(item.sessionId);
+            deletedSessionKeys.push(item.sessionId);
+            deletedTitles.push(item.meta?.title ?? "");
+          }
+        } catch (error) {
+          return toTextResult({
+            status: "error",
+            error: `删除会话失败: ${error instanceof Error ? error.message : String(error)}`,
+            deletedCount: deletedSessionKeys.length,
+            sessionKeys: deletedSessionKeys
+          });
+        }
+        if (deletedSessionKeys.length === 1) {
+          return toTextResult({
+            status: "ok",
+            deleted: true,
+            sessionKey: deletedSessionKeys[0],
+            title: deletedTitles[0]
+          });
+        }
+        return toTextResult({
+          status: "ok",
+          deleted: true,
+          deletedCount: deletedSessionKeys.length,
+          sessionKeys: deletedSessionKeys,
+          titles: deletedTitles
         });
       }
     },

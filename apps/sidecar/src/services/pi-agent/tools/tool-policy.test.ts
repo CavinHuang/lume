@@ -97,6 +97,7 @@ describe("tool-policy", () => {
         "sessions_list",
         "sessions_history",
         "sessions_send",
+        "sessions_delete",
         "sessions_spawn",
         "session_status"
       ]);

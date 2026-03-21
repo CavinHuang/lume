@@ -279,6 +279,13 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
+  name: "sessions_delete",
+  category: "write",
+  riskLevel: "medium",
+  description: "删除会话及其数据"
+});
+
+registerToolMetadata({
   name: "sessions_spawn",
   category: "execute",
   riskLevel: "medium",
