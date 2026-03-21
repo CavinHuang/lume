@@ -12,7 +12,7 @@ import type {
 } from "@lume/shared";
 import { createConversation, getConversationMessages } from "./conversation-manager";
 import { sendMessage } from "./chat-service";
-import { updateChatToolCredentials } from "./chat-tool-manager";
+import { createCustomChatTool, updateChatToolCredentials, updateChatToolState } from "./chat-tool-manager";
 
 describe("chat-service tool activity", () => {
   let prevConfigDir: string | undefined;
@@ -154,5 +154,77 @@ describe("chat-service tool activity", () => {
     const resultEvent = toolEvents.find((event) => event.activity.type === "result");
     expect(resultEvent).toBeDefined();
     expect(resultEvent?.activity.result).toContain("[provider=brave]");
+  });
+
+  test("启用自定义 HTTP 工具时应执行并输出工具活动", async () => {
+    createCustomChatTool({
+      id: "jira_search",
+      name: "Jira 搜索",
+      description: "查询 Jira 工单",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/issues?query={{query}}",
+        method: "GET",
+        resultPath: "data.summary"
+      }
+    });
+    updateChatToolState("jira_search", { enabled: true });
+
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      requestedUrls.push(url);
+      return new Response(
+        JSON.stringify({
+          data: {
+            summary: "共找到 3 条 issue"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    const conversation = createConversation("自定义工具活动测试");
+    const toolEvents: StreamToolActivityEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请查询本周迭代问题单",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["jira_search"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestedUrls.length).toBe(1);
+    expect(requestedUrls[0]).toContain("https://example.com/issues?query=");
+    expect(requestedUrls[0]).toContain(encodeURIComponent("请查询本周迭代问题单"));
+
+    const startEvent = toolEvents.find((event) => event.activity.type === "start");
+    const resultEvent = toolEvents.find((event) => event.activity.type === "result");
+    expect(startEvent?.activity.toolName).toBe("jira_search");
+    expect(resultEvent?.activity.toolName).toBe("jira_search");
+    expect(resultEvent?.activity.isError).toBeUndefined();
+    expect(resultEvent?.activity.result).toContain("共找到 3 条 issue");
+
+    const messages = getConversationMessages(conversation.id);
+    const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
+    const persisted = lastAssistant?.toolActivities ?? [];
+    expect(persisted.some((item) => item.toolName === "jira_search" && item.type === "result")).toBeTrue();
   });
 });
