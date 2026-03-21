@@ -156,4 +156,30 @@ describe("chat-tool-manager", () => {
     expect(result.message).toContain("custom tool ok");
     expect(requestedUrls[0]).toContain(encodeURIComponent("test connection"));
   });
+
+  test("自定义工具存在 credential 占位符但未配置时应标记为不可用", () => {
+    createCustomChatTool({
+      id: "internal_search",
+      name: "内部搜索",
+      description: "查询内部搜索接口",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/search?q={{query}}",
+        method: "GET",
+        headers: {
+          Authorization: "Bearer {{credential.apiToken}}"
+        }
+      }
+    });
+
+    let tools = getAllChatToolInfos();
+    let custom = tools.find((item) => item.meta.id === "internal_search");
+    expect(custom?.available).toBeFalse();
+
+    updateChatToolCredentials("internal_search", { apiToken: "token-123" });
+    tools = getAllChatToolInfos();
+    custom = tools.find((item) => item.meta.id === "internal_search");
+    expect(custom?.available).toBeTrue();
+  });
 });

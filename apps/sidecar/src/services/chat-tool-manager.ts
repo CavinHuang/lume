@@ -47,6 +47,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function extractCredentialKeysFromTemplate(template?: string): string[] {
+  if (!template) return [];
+  const regex = /\{\{\s*credential\.([a-zA-Z0-9_-]+)\s*\}\}/g;
+  const keys: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(template)) !== null) {
+    const key = (match[1] ?? "").trim();
+    if (key.length > 0) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
+function getRequiredCredentialKeys(meta: ChatToolMeta): string[] {
+  if (meta.executorType !== "http" || !meta.httpConfig) return [];
+  const keys = new Set<string>();
+  for (const key of extractCredentialKeysFromTemplate(meta.httpConfig.urlTemplate)) {
+    keys.add(key);
+  }
+  for (const key of extractCredentialKeysFromTemplate(meta.httpConfig.bodyTemplate)) {
+    keys.add(key);
+  }
+  for (const value of Object.values(meta.httpConfig.headers ?? {})) {
+    for (const key of extractCredentialKeysFromTemplate(value)) {
+      keys.add(key);
+    }
+  }
+  return Array.from(keys);
+}
+
 function normalizeHttpConfig(raw: unknown): ChatToolHttpConfig | undefined {
   if (!isRecord(raw)) return undefined;
   const urlTemplate = typeof raw.urlTemplate === "string" ? raw.urlTemplate.trim() : "";
@@ -242,10 +273,16 @@ function assertKnownToolId(toolId: string, config?: ChatToolFileConfig): ChatToo
   return current;
 }
 
-function isToolAvailable(toolId: string, _credentials: Record<string, string>): boolean {
+function isToolAvailable(meta: ChatToolMeta, credentials: Record<string, string>): boolean {
+  const toolId = meta.id;
   if (toolId === "web_search") {
     // DuckDuckGo provider 不依赖 API key，默认可用。
     return true;
+  }
+  if (meta.category === "custom") {
+    const required = getRequiredCredentialKeys(meta);
+    if (required.length === 0) return true;
+    return required.every((key) => (credentials[key] ?? "").trim().length > 0);
   }
   return true;
 }
@@ -257,7 +294,7 @@ export function getAllChatToolInfos(): ChatToolInfo[] {
     return {
       meta,
       enabled: config.toolStates[meta.id]?.enabled === true,
-      available: isToolAvailable(meta.id, credentials)
+      available: isToolAvailable(meta, credentials)
     };
   });
 }
