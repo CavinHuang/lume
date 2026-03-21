@@ -83,12 +83,20 @@ export function ToolSettings(): React.ReactElement {
     description: string;
     urlTemplate: string;
     method: "GET" | "POST";
+    headersJson: string;
+    bodyTemplate: string;
+    resultPath: string;
+    systemPromptAppend: string;
   }>({
     id: "",
     name: "",
     description: "",
     urlTemplate: "",
-    method: "GET"
+    method: "GET",
+    headersJson: "",
+    bodyTemplate: "",
+    resultPath: "",
+    systemPromptAppend: ""
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [webCredentials, setWebCredentials] = useState<{ braveApiKey: string; tavilyApiKey: string }>({
@@ -173,7 +181,11 @@ export function ToolSettings(): React.ReactElement {
       name: "",
       description: "",
       urlTemplate: "",
-      method: "GET"
+      method: "GET",
+      headersJson: "",
+      bodyTemplate: "",
+      resultPath: "",
+      systemPromptAppend: ""
     });
   };
 
@@ -404,6 +416,50 @@ export function ToolSettings(): React.ReactElement {
                   <option value="POST">POST</option>
                 </select>
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-headers-json">Headers（可选 JSON）</Label>
+                <Input
+                  id="custom-tool-headers-json"
+                  placeholder='例如: {"Authorization":"Bearer {{credential.apiKey}}"}'
+                  value={newCustomTool.headersJson}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, headersJson: event.target.value }));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-body-template">Body 模板（可选）</Label>
+                <Input
+                  id="custom-tool-body-template"
+                  placeholder='例如: {"query":"{{query}}"}'
+                  value={newCustomTool.bodyTemplate}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, bodyTemplate: event.target.value }));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-result-path">结果路径（可选）</Label>
+                <Input
+                  id="custom-tool-result-path"
+                  placeholder="例如: data.items"
+                  value={newCustomTool.resultPath}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, resultPath: event.target.value }));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-system-prompt-append">System Prompt 附加（可选）</Label>
+                <Input
+                  id="custom-tool-system-prompt-append"
+                  placeholder="例如: 查询失败时请明确说明重试建议"
+                  value={newCustomTool.systemPromptAppend}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, systemPromptAppend: event.target.value }));
+                  }}
+                />
+              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button
                   type="button"
@@ -418,6 +474,31 @@ export function ToolSettings(): React.ReactElement {
                   type="button"
                   disabled={creatingCustomTool}
                   onClick={() => {
+                    let headers: Record<string, string> | undefined;
+                    const headersJson = newCustomTool.headersJson.trim();
+                    if (headersJson.length > 0) {
+                      try {
+                        const parsed = JSON.parse(headersJson) as unknown;
+                        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                          setErrorMessage("Headers JSON 必须是对象");
+                          return;
+                        }
+                        const entries = Object.entries(parsed as Record<string, unknown>);
+                        const invalid = entries.find((entry) => typeof entry[1] !== "string");
+                        if (invalid) {
+                          setErrorMessage(`Headers 字段 ${invalid[0]} 必须是字符串`);
+                          return;
+                        }
+                        headers = Object.fromEntries(entries as Array<[string, string]>);
+                      } catch (error) {
+                        setErrorMessage(error instanceof Error ? `Headers JSON 解析失败: ${error.message}` : "Headers JSON 解析失败");
+                        return;
+                      }
+                    }
+
+                    const bodyTemplate = newCustomTool.bodyTemplate.trim();
+                    const resultPath = newCustomTool.resultPath.trim();
+                    const systemPromptAppend = newCustomTool.systemPromptAppend.trim();
                     const payload = {
                       id: newCustomTool.id.trim(),
                       name: newCustomTool.name.trim(),
@@ -426,8 +507,12 @@ export function ToolSettings(): React.ReactElement {
                       executorType: "http" as const,
                       httpConfig: {
                         urlTemplate: newCustomTool.urlTemplate.trim(),
-                        method: newCustomTool.method
-                      }
+                        method: newCustomTool.method,
+                        headers,
+                        bodyTemplate: bodyTemplate.length > 0 ? bodyTemplate : undefined,
+                        resultPath: resultPath.length > 0 ? resultPath : undefined
+                      },
+                      systemPromptAppend: systemPromptAppend.length > 0 ? systemPromptAppend : undefined
                     };
                     if (!payload.id || !payload.name || !payload.description || !payload.httpConfig.urlTemplate) {
                       setErrorMessage("请完整填写工具 ID、名称、描述与 URL 模板");
