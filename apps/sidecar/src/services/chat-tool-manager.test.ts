@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  createCustomChatTool,
+  deleteCustomChatTool,
   getAllChatToolInfos,
   getChatToolCredentials,
   testChatTool,
@@ -72,5 +74,47 @@ describe("chat-tool-manager", () => {
     const result = await testChatTool("web_search");
     expect(result.success).toBeTrue();
     expect(requestedUrl).toContain("duckduckgo.com");
+  });
+
+  test("应支持新增并读取自定义工具", () => {
+    createCustomChatTool({
+      id: "jira_search",
+      name: "Jira 搜索",
+      description: "查询 Jira issue",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/issues?query={{q}}",
+        method: "GET"
+      }
+    });
+
+    const tools = getAllChatToolInfos();
+    const custom = tools.find((item) => item.meta.id === "jira_search");
+    expect(custom).toBeDefined();
+    expect(custom?.meta.category).toBe("custom");
+    expect(custom?.enabled).toBeFalse();
+  });
+
+  test("应支持删除自定义工具并清理配置", () => {
+    createCustomChatTool({
+      id: "jira_search",
+      name: "Jira 搜索",
+      description: "查询 Jira issue",
+      category: "custom",
+      executorType: "http",
+      httpConfig: {
+        urlTemplate: "https://example.com/issues?query={{q}}",
+        method: "GET"
+      }
+    });
+    updateChatToolState("jira_search", { enabled: true });
+    updateChatToolCredentials("jira_search", { token: "secret" });
+
+    deleteCustomChatTool("jira_search");
+
+    const tools = getAllChatToolInfos();
+    expect(tools.some((item) => item.meta.id === "jira_search")).toBeFalse();
+    expect(() => getChatToolCredentials("jira_search")).toThrow();
   });
 });

@@ -61,6 +61,8 @@ import {
   updateSystemPrompt
 } from "./services/system-prompt-manager";
 import {
+  createCustomChatTool,
+  deleteCustomChatTool,
   getAllChatToolInfos,
   getChatToolCredentials,
   testChatTool,
@@ -353,6 +355,34 @@ const chatToolCredentialsUpdateInputSchema = z.object({
 
 const chatToolIdInputSchema = z.object({
   toolId: idSchema
+});
+
+const chatToolMetaSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  icon: z.string().optional(),
+  category: z.enum(["builtin", "custom"]),
+  params: z.array(z.object({
+    name: z.string().min(1),
+    type: z.enum(["string", "number", "boolean"]),
+    description: z.string().min(1),
+    required: z.boolean().optional(),
+    enum: z.array(z.string()).optional()
+  })).optional(),
+  executorType: z.enum(["builtin", "http"]).optional(),
+  httpConfig: z.object({
+    urlTemplate: z.string().min(1),
+    method: z.enum(["GET", "POST"]),
+    headers: z.record(z.string(), z.string()).optional(),
+    bodyTemplate: z.string().optional(),
+    resultPath: z.string().optional()
+  }).optional(),
+  systemPromptAppend: z.string().optional()
+});
+
+const chatToolCreateCustomInputSchema = z.object({
+  meta: chatToolMetaSchema
 });
 
 const agentSendInputSchema = z.object({
@@ -821,6 +851,20 @@ const handlers: Record<string, RpcHandler> = {
   [CHAT_TOOL_IPC_CHANNELS.TEST_TOOL]: async (params) => {
     const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.TEST_TOOL);
     return testChatTool(input.toolId);
+  },
+  [CHAT_TOOL_IPC_CHANNELS.CREATE_CUSTOM_TOOL]: async (params) => {
+    const input = validateInput(
+      chatToolCreateCustomInputSchema,
+      params,
+      CHAT_TOOL_IPC_CHANNELS.CREATE_CUSTOM_TOOL
+    );
+    createCustomChatTool(input.meta);
+    return { ok: true };
+  },
+  [CHAT_TOOL_IPC_CHANNELS.DELETE_CUSTOM_TOOL]: async (params) => {
+    const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.DELETE_CUSTOM_TOOL);
+    deleteCustomChatTool(input.toolId);
+    return { ok: true };
   },
 
   [SYSTEM_PROMPT_IPC_CHANNELS.GET_CONFIG]: async () => getSystemPromptConfig(),

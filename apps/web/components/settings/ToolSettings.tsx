@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAtom } from "jotai";
-import { Brain, Globe, Wrench } from "lucide-react";
+import { Brain, Globe, Trash2, Wrench } from "lucide-react";
 import { chatToolsAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
+  deleteCustomChatTool,
   getChatToolCredentials,
   getChatTools,
   testChatTool,
@@ -66,6 +67,8 @@ export function ToolSettings(): React.ReactElement {
     () => tools.find((item) => item.meta.id === "web_search")?.enabled ?? false,
     [tools]
   );
+  const builtinTools = useMemo(() => tools.filter((item) => item.meta.category === "builtin"), [tools]);
+  const customTools = useMemo(() => tools.filter((item) => item.meta.category === "custom"), [tools]);
 
   const refreshTools = async (): Promise<void> => {
     const next = await getChatTools();
@@ -80,7 +83,7 @@ export function ToolSettings(): React.ReactElement {
             <div className="px-4 py-3 text-sm text-muted-foreground">加载中...</div>
           ) : (
             <div className="divide-y divide-border/50">
-              {tools.map((tool) => (
+              {builtinTools.map((tool) => (
                 <div key={tool.meta.id} className="flex items-center justify-between px-4 py-3">
                   <div className="mr-4 flex min-w-0 items-center gap-2">
                     {getToolIcon(tool.meta.icon)}
@@ -182,6 +185,58 @@ export function ToolSettings(): React.ReactElement {
           </div>
         </SettingsCard>
       </SettingsSection>
+
+      {customTools.length > 0 ? (
+        <SettingsSection title="自定义工具" description="由 Agent/扩展写入的 HTTP 工具定义">
+          <SettingsCard divided={false} className="p-0">
+            <div className="divide-y divide-border/50">
+              {customTools.map((tool) => (
+                <div key={tool.meta.id} className="flex items-center justify-between px-4 py-3">
+                  <div className="mr-4 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium">{tool.meta.name}</p>
+                      {tool.meta.httpConfig?.method ? (
+                        <span className="text-xs text-muted-foreground">{tool.meta.httpConfig.method}</span>
+                      ) : null}
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">{tool.meta.description}</p>
+                    {tool.meta.httpConfig?.urlTemplate ? (
+                      <p className="truncate text-xs text-muted-foreground/70">{tool.meta.httpConfig.urlTemplate}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={tool.enabled}
+                      onCheckedChange={(checked) => {
+                        void updateChatToolState(tool.meta.id, { enabled: checked })
+                          .then(refreshTools)
+                          .catch((error) => {
+                            setErrorMessage(error instanceof Error ? error.message : String(error));
+                          });
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        void deleteCustomChatTool(tool.meta.id)
+                          .then(refreshTools)
+                          .catch((error) => {
+                            setErrorMessage(error instanceof Error ? error.message : String(error));
+                          });
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SettingsCard>
+        </SettingsSection>
+      ) : null}
 
       {errorMessage ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
