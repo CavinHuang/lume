@@ -11,6 +11,7 @@ import {
   deleteCustomChatTool,
   getChatToolCredentials,
   getChatTools,
+  onChatToolChanged,
   testChatTool,
   updateChatToolCredentials,
   updateChatToolState
@@ -60,6 +61,35 @@ export function ToolSettings(): React.ReactElement {
       });
     return () => {
       cancelled = true;
+    };
+  }, [setTools]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void onChatToolChanged(() => {
+      void getChatTools().then((toolInfos) => {
+        if (!disposed) {
+          setTools(toolInfos);
+        }
+      }).catch((error) => {
+        console.error("[ToolSettings] 工具配置变更刷新失败:", error);
+      });
+    }).then((fn) => {
+      if (disposed) {
+        void fn();
+        return;
+      }
+      unlisten = fn;
+    }).catch((error) => {
+      console.error("[ToolSettings] 订阅工具配置变更失败:", error);
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        void unlisten();
+      }
     };
   }, [setTools]);
 

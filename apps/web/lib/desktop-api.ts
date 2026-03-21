@@ -36,6 +36,7 @@ import type {
   ChatToolInfo,
   ChatToolMeta,
   ChatToolState,
+  ChatToolChangedEvent,
   ChatToolTestResult,
   FeishuGatewayConfigInput,
   FeishuGatewayConfigView,
@@ -622,6 +623,14 @@ export async function createCustomChatTool(meta: ChatToolMeta): Promise<{ ok: tr
 
 export async function deleteCustomChatTool(toolId: string): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(CHAT_TOOL_IPC_CHANNELS.DELETE_CUSTOM_TOOL, { toolId });
+}
+
+export async function onChatToolChanged(
+  handler: (event: ChatToolChangedEvent) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(CHAT_TOOL_IPC_CHANNELS.CUSTOM_TOOL_CHANGED, (params) => {
+    handler(params as ChatToolChangedEvent);
+  });
 }
 
 export async function listAgentSessions(): Promise<AgentSessionMeta[]> {

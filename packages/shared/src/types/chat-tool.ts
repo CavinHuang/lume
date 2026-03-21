@@ -83,6 +83,13 @@ export interface ChatToolTestResult {
   message: string
 }
 
+export interface ChatToolChangedEvent {
+  /** 变更工具 ID */
+  toolId: string
+  /** 变更类型 */
+  changeType: "state" | "credentials" | "create" | "delete"
+}
+
 export const CHAT_TOOL_IPC_CHANNELS = {
   /** 获取所有工具信息 */
   GET_ALL_TOOLS: "chat-tool:get-all-tools",
@@ -97,5 +104,7 @@ export const CHAT_TOOL_IPC_CHANNELS = {
   /** 创建自定义工具 */
   CREATE_CUSTOM_TOOL: "chat-tool:create-custom",
   /** 删除自定义工具 */
-  DELETE_CUSTOM_TOOL: "chat-tool:delete-custom"
+  DELETE_CUSTOM_TOOL: "chat-tool:delete-custom",
+  /** 工具配置变更通知 */
+  CUSTOM_TOOL_CHANGED: "chat-tool:changed"
 } as const

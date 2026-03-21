@@ -41,6 +41,7 @@ import {
   onChatStreamError,
   onChatStreamReasoning,
   onChatStreamToolActivity,
+  onChatToolChanged,
   sendChatMessage,
   stopChatGeneration,
   truncateConversationMessagesFrom,
@@ -113,6 +114,35 @@ export function ChatView(): React.ReactElement {
     }).catch((error) => {
       console.error("[ChatView] 加载工具配置失败:", error);
     });
+  }, [setChatTools]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void onChatToolChanged(() => {
+      void getChatTools().then((tools) => {
+        if (!disposed) {
+          setChatTools(tools);
+        }
+      }).catch((error) => {
+        console.error("[ChatView] 工具配置变更刷新失败:", error);
+      });
+    }).then((fn) => {
+      if (disposed) {
+        void fn();
+        return;
+      }
+      unlisten = fn;
+    }).catch((error) => {
+      console.error("[ChatView] 订阅工具配置变更失败:", error);
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        void unlisten();
+      }
+    };
   }, [setChatTools]);
 
   useEffect(() => {

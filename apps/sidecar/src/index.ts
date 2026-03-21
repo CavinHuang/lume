@@ -837,6 +837,10 @@ const handlers: Record<string, RpcHandler> = {
   [CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_STATE]: async (params) => {
     const input = validateInput(chatToolStateUpdateInputSchema, params, CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_STATE);
     updateChatToolState(input.toolId, input.state);
+    writeNotification(CHAT_TOOL_IPC_CHANNELS.CUSTOM_TOOL_CHANGED, {
+      toolId: input.toolId,
+      changeType: "state"
+    });
     return { ok: true };
   },
   [CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_CREDENTIALS]: async (params) => {
@@ -846,6 +850,10 @@ const handlers: Record<string, RpcHandler> = {
       CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_CREDENTIALS
     );
     updateChatToolCredentials(input.toolId, input.credentials);
+    writeNotification(CHAT_TOOL_IPC_CHANNELS.CUSTOM_TOOL_CHANGED, {
+      toolId: input.toolId,
+      changeType: "credentials"
+    });
     return { ok: true };
   },
   [CHAT_TOOL_IPC_CHANNELS.TEST_TOOL]: async (params) => {
@@ -859,11 +867,19 @@ const handlers: Record<string, RpcHandler> = {
       CHAT_TOOL_IPC_CHANNELS.CREATE_CUSTOM_TOOL
     );
     createCustomChatTool(input.meta);
+    writeNotification(CHAT_TOOL_IPC_CHANNELS.CUSTOM_TOOL_CHANGED, {
+      toolId: input.meta.id,
+      changeType: "create"
+    });
     return { ok: true };
   },
   [CHAT_TOOL_IPC_CHANNELS.DELETE_CUSTOM_TOOL]: async (params) => {
     const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.DELETE_CUSTOM_TOOL);
     deleteCustomChatTool(input.toolId);
+    writeNotification(CHAT_TOOL_IPC_CHANNELS.CUSTOM_TOOL_CHANGED, {
+      toolId: input.toolId,
+      changeType: "delete"
+    });
     return { ok: true };
   },
 
