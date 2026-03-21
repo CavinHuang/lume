@@ -35,6 +35,7 @@ import type {
   ChannelSessionBinding,
   ChatToolInfo,
   ChatToolState,
+  ChatToolTestResult,
   FeishuGatewayConfigInput,
   FeishuGatewayConfigView,
   FeishuGatewayTestResult,
@@ -608,6 +609,10 @@ export async function updateChatToolCredentials(
   credentials: Record<string, string>
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_CREDENTIALS, { toolId, credentials });
+}
+
+export async function testChatTool(toolId: string): Promise<ChatToolTestResult> {
+  return sidecarCall<ChatToolTestResult>(CHAT_TOOL_IPC_CHANNELS.TEST_TOOL, { toolId });
 }
 
 export async function listAgentSessions(): Promise<AgentSessionMeta[]> {

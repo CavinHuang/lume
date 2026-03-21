@@ -40,6 +40,13 @@ export interface ChatToolInfo {
   available: boolean
 }
 
+export interface ChatToolTestResult {
+  /** 测试是否成功 */
+  success: boolean
+  /** 结果说明 */
+  message: string
+}
+
 export const CHAT_TOOL_IPC_CHANNELS = {
   /** 获取所有工具信息 */
   GET_ALL_TOOLS: "chat-tool:get-all-tools",
@@ -48,5 +55,7 @@ export const CHAT_TOOL_IPC_CHANNELS = {
   /** 更新单个工具开关状态 */
   UPDATE_TOOL_STATE: "chat-tool:update-state",
   /** 更新单个工具凭据 */
-  UPDATE_TOOL_CREDENTIALS: "chat-tool:update-credentials"
+  UPDATE_TOOL_CREDENTIALS: "chat-tool:update-credentials",
+  /** 测试工具连接/可用性 */
+  TEST_TOOL: "chat-tool:test"
 } as const

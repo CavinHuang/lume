@@ -4,11 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useAtom } from "jotai";
 import { Brain, Globe, Wrench } from "lucide-react";
 import { chatToolsAtom } from "@/atoms";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   getChatToolCredentials,
   getChatTools,
+  testChatTool,
   updateChatToolCredentials,
   updateChatToolState
 } from "@/lib/desktop-api";
@@ -23,6 +25,11 @@ function getToolIcon(iconName?: string): React.ReactElement {
 export function ToolSettings(): React.ReactElement {
   const [tools, setTools] = useAtom(chatToolsAtom);
   const [loading, setLoading] = useState(false);
+  const [testingWebSearch, setTestingWebSearch] = useState(false);
+  const [webSearchTestResult, setWebSearchTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [webCredentials, setWebCredentials] = useState<{ braveApiKey: string; tavilyApiKey: string }>({
     braveApiKey: "",
@@ -139,6 +146,39 @@ export function ToolSettings(): React.ReactElement {
               placeholder="可选，留空则不使用 Tavily"
               disabled={!webSearchEnabled}
             />
+          </div>
+          <div className="flex items-center gap-3 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={testingWebSearch}
+              onClick={() => {
+                setTestingWebSearch(true);
+                setWebSearchTestResult(null);
+                void testChatTool("web_search")
+                  .then((result) => {
+                    setWebSearchTestResult(result);
+                    setErrorMessage(null);
+                  })
+                  .catch((error) => {
+                    setWebSearchTestResult({
+                      success: false,
+                      message: error instanceof Error ? error.message : String(error)
+                    });
+                  })
+                  .finally(() => {
+                    setTestingWebSearch(false);
+                  });
+              }}
+            >
+              {testingWebSearch ? "测试中..." : "测试联网搜索"}
+            </Button>
+            {webSearchTestResult ? (
+              <span className={webSearchTestResult.success ? "text-xs text-green-600" : "text-xs text-destructive"}>
+                {webSearchTestResult.message}
+              </span>
+            ) : null}
           </div>
         </SettingsCard>
       </SettingsSection>

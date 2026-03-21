@@ -63,6 +63,7 @@ import {
 import {
   getAllChatToolInfos,
   getChatToolCredentials,
+  testChatTool,
   updateChatToolCredentials,
   updateChatToolState
 } from "./services/chat-tool-manager";
@@ -816,6 +817,10 @@ const handlers: Record<string, RpcHandler> = {
     );
     updateChatToolCredentials(input.toolId, input.credentials);
     return { ok: true };
+  },
+  [CHAT_TOOL_IPC_CHANNELS.TEST_TOOL]: async (params) => {
+    const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.TEST_TOOL);
+    return testChatTool(input.toolId);
   },
 
   [SYSTEM_PROMPT_IPC_CHANNELS.GET_CONFIG]: async () => getSystemPromptConfig(),

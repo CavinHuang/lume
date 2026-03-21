@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   getAllChatToolInfos,
   getChatToolCredentials,
+  testChatTool,
   updateChatToolCredentials,
   updateChatToolState
 } from "./chat-tool-manager";
@@ -12,9 +13,11 @@ import {
 describe("chat-tool-manager", () => {
   let tempConfigDir: string;
   let previousConfigDir: string | undefined;
+  let previousFetch: typeof globalThis.fetch | undefined;
 
   beforeEach(() => {
     previousConfigDir = process.env.LUME_CONFIG_DIR;
+    previousFetch = globalThis.fetch;
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-chat-tool-manager-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
   });
@@ -24,6 +27,9 @@ describe("chat-tool-manager", () => {
       delete process.env.LUME_CONFIG_DIR;
     } else {
       process.env.LUME_CONFIG_DIR = previousConfigDir;
+    }
+    if (previousFetch) {
+      globalThis.fetch = previousFetch;
     }
   });
 
@@ -48,5 +54,23 @@ describe("chat-tool-manager", () => {
     const credentials = getChatToolCredentials("web_search");
     expect(credentials.braveApiKey).toBe("brave-key");
     expect(credentials.tavilyApiKey).toBe("tavily-key");
+  });
+
+  test("memory_search 测试应直接返回成功", async () => {
+    const result = await testChatTool("memory_search");
+    expect(result.success).toBeTrue();
+    expect(result.message).toContain("本地记忆检索工具可用");
+  });
+
+  test("web_search 在未配置 key 时应测试 DuckDuckGo", async () => {
+    let requestedUrl = "";
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = typeof input === "string" ? input : input.toString();
+      return new Response("<html>ok</html>", { status: 200 });
+    }) as typeof fetch;
+
+    const result = await testChatTool("web_search");
+    expect(result.success).toBeTrue();
+    expect(requestedUrl).toContain("duckduckgo.com");
   });
 });

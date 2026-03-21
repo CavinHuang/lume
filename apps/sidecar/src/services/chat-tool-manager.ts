@@ -10,7 +10,8 @@ import type {
   ChatToolFileConfig,
   ChatToolInfo,
   ChatToolMeta,
-  ChatToolState
+  ChatToolState,
+  ChatToolTestResult
 } from "@lume/shared";
 import { getChatToolsPath } from "./config-paths";
 
@@ -162,6 +163,107 @@ export function updateChatToolCredentials(toolId: string, credentials: Record<st
     .filter((entry) => entry[1].length > 0);
   config.toolCredentials[toolId] = Object.fromEntries(next);
   writeConfig(config);
+}
+
+async function testWebSearchByDuckDuckGo(): Promise<ChatToolTestResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch("https://duckduckgo.com/html/?q=test%20connection", {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        "user-agent": "Lume-Chat/1.0 (+chat-tool-test)"
+      }
+    });
+    if (!response.ok) {
+      return { success: false, message: `DuckDuckGo 请求失败: ${response.status}` };
+    }
+    return { success: true, message: "连接成功，DuckDuckGo 可用" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `DuckDuckGo 连接失败: ${message}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function testWebSearchByBrave(apiKey: string): Promise<ChatToolTestResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch("https://api.search.brave.com/res/v1/web/search?q=test%20connection&count=1", {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        "x-subscription-token": apiKey,
+        accept: "application/json",
+        "user-agent": "Lume-Chat/1.0 (+chat-tool-test)"
+      }
+    });
+    if (!response.ok) {
+      return { success: false, message: `Brave 请求失败: ${response.status}` };
+    }
+    return { success: true, message: "连接成功，Brave Search API 可用" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `Brave 连接失败: ${message}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function testWebSearchByTavily(apiKey: string): Promise<ChatToolTestResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Lume-Chat/1.0 (+chat-tool-test)"
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query: "test connection",
+        search_depth: "basic",
+        max_results: 1
+      })
+    });
+    if (!response.ok) {
+      return { success: false, message: `Tavily 请求失败: ${response.status}` };
+    }
+    return { success: true, message: "连接成功，Tavily Search API 可用" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `Tavily 连接失败: ${message}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function testChatTool(toolId: string): Promise<ChatToolTestResult> {
+  assertKnownToolId(toolId);
+
+  if (toolId === "memory_search") {
+    return { success: true, message: "连接成功，本地记忆检索工具可用" };
+  }
+
+  const credentials = getChatToolCredentials("web_search");
+  const braveApiKey = credentials.braveApiKey?.trim();
+  const tavilyApiKey = credentials.tavilyApiKey?.trim();
+
+  if (braveApiKey) {
+    const braveResult = await testWebSearchByBrave(braveApiKey);
+    if (braveResult.success) return braveResult;
+  }
+  if (tavilyApiKey) {
+    const tavilyResult = await testWebSearchByTavily(tavilyApiKey);
+    if (tavilyResult.success) return tavilyResult;
+  }
+
+  return testWebSearchByDuckDuckGo();
 }
 
 export { BUILTIN_CHAT_TOOLS };
