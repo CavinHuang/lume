@@ -106,6 +106,7 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     name: normalizeName(input.name),
     enabled: input.enabled ?? true,
     workspaceId: input.workspaceId?.trim() || undefined,
+    sessionId: input.sessionId?.trim() || undefined,
     schedule: input.schedule,
     prompt: normalizePrompt(input.prompt),
     createdAt: now,
@@ -131,6 +132,7 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...(input.name !== undefined ? { name: normalizeName(input.name) } : {}),
     ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId.trim() || undefined } : {}),
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId.trim() || undefined } : {}),
     ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
     ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
     updatedAt: Date.now()
@@ -149,4 +151,3 @@ export function deleteAutomationJob(input: AutomationDeleteJobInput): { ok: true
   writeIndex({ ...index, jobs: next });
   return { ok: true };
 }
-

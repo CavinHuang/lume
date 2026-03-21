@@ -64,6 +64,17 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("仅在以下情况才回退 web_search");
   });
 
+  test("automationExecution=true 时应注入无交互模式约束", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-automation",
+      availableTools: ["read", "write"],
+      automationExecution: true
+    });
+    expect(prompt).toContain("## Automation Non-Interactive Mode");
+    expect(prompt).toContain("禁止调用 AskUserQuestion");
+    expect(prompt).toContain("E_AUTOMATION_INTERACTION_DISABLED");
+  });
+
   test("buildSystemPromptAppend 应包含 session bootstrap 读取顺序", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-2",

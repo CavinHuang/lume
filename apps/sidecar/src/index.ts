@@ -1,12 +1,16 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { z } from "zod";
-import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type {
   AttachmentSaveInput,
   AgentGenerateTitleInput,
   AutomationCreateJobInput,
   AutomationDeleteJobInput,
+  ChannelGatewayIngressInput,
+  ChannelGatewayListDeliveriesInput,
+  ChannelProvider,
+  ChannelSessionBinding,
   AutomationListRunsInput,
   AutomationRunNowInput,
   AutomationUpdateJobInput,
@@ -144,6 +148,26 @@ import {
   startAutomationRunner,
   stopAutomationRunner
 } from "./services/automation-runner-service";
+import {
+  listChannelGatewayBindings,
+  listChannelGatewayDeliveries,
+  simulateChannelGatewayIngress,
+  upsertChannelGatewayBinding
+} from "./services/channel-gateway/gateway-service";
+import {
+  getFeishuIngressStatus,
+  startFeishuIngressServer,
+  stopFeishuIngressServer
+} from "./services/channel-gateway/feishu-ingress-service";
+import {
+  getFeishuGatewayConfigView,
+  saveFeishuGatewayConfig
+} from "./services/channel-gateway/feishu-config-manager";
+import { testFeishuGatewayConnection } from "./services/channel-gateway/feishu-api";
+import {
+  startFeishuRetryWorker,
+  stopFeishuRetryWorker
+} from "./services/channel-gateway/feishu-retry-worker";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -482,6 +506,7 @@ const automationCreateInputSchema = z.object({
   name: z.string().min(1),
   enabled: z.boolean().optional(),
   workspaceId: z.string().optional(),
+  sessionId: z.string().optional(),
   schedule: automationScheduleSchema,
   prompt: z.string().min(1)
 });
@@ -491,6 +516,7 @@ const automationUpdateInputSchema = z.object({
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   workspaceId: z.string().optional(),
+  sessionId: z.string().optional(),
   schedule: automationScheduleSchema.optional(),
   prompt: z.string().min(1).optional()
 });
@@ -506,6 +532,49 @@ const automationListRunsInputSchema = z.object({
 
 const automationRunNowInputSchema = z.object({
   id: idSchema
+});
+
+const channelProviderSchema = z.enum(["telegram", "discord", "whatsapp", "slack", "feishu"]);
+
+const channelInboundEventSchema = z.object({
+  id: idSchema,
+  provider: channelProviderSchema,
+  externalChatId: idSchema,
+  externalUserId: z.string().optional(),
+  externalMessageId: idSchema,
+  text: z.string().min(1),
+  receivedAt: z.number(),
+  workspaceId: z.string().optional(),
+  sessionId: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+
+const channelGatewayIngressInputSchema = z.object({
+  event: channelInboundEventSchema
+});
+
+const channelGatewayUpsertBindingInputSchema = z.object({
+  provider: channelProviderSchema,
+  externalChatId: idSchema,
+  externalUserId: z.string().optional(),
+  workspaceId: z.string().optional(),
+  sessionId: idSchema
+});
+
+const channelGatewayListDeliveriesInputSchema = z.object({
+  provider: channelProviderSchema.optional(),
+  limit: z.number().int().min(1).max(500).optional()
+});
+
+const feishuGatewaySaveInputSchema = z.object({
+  enabled: z.boolean(),
+  appId: z.string().default(""),
+  appSecret: z.string().optional(),
+  verificationToken: z.string().optional(),
+  encryptKey: z.string().optional(),
+  domain: z.enum(["feishu", "lark"]).optional(),
+  defaultWorkspaceId: z.string().optional(),
+  webhookPath: z.string().optional()
 });
 
 function validateInput<T>(schema: z.ZodType<T>, payload: unknown, method: string): T {
@@ -711,6 +780,54 @@ const handlers: Record<string, RpcHandler> = {
     runAutomationJobNow(
       validateInput(automationRunNowInputSchema, params, AUTOMATION_IPC_CHANNELS.RUN_NOW) as AutomationRunNowInput
     ),
+
+  [CHANNEL_GATEWAY_IPC_CHANNELS.SIMULATE_INGRESS]: async (params) =>
+    simulateChannelGatewayIngress(
+      validateInput(
+        channelGatewayIngressInputSchema,
+        params,
+        CHANNEL_GATEWAY_IPC_CHANNELS.SIMULATE_INGRESS
+      ) as ChannelGatewayIngressInput
+    ),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.LIST_BINDINGS]: async () => listChannelGatewayBindings(),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.UPSERT_BINDING]: async (params) =>
+    upsertChannelGatewayBinding(
+      validateInput(
+        channelGatewayUpsertBindingInputSchema,
+        params,
+        CHANNEL_GATEWAY_IPC_CHANNELS.UPSERT_BINDING
+      ) as {
+        provider: ChannelProvider;
+        externalChatId: string;
+        externalUserId?: string;
+        workspaceId?: string;
+        sessionId: string;
+      }
+    ),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.LIST_DELIVERIES]: async (params) =>
+    listChannelGatewayDeliveries(
+      validateInput(
+        channelGatewayListDeliveriesInputSchema,
+        params ?? {},
+        CHANNEL_GATEWAY_IPC_CHANNELS.LIST_DELIVERIES
+      ) as ChannelGatewayListDeliveriesInput
+    ),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.GET_INGRESS_STATUS]: async () => getFeishuIngressStatus(),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.START_INGRESS]: async () => startFeishuIngressServer(),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.STOP_INGRESS]: async () => {
+    await stopFeishuIngressServer();
+    return { ok: true };
+  },
+  [CHANNEL_GATEWAY_IPC_CHANNELS.GET_FEISHU_CONFIG]: async () => getFeishuGatewayConfigView(),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.SAVE_FEISHU_CONFIG]: async (params) =>
+    saveFeishuGatewayConfig(
+      validateInput(
+        feishuGatewaySaveInputSchema,
+        params,
+        CHANNEL_GATEWAY_IPC_CHANNELS.SAVE_FEISHU_CONFIG
+      )
+    ),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.TEST_FEISHU_CONFIG]: async () => testFeishuGatewayConnection(),
 
   [AGENT_IPC_CHANNELS.LIST_SESSIONS]: async () => listAgentSessions(),
   [AGENT_IPC_CHANNELS.CREATE_SESSION]: async (params) => {
@@ -1031,6 +1148,15 @@ function boot(): void {
       console.error(`[浏览器 Relay] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
+  const channelIngressAutostart = process.env.LUME_CHANNEL_GATEWAY_AUTOSTART?.toLowerCase() !== "0";
+  if (channelIngressAutostart) {
+    void startFeishuIngressServer().then((status) => {
+      console.error(`[渠道网关] 飞书 webhook 已启动: ${status.webhookUrl ?? "unknown"}`);
+    }).catch((error) => {
+      console.error(`[渠道网关] 飞书 webhook 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  startFeishuRetryWorker();
   void startAutomationRunner().catch((error) => {
     console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
   });
@@ -1043,6 +1169,8 @@ function boot(): void {
     closeMemoryManagers();
     void stopAutomationRunner().catch(() => {});
     void stopRelayServer().catch(() => {});
+    void stopFeishuIngressServer().catch(() => {});
+    stopFeishuRetryWorker();
   };
   process.once("exit", stopWatcher);
   process.once("SIGINT", () => {

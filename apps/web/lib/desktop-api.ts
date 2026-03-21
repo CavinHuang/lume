@@ -3,6 +3,7 @@
 import {
   AGENT_IPC_CHANNELS,
   AUTOMATION_IPC_CHANNELS,
+  CHANNEL_GATEWAY_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
   CHAT_IPC_CHANNELS,
   MEMORY_IPC_CHANNELS
@@ -23,6 +24,16 @@ import type {
   AutomationListRunsInput,
   AutomationRun,
   AutomationUpdateJobInput,
+  ChannelDeliveryRecord,
+  ChannelGatewayIngressInput,
+  ChannelGatewayIngressResult,
+  ChannelGatewayIngressStatus,
+  ChannelGatewayListDeliveriesInput,
+  ChannelProvider,
+  ChannelSessionBinding,
+  FeishuGatewayConfigInput,
+  FeishuGatewayConfigView,
+  FeishuGatewayTestResult,
   PlanFileMeta,
   PlanStateChangedEvent,
   GlobalDiscoverySnapshot,
@@ -244,6 +255,56 @@ export async function listAutomationRuns(input?: AutomationListRunsInput): Promi
 
 export async function runAutomationJobNow(id: string): Promise<AutomationRun> {
   return sidecarCall<AutomationRun>(AUTOMATION_IPC_CHANNELS.RUN_NOW, { id });
+}
+
+export async function simulateChannelGatewayIngress(
+  input: ChannelGatewayIngressInput
+): Promise<ChannelGatewayIngressResult> {
+  return sidecarCall<ChannelGatewayIngressResult>(CHANNEL_GATEWAY_IPC_CHANNELS.SIMULATE_INGRESS, input);
+}
+
+export async function listChannelGatewayBindings(): Promise<ChannelSessionBinding[]> {
+  return sidecarCall<ChannelSessionBinding[]>(CHANNEL_GATEWAY_IPC_CHANNELS.LIST_BINDINGS);
+}
+
+export async function upsertChannelGatewayBinding(input: {
+  provider: ChannelProvider;
+  externalChatId: string;
+  externalUserId?: string;
+  workspaceId?: string;
+  sessionId: string;
+}): Promise<ChannelSessionBinding> {
+  return sidecarCall<ChannelSessionBinding>(CHANNEL_GATEWAY_IPC_CHANNELS.UPSERT_BINDING, input);
+}
+
+export async function listChannelGatewayDeliveries(
+  input?: ChannelGatewayListDeliveriesInput
+): Promise<ChannelDeliveryRecord[]> {
+  return sidecarCall<ChannelDeliveryRecord[]>(CHANNEL_GATEWAY_IPC_CHANNELS.LIST_DELIVERIES, input ?? {});
+}
+
+export async function getChannelGatewayIngressStatus(): Promise<ChannelGatewayIngressStatus> {
+  return sidecarCall<ChannelGatewayIngressStatus>(CHANNEL_GATEWAY_IPC_CHANNELS.GET_INGRESS_STATUS);
+}
+
+export async function startChannelGatewayIngress(): Promise<ChannelGatewayIngressStatus> {
+  return sidecarCall<ChannelGatewayIngressStatus>(CHANNEL_GATEWAY_IPC_CHANNELS.START_INGRESS);
+}
+
+export async function stopChannelGatewayIngress(): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(CHANNEL_GATEWAY_IPC_CHANNELS.STOP_INGRESS);
+}
+
+export async function getFeishuGatewayConfig(): Promise<FeishuGatewayConfigView> {
+  return sidecarCall<FeishuGatewayConfigView>(CHANNEL_GATEWAY_IPC_CHANNELS.GET_FEISHU_CONFIG);
+}
+
+export async function saveFeishuGatewayConfig(input: FeishuGatewayConfigInput): Promise<FeishuGatewayConfigView> {
+  return sidecarCall<FeishuGatewayConfigView>(CHANNEL_GATEWAY_IPC_CHANNELS.SAVE_FEISHU_CONFIG, input);
+}
+
+export async function testFeishuGatewayConfig(): Promise<FeishuGatewayTestResult> {
+  return sidecarCall<FeishuGatewayTestResult>(CHANNEL_GATEWAY_IPC_CHANNELS.TEST_FEISHU_CONFIG);
 }
 
 export async function startBrowserRelay(): Promise<{

@@ -8,6 +8,7 @@ import type {
   Channel
 } from "@lume/shared";
 import { createAgentSession } from "./agent-session-manager";
+import { getAgentSessionMeta } from "./agent-session-manager";
 import { sendAgentMessage } from "./agent-service";
 import { listAutomationJobs, updateAutomationJob } from "./automation-manager";
 import { listChannels } from "./channel-manager";
@@ -140,17 +141,27 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
 
   try {
     const { channelId, modelId } = pickExecutionChannel();
-    const session = createAgentSession(`[自动化] ${job.name}`, channelId, job.workspaceId);
-    sessionId = session.id;
+    const boundSessionId = job.sessionId?.trim();
+    if (boundSessionId && getAgentSessionMeta(boundSessionId)) {
+      sessionId = boundSessionId;
+    } else {
+      const session = createAgentSession(`[自动化] ${job.name}`, channelId, job.workspaceId);
+      sessionId = session.id;
+    }
 
     let runtimeError: string | null = null;
     await sendAgentMessage(
       {
-        sessionId: session.id,
+        sessionId,
         userMessage: job.prompt,
         workspaceId: job.workspaceId,
         channelId,
-        modelId
+        modelId,
+        permissionMode: "bypassPermissions",
+        messageMetadata: {
+          automationJobId: job.id,
+          automationTrigger: trigger
+        }
       },
       {
         onEvent: () => {},
@@ -173,7 +184,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
       throw new Error(runtimeError);
     }
 
-    runMessage = `任务执行完成，会话: ${session.id}`;
+    runMessage = `任务执行完成，会话: ${sessionId}`;
   } catch (error) {
     runStatus = "failed";
     runMessage = error instanceof Error ? error.message : String(error);

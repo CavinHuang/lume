@@ -311,6 +311,31 @@ registerToolMetadata({
   allowedInPlanMode: true
 });
 
+// 自动化定时工具
+registerToolMetadata({
+  name: "automation_timer_read",
+  category: "read",
+  riskLevel: "low",
+  description: "读取定时任务配置",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "automation_timer_set",
+  category: "write",
+  riskLevel: "medium",
+  description: "设置定时任务（创建/更新/删除/启停）",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "automation_timer_query",
+  category: "read",
+  riskLevel: "low",
+  description: "查询定时任务运行记录",
+  allowedInPlanMode: true
+});
+
 // TodoWrite 工具
 registerToolMetadata({
   name: "TodoWrite",

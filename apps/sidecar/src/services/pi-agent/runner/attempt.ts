@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import type { AgentEventUsage } from "@lume/shared";
+import type { AgentEventUsage, AgentSendInput } from "@lume/shared";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel, type Api, type KnownProvider, type Model } from "@mariozechner/pi-ai";
 import {
@@ -46,6 +46,11 @@ const MAX_CONTEXT_MESSAGES = 20;
 interface RunPiAgentAttemptOptions {
   registerAbort: (sessionId: string, abort: () => Promise<void>) => void;
   unregisterAbort: (sessionId: string) => void;
+}
+
+function isAutomationExecution(metadata: AgentSendInput["messageMetadata"]): boolean {
+  if (!metadata || typeof metadata !== "object") return false;
+  return metadata.automationJobId !== undefined || metadata.automationTrigger !== undefined;
 }
 
 export async function runPiAgentAttempt(
@@ -96,6 +101,7 @@ export async function runPiAgentAttempt(
   }
 
   const runtimeConfig = resolveMemoryRuntimeConfig();
+  const automationExecution = isAutomationExecution(input.messageMetadata);
   const chatType = normalizeMemoryChatType(input.chatType)
     ?? deriveChatTypeFromSessionType(input.sessionType)
     ?? deriveChatTypeFromSessionKey(runtime.sessionId);
@@ -110,6 +116,7 @@ export async function runPiAgentAttempt(
     workspaceSlug,
     permissionMode: input.permissionMode,
     includeCitations,
+    automationExecution,
     memoryToolPolicy: runtimeConfig.toolPolicy,
     emitAskUserQuestion: emit.onAskUserQuestion
   });
@@ -122,6 +129,7 @@ export async function runPiAgentAttempt(
     chatType,
     availableTools: lumeTools.availableToolNames,
     memoryCitationsMode: runtimeConfig.citationsMode,
+    automationExecution,
     promptMode: resolveSystemPromptMode({
       sessionId: runtime.sessionId,
       sessionType: input.sessionType,

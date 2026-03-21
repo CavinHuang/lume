@@ -35,6 +35,8 @@ export interface AutomationJob {
   schedule: AutomationSchedule
   /** 执行提示词（后续可扩展为 workflow） */
   prompt: string
+  /** 执行结果回写会话 ID（可选） */
+  sessionId?: string
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
@@ -52,6 +54,7 @@ export interface AutomationCreateJobInput {
   name: string
   enabled?: boolean
   workspaceId?: string
+  sessionId?: string
   schedule: AutomationSchedule
   prompt: string
 }
@@ -62,6 +65,7 @@ export interface AutomationUpdateJobInput {
   name?: string
   enabled?: boolean
   workspaceId?: string
+  sessionId?: string
   schedule?: AutomationSchedule
   prompt?: string
 }

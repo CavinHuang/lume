@@ -540,9 +540,13 @@ export function createPiControlTools(params: {
   sessionId: string;
   agentCwd: string;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
+  includeAskUserQuestion?: boolean;
 }): AgentTool[] {
-  return [
-    {
+  const includeAskUserQuestion = params.includeAskUserQuestion !== false;
+  const tools: AgentTool[] = [];
+
+  if (includeAskUserQuestion) {
+    tools.push({
       name: ASK_USER_QUESTION_TOOL_NAME,
       label: ASK_USER_QUESTION_TOOL_NAME,
       description: ASK_USER_QUESTION_PROMPT,
@@ -591,8 +595,10 @@ export function createPiControlTools(params: {
           answers: askResult.answers
         });
       }
-    },
-    {
+    });
+  }
+
+  tools.push({
       name: ENTER_PLAN_TOOL_NAME,
       label: ENTER_PLAN_TOOL_NAME,
       description: ENTER_PLAN_MODE_PROMPT,
@@ -618,8 +624,9 @@ export function createPiControlTools(params: {
           context: toReadableString(input.context)
         });
       }
-    },
-    {
+    });
+
+  tools.push({
       name: EXIT_PLAN_TOOL_NAME,
       label: EXIT_PLAN_TOOL_NAME,
       description: EXIT_PLAN_MODE_PROMPT,
@@ -681,8 +688,9 @@ export function createPiControlTools(params: {
           message: "计划已完成并提交审核。请确认后进入实现阶段。"
         });
       }
-    }
-  ];
+    });
+
+  return tools;
 }
 
 export const __testing = {

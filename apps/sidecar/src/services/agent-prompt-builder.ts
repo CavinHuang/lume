@@ -73,6 +73,7 @@ interface SystemPromptContext {
   availableTools?: string[];
   memoryCitationsMode?: MemoryCitationsMode;
   promptMode?: SystemPromptMode;
+  automationExecution?: boolean;
 }
 
 export function shouldLoadLongTermMemory(chatType?: "direct" | "group" | "channel"): boolean {
@@ -175,6 +176,16 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   }
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
+  if (ctx.automationExecution) {
+    lines.push(
+      "",
+      "## Automation Non-Interactive Mode",
+      "当前由定时任务触发，禁止用户交互。",
+      "- 不要调用 AskUserQuestion",
+      "- 不要等待权限确认或人工输入",
+      "- 若任务需要交互，请立即失败并返回结构化错误，说明需要改为无交互流程"
+    );
+  }
   lines.push("", CLAUDE_PLAN_MODE_SECTION);
 
   return lines;
@@ -284,6 +295,16 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
 1. 优先中文回复，保留必要英文技术术语
 2. 破坏性操作前先确认
 3. 输出保持结构化、可执行`);
+
+  if (ctx.automationExecution) {
+    sections.push(`## Automation Non-Interactive Mode
+
+当前请求由定时任务触发，必须以无交互方式执行：
+- 禁止调用 AskUserQuestion
+- 禁止等待权限确认或任何人工输入
+- 如遇需要用户决策的步骤，立即失败并给出结构化错误：
+  { "code": "E_AUTOMATION_INTERACTION_DISABLED", "message": "定时任务模式禁止交互，请调整为无交互执行路径" }`);
+  }
 
   sections.push(CLAUDE_PLAN_MODE_SECTION);
 

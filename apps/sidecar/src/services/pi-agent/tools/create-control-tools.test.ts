@@ -92,4 +92,17 @@ describe("create-control-tools AskUserQuestion normalize", () => {
     const content = readFileSync(details.planPath!, "utf-8");
     expect(content.includes("## 计划")).toBeTrue();
   });
+
+  test("自动化模式下应不注册 AskUserQuestion 工具", () => {
+    const tools = createPiControlTools({
+      sessionId: "s3",
+      agentCwd: "/tmp",
+      emitAskUserQuestion: () => {},
+      includeAskUserQuestion: false
+    });
+    const names = tools.map((tool) => tool.name);
+    expect(names.includes("AskUserQuestion")).toBeFalse();
+    expect(names.includes("EnterPlanMode")).toBeTrue();
+    expect(names.includes("ExitPlanMode")).toBeTrue();
+  });
 });
