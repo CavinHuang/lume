@@ -5,9 +5,12 @@ import { useAtom } from "jotai";
 import { Brain, Globe, Trash2, Wrench } from "lucide-react";
 import { chatToolsAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
+  createCustomChatTool,
   deleteCustomChatTool,
   getChatToolCredentials,
   getChatTools,
@@ -28,10 +31,25 @@ export function ToolSettings(): React.ReactElement {
   const [tools, setTools] = useAtom(chatToolsAtom);
   const [loading, setLoading] = useState(false);
   const [testingWebSearch, setTestingWebSearch] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [creatingCustomTool, setCreatingCustomTool] = useState(false);
   const [webSearchTestResult, setWebSearchTestResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
+  const [newCustomTool, setNewCustomTool] = useState<{
+    id: string;
+    name: string;
+    description: string;
+    urlTemplate: string;
+    method: "GET" | "POST";
+  }>({
+    id: "",
+    name: "",
+    description: "",
+    urlTemplate: "",
+    method: "GET"
+  });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [webCredentials, setWebCredentials] = useState<{ braveApiKey: string; tavilyApiKey: string }>({
     braveApiKey: "",
@@ -103,6 +121,16 @@ export function ToolSettings(): React.ReactElement {
   const refreshTools = async (): Promise<void> => {
     const next = await getChatTools();
     setTools(next);
+  };
+
+  const resetNewCustomTool = (): void => {
+    setNewCustomTool({
+      id: "",
+      name: "",
+      description: "",
+      urlTemplate: "",
+      method: "GET"
+    });
   };
 
   return (
@@ -216,9 +244,142 @@ export function ToolSettings(): React.ReactElement {
         </SettingsCard>
       </SettingsSection>
 
-      {customTools.length > 0 ? (
-        <SettingsSection title="自定义工具" description="由 Agent/扩展写入的 HTTP 工具定义">
-          <SettingsCard divided={false} className="p-0">
+      <SettingsSection title="自定义工具" description="支持注册简单 HTTP 工具定义（当前仅配置管理）">
+        <div className="mb-2 flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              resetNewCustomTool();
+              setCreateDialogOpen(true);
+            }}
+          >
+            新增自定义工具
+          </Button>
+        </div>
+        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+          <DialogContent className="sm:max-w-[520px]">
+            <DialogHeader>
+              <DialogTitle>新增自定义工具</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-id">工具 ID</Label>
+                <Input
+                  id="custom-tool-id"
+                  placeholder="例如: jira_search"
+                  value={newCustomTool.id}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, id: event.target.value }));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-name">名称</Label>
+                <Input
+                  id="custom-tool-name"
+                  placeholder="例如: Jira 搜索"
+                  value={newCustomTool.name}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, name: event.target.value }));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-description">描述</Label>
+                <Input
+                  id="custom-tool-description"
+                  placeholder="例如: 查询 Jira issue 列表"
+                  value={newCustomTool.description}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, description: event.target.value }));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-url-template">URL 模板</Label>
+                <Input
+                  id="custom-tool-url-template"
+                  placeholder="https://example.com/api/issues?q={{query}}"
+                  value={newCustomTool.urlTemplate}
+                  onChange={(event) => {
+                    setNewCustomTool((prev) => ({ ...prev, urlTemplate: event.target.value }));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-tool-method">HTTP 方法</Label>
+                <select
+                  id="custom-tool-method"
+                  value={newCustomTool.method}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  onChange={(event) => {
+                    const method = event.target.value === "POST" ? "POST" : "GET";
+                    setNewCustomTool((prev) => ({ ...prev, method }));
+                  }}
+                >
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setCreateDialogOpen(false);
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="button"
+                  disabled={creatingCustomTool}
+                  onClick={() => {
+                    const payload = {
+                      id: newCustomTool.id.trim(),
+                      name: newCustomTool.name.trim(),
+                      description: newCustomTool.description.trim(),
+                      category: "custom" as const,
+                      executorType: "http" as const,
+                      httpConfig: {
+                        urlTemplate: newCustomTool.urlTemplate.trim(),
+                        method: newCustomTool.method
+                      }
+                    };
+                    if (!payload.id || !payload.name || !payload.description || !payload.httpConfig.urlTemplate) {
+                      setErrorMessage("请完整填写工具 ID、名称、描述与 URL 模板");
+                      return;
+                    }
+
+                    setCreatingCustomTool(true);
+                    void createCustomChatTool(payload)
+                      .then(async () => {
+                        await refreshTools();
+                        setErrorMessage(null);
+                        setCreateDialogOpen(false);
+                        resetNewCustomTool();
+                      })
+                      .catch((error) => {
+                        setErrorMessage(error instanceof Error ? error.message : String(error));
+                      })
+                      .finally(() => {
+                        setCreatingCustomTool(false);
+                      });
+                  }}
+                >
+                  {creatingCustomTool ? "创建中..." : "创建工具"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <SettingsCard divided={false} className="p-0">
+          {customTools.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-muted-foreground">暂无自定义工具</div>
+          ) : (
             <div className="divide-y divide-border/50">
               {customTools.map((tool) => (
                 <div key={tool.meta.id} className="flex items-center justify-between px-4 py-3">
@@ -264,9 +425,9 @@ export function ToolSettings(): React.ReactElement {
                 </div>
               ))}
             </div>
-          </SettingsCard>
-        </SettingsSection>
-      ) : null}
+          )}
+        </SettingsCard>
+      </SettingsSection>
 
       {errorMessage ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
