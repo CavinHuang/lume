@@ -40,8 +40,14 @@ import { handlePiSessionEvent } from "../subscribe/handlers";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "./types";
 import { resolvePiProviderCandidates } from "./provider-resolution";
 import { consumeMemoryFlushPrompt } from "../../agent-service";
-
-const MAX_CONTEXT_MESSAGES = 20;
+import {
+  getCompactionSettings,
+  estimateContextTokensFromLumeMessages,
+  shouldCompact,
+  runCompaction,
+  saveStoredCompaction,
+  buildCompactedContextPrompt
+} from "../compaction";
 
 interface RunPiAgentAttemptOptions {
   registerAbort: (sessionId: string, abort: () => Promise<void>) => void;
@@ -141,16 +147,61 @@ export async function runPiAgentAttempt(
     workspaceSlug,
     agentCwd
   });
-  const contextPrompt = buildContextPrompt(runtime.sessionId, input.userMessage);
+  const contextWindow = (model as { contextWindow?: number }).contextWindow ?? 200000;
+
+  const accumulator = createAgentStreamAccumulatorState();
+
+  // --- Compaction：检查是否需要 LLM 摘要压缩 ---
+  const allMessages = getAgentSessionMessages(runtime.sessionId);
+  const compactionSettings = getCompactionSettings();
+  const historyMessages = allMessages.slice(0, -1); // 排除当前用户消息
+  const isManualCompact = input.userMessage.trim().startsWith("/compact");
+  let compacted = false;
+
+  if (historyMessages.length > 0) {
+    const contextTokens = estimateContextTokensFromLumeMessages(historyMessages, runtime.sessionId);
+    const needsCompaction = isManualCompact || shouldCompact(contextTokens, contextWindow, compactionSettings);
+
+    if (needsCompaction) {
+      appendAgentEvents(accumulator, [{ type: "compacting" }]);
+      emit.onEvent({ type: "compacting" });
+
+      const customInstructions = isManualCompact
+        ? input.userMessage.replace(/^\/compact\s*/, "").trim() || undefined
+        : undefined;
+
+      const result = await runCompaction({
+        sessionId: runtime.sessionId,
+        messages: historyMessages,
+        model,
+        apiKey,
+        settings: compactionSettings,
+        customInstructions,
+        signal: undefined
+      });
+
+      if (result) {
+        saveStoredCompaction(runtime.sessionId, result);
+      }
+
+      compacted = true;
+      appendAgentEvents(accumulator, [{ type: "compact_complete" }]);
+      emit.onEvent({ type: "compact_complete" });
+    }
+  }
+
+  const userMessageForPrompt = isManualCompact
+    ? "上下文已压缩完成。请简要告知用户压缩已完成。"
+    : input.userMessage;
+  const contextPrompt = buildCompactedContextPrompt({
+    sessionId: runtime.sessionId,
+    currentUserMessage: userMessageForPrompt,
+    allMessages
+  });
   const contextualMessage = [dynamicContext, contextPrompt.text]
     .filter((item) => item.trim().length > 0)
     .join("\n\n");
 
-  const accumulator = createAgentStreamAccumulatorState();
-  if (contextPrompt.compacted) {
-    appendAgentEvents(accumulator, [{ type: "compacting" }]);
-    emit.onEvent({ type: "compacting" });
-  }
   let silentMode = false;
   const existingMeta = getAgentSessionMeta(runtime.sessionId);
   const toolsBeforePolicy = [
@@ -224,10 +275,6 @@ export async function runPiAgentAttempt(
         status: "errored",
         errorMessage: `模型返回空内容，请检查渠道配置（provider=${channel.provider}, baseUrl=${channel.baseUrl}, model=${resolvedModelId}）`
       };
-    }
-    if (contextPrompt.compacted) {
-      appendAgentEvents(accumulator, [{ type: "compact_complete" }]);
-      emit.onEvent({ type: "compact_complete" });
     }
     const usage = buildCompleteUsage(agent.state.messages);
     const stopReason = resolveStopReason(agent.state.messages);
@@ -371,61 +418,6 @@ function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?:
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200000,
     maxTokens: 32768
-  };
-}
-
-function formatAgentMessage(message: ReturnType<typeof getAgentSessionMessages>[number]): string {
-  if (message.role === "user") return `[user]: ${message.content}`;
-  if (message.role !== "assistant") return "";
-
-  const parts: string[] = [];
-  if (message.content) parts.push(message.content);
-
-  // 附加工具调用摘要，保留上下文
-  if (message.events && message.events.length > 0) {
-    const toolSummaries: string[] = [];
-    for (const event of message.events) {
-      if (event.type === "tool_start") {
-        toolSummaries.push(`[tool: ${event.toolName}(${JSON.stringify(event.input ?? {})})]`);
-      } else if (event.type === "tool_result") {
-        const resultText = typeof event.result === "string"
-          ? event.result.slice(0, 500)
-          : JSON.stringify(event.result ?? "").slice(0, 500);
-        toolSummaries.push(`[tool_result: ${resultText}]`);
-      }
-    }
-    if (toolSummaries.length > 0) {
-      parts.push(toolSummaries.join("\n"));
-    }
-  }
-
-  return `[assistant]: ${parts.join("\n")}`;
-}
-
-function buildContextPrompt(
-  sessionId: string,
-  currentUserMessage: string
-): { text: string; compacted: boolean } {
-  const allMessages = getAgentSessionMessages(sessionId);
-  if (allMessages.length === 0) {
-    return { text: currentUserMessage, compacted: false };
-  }
-  const history = allMessages.slice(0, -1);
-  if (history.length === 0) {
-    return { text: currentUserMessage, compacted: false };
-  }
-  const compacted = history.length > MAX_CONTEXT_MESSAGES;
-  const recent = history.slice(-MAX_CONTEXT_MESSAGES);
-  const lines = recent
-    .filter((message) => (message.role === "user" || message.role === "assistant") && message.content)
-    .map((message) => formatAgentMessage(message))
-    .filter((line) => line.length > 0);
-  if (lines.length === 0) {
-    return { text: currentUserMessage, compacted };
-  }
-  return {
-    text: `<conversation_history>\n${lines.join("\n")}\n</conversation_history>\n\n${currentUserMessage}`,
-    compacted
   };
 }
 

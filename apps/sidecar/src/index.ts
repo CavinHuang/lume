@@ -1,7 +1,7 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { z } from "zod";
-import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, MEMORY_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type {
   AttachmentSaveInput,
   AgentGenerateTitleInput,
@@ -60,6 +60,12 @@ import {
   updateAppendSetting,
   updateSystemPrompt
 } from "./services/system-prompt-manager";
+import {
+  getAllChatToolInfos,
+  getChatToolCredentials,
+  updateChatToolCredentials,
+  updateChatToolState
+} from "./services/chat-tool-manager";
 import {
   deleteAttachment,
   readAttachmentAsBase64,
@@ -243,7 +249,14 @@ const chatMessageSchema = z.object({
   model: z.string().optional(),
   reasoning: z.string().optional(),
   stopped: z.boolean().optional(),
-  attachments: z.array(fileAttachmentSchema).optional()
+  attachments: z.array(fileAttachmentSchema).optional(),
+  toolActivities: z.array(z.object({
+    toolCallId: z.string(),
+    toolName: z.string(),
+    type: z.enum(["start", "result"]),
+    result: z.string().optional(),
+    isError: z.boolean().optional()
+  })).optional()
 });
 
 const chatSendInputSchema = z.object({
@@ -256,7 +269,8 @@ const chatSendInputSchema = z.object({
   contextLength: z.union([z.number(), z.literal("infinite")]).optional(),
   contextDividers: z.array(z.string()).optional(),
   attachments: z.array(fileAttachmentSchema).optional(),
-  thinkingEnabled: z.boolean().optional()
+  thinkingEnabled: z.boolean().optional(),
+  enabledToolIds: z.array(z.string()).optional()
 });
 
 const chatConversationIdInputSchema = z.object({
@@ -322,6 +336,22 @@ const systemPromptAppendInputSchema = z.object({
 
 const systemPromptSetDefaultInputSchema = z.object({
   id: z.string().min(1).nullable()
+});
+
+const chatToolStateUpdateInputSchema = z.object({
+  toolId: idSchema,
+  state: z.object({
+    enabled: z.boolean()
+  })
+});
+
+const chatToolCredentialsUpdateInputSchema = z.object({
+  toolId: idSchema,
+  credentials: z.record(z.string(), z.string())
+});
+
+const chatToolIdInputSchema = z.object({
+  toolId: idSchema
 });
 
 const agentSendInputSchema = z.object({
@@ -757,13 +787,34 @@ const handlers: Record<string, RpcHandler> = {
       onChunk: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_CHUNK, event),
       onReasoning: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_REASONING, event),
       onComplete: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_COMPLETE, event),
-      onError: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_ERROR, event)
+      onError: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_ERROR, event),
+      onToolActivity: (event) => writeNotification(CHAT_IPC_CHANNELS.STREAM_TOOL_ACTIVITY, event)
     }).catch((error) => {
       writeNotification(CHAT_IPC_CHANNELS.STREAM_ERROR, {
         conversationId: input.conversationId,
         error: error instanceof Error ? error.message : String(error)
       });
     });
+    return { ok: true };
+  },
+
+  [CHAT_TOOL_IPC_CHANNELS.GET_ALL_TOOLS]: async () => getAllChatToolInfos(),
+  [CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS]: async (params) => {
+    const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS);
+    return getChatToolCredentials(input.toolId);
+  },
+  [CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_STATE]: async (params) => {
+    const input = validateInput(chatToolStateUpdateInputSchema, params, CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_STATE);
+    updateChatToolState(input.toolId, input.state);
+    return { ok: true };
+  },
+  [CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_CREDENTIALS]: async (params) => {
+    const input = validateInput(
+      chatToolCredentialsUpdateInputSchema,
+      params,
+      CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_CREDENTIALS
+    );
+    updateChatToolCredentials(input.toolId, input.credentials);
     return { ok: true };
   },
 

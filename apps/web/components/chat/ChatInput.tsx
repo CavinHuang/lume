@@ -20,6 +20,7 @@ import { AttachmentPreviewItem } from "./AttachmentPreviewItem";
 import { ModelSelector } from "./ModelSelector";
 import { ContextSettingsPopover } from "./ContextSettingsPopover";
 import { ClearContextButton } from "./ClearContextButton";
+import { ToolSelectorPopover } from "./ToolSelectorPopover";
 
 interface ChatInputProps {
   disabled?: boolean;
@@ -213,6 +214,7 @@ export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInpu
             </Tooltip>
 
             <ModelSelector />
+            <ToolSelectorPopover />
 
             <Tooltip>
               <TooltipTrigger asChild>

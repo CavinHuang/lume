@@ -4,7 +4,7 @@ import * as React from "react";
 import { useAtomValue } from "jotai";
 import { Loader2, MessageSquare } from "lucide-react";
 import { useSmoothStream } from "@lume/ui";
-import type { ChatMessage } from "@lume/shared";
+import type { ChatMessage, ChatToolActivity } from "@lume/shared";
 import {
   currentConversationIdAtom,
   hasMoreMessagesAtom,
@@ -35,6 +35,7 @@ interface ChatMessagesProps {
   onDeleteDivider?: (messageId: string) => void;
   streamingContent?: string;
   streamingReasoning?: string;
+  streamingToolActivities?: ChatToolActivity[];
   onLoadMore?: () => Promise<void>;
   loadingMore?: boolean;
 }
@@ -106,6 +107,7 @@ export function ChatMessages({
   onDeleteDivider,
   streamingContent,
   streamingReasoning,
+  streamingToolActivities,
   onLoadMore,
   loadingMore
 }: ChatMessagesProps): React.ReactElement {
@@ -224,6 +226,7 @@ export function ChatMessages({
                   role: "assistant",
                   content: smoothContent ?? "",
                   reasoning: smoothReasoning ?? "",
+                  toolActivities: streamingToolActivities,
                   createdAt: Date.now(),
                   model: selectedModel?.modelId ?? "Assistant"
                 }}

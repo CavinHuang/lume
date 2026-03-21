@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AlertCircle, MessageSquare, X } from "lucide-react";
 import {
+  activeToolIdsAtom,
+  chatToolsAtom,
   chatStreamErrorsAtom,
   currentChatErrorAtom,
   currentConversationAtom,
@@ -32,11 +34,13 @@ import {
   getConversationMessages,
   getRecentConversationMessages,
   getSystemPromptConfig,
+  getChatTools,
   deleteConversationMessage,
   onChatStreamChunk,
   onChatStreamComplete,
   onChatStreamError,
   onChatStreamReasoning,
+  onChatStreamToolActivity,
   sendChatMessage,
   stopChatGeneration,
   truncateConversationMessagesFrom,
@@ -62,10 +66,12 @@ export function ChatView(): React.ReactElement {
   const [contextDividers, setContextDividers] = useAtom(contextDividersAtom);
   const [thinkingEnabled] = useAtom(thinkingEnabledAtom);
   const [promptConfig, setPromptConfig] = useAtom(promptConfigAtom);
+  const [, setChatTools] = useAtom(chatToolsAtom);
   const [conversationPromptMap, setConversationPromptMap] = useAtom(conversationPromptIdAtom);
   const promptSidebarOpen = useAtomValue(promptSidebarOpenAtom);
   const selectedPromptId = useAtomValue(selectedPromptIdAtom);
   const userProfile = useAtomValue(userProfileAtom);
+  const activeToolIds = useAtomValue(activeToolIdsAtom);
   const [pendingAttachments, setPendingAttachments] = useAtom(pendingAttachmentsAtom);
   const conversations = useAtomValue(conversationsAtom);
   const setHasMoreMessages = useSetAtom(hasMoreMessagesAtom);
@@ -100,6 +106,14 @@ export function ChatView(): React.ReactElement {
       console.error("[ChatView] 加载系统提示词配置失败:", error);
     });
   }, [setPromptConfig]);
+
+  useEffect(() => {
+    void getChatTools().then((tools) => {
+      setChatTools(tools);
+    }).catch((error) => {
+      console.error("[ChatView] 加载工具配置失败:", error);
+    });
+  }, [setChatTools]);
 
   useEffect(() => {
     if (!currentConversationId) return;
@@ -169,7 +183,7 @@ export function ChatView(): React.ReactElement {
     trackUnlisten(onChatStreamChunk((event) => {
       setStreamingStates((prev) => {
         const map = new Map(prev);
-        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "" };
+        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "", toolActivities: [] };
         map.set(event.conversationId, {
           ...current,
           streaming: true,
@@ -182,11 +196,23 @@ export function ChatView(): React.ReactElement {
     trackUnlisten(onChatStreamReasoning((event) => {
       setStreamingStates((prev) => {
         const map = new Map(prev);
-        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "" };
+        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "", toolActivities: [] };
         map.set(event.conversationId, {
           ...current,
           streaming: true,
           reasoning: current.reasoning + event.delta
+        });
+        return map;
+      });
+    }));
+
+    trackUnlisten(onChatStreamToolActivity((event) => {
+      setStreamingStates((prev) => {
+        const map = new Map(prev);
+        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "", toolActivities: [] };
+        map.set(event.conversationId, {
+          ...current,
+          toolActivities: [...current.toolActivities, event.activity]
         });
         return map;
       });
@@ -352,7 +378,7 @@ export function ChatView(): React.ReactElement {
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
-      map.set(currentConversationId, { streaming: true, content: "", reasoning: "" });
+      map.set(currentConversationId, { streaming: true, content: "", reasoning: "", toolActivities: [] });
       return map;
     });
 
@@ -370,7 +396,8 @@ export function ChatView(): React.ReactElement {
       contextLength,
       contextDividers: options?.contextDividersOverride ?? contextDividers,
       attachments: savedAttachments.length > 0 ? savedAttachments : undefined,
-      thinkingEnabled
+      thinkingEnabled,
+      enabledToolIds: activeToolIds
     };
 
     void sendChatMessage(input).catch((error) => {
@@ -597,6 +624,7 @@ export function ChatView(): React.ReactElement {
           }}
           streamingContent={streamState?.content}
           streamingReasoning={streamState?.reasoning}
+          streamingToolActivities={streamState?.toolActivities}
           onLoadMore={handleLoadMore}
         />
         {chatError ? (

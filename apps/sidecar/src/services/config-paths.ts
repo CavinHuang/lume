@@ -98,6 +98,10 @@ export function getSystemPromptsPath(): string {
   return join(getConfigDir(), "system-prompts.json");
 }
 
+export function getChatToolsPath(): string {
+  return join(getConfigDir(), "chat-tools.json");
+}
+
 export function getUserProfilePath(): string {
   return join(getConfigDir(), "user-profile.json");
 }

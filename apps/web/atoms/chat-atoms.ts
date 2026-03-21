@@ -1,6 +1,6 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import type { ChatMessage, ConversationMeta, FileAttachment } from "@lume/shared";
+import type { ChatMessage, ChatToolActivity, ConversationMeta, FileAttachment } from "@lume/shared";
 
 interface SelectedModel {
   channelId: string;
@@ -20,6 +20,7 @@ export interface ConversationStreamState {
   streaming: boolean;
   content: string;
   reasoning: string;
+  toolActivities: ChatToolActivity[];
 }
 
 export const streamingStatesAtom = atom<Map<string, ConversationStreamState>>(new Map());

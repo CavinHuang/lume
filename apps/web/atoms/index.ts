@@ -2,6 +2,7 @@ export * from "./app-mode";
 export * from "./active-view";
 export * from "./settings-tab";
 export * from "./chat-atoms";
+export * from "./chat-tool-atoms";
 export * from "./system-prompt-atoms";
 export * from "./agent-atoms";
 export * from "./theme";

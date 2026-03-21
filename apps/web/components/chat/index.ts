@@ -10,6 +10,8 @@ export { DeleteMessageDialog } from "./DeleteMessageDialog";
 export { ClearContextButton } from "./ClearContextButton";
 export { ContextSettingsPopover } from "./ContextSettingsPopover";
 export { SystemPromptSelector } from "./SystemPromptSelector";
+export { ChatToolActivityIndicator } from "./ChatToolActivityIndicator";
+export { ToolSelectorPopover } from "./ToolSelectorPopover";
 export { ParallelChatMessages } from "./ParallelChatMessages";
 export { AttachmentPreviewItem } from "./AttachmentPreviewItem";
 export { UserAvatar } from "./UserAvatar";

@@ -6,6 +6,7 @@ import {
   CHANNEL_GATEWAY_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
   CHAT_IPC_CHANNELS,
+  CHAT_TOOL_IPC_CHANNELS,
   MEMORY_IPC_CHANNELS,
   SYSTEM_PROMPT_IPC_CHANNELS
 } from "@lume/shared";
@@ -32,6 +33,8 @@ import type {
   ChannelGatewayListDeliveriesInput,
   ChannelProvider,
   ChannelSessionBinding,
+  ChatToolInfo,
+  ChatToolState,
   FeishuGatewayConfigInput,
   FeishuGatewayConfigView,
   FeishuGatewayTestResult,
@@ -70,6 +73,7 @@ import type {
   StreamCompleteEvent,
   StreamErrorEvent,
   StreamReasoningEvent,
+  StreamToolActivityEvent,
   SystemPrompt,
   SystemPromptConfig,
   SystemPromptCreateInput,
@@ -577,6 +581,33 @@ export async function onChatStreamError(handler: (event: StreamErrorEvent) => vo
   return onSidecarMethodEvent(CHAT_IPC_CHANNELS.STREAM_ERROR, (params) => {
     handler(params as StreamErrorEvent);
   });
+}
+
+export async function onChatStreamToolActivity(
+  handler: (event: StreamToolActivityEvent) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(CHAT_IPC_CHANNELS.STREAM_TOOL_ACTIVITY, (params) => {
+    handler(params as StreamToolActivityEvent);
+  });
+}
+
+export async function getChatTools(): Promise<ChatToolInfo[]> {
+  return sidecarCall<ChatToolInfo[]>(CHAT_TOOL_IPC_CHANNELS.GET_ALL_TOOLS);
+}
+
+export async function getChatToolCredentials(toolId: string): Promise<Record<string, string>> {
+  return sidecarCall<Record<string, string>>(CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS, { toolId });
+}
+
+export async function updateChatToolState(toolId: string, state: ChatToolState): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_STATE, { toolId, state });
+}
+
+export async function updateChatToolCredentials(
+  toolId: string,
+  credentials: Record<string, string>
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_CREDENTIALS, { toolId, credentials });
 }
 
 export async function listAgentSessions(): Promise<AgentSessionMeta[]> {

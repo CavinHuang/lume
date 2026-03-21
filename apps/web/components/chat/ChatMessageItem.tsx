@@ -25,6 +25,7 @@ import { CopyButton } from "./CopyButton";
 import { DeleteMessageDialog } from "./DeleteMessageDialog";
 import type { InlineEditSubmitPayload } from "./InlineEditForm";
 import { InlineEditForm } from "./InlineEditForm";
+import { ChatToolActivityIndicator } from "./ChatToolActivityIndicator";
 import { UserAvatar } from "./UserAvatar";
 
 export function formatMessageTime(timestamp: number): string {
@@ -123,6 +124,10 @@ export function ChatMessageItem({
         <MessageContent>
           {message.role === "assistant" ? (
             <>
+              {message.toolActivities && message.toolActivities.length > 0 ? (
+                <ChatToolActivityIndicator activities={message.toolActivities} />
+              ) : null}
+
               {message.reasoning ? (
                 <Reasoning isStreaming={isStreaming && !message.content} defaultOpen={isStreaming && !message.content}>
                   <ReasoningTrigger />
