@@ -2,7 +2,7 @@
 
 import { useAtom, useAtomValue } from "jotai";
 import type { ReactNode } from "react";
-import { Info, Palette, Plug, Radio, Settings } from "lucide-react";
+import { BookOpen, Info, Palette, Plug, Radio, Settings } from "lucide-react";
 import { appModeAtom, hasUpdateAtom, settingsTabAtom, type SettingsTab } from "@/atoms";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -11,6 +11,7 @@ import { AgentSettings } from "./AgentSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { ChannelSettings } from "./ChannelSettings";
 import { GeneralSettings } from "./GeneralSettings";
+import { PromptSettings } from "./PromptSettings";
 
 type TabItem = {
   id: SettingsTab;
@@ -20,7 +21,8 @@ type TabItem = {
 
 const BASE_TABS: TabItem[] = [
   { id: "general", label: "通用", icon: <Settings size={16} /> },
-  { id: "channels", label: "渠道", icon: <Radio size={16} /> }
+  { id: "channels", label: "渠道", icon: <Radio size={16} /> },
+  { id: "prompts", label: "提示词", icon: <BookOpen size={16} /> }
 ];
 
 const AGENT_TAB: TabItem = { id: "agent", label: "配置", icon: <Plug size={16} /> };
@@ -38,6 +40,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <ChannelSettings />;
     case "agent":
       return <AgentSettings />;
+    case "prompts":
+      return <PromptSettings />;
     case "appearance":
       return <AppearanceSettings />;
     case "about":

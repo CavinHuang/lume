@@ -94,6 +94,10 @@ export function getSettingsPath(): string {
   return join(getConfigDir(), "settings.json");
 }
 
+export function getSystemPromptsPath(): string {
+  return join(getConfigDir(), "system-prompts.json");
+}
+
 export function getUserProfilePath(): string {
   return join(getConfigDir(), "user-profile.json");
 }

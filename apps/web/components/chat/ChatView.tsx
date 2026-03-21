@@ -15,9 +15,15 @@ import {
   hasMoreMessagesAtom,
   INITIAL_MESSAGE_LIMIT,
   pendingAttachmentsAtom,
+  conversationPromptIdAtom,
+  promptConfigAtom,
+  promptSidebarOpenAtom,
+  resolveSystemMessage,
+  selectedPromptIdAtom,
   selectedModelAtom,
   streamingStatesAtom,
-  thinkingEnabledAtom
+  thinkingEnabledAtom,
+  userProfileAtom
 } from "@/atoms";
 import {
   saveChatAttachment,
@@ -25,6 +31,7 @@ import {
   listConversations,
   getConversationMessages,
   getRecentConversationMessages,
+  getSystemPromptConfig,
   deleteConversationMessage,
   onChatStreamChunk,
   onChatStreamComplete,
@@ -38,9 +45,11 @@ import {
   generateConversationTitle
 } from "@/lib/desktop-api";
 import type { AttachmentSaveInput, ChatMessage, ChatSendInput, FileAttachment } from "@lume/shared";
+import { cn } from "@/lib/utils";
 import { ChatHeader } from "./ChatHeader";
 import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
+import { PromptEditorSidebar } from "./PromptEditorSidebar";
 import type { InlineEditSubmitPayload } from "./ChatMessageItem";
 
 export function ChatView(): React.ReactElement {
@@ -52,6 +61,11 @@ export function ChatView(): React.ReactElement {
   const [contextLength] = useAtom(contextLengthAtom);
   const [contextDividers, setContextDividers] = useAtom(contextDividersAtom);
   const [thinkingEnabled] = useAtom(thinkingEnabledAtom);
+  const [promptConfig, setPromptConfig] = useAtom(promptConfigAtom);
+  const [conversationPromptMap, setConversationPromptMap] = useAtom(conversationPromptIdAtom);
+  const promptSidebarOpen = useAtomValue(promptSidebarOpenAtom);
+  const selectedPromptId = useAtomValue(selectedPromptIdAtom);
+  const userProfile = useAtomValue(userProfileAtom);
   const [pendingAttachments, setPendingAttachments] = useAtom(pendingAttachmentsAtom);
   const conversations = useAtomValue(conversationsAtom);
   const setHasMoreMessages = useSetAtom(hasMoreMessagesAtom);
@@ -78,6 +92,36 @@ export function ChatView(): React.ReactElement {
   useEffect(() => {
     setInlineEditingMessageId(null);
   }, [currentConversationId]);
+
+  useEffect(() => {
+    void getSystemPromptConfig().then((config) => {
+      setPromptConfig(config);
+    }).catch((error) => {
+      console.error("[ChatView] 加载系统提示词配置失败:", error);
+    });
+  }, [setPromptConfig]);
+
+  useEffect(() => {
+    if (!currentConversationId) return;
+    const existingPromptId = conversationPromptMap.get(currentConversationId);
+    if (existingPromptId && promptConfig.prompts.some((item) => item.id === existingPromptId)) {
+      return;
+    }
+    const nextPromptId = promptConfig.defaultPromptId ?? selectedPromptId;
+    if (!nextPromptId) return;
+    setConversationPromptMap((prev) => {
+      const next = new Map(prev);
+      next.set(currentConversationId, nextPromptId);
+      return next;
+    });
+  }, [
+    currentConversationId,
+    conversationPromptMap,
+    promptConfig.prompts,
+    promptConfig.defaultPromptId,
+    selectedPromptId,
+    setConversationPromptMap
+  ]);
 
   useEffect(() => {
     if (!currentConversationId) {
@@ -318,6 +362,11 @@ export function ChatView(): React.ReactElement {
       messageHistory: [],
       channelId: selectedModel.channelId,
       modelId: selectedModel.modelId,
+      systemMessage: resolveSystemMessage(
+        conversationPromptMap.get(currentConversationId) ?? selectedPromptId,
+        promptConfig,
+        userProfile.userName
+      ),
       contextLength,
       contextDividers: options?.contextDividersOverride ?? contextDividers,
       attachments: savedAttachments.length > 0 ? savedAttachments : undefined,
@@ -527,62 +576,80 @@ export function ChatView(): React.ReactElement {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] flex-col overflow-hidden">
-      <ChatHeader />
-      <ChatMessages
-        messages={currentMessages}
-        isStreaming={isStreaming}
-        contextDividers={contextDividers}
-        onDeleteMessage={handleDeleteMessage}
-        onResendMessage={handleResendMessage}
-        onStartInlineEdit={handleStartInlineEdit}
-        onSubmitInlineEdit={handleSubmitInlineEdit}
-        onCancelInlineEdit={handleCancelInlineEdit}
-        inlineEditingMessageId={inlineEditingMessageId}
-        onDeleteDivider={(messageId) => {
-          if (!currentConversationId) return;
-          const next = contextDividers.filter((id) => id !== messageId);
-          setContextDividers(next);
-          void updateConversationContextDividers(currentConversationId, next);
-        }}
-        streamingContent={streamState?.content}
-        streamingReasoning={streamState?.reasoning}
-        onLoadMore={handleLoadMore}
-      />
-      {chatError ? (
-        <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
-          <AlertCircle className="size-4 shrink-0" />
-          <span className="flex-1 break-all">{chatError}</span>
-          <button
-            type="button"
-            className="shrink-0 rounded px-2 py-0.5 text-xs font-medium transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={() => { void handleReconnect(); }}
-            disabled={isReconnecting}
-          >
-            {isReconnecting ? "重连中..." : "重连"}
-          </button>
-          <button
-            type="button"
-            className="shrink-0 rounded p-0.5 transition-colors hover:bg-destructive/10"
-            onClick={() => {
-              if (!currentConversationId) return;
-              setErrors((prev) => {
-                const map = new Map(prev);
-                map.delete(currentConversationId);
-                return map;
-              });
-            }}
-          >
-            <X className="size-3.5" />
-          </button>
+    <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <ChatHeader />
+        <ChatMessages
+          messages={currentMessages}
+          isStreaming={isStreaming}
+          contextDividers={contextDividers}
+          onDeleteMessage={handleDeleteMessage}
+          onResendMessage={handleResendMessage}
+          onStartInlineEdit={handleStartInlineEdit}
+          onSubmitInlineEdit={handleSubmitInlineEdit}
+          onCancelInlineEdit={handleCancelInlineEdit}
+          inlineEditingMessageId={inlineEditingMessageId}
+          onDeleteDivider={(messageId) => {
+            if (!currentConversationId) return;
+            const next = contextDividers.filter((id) => id !== messageId);
+            setContextDividers(next);
+            void updateConversationContextDividers(currentConversationId, next);
+          }}
+          streamingContent={streamState?.content}
+          streamingReasoning={streamState?.reasoning}
+          onLoadMore={handleLoadMore}
+        />
+        {chatError ? (
+          <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+            <AlertCircle className="size-4 shrink-0" />
+            <span className="flex-1 break-all">{chatError}</span>
+            <button
+              type="button"
+              className="shrink-0 rounded px-2 py-0.5 text-xs font-medium transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => { void handleReconnect(); }}
+              disabled={isReconnecting}
+            >
+              {isReconnecting ? "重连中..." : "重连"}
+            </button>
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 transition-colors hover:bg-destructive/10"
+              onClick={() => {
+                if (!currentConversationId) return;
+                setErrors((prev) => {
+                  const map = new Map(prev);
+                  map.delete(currentConversationId);
+                  return map;
+                });
+              }}
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
+        <ChatInput
+          disabled={!canSend}
+          onSend={handleSend}
+          onClearContext={() => { void handleClearContext(); }}
+          onStop={handleStop}
+        />
+      </div>
+
+      <div
+        className={cn(
+          "relative flex-shrink-0 overflow-hidden border-l transition-[width] duration-300 ease-in-out",
+          promptSidebarOpen ? "w-[300px]" : "w-10 border-l-0"
+        )}
+      >
+        <div
+          className={cn(
+            "h-full w-[300px] transition-opacity duration-200",
+            promptSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
+          )}
+        >
+          <PromptEditorSidebar />
         </div>
-      ) : null}
-      <ChatInput
-        disabled={!canSend}
-        onSend={handleSend}
-        onClearContext={() => { void handleClearContext(); }}
-        onStop={handleStop}
-      />
+      </div>
     </div>
   );
 }

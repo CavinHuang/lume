@@ -1,7 +1,7 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { z } from "zod";
-import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type {
   AttachmentSaveInput,
   AgentGenerateTitleInput,
@@ -24,6 +24,8 @@ import type {
   ChannelCreateInput,
   ChannelUpdateInput,
   ChatSendInput,
+  SystemPromptCreateInput,
+  SystemPromptUpdateInput,
   FetchModelsInput,
   GenerateTitleInput,
   WorkspaceMcpConfig
@@ -50,6 +52,14 @@ import {
   updateConversationMeta
 } from "./services/conversation-manager";
 import { generateTitle, sendMessage, stopGeneration } from "./services/chat-service";
+import {
+  createSystemPrompt,
+  deleteSystemPrompt,
+  getSystemPromptConfig,
+  setDefaultPrompt,
+  updateAppendSetting,
+  updateSystemPrompt
+} from "./services/system-prompt-manager";
 import {
   deleteAttachment,
   readAttachmentAsBase64,
@@ -287,6 +297,31 @@ const chatLocalPathInputSchema = z.object({
 const chatRecentMessagesInputSchema = z.object({
   conversationId: idSchema,
   limit: z.number().int().min(1)
+});
+
+const systemPromptCreateInputSchema = z.object({
+  name: z.string().min(1).max(50),
+  content: z.string()
+});
+
+const systemPromptUpdateInputSchema = z.object({
+  id: idSchema,
+  input: z.object({
+    name: z.string().min(1).max(50).optional(),
+    content: z.string().optional()
+  })
+});
+
+const systemPromptDeleteInputSchema = z.object({
+  id: idSchema
+});
+
+const systemPromptAppendInputSchema = z.object({
+  enabled: z.boolean()
+});
+
+const systemPromptSetDefaultInputSchema = z.object({
+  id: z.string().min(1).nullable()
 });
 
 const agentSendInputSchema = z.object({
@@ -731,6 +766,52 @@ const handlers: Record<string, RpcHandler> = {
     });
     return { ok: true };
   },
+
+  [SYSTEM_PROMPT_IPC_CHANNELS.GET_CONFIG]: async () => getSystemPromptConfig(),
+  [SYSTEM_PROMPT_IPC_CHANNELS.CREATE]: async (params) => {
+    const input = validateInput(
+      systemPromptCreateInputSchema,
+      params,
+      SYSTEM_PROMPT_IPC_CHANNELS.CREATE
+    );
+    return createSystemPrompt(input as SystemPromptCreateInput);
+  },
+  [SYSTEM_PROMPT_IPC_CHANNELS.UPDATE]: async (params) => {
+    const input = validateInput(
+      systemPromptUpdateInputSchema,
+      params,
+      SYSTEM_PROMPT_IPC_CHANNELS.UPDATE
+    );
+    return updateSystemPrompt(input.id, input.input as SystemPromptUpdateInput);
+  },
+  [SYSTEM_PROMPT_IPC_CHANNELS.DELETE]: async (params) => {
+    const input = validateInput(
+      systemPromptDeleteInputSchema,
+      params,
+      SYSTEM_PROMPT_IPC_CHANNELS.DELETE
+    );
+    deleteSystemPrompt(input.id);
+    return { ok: true };
+  },
+  [SYSTEM_PROMPT_IPC_CHANNELS.UPDATE_APPEND_SETTING]: async (params) => {
+    const input = validateInput(
+      systemPromptAppendInputSchema,
+      params,
+      SYSTEM_PROMPT_IPC_CHANNELS.UPDATE_APPEND_SETTING
+    );
+    updateAppendSetting(input.enabled);
+    return { ok: true };
+  },
+  [SYSTEM_PROMPT_IPC_CHANNELS.SET_DEFAULT]: async (params) => {
+    const input = validateInput(
+      systemPromptSetDefaultInputSchema,
+      params,
+      SYSTEM_PROMPT_IPC_CHANNELS.SET_DEFAULT
+    );
+    setDefaultPrompt(input.id);
+    return { ok: true };
+  },
+
   [MEMORY_IPC_CHANNELS.INDEX_WORKSPACE]: async (params) =>
     indexWorkspaceMemory(validateInput(memoryIndexWorkspaceInputSchema, params, MEMORY_IPC_CHANNELS.INDEX_WORKSPACE)),
   [MEMORY_IPC_CHANNELS.INDEX_FILE]: async (params) =>

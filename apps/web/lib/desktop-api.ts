@@ -6,7 +6,8 @@ import {
   CHANNEL_GATEWAY_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
   CHAT_IPC_CHANNELS,
-  MEMORY_IPC_CHANNELS
+  MEMORY_IPC_CHANNELS,
+  SYSTEM_PROMPT_IPC_CHANNELS
 } from "@lume/shared";
 import type {
   AttachmentSaveInput,
@@ -69,6 +70,10 @@ import type {
   StreamCompleteEvent,
   StreamErrorEvent,
   StreamReasoningEvent,
+  SystemPrompt,
+  SystemPromptConfig,
+  SystemPromptCreateInput,
+  SystemPromptUpdateInput,
   WorkspaceCapabilities,
   WorkspaceMcpConfig,
   MemorySearchResult,
@@ -517,6 +522,33 @@ export async function openFolderDialog(): Promise<{ path: string | null }> {
 
 export async function generateConversationTitle(input: GenerateTitleInput): Promise<string | null> {
   return sidecarCall<string | null>(CHAT_IPC_CHANNELS.GENERATE_TITLE, input);
+}
+
+export async function getSystemPromptConfig(): Promise<SystemPromptConfig> {
+  return sidecarCall<SystemPromptConfig>(SYSTEM_PROMPT_IPC_CHANNELS.GET_CONFIG);
+}
+
+export async function createSystemPrompt(input: SystemPromptCreateInput): Promise<SystemPrompt> {
+  return sidecarCall<SystemPrompt>(SYSTEM_PROMPT_IPC_CHANNELS.CREATE, input);
+}
+
+export async function updateSystemPrompt(
+  id: string,
+  input: SystemPromptUpdateInput
+): Promise<SystemPrompt> {
+  return sidecarCall<SystemPrompt>(SYSTEM_PROMPT_IPC_CHANNELS.UPDATE, { id, input });
+}
+
+export async function deleteSystemPrompt(id: string): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(SYSTEM_PROMPT_IPC_CHANNELS.DELETE, { id });
+}
+
+export async function updateSystemPromptAppendSetting(enabled: boolean): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(SYSTEM_PROMPT_IPC_CHANNELS.UPDATE_APPEND_SETTING, { enabled });
+}
+
+export async function setDefaultSystemPrompt(id: string | null): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(SYSTEM_PROMPT_IPC_CHANNELS.SET_DEFAULT, { id });
 }
 
 export async function onChatStreamChunk(handler: (event: StreamChunkEvent) => void): Promise<UnlistenFn> {

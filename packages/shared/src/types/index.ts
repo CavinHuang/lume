@@ -5,6 +5,7 @@
 export * from "./runtime";
 export * from "./channel";
 export * from "./chat";
+export * from "./system-prompt";
 export * from "./agent";
 export * from "./memory";
 export * from "./workspace-bootstrap";

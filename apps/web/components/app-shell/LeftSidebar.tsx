@@ -12,10 +12,13 @@ import {
   agentWorkspacesAtom,
   appModeAtom,
   conversationsAtom,
+  conversationPromptIdAtom,
   currentAgentWorkspaceIdAtom,
   currentAgentSessionIdAtom,
   currentConversationIdAtom,
   hasUpdateAtom,
+  promptConfigAtom,
+  selectedPromptIdAtom,
   selectedModelAtom,
   streamingConversationIdsAtom,
   workspaceCapabilitiesVersionAtom
@@ -93,10 +96,13 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const runningIds = useAtomValue(agentRunningSessionIdsAtom);
   const agentChannelId = useAtomValue(agentChannelIdAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
+  const promptConfig = useAtomValue(promptConfigAtom);
   const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom);
 
   const [conversations, setConversations] = useAtom(conversationsAtom);
   const [currentConversationId, setCurrentConversationId] = useAtom(currentConversationIdAtom);
+  const setConversationPromptMap = useSetAtom(conversationPromptIdAtom);
+  const setSelectedPromptId = useSetAtom(selectedPromptIdAtom);
   const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom);
   const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom);
   const [agentWorkspaces, setAgentWorkspaces] = useAtom(agentWorkspacesAtom);
@@ -235,6 +241,13 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         channelId: selectedModel?.channelId
       });
       setConversations((prev) => [created, ...prev]);
+      const nextPromptId = promptConfig.defaultPromptId ?? "builtin-default";
+      setConversationPromptMap((prev) => {
+        const next = new Map(prev);
+        next.set(created.id, nextPromptId);
+        return next;
+      });
+      setSelectedPromptId(nextPromptId);
       setCurrentConversationId(created.id);
       setActiveView("conversations");
       return;
@@ -253,6 +266,12 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     if (!pendingDelete) return;
     if (pendingDelete.type === "conversation") {
       await deleteConversationById(pendingDelete.id);
+      setConversationPromptMap((prev) => {
+        if (!prev.has(pendingDelete.id)) return prev;
+        const next = new Map(prev);
+        next.delete(pendingDelete.id);
+        return next;
+      });
       const next = await listConversations();
       setConversations(next);
       if (currentConversationId === pendingDelete.id) {
