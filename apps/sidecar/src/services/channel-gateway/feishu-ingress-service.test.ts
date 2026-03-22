@@ -106,6 +106,7 @@ describe("channel-gateway feishu ingress parser", () => {
       {
         version: 1,
         enabled: true,
+        connectionMode: "webhook",
         appId: "app_id",
         appSecret: "app_secret",
         verificationToken: "verify_token",

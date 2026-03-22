@@ -84,19 +84,24 @@ export interface ChannelGatewayListDeliveriesInput {
   limit?: number;
 }
 
+export type FeishuConnectionMode = "websocket" | "webhook";
+
 export interface ChannelGatewayIngressStatus {
   running: boolean;
+  connectionMode: FeishuConnectionMode;
   port: number | null;
   webhookPath: string;
   webhookUrl: string | null;
+  wsConnected?: boolean;
 }
 
 export interface FeishuGatewayConfig {
   version: number;
   enabled: boolean;
+  connectionMode: FeishuConnectionMode;
   appId: string;
   appSecret: string;
-  verificationToken: string;
+  verificationToken?: string;
   encryptKey?: string;
   domain: "feishu" | "lark";
   defaultWorkspaceId?: string;
@@ -106,6 +111,7 @@ export interface FeishuGatewayConfig {
 export interface FeishuGatewayConfigView {
   version: number;
   enabled: boolean;
+  connectionMode: FeishuConnectionMode;
   appId: string;
   hasAppSecret: boolean;
   hasVerificationToken: boolean;
@@ -117,6 +123,7 @@ export interface FeishuGatewayConfigView {
 
 export interface FeishuGatewayConfigInput {
   enabled: boolean;
+  connectionMode?: FeishuConnectionMode;
   appId: string;
   appSecret?: string;
   verificationToken?: string;

@@ -115,7 +115,7 @@ import {
   updateAgentWorkspace,
   deleteWorkspaceSkill
 } from "./services/agent-workspace-manager";
-import { readBootstrapFile } from "./services/workspace-bootstrap-service";
+import { readBootstrapFile, writeBootstrapFile } from "./services/workspace-bootstrap-service";
 import {
   getGlobalMarketplaceDetail,
   getGlobalDiscoverySnapshot,
@@ -180,10 +180,16 @@ import {
   stopFeishuIngressServer
 } from "./services/channel-gateway/feishu-ingress-service";
 import {
+  getFeishuGatewayConfig,
   getFeishuGatewayConfigView,
   saveFeishuGatewayConfig
 } from "./services/channel-gateway/feishu-config-manager";
 import { testFeishuGatewayConnection } from "./services/channel-gateway/feishu-api";
+import {
+  getFeishuWsIngressStatus,
+  startFeishuWsIngressServer,
+  stopFeishuWsIngressServer
+} from "./services/channel-gateway/feishu-ws-ingress-service";
 import {
   startFeishuRetryWorker,
   stopFeishuRetryWorker
@@ -565,6 +571,12 @@ const readBootstrapFileInputSchema = z.object({
   fileType: bootstrapFileTypeSchema
 });
 
+const writeBootstrapFileInputSchema = z.object({
+  workspaceSlug: idSchema,
+  fileType: bootstrapFileTypeSchema,
+  content: z.string()
+});
+
 const toolPolicyRuleSchema = z.object({
   allow: z.array(z.string()).optional(),
   deny: z.array(z.string()).optional()
@@ -665,6 +677,7 @@ const channelGatewayListDeliveriesInputSchema = z.object({
 
 const feishuGatewaySaveInputSchema = z.object({
   enabled: z.boolean(),
+  connectionMode: z.enum(["websocket", "webhook"]).optional(),
   appId: z.string().default(""),
   appSecret: z.string().optional(),
   verificationToken: z.string().optional(),
@@ -1010,10 +1023,22 @@ const handlers: Record<string, RpcHandler> = {
         CHANNEL_GATEWAY_IPC_CHANNELS.LIST_DELIVERIES
       ) as ChannelGatewayListDeliveriesInput
     ),
-  [CHANNEL_GATEWAY_IPC_CHANNELS.GET_INGRESS_STATUS]: async () => getFeishuIngressStatus(),
-  [CHANNEL_GATEWAY_IPC_CHANNELS.START_INGRESS]: async () => startFeishuIngressServer(),
+  [CHANNEL_GATEWAY_IPC_CHANNELS.GET_INGRESS_STATUS]: async () => {
+    const cfg = getFeishuGatewayConfig();
+    return cfg.connectionMode === "websocket" ? getFeishuWsIngressStatus() : getFeishuIngressStatus();
+  },
+  [CHANNEL_GATEWAY_IPC_CHANNELS.START_INGRESS]: async () => {
+    const cfg = getFeishuGatewayConfig();
+    if (cfg.connectionMode === "websocket") {
+      await stopFeishuIngressServer();
+      return startFeishuWsIngressServer();
+    }
+    await stopFeishuWsIngressServer();
+    return startFeishuIngressServer();
+  },
   [CHANNEL_GATEWAY_IPC_CHANNELS.STOP_INGRESS]: async () => {
     await stopFeishuIngressServer();
+    await stopFeishuWsIngressServer();
     return { ok: true };
   },
   [CHANNEL_GATEWAY_IPC_CHANNELS.GET_FEISHU_CONFIG]: async () => getFeishuGatewayConfigView(),
@@ -1187,6 +1212,11 @@ const handlers: Record<string, RpcHandler> = {
     const input = validateInput(readBootstrapFileInputSchema, params, "agent:read-bootstrap-file");
     return { content: readBootstrapFile(input.workspaceSlug, input.fileType as import("@lume/shared").BootstrapFileType) };
   },
+  "agent:write-bootstrap-file": async (params) => {
+    const input = validateInput(writeBootstrapFileInputSchema, params, "agent:write-bootstrap-file");
+    writeBootstrapFile(input.workspaceSlug, input.fileType as import("@lume/shared").BootstrapFileType, input.content);
+    return { ok: true };
+  },
   [AGENT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
     const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_MESSAGE);
     if (planStateTracker.isLikelyExecutionRequest(input)) {
@@ -1348,11 +1378,20 @@ function boot(): void {
   }
   const channelIngressAutostart = process.env.LUME_CHANNEL_GATEWAY_AUTOSTART?.toLowerCase() !== "0";
   if (channelIngressAutostart) {
-    void startFeishuIngressServer().then((status) => {
-      console.error(`[渠道网关] 飞书 webhook 已启动: ${status.webhookUrl ?? "unknown"}`);
-    }).catch((error) => {
-      console.error(`[渠道网关] 飞书 webhook 启动失败: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    const channelConfig = getFeishuGatewayConfig();
+    if (channelConfig.connectionMode === "websocket") {
+      void startFeishuWsIngressServer().then((status) => {
+        console.error(`[渠道网关] 飞书 WebSocket 已启动: connected=${status.wsConnected}`);
+      }).catch((error) => {
+        console.error(`[渠道网关] 飞书 WebSocket 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } else {
+      void startFeishuIngressServer().then((status) => {
+        console.error(`[渠道网关] 飞书 webhook 已启动: ${status.webhookUrl ?? "unknown"}`);
+      }).catch((error) => {
+        console.error(`[渠道网关] 飞书 webhook 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
   }
   startFeishuRetryWorker();
   void startAutomationRunner().catch((error) => {
@@ -1370,6 +1409,7 @@ function boot(): void {
     void stopAutomationRunner().catch(() => {});
     void stopRelayServer().catch(() => {});
     void stopFeishuIngressServer().catch(() => {});
+    void stopFeishuWsIngressServer().catch(() => {});
     stopFeishuRetryWorker();
   };
   process.once("exit", stopWatcher);

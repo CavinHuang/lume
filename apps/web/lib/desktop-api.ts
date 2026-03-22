@@ -1000,6 +1000,14 @@ export async function readAgentBootstrapFile(
   return sidecarCall<{ content: string }>("agent:read-bootstrap-file", { workspaceSlug, fileType });
 }
 
+export async function writeAgentBootstrapFile(
+  workspaceSlug: string,
+  fileType: string,
+  content: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>("agent:write-bootstrap-file", { workspaceSlug, fileType, content });
+}
+
 export async function searchWorkspaceMemory(
   workspaceSlug: string,
   query: string,

@@ -2,6 +2,7 @@ import { createDecipheriv, createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import type { ChannelGatewayIngressStatus, ChannelInboundEvent, FeishuGatewayConfig } from "@lume/shared";
 import { getFeishuGatewayConfig } from "./feishu-config-manager";
+import { parsePostContent, parseTextContent, pickSenderId, type FeishuMessageEventPayload } from "./feishu-message-parser";
 import { simulateChannelGatewayIngress } from "./gateway-service";
 
 const DEFAULT_PORT = 18793;
@@ -14,31 +15,6 @@ type FeishuVerificationPayload = {
   type?: string;
   challenge?: string;
   token?: string;
-};
-
-type FeishuMessageEventPayload = {
-  schema?: string;
-  header?: {
-    event_id?: string;
-    event_type?: string;
-    create_time?: string;
-  };
-  event?: {
-    sender?: {
-      sender_id?: {
-        open_id?: string;
-        user_id?: string;
-        union_id?: string;
-      };
-    };
-    message?: {
-      message_id?: string;
-      chat_id?: string;
-      message_type?: string;
-      content?: string;
-      parent_id?: string;
-    };
-  };
 };
 
 let server: ReturnType<typeof createServer> | null = null;
@@ -117,7 +93,7 @@ function secureEqual(a: string, b: string): boolean {
 }
 
 function verifyRequestToken(payloadToken: string | undefined, config: FeishuGatewayConfig): boolean {
-  const expected = config.verificationToken.trim();
+  const expected = config.verificationToken?.trim();
   if (!expected) return false;
   return secureEqual(payloadToken?.trim() || "", expected);
 }
@@ -152,48 +128,6 @@ function decryptFeishuPayload(encrypt: string, encryptKey: string): unknown {
   const length = content.readUInt32BE(0);
   const jsonBody = content.subarray(4, 4 + length).toString("utf8");
   return JSON.parse(jsonBody);
-}
-
-function pickSenderId(payload: FeishuMessageEventPayload): string | undefined {
-  return (
-    payload.event?.sender?.sender_id?.open_id
-    || payload.event?.sender?.sender_id?.user_id
-    || payload.event?.sender?.sender_id?.union_id
-    || undefined
-  );
-}
-
-function parseTextContent(raw: string | undefined): string {
-  if (!raw?.trim()) return "";
-  try {
-    const parsed = JSON.parse(raw) as { text?: string };
-    return typeof parsed.text === "string" ? parsed.text.trim() : "";
-  } catch {
-    return "";
-  }
-}
-
-function parsePostContent(raw: string | undefined): string {
-  if (!raw?.trim()) return "";
-  try {
-    const parsed = JSON.parse(raw) as {
-      zh_cn?: { content?: Array<Array<{ text?: string }>> };
-      en_us?: { content?: Array<Array<{ text?: string }>> };
-    };
-    const locale = parsed.zh_cn ?? parsed.en_us;
-    const rows = locale?.content ?? [];
-    const texts: string[] = [];
-    for (const row of rows) {
-      for (const block of row) {
-        if (typeof block?.text === "string" && block.text.trim()) {
-          texts.push(block.text.trim());
-        }
-      }
-    }
-    return texts.join("\n").trim();
-  } catch {
-    return "";
-  }
 }
 
 function toInboundEvent(payload: FeishuMessageEventPayload): ChannelInboundEvent | null {
@@ -231,6 +165,7 @@ export function getFeishuIngressStatus(): ChannelGatewayIngressStatus {
   const webhookPath = normalizeWebhookPath(config.webhookPath);
   return {
     running: Boolean(server),
+    connectionMode: "webhook" as const,
     port: boundPort,
     webhookPath,
     webhookUrl: boundPort ? `http://127.0.0.1:${boundPort}${webhookPath}` : null

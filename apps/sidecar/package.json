@@ -12,6 +12,7 @@
     "smoke:chat-stream": "bun scripts/smoke-chat-stream.mjs"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
     "@lume/shared": "workspace:*",
     "@mariozechner/pi-agent-core": "0.52.10",
     "@mariozechner/pi-ai": "0.52.10",

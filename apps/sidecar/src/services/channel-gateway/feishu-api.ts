@@ -34,7 +34,9 @@ function ensureConfigured(config: FeishuGatewayConfig): void {
   if (!config.enabled) throw new Error("飞书渠道网关未启用");
   if (!config.appId.trim()) throw new Error("飞书 appId 未配置");
   if (!config.appSecret.trim()) throw new Error("飞书 appSecret 未配置");
-  if (!config.verificationToken.trim()) throw new Error("飞书 verificationToken 未配置");
+  if (config.connectionMode === "webhook" && !config.verificationToken?.trim()) {
+    throw new Error("飞书 verificationToken 未配置（Webhook 模式必须）");
+  }
 }
 
 async function fetchTenantAccessToken(config: FeishuGatewayConfig): Promise<TenantTokenCacheItem> {

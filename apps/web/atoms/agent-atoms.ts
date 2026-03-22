@@ -326,6 +326,9 @@ export const currentAgentMessagesAtom = atom<AgentMessage[]>([]);
 export const agentStreamingStatesAtom = atom<Map<string, AgentStreamState>>(new Map());
 export const agentStreamErrorsAtom = atom<Map<string, string>>(new Map());
 
+/** 持久化每个 session 最后一次上下文用量，确保非流式状态下也能显示 */
+export const agentSessionContextCacheAtom = atom<Map<string, { inputTokens: number; contextWindow?: number }>>(new Map());
+
 export const currentAgentStreamStateAtom = atom<AgentStreamState | null>((get) => {
   const currentId = get(currentAgentSessionIdAtom);
   if (!currentId) return null;
@@ -359,9 +362,11 @@ export const agentContextStatusAtom = atom<{
   isCompacting: boolean;
 }>((get) => {
   const state = get(currentAgentStreamStateAtom);
+  const currentId = get(currentAgentSessionIdAtom);
+  const cache = currentId ? get(agentSessionContextCacheAtom).get(currentId) : undefined;
   return {
-    inputTokens: state?.inputTokens,
-    contextWindow: state?.contextWindow,
+    inputTokens: state?.inputTokens ?? cache?.inputTokens,
+    contextWindow: state?.contextWindow ?? cache?.contextWindow,
     isCompacting: !!state?.isCompacting
   };
 });

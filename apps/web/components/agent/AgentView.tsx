@@ -25,6 +25,7 @@ import {
   agentStreamErrorsAtom,
   agentToolActivitiesAtom,
   agentStreamingStatesAtom,
+  agentSessionContextCacheAtom,
   agentWorkspacesAtom,
   applyAgentEvent,
   currentAgentErrorAtom,
@@ -284,6 +285,7 @@ export function AgentView(): React.ReactElement {
   const [workspaces] = useAtom(agentWorkspacesAtom);
   const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
+  const setContextCache = useSetAtom(agentSessionContextCacheAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const toolActivities = useAtomValue(agentToolActivitiesAtom);
   const contextStatus = useAtomValue(agentContextStatusAtom);
@@ -787,6 +789,19 @@ export function AgentView(): React.ReactElement {
         map.set(payload.sessionId, applyAgentEvent(current, payload.event));
         return map;
       });
+
+      // 持久化 usage 到缓存，确保非流式状态下也能显示上下文用量
+      if (payload.event.type === "usage_update") {
+        const usageEvent = payload.event;
+        setContextCache((prev) => {
+          const map = new Map(prev);
+          map.set(payload.sessionId, {
+            inputTokens: usageEvent.usage.inputTokens,
+            contextWindow: usageEvent.usage.contextWindow ?? prev.get(payload.sessionId)?.contextWindow
+          });
+          return map;
+        });
+      }
     }));
 
     trackUnlisten(onAgentStreamComplete((payload) => {

@@ -44,12 +44,12 @@ export function ContextUsageBadge({
   const usageRatio = compactThreshold ? inputTokens / compactThreshold : undefined;
   const isWarning = usageRatio !== undefined && usageRatio >= WARNING_RATIO;
   const isFlushHint = usageRatio !== undefined && usageRatio >= MEMORY_FLUSH_RATIO && !isWarning;
+  // 主显示：当前 token / 压缩阈值（如 1.2k/155k）
   const displayText = compactThreshold
-    ? `${formatTokens(inputTokens)} / ${formatTokens(compactThreshold)}`
+    ? `${formatTokens(inputTokens)}/${formatTokens(compactThreshold)}`
     : formatTokens(inputTokens);
-  const percentText = usageRatio !== undefined ? `${Math.round(usageRatio * 100)}%` : undefined;
   const tooltipText = contextWindow
-    ? `上下文: ${inputTokens.toLocaleString()} / ${compactThreshold?.toLocaleString()} tokens (窗口 ${contextWindow.toLocaleString()})${isWarning ? "\n点击手动压缩" : isFlushHint ? "\n上下文即将达到上限" : ""}`
+    ? `上下文: ${inputTokens.toLocaleString()} / ${compactThreshold?.toLocaleString()} tokens\n模型窗口: ${contextWindow.toLocaleString()} tokens${isWarning ? "\n点击手动压缩" : isFlushHint ? "\n上下文即将达到上限" : ""}`
     : `上下文: ${inputTokens.toLocaleString()} tokens`;
 
   return (
@@ -69,7 +69,6 @@ export function ContextUsageBadge({
           disabled={!isWarning || isProcessing}
         >
           <span>{displayText}</span>
-          {isWarning && percentText ? <span className="font-medium">{percentText}</span> : null}
         </button>
       </TooltipTrigger>
       <TooltipContent side="top">

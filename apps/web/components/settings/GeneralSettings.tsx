@@ -6,13 +6,13 @@ import { Camera, ImagePlus } from "lucide-react";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 import type { AgentProxySettings, AgentProxyStatus } from "@lume/shared";
-import { userProfileAtom, persistUserProfile } from "@/atoms";
+import { userProfileAtom, persistUserProfile, themeModeAtom, persistThemeMode, type ThemeMode } from "@/atoms";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { getAgentProxySettings, saveAgentProxySettings } from "@/lib/desktop-api";
-import { SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect } from "./primitives";
+import { SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSegmentedControl, SettingsSelect } from "./primitives";
 
 interface EmojiMartEmoji {
   id: string;
@@ -23,8 +23,19 @@ interface EmojiMartEmoji {
   shortcodes: string;
 }
 
+const THEME_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
+  { value: "system", label: "跟随系统" }
+];
+
 export function GeneralSettings(): React.ReactElement {
   const [userProfile, setUserProfile] = useAtom(userProfileAtom);
+  const [themeMode, setThemeMode] = useAtom(themeModeAtom);
+  const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
+  const zoomHint = isMac
+    ? "使用 ⌘+ 放大、⌘- 缩小、⌘0 恢复默认大小"
+    : "使用 Ctrl++ 放大、Ctrl+- 缩小、Ctrl+0 恢复默认大小";
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(userProfile.userName);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
@@ -193,9 +204,21 @@ export function GeneralSettings(): React.ReactElement {
 
       <SettingsSection title="通用设置" description="应用的基本配置">
         <SettingsCard>
+          <SettingsSegmentedControl
+            label="主题模式"
+            description="选择应用的配色方案"
+            value={themeMode}
+            onValueChange={(value) => {
+              const next = value as ThemeMode;
+              setThemeMode(next);
+              persistThemeMode(next);
+            }}
+            options={THEME_OPTIONS}
+          />
           <SettingsRow label="语言" description="更多语言支持即将推出">
             <span className="text-[13px] text-foreground/40">简体中文</span>
           </SettingsRow>
+          <SettingsRow label="界面缩放" description={zoomHint} />
         </SettingsCard>
       </SettingsSection>
 

@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type {
+  FeishuConnectionMode,
   FeishuGatewayConfig,
   FeishuGatewayConfigInput,
   FeishuGatewayConfigView
@@ -14,9 +15,10 @@ const DEFAULT_WEBHOOK_PATH = "/webhook/feishu";
 interface StoredFeishuGatewayConfig {
   version: number;
   enabled: boolean;
+  connectionMode: FeishuConnectionMode;
   appId: string;
   appSecretEnc: string;
-  verificationTokenEnc: string;
+  verificationTokenEnc?: string;
   encryptKeyEnc?: string;
   domain: "feishu" | "lark";
   defaultWorkspaceId?: string;
@@ -56,9 +58,9 @@ function defaultStoredConfig(): StoredFeishuGatewayConfig {
   return {
     version: CONFIG_VERSION,
     enabled: false,
+    connectionMode: "websocket",
     appId: "",
     appSecretEnc: "",
-    verificationTokenEnc: "",
     domain: "feishu",
     webhookPath: DEFAULT_WEBHOOK_PATH
   };
@@ -78,9 +80,10 @@ function readStored(): StoredFeishuGatewayConfig {
     return {
       version: CONFIG_VERSION,
       enabled: parsed.enabled === true,
+      connectionMode: parsed.connectionMode === "webhook" ? "webhook" : "websocket",
       appId: typeof parsed.appId === "string" ? parsed.appId : "",
       appSecretEnc: typeof parsed.appSecretEnc === "string" ? parsed.appSecretEnc : "",
-      verificationTokenEnc: typeof parsed.verificationTokenEnc === "string" ? parsed.verificationTokenEnc : "",
+      verificationTokenEnc: typeof parsed.verificationTokenEnc === "string" ? parsed.verificationTokenEnc : undefined,
       encryptKeyEnc: typeof parsed.encryptKeyEnc === "string" ? parsed.encryptKeyEnc : undefined,
       domain: parsed.domain === "lark" ? "lark" : "feishu",
       defaultWorkspaceId: typeof parsed.defaultWorkspaceId === "string" ? parsed.defaultWorkspaceId : undefined,
@@ -96,6 +99,7 @@ function toPublicView(stored: StoredFeishuGatewayConfig): FeishuGatewayConfigVie
   return {
     version: stored.version,
     enabled: stored.enabled,
+    connectionMode: stored.connectionMode,
     appId: stored.appId,
     hasAppSecret: Boolean(stored.appSecretEnc),
     hasVerificationToken: Boolean(stored.verificationTokenEnc),
@@ -110,9 +114,10 @@ function toRuntimeConfig(stored: StoredFeishuGatewayConfig): FeishuGatewayConfig
   return {
     version: stored.version,
     enabled: stored.enabled,
+    connectionMode: stored.connectionMode,
     appId: stored.appId,
     appSecret: stored.appSecretEnc ? decryptSecret(stored.appSecretEnc) : "",
-    verificationToken: stored.verificationTokenEnc ? decryptSecret(stored.verificationTokenEnc) : "",
+    ...(stored.verificationTokenEnc ? { verificationToken: decryptSecret(stored.verificationTokenEnc) } : {}),
     ...(stored.encryptKeyEnc ? { encryptKey: decryptSecret(stored.encryptKeyEnc) } : {}),
     domain: stored.domain,
     ...(stored.defaultWorkspaceId ? { defaultWorkspaceId: stored.defaultWorkspaceId } : {}),
@@ -138,6 +143,7 @@ export function saveFeishuGatewayConfig(input: FeishuGatewayConfigInput): Feishu
     ...current,
     version: CONFIG_VERSION,
     enabled: input.enabled,
+    connectionMode: input.connectionMode === "webhook" ? "webhook" : (input.connectionMode === "websocket" ? "websocket" : current.connectionMode),
     appId: input.appId.trim(),
     domain: input.domain === "lark" ? "lark" : "feishu",
     defaultWorkspaceId: input.defaultWorkspaceId?.trim() || undefined,

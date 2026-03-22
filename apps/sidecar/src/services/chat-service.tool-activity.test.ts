@@ -699,6 +699,103 @@ describe("chat-service tool activity", () => {
     expect(chunkEvents.some((event) => event.delta.includes("Anthropic 函数调用后的最终回答"))).toBeTrue();
   });
 
+  test("anthropic 同轮多 tool_use 时应保留两次执行并续接双 tool_result", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "anthropic-fc-multi",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "sk-test",
+      models: [{ id: "claude-test", name: "claude-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const requestBodies: unknown[] = [];
+    const duckQueries: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/messages")) {
+        if (init?.body && typeof init.body === "string") {
+          requestBodies.push(JSON.parse(init.body));
+        }
+        if (requestBodies.length === 1) {
+          return new Response(
+            "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}}\n" +
+            "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_2\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"lume desktop release\\\"}\"}}\n" +
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n" +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Anthropic 多工具函数调用完成\"}}\n" +
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n" +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        const query = decodeURIComponent((url.split("?q=")[1] ?? "").split("&")[0] ?? "");
+        duckQueries.push(query);
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("anthropic 同轮多工具");
+    const toolEvents: StreamToolActivityEvent[] = [];
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请联网检索两组信息并总结",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "claude-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestBodies.length).toBe(2);
+    const secondMessages = (requestBodies[1] as { messages: Array<{ role: string; content?: Array<{ type?: string; tool_use_id?: string }> }> }).messages;
+    expect(
+      secondMessages.some((item) =>
+        item.role === "user"
+        && Array.isArray(item.content)
+        && item.content.some((part) => part.type === "tool_result" && part.tool_use_id === "toolu_1")
+      )
+    ).toBeTrue();
+    expect(
+      secondMessages.some((item) =>
+        item.role === "user"
+        && Array.isArray(item.content)
+        && item.content.some((part) => part.type === "tool_result" && part.tool_use_id === "toolu_2")
+      )
+    ).toBeTrue();
+
+    expect(duckQueries).toContain("latest ai news");
+    expect(duckQueries).toContain("lume desktop release");
+    expect(toolEvents.filter((event) => event.activity.type === "start" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(toolEvents.filter((event) => event.activity.type === "result" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(chunkEvents.some((event) => event.delta.includes("Anthropic 多工具函数调用完成"))).toBeTrue();
+  });
+
   test("google provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;
