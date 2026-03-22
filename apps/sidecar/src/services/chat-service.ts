@@ -48,6 +48,7 @@ import {
   getEnabledChatToolSystemPromptAppend
 } from "./chat-tool-manager";
 import { executeHttpChatTool } from "./chat-tool-http-executor";
+import { generateNanoBananaImage } from "./nano-banana-service";
 
 type ChatEventEmitter = {
   onChunk: (event: StreamChunkEvent) => void;
@@ -128,6 +129,8 @@ function filterHistory(
 const WEB_SEARCH_KEYWORD_PATTERN = /\b(latest|today|current|news|price|weather|score|release|update)\b|最新|今天|现在|新闻|价格|汇率|天气|比分|发布|更新/iu;
 const AGENT_MODE_RECOMMEND_KEYWORD_PATTERN =
   /调研|研究|报告|分析|开发|代码|实现|重构|调试|测试|项目|文件|脚本|命令|自动化|多步骤|搭建|部署|数据库|api|workflow|pipeline|计划|执行|refactor|debug|test|build|research/iu;
+const NANO_BANANA_KEYWORD_PATTERN =
+  /图片|图像|配图|海报|插画|封面|壁纸|logo|生图|绘图|画一张|生成图|image|poster|illustration|cover|draw|render/iu;
 
 function shouldRunWebSearch(userMessage: string): boolean {
   return WEB_SEARCH_KEYWORD_PATTERN.test(userMessage);
@@ -138,6 +141,28 @@ function shouldSuggestAgentMode(userMessage: string): boolean {
   if (!normalized) return false;
   if (AGENT_MODE_RECOMMEND_KEYWORD_PATTERN.test(normalized)) return true;
   return normalized.length >= 80 && /\s|，|。|,|\./.test(normalized);
+}
+
+function shouldRunNanoBanana(userMessage: string, attachments?: FileAttachment[]): boolean {
+  if (attachments?.some((item) => isImageAttachment(item.mediaType))) {
+    return true;
+  }
+  return NANO_BANANA_KEYWORD_PATTERN.test(userMessage.trim());
+}
+
+function getLatestAttachmentsByRole(
+  history: ChatMessage[],
+  role: "user" | "assistant"
+): FileAttachment[] | undefined {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index];
+    if (!item) continue;
+    if (item.role !== role) continue;
+    if (item.attachments && item.attachments.length > 0) {
+      return item.attachments;
+    }
+  }
+  return undefined;
 }
 
 function buildAgentModeRecommendation(userMessage: string): { reason: string; suggestedPrompt: string } {
@@ -352,10 +377,19 @@ function getStringArgument(argumentsObj: Record<string, unknown>, key: string): 
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function getBooleanArgument(argumentsObj: Record<string, unknown>, key: string): boolean | undefined {
+  const value = argumentsObj[key];
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
 function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition[] {
   return enabledMetas.map((meta) => {
     if (meta.id === "memory_search") {
-      return {
+      const definition: ToolDefinition = {
         name: meta.id,
         description: meta.description,
         parameters: {
@@ -369,10 +403,11 @@ function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition
           required: ["query"]
         }
       };
+      return definition;
     }
 
     if (meta.id === "web_search") {
-      return {
+      const definition: ToolDefinition = {
         name: meta.id,
         description: meta.description,
         parameters: {
@@ -386,10 +421,11 @@ function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition
           required: ["query"]
         }
       };
+      return definition;
     }
 
     if (meta.id === "suggest_agent_mode") {
-      return {
+      const definition: ToolDefinition = {
         name: meta.id,
         description: meta.description,
         parameters: {
@@ -407,6 +443,39 @@ function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition
           required: ["reason", "suggestedPrompt"]
         }
       };
+      return definition;
+    }
+
+    if (meta.id === "nano_banana") {
+      const definition: ToolDefinition = {
+        name: meta.id,
+        description: meta.description,
+        parameters: {
+          type: "object",
+          properties: {
+            prompt: {
+              type: "string",
+              description: "图片生成/编辑描述，英文描述通常效果更好"
+            },
+            aspectRatio: {
+              type: "string",
+              description: "图片宽高比",
+              enum: ["1:1", "16:9", "4:3", "9:16", "3:4"]
+            },
+            imageSize: {
+              type: "string",
+              description: "图片分辨率",
+              enum: ["auto", "1K", "2K", "4K"]
+            },
+            useReferenceImages: {
+              type: "boolean",
+              description: "是否使用当前或历史图片附件作为参考图"
+            }
+          },
+          required: ["prompt"]
+        }
+      };
+      return definition;
     }
 
     const props = Object.fromEntries(
@@ -431,7 +500,7 @@ function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition
       .filter((param) => param.required)
       .map((param) => param.name);
 
-    return {
+    const definition: ToolDefinition = {
       name: meta.id,
       description: meta.description,
       parameters: {
@@ -440,13 +509,18 @@ function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition
         ...(required.length > 0 ? { required } : {})
       }
     };
+    return definition;
   });
 }
 
 async function executeToolCallForChat(input: {
+  conversationId: string;
   toolCall: ToolCall;
   fallbackQuery: string;
   enabledMetaMap: Map<string, ChatToolMeta>;
+  currentAttachments?: FileAttachment[];
+  previousUserAttachments?: FileAttachment[];
+  previousAssistantAttachments?: FileAttachment[];
   emitToolActivity: (activity: ChatToolActivity) => void;
 }): Promise<ToolResult> {
   const { toolCall, fallbackQuery, enabledMetaMap } = input;
@@ -520,6 +594,37 @@ async function executeToolCallForChat(input: {
       return { toolCallId: toolCall.id, content: text };
     }
 
+    if (toolCall.name === "nano_banana") {
+      const prompt = getStringArgument(toolCall.arguments, "prompt") ?? query;
+      const aspectRatio = getStringArgument(toolCall.arguments, "aspectRatio");
+      const imageSize = getStringArgument(toolCall.arguments, "imageSize");
+      const useReferenceImages = getBooleanArgument(toolCall.arguments, "useReferenceImages");
+      const result = await generateNanoBananaImage(
+        {
+          conversationId: input.conversationId,
+          prompt,
+          aspectRatio,
+          imageSize,
+          useReferenceImages,
+          currentAttachments: input.currentAttachments,
+          previousUserAttachments: input.previousUserAttachments,
+          previousAssistantAttachments: input.previousAssistantAttachments
+        },
+        getChatToolCredentials("nano_banana")
+      );
+      input.emitToolActivity({
+        type: "result",
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        result: result.text
+      });
+      return {
+        toolCallId: toolCall.id,
+        content: result.text,
+        generatedAttachments: result.attachments
+      };
+    }
+
     if (meta.category === "custom") {
       const customQuery = query || JSON.stringify(toolCall.arguments);
       const result = await runCustomHttpTool(meta, customQuery);
@@ -561,9 +666,12 @@ async function executeToolCallForChat(input: {
 async function runEnabledToolsForChat(input: {
   conversationId: string;
   userMessage: string;
+  attachments?: FileAttachment[];
+  previousUserAttachments?: FileAttachment[];
+  previousAssistantAttachments?: FileAttachment[];
   enabledToolIds?: string[];
   emitToolActivity: (activity: ChatToolActivity) => void;
-}): Promise<string | undefined> {
+}): Promise<{ contextAppendix?: string; generatedAttachments: FileAttachment[] }> {
   const toolInfos = getAllChatToolInfos();
   const enabledAndAvailable = new Set(
     toolInfos
@@ -577,6 +685,7 @@ async function runEnabledToolsForChat(input: {
     Array.from(requested).filter((toolId) => enabledAndAvailable.has(toolId))
   );
   const contextSections: string[] = [];
+  const generatedAttachments: FileAttachment[] = [];
 
   if (enabled.has("memory_search")) {
     const toolCallId = randomUUID();
@@ -676,6 +785,47 @@ async function runEnabledToolsForChat(input: {
     }
   }
 
+  if (enabled.has("nano_banana") && shouldRunNanoBanana(input.userMessage, input.attachments)) {
+    const toolCallId = randomUUID();
+    input.emitToolActivity({
+      type: "start",
+      toolName: "nano_banana",
+      toolCallId
+    });
+    try {
+      const result = await generateNanoBananaImage(
+        {
+          conversationId: input.conversationId,
+          prompt: input.userMessage,
+          useReferenceImages: true,
+          currentAttachments: input.attachments,
+          previousUserAttachments: input.previousUserAttachments,
+          previousAssistantAttachments: input.previousAssistantAttachments
+        },
+        getChatToolCredentials("nano_banana")
+      );
+      contextSections.push(`nano_banana:\n${result.text}`);
+      if (result.attachments && result.attachments.length > 0) {
+        generatedAttachments.push(...result.attachments);
+      }
+      input.emitToolActivity({
+        type: "result",
+        toolName: "nano_banana",
+        toolCallId,
+        result: result.text
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      input.emitToolActivity({
+        type: "result",
+        toolName: "nano_banana",
+        toolCallId,
+        result: message,
+        isError: true
+      });
+    }
+  }
+
   const customEnabledTools = toolInfos.filter(
     (tool) =>
       tool.meta.category === "custom" &&
@@ -713,14 +863,15 @@ async function runEnabledToolsForChat(input: {
     }
   }
 
-  if (contextSections.length === 0) {
-    return undefined;
-  }
-
-  return [
-    "以下是本轮工具执行结果，可作为回答参考：",
-    ...contextSections
-  ].join("\n\n");
+  return {
+    contextAppendix: contextSections.length > 0
+      ? [
+        "以下是本轮工具执行结果，可作为回答参考：",
+        ...contextSections
+      ].join("\n\n")
+      : undefined,
+    generatedAttachments
+  };
 }
 
 export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter): Promise<void> {
@@ -738,18 +889,28 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
   } = input;
 
   const accumulatedToolActivities: ChatToolActivity[] = [];
+  const accumulatedGeneratedAttachments: FileAttachment[] = [];
   const emitToolActivity = (activity: ChatToolActivity): void => {
     accumulatedToolActivities.push(activity);
     emit.onToolActivity({ conversationId, activity });
   };
+  const fullHistory = getConversationMessages(conversationId);
+  const previousUserAttachments = getLatestAttachmentsByRole(fullHistory, "user");
+  const previousAssistantAttachments = getLatestAttachmentsByRole(fullHistory, "assistant");
 
   if (process.env.LUME_CHAT_MOCK_SUCCESS === "1") {
-    await runEnabledToolsForChat({
+    const toolResult = await runEnabledToolsForChat({
       conversationId,
       userMessage,
+      attachments,
+      previousUserAttachments,
+      previousAssistantAttachments,
       enabledToolIds,
       emitToolActivity
     });
+    if (toolResult.generatedAttachments.length > 0) {
+      accumulatedGeneratedAttachments.push(...toolResult.generatedAttachments);
+    }
 
     const mockDelta = (process.env.LUME_CHAT_MOCK_TEXT || "chat-mock-success").trim();
     appendMessage(conversationId, {
@@ -767,6 +928,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
       content: mockDelta,
       createdAt: Date.now(),
       model: modelId,
+      attachments: accumulatedGeneratedAttachments.length > 0 ? accumulatedGeneratedAttachments : undefined,
       toolActivities: accumulatedToolActivities.length > 0 ? accumulatedToolActivities : undefined
     });
     updateConversationMeta(conversationId, {});
@@ -805,14 +967,21 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     )
     && enabledToolMetas.length > 0
   );
-  const toolContextAppendix = useModelToolCalling
+  const toolExecutionResult = useModelToolCalling
     ? undefined
     : await runEnabledToolsForChat({
       conversationId,
       userMessage,
+      attachments,
+      previousUserAttachments,
+      previousAssistantAttachments,
       enabledToolIds,
       emitToolActivity
     });
+  if (toolExecutionResult?.generatedAttachments.length) {
+    accumulatedGeneratedAttachments.push(...toolExecutionResult.generatedAttachments);
+  }
+  const toolContextAppendix = toolExecutionResult?.contextAppendix;
   const toolSystemPromptAppend = getEnabledChatToolSystemPromptAppend(enabledToolIds);
   const effectiveSystemMessage = [systemMessage, toolSystemPromptAppend, toolContextAppendix]
     .filter(Boolean)
@@ -824,7 +993,6 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
   if (existing) existing.abort();
   activeControllers.set(conversationId, controller);
 
-  const fullHistory = getConversationMessages(conversationId);
   const filteredHistory = filterHistory(fullHistory, contextDividers, contextLength);
   const enrichedHistory = await enrichHistoryWithDocuments(filteredHistory);
   const enrichedUserMessage = await enrichMessageWithDocuments(userMessage, attachments);
@@ -882,12 +1050,19 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
         const toolResults: ToolResult[] = [];
         for (const toolCall of toolCalls) {
           const result = await executeToolCallForChat({
+            conversationId,
             toolCall,
             fallbackQuery: userMessage,
             enabledMetaMap,
+            currentAttachments: attachments,
+            previousUserAttachments,
+            previousAssistantAttachments,
             emitToolActivity
           });
           toolResults.push(result);
+          if (result.generatedAttachments && result.generatedAttachments.length > 0) {
+            accumulatedGeneratedAttachments.push(...result.generatedAttachments);
+          }
         }
         continuationMessages.push(
           { role: "assistant", content: "", toolCalls },
@@ -936,6 +1111,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
       createdAt: Date.now(),
       model: modelSelection.modelRef,
       reasoning: finalReasoning || undefined,
+      attachments: accumulatedGeneratedAttachments.length > 0 ? accumulatedGeneratedAttachments : undefined,
       toolActivities: accumulatedToolActivities.length > 0 ? accumulatedToolActivities : undefined
     });
     updateConversationMeta(conversationId, {});
@@ -960,6 +1136,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
           model: modelSelection.modelRef,
           reasoning: accumulatedReasoning || undefined,
           stopped: true,
+          attachments: accumulatedGeneratedAttachments.length > 0 ? accumulatedGeneratedAttachments : undefined,
           toolActivities: accumulatedToolActivities.length > 0 ? accumulatedToolActivities : undefined
         });
         updateConversationMeta(conversationId, {});

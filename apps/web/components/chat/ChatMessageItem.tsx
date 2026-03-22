@@ -148,6 +148,9 @@ export function ChatMessageItem({
                   {isStreaming && isLastAssistant && !message.stopped ? <StreamingIndicator /> : null}
                 </>
               ) : null}
+              {message.attachments && message.attachments.length > 0 ? (
+                <MessageAttachments attachments={message.attachments} />
+              ) : null}
 
               {message.stopped && !message.content ? <MessageStopped /> : null}
             </>

@@ -76,6 +76,8 @@ export interface ToolResult {
   content: string
   /** 是否出错 */
   isError?: boolean
+  /** 工具生成的附件（如图片） */
+  generatedAttachments?: FileAttachment[]
 }
 
 /**

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Brain, Globe, Settings, Sparkles, Wrench } from "lucide-react";
+import { Brain, Globe, ImagePlus, Settings, Sparkles, Wrench } from "lucide-react";
 import { activeViewAtom, chatToolsAtom, hasActiveToolsAtom, settingsTabAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 function getToolIcon(iconName?: string): React.ReactElement {
   if (iconName === "Brain") return <Brain className="size-4" />;
   if (iconName === "Globe") return <Globe className="size-4" />;
+  if (iconName === "ImagePlus") return <ImagePlus className="size-4" />;
   if (iconName === "Sparkles") return <Sparkles className="size-4" />;
   return <Wrench className="size-4" />;
 }

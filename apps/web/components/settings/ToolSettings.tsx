@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAtom } from "jotai";
-import { Brain, Globe, Sparkles, Trash2, Wrench } from "lucide-react";
+import { Brain, Globe, ImagePlus, Sparkles, Trash2, Wrench } from "lucide-react";
 import type { ChatToolInfo } from "@lume/shared";
 import { chatToolsAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { SettingsCard, SettingsSection } from "./primitives";
 function getToolIcon(iconName?: string): React.ReactElement {
   if (iconName === "Brain") return <Brain className="size-4 text-muted-foreground" />;
   if (iconName === "Globe") return <Globe className="size-4 text-muted-foreground" />;
+  if (iconName === "ImagePlus") return <ImagePlus className="size-4 text-muted-foreground" />;
   if (iconName === "Sparkles") return <Sparkles className="size-4 text-muted-foreground" />;
   return <Wrench className="size-4 text-muted-foreground" />;
 }
@@ -64,6 +65,7 @@ export function ToolSettings(): React.ReactElement {
   const [tools, setTools] = useAtom(chatToolsAtom);
   const [loading, setLoading] = useState(false);
   const [testingWebSearch, setTestingWebSearch] = useState(false);
+  const [testingNanoBanana, setTestingNanoBanana] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [credentialsDialogOpen, setCredentialsDialogOpen] = useState(false);
   const [creatingCustomTool, setCreatingCustomTool] = useState(false);
@@ -71,6 +73,10 @@ export function ToolSettings(): React.ReactElement {
   const [testingCustomToolId, setTestingCustomToolId] = useState<string | null>(null);
   const [customToolTestResults, setCustomToolTestResults] = useState<Record<string, { success: boolean; message: string }>>({});
   const [webSearchTestResult, setWebSearchTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+  const [nanoBananaTestResult, setNanoBananaTestResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
@@ -104,17 +110,35 @@ export function ToolSettings(): React.ReactElement {
     braveApiKey: "",
     tavilyApiKey: ""
   });
+  const [nanoBananaCredentials, setNanoBananaCredentials] = useState<{
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+  }>({
+    apiKey: "",
+    baseUrl: "",
+    model: ""
+  });
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void Promise.all([getChatTools(), getChatToolCredentials("web_search")])
-      .then(([toolInfos, credentials]) => {
+    void Promise.all([
+      getChatTools(),
+      getChatToolCredentials("web_search"),
+      getChatToolCredentials("nano_banana")
+    ])
+      .then(([toolInfos, web, nano]) => {
         if (cancelled) return;
         setTools(toolInfos);
         setWebCredentials({
-          braveApiKey: credentials.braveApiKey ?? "",
-          tavilyApiKey: credentials.tavilyApiKey ?? ""
+          braveApiKey: web.braveApiKey ?? "",
+          tavilyApiKey: web.tavilyApiKey ?? ""
+        });
+        setNanoBananaCredentials({
+          apiKey: nano.apiKey ?? "",
+          baseUrl: nano.baseUrl ?? "",
+          model: nano.model ?? ""
         });
         setErrorMessage(null);
       })
@@ -135,10 +159,22 @@ export function ToolSettings(): React.ReactElement {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     void onChatToolChanged(() => {
-      void getChatTools().then((toolInfos) => {
-        if (!disposed) {
-          setTools(toolInfos);
-        }
+      void Promise.all([
+        getChatTools(),
+        getChatToolCredentials("web_search"),
+        getChatToolCredentials("nano_banana")
+      ]).then(([toolInfos, web, nano]) => {
+        if (disposed) return;
+        setTools(toolInfos);
+        setWebCredentials({
+          braveApiKey: web.braveApiKey ?? "",
+          tavilyApiKey: web.tavilyApiKey ?? ""
+        });
+        setNanoBananaCredentials({
+          apiKey: nano.apiKey ?? "",
+          baseUrl: nano.baseUrl ?? "",
+          model: nano.model ?? ""
+        });
       }).catch((error) => {
         console.error("[ToolSettings] 工具配置变更刷新失败:", error);
       });
@@ -162,6 +198,10 @@ export function ToolSettings(): React.ReactElement {
 
   const webSearchEnabled = useMemo(
     () => tools.find((item) => item.meta.id === "web_search")?.enabled ?? false,
+    [tools]
+  );
+  const nanoBananaEnabled = useMemo(
+    () => tools.find((item) => item.meta.id === "nano_banana")?.enabled ?? false,
     [tools]
   );
   const builtinTools = useMemo(() => tools.filter((item) => item.meta.category === "builtin"), [tools]);
@@ -332,6 +372,101 @@ export function ToolSettings(): React.ReactElement {
             {webSearchTestResult ? (
               <span className={webSearchTestResult.success ? "text-xs text-green-600" : "text-xs text-destructive"}>
                 {webSearchTestResult.message}
+              </span>
+            ) : null}
+          </div>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Nano Banana 生图凭据"
+        description="配置 Gemini Image Generation API（未配置时工具不可用）"
+      >
+        <SettingsCard divided={false} className="space-y-3 p-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">Gemini API Key</label>
+            <Input
+              value={nanoBananaCredentials.apiKey}
+              onChange={(event) => {
+                setNanoBananaCredentials((prev) => ({ ...prev, apiKey: event.target.value }));
+              }}
+              onBlur={() => {
+                void updateChatToolCredentials("nano_banana", nanoBananaCredentials)
+                  .then(() => setErrorMessage(null))
+                  .catch((error) => {
+                    setErrorMessage(error instanceof Error ? error.message : String(error));
+                  });
+              }}
+              placeholder="必填，用于调用 Gemini 生图接口"
+              disabled={!nanoBananaEnabled}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">Base URL（可选）</label>
+            <Input
+              value={nanoBananaCredentials.baseUrl}
+              onChange={(event) => {
+                setNanoBananaCredentials((prev) => ({ ...prev, baseUrl: event.target.value }));
+              }}
+              onBlur={() => {
+                void updateChatToolCredentials("nano_banana", nanoBananaCredentials)
+                  .then(() => setErrorMessage(null))
+                  .catch((error) => {
+                    setErrorMessage(error instanceof Error ? error.message : String(error));
+                  });
+              }}
+              placeholder="默认 https://generativelanguage.googleapis.com"
+              disabled={!nanoBananaEnabled}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">模型（可选）</label>
+            <Input
+              value={nanoBananaCredentials.model}
+              onChange={(event) => {
+                setNanoBananaCredentials((prev) => ({ ...prev, model: event.target.value }));
+              }}
+              onBlur={() => {
+                void updateChatToolCredentials("nano_banana", nanoBananaCredentials)
+                  .then(() => setErrorMessage(null))
+                  .catch((error) => {
+                    setErrorMessage(error instanceof Error ? error.message : String(error));
+                  });
+              }}
+              placeholder="默认 gemini-3.1-flash-image-preview"
+              disabled={!nanoBananaEnabled}
+            />
+          </div>
+          <div className="flex items-center gap-3 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={testingNanoBanana}
+              onClick={() => {
+                setTestingNanoBanana(true);
+                setNanoBananaTestResult(null);
+                void testChatTool("nano_banana")
+                  .then((result) => {
+                    setNanoBananaTestResult(result);
+                    setErrorMessage(null);
+                  })
+                  .catch((error) => {
+                    setNanoBananaTestResult({
+                      success: false,
+                      message: error instanceof Error ? error.message : String(error)
+                    });
+                  })
+                  .finally(() => {
+                    setTestingNanoBanana(false);
+                  });
+              }}
+            >
+              {testingNanoBanana ? "测试中..." : "测试生图连接"}
+            </Button>
+            {nanoBananaTestResult ? (
+              <span className={nanoBananaTestResult.success ? "text-xs text-green-600" : "text-xs text-destructive"}>
+                {nanoBananaTestResult.message}
               </span>
             ) : null}
           </div>

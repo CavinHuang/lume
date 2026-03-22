@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useAtomValue } from "jotai";
-import { Brain, CheckCircle2, ChevronRight, Globe, Loader2, Sparkles, Wrench, XCircle } from "lucide-react";
+import { Brain, CheckCircle2, ChevronRight, Globe, ImagePlus, Loader2, Sparkles, Wrench, XCircle } from "lucide-react";
 import type { ChatToolActivity } from "@lume/shared";
 import type { ReactElement } from "react";
 import { chatToolsAtom } from "@/atoms";
@@ -15,7 +15,8 @@ const TOOL_LABELS: Record<string, { running: string; done: string }> = {
   recall_memory: { running: "正在回忆...", done: "回忆完成" },
   add_memory: { running: "正在记住...", done: "已记住" },
   web_search: { running: "正在搜索...", done: "搜索完成" },
-  suggest_agent_mode: { running: "正在分析任务适配性...", done: "已推荐 Agent 模式" }
+  suggest_agent_mode: { running: "正在分析任务适配性...", done: "已推荐 Agent 模式" },
+  nano_banana: { running: "正在生成图片...", done: "图片生成完成" }
 };
 
 function getToolIcon(toolName: string): ReactElement {
@@ -27,6 +28,9 @@ function getToolIcon(toolName: string): ReactElement {
   }
   if (toolName === "suggest_agent_mode") {
     return <Sparkles className="size-3" />;
+  }
+  if (toolName === "nano_banana") {
+    return <ImagePlus className="size-3" />;
   }
   return <Wrench className="size-3" />;
 }

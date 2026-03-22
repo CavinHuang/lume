@@ -37,15 +37,19 @@ describe("chat-tool-manager", () => {
     }
   });
 
-  test("应返回默认工具列表并包含 memory_search/web_search/suggest_agent_mode", () => {
+  test("应返回默认工具列表并包含 memory_search/web_search/suggest_agent_mode/nano_banana", () => {
     const tools = getAllChatToolInfos();
     expect(tools.some((item) => item.meta.id === "memory_search")).toBeTrue();
     expect(tools.some((item) => item.meta.id === "web_search")).toBeTrue();
     expect(tools.some((item) => item.meta.id === "suggest_agent_mode")).toBeTrue();
+    expect(tools.some((item) => item.meta.id === "nano_banana")).toBeTrue();
     const memoryTool = tools.find((item) => item.meta.id === "memory_search");
     const suggestTool = tools.find((item) => item.meta.id === "suggest_agent_mode");
+    const nanoBananaTool = tools.find((item) => item.meta.id === "nano_banana");
     expect(memoryTool?.enabled).toBeTrue();
     expect(suggestTool?.enabled).toBeTrue();
+    expect(nanoBananaTool?.enabled).toBeFalse();
+    expect(nanoBananaTool?.available).toBeFalse();
   });
 
   test("应支持更新工具开关状态", () => {
@@ -75,6 +79,43 @@ describe("chat-tool-manager", () => {
     const result = await testChatTool("suggest_agent_mode");
     expect(result.success).toBeTrue();
     expect(result.message).toContain("Agent 模式推荐工具可用");
+  });
+
+  test("nano_banana 未配置 key 时测试应失败", async () => {
+    const result = await testChatTool("nano_banana");
+    expect(result.success).toBeFalse();
+    expect(result.message).toContain("Gemini API Key");
+  });
+
+  test("nano_banana 配置 key 后应可测试连通性", async () => {
+    updateChatToolCredentials("nano_banana", {
+      apiKey: "gemini-key",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      model: "gemini-3.1-flash-image-preview"
+    });
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: "ok" }]
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await testChatTool("nano_banana");
+    expect(result.success).toBeTrue();
+    expect(result.message).toContain("模型");
   });
 
   test("web_search 在未配置 key 时应测试 DuckDuckGo", async () => {

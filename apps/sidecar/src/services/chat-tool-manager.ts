@@ -2,7 +2,7 @@
  * Migrated from:
  * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\chat-tool-config.ts
  * Adaptation:
- * - 当前内置工具覆盖 memory_search、web_search、suggest_agent_mode。
+ * - 当前内置工具覆盖 memory_search、web_search、suggest_agent_mode、nano_banana。
  * - 补齐自定义工具元数据持久化（create/delete/list），执行链路后续对齐。
  */
 
@@ -18,6 +18,7 @@ import type {
 } from "@lume/shared";
 import { getChatToolsPath } from "./config-paths";
 import { executeHttpChatTool } from "./chat-tool-http-executor";
+import { testNanoBananaConnection } from "./nano-banana-service";
 
 const CHAT_TOOL_CONFIG_VERSION = 1;
 const TOOL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
@@ -60,6 +61,24 @@ const BUILTIN_CHAT_TOOLS: ChatToolMeta[] = [
     ],
     systemPromptAppend:
       "当用户请求涉及调研、代码修改、文件操作或多步骤执行时，可优先建议切换 Agent 模式以获得更完整的执行能力。"
+  },
+  {
+    id: "nano_banana",
+    name: "Nano Banana",
+    description: "AI 图片生成与编辑（基于 Gemini Image Generation）",
+    icon: "ImagePlus",
+    category: "builtin",
+    executorType: "builtin",
+    params: [
+      { name: "prompt", type: "string", description: "图片生成/编辑描述", required: true },
+      { name: "aspectRatio", type: "string", description: "宽高比，可选：1:1/16:9/4:3/9:16/3:4" },
+      { name: "imageSize", type: "string", description: "分辨率，可选：auto/1K/2K/4K" },
+      { name: "useReferenceImages", type: "boolean", description: "是否使用参考图（当前/历史图片附件）" }
+    ],
+    systemPromptAppend: [
+      "当用户明确要求生成图片、绘图、做海报或编辑图片时，优先调用 nano_banana。",
+      "prompt 建议写成具体英文描述，编辑图片时可将 useReferenceImages 设为 true。"
+    ].join("\n")
   }
 ];
 
@@ -310,6 +329,9 @@ function isToolAvailable(meta: ChatToolMeta, credentials: Record<string, string>
     // DuckDuckGo provider 不依赖 API key，默认可用。
     return true;
   }
+  if (toolId === "nano_banana") {
+    return (credentials.apiKey ?? "").trim().length > 0;
+  }
   if (meta.category === "custom") {
     const required = getRequiredCredentialKeys(meta);
     if (required.length === 0) return true;
@@ -494,6 +516,9 @@ export async function testChatTool(toolId: string): Promise<ChatToolTestResult> 
   }
   if (toolId === "suggest_agent_mode") {
     return { success: true, message: "连接成功，Agent 模式推荐工具可用" };
+  }
+  if (toolId === "nano_banana") {
+    return testNanoBananaConnection(config.toolCredentials.nano_banana ?? {});
   }
   if (toolId === "web_search") {
     const credentials = config.toolCredentials.web_search ?? {};

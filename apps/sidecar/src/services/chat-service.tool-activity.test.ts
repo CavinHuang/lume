@@ -384,6 +384,77 @@ describe("chat-service tool activity", () => {
     expect(toolEvents.length).toBe(0);
   });
 
+  test("启用 nano_banana 且命中生图意图时应发出活动并保存图片附件", async () => {
+    updateChatToolState("nano_banana", { enabled: true });
+    updateChatToolCredentials("nano_banana", {
+      apiKey: "gemini-key",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      model: "gemini-3.1-flash-image-preview"
+    });
+
+    const toolEvents: StreamToolActivityEvent[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!url.includes(":generateContent")) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y5J8AAAAASUVORK5CYII="
+                    }
+                  },
+                  { text: "图片生成完成" }
+                ]
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    const conversation = createConversation("nano banana tool activity");
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请生成一张太空猫咪海报",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(toolEvents.some((event) => event.activity.type === "start" && event.activity.toolName === "nano_banana")).toBeTrue();
+    const resultEvent = toolEvents.find((event) => event.activity.type === "result" && event.activity.toolName === "nano_banana");
+    expect(resultEvent).toBeDefined();
+    expect(resultEvent?.activity.result).toContain("图片已成功生成");
+
+    const messages = getConversationMessages(conversation.id);
+    const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
+    expect(lastAssistant?.attachments?.length ?? 0).toBeGreaterThan(0);
+    expect(lastAssistant?.attachments?.[0]?.mediaType).toBe("image/png");
+  });
+
   test("openai 兼容 provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;
