@@ -56,6 +56,7 @@ interface AnthropicMessage {
 /** Anthropic SSE 事件 */
 interface AnthropicSSEEvent {
   type: string
+  index?: number
   content_block?: {
     type: string
     id?: string
@@ -248,6 +249,9 @@ export class AnthropicAdapter implements ProviderAdapter {
           type: 'tool_call_start',
           toolCallId: event.content_block.id || '',
           toolName: event.content_block.name || '',
+          metadata: typeof event.index === 'number'
+            ? { blockIndex: event.index }
+            : undefined,
         })
       }
 
@@ -260,6 +264,9 @@ export class AnthropicAdapter implements ProviderAdapter {
             type: 'tool_call_delta',
             toolCallId: '',
             argumentsDelta: event.delta.partial_json,
+            metadata: typeof event.index === 'number'
+              ? { blockIndex: event.index }
+              : undefined,
           })
         } else if (event.delta?.text) {
           // 普通文本内容（text_delta）

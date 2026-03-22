@@ -131,6 +131,7 @@ export interface StreamToolCallDeltaEvent {
   type: 'tool_call_delta'
   toolCallId: string
   argumentsDelta: string
+  metadata?: Record<string, unknown>
 }
 
 /** 所有流式事件的联合类型 */

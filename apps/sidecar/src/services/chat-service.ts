@@ -189,6 +189,47 @@ function inferNanoBananaImageSize(userMessage: string): string | undefined {
   return undefined;
 }
 
+function buildNanoBananaEnhancedPrompt(userMessage: string): string {
+  const base = userMessage.trim();
+  if (!base) return base;
+  const hints: string[] = [];
+  const lower = base.toLowerCase();
+
+  if (/写实|realistic|photoreal/i.test(base)) {
+    hints.push("photorealistic, highly detailed");
+  }
+  if (/插画|illustration|插图/i.test(base)) {
+    hints.push("digital illustration style");
+  }
+  if (/赛博朋克|cyberpunk/i.test(base)) {
+    hints.push("cyberpunk style, neon lighting");
+  }
+  if (/水彩|watercolor/i.test(base)) {
+    hints.push("watercolor texture, soft edges");
+  }
+  if (/电影|cinematic/i.test(base)) {
+    hints.push("cinematic composition, dramatic lighting");
+  }
+  if (/无水印|不要水印|no watermark|no text/i.test(base)) {
+    hints.push("no watermark, no text overlay");
+  }
+  if (/高细节|高质量|高清|high detail|high quality/i.test(base)) {
+    hints.push("sharp details, high quality render");
+  }
+  if (NANO_BANANA_EDIT_KEYWORD_PATTERN.test(base)) {
+    hints.push("preserve subject identity unless user requests replacement");
+  }
+
+  const hasAsciiWords = /[a-zA-Z]{3,}/.test(base);
+  if (hints.length === 0 && !hasAsciiWords && /[\u4e00-\u9fff]/.test(base)) {
+    hints.push("high quality composition, balanced lighting");
+  }
+  if (hints.length === 0) {
+    return base;
+  }
+  return `${base}\n\nStyle hints: ${hints.join("; ")}.`;
+}
+
 function getLatestAttachmentsByRole(
   history: ChatMessage[],
   role: "user" | "assistant"
@@ -636,6 +677,7 @@ async function executeToolCallForChat(input: {
 
     if (toolCall.name === "nano_banana") {
       const prompt = getStringArgument(toolCall.arguments, "prompt") ?? query;
+      const enhancedPrompt = buildNanoBananaEnhancedPrompt(prompt);
       const aspectRatio = getStringArgument(toolCall.arguments, "aspectRatio")
         ?? inferNanoBananaAspectRatio(prompt);
       const imageSize = getStringArgument(toolCall.arguments, "imageSize")
@@ -650,7 +692,7 @@ async function executeToolCallForChat(input: {
       const result = await generateNanoBananaImage(
         {
           conversationId: input.conversationId,
-          prompt,
+          prompt: enhancedPrompt,
           aspectRatio,
           imageSize,
           useReferenceImages,
@@ -854,7 +896,7 @@ async function runEnabledToolsForChat(input: {
       const result = await generateNanoBananaImage(
         {
           conversationId: input.conversationId,
-          prompt: input.userMessage,
+          prompt: buildNanoBananaEnhancedPrompt(input.userMessage),
           aspectRatio: inferredAspectRatio,
           imageSize: inferredImageSize,
           useReferenceImages,

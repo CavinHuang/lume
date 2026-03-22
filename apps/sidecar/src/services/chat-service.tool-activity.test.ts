@@ -542,6 +542,75 @@ describe("chat-service tool activity", () => {
     expect(secondBody.generationConfig?.imageConfig?.imageSize).toBe("4K");
   });
 
+  test("nano_banana 应自动追加风格与约束提示词", async () => {
+    updateChatToolState("nano_banana", { enabled: true });
+    updateChatToolCredentials("nano_banana", {
+      apiKey: "gemini-key",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      model: "gemini-3.1-flash-image-preview"
+    });
+
+    const generateBodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!url.includes(":generateContent")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (init?.body && typeof init.body === "string") {
+        generateBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y5J8AAAAASUVORK5CYII="
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    const conversation = createConversation("nano banana prompt hints");
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请生成一张写实风格的城市海报，要求无水印",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(generateBodies.length).toBe(1);
+    const body = generateBodies[0] as {
+      contents?: Array<{
+        parts?: Array<{ text?: string }>;
+      }>;
+    };
+    const promptText = body.contents?.[0]?.parts?.find((part) => typeof part.text === "string")?.text ?? "";
+    expect(promptText).toContain("Style hints:");
+    expect(promptText).toContain("photorealistic");
+    expect(promptText).toContain("no watermark");
+  });
+
   test("openai 兼容 provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;
@@ -924,6 +993,87 @@ describe("chat-service tool activity", () => {
     expect(toolEvents.some((event) => event.activity.type === "start" && event.activity.toolName === "web_search")).toBeTrue();
     expect(toolEvents.some((event) => event.activity.type === "result" && event.activity.toolName === "web_search")).toBeTrue();
     expect(chunkEvents.some((event) => event.delta.includes("Anthropic 异常顺序调用完成"))).toBeTrue();
+  });
+
+  test("anthropic 同轮交错 index delta 时应分别命中两组工具参数", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "anthropic-fc-interleaved-index",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "sk-test",
+      models: [{ id: "claude-test", name: "claude-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const requestBodies: unknown[] = [];
+    const duckQueries: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/messages")) {
+        if (init?.body && typeof init.body === "string") {
+          requestBodies.push(JSON.parse(init.body));
+        }
+        if (requestBodies.length === 1) {
+          return new Response(
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_a\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_b\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"lume desktop release\\\"}\"}}\n" +
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n" +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Anthropic 交错 delta 调用完成\"}}\n" +
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n" +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        const query = decodeURIComponent((url.split("?q=")[1] ?? "").split("&")[0] ?? "");
+        duckQueries.push(query);
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("anthropic 交错 index delta tool_use");
+    const toolEvents: StreamToolActivityEvent[] = [];
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请联网检索两组信息并总结",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "claude-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestBodies.length).toBe(2);
+    expect(duckQueries).toContain("latest ai news");
+    expect(duckQueries).toContain("lume desktop release");
+    expect(toolEvents.filter((event) => event.activity.type === "start" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(toolEvents.filter((event) => event.activity.type === "result" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(chunkEvents.some((event) => event.delta.includes("Anthropic 交错 delta 调用完成"))).toBeTrue();
   });
 
   test("anthropic 同轮多 tool_use 时应保留两次执行并续接双 tool_result", async () => {

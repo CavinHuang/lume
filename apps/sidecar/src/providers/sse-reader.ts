@@ -88,7 +88,9 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   let buffer = ''
   const pendingToolCalls = new Map<string, { id: string; name: string; args: string; metadata?: Record<string, unknown> }>()
   const toolCallIdAlias = new Map<string, string>()
+  const toolCallIdByBlockIndex = new Map<number, string>()
   const preStartArgsBuffer = new Map<string, string>()
+  const preStartArgsByBlockIndex = new Map<number, string>()
   let anonymousArgsBuffer = ''
   let currentToolCallId: string | undefined
 
@@ -101,6 +103,11 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
       nextId = `${rawId}__${counter}`
     }
     return nextId
+  }
+
+  function getBlockIndex(metadata?: Record<string, unknown>): number | undefined {
+    const candidate = metadata?.blockIndex
+    return typeof candidate === 'number' ? candidate : undefined
   }
 
   try {
@@ -136,10 +143,20 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
             const rawId = (event.toolCallId || '').trim() || `tc_${pendingToolCalls.size}`
             const normalizedId = allocateUniqueToolCallId(rawId)
             toolCallIdAlias.set(rawId, normalizedId)
+            const blockIndex = getBlockIndex(event.metadata)
+            if (typeof blockIndex === 'number') {
+              toolCallIdByBlockIndex.set(blockIndex, normalizedId)
+            }
             currentToolCallId = normalizedId
             const bufferedArgs = preStartArgsBuffer.get(rawId) || ''
-            const combinedBufferedArgs = bufferedArgs || anonymousArgsBuffer
+            const bufferedArgsByIndex = typeof blockIndex === 'number'
+              ? (preStartArgsByBlockIndex.get(blockIndex) || '')
+              : ''
+            const combinedBufferedArgs = `${bufferedArgs}${bufferedArgsByIndex}${anonymousArgsBuffer}`
             preStartArgsBuffer.delete(rawId)
+            if (typeof blockIndex === 'number') {
+              preStartArgsByBlockIndex.delete(blockIndex)
+            }
             anonymousArgsBuffer = ''
             pendingToolCalls.set(normalizedId, {
               id: normalizedId,
@@ -149,16 +166,30 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
             })
           } else if (event.type === 'tool_call_delta') {
             const rawId = (event.toolCallId || '').trim()
+            const blockIndex = getBlockIndex(event.metadata)
+            const indexedToolCallId = typeof blockIndex === 'number'
+              ? toolCallIdByBlockIndex.get(blockIndex)
+              : undefined
             const tcId = rawId
               ? (toolCallIdAlias.get(rawId) || rawId)
-              : currentToolCallId
+              : (indexedToolCallId || currentToolCallId)
             if (tcId) {
               const pending = pendingToolCalls.get(tcId)
               if (pending) {
                 pending.args += event.argumentsDelta
               } else if (rawId) {
                 preStartArgsBuffer.set(rawId, (preStartArgsBuffer.get(rawId) || '') + event.argumentsDelta)
+              } else if (typeof blockIndex === 'number') {
+                preStartArgsByBlockIndex.set(
+                  blockIndex,
+                  (preStartArgsByBlockIndex.get(blockIndex) || '') + event.argumentsDelta
+                )
               }
+            } else if (typeof blockIndex === 'number') {
+              preStartArgsByBlockIndex.set(
+                blockIndex,
+                (preStartArgsByBlockIndex.get(blockIndex) || '') + event.argumentsDelta
+              )
             } else if (!rawId) {
               anonymousArgsBuffer += event.argumentsDelta
             }

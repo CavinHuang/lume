@@ -12,23 +12,30 @@ function createMockAdapter(): ProviderAdapter {
       const payload = JSON.parse(jsonLine) as {
         event: "start" | "delta" | "done";
         id?: string;
-        name?: string;
-        args?: string;
-        stop?: string;
-      };
+      name?: string;
+      args?: string;
+      stop?: string;
+      index?: number;
+    };
       if (payload.event === "start") {
         return [{
           type: "tool_call_start",
           toolCallId: payload.id ?? "",
-          toolName: payload.name ?? ""
+          toolName: payload.name ?? "",
+          metadata: typeof payload.index === "number"
+            ? { blockIndex: payload.index }
+            : undefined
         }];
       }
       if (payload.event === "delta") {
-        return [{
+        return [({
           type: "tool_call_delta",
           toolCallId: payload.id ?? "",
-          argumentsDelta: payload.args ?? ""
-        }];
+          argumentsDelta: payload.args ?? "",
+          metadata: typeof payload.index === "number"
+            ? { blockIndex: payload.index }
+            : undefined
+        }) as StreamEvent];
       }
       if (payload.event === "done") {
         return [{
@@ -113,5 +120,30 @@ describe("sse-reader", () => {
     expect(result.toolCalls.length).toBe(1);
     expect(result.toolCalls[0]?.id).toBe("tc_anon");
     expect(result.toolCalls[0]?.arguments.query).toBe("anonymous");
+  });
+
+  test("带 blockIndex 的交错 delta 应归属到对应 tool_call", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+      "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+      "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"first\\\"}\",\"index\":0}",
+      "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"second\\\"}\",\"index\":1}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(2);
+    expect(result.toolCalls[0]?.id).toBe("toolu_1");
+    expect(result.toolCalls[1]?.id).toBe("toolu_2");
+    expect(result.toolCalls[0]?.arguments.query).toBe("first");
+    expect(result.toolCalls[1]?.arguments.query).toBe("second");
   });
 });
