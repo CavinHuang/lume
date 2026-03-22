@@ -3,7 +3,7 @@
  * /Users/cavinhuang/workspace/projects/ai-projects/Proma/apps/electron/src/renderer/components/agent/SidePanel.tsx
  * Adaptation:
  * - Lume 使用简化双 Tab 侧面板（Team + Files），复用现有 FileBrowser。
- * - Team 面板数据来自消息事件重建，不依赖额外 IPC 轮询。
+ * - Team 面板数据来自消息事件重建 + subagent run IPC 轮询合并。
  */
 
 "use client";
@@ -137,4 +137,3 @@ export function AgentSidePanel({
     </div>
   );
 }
-

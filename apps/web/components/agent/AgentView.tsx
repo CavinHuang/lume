@@ -48,6 +48,7 @@ import {
   getAgentSessionMessages,
   getAgentSessionPath,
   listAgentSessions,
+  listSubagentRuns,
   listChannels,
   onAgentStreamComplete,
   onAgentStreamError,
@@ -79,7 +80,7 @@ import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentSidePanel, type AgentSidePanelTab } from "./AgentSidePanel";
-import { buildTeamActivitiesFromSession } from "./team-activity";
+import { buildTeamActivitiesFromRuns, buildTeamActivitiesFromSession, mergeToolActivities } from "./team-activity";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -353,6 +354,7 @@ export function AgentView(): React.ReactElement {
 
   const [todoPanelExpanded, setTodoPanelExpanded] = useState(true);
   const prevTodoItemsRef = useRef<TodoItem[] | null>(null);
+  const [teamRunActivities, setTeamRunActivities] = useState<ReturnType<typeof buildTeamActivitiesFromSession>>([]);
 
   const parseTodoItemsFromInput = useCallback((input: Record<string, unknown>): TodoItem[] | null => {
     if (!Array.isArray(input.todos)) return null;
@@ -388,9 +390,13 @@ export function AgentView(): React.ReactElement {
     return null;
   }, [messages, parseTodoItemsFromInput, toolActivities]);
 
-  const teamActivities = useMemo(
+  const teamActivitiesFromSession = useMemo(
     () => buildTeamActivitiesFromSession(messages, toolActivities),
     [messages, toolActivities]
+  );
+  const teamActivities = useMemo(
+    () => mergeToolActivities(teamActivitiesFromSession, teamRunActivities),
+    [teamActivitiesFromSession, teamRunActivities]
   );
 
   const todoProgressText = useMemo(() => {
@@ -436,6 +442,39 @@ export function AgentView(): React.ReactElement {
     setCurrentSidePanelOpen,
     setCurrentSidePanelTab
   ]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setTeamRunActivities([]);
+      return;
+    }
+
+    let disposed = false;
+    const pollRuns = async (): Promise<void> => {
+      try {
+        const result = await listSubagentRuns({
+          ownerSessionId: sessionId,
+          limit: 200
+        });
+        if (disposed) return;
+        setTeamRunActivities(buildTeamActivitiesFromRuns(result.runs));
+      } catch (error) {
+        if (!disposed) {
+          console.warn("[AgentView] 查询 subagent runs 失败:", error);
+        }
+      }
+    };
+
+    void pollRuns();
+    const timer = setInterval(() => {
+      void pollRuns();
+    }, 2500);
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [sessionId]);
 
   // 自动展开/收起 todo 面板
   useEffect(() => {

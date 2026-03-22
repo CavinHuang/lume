@@ -386,6 +386,8 @@ Lume 当前实现入口（改造起点）：
 - ✅ 可观测：新增统一 subagent 日志字段模板（run/session/agent/status/errorCode）并接入 registry + announce 链路。
 - ✅ 可观测：新增 `agent:list-subagent-runs` IPC 查询接口（owner/runId/status/limit + statusSummary）。
 - ✅ 稳定性：新增 `ENABLE_SUBAGENT_TEAM_V2` 回滚开关（关闭后禁用 `sessions_spawn/subagents_*`）。
+- ✅ 前端：Team 面板接入 run registry 轮询数据（非流式回合同步刷新子任务状态）。
+- ✅ 前端：Team Agent 卡片补 run 级 telemetry（runId/usage/errorCode/announce）。
 
 已补测试：
 - ✅ `subagent-run-registry.test.ts`（创建/更新/重启恢复）。

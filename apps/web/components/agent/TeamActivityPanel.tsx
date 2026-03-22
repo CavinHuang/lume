@@ -2,8 +2,8 @@
  * Migrated from:
  * /Users/cavinhuang/workspace/projects/ai-projects/Proma/apps/electron/src/renderer/components/agent/TeamActivityPanel.tsx
  * Adaptation:
- * - 基于 Lume 现有 tool_start/tool_result 事件，提供 Team 头部、Task Board、Agent 卡片。
- * - 暂不包含 Proma 的 inbox 轮询与 teammate runtime 详情。
+ * - 基于工具事件 + run registry 聚合，提供 Team 头部、Task Board、Agent 卡片。
+ * - 增加 run 级 telemetry 显示（runId/usage/errorCode/announce）。
  */
 
 "use client";
@@ -121,6 +121,7 @@ function AgentCard({
   onToggle: () => void;
 }): React.ReactElement {
   const elapsed = formatElapsed(agent.elapsedSeconds);
+  const shortRunId = agent.runId ? agent.runId.slice(0, 8) : null;
 
   return (
     <div className="rounded-lg border border-border/70 bg-background/80">
@@ -143,6 +144,21 @@ function AgentCard({
       {expanded ? (
         <div className="space-y-2 border-t border-border/60 px-3 py-2">
           <p className="text-[11px] leading-relaxed text-foreground/80">{agent.description}</p>
+
+          {(shortRunId || agent.usageEvents || agent.announceStatus || agent.errorCode) ? (
+            <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground/80">
+              {shortRunId ? <span className="rounded bg-muted px-1.5 py-0.5">run {shortRunId}</span> : null}
+              {typeof agent.usageEvents === "number" ? (
+                <span className="rounded bg-muted px-1.5 py-0.5">usage {agent.usageEvents}</span>
+              ) : null}
+              {agent.announceStatus ? (
+                <span className="rounded bg-muted px-1.5 py-0.5">announce {agent.announceStatus}</span>
+              ) : null}
+              {agent.errorCode ? (
+                <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-destructive">{agent.errorCode}</span>
+              ) : null}
+            </div>
+          ) : null}
 
           {agent.childActivities.length > 0 ? (
             <div className="space-y-1 rounded-md bg-muted/30 px-2 py-1.5">
@@ -227,4 +243,3 @@ export function TeamActivityPanel({ activities }: TeamActivityPanelProps): React
     </div>
   );
 }
-

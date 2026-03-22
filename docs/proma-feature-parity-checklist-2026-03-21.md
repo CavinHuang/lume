@@ -209,8 +209,8 @@
 - ✅ 已完成：新增并发 + 故障恢复 e2e 流程测试（含重启恢复断言）。
 - ✅ 已完成：新增运维手册（list/kill/查 run、回滚开关、已知限制/演进路线）。
 - ✅ 已完成：`ENABLE_SUBAGENT_TEAM_V2` 回滚开关（可紧急禁用 `sessions_spawn/subagents_*`）。
-- ⏳ 待完成：inbox 通信时间线轮询（`getAgentTeamData` 等 runtime/IPC 依赖）。
-- ⏳ 待完成：teammate 级别 telemetry（task_started/task_notification/usage 等事件全量对齐）。
+- ✅ 已完成：Team 面板接入 run registry 轮询（`agent:list-subagent-runs`），补齐非流式回合下的子任务状态刷新。
+- ✅ 已完成：Team Agent 卡片接入 run 级 telemetry（runId/usage/errorCode/announce）。
 
 **取舍点**
 - 方案 A（推荐）：保留 Lume 时间线，新增 Team 视图作为并列模式。

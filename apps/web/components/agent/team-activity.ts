@@ -2,10 +2,11 @@
  * Migrated from:
  * /Users/cavinhuang/workspace/projects/ai-projects/Proma/apps/electron/src/renderer/atoms/agent-atoms.ts
  * Adaptation:
- * - 裁剪为 Lume Web 侧 Team 面板最小数据提取层（无 inbox 轮询、无 teammate runtime 事件）。
+ * - 保持 Lume Web 侧轻量提取层，支持消息事件与 run registry 轮询数据合并。
  */
 
 import type { AgentMessage } from "@lume/shared";
+import type { SubagentRunRecord } from "@lume/shared";
 import type { ToolActivity } from "@/atoms/agent-atoms";
 
 export type TeamActivityStatus = "running" | "completed" | "error" | "backgrounded";
@@ -28,6 +29,11 @@ export interface TeamAgentInfo {
   teamName?: string;
   status: TeamActivityStatus;
   elapsedSeconds?: number;
+  runId?: string;
+  childSessionKey?: string;
+  announceStatus?: string;
+  errorCode?: string;
+  usageEvents?: number;
   childActivities: ToolActivity[];
 }
 
@@ -50,6 +56,11 @@ function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value;
 }
 
 export function getActivityStatus(activity: ToolActivity): TeamActivityStatus {
@@ -189,6 +200,46 @@ export function mergeToolActivities(history: ToolActivity[], streaming: ToolActi
   return order.map((id) => map.get(id)).filter((item): item is ToolActivity => !!item);
 }
 
+function isTerminalRunStatus(status: SubagentRunRecord["status"]): boolean {
+  return (
+    status === "completed"
+    || status === "errored"
+    || status === "aborted"
+    || status === "timed_out"
+    || status === "canceled"
+  );
+}
+
+export function buildTeamActivitiesFromRuns(runs: SubagentRunRecord[]): ToolActivity[] {
+  return runs.map((run, index) => {
+    const endedAt = run.endedAt ?? Date.now();
+    const elapsedSeconds = run.startedAt ? Math.max(0, Math.floor((endedAt - run.startedAt) / 1000)) : undefined;
+    const done = isTerminalRunStatus(run.status);
+    const isError = run.status !== "completed" && done;
+    return {
+      toolUseId: `subagent-run:${run.runId}`,
+      parentToolUseId: run.parentRunId ? `subagent-run:${run.parentRunId}` : undefined,
+      toolName: "Agent",
+      input: {
+        name: run.label || `Subagent ${index + 1}`,
+        description: run.task,
+        subagent_type: "runtime_subagent",
+        run_id: run.runId,
+        child_session_key: run.childSessionId,
+        announce_status: run.announceStatus,
+        usage_events: run.outcome?.usageEvents,
+        error_code: run.outcome?.errorCode
+      },
+      intent: run.task,
+      displayName: run.label,
+      elapsedSeconds,
+      result: run.outcome?.output ?? run.outcome?.error,
+      isError,
+      done
+    };
+  });
+}
+
 /**
  * 仅保留 Team 相关活动：TeamCreate/TaskCreate/TaskUpdate/Task/Agent 及其后代工具调用。
  */
@@ -299,6 +350,11 @@ export function extractTeamOverview(activities: ToolActivity[]): TeamOverview | 
       teamName: asNonEmptyString(activity.input.team_name) ?? teamName,
       status: getActivityStatus(activity),
       elapsedSeconds: activity.elapsedSeconds,
+      runId: asNonEmptyString(activity.input.run_id),
+      childSessionKey: asNonEmptyString(activity.input.child_session_key),
+      announceStatus: asNonEmptyString(activity.input.announce_status),
+      errorCode: asNonEmptyString(activity.input.error_code),
+      usageEvents: asFiniteNumber(activity.input.usage_events),
       childActivities: childMap.get(activity.toolUseId) ?? []
     };
   });
@@ -323,4 +379,3 @@ export function buildTeamActivitiesFromSession(
   const merged = mergeToolActivities(history, streamingActivities);
   return selectTeamActivities(merged);
 }
-
