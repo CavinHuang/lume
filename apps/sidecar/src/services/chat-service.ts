@@ -134,6 +134,22 @@ const NANO_BANANA_KEYWORD_PATTERN =
   /图片|图像|配图|海报|插画|封面|壁纸|logo|生图|绘图|画一张|生成图|这张图|这幅图|改图|修图|image|poster|illustration|cover|draw|render/iu;
 const NANO_BANANA_EDIT_KEYWORD_PATTERN =
   /修改|编辑|重绘|重做|优化|继续|基于|参考|换|改成|replace|edit|modify|adjust|reference/iu;
+const NANO_BANANA_STYLE_HINT_RULES: Array<{ pattern: RegExp; hint: string }> = [
+  { pattern: /写实|realistic|photoreal/i, hint: "photorealistic, highly detailed" },
+  { pattern: /插画|illustration|插图/i, hint: "digital illustration style" },
+  { pattern: /赛博朋克|cyberpunk/i, hint: "cyberpunk style, neon lighting" },
+  { pattern: /水彩|watercolor/i, hint: "watercolor texture, soft edges" },
+  { pattern: /电影|cinematic/i, hint: "cinematic composition, dramatic lighting" },
+  { pattern: /极简|minimal/i, hint: "minimal composition, clean background" },
+  { pattern: /动漫|anime|二次元/i, hint: "anime style, vivid linework" }
+];
+const NANO_BANANA_CONSTRAINT_HINT_RULES: Array<{ pattern: RegExp; hint: string }> = [
+  { pattern: /无水印|不要水印/i, hint: "no watermark" },
+  { pattern: /no watermark/i, hint: "no watermark" },
+  { pattern: /无文字|不要文字|不要字|no text/i, hint: "no text overlay" },
+  { pattern: /高细节|高质量|高清|high detail|high quality/i, hint: "sharp details, high quality render" },
+  { pattern: /无人物|不要人物|no people/i, hint: "no people" }
+];
 
 function shouldRunWebSearch(userMessage: string): boolean {
   return WEB_SEARCH_KEYWORD_PATTERN.test(userMessage);
@@ -189,45 +205,44 @@ function inferNanoBananaImageSize(userMessage: string): string | undefined {
   return undefined;
 }
 
+function collectPromptHints(
+  userMessage: string,
+  rules: Array<{ pattern: RegExp; hint: string }>
+): string[] {
+  const hints: string[] = [];
+  for (const rule of rules) {
+    if (rule.pattern.test(userMessage)) {
+      hints.push(rule.hint);
+    }
+  }
+  return [...new Set(hints)];
+}
+
 function buildNanoBananaEnhancedPrompt(userMessage: string): string {
   const base = userMessage.trim();
   if (!base) return base;
-  const hints: string[] = [];
-  const lower = base.toLowerCase();
-
-  if (/写实|realistic|photoreal/i.test(base)) {
-    hints.push("photorealistic, highly detailed");
-  }
-  if (/插画|illustration|插图/i.test(base)) {
-    hints.push("digital illustration style");
-  }
-  if (/赛博朋克|cyberpunk/i.test(base)) {
-    hints.push("cyberpunk style, neon lighting");
-  }
-  if (/水彩|watercolor/i.test(base)) {
-    hints.push("watercolor texture, soft edges");
-  }
-  if (/电影|cinematic/i.test(base)) {
-    hints.push("cinematic composition, dramatic lighting");
-  }
-  if (/无水印|不要水印|no watermark|no text/i.test(base)) {
-    hints.push("no watermark, no text overlay");
-  }
-  if (/高细节|高质量|高清|high detail|high quality/i.test(base)) {
-    hints.push("sharp details, high quality render");
-  }
+  const styleHints = collectPromptHints(base, NANO_BANANA_STYLE_HINT_RULES);
+  const constraintHints = collectPromptHints(base, NANO_BANANA_CONSTRAINT_HINT_RULES);
   if (NANO_BANANA_EDIT_KEYWORD_PATTERN.test(base)) {
-    hints.push("preserve subject identity unless user requests replacement");
+    constraintHints.push("preserve subject identity unless user requests replacement");
   }
+  const normalizedConstraintHints = [...new Set(constraintHints)];
 
   const hasAsciiWords = /[a-zA-Z]{3,}/.test(base);
-  if (hints.length === 0 && !hasAsciiWords && /[\u4e00-\u9fff]/.test(base)) {
-    hints.push("high quality composition, balanced lighting");
+  if (styleHints.length === 0 && !hasAsciiWords && /[\u4e00-\u9fff]/.test(base)) {
+    styleHints.push("high quality composition, balanced lighting");
   }
-  if (hints.length === 0) {
+  if (styleHints.length === 0 && normalizedConstraintHints.length === 0) {
     return base;
   }
-  return `${base}\n\nStyle hints: ${hints.join("; ")}.`;
+  const sections = [base];
+  if (styleHints.length > 0) {
+    sections.push(`Style hints: ${styleHints.join("; ")}.`);
+  }
+  if (normalizedConstraintHints.length > 0) {
+    sections.push(`Constraints: ${normalizedConstraintHints.join("; ")}.`);
+  }
+  return sections.join("\n\n");
 }
 
 function getLatestAttachmentsByRole(

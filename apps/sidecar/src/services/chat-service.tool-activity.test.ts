@@ -542,7 +542,7 @@ describe("chat-service tool activity", () => {
     expect(secondBody.generationConfig?.imageConfig?.imageSize).toBe("4K");
   });
 
-  test("nano_banana 应自动追加风格与约束提示词", async () => {
+  test("nano_banana 应以模板化段落追加风格与约束提示词", async () => {
     updateChatToolState("nano_banana", { enabled: true });
     updateChatToolCredentials("nano_banana", {
       apiKey: "gemini-key",
@@ -608,6 +608,7 @@ describe("chat-service tool activity", () => {
     const promptText = body.contents?.[0]?.parts?.find((part) => typeof part.text === "string")?.text ?? "";
     expect(promptText).toContain("Style hints:");
     expect(promptText).toContain("photorealistic");
+    expect(promptText).toContain("Constraints:");
     expect(promptText).toContain("no watermark");
   });
 
