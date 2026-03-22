@@ -88,6 +88,7 @@
 - ✅ 已完成：`chat:stream:tool-activity` 流式事件通道、UI 活动指示器渲染、活动持久化到 assistant 消息。
 - ✅ 已完成：`chat-tools.json` 变更通知（`chat-tool:custom-tool-changed`）与前端自动刷新。
 - ✅ 已完成：最小闭环工具执行（`memory_search` / `web_search` / `suggest_agent_mode` / `custom http`）与 systemPromptAppend 注入。
+- ✅ 已完成：`suggest_agent_mode` 推荐卡片渲染与一键切换 Agent 会话。
 - ✅ 已完成：自定义工具可用性判定（按 `credential.*` 占位符）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
