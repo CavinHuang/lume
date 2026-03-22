@@ -40,6 +40,8 @@ describe("chat-tool-manager", () => {
     const tools = getAllChatToolInfos();
     expect(tools.some((item) => item.meta.id === "memory_search")).toBeTrue();
     expect(tools.some((item) => item.meta.id === "web_search")).toBeTrue();
+    const memoryTool = tools.find((item) => item.meta.id === "memory_search");
+    expect(memoryTool?.enabled).toBeTrue();
   });
 
   test("应支持更新工具开关状态", () => {

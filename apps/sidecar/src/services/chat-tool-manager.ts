@@ -176,7 +176,10 @@ function normalizeCustomToolMeta(raw: unknown): ChatToolMeta | null {
 
 function getDefaultToolStates(customTools: ChatToolMeta[] = []): Record<string, ChatToolState> {
   return Object.fromEntries(
-    [...BUILTIN_CHAT_TOOLS, ...customTools].map((tool) => [tool.id, { enabled: false }])
+    [...BUILTIN_CHAT_TOOLS, ...customTools].map((tool) => [
+      tool.id,
+      { enabled: tool.id === "memory_search" }
+    ])
   );
 }
 

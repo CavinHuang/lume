@@ -106,5 +106,5 @@ export const CHAT_TOOL_IPC_CHANNELS = {
   /** 删除自定义工具 */
   DELETE_CUSTOM_TOOL: "chat-tool:delete-custom",
   /** 工具配置变更通知 */
-  CUSTOM_TOOL_CHANGED: "chat-tool:changed"
+  CUSTOM_TOOL_CHANGED: "chat-tool:custom-tool-changed"
 } as const
