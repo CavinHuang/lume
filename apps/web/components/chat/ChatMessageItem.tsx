@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
 import { Pencil, RotateCcw, Trash2 } from "lucide-react";
 import type { ChatMessage } from "@lume/shared";
@@ -25,6 +25,7 @@ import { CopyButton } from "./CopyButton";
 import { DeleteMessageDialog } from "./DeleteMessageDialog";
 import type { InlineEditSubmitPayload } from "./InlineEditForm";
 import { InlineEditForm } from "./InlineEditForm";
+import { AgentModeRecommendationBanner, extractAgentModeRecommendation } from "./AgentModeRecommendationBanner";
 import { ChatToolActivityIndicator } from "./ChatToolActivityIndicator";
 import { UserAvatar } from "./UserAvatar";
 
@@ -72,6 +73,10 @@ export function ChatMessageItem({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const userProfile = useAtomValue(userProfileAtom);
+  const recommendation = useMemo(
+    () => extractAgentModeRecommendation(message.toolActivities),
+    [message.toolActivities]
+  );
 
   const handleDeleteConfirm = async (): Promise<void> => {
     if (!onDeleteMessage) return;
@@ -127,6 +132,7 @@ export function ChatMessageItem({
               {message.toolActivities && message.toolActivities.length > 0 ? (
                 <ChatToolActivityIndicator activities={message.toolActivities} />
               ) : null}
+              {recommendation ? <AgentModeRecommendationBanner recommendation={recommendation} /> : null}
 
               {message.reasoning ? (
                 <Reasoning isStreaming={isStreaming && !message.content} defaultOpen={isStreaming && !message.content}>

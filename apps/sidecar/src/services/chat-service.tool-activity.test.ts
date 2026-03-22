@@ -357,4 +357,29 @@ describe("chat-service tool activity", () => {
     expect(resultEvent?.activity.result).toContain("agent_recommendation");
     expect(resultEvent?.activity.result).toContain("suggestedPrompt");
   });
+
+  test("启用 suggest_agent_mode 但简单问候不应触发推荐活动", async () => {
+    const conversation = createConversation("Agent 模式推荐不触发");
+    const toolEvents: StreamToolActivityEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "你好",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["suggest_agent_mode"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(toolEvents.length).toBe(0);
+  });
 });
