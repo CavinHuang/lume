@@ -1316,6 +1316,97 @@ describe("chat-service tool activity", () => {
     expect(chunkEvents.some((event) => event.delta.includes("Anthropic 多工具函数调用完成"))).toBeTrue();
   });
 
+  test("anthropic 跨轮混合乱序 tool_use 时应稳定续接", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "anthropic-fc-multi-round-chaos",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "sk-test",
+      models: [{ id: "claude-test", name: "claude-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const requestBodies: unknown[] = [];
+    const duckQueries: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/messages")) {
+        if (init?.body && typeof init.body === "string") {
+          requestBodies.push(JSON.parse(init.body));
+        }
+        if (requestBodies.length === 1) {
+          return new Response(
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"q1\\\"}\"}}\n" +
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_r1_a\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_r1_b\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"q2\\\"}\"}}\n" +
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n" +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        if (requestBodies.length === 2) {
+          return new Response(
+            "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_r2_a\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"q3\\\"}\"}}\n" +
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n" +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Anthropic 跨轮混合乱序调用完成\"}}\n" +
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n" +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        const query = decodeURIComponent((url.split("?q=")[1] ?? "").split("&")[0] ?? "");
+        duckQueries.push(query);
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("anthropic 跨轮混合乱序");
+    const toolEvents: StreamToolActivityEvent[] = [];
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请分三轮检索并汇总",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "claude-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestBodies.length).toBe(3);
+    expect(duckQueries).toContain("q1");
+    expect(duckQueries).toContain("q2");
+    expect(duckQueries).toContain("q3");
+    expect(toolEvents.filter((event) => event.activity.type === "start" && event.activity.toolName === "web_search").length).toBe(3);
+    expect(toolEvents.filter((event) => event.activity.type === "result" && event.activity.toolName === "web_search").length).toBe(3);
+    expect(chunkEvents.some((event) => event.delta.includes("Anthropic 跨轮混合乱序调用完成"))).toBeTrue();
+  });
+
   test("google provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;

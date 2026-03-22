@@ -105,9 +105,10 @@
 - ✅ 已完成：Anthropic 同轮交错 `index delta` 归属恢复（双 `tool_use` 参数不串位）与端到端回归覆盖。
 - ✅ 已完成：OpenAI `tool_call arguments` 异常包裹（code fence JSON）解析恢复与续接回归覆盖。
 - ✅ 已完成：OpenAI `tool_call arguments` 截断 JSON 异常注入回归（参数失败时回退用户 query，链路不中断）。
+- ✅ 已完成：Anthropic 跨轮混合乱序压力回归（同轮乱序 + 次轮继续 `tool_use` + 三轮续接收敛）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
-- ⏳ 未做：更高强度混沌注入（跨轮随机交错、截断 JSON、网络抖动重放）的压力回归覆盖。
+- ⏳ 未做：更高强度混沌注入（随机顺序 fuzz、网络抖动重放）的压力回归覆盖。
 - ⏳ 未做：`nano_banana` 的更深度提示词自动优化（跨轮意图记忆、约束冲突自动裁剪）与全量细节对齐。
 
 **Proma 精确代码位置**
