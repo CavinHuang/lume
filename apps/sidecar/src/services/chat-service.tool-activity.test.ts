@@ -612,6 +612,273 @@ describe("chat-service tool activity", () => {
     expect(promptText).toContain("no watermark");
   });
 
+  test("nano_banana 跨轮继续时应继承上轮风格约束并注入意图记忆", async () => {
+    updateChatToolState("nano_banana", { enabled: true });
+    updateChatToolCredentials("nano_banana", {
+      apiKey: "gemini-key",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      model: "gemini-3.1-flash-image-preview"
+    });
+
+    const generateBodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!url.includes(":generateContent")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (init?.body && typeof init.body === "string") {
+        generateBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y5J8AAAAASUVORK5CYII="
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    const conversation = createConversation("nano banana intent memory");
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请生成一张赛博朋克风格城市海报，要求无文字",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "继续这个风格，换个角度再生成一张海报",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(generateBodies.length).toBe(2);
+    const secondBody = generateBodies[1] as {
+      contents?: Array<{
+        parts?: Array<{ text?: string }>;
+      }>;
+    };
+    const secondContents = secondBody.contents ?? [];
+    const promptText = secondContents[secondContents.length - 1]?.parts?.find((part) => typeof part.text === "string")?.text ?? "";
+    expect(promptText).toContain("Style hints:");
+    expect(promptText).toContain("cyberpunk style, neon lighting");
+    expect(promptText).toContain("Constraints:");
+    expect(promptText).toContain("no text overlay");
+    expect(promptText).toContain("Intent memory:");
+  });
+
+  test("nano_banana 跨轮约束冲突时应自动裁剪旧约束", async () => {
+    updateChatToolState("nano_banana", { enabled: true });
+    updateChatToolCredentials("nano_banana", {
+      apiKey: "gemini-key",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      model: "gemini-3.1-flash-image-preview"
+    });
+
+    const generateBodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!url.includes(":generateContent")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (init?.body && typeof init.body === "string") {
+        generateBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y5J8AAAAASUVORK5CYII="
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    const conversation = createConversation("nano banana constraint pruning");
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请生成一张赛博朋克海报，不要文字，不要人物",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "继续这张图，加上标题文字并加入一个人物",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(generateBodies.length).toBe(2);
+    const secondBody = generateBodies[1] as {
+      contents?: Array<{
+        parts?: Array<{ text?: string }>;
+      }>;
+    };
+    const secondContents = secondBody.contents ?? [];
+    const promptText = secondContents[secondContents.length - 1]?.parts?.find((part) => typeof part.text === "string")?.text ?? "";
+    expect(promptText).toContain("Style hints:");
+    expect(promptText).toContain("cyberpunk style, neon lighting");
+    expect(promptText).toContain("Constraints:");
+    expect(promptText).not.toContain("no text overlay");
+    expect(promptText).not.toContain("no people");
+    expect(promptText).toContain("Intent memory:");
+  });
+
+  test("nano_banana 继续编辑并指定新风格时应覆盖历史主风格", async () => {
+    updateChatToolState("nano_banana", { enabled: true });
+    updateChatToolCredentials("nano_banana", {
+      apiKey: "gemini-key",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      model: "gemini-3.1-flash-image-preview"
+    });
+
+    const generateBodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!url.includes(":generateContent")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (init?.body && typeof init.body === "string") {
+        generateBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y5J8AAAAASUVORK5CYII="
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    const conversation = createConversation("nano banana style override");
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请生成一张写实风格建筑海报",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "继续这张图，改成二次元动漫风格海报",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(generateBodies.length).toBe(2);
+    const secondBody = generateBodies[1] as {
+      contents?: Array<{
+        parts?: Array<{ text?: string }>;
+      }>;
+    };
+    const secondContents = secondBody.contents ?? [];
+    const promptText = secondContents[secondContents.length - 1]?.parts?.find((part) => typeof part.text === "string")?.text ?? "";
+    expect(promptText).toContain("Style hints:");
+    expect(promptText).toContain("anime style, vivid linework");
+    expect(promptText).not.toContain("photorealistic, highly detailed");
+    expect(promptText).toContain("Intent memory:");
+  });
+
   test("openai 兼容 provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;

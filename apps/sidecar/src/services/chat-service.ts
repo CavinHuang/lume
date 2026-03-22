@@ -134,22 +134,59 @@ const NANO_BANANA_KEYWORD_PATTERN =
   /图片|图像|配图|海报|插画|封面|壁纸|logo|生图|绘图|画一张|生成图|这张图|这幅图|改图|修图|image|poster|illustration|cover|draw|render/iu;
 const NANO_BANANA_EDIT_KEYWORD_PATTERN =
   /修改|编辑|重绘|重做|优化|继续|基于|参考|换|改成|replace|edit|modify|adjust|reference/iu;
-const NANO_BANANA_STYLE_HINT_RULES: Array<{ pattern: RegExp; hint: string }> = [
-  { pattern: /写实|realistic|photoreal/i, hint: "photorealistic, highly detailed" },
-  { pattern: /插画|illustration|插图/i, hint: "digital illustration style" },
-  { pattern: /赛博朋克|cyberpunk/i, hint: "cyberpunk style, neon lighting" },
-  { pattern: /水彩|watercolor/i, hint: "watercolor texture, soft edges" },
-  { pattern: /电影|cinematic/i, hint: "cinematic composition, dramatic lighting" },
-  { pattern: /极简|minimal/i, hint: "minimal composition, clean background" },
-  { pattern: /动漫|anime|二次元/i, hint: "anime style, vivid linework" }
+const NANO_BANANA_CONTINUATION_KEYWORD_PATTERN =
+  /继续|延续|保持|同风格|一样|再来|沿用|继续这张|continue|keep style|same style|another version|iterate/iu;
+const NANO_BANANA_REPLACE_SUBJECT_KEYWORD_PATTERN =
+  /替换主体|换主体|换成|替换成|replace subject|swap subject|change subject/iu;
+const NANO_BANANA_ENABLE_TEXT_OVERLAY_PATTERN =
+  /加(上)?(标题)?文字|添加(标题)?文字|带文字|加(上)?标题|标题文案|slogan|caption|add text|with text/iu;
+const NANO_BANANA_ENABLE_PEOPLE_PATTERN =
+  /加入(一个)?人物|加(入)?一个人|有人物|带人物|with (a )?(person|people)|include (a )?(person|people)/iu;
+const NANO_BANANA_ENABLE_WATERMARK_PATTERN =
+  /加(上)?水印|带水印|with watermark|add watermark/iu;
+
+type NanoBananaConstraintGroup = "watermark" | "textOverlay" | "people" | "subjectIdentity";
+interface NanoBananaHintRule {
+  pattern: RegExp;
+  key: string;
+  hint: string;
+  group?: NanoBananaConstraintGroup | "renderingStyle";
+  polarity?: "allow" | "forbid";
+}
+interface NanoBananaConstraintPreference {
+  watermark?: "allow" | "forbid";
+  textOverlay?: "allow" | "forbid";
+  people?: "allow" | "forbid";
+  subjectIdentity?: "allow" | "forbid";
+}
+interface NanoBananaIntentMemory {
+  styleEntries: NanoBananaHintRule[];
+  constraintEntries: NanoBananaHintRule[];
+  lastImagePrompt?: string;
+}
+
+const NANO_BANANA_STYLE_HINT_RULES: NanoBananaHintRule[] = [
+  { pattern: /写实|realistic|photoreal/i, key: "style-photoreal", hint: "photorealistic, highly detailed", group: "renderingStyle" },
+  { pattern: /插画|illustration|插图/i, key: "style-illustration", hint: "digital illustration style", group: "renderingStyle" },
+  { pattern: /水彩|watercolor/i, key: "style-watercolor", hint: "watercolor texture, soft edges", group: "renderingStyle" },
+  { pattern: /动漫|anime|二次元/i, key: "style-anime", hint: "anime style, vivid linework", group: "renderingStyle" },
+  { pattern: /赛博朋克|cyberpunk/i, key: "style-cyberpunk", hint: "cyberpunk style, neon lighting" },
+  { pattern: /电影|cinematic/i, key: "style-cinematic", hint: "cinematic composition, dramatic lighting" },
+  { pattern: /极简|minimal/i, key: "style-minimal", hint: "minimal composition, clean background" }
 ];
-const NANO_BANANA_CONSTRAINT_HINT_RULES: Array<{ pattern: RegExp; hint: string }> = [
-  { pattern: /无水印|不要水印/i, hint: "no watermark" },
-  { pattern: /no watermark/i, hint: "no watermark" },
-  { pattern: /无文字|不要文字|不要字|no text/i, hint: "no text overlay" },
-  { pattern: /高细节|高质量|高清|high detail|high quality/i, hint: "sharp details, high quality render" },
-  { pattern: /无人物|不要人物|no people/i, hint: "no people" }
+const NANO_BANANA_CONSTRAINT_HINT_RULES: NanoBananaHintRule[] = [
+  { pattern: /无水印|不要水印|no watermark/i, key: "constraint-no-watermark", hint: "no watermark", group: "watermark", polarity: "forbid" },
+  { pattern: /无文字|不要文字|不要字|no text/i, key: "constraint-no-text-overlay", hint: "no text overlay", group: "textOverlay", polarity: "forbid" },
+  { pattern: /无人物|不要人物|no people/i, key: "constraint-no-people", hint: "no people", group: "people", polarity: "forbid" },
+  { pattern: /高细节|高质量|高清|high detail|high quality/i, key: "constraint-high-quality", hint: "sharp details, high quality render" }
 ];
+const NANO_BANANA_PRESERVE_SUBJECT_HINT: NanoBananaHintRule = {
+  pattern: /(?:)/,
+  key: "constraint-preserve-subject-identity",
+  hint: "preserve subject identity unless user requests replacement",
+  group: "subjectIdentity",
+  polarity: "forbid"
+};
 
 function shouldRunWebSearch(userMessage: string): boolean {
   return WEB_SEARCH_KEYWORD_PATTERN.test(userMessage);
@@ -205,28 +242,156 @@ function inferNanoBananaImageSize(userMessage: string): string | undefined {
   return undefined;
 }
 
-function collectPromptHints(
+function collectPromptHintEntries(
   userMessage: string,
-  rules: Array<{ pattern: RegExp; hint: string }>
-): string[] {
-  const hints: string[] = [];
+  rules: NanoBananaHintRule[]
+): NanoBananaHintRule[] {
+  const hints: NanoBananaHintRule[] = [];
+  const seenKeys = new Set<string>();
   for (const rule of rules) {
     if (rule.pattern.test(userMessage)) {
-      hints.push(rule.hint);
+      if (seenKeys.has(rule.key)) continue;
+      seenKeys.add(rule.key);
+      hints.push(rule);
     }
   }
-  return [...new Set(hints)];
+  return hints;
 }
 
-function buildNanoBananaEnhancedPrompt(userMessage: string): string {
+function mergePromptHintEntries(
+  currentEntries: NanoBananaHintRule[],
+  rememberedEntries: NanoBananaHintRule[]
+): NanoBananaHintRule[] {
+  const merged: NanoBananaHintRule[] = [...currentEntries];
+  const currentGroups = new Set(
+    currentEntries
+      .map((entry) => entry.group)
+      .filter((group): group is Exclude<NanoBananaHintRule["group"], undefined> => typeof group === "string")
+  );
+  for (const remembered of rememberedEntries) {
+    if (merged.some((entry) => entry.key === remembered.key)) continue;
+    if (remembered.group && currentGroups.has(remembered.group)) continue;
+    merged.push(remembered);
+  }
+  return merged;
+}
+
+function resolveConstraintPreference(
+  userMessage: string,
+  currentConstraintEntries: NanoBananaHintRule[]
+): NanoBananaConstraintPreference {
+  const preference: NanoBananaConstraintPreference = {};
+  for (const entry of currentConstraintEntries) {
+    if (!entry.group || !entry.polarity) continue;
+    if (entry.group === "watermark" || entry.group === "textOverlay" || entry.group === "people" || entry.group === "subjectIdentity") {
+      preference[entry.group] = entry.polarity;
+    }
+  }
+
+  if (!preference.textOverlay && NANO_BANANA_ENABLE_TEXT_OVERLAY_PATTERN.test(userMessage)) {
+    preference.textOverlay = "allow";
+  }
+  if (!preference.people && NANO_BANANA_ENABLE_PEOPLE_PATTERN.test(userMessage)) {
+    preference.people = "allow";
+  }
+  if (!preference.watermark && NANO_BANANA_ENABLE_WATERMARK_PATTERN.test(userMessage)) {
+    preference.watermark = "allow";
+  }
+  if (NANO_BANANA_REPLACE_SUBJECT_KEYWORD_PATTERN.test(userMessage)) {
+    preference.subjectIdentity = "allow";
+  }
+
+  return preference;
+}
+
+function pruneConstraintConflicts(
+  entries: NanoBananaHintRule[],
+  preference: NanoBananaConstraintPreference
+): NanoBananaHintRule[] {
+  const filtered = entries.filter((entry) => {
+    if (!entry.group || !entry.polarity) return true;
+    if (entry.group === "renderingStyle") return true;
+    const pref = preference[entry.group];
+    if (!pref) return true;
+    return pref === entry.polarity;
+  });
+
+  const output: NanoBananaHintRule[] = [];
+  const seenKeys = new Set<string>();
+  const seenGroups = new Set<string>();
+  for (const entry of filtered) {
+    if (seenKeys.has(entry.key)) continue;
+    if (entry.group && entry.polarity) {
+      if (seenGroups.has(entry.group)) continue;
+      seenGroups.add(entry.group);
+    }
+    output.push(entry);
+    seenKeys.add(entry.key);
+  }
+  return output;
+}
+
+function collectNanoBananaIntentMemory(messageHistory: ChatMessage[]): NanoBananaIntentMemory {
+  for (let index = messageHistory.length - 1; index >= 0; index -= 1) {
+    const item = messageHistory[index];
+    if (!item || item.role !== "user") continue;
+    const text = item.content.trim();
+    if (!text) continue;
+    const styleEntries = collectPromptHintEntries(text, NANO_BANANA_STYLE_HINT_RULES);
+    const constraintEntries = collectPromptHintEntries(text, NANO_BANANA_CONSTRAINT_HINT_RULES);
+    const imageIntent = shouldRunNanoBanana(text, item.attachments);
+    if (!imageIntent && styleEntries.length === 0 && constraintEntries.length === 0) continue;
+    return {
+      styleEntries,
+      constraintEntries,
+      lastImagePrompt: text
+    };
+  }
+  return {
+    styleEntries: [],
+    constraintEntries: [],
+    lastImagePrompt: undefined
+  };
+}
+
+function summarizePromptForIntentMemory(prompt: string): string {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 120) return normalized;
+  return `${normalized.slice(0, 120)}...`;
+}
+
+function buildNanoBananaEnhancedPrompt(
+  userMessage: string,
+  options?: { messageHistory?: ChatMessage[]; useReferenceImages?: boolean }
+): string {
   const base = userMessage.trim();
   if (!base) return base;
-  const styleHints = collectPromptHints(base, NANO_BANANA_STYLE_HINT_RULES);
-  const constraintHints = collectPromptHints(base, NANO_BANANA_CONSTRAINT_HINT_RULES);
-  if (NANO_BANANA_EDIT_KEYWORD_PATTERN.test(base)) {
-    constraintHints.push("preserve subject identity unless user requests replacement");
+
+  const shouldReuseIntent = (
+    NANO_BANANA_CONTINUATION_KEYWORD_PATTERN.test(base)
+    || options?.useReferenceImages === true
+  );
+  const intentMemory = shouldReuseIntent
+    ? collectNanoBananaIntentMemory(options?.messageHistory ?? [])
+    : { styleEntries: [], constraintEntries: [], lastImagePrompt: undefined };
+
+  const styleEntries = collectPromptHintEntries(base, NANO_BANANA_STYLE_HINT_RULES);
+  const constraintEntries = collectPromptHintEntries(base, NANO_BANANA_CONSTRAINT_HINT_RULES);
+  const constraintPreference = resolveConstraintPreference(base, constraintEntries);
+  if (
+    NANO_BANANA_EDIT_KEYWORD_PATTERN.test(base)
+    && constraintPreference.subjectIdentity !== "allow"
+  ) {
+    constraintEntries.push(NANO_BANANA_PRESERVE_SUBJECT_HINT);
   }
-  const normalizedConstraintHints = [...new Set(constraintHints)];
+  const mergedStyleEntries = mergePromptHintEntries(styleEntries, intentMemory.styleEntries);
+  const mergedConstraintEntries = pruneConstraintConflicts(
+    mergePromptHintEntries(constraintEntries, intentMemory.constraintEntries),
+    constraintPreference
+  );
+
+  const styleHints = mergedStyleEntries.map((entry) => entry.hint);
+  const normalizedConstraintHints = mergedConstraintEntries.map((entry) => entry.hint);
 
   const hasAsciiWords = /[a-zA-Z]{3,}/.test(base);
   if (styleHints.length === 0 && !hasAsciiWords && /[\u4e00-\u9fff]/.test(base)) {
@@ -241,6 +406,11 @@ function buildNanoBananaEnhancedPrompt(userMessage: string): string {
   }
   if (normalizedConstraintHints.length > 0) {
     sections.push(`Constraints: ${normalizedConstraintHints.join("; ")}.`);
+  }
+  if (shouldReuseIntent && intentMemory.lastImagePrompt && intentMemory.lastImagePrompt !== base) {
+    sections.push(
+      `Intent memory: continue previous request context (${summarizePromptForIntentMemory(intentMemory.lastImagePrompt)}), unless current instructions override it.`
+    );
   }
   return sections.join("\n\n");
 }
@@ -610,6 +780,7 @@ function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition
 
 async function executeToolCallForChat(input: {
   conversationId: string;
+  messageHistory: ChatMessage[];
   toolCall: ToolCall;
   fallbackQuery: string;
   enabledMetaMap: Map<string, ChatToolMeta>;
@@ -692,7 +863,6 @@ async function executeToolCallForChat(input: {
 
     if (toolCall.name === "nano_banana") {
       const prompt = getStringArgument(toolCall.arguments, "prompt") ?? query;
-      const enhancedPrompt = buildNanoBananaEnhancedPrompt(prompt);
       const aspectRatio = getStringArgument(toolCall.arguments, "aspectRatio")
         ?? inferNanoBananaAspectRatio(prompt);
       const imageSize = getStringArgument(toolCall.arguments, "imageSize")
@@ -704,6 +874,10 @@ async function executeToolCallForChat(input: {
           previousUserAttachments: input.previousUserAttachments,
           previousAssistantAttachments: input.previousAssistantAttachments
         });
+      const enhancedPrompt = buildNanoBananaEnhancedPrompt(prompt, {
+        messageHistory: input.messageHistory,
+        useReferenceImages
+      });
       const result = await generateNanoBananaImage(
         {
           conversationId: input.conversationId,
@@ -773,6 +947,7 @@ async function executeToolCallForChat(input: {
 async function runEnabledToolsForChat(input: {
   conversationId: string;
   userMessage: string;
+  messageHistory: ChatMessage[];
   attachments?: FileAttachment[];
   previousUserAttachments?: FileAttachment[];
   previousAssistantAttachments?: FileAttachment[];
@@ -911,7 +1086,10 @@ async function runEnabledToolsForChat(input: {
       const result = await generateNanoBananaImage(
         {
           conversationId: input.conversationId,
-          prompt: buildNanoBananaEnhancedPrompt(input.userMessage),
+          prompt: buildNanoBananaEnhancedPrompt(input.userMessage, {
+            messageHistory: input.messageHistory,
+            useReferenceImages
+          }),
           aspectRatio: inferredAspectRatio,
           imageSize: inferredImageSize,
           useReferenceImages,
@@ -1019,6 +1197,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     const toolResult = await runEnabledToolsForChat({
       conversationId,
       userMessage,
+      messageHistory: fullHistory,
       attachments,
       previousUserAttachments,
       previousAssistantAttachments,
@@ -1089,6 +1268,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     : await runEnabledToolsForChat({
       conversationId,
       userMessage,
+      messageHistory: fullHistory,
       attachments,
       previousUserAttachments,
       previousAssistantAttachments,
@@ -1169,6 +1349,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
         for (const toolCall of toolCalls) {
           const result = await executeToolCallForChat({
             conversationId,
+            messageHistory: fullHistory,
             toolCall,
             fallbackQuery: userMessage,
             enabledMetaMap,
