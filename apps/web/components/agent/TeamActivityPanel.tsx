@@ -9,7 +9,7 @@
 "use client";
 
 import * as React from "react";
-import { Bot, CheckCircle2, ChevronRight, Circle, Clock, ListChecks, Loader2, Users, XCircle } from "lucide-react";
+import { Bell, Bot, CheckCircle2, ChevronRight, Circle, Clock, ListChecks, Loader2, Users, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ToolActivity } from "@/atoms/agent-atoms";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -18,11 +18,13 @@ import {
   getActivityStatus,
   type TeamActivityStatus,
   type TeamAgentInfo,
+  type TeamInboxItem,
   type TeamTaskItem
 } from "./team-activity";
 
 interface TeamActivityPanelProps {
   activities: ToolActivity[];
+  inboxItems: TeamInboxItem[];
 }
 
 function formatElapsed(seconds?: number): string | null {
@@ -72,6 +74,48 @@ function summarizeInput(input: Record<string, unknown>): string {
     }
   }
   return "";
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+function InboxTimeline({ items }: { items: TeamInboxItem[] }): React.ReactElement | null {
+  if (items.length === 0) return null;
+  return (
+    <div className="rounded-lg bg-foreground/[0.03] px-3 py-2.5">
+      <div className="mb-2 flex items-center gap-2">
+        <Bell className="size-3 text-muted-foreground/70" />
+        <span className="text-[11px] font-medium text-muted-foreground">Inbox</span>
+        <span className="ml-auto text-[10px] text-muted-foreground/70">{items.length}</span>
+      </div>
+      <div className="space-y-1.5">
+        {items.slice(0, 12).map((item) => (
+          <div key={item.messageId} className="rounded-md border border-border/60 bg-background/70 px-2 py-1.5">
+            <div className="flex items-center gap-1.5 text-[10px]">
+              {item.isError ? (
+                <XCircle className="size-3 text-destructive" />
+              ) : (
+                <CheckCircle2 className="size-3 text-green-500" />
+              )}
+              <span className="truncate text-foreground/90">{item.summary}</span>
+              <span className="ml-auto text-muted-foreground/70">{formatTime(item.createdAt)}</span>
+            </div>
+            {(item.runId || item.status) ? (
+              <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/80">
+                {item.runId ? <span>run {item.runId.slice(0, 8)}</span> : null}
+                {item.status ? <span>{item.status}</span> : null}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function TaskBoard({ tasks }: { tasks: TeamTaskItem[] }): React.ReactElement | null {
@@ -185,11 +229,16 @@ function AgentCard({
   );
 }
 
-export function TeamActivityPanel({ activities }: TeamActivityPanelProps): React.ReactElement {
+export function TeamActivityPanel({ activities, inboxItems }: TeamActivityPanelProps): React.ReactElement {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const overview = React.useMemo(() => extractTeamOverview(activities), [activities]);
+  const hasOverviewData = !!overview && (
+    overview.tasks.length > 0
+    || overview.agents.length > 0
+    || !!overview.teamName
+  );
 
-  if (!overview || (overview.tasks.length === 0 && overview.agents.length === 0 && !overview.teamName)) {
+  if (!hasOverviewData && inboxItems.length === 0) {
     return (
       <div className="flex h-full items-center justify-center p-4">
         <div className="flex flex-col items-center gap-2 text-muted-foreground/70">
@@ -201,12 +250,12 @@ export function TeamActivityPanel({ activities }: TeamActivityPanelProps): React
     );
   }
 
-  const runningCount = overview.agents.filter((item) => item.status === "running" || item.status === "backgrounded").length;
-  const doneCount = overview.agents.filter((item) => item.status === "completed" || item.status === "error").length;
+  const runningCount = (overview?.agents ?? []).filter((item) => item.status === "running" || item.status === "backgrounded").length;
+  const doneCount = (overview?.agents ?? []).filter((item) => item.status === "completed" || item.status === "error").length;
 
   return (
     <div className="flex h-full flex-col">
-      {overview.teamName ? (
+      {overview?.teamName ? (
         <div className="border-b px-3 py-2.5">
           <div className="flex items-center gap-2">
             <Users className="size-3.5 text-primary" />
@@ -219,7 +268,7 @@ export function TeamActivityPanel({ activities }: TeamActivityPanelProps): React
       ) : null}
 
       <div className="flex items-center gap-2 border-b px-3 py-1.5 text-[11px] text-muted-foreground">
-        <span>{overview.agents.length} 个 Agent</span>
+        <span>{overview?.agents.length ?? 0} 个 Agent</span>
         <span className="ml-auto inline-flex items-center gap-2">
           {runningCount > 0 ? <span className="text-blue-600">运行中 {runningCount}</span> : null}
           {doneCount > 0 ? <span className="text-green-600">完成 {doneCount}</span> : null}
@@ -228,9 +277,10 @@ export function TeamActivityPanel({ activities }: TeamActivityPanelProps): React
 
       <ScrollArea className="flex-1">
         <div className="space-y-2 p-2">
-          <TaskBoard tasks={overview.tasks} />
+          <InboxTimeline items={inboxItems} />
+          <TaskBoard tasks={overview?.tasks ?? []} />
 
-          {overview.agents.map((agent) => (
+          {(overview?.agents ?? []).map((agent) => (
             <AgentCard
               key={agent.toolUseId}
               agent={agent}

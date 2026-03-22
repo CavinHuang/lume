@@ -44,6 +44,16 @@ export interface TeamOverview {
   agents: TeamAgentInfo[];
 }
 
+export interface TeamInboxItem {
+  messageId: string;
+  createdAt: number;
+  runId?: string;
+  childSessionKey?: string;
+  status?: string;
+  summary: string;
+  isError: boolean;
+}
+
 const TEAM_ROOT_TOOL_NAMES = new Set(["Task", "Agent"]);
 const TEAM_CONTEXT_TOOL_NAMES = new Set(["TeamCreate", "TaskCreate", "TaskUpdate", "Task", "Agent"]);
 
@@ -61,6 +71,22 @@ function asNonEmptyString(value: unknown): string | undefined {
 function asFiniteNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return value;
+}
+
+function truncateSummary(value: string, maxChars = 120): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}...`;
+}
+
+function extractAnnounceSummary(content: string): string {
+  const normalized = content.trim();
+  if (!normalized) return "子任务状态更新";
+  const lines = normalized
+    .split("\n")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (lines.length === 0) return "子任务状态更新";
+  return truncateSummary(lines[0] as string);
 }
 
 export function getActivityStatus(activity: ToolActivity): TeamActivityStatus {
@@ -378,4 +404,24 @@ export function buildTeamActivitiesFromSession(
   const history = extractToolActivitiesFromMessages(messages);
   const merged = mergeToolActivities(history, streamingActivities);
   return selectTeamActivities(merged);
+}
+
+export function extractTeamInboxFromMessages(messages: AgentMessage[]): TeamInboxItem[] {
+  const items: TeamInboxItem[] = [];
+  for (const message of messages) {
+    if (!message || message.role !== "assistant") continue;
+    const metadata = asRecord(message.metadata);
+    if (metadata.subagentAnnounce !== true) continue;
+    const status = asNonEmptyString(metadata.status);
+    items.push({
+      messageId: message.id,
+      createdAt: message.createdAt,
+      runId: asNonEmptyString(metadata.runId),
+      childSessionKey: asNonEmptyString(metadata.childSessionId),
+      status,
+      summary: extractAnnounceSummary(message.content),
+      isError: status !== "completed"
+    });
+  }
+  return items.sort((a, b) => b.createdAt - a.createdAt);
 }

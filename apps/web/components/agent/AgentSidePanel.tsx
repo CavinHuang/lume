@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { FileBrowser } from "@/components/file-browser";
 import type { ToolActivity } from "@/atoms/agent-atoms";
+import type { TeamInboxItem } from "./team-activity";
 import { TeamActivityPanel } from "./TeamActivityPanel";
 import { extractTeamOverview } from "./team-activity";
 
@@ -24,6 +25,7 @@ interface AgentSidePanelProps {
   sessionPath: string | null;
   workspaceSlug: string | null;
   teamActivities: ToolActivity[];
+  inboxItems: TeamInboxItem[];
   open: boolean;
   activeTab: AgentSidePanelTab;
   onOpenChange: (open: boolean) => void;
@@ -35,6 +37,7 @@ export function AgentSidePanel({
   sessionPath,
   workspaceSlug,
   teamActivities,
+  inboxItems,
   open,
   activeTab,
   onOpenChange,
@@ -122,7 +125,7 @@ export function AgentSidePanel({
 
         <div className="min-h-0 flex-1">
           {activeTab === "team" ? (
-            <TeamActivityPanel activities={teamActivities} />
+            <TeamActivityPanel activities={teamActivities} inboxItems={inboxItems} />
           ) : hasFiles && workspaceSlug && sessionPath ? (
             <FileBrowser
               workspaceSlug={workspaceSlug}

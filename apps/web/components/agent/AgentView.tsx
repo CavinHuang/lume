@@ -80,7 +80,12 @@ import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentSidePanel, type AgentSidePanelTab } from "./AgentSidePanel";
-import { buildTeamActivitiesFromRuns, buildTeamActivitiesFromSession, mergeToolActivities } from "./team-activity";
+import {
+  buildTeamActivitiesFromRuns,
+  buildTeamActivitiesFromSession,
+  extractTeamInboxFromMessages,
+  mergeToolActivities
+} from "./team-activity";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -393,6 +398,10 @@ export function AgentView(): React.ReactElement {
   const teamActivitiesFromSession = useMemo(
     () => buildTeamActivitiesFromSession(messages, toolActivities),
     [messages, toolActivities]
+  );
+  const teamInboxItems = useMemo(
+    () => extractTeamInboxFromMessages(messages),
+    [messages]
   );
   const teamActivities = useMemo(
     () => mergeToolActivities(teamActivitiesFromSession, teamRunActivities),
@@ -1956,6 +1965,7 @@ export function AgentView(): React.ReactElement {
             sessionPath={sessionRootPath}
             workspaceSlug={currentWorkspace?.slug ?? null}
             teamActivities={teamActivities}
+            inboxItems={teamInboxItems}
             open={currentSidePanelOpen}
             activeTab={currentSidePanelTab}
             onOpenChange={setCurrentSidePanelOpen}

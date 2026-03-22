@@ -211,6 +211,7 @@
 - ✅ 已完成：`ENABLE_SUBAGENT_TEAM_V2` 回滚开关（可紧急禁用 `sessions_spawn/subagents_*`）。
 - ✅ 已完成：Team 面板接入 run registry 轮询（`agent:list-subagent-runs`），补齐非流式回合下的子任务状态刷新。
 - ✅ 已完成：Team Agent 卡片接入 run 级 telemetry（runId/usage/errorCode/announce）。
+- ✅ 已完成：Team 面板增加 Inbox 通知时间线（基于 `subagentAnnounce` 消息聚合）。
 
 **取舍点**
 - 方案 A（推荐）：保留 Lume 时间线，新增 Team 视图作为并列模式。

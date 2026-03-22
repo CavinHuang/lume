@@ -388,6 +388,7 @@ Lume 当前实现入口（改造起点）：
 - ✅ 稳定性：新增 `ENABLE_SUBAGENT_TEAM_V2` 回滚开关（关闭后禁用 `sessions_spawn/subagents_*`）。
 - ✅ 前端：Team 面板接入 run registry 轮询数据（非流式回合同步刷新子任务状态）。
 - ✅ 前端：Team Agent 卡片补 run 级 telemetry（runId/usage/errorCode/announce）。
+- ✅ 前端：Team 面板增加 Inbox 通知时间线（基于 `subagentAnnounce` 消息）。
 
 已补测试：
 - ✅ `subagent-run-registry.test.ts`（创建/更新/重启恢复）。
