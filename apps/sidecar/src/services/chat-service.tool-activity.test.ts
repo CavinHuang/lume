@@ -455,6 +455,93 @@ describe("chat-service tool activity", () => {
     expect(lastAssistant?.attachments?.[0]?.mediaType).toBe("image/png");
   });
 
+  test("nano_banana 编辑语义应自动启用参考图并推断画幅参数", async () => {
+    updateChatToolState("nano_banana", { enabled: true });
+    updateChatToolCredentials("nano_banana", {
+      apiKey: "gemini-key",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      model: "gemini-3.1-flash-image-preview"
+    });
+
+    const generateBodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!url.includes(":generateContent")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (init?.body && typeof init.body === "string") {
+        generateBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y5J8AAAAASUVORK5CYII="
+                    }
+                  },
+                  { text: "图片生成完成" }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    const conversation = createConversation("nano banana edit inference");
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请生成一张城市夜景海报",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请把这张图改成横版16:9，输出4K高清版本",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["nano_banana"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(generateBodies.length).toBe(2);
+    const secondBody = generateBodies[1] as {
+      contents?: Array<{ parts?: Array<{ inlineData?: unknown; text?: string }> }>;
+      generationConfig?: { imageConfig?: { aspectRatio?: string; imageSize?: string } };
+    };
+    const contents = secondBody.contents ?? [];
+    const lastUserParts = contents[contents.length - 1]?.parts ?? [];
+    expect(lastUserParts.some((part) => !!part.inlineData)).toBeTrue();
+    expect(secondBody.generationConfig?.imageConfig?.aspectRatio).toBe("16:9");
+    expect(secondBody.generationConfig?.imageConfig?.imageSize).toBe("4K");
+  });
+
   test("openai 兼容 provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;

@@ -130,7 +130,9 @@ const WEB_SEARCH_KEYWORD_PATTERN = /\b(latest|today|current|news|price|weather|s
 const AGENT_MODE_RECOMMEND_KEYWORD_PATTERN =
   /调研|研究|报告|分析|开发|代码|实现|重构|调试|测试|项目|文件|脚本|命令|自动化|多步骤|搭建|部署|数据库|api|workflow|pipeline|计划|执行|refactor|debug|test|build|research/iu;
 const NANO_BANANA_KEYWORD_PATTERN =
-  /图片|图像|配图|海报|插画|封面|壁纸|logo|生图|绘图|画一张|生成图|image|poster|illustration|cover|draw|render/iu;
+  /图片|图像|配图|海报|插画|封面|壁纸|logo|生图|绘图|画一张|生成图|这张图|这幅图|改图|修图|image|poster|illustration|cover|draw|render/iu;
+const NANO_BANANA_EDIT_KEYWORD_PATTERN =
+  /修改|编辑|重绘|重做|优化|继续|基于|参考|换|改成|replace|edit|modify|adjust|reference/iu;
 
 function shouldRunWebSearch(userMessage: string): boolean {
   return WEB_SEARCH_KEYWORD_PATTERN.test(userMessage);
@@ -148,6 +150,42 @@ function shouldRunNanoBanana(userMessage: string, attachments?: FileAttachment[]
     return true;
   }
   return NANO_BANANA_KEYWORD_PATTERN.test(userMessage.trim());
+}
+
+function hasImageAttachments(attachments?: FileAttachment[]): boolean {
+  return attachments?.some((item) => isImageAttachment(item.mediaType)) ?? false;
+}
+
+function shouldUseReferenceImagesForNanoBanana(input: {
+  userMessage: string;
+  currentAttachments?: FileAttachment[];
+  previousUserAttachments?: FileAttachment[];
+  previousAssistantAttachments?: FileAttachment[];
+}): boolean {
+  if (hasImageAttachments(input.currentAttachments)) {
+    return true;
+  }
+  const hasPreviousImage = hasImageAttachments(input.previousUserAttachments) || hasImageAttachments(input.previousAssistantAttachments);
+  if (!hasPreviousImage) return false;
+  return NANO_BANANA_EDIT_KEYWORD_PATTERN.test(input.userMessage);
+}
+
+function inferNanoBananaAspectRatio(userMessage: string): string | undefined {
+  const text = userMessage.toLowerCase();
+  if (text.includes("16:9") || text.includes("横版")) return "16:9";
+  if (text.includes("9:16") || text.includes("竖版")) return "9:16";
+  if (text.includes("4:3")) return "4:3";
+  if (text.includes("3:4")) return "3:4";
+  if (text.includes("1:1") || text.includes("方图") || text.includes("正方形")) return "1:1";
+  return undefined;
+}
+
+function inferNanoBananaImageSize(userMessage: string): string | undefined {
+  const text = userMessage.toLowerCase();
+  if (text.includes("4k") || text.includes("4096")) return "4K";
+  if (text.includes("2k") || text.includes("2048")) return "2K";
+  if (text.includes("1k") || text.includes("1024")) return "1K";
+  return undefined;
 }
 
 function getLatestAttachmentsByRole(
@@ -597,9 +635,17 @@ async function executeToolCallForChat(input: {
 
     if (toolCall.name === "nano_banana") {
       const prompt = getStringArgument(toolCall.arguments, "prompt") ?? query;
-      const aspectRatio = getStringArgument(toolCall.arguments, "aspectRatio");
-      const imageSize = getStringArgument(toolCall.arguments, "imageSize");
-      const useReferenceImages = getBooleanArgument(toolCall.arguments, "useReferenceImages");
+      const aspectRatio = getStringArgument(toolCall.arguments, "aspectRatio")
+        ?? inferNanoBananaAspectRatio(prompt);
+      const imageSize = getStringArgument(toolCall.arguments, "imageSize")
+        ?? inferNanoBananaImageSize(prompt);
+      const useReferenceImages = getBooleanArgument(toolCall.arguments, "useReferenceImages")
+        ?? shouldUseReferenceImagesForNanoBanana({
+          userMessage: prompt,
+          currentAttachments: input.currentAttachments,
+          previousUserAttachments: input.previousUserAttachments,
+          previousAssistantAttachments: input.previousAssistantAttachments
+        });
       const result = await generateNanoBananaImage(
         {
           conversationId: input.conversationId,
@@ -796,11 +842,21 @@ async function runEnabledToolsForChat(input: {
       toolCallId
     });
     try {
+      const inferredAspectRatio = inferNanoBananaAspectRatio(input.userMessage);
+      const inferredImageSize = inferNanoBananaImageSize(input.userMessage);
+      const useReferenceImages = shouldUseReferenceImagesForNanoBanana({
+        userMessage: input.userMessage,
+        currentAttachments: input.attachments,
+        previousUserAttachments: input.previousUserAttachments,
+        previousAssistantAttachments: input.previousAssistantAttachments
+      });
       const result = await generateNanoBananaImage(
         {
           conversationId: input.conversationId,
           prompt: input.userMessage,
-          useReferenceImages: true,
+          aspectRatio: inferredAspectRatio,
+          imageSize: inferredImageSize,
+          useReferenceImages,
           currentAttachments: input.attachments,
           previousUserAttachments: input.previousUserAttachments,
           previousAssistantAttachments: input.previousAssistantAttachments
