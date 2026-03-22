@@ -50,7 +50,10 @@ import type {
   ImportGlobalSkillToWorkspaceInput,
   InstallGlobalPluginInput,
   InstallGlobalPluginResult,
+  AgentListSubagentRunsInput,
+  AgentListSubagentRunsResult,
   AgentMessage,
+  AgentMessageAppendedEvent,
   AgentRecentMessagesResult,
   AgentSaveFilesInput,
   AgentSavedFile,
@@ -638,6 +641,12 @@ export async function listAgentSessions(): Promise<AgentSessionMeta[]> {
   return sidecarCall<AgentSessionMeta[]>(AGENT_IPC_CHANNELS.LIST_SESSIONS);
 }
 
+export async function listSubagentRuns(
+  input?: AgentListSubagentRunsInput
+): Promise<AgentListSubagentRunsResult> {
+  return sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, input ?? {});
+}
+
 export async function createAgentSession(params?: {
   title?: string;
   channelId?: string;
@@ -815,6 +824,14 @@ export async function onAgentStreamError(
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.STREAM_ERROR, (params) => {
     handler(params as { sessionId: string; error: string });
+  });
+}
+
+export async function onAgentMessageAppended(
+  handler: (event: AgentMessageAppendedEvent) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, (params) => {
+    handler(params as AgentMessageAppendedEvent);
   });
 }
 

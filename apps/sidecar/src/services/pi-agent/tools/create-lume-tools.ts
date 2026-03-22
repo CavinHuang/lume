@@ -19,6 +19,10 @@ const OPENCLAW_ALIGNED_TOOL_NAMES = [
   "sessions_delete",
   "sessions_spawn",
   "session_status",
+  "subagents_list",
+  "subagents_kill",
+  "subagents_send",
+  "subagents_steer",
   "web_search",
   "web_fetch"
 ];
@@ -72,7 +76,8 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     workspaceId: input.workspaceId,
     channelId: input.channelId,
     sessionType: input.sessionType,
-    chatType: input.chatType
+    chatType: input.chatType,
+    permissionMode: input.permissionMode
   });
 
   // 不再在这里过滤，由 tool-permission-gate.ts 基于 tool-metadata.ts 处理

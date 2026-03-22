@@ -99,7 +99,11 @@ describe("tool-policy", () => {
         "sessions_send",
         "sessions_delete",
         "sessions_spawn",
-        "session_status"
+        "session_status",
+        "subagents_list",
+        "subagents_kill",
+        "subagents_send",
+        "subagents_steer"
       ]);
     } finally {
       if (previousConfigDir === undefined) {

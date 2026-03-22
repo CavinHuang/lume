@@ -52,6 +52,7 @@ import {
   onAgentStreamComplete,
   onAgentStreamError,
   onAgentStreamEvent,
+  onAgentMessageAppended,
   onAgentAskUserQuestion,
   onAgentPlanStateChanged,
   onAgentToolPermissionRequest,
@@ -72,12 +73,13 @@ import { AgentMessages } from "./AgentMessages";
 import type { AgentInlineEditSubmitPayload } from "./AgentMessages";
 import { AskUserQuestionPanel } from "./AskUserQuestionPanel";
 import { ContextUsageBadge } from "./ContextUsageBadge";
-import { FileBrowser } from "@/components/file-browser";
 import { AttachmentPreviewItem } from "@/components/chat/AttachmentPreviewItem";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentSidePanel, type AgentSidePanelTab } from "./AgentSidePanel";
+import { buildTeamActivitiesFromSession } from "./team-activity";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -302,7 +304,8 @@ export function AgentView(): React.ReactElement {
   const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom);
   const [inputContent, setInputContent] = useState("");
   const [sessionRootPath, setSessionRootPath] = useState<string | null>(null);
-  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [sidePanelOpenMap, setSidePanelOpenMap] = useState<Map<string, boolean>>(new Map());
+  const [sidePanelTabMap, setSidePanelTabMap] = useState<Map<string, AgentSidePanelTab>>(new Map());
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
   const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
@@ -385,11 +388,54 @@ export function AgentView(): React.ReactElement {
     return null;
   }, [messages, parseTodoItemsFromInput, toolActivities]);
 
+  const teamActivities = useMemo(
+    () => buildTeamActivitiesFromSession(messages, toolActivities),
+    [messages, toolActivities]
+  );
+
   const todoProgressText = useMemo(() => {
     if (!latestTodoItems || latestTodoItems.length === 0) return null;
     const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
     return `${completed}/${latestTodoItems.length}`;
   }, [latestTodoItems]);
+
+  const currentSidePanelOpen = sessionId ? sidePanelOpenMap.get(sessionId) ?? false : false;
+  const currentSidePanelTab = sessionId ? sidePanelTabMap.get(sessionId) ?? "team" : "team";
+  const fileBrowserOpen = currentSidePanelOpen && currentSidePanelTab === "files";
+
+  const setCurrentSidePanelOpen = useCallback((open: boolean): void => {
+    if (!sessionId) return;
+    setSidePanelOpenMap((prev) => {
+      const map = new Map(prev);
+      map.set(sessionId, open);
+      return map;
+    });
+  }, [sessionId]);
+
+  const setCurrentSidePanelTab = useCallback((tab: AgentSidePanelTab): void => {
+    if (!sessionId) return;
+    setSidePanelTabMap((prev) => {
+      const map = new Map(prev);
+      map.set(sessionId, tab);
+      return map;
+    });
+  }, [sessionId]);
+
+  const handleToggleFileBrowser = useCallback((): void => {
+    if (!sessionId) return;
+    if (currentSidePanelOpen && currentSidePanelTab === "files") {
+      setCurrentSidePanelOpen(false);
+      return;
+    }
+    setCurrentSidePanelTab("files");
+    setCurrentSidePanelOpen(true);
+  }, [
+    currentSidePanelOpen,
+    currentSidePanelTab,
+    sessionId,
+    setCurrentSidePanelOpen,
+    setCurrentSidePanelTab
+  ]);
 
   // 自动展开/收起 todo 面板
   useEffect(() => {
@@ -919,6 +965,21 @@ export function AgentView(): React.ReactElement {
       } else {
         finalize();
       }
+    }));
+
+    trackUnlisten(onAgentMessageAppended((payload) => {
+      void listAgentSessions().then(setSessions);
+      if (payload.sessionId !== currentSessionIdRef.current) {
+        return;
+      }
+      startTransition(() => {
+        setMessages((prev) => {
+          if (prev.some((item) => item.id === payload.message.id)) {
+            return prev;
+          }
+          return [...prev, payload.message];
+        });
+      });
     }));
 
     trackUnlisten(onAgentTitleUpdated((payload) => {
@@ -1559,7 +1620,7 @@ export function AgentView(): React.ReactElement {
       <div className="flex h-full overflow-hidden">
         <div className="mx-auto flex h-full min-w-0 max-w-[min(72rem,100%)] flex-1 flex-col">
           <AgentHeader
-            onToggleFileBrowser={() => setFileBrowserOpen((prev) => !prev)}
+            onToggleFileBrowser={handleToggleFileBrowser}
             fileBrowserOpen={fileBrowserOpen}
           />
 
@@ -1851,21 +1912,16 @@ export function AgentView(): React.ReactElement {
         </div>
       </div>
 
-          {fileBrowserOpen && sessionRootPath && workspaceId ? (
-            (() => {
-              const workspace = workspaces.find((item) => item.id === workspaceId);
-              if (!workspace) return null;
-              return (
-                <div className="w-[300px] shrink-0 border-l">
-                  <FileBrowser
-                    workspaceSlug={workspace.slug}
-                    sessionId={sessionId}
-                    rootPath={sessionRootPath}
-                  />
-                </div>
-              );
-            })()
-          ) : null}
+          <AgentSidePanel
+            sessionId={sessionId}
+            sessionPath={sessionRootPath}
+            workspaceSlug={currentWorkspace?.slug ?? null}
+            teamActivities={teamActivities}
+            open={currentSidePanelOpen}
+            activeTab={currentSidePanelTab}
+            onOpenChange={setCurrentSidePanelOpen}
+            onTabChange={setCurrentSidePanelTab}
+          />
         </div>
       {askUserQuestionRequest ? (
         <AskUserQuestionPanel

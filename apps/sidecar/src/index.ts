@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, MEMORY_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type {
   AttachmentSaveInput,
+  AgentListSubagentRunsInput,
   AgentGenerateTitleInput,
   AutomationCreateJobInput,
   AutomationDeleteJobInput,
@@ -195,6 +196,8 @@ import {
   startFeishuRetryWorker,
   stopFeishuRetryWorker
 } from "./services/channel-gateway/feishu-retry-worker";
+import { subscribeSubagentAnnounceEvent } from "./services/pi-agent/subagents/subagent-announce-bus";
+import { getSubagentRunRegistry } from "./services/pi-agent/subagents/subagent-run-registry";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -460,6 +463,13 @@ const agentUpdateTitleInputSchema = z.object({
 const agentTruncateInputSchema = z.object({
   sessionId: idSchema,
   messageId: idSchema
+});
+
+const agentListSubagentRunsInputSchema = z.object({
+  ownerSessionId: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+  status: z.enum(["accepted", "running", "completed", "errored", "aborted", "timed_out", "canceled"]).optional(),
+  limit: z.number().int().min(1).max(500).optional()
 });
 
 const workspaceSlugInputSchema = z.object({
@@ -1075,6 +1085,30 @@ const handlers: Record<string, RpcHandler> = {
     const input = validateInput(agentRecentMessagesInputSchema, params, AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES);
     return getRecentAgentMessages(input.sessionId, input.limit);
   },
+  [AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS]: async (params) => {
+    const input = validateInput(
+      agentListSubagentRunsInputSchema,
+      params,
+      AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS
+    ) as AgentListSubagentRunsInput;
+    const runRegistry = getSubagentRunRegistry();
+    const limit = typeof input.limit === "number" ? input.limit : 50;
+    let runs = input.ownerSessionId
+      ? runRegistry.listControlledBySession(input.ownerSessionId)
+      : runRegistry.listAll(500).sort((a, b) => a.createdAt - b.createdAt);
+    if (input.runId) {
+      runs = runs.filter((run) => run.runId === input.runId);
+    }
+    if (input.status) {
+      runs = runs.filter((run) => run.status === input.status);
+    }
+    const sliced = runs.slice(Math.max(0, runs.length - limit));
+    return {
+      count: sliced.length,
+      runs: sliced,
+      statusSummary: runRegistry.summarizeStatuses(sliced)
+    };
+  },
   [AGENT_IPC_CHANNELS.UPDATE_TITLE]: async (params) => {
     const input = validateInput(agentUpdateTitleInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_TITLE);
     return updateAgentSessionMeta(input.sessionId, { title: input.title });
@@ -1411,7 +1445,11 @@ function boot(): void {
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
   startMemorySyncWatcher();
   startChatToolsWatcher((method, params) => writeNotification(method, params));
+  const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
+    writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+  });
   const stopWatcher = (): void => {
+    unsubscribeSubagentAnnounce();
     stopWorkspaceWatcher();
     stopMemorySyncWatcher();
     stopChatToolsWatcher();

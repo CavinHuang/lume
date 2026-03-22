@@ -16,6 +16,10 @@ import { decryptApiKey, listChannels } from "../../channel-manager";
 import { resolveRequestedModelIdForChannel } from "../../model-selection";
 import { runPiAgentMessage } from "../run-pi-agent-message";
 import { stopPiAgent } from "../runner/run";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
+import { resolveSubagentSpawnPolicy } from "../subagents/subagent-policy";
+import { resolveSubagentThreadBinding } from "../subagents/subagent-thread-binding";
 
 const DEFAULT_TIMEOUT_MS = 12_000;
 const DEFAULT_WEB_FETCH_MAX_CHARS = 12_000;
@@ -60,6 +64,7 @@ interface CreateOpenClawAlignedToolsInput {
   channelId?: string;
   sessionType?: AgentSendInput["sessionType"];
   chatType?: AgentSendInput["chatType"];
+  permissionMode?: AgentSendInput["permissionMode"];
 }
 
 interface ResolveSessionTargetInput {
@@ -67,6 +72,13 @@ interface ResolveSessionTargetInput {
   sessionKey?: unknown;
   label?: unknown;
   agentId?: unknown;
+}
+
+interface ResolveSpawnRouteInput {
+  spawnAgentId: string;
+  currentSessionId: string;
+  fallbackChannelId?: string;
+  requestedModel?: string;
 }
 
 function isSubagentSessionId(sessionId: string): boolean {
@@ -83,8 +95,17 @@ const SUBAGENT_BLOCKED_TOOL_NAMES = new Set([
   "sessions_send",
   "sessions_delete",
   "sessions_spawn",
-  "session_status"
+  "session_status",
+  "subagents_list",
+  "subagents_kill",
+  "subagents_send",
+  "subagents_steer"
 ]);
+
+function isSubagentTeamV2Enabled(): boolean {
+  const raw = (process.env.ENABLE_SUBAGENT_TEAM_V2 ?? "true").trim().toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+}
 
 function buildSubagentBlockedResult(toolName: string): AgentToolResult<{
   status: "error";
@@ -93,6 +114,16 @@ function buildSubagentBlockedResult(toolName: string): AgentToolResult<{
   return toTextResult({
     status: "error",
     error: `${toolName} is not allowed from sub-agent sessions`
+  });
+}
+
+function buildSubagentFeatureDisabledResult(toolName: string): AgentToolResult<{
+  status: "unavailable";
+  error: string;
+}> {
+  return toTextResult({
+    status: "unavailable",
+    error: `${toolName} disabled by ENABLE_SUBAGENT_TEAM_V2=false`
   });
 }
 
@@ -432,6 +463,152 @@ function extractLatestModelFromSession(sessionId: string): string | undefined {
   return undefined;
 }
 
+function mapRunStatusToSubagent(status: "completed" | "aborted" | "errored" | "timed_out"): "completed" | "aborted" | "errored" | "timed_out" {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "aborted":
+      return "aborted";
+    case "timed_out":
+      return "timed_out";
+    default:
+      return "errored";
+  }
+}
+
+const TERMINAL_SUBAGENT_STATUSES = new Set(["completed", "errored", "aborted", "timed_out", "canceled"]);
+
+function isTerminalSubagentStatus(status: string): boolean {
+  return TERMINAL_SUBAGENT_STATUSES.has(status);
+}
+
+function resolveSubagentErrorCode(params: {
+  status: "completed" | "aborted" | "errored" | "timed_out" | "canceled";
+  error?: string;
+}): string | undefined {
+  if (params.status === "completed") return undefined;
+  if (params.status === "timed_out") return "SUBAGENT_TIMEOUT";
+  if (params.status === "aborted") return "SUBAGENT_ABORTED";
+  if (params.status === "canceled") return "SUBAGENT_CANCELED";
+  if (!params.error) return "SUBAGENT_RUNTIME_ERROR";
+  const message = params.error.toLowerCase();
+  if (message.includes("permission")) return "SUBAGENT_PERMISSION_REQUIRED";
+  if (message.includes("askuserquestion")) return "SUBAGENT_ASK_USER_REQUIRED";
+  if (message.includes("timeout")) return "SUBAGENT_TIMEOUT";
+  return "SUBAGENT_RUNTIME_ERROR";
+}
+
+function resolveOwnedSubagentRun(params: {
+  runRegistry: ReturnType<typeof getSubagentRunRegistry>;
+  ownerSessionId: string;
+  runId: string;
+}) {
+  const matched = params.runRegistry.get(params.runId);
+  if (!matched) {
+    return {
+      ok: false as const,
+      error: `runId not found: ${params.runId}`
+    };
+  }
+  const owned = matched.parentSessionId === params.ownerSessionId || matched.rootSessionId === params.ownerSessionId;
+  if (!owned) {
+    return {
+      ok: false as const,
+      error: "仅允许操作当前会话可控的 subagent run"
+    };
+  }
+  return {
+    ok: true as const,
+    run: matched
+  };
+}
+
+async function finalizeSubagentRun(params: {
+  runRegistry: ReturnType<typeof getSubagentRunRegistry>;
+  runId: string;
+  cleanup: "keep" | "delete";
+  childSessionId: string;
+  result: {
+    status: "completed" | "aborted" | "errored" | "timed_out";
+    error?: string;
+    runText: string;
+    usageEvents: number;
+  };
+}): Promise<void> {
+  const terminalStatus = mapRunStatusToSubagent(params.result.status);
+  const finalized = params.runRegistry.update(params.runId, {
+    status: terminalStatus,
+    endedAt: Date.now(),
+      outcome: {
+        output: params.result.runText,
+        error: params.result.error,
+        errorCode: resolveSubagentErrorCode({
+          status: terminalStatus,
+          error: params.result.error
+        }),
+        usageEvents: params.result.usageEvents
+      }
+    });
+  if (params.cleanup === "delete") {
+    try {
+      deleteAgentSession(params.childSessionId);
+    } catch {
+      // ignore cleanup failure to keep status stable
+    }
+  }
+  if (!finalized) {
+    return;
+  }
+  const announceResult = await announceSubagentCompletion({
+    run: finalized
+  });
+  params.runRegistry.update(params.runId, {
+    announceStatus: announceResult.delivered ? "delivered" : "failed",
+    announceAttempts: announceResult.attempts,
+    announceLastError: announceResult.error,
+    announceDeliveredAt: announceResult.delivered ? Date.now() : undefined
+  });
+}
+
+function resolveSpawnRoute(input: ResolveSpawnRouteInput): {
+  ok: true;
+  resolvedAgentId?: string;
+  channelId?: string;
+  modelHint?: string;
+} | {
+  ok: false;
+  error: string;
+} {
+  const currentMeta = getAgentSessionMeta(input.currentSessionId);
+  const normalizedAgentId = input.spawnAgentId.trim();
+
+  if (!normalizedAgentId || normalizedAgentId === "lume") {
+    return {
+      ok: true,
+      resolvedAgentId: normalizedAgentId || undefined,
+      channelId: currentMeta?.channelId ?? input.fallbackChannelId,
+      modelHint: input.requestedModel || extractLatestModelFromSession(input.currentSessionId)
+    };
+  }
+
+  const targetMeta = getAgentSessionMeta(normalizedAgentId);
+  if (!targetMeta) {
+    return {
+      ok: false,
+      error: `agentId 不存在: ${normalizedAgentId}`
+    };
+  }
+
+  return {
+    ok: true,
+    resolvedAgentId: targetMeta.id,
+    channelId: targetMeta.channelId ?? currentMeta?.channelId ?? input.fallbackChannelId,
+    modelHint: input.requestedModel
+      || extractLatestModelFromSession(targetMeta.id)
+      || extractLatestModelFromSession(input.currentSessionId)
+  };
+}
+
 function collectTextFromEvent(event: AgentEvent): string {
   if (event.type === "text_delta" || event.type === "text_complete") {
     return event.text;
@@ -445,6 +622,7 @@ async function executeAgentTurn(params: {
   workspaceId?: string;
   channelId?: string;
   modelId?: string;
+  permissionMode?: AgentSendInput["permissionMode"];
   timeoutSeconds?: number;
   sessionType?: AgentSendInput["sessionType"];
   chatType?: AgentSendInput["chatType"];
@@ -466,6 +644,7 @@ async function executeAgentTurn(params: {
     workspaceId: params.workspaceId,
     channelId: params.channelId,
     modelId: params.modelId,
+    permissionMode: params.permissionMode,
     sessionType: params.sessionType,
     chatType: params.chatType,
     messageMetadata: params.messageMetadata
@@ -559,10 +738,19 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
         if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("agents_list")) {
           return buildSubagentBlockedResult("agents_list");
         }
+        const sessionAgents = listAgentSessions()
+          .slice(0, 50)
+          .map((session) => ({
+            id: session.id,
+            name: session.title,
+            configured: Boolean(session.channelId),
+            channelId: session.channelId
+          }));
+
         return toTextResult({
           requester: "lume",
           allowAny: false,
-          agents: [{ id: "lume", name: "Lume Agent", configured: true }]
+          agents: [{ id: "lume", name: "Lume Agent", configured: true }, ...sessionAgents]
         });
       }
     },
@@ -807,6 +995,7 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           workspaceId: meta.workspaceId,
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
+          permissionMode: input.permissionMode,
           timeoutSeconds,
           sessionType: input.sessionType,
           chatType: input.chatType
@@ -972,9 +1161,15 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
         thinking: Type.Optional(Type.String()),
         runTimeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
         timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
-        cleanup: Type.Optional(Type.Union([Type.Literal("delete"), Type.Literal("keep")]))
+        cleanup: Type.Optional(Type.Union([Type.Literal("delete"), Type.Literal("keep")])),
+        sandbox: Type.Optional(Type.Union([Type.Literal("inherit"), Type.Literal("require")])),
+        thread: Type.Optional(Type.Boolean()),
+        deliverySessionKey: Type.Optional(Type.String())
       }),
       async execute(_toolCallId, args) {
+        if (!isSubagentTeamV2Enabled()) {
+          return buildSubagentFeatureDisabledResult("sessions_spawn");
+        }
         if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_spawn")) {
           return buildSubagentBlockedResult("sessions_spawn");
         }
@@ -987,16 +1182,53 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           params.cleanup === "delete" || params.cleanup === "keep"
             ? params.cleanup
             : "keep";
+        const sandbox = params.sandbox === "require" ? "require" : "inherit";
+        const threadRequested = params.thread === true;
+        const deliverySessionKeyRaw = typeof params.deliverySessionKey === "string"
+          ? params.deliverySessionKey.trim()
+          : "";
+        const requestedDeliverySessionId = deliverySessionKeyRaw
+          ? pickSessionId(deliverySessionKeyRaw, input.sessionId)
+          : undefined;
+        if (requestedDeliverySessionId && !getAgentSessionMeta(requestedDeliverySessionId)) {
+          return toTextResult({
+            status: "error",
+            error: `deliverySessionKey 不存在: ${requestedDeliverySessionId}`
+          });
+        }
+        const policyDecision = resolveSubagentSpawnPolicy({
+          parentSessionId: input.sessionId,
+          parentPermissionMode: input.permissionMode,
+          requestedSandbox: sandbox
+        });
+        if (!policyDecision.ok) {
+          return toTextResult({
+            status: "forbidden",
+            error: policyDecision.error
+          });
+        }
         const currentMeta = getAgentSessionMeta(input.sessionId);
         const label = typeof params.label === "string" ? params.label.trim() : "";
+        const modelOverride = typeof params.model === "string" ? params.model.trim() : "";
+        const spawnAgentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
+        const route = resolveSpawnRoute({
+          spawnAgentId,
+          currentSessionId: input.sessionId,
+          fallbackChannelId: currentMeta?.channelId ?? input.channelId,
+          requestedModel: modelOverride
+        });
+        if (!route.ok) {
+          return toTextResult({
+            status: "error",
+            error: route.error
+          });
+        }
         const created = createAgentSession(
           label || "子会话",
-          currentMeta?.channelId ?? input.channelId,
+          route.channelId ?? currentMeta?.channelId ?? input.channelId,
           currentMeta?.workspaceId ?? input.workspaceId
         );
-        const modelOverride = typeof params.model === "string" ? params.model.trim() : "";
-        const requestedModel = modelOverride || extractLatestModelFromSession(input.sessionId);
-        const spawnAgentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
+        const requestedModel = route.modelHint || extractLatestModelFromSession(input.sessionId);
         const thinking = typeof params.thinking === "string" ? params.thinking.trim() : "";
         const resolvedChannelId = created.channelId;
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
@@ -1007,6 +1239,35 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
             childSessionKey: created.id
           });
         }
+        const runRegistry = getSubagentRunRegistry();
+        const runId = randomUUID();
+        const threadBinding = resolveSubagentThreadBinding({
+          parentSessionId: input.sessionId,
+          childSessionId: created.id,
+          threadRequested,
+          requestedDeliverySessionId
+        });
+        runRegistry.create({
+          runId,
+          parentSessionId: input.sessionId,
+          parentRunId: policyDecision.parentRunId,
+          rootSessionId: policyDecision.rootSessionId,
+          depth: policyDecision.depth,
+          childSessionId: created.id,
+          deliverySessionId: threadBinding.deliverySessionId,
+          threadRequested: threadBinding.threadRequested,
+          threadBound: threadBinding.threadBound,
+          label: label || undefined,
+          task,
+          cleanup,
+          status: "accepted",
+          parentToolUseId: _toolCallId,
+          requestedAgentId: spawnAgentId || undefined,
+          resolvedAgentId: route.resolvedAgentId,
+          channelId: resolvedChannelId,
+          modelId: resolvedModelId,
+          announceStatus: "pending"
+        });
 
         const waitSeconds = clampInt(
           params.runTimeoutSeconds ?? params.timeoutSeconds,
@@ -1015,18 +1276,39 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           0
         );
         if (waitSeconds > 0) {
+          runRegistry.update(runId, {
+            status: "running",
+            startedAt: Date.now()
+          });
           const runResult = await executeAgentTurn({
             sessionId: created.id,
             userMessage: task,
             workspaceId: created.workspaceId,
             channelId: resolvedChannelId,
             modelId: resolvedModelId,
+            permissionMode: policyDecision.childPermissionMode,
             timeoutSeconds: waitSeconds,
             sessionType: "subagent",
             chatType: input.chatType,
             messageMetadata: {
-              spawnedBy: input.sessionId
+              spawnedBy: input.sessionId,
+              spawnDepth: policyDecision.depth
             }
+          });
+          runRegistry.update(runId, {
+            status: mapRunStatusToSubagent(runResult.status),
+            endedAt: Date.now(),
+            outcome: {
+              output: runResult.runText,
+              error: runResult.error,
+              errorCode: resolveSubagentErrorCode({
+                status: mapRunStatusToSubagent(runResult.status),
+                error: runResult.error
+              }),
+              usageEvents: runResult.usageEvents
+            },
+            announceStatus: "delivered",
+            announceAttempts: 0
           });
           if (cleanup === "delete") {
             try {
@@ -1038,40 +1320,498 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           return toTextResult({
             status: runResult.status,
             childSessionKey: created.id,
-            runId: randomUUID(),
+            runId,
             model: resolvedModelId,
             output: runResult.runText,
             cleanup,
             ...(spawnAgentId ? { requestedAgentId: spawnAgentId } : {}),
+            ...(route.resolvedAgentId ? { resolvedAgentId: route.resolvedAgentId } : {}),
             ...(thinking ? { requestedThinking: thinking } : {}),
-            ...(spawnAgentId ? { warning: "当前实现暂未启用多 agent 路由，agentId 仅记录不生效" } : {}),
+            spawnDepth: policyDecision.depth,
+            rootSessionKey: policyDecision.rootSessionId,
+            deliverySessionKey: threadBinding.deliverySessionId,
+            thread: threadBinding.threadRequested,
+            threadBound: threadBinding.threadBound,
             ...(runResult.error ? { error: runResult.error } : {})
           });
         }
 
+        runRegistry.update(runId, {
+          status: "running",
+          startedAt: Date.now()
+        });
         void executeAgentTurn({
           sessionId: created.id,
           userMessage: task,
           workspaceId: created.workspaceId,
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
+          permissionMode: policyDecision.childPermissionMode,
           timeoutSeconds: 0,
           sessionType: "subagent",
           chatType: input.chatType,
           messageMetadata: {
-            spawnedBy: input.sessionId
+            spawnedBy: input.sessionId,
+            spawnDepth: policyDecision.depth
           }
+        }).then(async (runResult) => {
+          await finalizeSubagentRun({
+            runRegistry,
+            runId,
+            cleanup,
+            childSessionId: created.id,
+            result: runResult
+          });
+        }).catch((error) => {
+          void finalizeSubagentRun({
+            runRegistry,
+            runId,
+            cleanup,
+            childSessionId: created.id,
+            result: {
+              status: "errored",
+              error: error instanceof Error ? error.message : String(error),
+              runText: "",
+              usageEvents: 0
+            }
+          });
         });
         return toTextResult({
           status: "accepted",
           childSessionKey: created.id,
-          runId: randomUUID(),
+          runId,
           model: resolvedModelId,
           cleanup,
           ...(spawnAgentId ? { requestedAgentId: spawnAgentId } : {}),
+          ...(route.resolvedAgentId ? { resolvedAgentId: route.resolvedAgentId } : {}),
           ...(thinking ? { requestedThinking: thinking } : {}),
-          ...(spawnAgentId ? { warning: "当前实现暂未启用多 agent 路由，agentId 仅记录不生效" } : {}),
+          spawnDepth: policyDecision.depth,
+          rootSessionKey: policyDecision.rootSessionId,
+          deliverySessionKey: threadBinding.deliverySessionId,
+          thread: threadBinding.threadRequested,
+          threadBound: threadBinding.threadBound,
+          sandbox,
           note: "已启动后台子会话执行（runTimeoutSeconds=0 为异步模式）"
+        });
+      }
+    },
+    {
+      name: "subagents_list",
+      label: "subagents_list",
+      description: "List spawned subagent runs controlled by current session.",
+      parameters: Type.Object({
+        sessionKey: Type.Optional(Type.String()),
+        status: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Number({ minimum: 1, maximum: 200 })),
+        runId: Type.Optional(Type.String())
+      }),
+      async execute(_toolCallId, args) {
+        if (!isSubagentTeamV2Enabled()) {
+          return buildSubagentFeatureDisabledResult("subagents_list");
+        }
+        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_list")) {
+          return buildSubagentBlockedResult("subagents_list");
+        }
+        const params = (args ?? {}) as Record<string, unknown>;
+        const ownerSessionId = pickSessionId(params.sessionKey, input.sessionId);
+        const statusFilter = typeof params.status === "string" ? params.status.trim() : "";
+        const runIdFilter = typeof params.runId === "string" ? params.runId.trim() : "";
+        const limit = clampInt(params.limit, 1, 200, 50);
+        const runRegistry = getSubagentRunRegistry();
+
+        if (runIdFilter) {
+          const resolved = resolveOwnedSubagentRun({
+            runRegistry,
+            ownerSessionId,
+            runId: runIdFilter
+          });
+          if (!resolved.ok) {
+            return toTextResult({
+              status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
+              error: resolved.error
+            });
+          }
+          return toTextResult({
+            status: "ok",
+            count: 1,
+            runs: [resolved.run]
+          });
+        }
+
+        let runs = runRegistry.listControlledBySession(ownerSessionId);
+        if (statusFilter) {
+          runs = runs.filter((run) => run.status === statusFilter);
+        }
+        const sliced = runs.slice(Math.max(0, runs.length - limit));
+        return toTextResult({
+          status: "ok",
+          count: sliced.length,
+          runs: sliced
+        });
+      }
+    },
+    {
+      name: "subagents_kill",
+      label: "subagents_kill",
+      description: "Kill a running subagent run and optional descendant runs.",
+      parameters: Type.Object({
+        runId: Type.String({ minLength: 1 }),
+        cascade: Type.Optional(Type.Boolean())
+      }),
+      async execute(_toolCallId, args) {
+        if (!isSubagentTeamV2Enabled()) {
+          return buildSubagentFeatureDisabledResult("subagents_kill");
+        }
+        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_kill")) {
+          return buildSubagentBlockedResult("subagents_kill");
+        }
+        const params = (args ?? {}) as Record<string, unknown>;
+        const runId = typeof params.runId === "string" ? params.runId.trim() : "";
+        if (!runId) {
+          return toTextResult({
+            status: "error",
+            error: "runId 不能为空"
+          });
+        }
+        const runRegistry = getSubagentRunRegistry();
+        const resolved = resolveOwnedSubagentRun({
+          runRegistry,
+          ownerSessionId: input.sessionId,
+          runId
+        });
+        if (!resolved.ok) {
+          return toTextResult({
+            status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
+            error: resolved.error
+          });
+        }
+        const matched = resolved.run;
+        const cascade = params.cascade !== false;
+        const descendants = cascade ? runRegistry.listDescendants(runId) : [];
+        const targets = [matched, ...descendants];
+        const runningTargets = targets.filter((run) => !isTerminalSubagentStatus(run.status));
+        if (runningTargets.length === 0) {
+          return toTextResult({
+            status: "ok",
+            killed: false,
+            runId,
+            reason: `run 已结束: ${matched.status}`,
+            cascade
+          });
+        }
+        for (const target of runningTargets) {
+          void stopPiAgent(target.childSessionId);
+          runRegistry.update(target.runId, {
+            status: "canceled",
+            endedAt: Date.now(),
+            outcome: {
+              output: target.outcome?.output,
+              usageEvents: target.outcome?.usageEvents,
+              error: "killed by subagents_kill",
+              errorCode: "SUBAGENT_CANCELED"
+            }
+          });
+          if (target.cleanup === "delete") {
+            try {
+              deleteAgentSession(target.childSessionId);
+            } catch {
+              // keep result deterministic
+            }
+          }
+        }
+        return toTextResult({
+          status: "ok",
+          killed: true,
+          runId,
+          killedCount: runningTargets.length,
+          cascade,
+          childSessionKey: matched.childSessionId,
+          killedRunIds: runningTargets.map((item) => item.runId)
+        });
+      }
+    },
+    {
+      name: "subagents_send",
+      label: "subagents_send",
+      description: "Send a follow-up message to a controlled subagent run.",
+      parameters: Type.Object({
+        runId: Type.String({ minLength: 1 }),
+        message: Type.String({ minLength: 1 }),
+        timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 }))
+      }),
+      async execute(_toolCallId, args) {
+        if (!isSubagentTeamV2Enabled()) {
+          return buildSubagentFeatureDisabledResult("subagents_send");
+        }
+        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_send")) {
+          return buildSubagentBlockedResult("subagents_send");
+        }
+        const params = (args ?? {}) as Record<string, unknown>;
+        const runId = typeof params.runId === "string" ? params.runId.trim() : "";
+        const message = typeof params.message === "string" ? params.message.trim() : "";
+        if (!runId || !message) {
+          return toTextResult({
+            status: "error",
+            error: !runId ? "runId 不能为空" : "message 不能为空"
+          });
+        }
+        const runRegistry = getSubagentRunRegistry();
+        const resolved = resolveOwnedSubagentRun({
+          runRegistry,
+          ownerSessionId: input.sessionId,
+          runId
+        });
+        if (!resolved.ok) {
+          return toTextResult({
+            status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
+            error: resolved.error
+          });
+        }
+        const matched = resolved.run;
+        const childMeta = getAgentSessionMeta(matched.childSessionId);
+        if (!childMeta) {
+          return toTextResult({
+            status: "not_found",
+            error: `child session not found: ${matched.childSessionId}`
+          });
+        }
+        const resolvedChannelId = matched.channelId ?? childMeta.channelId ?? input.channelId;
+        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childSessionId);
+        const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
+        if (!resolvedChannelId || !resolvedModelId) {
+          return toTextResult({
+            status: "error",
+            error: "目标子会话缺少 channel/model，无法执行"
+          });
+        }
+        runRegistry.update(matched.runId, {
+          status: "running",
+          startedAt: Date.now()
+        });
+        const timeoutSeconds = clampInt(params.timeoutSeconds, 0, 600, 60);
+        const runResult = await executeAgentTurn({
+          sessionId: matched.childSessionId,
+          userMessage: message,
+          workspaceId: childMeta.workspaceId,
+          channelId: resolvedChannelId,
+          modelId: resolvedModelId,
+          permissionMode: input.permissionMode,
+          timeoutSeconds,
+          sessionType: "subagent",
+          chatType: input.chatType,
+          messageMetadata: {
+            spawnedBy: matched.parentSessionId,
+            controlCommand: "send"
+          }
+        });
+        runRegistry.update(matched.runId, {
+          status: mapRunStatusToSubagent(runResult.status),
+          endedAt: Date.now(),
+          outcome: {
+            output: runResult.runText,
+            error: runResult.error,
+            errorCode: resolveSubagentErrorCode({
+              status: mapRunStatusToSubagent(runResult.status),
+              error: runResult.error
+            }),
+            usageEvents: runResult.usageEvents
+          },
+          announceStatus: "delivered",
+          announceAttempts: 0
+        });
+        return toTextResult({
+          status: runResult.status,
+          runId: matched.runId,
+          childSessionKey: matched.childSessionId,
+          model: resolvedModelId,
+          output: runResult.runText,
+          ...(runResult.error ? { error: runResult.error } : {})
+        });
+      }
+    },
+    {
+      name: "subagents_steer",
+      label: "subagents_steer",
+      description: "Steer a controlled subagent run with a new directive.",
+      parameters: Type.Object({
+        runId: Type.String({ minLength: 1 }),
+        message: Type.String({ minLength: 1 }),
+        runTimeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+        timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 }))
+      }),
+      async execute(_toolCallId, args) {
+        if (!isSubagentTeamV2Enabled()) {
+          return buildSubagentFeatureDisabledResult("subagents_steer");
+        }
+        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_steer")) {
+          return buildSubagentBlockedResult("subagents_steer");
+        }
+        const params = (args ?? {}) as Record<string, unknown>;
+        const runId = typeof params.runId === "string" ? params.runId.trim() : "";
+        const message = typeof params.message === "string" ? params.message.trim() : "";
+        if (!runId || !message) {
+          return toTextResult({
+            status: "error",
+            error: !runId ? "runId 不能为空" : "message 不能为空"
+          });
+        }
+        const runRegistry = getSubagentRunRegistry();
+        const resolved = resolveOwnedSubagentRun({
+          runRegistry,
+          ownerSessionId: input.sessionId,
+          runId
+        });
+        if (!resolved.ok) {
+          return toTextResult({
+            status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
+            error: resolved.error
+          });
+        }
+        const matched = resolved.run;
+        const childMeta = getAgentSessionMeta(matched.childSessionId);
+        if (!childMeta) {
+          return toTextResult({
+            status: "not_found",
+            error: `child session not found: ${matched.childSessionId}`
+          });
+        }
+        if (!isTerminalSubagentStatus(matched.status)) {
+          void stopPiAgent(matched.childSessionId);
+          runRegistry.update(matched.runId, {
+            status: "canceled",
+            endedAt: Date.now(),
+            outcome: {
+              output: matched.outcome?.output,
+              usageEvents: matched.outcome?.usageEvents,
+              error: "steered by subagents_steer",
+              errorCode: "SUBAGENT_CANCELED"
+            }
+          });
+        }
+        const resolvedChannelId = matched.channelId ?? childMeta.channelId ?? input.channelId;
+        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childSessionId);
+        const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
+        if (!resolvedChannelId || !resolvedModelId) {
+          return toTextResult({
+            status: "error",
+            error: "目标子会话缺少 channel/model，无法执行"
+          });
+        }
+        const nextRunId = randomUUID();
+        runRegistry.create({
+          runId: nextRunId,
+          parentSessionId: input.sessionId,
+          parentRunId: matched.parentRunId,
+          rootSessionId: matched.rootSessionId || input.sessionId,
+          depth: matched.depth,
+          childSessionId: matched.childSessionId,
+          deliverySessionId: matched.deliverySessionId,
+          threadRequested: matched.threadRequested,
+          threadBound: matched.threadBound,
+          label: matched.label,
+          task: message,
+          cleanup: matched.cleanup,
+          status: "accepted",
+          parentToolUseId: _toolCallId,
+          requestedAgentId: matched.requestedAgentId,
+          resolvedAgentId: matched.resolvedAgentId,
+          channelId: resolvedChannelId,
+          modelId: resolvedModelId,
+          announceStatus: "pending"
+        });
+
+        const waitSeconds = clampInt(params.runTimeoutSeconds ?? params.timeoutSeconds, 0, 600, 0);
+        runRegistry.update(nextRunId, {
+          status: "running",
+          startedAt: Date.now()
+        });
+        if (waitSeconds > 0) {
+          const runResult = await executeAgentTurn({
+            sessionId: matched.childSessionId,
+            userMessage: message,
+            workspaceId: childMeta.workspaceId,
+            channelId: resolvedChannelId,
+            modelId: resolvedModelId,
+            permissionMode: input.permissionMode,
+            timeoutSeconds: waitSeconds,
+            sessionType: "subagent",
+            chatType: input.chatType,
+            messageMetadata: {
+              spawnedBy: matched.parentSessionId,
+              controlCommand: "steer",
+              steeredFromRunId: matched.runId
+            }
+          });
+          runRegistry.update(nextRunId, {
+            status: mapRunStatusToSubagent(runResult.status),
+            endedAt: Date.now(),
+            outcome: {
+              output: runResult.runText,
+              error: runResult.error,
+              errorCode: resolveSubagentErrorCode({
+                status: mapRunStatusToSubagent(runResult.status),
+                error: runResult.error
+              }),
+              usageEvents: runResult.usageEvents
+            },
+            announceStatus: "delivered",
+            announceAttempts: 0
+          });
+          return toTextResult({
+            status: runResult.status,
+            runId: nextRunId,
+            replacedRunId: matched.runId,
+            childSessionKey: matched.childSessionId,
+            model: resolvedModelId,
+            output: runResult.runText,
+            ...(runResult.error ? { error: runResult.error } : {})
+          });
+        }
+
+        void executeAgentTurn({
+          sessionId: matched.childSessionId,
+          userMessage: message,
+          workspaceId: childMeta.workspaceId,
+          channelId: resolvedChannelId,
+          modelId: resolvedModelId,
+          permissionMode: input.permissionMode,
+          timeoutSeconds: 0,
+          sessionType: "subagent",
+          chatType: input.chatType,
+          messageMetadata: {
+            spawnedBy: matched.parentSessionId,
+            controlCommand: "steer",
+            steeredFromRunId: matched.runId
+          }
+        }).then(async (runResult) => {
+          await finalizeSubagentRun({
+            runRegistry,
+            runId: nextRunId,
+            cleanup: matched.cleanup,
+            childSessionId: matched.childSessionId,
+            result: runResult
+          });
+        }).catch((error) => {
+          void finalizeSubagentRun({
+            runRegistry,
+            runId: nextRunId,
+            cleanup: matched.cleanup,
+            childSessionId: matched.childSessionId,
+            result: {
+              status: "errored",
+              error: error instanceof Error ? error.message : String(error),
+              runText: "",
+              usageEvents: 0
+            }
+          });
+        });
+        return toTextResult({
+          status: "accepted",
+          runId: nextRunId,
+          replacedRunId: matched.runId,
+          childSessionKey: matched.childSessionId,
+          model: resolvedModelId,
+          note: "已提交 steer 指令，子会话将在后台继续执行"
         });
       }
     },

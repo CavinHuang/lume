@@ -205,6 +205,73 @@ export interface AgentRuntimeToolPolicyConfig {
   }
 }
 
+// ===== Subagent Runs =====
+
+export type SubagentRunStatus =
+  | 'accepted'
+  | 'running'
+  | 'completed'
+  | 'errored'
+  | 'aborted'
+  | 'timed_out'
+  | 'canceled'
+
+export interface SubagentRunOutcome {
+  output?: string
+  error?: string
+  errorCode?: string
+  usageEvents?: number
+}
+
+export interface SubagentRunRecord {
+  runId: string
+  parentSessionId: string
+  parentRunId?: string
+  rootSessionId: string
+  depth: number
+  childSessionId: string
+  deliverySessionId?: string
+  threadRequested?: boolean
+  threadBound?: boolean
+  label?: string
+  task: string
+  status: SubagentRunStatus
+  cleanup: 'keep' | 'delete'
+  parentToolUseId?: string
+  requestedAgentId?: string
+  resolvedAgentId?: string
+  channelId?: string
+  modelId?: string
+  announceStatus?: 'pending' | 'delivered' | 'failed'
+  announceAttempts?: number
+  announceLastError?: string
+  announceDeliveredAt?: number
+  createdAt: number
+  updatedAt: number
+  startedAt?: number
+  endedAt?: number
+  outcome?: SubagentRunOutcome
+}
+
+export interface SubagentControlCommand {
+  type: 'list' | 'kill' | 'send' | 'steer'
+  runId?: string
+  payload?: Record<string, unknown>
+}
+
+export interface AgentListSubagentRunsInput {
+  ownerSessionId?: string
+  runId?: string
+  status?: SubagentRunStatus
+  limit?: number
+}
+
+export interface AgentListSubagentRunsResult {
+  count: number
+  runs: SubagentRunRecord[]
+  statusSummary: Record<SubagentRunStatus, number>
+}
+
 export type AgentProxyMode = 'off' | 'system' | 'custom'
 
 export interface AgentProxySettings {
@@ -464,6 +531,12 @@ export interface AgentStreamEvent {
   event: AgentEvent
 }
 
+/** Agent 会话消息追加通知（sidecar -> web） */
+export interface AgentMessageAppendedEvent {
+  sessionId: string
+  message: AgentMessage
+}
+
 // ===== 文件浏览器 =====
 
 /** 文件/目录条目（用于文件浏览器树形视图） */
@@ -591,6 +664,10 @@ export const AGENT_IPC_CHANNELS = {
   STREAM_COMPLETE: 'agent:stream:complete',
   /** Agent 流式错误 */
   STREAM_ERROR: 'agent:stream:error',
+  /** 会话有新消息追加（非当前流式回合） */
+  MESSAGE_APPENDED: 'agent:message-appended',
+  /** 查询 subagent run 状态（调试/观测） */
+  LIST_SUBAGENT_RUNS: 'agent:list-subagent-runs',
   /** AskUserQuestion 请求（sidecar -> web） */
   ASK_USER_QUESTION: 'agent:ask-user-question',
   /** AskUserQuestion 回答提交（web -> sidecar） */

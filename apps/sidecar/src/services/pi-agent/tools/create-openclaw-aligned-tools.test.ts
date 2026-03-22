@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test";
+import { afterEach, describe, expect, test, mock } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,14 +6,52 @@ import { randomUUID } from "node:crypto";
 import {
   appendAgentMessage,
   createAgentSession,
+  getAgentSessionMessages,
   getAgentSessionMeta
 } from "../../agent-session-manager";
+import {
+  getSubagentRunRegistry,
+  resetSubagentRunRegistryForTest
+} from "../subagents/subagent-run-registry";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 mock.module("undici", () => ({
   EnvHttpProxyAgent: class {},
   setGlobalDispatcher: () => undefined
 }));
+
+mock.module("../run-pi-agent-message", () => ({
+  runPiAgentMessage: async (
+    input: unknown,
+    emit: { onEvent: (event: unknown) => void; onComplete: () => void; onError?: (error: string) => void }
+  ) => {
+    const message = typeof (input as { userMessage?: unknown })?.userMessage === "string"
+      ? ((input as { userMessage: string }).userMessage)
+      : "";
+    if (message.includes("[mock-slow]")) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    if (message.includes("[mock-error]")) {
+      emit.onError?.("mock runtime error");
+      return { status: "errored" as const };
+    }
+    emit.onEvent({
+      type: "text_complete",
+      text: "mock output",
+      isIntermediate: false
+    });
+    emit.onComplete();
+    return { status: "completed" as const };
+  }
+}));
+
+mock.module("../runner/run", () => ({
+  stopPiAgent: () => undefined
+}));
+
+afterEach(() => {
+  resetSubagentRunRegistryForTest();
+});
 
 async function loadCreateOpenClawAlignedTools() {
   const mod = await import("./create-openclaw-aligned-tools");
@@ -29,6 +67,433 @@ function resolveTool(tools: AgentTool[], name: string): AgentTool {
 }
 
 describe("create-openclaw-aligned-tools", () => {
+  test("agents_list 应返回可用于 sessions_spawn 的会话 agentId", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const target = createAgentSession("目标 Agent", "channel-target");
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const agentsListTool = resolveTool(tools as unknown as AgentTool[], "agents_list");
+      const result = await agentsListTool.execute("tool-call-agents-list", {});
+      const details = result.details as {
+        agents?: Array<{ id?: string }>;
+      };
+      const ids = (details.agents ?? []).map((item) => item.id);
+      expect(ids).toContain("lume");
+      expect(ids).toContain(target.id);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("sessions_spawn 指定 agentId 时应生效并写入 run registry", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const target = createAgentSession("目标 Agent", "channel-target");
+      appendAgentMessage(target.id, {
+        id: randomUUID(),
+        role: "assistant",
+        content: "hello",
+        createdAt: Date.now(),
+        model: "model-target"
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
+      const result = await spawnTool.execute("tool-call-spawn-route", {
+        task: "do routed work",
+        agentId: target.id,
+        runTimeoutSeconds: 3
+      });
+      const details = result.details as {
+        status?: string;
+        runId?: string;
+        model?: string;
+        requestedAgentId?: string;
+        resolvedAgentId?: string;
+      };
+      expect(details.status).toBe("completed");
+      expect(typeof details.runId).toBe("string");
+      expect(details.model).toBe("model-target");
+      expect(details.requestedAgentId).toBe(target.id);
+      expect(details.resolvedAgentId).toBe(target.id);
+
+      const runId = details.runId as string;
+      const persisted = getSubagentRunRegistry().get(runId);
+      expect(persisted).not.toBeNull();
+      expect(persisted?.status).toBe("completed");
+      expect(persisted?.requestedAgentId).toBe(target.id);
+      expect(persisted?.resolvedAgentId).toBe(target.id);
+      expect(persisted?.modelId).toBe("model-target");
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("ENABLE_SUBAGENT_TEAM_V2=false 时应禁用 sessions_spawn", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    const previousFlag = process.env.ENABLE_SUBAGENT_TEAM_V2;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    process.env.ENABLE_SUBAGENT_TEAM_V2 = "false";
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
+      const result = await spawnTool.execute("tool-call-spawn-disabled", {
+        task: "should be blocked"
+      });
+      const details = result.details as {
+        status?: string;
+        error?: string;
+      };
+      expect(details.status).toBe("unavailable");
+      expect(details.error).toContain("ENABLE_SUBAGENT_TEAM_V2=false");
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env.ENABLE_SUBAGENT_TEAM_V2;
+      } else {
+        process.env.ENABLE_SUBAGENT_TEAM_V2 = previousFlag;
+      }
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("subagents_list 应返回当前会话的 run 列表", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const child = createAgentSession("子会话", "channel-current");
+      const registry = getSubagentRunRegistry();
+      const run = registry.create({
+        runId: randomUUID(),
+        parentSessionId: current.id,
+        childSessionId: child.id,
+        task: "list me",
+        cleanup: "keep",
+        status: "running"
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const listTool = resolveTool(tools as unknown as AgentTool[], "subagents_list");
+      const result = await listTool.execute("tool-call-subagents-list", {});
+      const details = result.details as {
+        status?: string;
+        count?: number;
+        runs?: Array<{ runId?: string }>;
+      };
+      expect(details.status).toBe("ok");
+      expect(details.count).toBe(1);
+      expect(details.runs?.[0]?.runId).toBe(run.runId);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("subagents_kill 应终止当前会话拥有的运行中 run", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const child = createAgentSession("子会话", "channel-current");
+      const registry = getSubagentRunRegistry();
+      const runId = randomUUID();
+      registry.create({
+        runId,
+        parentSessionId: current.id,
+        childSessionId: child.id,
+        task: "kill me",
+        cleanup: "keep",
+        status: "running"
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const killTool = resolveTool(tools as unknown as AgentTool[], "subagents_kill");
+      const result = await killTool.execute("tool-call-subagents-kill", {
+        runId
+      });
+      const details = result.details as {
+        status?: string;
+        killed?: boolean;
+      };
+      expect(details.status).toBe("ok");
+      expect(details.killed).toBe(true);
+      expect(getSubagentRunRegistry().get(runId)?.status).toBe("canceled");
+      expect(getSubagentRunRegistry().get(runId)?.outcome?.errorCode).toBe("SUBAGENT_CANCELED");
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("subagents_send 应向受控子任务会话发送指令", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const child = createAgentSession("子会话", "channel-current");
+      const registry = getSubagentRunRegistry();
+      const runId = randomUUID();
+      registry.create({
+        runId,
+        parentSessionId: current.id,
+        childSessionId: child.id,
+        task: "send me",
+        cleanup: "keep",
+        status: "running",
+        channelId: "channel-current",
+        modelId: "model-send"
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const sendTool = resolveTool(tools as unknown as AgentTool[], "subagents_send");
+      const result = await sendTool.execute("tool-call-subagents-send", {
+        runId,
+        message: "follow up",
+        timeoutSeconds: 3
+      });
+      const details = result.details as {
+        status?: string;
+        runId?: string;
+      };
+      expect(details.status).toBe("completed");
+      expect(details.runId).toBe(runId);
+      expect(getSubagentRunRegistry().get(runId)?.status).toBe("completed");
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("subagents_steer 应取消旧 run 并创建新 run", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const child = createAgentSession("子会话", "channel-current");
+      const registry = getSubagentRunRegistry();
+      const oldRunId = randomUUID();
+      registry.create({
+        runId: oldRunId,
+        parentSessionId: current.id,
+        childSessionId: child.id,
+        task: "old task",
+        cleanup: "keep",
+        status: "running",
+        channelId: "channel-current",
+        modelId: "model-steer"
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const steerTool = resolveTool(tools as unknown as AgentTool[], "subagents_steer");
+      const result = await steerTool.execute("tool-call-subagents-steer", {
+        runId: oldRunId,
+        message: "new direction",
+        timeoutSeconds: 0
+      });
+      const details = result.details as {
+        status?: string;
+        runId?: string;
+        replacedRunId?: string;
+      };
+      expect(details.status).toBe("accepted");
+      expect(details.replacedRunId).toBe(oldRunId);
+      expect(typeof details.runId).toBe("string");
+      expect(details.runId).not.toBe(oldRunId);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(getSubagentRunRegistry().get(oldRunId)?.status).toBe("canceled");
+      expect(getSubagentRunRegistry().get(details.runId as string)).not.toBeNull();
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("sessions_spawn 应拒绝超过扇出限制", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    const previousFanout = process.env.LUME_SUBAGENT_MAX_FANOUT;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    process.env.LUME_SUBAGENT_MAX_FANOUT = "1";
+    try {
+      const current = createAgentSession("当前会话", "channel-current");
+      const child = createAgentSession("子会话", "channel-current");
+      getSubagentRunRegistry().create({
+        runId: randomUUID(),
+        parentSessionId: current.id,
+        childSessionId: child.id,
+        task: "already running",
+        cleanup: "keep",
+        status: "running"
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
+      const result = await spawnTool.execute("tool-call-spawn-fanout-limit", {
+        task: "another child"
+      });
+      const details = result.details as { status?: string; error?: string };
+      expect(details.status).toBe("forbidden");
+      expect(details.error).toContain("扇出超限");
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+      if (previousFanout === undefined) {
+        delete process.env.LUME_SUBAGENT_MAX_FANOUT;
+      } else {
+        process.env.LUME_SUBAGENT_MAX_FANOUT = previousFanout;
+      }
+    }
+  });
+
+  test("sessions_spawn 应拒绝超过深度限制", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    const previousDepth = process.env.LUME_SUBAGENT_MAX_DEPTH;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    process.env.LUME_SUBAGENT_MAX_DEPTH = "1";
+    try {
+      const root = createAgentSession("根会话", "channel-current");
+      const current = createAgentSession("当前会话", "channel-current");
+      getSubagentRunRegistry().create({
+        runId: randomUUID(),
+        parentSessionId: root.id,
+        rootSessionId: root.id,
+        depth: 1,
+        childSessionId: current.id,
+        task: "depth parent",
+        cleanup: "keep",
+        status: "running"
+      });
+
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: current.id
+      });
+      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
+      const result = await spawnTool.execute("tool-call-spawn-depth-limit", {
+        task: "too deep"
+      });
+      const details = result.details as { status?: string; error?: string };
+      expect(details.status).toBe("forbidden");
+      expect(details.error).toContain("深度超限");
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+      if (previousDepth === undefined) {
+        delete process.env.LUME_SUBAGENT_MAX_DEPTH;
+      } else {
+        process.env.LUME_SUBAGENT_MAX_DEPTH = previousDepth;
+      }
+    }
+  });
+
+  test("sessions_spawn 异步完成应按 deliverySessionKey 回传 completion", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    try {
+      const parent = createAgentSession("父会话", "channel-current");
+      const inbox = createAgentSession("收件会话", "channel-current");
+      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
+      const tools = createOpenClawAlignedTools({
+        sessionId: parent.id
+      });
+      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
+      const result = await spawnTool.execute("tool-call-spawn-delivery", {
+        task: "async task",
+        runTimeoutSeconds: 0,
+        model: "model-delivery",
+        deliverySessionKey: inbox.id,
+        thread: true
+      });
+      const details = result.details as {
+        status?: string;
+        runId?: string;
+        deliverySessionKey?: string;
+        threadBound?: boolean;
+      };
+      expect(details.status).toBe("accepted");
+      expect(details.deliverySessionKey).toBe(inbox.id);
+      expect(details.threadBound).toBe(true);
+      const runId = details.runId as string;
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const run = getSubagentRunRegistry().get(runId);
+      expect(run?.announceStatus).toBe("delivered");
+      expect(run?.deliverySessionId).toBe(inbox.id);
+
+      const inboxMessages = getAgentSessionMessages(inbox.id);
+      const parentMessages = getAgentSessionMessages(parent.id);
+      expect(inboxMessages.some((item) => item.metadata?.subagentAnnounce === true)).toBe(true);
+      expect(parentMessages.some((item) => item.metadata?.subagentAnnounce === true)).toBe(false);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
   test("subagent 会话应拒绝 sessions_spawn", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));

@@ -34,7 +34,11 @@ const TOOL_GROUPS: Record<string, string[]> = {
     "sessions_send",
     "sessions_delete",
     "sessions_spawn",
-    "session_status"
+    "session_status",
+    "subagents_list",
+    "subagents_kill",
+    "subagents_send",
+    "subagents_steer"
   ],
   "group:planning": ["askuserquestion", "enterplanmode", "exitplanmode"]
 };
@@ -47,7 +51,11 @@ const DEFAULT_SUBAGENT_POLICY: ToolPolicy = {
     "sessions_send",
     "sessions_delete",
     "sessions_spawn",
-    "session_status"
+    "session_status",
+    "subagents_list",
+    "subagents_kill",
+    "subagents_send",
+    "subagents_steer"
   ]
 };
 

@@ -195,6 +195,23 @@
 **对齐动作**
 - 增加可切换的 Team 视图（任务板 + Agent 状态 + inbox）。
 
+**进展（2026-03-22）**
+- ✅ 已完成：Lume Agent 页面新增 Proma 风格侧面板（`Team + Files` 双 Tab）。
+- ✅ 已完成：Team 面板支持从 `messages + streaming toolActivities` 重建团队视图（Team 头部、Task Board、Agent 卡片、子工具活动）。
+- ✅ 已完成：`sessions_spawn` 支持稳定 `runId` registry，并让 `agentId` 路由真正生效（不再仅记录告警）。
+- ✅ 已完成：`subagents_list / subagents_kill / subagents_send / subagents_steer` 控制面（owner 范围、kill 级联）。
+- ✅ 已完成：async 子任务 completion announce 回传父会话（含重试、失败状态记录）。
+- ✅ 已完成：深度/扇出/ownership/sandbox 约束硬限制（含单测覆盖）。
+- ✅ 已完成：thread binding + delivery target hook 最小实现（`thread` 标记、`deliverySessionKey` 重定向、完成后解绑接口）。
+- ✅ 已完成：`agent:message-appended` 实时通知，父会话 UI 可在非当前流回合接收子任务完成消息。
+- ✅ 已完成：subagent 统一日志字段（run/session/agent/status/errorCode）接入 registry + announce。
+- ✅ 已完成：新增 `agent:list-subagent-runs` IPC 查询接口（owner/runId/status/limit + statusSummary）。
+- ✅ 已完成：新增并发 + 故障恢复 e2e 流程测试（含重启恢复断言）。
+- ✅ 已完成：新增运维手册（list/kill/查 run、回滚开关、已知限制/演进路线）。
+- ✅ 已完成：`ENABLE_SUBAGENT_TEAM_V2` 回滚开关（可紧急禁用 `sessions_spawn/subagents_*`）。
+- ⏳ 待完成：inbox 通信时间线轮询（`getAgentTeamData` 等 runtime/IPC 依赖）。
+- ⏳ 待完成：teammate 级别 telemetry（task_started/task_notification/usage 等事件全量对齐）。
+
 **取舍点**
 - 方案 A（推荐）：保留 Lume 时间线，新增 Team 视图作为并列模式。
 - 方案 B：用 Team 视图替换时间线；会损失 Lume 现有通用调试可读性。

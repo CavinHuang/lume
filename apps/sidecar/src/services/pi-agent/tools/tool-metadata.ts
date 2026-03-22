@@ -299,6 +299,34 @@ registerToolMetadata({
   description: "获取会话状态"
 });
 
+registerToolMetadata({
+  name: "subagents_list",
+  category: "control",
+  riskLevel: "low",
+  description: "列出子代理运行状态"
+});
+
+registerToolMetadata({
+  name: "subagents_kill",
+  category: "execute",
+  riskLevel: "medium",
+  description: "终止子代理运行"
+});
+
+registerToolMetadata({
+  name: "subagents_send",
+  category: "execute",
+  riskLevel: "medium",
+  description: "向子代理发送跟进指令"
+});
+
+registerToolMetadata({
+  name: "subagents_steer",
+  category: "execute",
+  riskLevel: "medium",
+  description: "重定向子代理任务方向"
+});
+
 // 网络工具
 registerToolMetadata({
   name: "web_search",
