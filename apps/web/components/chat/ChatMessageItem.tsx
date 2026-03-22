@@ -25,9 +25,10 @@ import { CopyButton } from "./CopyButton";
 import { DeleteMessageDialog } from "./DeleteMessageDialog";
 import type { InlineEditSubmitPayload } from "./InlineEditForm";
 import { InlineEditForm } from "./InlineEditForm";
-import { AgentModeRecommendationBanner, extractAgentModeRecommendation } from "./AgentModeRecommendationBanner";
+import { AgentModeRecommendationBanner } from "./AgentModeRecommendationBanner";
 import { ChatToolActivityIndicator } from "./ChatToolActivityIndicator";
 import { UserAvatar } from "./UserAvatar";
+import { extractAgentModeRecommendation } from "./agent-mode-recommendation";
 
 export function formatMessageTime(timestamp: number): string {
   const date = new Date(timestamp);
