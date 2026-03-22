@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatMessage, ConversationMeta, RecentMessagesResult } from "@lume/shared";
 import { deleteAttachment, deleteConversationAttachments } from "./attachment-service";
 import { getConversationMessagesPath, getConversationsDir, getConversationsIndexPath } from "./config-paths";
+import { clearNanoBananaConversationHistory } from "./nano-banana-service";
 
 interface ConversationsIndex {
   version: number;
@@ -161,6 +162,7 @@ export function deleteConversation(id: string): void {
   const filePath = getConversationMessagesPath(id);
   if (existsSync(filePath)) unlinkSync(filePath);
   deleteConversationAttachments(id);
+  clearNanoBananaConversationHistory(id);
 }
 
 export function deleteMessage(conversationId: string, messageId: string): ChatMessage[] {
@@ -173,6 +175,7 @@ export function deleteMessage(conversationId: string, messageId: string): ChatMe
     }
   }
   saveConversationMessages(conversationId, filtered);
+  clearNanoBananaConversationHistory(conversationId);
   return filtered;
 }
 
@@ -198,6 +201,7 @@ export function truncateMessagesFrom(
   }
 
   saveConversationMessages(conversationId, kept);
+  clearNanoBananaConversationHistory(conversationId);
   return kept;
 }
 

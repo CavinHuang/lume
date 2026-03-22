@@ -2,8 +2,8 @@
  * Migrated from:
  * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\chat-tools\nano-banana-tool.ts
  * Adaptation:
- * - Chat 模式先对齐最小生图闭环（请求 Gemini Image Generation + 保存图片附件）。
- * - 暂不引入多轮 thought signature 历史复用。
+ * - Chat 模式对齐生图闭环（请求 Gemini Image Generation + 保存图片附件）。
+ * - 保留最小会话级历史，支持多轮编辑的 thought signature 续接。
  */
 
 import { randomUUID } from "node:crypto";
@@ -21,6 +21,13 @@ interface GeminiInlineData {
 interface GeminiPart {
   text?: string;
   inlineData?: GeminiInlineData;
+  thoughtSignature?: string;
+  thought_signature?: string;
+}
+
+interface GeminiContent {
+  role: "user" | "model";
+  parts: GeminiPart[];
 }
 
 interface GeminiResponsePayload {
@@ -49,6 +56,9 @@ export interface NanoBananaGenerateResult {
   text: string;
   attachments?: FileAttachment[];
 }
+
+const conversationHistory = new Map<string, GeminiContent[]>();
+const DUMMY_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
 
 function toImageExtByMediaType(mediaType: string): string {
   if (mediaType === "image/jpeg") return ".jpg";
@@ -81,9 +91,21 @@ function collectReferenceImageParts(input: NanoBananaGenerateInput): Array<{ inl
   return parts;
 }
 
-function buildNanoBananaRequestBody(input: NanoBananaGenerateInput): Record<string, unknown> {
-  const referenceParts = input.useReferenceImages ? collectReferenceImageParts(input) : [];
-  const userParts = [...referenceParts, { text: input.prompt }];
+function historyHasThoughtSignature(history: GeminiContent[]): boolean {
+  return history.some((item) =>
+    item.parts.some((part) => (part.thoughtSignature ?? part.thought_signature ?? "").length > 0)
+  );
+}
+
+function buildNanoBananaRequestBody(input: NanoBananaGenerateInput, history: GeminiContent[], referenceParts: GeminiPart[]): Record<string, unknown> {
+  const needsSignature = history.length > 0 && historyHasThoughtSignature(history);
+  const userParts: GeminiPart[] = [
+    ...referenceParts,
+    {
+      text: input.prompt,
+      ...(needsSignature ? { thoughtSignature: DUMMY_THOUGHT_SIGNATURE } : {})
+    }
+  ];
   const generationConfig: Record<string, unknown> = {
     responseModalities: ["TEXT", "IMAGE"]
   };
@@ -100,21 +122,24 @@ function buildNanoBananaRequestBody(input: NanoBananaGenerateInput): Record<stri
   }
 
   return {
-    contents: [{ role: "user", parts: userParts }],
+    contents: [...history, { role: "user", parts: userParts }],
     generationConfig
   };
 }
 
-function parseNanoBananaResponse(input: NanoBananaGenerateInput, payload: GeminiResponsePayload): NanoBananaGenerateResult {
+function parseNanoBananaResponse(
+  input: NanoBananaGenerateInput,
+  payload: GeminiResponsePayload
+): { result: NanoBananaGenerateResult; modelParts: GeminiPart[] } {
   if (payload.error?.message) {
     throw new Error(`Gemini API 错误: ${payload.error.message}`);
   }
 
-  const parts = payload.candidates?.[0]?.content?.parts ?? [];
+  const modelParts = payload.candidates?.[0]?.content?.parts ?? [];
   const savedAttachments: FileAttachment[] = [];
   const textParts: string[] = [];
 
-  for (const part of parts) {
+  for (const part of modelParts) {
     const inlineData = part.inlineData;
     if (inlineData?.data && inlineData.mimeType && inlineData.mimeType.startsWith("image/")) {
       const filename = `nano-banana-${randomUUID().slice(0, 8)}${toImageExtByMediaType(inlineData.mimeType)}`;
@@ -134,13 +159,19 @@ function parseNanoBananaResponse(input: NanoBananaGenerateInput, payload: Gemini
 
   if (savedAttachments.length > 0) {
     return {
-      text: `图片已成功生成（${savedAttachments.length} 张）${textParts.length > 0 ? `\n\n${textParts.join("\n")}` : ""}`,
-      attachments: savedAttachments
+      result: {
+        text: `图片已成功生成（${savedAttachments.length} 张）${textParts.length > 0 ? `\n\n${textParts.join("\n")}` : ""}`,
+        attachments: savedAttachments
+      },
+      modelParts
     };
   }
 
   if (textParts.length > 0) {
-    return { text: textParts.join("\n") };
+    return {
+      result: { text: textParts.join("\n") },
+      modelParts
+    };
   }
 
   throw new Error("未生成图片内容");
@@ -163,7 +194,9 @@ export async function generateNanoBananaImage(
   const baseUrl = credentials.baseUrl?.trim() || NANO_BANANA_DEFAULT_BASE_URL;
   const model = credentials.model?.trim() || NANO_BANANA_DEFAULT_MODEL;
   const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const body = buildNanoBananaRequestBody(input);
+  const history = conversationHistory.get(input.conversationId) ?? [];
+  const referenceParts = input.useReferenceImages ? collectReferenceImageParts(input) : [];
+  const body = buildNanoBananaRequestBody(input, history, referenceParts);
 
   const response = await fetch(url, {
     method: "POST",
@@ -179,7 +212,17 @@ export async function generateNanoBananaImage(
   }
 
   const payload = await response.json() as GeminiResponsePayload;
-  return parseNanoBananaResponse(input, payload);
+  const parsed = parseNanoBananaResponse(input, payload);
+  const userHistory: GeminiContent = {
+    role: "user",
+    parts: [...referenceParts, { text: prompt }]
+  };
+  const modelHistory: GeminiContent = {
+    role: "model",
+    parts: parsed.modelParts
+  };
+  conversationHistory.set(input.conversationId, [...history, userHistory, modelHistory]);
+  return parsed.result;
 }
 
 export async function testNanoBananaConnection(credentials: Record<string, string>): Promise<ChatToolTestResult> {
@@ -220,4 +263,8 @@ export async function testNanoBananaConnection(credentials: Record<string, strin
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function clearNanoBananaConversationHistory(conversationId: string): void {
+  conversationHistory.delete(conversationId);
 }

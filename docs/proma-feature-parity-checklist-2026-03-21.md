@@ -89,13 +89,14 @@
 - ✅ 已完成：`chat-tools.json` 变更通知（`chat-tool:custom-tool-changed`）与前端自动刷新。
 - ✅ 已完成：最小闭环工具执行（`memory_search` / `web_search` / `suggest_agent_mode` / `custom http`）与 systemPromptAppend 注入。
 - ✅ 已完成：`nano_banana` 最小闭环（内置工具注册、凭据校验、连接测试、工具活动、图片附件落盘与展示）。
+- ✅ 已完成：`nano_banana` 会话级多轮续接（thought signature 占位符兼容）与会话删除/截断后的历史清理。
 - ✅ 已完成：`suggest_agent_mode` 推荐卡片渲染与一键切换 Agent 会话。
 - ✅ 已完成：自定义工具可用性判定（按 `credential.*` 占位符）。
 - ✅ 已完成：OpenAI / Anthropic / Google provider 的最小函数调用编排（tool_calls -> 工具执行 -> 续接请求）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
 - ⏳ 未做：复杂多轮工具调用场景下的 provider 级边界行为统一（当前为最小闭环实现）。
-- ⏳ 未做：`nano_banana` 的高级多轮编辑能力（如 thought signature 历史续接、精细编辑参数策略）与 Proma 全量细节对齐。
+- ⏳ 未做：`nano_banana` 的高级编辑策略细节（参数自动化策略、参考图挑选策略等）与全量细节对齐。
 
 **Proma 精确代码位置**
 - 工具设置页：
