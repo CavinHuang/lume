@@ -60,6 +60,7 @@ type ChatEventEmitter = {
 
 const activeControllers = new Map<string, AbortController>();
 const MAX_TOOL_CALLING_ROUNDS = 6;
+const TOOL_CALLING_ROUND_LIMIT_MESSAGE = "工具调用轮次达到上限，已停止继续调用。请缩小问题范围后重试。";
 
 function getImageAttachmentData(attachments?: FileAttachment[]): ImageAttachmentData[] {
   if (!attachments || attachments.length === 0) return [];
@@ -1079,6 +1080,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
       const toolDefinitions = getDefaultToolDefinitions(enabledToolMetas);
       const enabledMetaMap = new Map(enabledToolMetas.map((meta) => [meta.id, meta] as const));
       const continuationMessages: ContinuationMessage[] = [];
+      let hitToolRoundLimit = false;
 
       for (let round = 0; round < MAX_TOOL_CALLING_ROUNDS; round += 1) {
         const request = adapter.buildStreamRequest({
@@ -1127,9 +1129,12 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
           { role: "assistant", content: "", toolCalls },
           { role: "tool", results: toolResults }
         );
+        if (round === MAX_TOOL_CALLING_ROUNDS - 1) {
+          hitToolRoundLimit = true;
+        }
       }
 
-      finalContent = accumulatedContent;
+      finalContent = accumulatedContent || (hitToolRoundLimit ? TOOL_CALLING_ROUND_LIMIT_MESSAGE : "");
       finalReasoning = accumulatedReasoning;
     } else {
       const request = adapter.buildStreamRequest({

@@ -701,6 +701,68 @@ describe("chat-service tool activity", () => {
     expect(chunkEvents.some((event) => event.delta.includes("多工具函数调用完成"))).toBeTrue();
   });
 
+  test("openai 长链 tool_use 超过上限时应返回降级提示而非空回复", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "openai-fc-limit",
+      provider: "openai",
+      baseUrl: "https://mock-openai.example.com/v1",
+      apiKey: "sk-test",
+      models: [{ id: "gpt-test", name: "gpt-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const requestBodies: unknown[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/chat/completions")) {
+        if (init?.body && typeof init.body === "string") {
+          requestBodies.push(JSON.parse(init.body));
+        }
+        return new Response(
+          `data: {"choices":[{"delta":{"tool_calls":[{"id":"call_loop_1","function":{"name":"web_search","arguments":"{\\"query\\":\\"loop query\\"}"}}]}}]}\n` +
+          `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n` +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("openai 长链工具上限");
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请持续执行工具直到完成",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "gpt-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(requestBodies.length).toBe(6);
+    const messages = getConversationMessages(conversation.id);
+    const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
+    expect(lastAssistant?.content).toContain("工具调用轮次达到上限");
+  });
+
   test("anthropic provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;
