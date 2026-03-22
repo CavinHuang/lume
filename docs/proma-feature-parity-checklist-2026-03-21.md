@@ -90,10 +90,10 @@
 - ✅ 已完成：最小闭环工具执行（`memory_search` / `web_search` / `suggest_agent_mode` / `custom http`）与 systemPromptAppend 注入。
 - ✅ 已完成：`suggest_agent_mode` 推荐卡片渲染与一键切换 Agent 会话。
 - ✅ 已完成：自定义工具可用性判定（按 `credential.*` 占位符）。
-- ✅ 已完成：OpenAI 兼容 provider 的最小函数调用编排（tool_calls -> 工具执行 -> 续接请求）。
+- ✅ 已完成：OpenAI / Anthropic provider 的最小函数调用编排（tool_calls -> 工具执行 -> 续接请求）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
-- ⏳ 未做：Anthropic / Google provider 的函数调用编排对齐（当前仍走 Lume 侧预执行策略）。
+- ⏳ 未做：Google provider 的函数调用编排对齐（当前仍走 Lume 侧预执行策略）。
 - ⏳ 未做：Proma 全量内置工具族（如 nano banana）在 Chat 模式的完整复刻。
 
 **Proma 精确代码位置**

@@ -23,20 +23,28 @@ import type {
   StreamEvent,
   TitleRequestInput,
   ImageAttachmentData,
+  ToolDefinition,
+  ContinuationMessage,
 } from './types'
 import { normalizeAnthropicBaseUrl } from './url-utils'
 
 // ===== Anthropic 特有类型 =====
 
-/** Anthropic 内容块 */
+/** Anthropic 内容块（扩展支持 tool_use / tool_result） */
 interface AnthropicContentBlock {
-  type: 'text' | 'image'
+  type: 'text' | 'image' | 'tool_use' | 'tool_result'
   text?: string
   source?: {
     type: 'base64'
     media_type: string
     data: string
   }
+  id?: string
+  name?: string
+  input?: Record<string, unknown>
+  tool_use_id?: string
+  content?: string | AnthropicContentBlock[]
+  is_error?: boolean
 }
 
 /** Anthropic 消息格式 */
@@ -46,20 +54,29 @@ interface AnthropicMessage {
 }
 
 /** Anthropic SSE 事件 */
-interface AnthropicDeltaEvent {
+interface AnthropicSSEEvent {
   type: string
+  content_block?: {
+    type: string
+    id?: string
+    name?: string
+  }
   delta?: {
     type?: string
     /** 普通文本增量 (text_delta) */
     text?: string
     /** 思考内容增量 (thinking_delta) */
     thinking?: string
+    /** 工具参数 JSON 增量 (input_json_delta) */
+    partial_json?: string
+    /** message_delta 的 stop_reason */
+    stop_reason?: string
   }
 }
 
 /** Anthropic 标题响应 */
 interface AnthropicTitleResponse {
-  content?: Array<{ type: string; text?: string }>
+  content?: Array<{ type: string; text?: string; thinking?: string }>
 }
 
 // ===== 消息转换 =====
@@ -131,6 +148,45 @@ function toAnthropicMessages(
   return messages
 }
 
+function toAnthropicTools(tools: ToolDefinition[]): Array<Record<string, unknown>> {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.parameters,
+  }))
+}
+
+function appendContinuationMessages(
+  messages: AnthropicMessage[],
+  continuationMessages: ContinuationMessage[],
+): void {
+  for (const contMsg of continuationMessages) {
+    if (contMsg.role === 'assistant') {
+      const content: AnthropicContentBlock[] = []
+      if (contMsg.content) {
+        content.push({ type: 'text', text: contMsg.content })
+      }
+      for (const tc of contMsg.toolCalls) {
+        content.push({
+          type: 'tool_use',
+          id: tc.id,
+          name: tc.name,
+          input: tc.arguments,
+        })
+      }
+      messages.push({ role: 'assistant', content })
+    } else if (contMsg.role === 'tool') {
+      const content: AnthropicContentBlock[] = contMsg.results.map((result) => ({
+        type: 'tool_result' as const,
+        tool_use_id: result.toolCallId,
+        content: result.content,
+        is_error: result.isError ?? false,
+      }))
+      messages.push({ role: 'user', content })
+    }
+  }
+}
+
 // ===== 适配器实现 =====
 
 export class AnthropicAdapter implements ProviderAdapter {
@@ -163,6 +219,12 @@ export class AnthropicAdapter implements ProviderAdapter {
     if (input.systemMessage) {
       body.system = input.systemMessage
     }
+    if (input.tools && input.tools.length > 0) {
+      body.tools = toAnthropicTools(input.tools)
+    }
+    if (input.continuationMessages && input.continuationMessages.length > 0) {
+      appendContinuationMessages(messages, input.continuationMessages)
+    }
 
     return {
       url: `${url}/messages`,
@@ -178,17 +240,35 @@ export class AnthropicAdapter implements ProviderAdapter {
 
   parseSSELine(jsonLine: string): StreamEvent[] {
     try {
-      const event = JSON.parse(jsonLine) as AnthropicDeltaEvent
+      const event = JSON.parse(jsonLine) as AnthropicSSEEvent
       const events: StreamEvent[] = []
+
+      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+        events.push({
+          type: 'tool_call_start',
+          toolCallId: event.content_block.id || '',
+          toolName: event.content_block.name || '',
+        })
+      }
 
       if (event.type === 'content_block_delta') {
         // 推理内容（thinking_delta 的内容在 delta.thinking 字段中）
         if (event.delta?.type === 'thinking_delta' && event.delta?.thinking) {
           events.push({ type: 'reasoning', delta: event.delta.thinking })
+        } else if (event.delta?.type === 'input_json_delta' && event.delta?.partial_json) {
+          events.push({
+            type: 'tool_call_delta',
+            toolCallId: '',
+            argumentsDelta: event.delta.partial_json,
+          })
         } else if (event.delta?.text) {
           // 普通文本内容（text_delta）
           events.push({ type: 'chunk', delta: event.delta.text })
         }
+      }
+
+      if (event.type === 'message_delta' && event.delta?.stop_reason) {
+        events.push({ type: 'done', stopReason: event.delta.stop_reason })
       }
 
       return events
@@ -212,12 +292,28 @@ export class AnthropicAdapter implements ProviderAdapter {
         model: input.modelId,
         max_tokens: 50,
         messages: [{ role: 'user', content: input.prompt }],
+        thinking: { type: 'disabled' },
       }),
     }
   }
 
   parseTitleResponse(responseBody: unknown): string | null {
     const data = responseBody as AnthropicTitleResponse
-    return data.content?.[0]?.text ?? null
+    if (!data.content || data.content.length === 0) return null
+
+    const textBlock = data.content.find((block) => block.type === 'text')
+    if (textBlock?.text) return textBlock.text
+
+    const thinkingBlock = data.content.find((block) => block.type === 'thinking')
+    if (thinkingBlock?.thinking) {
+      const lines = thinkingBlock.thinking.trim().split('\n')
+      const lastLine = lines[lines.length - 1]?.trim()
+      if (lastLine?.startsWith('- ')) {
+        return lastLine.slice(2).trim()
+      }
+      return lastLine || null
+    }
+
+    return null
   }
 }
