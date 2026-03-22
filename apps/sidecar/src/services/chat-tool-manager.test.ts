@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -12,6 +12,7 @@ import {
   updateChatToolCredentials,
   updateChatToolState
 } from "./chat-tool-manager";
+import { getChatToolsPath } from "./config-paths";
 
 describe("chat-tool-manager", () => {
   let tempConfigDir: string;
@@ -235,5 +236,31 @@ describe("chat-tool-manager", () => {
 
     const append = getEnabledChatToolSystemPromptAppend(["internal_search"]);
     expect(append).toBeUndefined();
+  });
+
+  test("应兼容 Proma 旧工具 ID 并迁移开关与凭据", () => {
+    const legacyConfig = {
+      version: 1,
+      toolStates: {
+        memory: { enabled: false },
+        "web-search": { enabled: true },
+        "agent-mode-recommend": { enabled: true }
+      },
+      toolCredentials: {
+        "web-search": {
+          braveApiKey: "legacy-brave-key"
+        }
+      },
+      customTools: []
+    };
+    writeFileSync(getChatToolsPath(), JSON.stringify(legacyConfig, null, 2), "utf-8");
+
+    const tools = getAllChatToolInfos();
+    expect(tools.find((item) => item.meta.id === "memory_search")?.enabled).toBeFalse();
+    expect(tools.find((item) => item.meta.id === "web_search")?.enabled).toBeTrue();
+    expect(tools.find((item) => item.meta.id === "suggest_agent_mode")?.enabled).toBeTrue();
+
+    const credentials = getChatToolCredentials("web_search");
+    expect(credentials.braveApiKey).toBe("legacy-brave-key");
   });
 });

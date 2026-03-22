@@ -21,6 +21,12 @@ import { executeHttpChatTool } from "./chat-tool-http-executor";
 
 const CHAT_TOOL_CONFIG_VERSION = 1;
 const TOOL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
+const LEGACY_TOOL_ID_MAP: Record<string, string> = {
+  memory: "memory_search",
+  "web-search": "web_search",
+  "agent-mode-recommend": "suggest_agent_mode",
+  "nano-banana": "nano_banana"
+};
 
 const BUILTIN_CHAT_TOOLS: ChatToolMeta[] = [
   {
@@ -58,6 +64,10 @@ const BUILTIN_CHAT_TOOLS: ChatToolMeta[] = [
 ];
 
 const BUILTIN_TOOL_ID_SET = new Set(BUILTIN_CHAT_TOOLS.map((tool) => tool.id));
+
+function normalizeToolId(toolId: string): string {
+  return LEGACY_TOOL_ID_MAP[toolId] ?? toolId;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -232,21 +242,23 @@ function normalizeConfig(raw: unknown): ChatToolFileConfig {
   const toolStates = getDefaultToolStates(customTools);
   if (isRecord(raw.toolStates)) {
     for (const [toolId, value] of Object.entries(raw.toolStates)) {
-      if (!knownToolIds.has(toolId) || !isRecord(value)) continue;
-      toolStates[toolId] = { enabled: value.enabled === true };
+      const normalizedToolId = normalizeToolId(toolId);
+      if (!knownToolIds.has(normalizedToolId) || !isRecord(value)) continue;
+      toolStates[normalizedToolId] = { enabled: value.enabled === true };
     }
   }
 
   const toolCredentials: Record<string, Record<string, string>> = {};
   if (isRecord(raw.toolCredentials)) {
     for (const [toolId, value] of Object.entries(raw.toolCredentials)) {
-      if (!knownToolIds.has(toolId) || !isRecord(value)) continue;
+      const normalizedToolId = normalizeToolId(toolId);
+      if (!knownToolIds.has(normalizedToolId) || !isRecord(value)) continue;
       const entries = Object.entries(value)
         .filter((entry): entry is [string, string] => typeof entry[1] === "string")
         .map(([key, credential]) => [key, credential.trim()] as const)
         .filter((entry) => entry[1].length > 0);
       if (entries.length === 0) continue;
-      toolCredentials[toolId] = Object.fromEntries(entries);
+      toolCredentials[normalizedToolId] = Object.fromEntries(entries);
     }
   }
 
