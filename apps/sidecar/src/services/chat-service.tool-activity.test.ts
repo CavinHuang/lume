@@ -760,6 +760,77 @@ describe("chat-service tool activity", () => {
     expect(chunkEvents.some((event) => event.delta.includes("fenced 参数调用完成"))).toBeTrue();
   });
 
+  test("openai tool 参数 JSON 截断时应回退用户 query 且不中断续接", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "openai-fc-truncated-json",
+      provider: "openai",
+      baseUrl: "https://mock-openai.example.com/v1",
+      apiKey: "sk-test",
+      models: [{ id: "gpt-test", name: "gpt-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const duckQueries: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/chat/completions")) {
+        if (init?.body && typeof init.body === "string") {
+          JSON.parse(init.body);
+        }
+        if (!duckQueries.length) {
+          return new Response(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_web_truncated\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"latest ai news\\\"\"}}]}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n" +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"truncated 参数调用完成\"}}]}\n" +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        const query = decodeURIComponent((url.split("?q=")[1] ?? "").split("&")[0] ?? "");
+        duckQueries.push(query);
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("openai truncated tool args");
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请搜索今天 AI 新闻",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "gpt-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(duckQueries).toContain("请搜索今天 AI 新闻");
+    expect(chunkEvents.some((event) => event.delta.includes("truncated 参数调用完成"))).toBeTrue();
+  });
+
   test("openai 多 tool_call(index) 时应正确归属参数并续接两次结果", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;

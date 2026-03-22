@@ -104,6 +104,7 @@
 - ✅ 已完成：Anthropic 异常顺序回归（`input_json_delta` 早于 `tool_use start`）并验证工具链路可恢复。
 - ✅ 已完成：Anthropic 同轮交错 `index delta` 归属恢复（双 `tool_use` 参数不串位）与端到端回归覆盖。
 - ✅ 已完成：OpenAI `tool_call arguments` 异常包裹（code fence JSON）解析恢复与续接回归覆盖。
+- ✅ 已完成：OpenAI `tool_call arguments` 截断 JSON 异常注入回归（参数失败时回退用户 query，链路不中断）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
 - ⏳ 未做：更高强度混沌注入（跨轮随机交错、截断 JSON、网络抖动重放）的压力回归覆盖。
