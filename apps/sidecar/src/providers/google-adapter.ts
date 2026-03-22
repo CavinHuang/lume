@@ -24,6 +24,8 @@ import type {
   StreamEvent,
   TitleRequestInput,
   ImageAttachmentData,
+  ToolDefinition,
+  ContinuationMessage,
 } from './types'
 import { normalizeBaseUrl } from './url-utils'
 
@@ -32,9 +34,21 @@ import { normalizeBaseUrl } from './url-utils'
 /** Google 内容部分 */
 interface GooglePart {
   text?: string
+  /** Gemini 2.5/3 思考内容标记 */
+  thought?: boolean
+  /** 思考签名（工具调用时由模型生成，续接请求必须原样返回） */
+  thoughtSignature?: string
   inline_data?: {
     mime_type: string
     data: string
+  }
+  functionCall?: {
+    name: string
+    args?: Record<string, unknown>
+  }
+  functionResponse?: {
+    name: string
+    response: Record<string, unknown>
   }
 }
 
@@ -48,11 +62,7 @@ interface GoogleContent {
 interface GoogleStreamData {
   candidates?: Array<{
     content?: {
-      parts?: Array<{
-        text?: string
-        /** Gemini 2.5/3 思考内容标记，true 表示此 part 为推理过程 */
-        thought?: boolean
-      }>
+      parts?: GooglePart[]
     }
     finishReason?: string
   }>
@@ -127,6 +137,48 @@ function toGoogleContents(input: StreamRequestInput): GoogleContent[] {
   return contents
 }
 
+function toGoogleTools(tools: ToolDefinition[]): Array<Record<string, unknown>> {
+  return [{
+    functionDeclarations: tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    })),
+  }]
+}
+
+function appendContinuationMessages(
+  contents: GoogleContent[],
+  continuationMessages: ContinuationMessage[],
+): void {
+  for (const contMsg of continuationMessages) {
+    if (contMsg.role === 'assistant') {
+      const parts: GooglePart[] = []
+      if (contMsg.content) {
+        parts.push({ text: contMsg.content })
+      }
+      for (const tc of contMsg.toolCalls) {
+        const part: GooglePart = {
+          functionCall: { name: tc.name, args: tc.arguments },
+        }
+        if (tc.metadata?.thoughtSignature) {
+          part.thoughtSignature = tc.metadata.thoughtSignature as string
+        }
+        parts.push(part)
+      }
+      contents.push({ role: 'model', parts })
+    } else if (contMsg.role === 'tool') {
+      const parts: GooglePart[] = contMsg.results.map((r) => ({
+        functionResponse: {
+          name: r.toolCallId,
+          response: { content: r.content },
+        },
+      }))
+      contents.push({ role: 'user', parts })
+    }
+  }
+}
+
 // ===== 适配器实现 =====
 
 export class GoogleAdapter implements ProviderAdapter {
@@ -163,6 +215,12 @@ export class GoogleAdapter implements ProviderAdapter {
         parts: [{ text: input.systemMessage }],
       }
     }
+    if (input.tools && input.tools.length > 0) {
+      body.tools = toGoogleTools(input.tools)
+    }
+    if (input.continuationMessages && input.continuationMessages.length > 0) {
+      appendContinuationMessages(contents, input.continuationMessages)
+    }
 
     return {
       url: `${url}/v1beta/models/${input.modelId}:streamGenerateContent?alt=sse&key=${input.apiKey}`,
@@ -181,8 +239,26 @@ export class GoogleAdapter implements ProviderAdapter {
 
       const events: StreamEvent[] = []
 
-      // 遍历所有 parts，区分推理内容和正常文本
+      // 遍历所有 parts，区分推理内容、正常文本和函数调用
       for (const part of parts) {
+        if (part.functionCall) {
+          const fc = part.functionCall
+          events.push({
+            type: 'tool_call_start',
+            toolCallId: fc.name,
+            toolName: fc.name,
+            metadata: part.thoughtSignature
+              ? { thoughtSignature: part.thoughtSignature }
+              : undefined,
+          })
+          events.push({
+            type: 'tool_call_delta',
+            toolCallId: fc.name,
+            argumentsDelta: JSON.stringify(fc.args || {}),
+          })
+          continue
+        }
+
         if (!part.text) continue
 
         if (part.thought) {

@@ -798,7 +798,11 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
 
   const enabledToolMetas = getEnabledChatToolMetas(enabledToolIds);
   const useModelToolCalling = (
-    (modelSelection.adapterProvider === "openai" || modelSelection.adapterProvider === "anthropic")
+    (
+      modelSelection.adapterProvider === "openai"
+      || modelSelection.adapterProvider === "anthropic"
+      || modelSelection.adapterProvider === "google"
+    )
     && enabledToolMetas.length > 0
   );
   const toolContextAppendix = useModelToolCalling
