@@ -206,21 +206,12 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
 
   const toolCalls: ToolCall[] = []
   for (const [, pending] of pendingToolCalls) {
-    try {
-      toolCalls.push({
-        id: pending.id,
-        name: pending.name,
-        arguments: pending.args ? JSON.parse(pending.args) : {},
-        metadata: pending.metadata,
-      })
-    } catch {
-      toolCalls.push({
-        id: pending.id,
-        name: pending.name,
-        arguments: {},
-        metadata: pending.metadata,
-      })
-    }
+    toolCalls.push({
+      id: pending.id,
+      name: pending.name,
+      arguments: parseToolArguments(pending.args),
+      metadata: pending.metadata,
+    })
   }
 
   if (toolCalls.length > 0 && !stopReason) {
@@ -229,6 +220,46 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
 
   onEvent({ type: 'done', stopReason })
   return { content, reasoning, toolCalls, stopReason }
+}
+
+function parseToolArguments(rawArgs: string): Record<string, unknown> {
+  const trimmed = rawArgs.trim()
+  if (!trimmed) return {}
+
+  const candidates: string[] = []
+  const seen = new Set<string>()
+  const pushCandidate = (value: string): void => {
+    const candidate = value.trim()
+    if (!candidate || seen.has(candidate)) return
+    seen.add(candidate)
+    candidates.push(candidate)
+  }
+
+  pushCandidate(trimmed)
+
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  if (fenceMatch?.[1]) {
+    pushCandidate(fenceMatch[1])
+  }
+
+  const firstBrace = trimmed.indexOf('{')
+  const lastBrace = trimmed.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    pushCandidate(trimmed.slice(firstBrace, lastBrace + 1))
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // ignore and continue trying other candidates
+    }
+  }
+
+  return {}
 }
 
 // ===== 非流式标题请求 =====

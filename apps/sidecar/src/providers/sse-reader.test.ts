@@ -146,4 +146,24 @@ describe("sse-reader", () => {
     expect(result.toolCalls[0]?.arguments.query).toBe("first");
     expect(result.toolCalls[1]?.arguments.query).toBe("second");
   });
+
+  test("工具参数被 markdown code fence 包裹时应解析出 JSON", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"start\",\"id\":\"tc_fenced\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"delta\",\"id\":\"tc_fenced\",\"args\":\"```json\\n{\\\"query\\\":\\\"fenced query\\\"}\\n```\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.arguments.query).toBe("fenced query");
+  });
 });
