@@ -236,9 +236,10 @@ export class OpenAIAdapter implements ProviderAdapter {
             })
           }
           if (tc.function?.arguments) {
+            const fallbackToolCallId = typeof tc.index === 'number' ? `tc_${tc.index}` : ''
             events.push({
               type: 'tool_call_delta',
-              toolCallId: tc.id || '',
+              toolCallId: tc.id || fallbackToolCallId,
               argumentsDelta: tc.function.arguments,
             })
           }

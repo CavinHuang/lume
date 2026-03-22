@@ -528,6 +528,7 @@ async function executeToolCallForChat(input: {
   if (!meta) {
     return {
       toolCallId: toolCall.id,
+      toolName: toolCall.name,
       content: `工具未启用或不存在: ${toolCall.name}`,
       isError: true
     };
@@ -560,7 +561,7 @@ async function executeToolCallForChat(input: {
         toolCallId: toolCall.id,
         result: text
       });
-      return { toolCallId: toolCall.id, content: text };
+      return { toolCallId: toolCall.id, toolName: toolCall.name, content: text };
     }
 
     if (toolCall.name === "web_search") {
@@ -572,7 +573,7 @@ async function executeToolCallForChat(input: {
         toolCallId: toolCall.id,
         result: text
       });
-      return { toolCallId: toolCall.id, content: text };
+      return { toolCallId: toolCall.id, toolName: toolCall.name, content: text };
     }
 
     if (toolCall.name === "suggest_agent_mode") {
@@ -620,6 +621,7 @@ async function executeToolCallForChat(input: {
       });
       return {
         toolCallId: toolCall.id,
+        toolName: toolCall.name,
         content: result.text,
         generatedAttachments: result.attachments
       };
@@ -634,7 +636,7 @@ async function executeToolCallForChat(input: {
         toolCallId: toolCall.id,
         result
       });
-      return { toolCallId: toolCall.id, content: result };
+      return { toolCallId: toolCall.id, toolName: toolCall.name, content: result };
     }
 
     const message = `暂不支持的工具: ${toolCall.name}`;
@@ -645,7 +647,7 @@ async function executeToolCallForChat(input: {
       result: message,
       isError: true
     });
-    return { toolCallId: toolCall.id, content: message, isError: true };
+    return { toolCallId: toolCall.id, toolName: toolCall.name, content: message, isError: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     input.emitToolActivity({
@@ -657,6 +659,7 @@ async function executeToolCallForChat(input: {
     });
     return {
       toolCallId: toolCall.id,
+      toolName: toolCall.name,
       content: message,
       isError: true
     };

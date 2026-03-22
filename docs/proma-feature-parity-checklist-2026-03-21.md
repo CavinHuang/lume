@@ -93,9 +93,10 @@
 - ✅ 已完成：`suggest_agent_mode` 推荐卡片渲染与一键切换 Agent 会话。
 - ✅ 已完成：自定义工具可用性判定（按 `credential.*` 占位符）。
 - ✅ 已完成：OpenAI / Anthropic / Google provider 的最小函数调用编排（tool_calls -> 工具执行 -> 续接请求）。
+- ✅ 已完成：provider 多调用边界增强（OpenAI `tool_call index` 参数归属、Google 同名函数调用去重并保留双执行续接）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
-- ⏳ 未做：复杂多轮工具调用场景下的 provider 级边界行为统一（当前为最小闭环实现）。
+- ⏳ 未做：更复杂跨轮边界（如 Anthropic 极端交错 tool_use/event 顺序）的一致性回归覆盖。
 - ⏳ 未做：`nano_banana` 的高级编辑策略细节（参数自动化策略、参考图挑选策略等）与全量细节对齐。
 
 **Proma 精确代码位置**

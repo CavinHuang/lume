@@ -72,6 +72,8 @@ export interface ToolCall {
 export interface ToolResult {
   /** 对应的工具调用 ID */
   toolCallId: string
+  /** 工具名称 */
+  toolName?: string
   /** 执行结果内容 */
   content: string
   /** 是否出错 */

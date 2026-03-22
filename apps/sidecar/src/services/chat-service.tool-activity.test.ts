@@ -532,6 +532,88 @@ describe("chat-service tool activity", () => {
     expect(chunkEvents.some((event) => event.delta.includes("函数调用后的最终回答"))).toBeTrue();
   });
 
+  test("openai 多 tool_call(index) 时应正确归属参数并续接两次结果", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "openai-fc-multi",
+      provider: "openai",
+      baseUrl: "https://mock-openai.example.com/v1",
+      apiKey: "sk-test",
+      models: [{ id: "gpt-test", name: "gpt-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const requestBodies: unknown[] = [];
+    const duckQueries: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/chat/completions")) {
+        if (init?.body && typeof init.body === "string") {
+          requestBodies.push(JSON.parse(init.body));
+        }
+        if (requestBodies.length === 1) {
+          return new Response(
+            `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"web_search"}},{"index":1,"function":{"name":"web_search"}}]}}]}\n` +
+            `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"query\\":\\"latest ai news\\"}"}},{"index":1,"function":{"arguments":"{\\"query\\":\\"lume desktop release\\"}"}}]}}]}\n` +
+            `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n` +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          `data: {"choices":[{"delta":{"content":"多工具函数调用完成"}}]}\n` +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        const query = decodeURIComponent((url.split("?q=")[1] ?? "").split("&")[0] ?? "");
+        duckQueries.push(query);
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("openai 多工具函数调用");
+    const toolEvents: StreamToolActivityEvent[] = [];
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请联网检索两组信息并总结",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "gpt-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestBodies.length).toBe(2);
+    const secondMessages = (requestBodies[1] as { messages: Array<{ role: string; tool_call_id?: string }> }).messages;
+    expect(secondMessages.some((item) => item.role === "tool" && item.tool_call_id === "tc_0")).toBeTrue();
+    expect(secondMessages.some((item) => item.role === "tool" && item.tool_call_id === "tc_1")).toBeTrue();
+
+    expect(duckQueries).toContain("latest ai news");
+    expect(duckQueries).toContain("lume desktop release");
+    expect(toolEvents.filter((event) => event.activity.type === "start" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(toolEvents.filter((event) => event.activity.type === "result" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(chunkEvents.some((event) => event.delta.includes("多工具函数调用完成"))).toBeTrue();
+  });
+
   test("anthropic provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;
@@ -697,5 +779,88 @@ describe("chat-service tool activity", () => {
     expect(toolEvents.some((event) => event.activity.type === "start" && event.activity.toolName === "web_search")).toBeTrue();
     expect(toolEvents.some((event) => event.activity.type === "result" && event.activity.toolName === "web_search")).toBeTrue();
     expect(chunkEvents.some((event) => event.delta.includes("Google 函数调用后的最终回答"))).toBeTrue();
+  });
+
+  test("google 同名多函数调用时应保留两次执行并正确续接 functionResponse 名称", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "google-fc-multi",
+      provider: "google",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      apiKey: "sk-test",
+      models: [{ id: "gemini-test", name: "gemini-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const requestBodies: unknown[] = [];
+    const duckQueries: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes(":streamGenerateContent")) {
+        if (init?.body && typeof init.body === "string") {
+          requestBodies.push(JSON.parse(init.body));
+        }
+        if (requestBodies.length === 1) {
+          return new Response(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"web_search\",\"args\":{\"query\":\"latest ai news\"}}},{\"functionCall\":{\"name\":\"web_search\",\"args\":{\"query\":\"lume desktop release\"}}}]}}]}\n" +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Google 同名多函数调用完成\"}]}}]}\n" +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        const query = decodeURIComponent((url.split("?q=")[1] ?? "").split("&")[0] ?? "");
+        duckQueries.push(query);
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("google 同名多函数调用");
+    const toolEvents: StreamToolActivityEvent[] = [];
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请联网检索两组信息并总结",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "gemini-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestBodies.length).toBe(2);
+    const secondContents = (requestBodies[1] as { contents: Array<{ role: string; parts?: Array<{ functionResponse?: { name?: string } }> }> }).contents;
+    const functionResponseNames = secondContents
+      .flatMap((item) => item.parts ?? [])
+      .map((part) => part.functionResponse?.name)
+      .filter((name): name is string => typeof name === "string");
+    expect(functionResponseNames.filter((name) => name === "web_search").length).toBe(2);
+
+    expect(duckQueries).toContain("latest ai news");
+    expect(duckQueries).toContain("lume desktop release");
+    expect(toolEvents.filter((event) => event.activity.type === "start" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(toolEvents.filter((event) => event.activity.type === "result" && event.activity.toolName === "web_search").length).toBe(2);
+    expect(chunkEvents.some((event) => event.delta.includes("Google 同名多函数调用完成"))).toBeTrue();
   });
 });

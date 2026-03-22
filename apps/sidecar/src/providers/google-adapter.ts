@@ -170,7 +170,7 @@ function appendContinuationMessages(
     } else if (contMsg.role === 'tool') {
       const parts: GooglePart[] = contMsg.results.map((r) => ({
         functionResponse: {
-          name: r.toolCallId,
+          name: r.toolName || r.toolCallId,
           response: { content: r.content },
         },
       }))

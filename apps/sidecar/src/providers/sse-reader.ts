@@ -87,7 +87,19 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   const decoder = new TextDecoder()
   let buffer = ''
   const pendingToolCalls = new Map<string, { id: string; name: string; args: string; metadata?: Record<string, unknown> }>()
+  const toolCallIdAlias = new Map<string, string>()
   let currentToolCallId: string | undefined
+
+  function allocateUniqueToolCallId(rawId: string): string {
+    if (!pendingToolCalls.has(rawId)) return rawId
+    let counter = 2
+    let nextId = `${rawId}__${counter}`
+    while (pendingToolCalls.has(nextId)) {
+      counter += 1
+      nextId = `${rawId}__${counter}`
+    }
+    return nextId
+  }
 
   try {
     while (true) {
@@ -119,15 +131,21 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
           } else if (event.type === 'reasoning') {
             reasoning += event.delta
           } else if (event.type === 'tool_call_start') {
-            currentToolCallId = event.toolCallId
-            pendingToolCalls.set(event.toolCallId, {
-              id: event.toolCallId,
+            const rawId = (event.toolCallId || '').trim() || `tc_${pendingToolCalls.size}`
+            const normalizedId = allocateUniqueToolCallId(rawId)
+            toolCallIdAlias.set(rawId, normalizedId)
+            currentToolCallId = normalizedId
+            pendingToolCalls.set(normalizedId, {
+              id: normalizedId,
               name: event.toolName,
               args: '',
               metadata: event.metadata,
             })
           } else if (event.type === 'tool_call_delta') {
-            const tcId = event.toolCallId || currentToolCallId
+            const rawId = (event.toolCallId || '').trim()
+            const tcId = rawId
+              ? (toolCallIdAlias.get(rawId) || rawId)
+              : currentToolCallId
             if (tcId) {
               const pending = pendingToolCalls.get(tcId)
               if (pending) {
