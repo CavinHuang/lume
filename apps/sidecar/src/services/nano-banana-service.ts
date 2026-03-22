@@ -12,6 +12,7 @@ import { isImageAttachment, readAttachmentAsBase64, saveAttachment } from "./att
 
 export const NANO_BANANA_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 export const NANO_BANANA_DEFAULT_MODEL = "gemini-3.1-flash-image-preview";
+const MAX_REFERENCE_IMAGES = 4;
 
 interface GeminiInlineData {
   mimeType?: string;
@@ -68,15 +69,18 @@ function toImageExtByMediaType(mediaType: string): string {
 }
 
 function collectReferenceImageParts(input: NanoBananaGenerateInput): Array<{ inlineData: { mimeType: string; data: string } }> {
-  const allAttachments: FileAttachment[] = [
-    ...(input.previousUserAttachments ?? []),
+  const prioritizedAttachments: FileAttachment[] = [
+    ...(input.currentAttachments ?? []),
     ...(input.previousAssistantAttachments ?? []),
-    ...(input.currentAttachments ?? [])
+    ...(input.previousUserAttachments ?? [])
   ];
 
   const parts: Array<{ inlineData: { mimeType: string; data: string } }> = [];
-  for (const attachment of allAttachments) {
+  const seenLocalPaths = new Set<string>();
+  for (const attachment of prioritizedAttachments) {
+    if (parts.length >= MAX_REFERENCE_IMAGES) break;
     if (!isImageAttachment(attachment.mediaType)) continue;
+    if (seenLocalPaths.has(attachment.localPath)) continue;
     try {
       parts.push({
         inlineData: {
@@ -84,6 +88,7 @@ function collectReferenceImageParts(input: NanoBananaGenerateInput): Array<{ inl
           data: readAttachmentAsBase64(attachment.localPath)
         }
       });
+      seenLocalPaths.add(attachment.localPath);
     } catch (error) {
       console.warn(`[Nano Banana] 读取参考图失败: ${attachment.localPath}`, error);
     }

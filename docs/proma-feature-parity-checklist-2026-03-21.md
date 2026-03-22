@@ -97,10 +97,12 @@
 - ✅ 已完成：provider 多调用边界增强（OpenAI `tool_call index` 参数归属、Google 同名函数调用去重并保留双执行续接）。
 - ✅ 已完成：Anthropic 同轮多 `tool_use` 续接双 `tool_result` 回归覆盖。
 - ✅ 已完成：工具长链保护（达到最大工具轮次时返回降级提示，避免空 assistant 回复）。
+- ✅ 已完成：`sse-reader` 乱序兼容（`tool_call_delta` 早于 `tool_call_start` 缓冲回填）与同名 tool_call 唯一 ID 归一。
+- ✅ 已完成：`nano_banana` 多参考图优先级（当前 > 上一轮 assistant > 上一轮 user）与数量上限（最多 4 张）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
 - ⏳ 未做：更复杂跨轮边界（极端交错事件顺序、异常注入场景）的压力回归覆盖。
-- ⏳ 未做：`nano_banana` 的更细粒度策略（多参考图优先级、风格/约束模板化）与全量细节对齐。
+- ⏳ 未做：`nano_banana` 的更细粒度策略（风格/约束模板化、提示词自动优化）与全量细节对齐。
 
 **Proma 精确代码位置**
 - 工具设置页：
