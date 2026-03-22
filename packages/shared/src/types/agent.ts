@@ -114,6 +114,20 @@ export interface AgentMessage {
   events?: AgentEvent[]
 }
 
+/**
+ * Agent 消息分页加载结果
+ *
+ * 用于分页加载：首次仅加载尾部 N 条消息，减少传输开销。
+ */
+export interface AgentRecentMessagesResult {
+  /** 本次返回的消息列表（按时间正序） */
+  messages: AgentMessage[]
+  /** 会话中的总消息数 */
+  total: number
+  /** 是否还有更早的历史消息 */
+  hasMore: boolean
+}
+
 // ===== Agent 标题生成输入 =====
 
 /** Agent 标题生成输入 */
@@ -509,6 +523,8 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_SESSION: 'agent:create-session',
   /** 获取会话消息 */
   GET_MESSAGES: 'agent:get-messages',
+  /** 获取最近 N 条会话消息（分页） */
+  GET_RECENT_MESSAGES: 'agent:get-recent-messages',
   /** 更新会话标题 */
   UPDATE_TITLE: 'agent:update-title',
   /** 删除会话 */

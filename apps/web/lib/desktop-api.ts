@@ -51,6 +51,7 @@ import type {
   InstallGlobalPluginInput,
   InstallGlobalPluginResult,
   AgentMessage,
+  AgentRecentMessagesResult,
   AgentSaveFilesInput,
   AgentSavedFile,
   AgentSendInput,
@@ -647,6 +648,10 @@ export async function createAgentSession(params?: {
 
 export async function getAgentSessionMessages(sessionId: string) {
   return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.GET_MESSAGES, { sessionId });
+}
+
+export async function getRecentAgentSessionMessages(sessionId: string, limit: number): Promise<AgentRecentMessagesResult> {
+  return sidecarCall<AgentRecentMessagesResult>(AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES, { sessionId, limit });
 }
 
 export async function updateAgentSessionTitle(sessionId: string, title: string): Promise<AgentSessionMeta> {

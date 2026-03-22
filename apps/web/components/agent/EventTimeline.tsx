@@ -41,7 +41,7 @@ interface EventTimelineProps {
   isStreaming?: boolean;
 }
 
-export function EventTimeline({ events, isStreaming = false }: EventTimelineProps): React.ReactElement | null {
+export const EventTimeline = React.memo(function EventTimeline({ events, isStreaming = false }: EventTimelineProps): React.ReactElement | null {
   if (events.length === 0) return null;
 
   type TimelineText = Extract<TimelineEvent, { type: "text" }>;
@@ -116,4 +116,4 @@ export function EventTimeline({ events, isStreaming = false }: EventTimelineProp
       })}
     </div>
   );
-}
+})

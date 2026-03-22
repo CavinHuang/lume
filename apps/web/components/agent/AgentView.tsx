@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AlertCircle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, CornerDownLeft, FolderPlus, Loader2, Paperclip, Settings, Square, X } from "lucide-react";
 import type {
@@ -614,48 +614,64 @@ export function AgentView(): React.ReactElement {
     }
   }, [agentChannelId, agentModelId, channels, setAgentModelId]);
 
+  const [sessionSwitching, setSessionSwitching] = useState(false);
+
   useEffect(() => {
     if (!sessionId) {
       setMessages([]);
       setSessionRootPath(null);
       setToolPermissionRequest(null);
       resetPlan();
+      setSessionSwitching(false);
       return;
     }
 
+    // 标记切换中，保留旧消息避免闪白
+    setSessionSwitching(true);
     setPendingFiles([]);
     setPendingFolderRefs([]);
     setInlineEditingMessageId(null);
     setInputContent("");
     setToolPermissionRequest(null);
     resetPlan();
+
+    let cancelled = false;
     void getAgentSessionMessages(sessionId)
       .then((next) => {
-        setMessages(next);
-        const recovered = recoverPlanFromMessages(next);
-        if (recovered.planPath || recovered.draft) {
-          setPlanState((prev) => ({
-            ...prev,
-            phase: "review",
-            sessionActive: false,
-            reviewOpen: false,
-            file: recovered.planPath
-              ? {
-                ...prev.file,
-                path: recovered.planPath,
-                savedAt: prev.file.savedAt ?? Date.now()
-              }
-              : prev.file,
-            draft: recovered.draft
-              ? {
-                content: recovered.draft,
-                updatedAt: Date.now()
-              }
-              : prev.draft
-          }));
-        }
+        if (cancelled) return;
+        // startTransition: 将消息列表渲染标记为可中断的低优先级更新，
+        // 保持 spinner 可见直到 React 完成渲染，避免主线程长时间阻塞。
+        startTransition(() => {
+          setMessages(next);
+          const recovered = recoverPlanFromMessages(next);
+          if (recovered.planPath || recovered.draft) {
+            setPlanState((prev) => ({
+              ...prev,
+              phase: "review",
+              sessionActive: false,
+              reviewOpen: false,
+              file: recovered.planPath
+                ? {
+                  ...prev.file,
+                  path: recovered.planPath,
+                  savedAt: prev.file.savedAt ?? Date.now()
+                }
+                : prev.file,
+              draft: recovered.draft
+                ? {
+                  content: recovered.draft,
+                  updatedAt: Date.now()
+                }
+                : prev.draft
+            }));
+          }
+          setSessionSwitching(false);
+        });
       })
       .catch((error) => {
+        if (cancelled) return;
+        setMessages([]);
+        setSessionSwitching(false);
         const message = error instanceof Error ? error.message : String(error);
         setStreamErrors((prev) => {
           const map = new Map(prev);
@@ -663,6 +679,8 @@ export function AgentView(): React.ReactElement {
           return map;
         });
       });
+
+    return () => { cancelled = true; };
   }, [resetPlan, sessionId, setMessages, setPlanState, setStreamErrors]);
 
   useEffect(() => {
@@ -822,30 +840,32 @@ export function AgentView(): React.ReactElement {
       if (payload.sessionId === currentSessionIdRef.current) {
         void getAgentSessionMessages(payload.sessionId)
           .then((next) => {
-            if (planStreamCaptureRef.current) {
-              const fallbackText = extractLatestAssistantText(next);
-              if (fallbackText) {
-                setPlanState((prev) => (
-                  prev.draft.content.trim().length > 0
-                    ? prev
-                    : {
-                      ...prev,
-                      draft: {
-                        content: fallbackText,
-                        updatedAt: Date.now()
+            startTransition(() => {
+              if (planStreamCaptureRef.current) {
+                const fallbackText = extractLatestAssistantText(next);
+                if (fallbackText) {
+                  setPlanState((prev) => (
+                    prev.draft.content.trim().length > 0
+                      ? prev
+                      : {
+                        ...prev,
+                        draft: {
+                          content: fallbackText,
+                          updatedAt: Date.now()
+                        }
                       }
-                    }
-                ));
+                  ));
+                }
               }
-            }
-            // 去重：移除与新消息 ID 冲突的旧消息
-            setMessages((prev) => {
-              const nextIds = new Set(next.map(m => m.id));
-              // 先过滤掉临时消息，再过滤重复的正式消息
-              const filteredPrev = prev.filter(m => !m.id.startsWith('temp-'));
-              return [...filteredPrev.filter(m => !nextIds.has(m.id)), ...next];
+              // 去重：移除与新消息 ID 冲突的旧消息
+              setMessages((prev) => {
+                const nextIds = new Set(next.map(m => m.id));
+                // 先过滤掉临时消息，再过滤重复的正式消息
+                const filteredPrev = prev.filter(m => !m.id.startsWith('temp-'));
+                return [...filteredPrev.filter(m => !nextIds.has(m.id)), ...next];
+              });
+              finalize();
             });
-            finalize();
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
@@ -882,8 +902,10 @@ export function AgentView(): React.ReactElement {
       if (payload.sessionId === currentSessionIdRef.current) {
         void getAgentSessionMessages(payload.sessionId)
           .then((next) => {
-            setMessages(next);
-            finalize();
+            startTransition(() => {
+              setMessages(next);
+              finalize();
+            });
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
@@ -1387,13 +1409,15 @@ export function AgentView(): React.ReactElement {
       void getAgentSessionMessages(sessionId)
         .then((next) => {
           if (disposed) return;
-          // 仅在确有变化时更新，避免抖动。
-          setMessages((prev) => {
-            if (prev.length === next.length) {
-              const same = prev.every((item, index) => item.id === next[index]?.id && item.content === next[index]?.content);
-              return same ? prev : next;
-            }
-            return next;
+          startTransition(() => {
+            // 仅在确有变化时更新，避免抖动。
+            setMessages((prev) => {
+              if (prev.length === next.length) {
+                const same = prev.every((item, index) => item.id === next[index]?.id && item.content === next[index]?.content);
+                return same ? prev : next;
+              }
+              return next;
+            });
           });
 
           if (isAgentDebugEnabled()) {
@@ -1541,6 +1565,7 @@ export function AgentView(): React.ReactElement {
 
           <AgentMessages
             isStreaming={streaming}
+            isSwitching={sessionSwitching}
             inlineEditingMessageId={inlineEditingMessageId}
             onDeleteMessage={handleDeleteMessage}
             onResendMessage={handleResendMessage}

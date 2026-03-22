@@ -79,6 +79,7 @@ import {
   createAgentSession,
   deleteAgentSession,
   getAgentSessionMessages,
+  getRecentAgentMessages,
   listAgentSessions,
   truncateAgentMessagesFrom,
   updateAgentSessionMeta
@@ -444,6 +445,11 @@ const agentCreateSessionInputSchema = z.object({
 
 const agentSessionIdInputSchema = z.object({
   sessionId: idSchema
+});
+
+const agentRecentMessagesInputSchema = z.object({
+  sessionId: idSchema,
+  limit: z.number().int().min(1).max(2000)
 });
 
 const agentUpdateTitleInputSchema = z.object({
@@ -1064,6 +1070,10 @@ const handlers: Record<string, RpcHandler> = {
   [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {
     const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.GET_MESSAGES);
     return getAgentSessionMessages(input.sessionId);
+  },
+  [AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES]: async (params) => {
+    const input = validateInput(agentRecentMessagesInputSchema, params, AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES);
+    return getRecentAgentMessages(input.sessionId, input.limit);
   },
   [AGENT_IPC_CHANNELS.UPDATE_TITLE]: async (params) => {
     const input = validateInput(agentUpdateTitleInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_TITLE);

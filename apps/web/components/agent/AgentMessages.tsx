@@ -42,6 +42,7 @@ export interface AgentInlineEditSubmitPayload {
 
 interface AgentMessagesProps {
   isStreaming?: boolean;
+  isSwitching?: boolean;
   inlineEditingMessageId?: string | null;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
@@ -218,7 +219,7 @@ function InlineEditForm({
   );
 }
 
-function AgentMessageItem({
+const AgentMessageItem = React.memo(function AgentMessageItem({
   message,
   isStreaming,
   isInlineEditing,
@@ -242,6 +243,15 @@ function AgentMessageItem({
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const userProfile = useAtomValue(userProfileAtom);
+
+  const timelineEvents = React.useMemo(
+    () => message.role === "assistant" ? extractTimelineEvents(message) : [],
+    [message]
+  );
+  const toolActivities = React.useMemo(
+    () => message.role === "assistant" ? extractToolActivities(message.events) : [],
+    [message]
+  );
 
   if (message.role === "user") {
     const sanitizedContent = stripPlanExecutionMarker(message.content);
@@ -318,9 +328,6 @@ function AgentMessageItem({
   }
 
   if (message.role === "assistant") {
-    const timelineEvents = extractTimelineEvents(message);
-    const toolActivities = extractToolActivities(message.events);
-
     return (
       <Message from="assistant">
         <MessageHeader
@@ -354,10 +361,11 @@ function AgentMessageItem({
   }
 
   return null;
-}
+})
 
 export function AgentMessages({
   isStreaming = false,
+  isSwitching = false,
   inlineEditingMessageId = null,
   onDeleteMessage,
   onResendMessage,
@@ -381,26 +389,38 @@ export function AgentMessages({
   const shouldShowStreamingMessage =
     (streaming || Boolean(smoothContent));
 
+  const stableOnDelete = actionsDisabled ? undefined : onDeleteMessage;
+  const stableOnResend = actionsDisabled ? undefined : onResendMessage;
+  const stableOnSaveAsTask = actionsDisabled ? undefined : onSaveAsTask;
+  const stableOnStartInlineEdit = actionsDisabled ? undefined : onStartInlineEdit;
+
   return (
-    <Conversation>
+    <Conversation className={!streaming ? "cv-ready" : undefined}>
       <ConversationContent>
-        {messages.length === 0 && !streaming ? (
+        {isSwitching ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="flex flex-col items-center gap-3 text-muted-foreground">
+              <div className="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+            </div>
+          </div>
+        ) : messages.length === 0 && !streaming ? (
           <EmptyState />
         ) : (
           <>
             {messages.map((message) => (
-              <AgentMessageItem
-                key={message.id}
-                message={message}
-                isStreaming={actionsDisabled}
-                isInlineEditing={inlineEditingMessageId === message.id}
-                onDeleteMessage={actionsDisabled ? undefined : onDeleteMessage}
-                onResendMessage={actionsDisabled ? undefined : onResendMessage}
-                onSaveAsTask={actionsDisabled ? undefined : onSaveAsTask}
-                onStartInlineEdit={actionsDisabled ? undefined : onStartInlineEdit}
-                onSubmitInlineEdit={onSubmitInlineEdit}
-                onCancelInlineEdit={onCancelInlineEdit}
-              />
+              <div key={message.id} data-message-id={message.id}>
+                <AgentMessageItem
+                  message={message}
+                  isStreaming={actionsDisabled}
+                  isInlineEditing={inlineEditingMessageId === message.id}
+                  onDeleteMessage={stableOnDelete}
+                  onResendMessage={stableOnResend}
+                  onSaveAsTask={stableOnSaveAsTask}
+                  onStartInlineEdit={stableOnStartInlineEdit}
+                  onSubmitInlineEdit={onSubmitInlineEdit}
+                  onCancelInlineEdit={onCancelInlineEdit}
+                />
+              </div>
             ))}
             {shouldShowStreamingMessage ? (
               <Message from="assistant">

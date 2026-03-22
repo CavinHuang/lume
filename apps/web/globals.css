@@ -156,6 +156,12 @@
   );
 }
 
+/* 消息列表屏幕外渲染优化 — 对齐 Proma content-visibility 策略 */
+.cv-ready [data-message-id] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
+}
+
 /* Shiki 代码块样式 */
 .code-block-wrapper {
   contain: content;

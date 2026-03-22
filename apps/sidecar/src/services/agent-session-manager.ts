@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { AgentMessage, AgentSessionMeta } from "@lume/shared";
+import type { AgentMessage, AgentRecentMessagesResult, AgentSessionMeta } from "@lume/shared";
 import {
   getAgentWorkspacesDir,
   getAgentSessionMessagesPath,
@@ -134,6 +134,24 @@ export function getAgentSessionMessages(id: string): AgentMessage[] {
     console.error(`[Agent 会话] 读取消息失败 (${id}):`, error);
     backupCorruptFile(filePath, "Agent 会话消息");
     return [];
+  }
+}
+
+export function getRecentAgentMessages(id: string, limit: number): AgentRecentMessagesResult {
+  const filePath = getAgentSessionMessagesPath(id);
+  if (!existsSync(filePath)) return { messages: [], total: 0, hasMore: false };
+  try {
+    const lines = readFileSync(filePath, "utf-8").split("\n").filter((line) => line.trim());
+    const total = lines.length;
+    if (total <= limit) {
+      return { messages: lines.map((line) => JSON.parse(line) as AgentMessage), total, hasMore: false };
+    }
+    const recent = lines.slice(-limit).map((line) => JSON.parse(line) as AgentMessage);
+    return { messages: recent, total, hasMore: true };
+  } catch (error) {
+    console.error(`[Agent 会话] 读取最近消息失败 (${id}):`, error);
+    backupCorruptFile(filePath, "Agent 会话消息");
+    return { messages: [], total: 0, hasMore: false };
   }
 }
 
