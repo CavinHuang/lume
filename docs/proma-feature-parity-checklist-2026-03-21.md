@@ -99,6 +99,7 @@
 - ✅ 已完成：工具长链保护（达到最大工具轮次时返回降级提示，避免空 assistant 回复）。
 - ✅ 已完成：`sse-reader` 乱序兼容（`tool_call_delta` 早于 `tool_call_start` 缓冲回填）与同名 tool_call 唯一 ID 归一。
 - ✅ 已完成：`nano_banana` 多参考图优先级（当前 > 上一轮 assistant > 上一轮 user）与数量上限（最多 4 张）。
+- ✅ 已完成：Anthropic 异常顺序回归（`input_json_delta` 早于 `tool_use start`）并验证工具链路可恢复。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
 - ⏳ 未做：更复杂跨轮边界（极端交错事件顺序、异常注入场景）的压力回归覆盖。

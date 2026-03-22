@@ -93,4 +93,25 @@ describe("sse-reader", () => {
     expect(result.toolCalls[0]?.id).toBe("tc_0");
     expect(result.toolCalls[0]?.arguments.query).toBe("late");
   });
+
+  test("匿名 delta 早于 start 到达时应回填到首个 tool_call", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"anonymous\\\"}\"}",
+      "data: {\"event\":\"start\",\"id\":\"tc_anon\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.id).toBe("tc_anon");
+    expect(result.toolCalls[0]?.arguments.query).toBe("anonymous");
+  });
 });

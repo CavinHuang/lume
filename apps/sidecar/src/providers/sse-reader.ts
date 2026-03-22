@@ -89,6 +89,7 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   const pendingToolCalls = new Map<string, { id: string; name: string; args: string; metadata?: Record<string, unknown> }>()
   const toolCallIdAlias = new Map<string, string>()
   const preStartArgsBuffer = new Map<string, string>()
+  let anonymousArgsBuffer = ''
   let currentToolCallId: string | undefined
 
   function allocateUniqueToolCallId(rawId: string): string {
@@ -137,11 +138,13 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
             toolCallIdAlias.set(rawId, normalizedId)
             currentToolCallId = normalizedId
             const bufferedArgs = preStartArgsBuffer.get(rawId) || ''
+            const combinedBufferedArgs = bufferedArgs || anonymousArgsBuffer
             preStartArgsBuffer.delete(rawId)
+            anonymousArgsBuffer = ''
             pendingToolCalls.set(normalizedId, {
               id: normalizedId,
               name: event.toolName,
-              args: bufferedArgs,
+              args: combinedBufferedArgs,
               metadata: event.metadata,
             })
           } else if (event.type === 'tool_call_delta') {
@@ -156,6 +159,8 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
               } else if (rawId) {
                 preStartArgsBuffer.set(rawId, (preStartArgsBuffer.get(rawId) || '') + event.argumentsDelta)
               }
+            } else if (!rawId) {
+              anonymousArgsBuffer += event.argumentsDelta
             }
           } else if (event.type === 'done' && event.stopReason) {
             stopReason = event.stopReason
