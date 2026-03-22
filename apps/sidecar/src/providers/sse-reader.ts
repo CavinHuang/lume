@@ -236,10 +236,18 @@ function parseToolArguments(rawArgs: string): Record<string, unknown> {
   }
 
   pushCandidate(trimmed)
+  const firstObjectFromRaw = extractFirstJsonObject(trimmed)
+  if (firstObjectFromRaw) {
+    pushCandidate(firstObjectFromRaw)
+  }
 
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
   if (fenceMatch?.[1]) {
     pushCandidate(fenceMatch[1])
+    const firstObjectFromFence = extractFirstJsonObject(fenceMatch[1])
+    if (firstObjectFromFence) {
+      pushCandidate(firstObjectFromFence)
+    }
   }
 
   const firstBrace = trimmed.indexOf('{')
@@ -260,6 +268,48 @@ function parseToolArguments(rawArgs: string): Record<string, unknown> {
   }
 
   return {}
+}
+
+function extractFirstJsonObject(input: string): string | undefined {
+  const text = input.trim()
+  let start = -1
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (inString) {
+      if (escape) {
+        escape = false
+        continue
+      }
+      if (char === '\\') {
+        escape = true
+        continue
+      }
+      if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      continue
+    }
+    if (char === '{') {
+      if (depth === 0) start = index
+      depth += 1
+      continue
+    }
+    if (char === '}') {
+      if (depth === 0) continue
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        return text.slice(start, index + 1)
+      }
+    }
+  }
+  return undefined
 }
 
 // ===== 非流式标题请求 =====

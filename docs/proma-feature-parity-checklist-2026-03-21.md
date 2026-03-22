@@ -107,9 +107,11 @@
 - ✅ 已完成：OpenAI `tool_call arguments` 异常包裹（code fence JSON）解析恢复与续接回归覆盖。
 - ✅ 已完成：OpenAI `tool_call arguments` 截断 JSON 异常注入回归（参数失败时回退用户 query，链路不中断）。
 - ✅ 已完成：Anthropic 跨轮混合乱序压力回归（同轮乱序 + 次轮继续 `tool_use` + 三轮续接收敛）。
+- ✅ 已完成：网络抖动重放回归（重复 `delta`/`input_json_delta` 场景参数可恢复）。
+- ✅ 已完成：随机顺序 fuzz 回归（双 `tool_call` 多样本乱序参数归属稳定）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
-- ⏳ 未做：更高强度混沌注入（随机顺序 fuzz、网络抖动重放）的压力回归覆盖。
+- 暂无（P0-CHAT-002 对齐项已完成）。
 
 **Proma 精确代码位置**
 - 工具设置页：

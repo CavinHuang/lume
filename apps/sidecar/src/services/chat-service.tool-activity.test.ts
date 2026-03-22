@@ -1674,6 +1674,80 @@ describe("chat-service tool activity", () => {
     expect(chunkEvents.some((event) => event.delta.includes("Anthropic 跨轮混合乱序调用完成"))).toBeTrue();
   });
 
+  test("anthropic input_json_delta 重放时应恢复 query 而非回退用户原文", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "anthropic-fc-delta-replay",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "sk-test",
+      models: [{ id: "claude-test", name: "claude-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const duckQueries: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/messages")) {
+        if (init?.body && typeof init.body === "string") {
+          JSON.parse(init.body);
+        }
+        if (!duckQueries.length) {
+          return new Response(
+            "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_replay\",\"name\":\"web_search\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}}\n" +
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}}\n" +
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n" +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Anthropic replay 调用完成\"}}\n" +
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n" +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        const query = decodeURIComponent((url.split("?q=")[1] ?? "").split("&")[0] ?? "");
+        duckQueries.push(query);
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("anthropic delta replay");
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请联网查最新 AI 新闻并总结",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "claude-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: () => {}
+      }
+    );
+
+    expect(duckQueries).toContain("latest ai news");
+    expect(chunkEvents.some((event) => event.delta.includes("Anthropic replay 调用完成"))).toBeTrue();
+  });
+
   test("google provider 启用工具时应走模型函数调用链路", async () => {
     delete process.env.LUME_CHAT_MOCK_SUCCESS;
     delete process.env.LUME_CHAT_MOCK_TEXT;

@@ -166,4 +166,87 @@ describe("sse-reader", () => {
     expect(result.toolCalls.length).toBe(1);
     expect(result.toolCalls[0]?.arguments.query).toBe("fenced query");
   });
+
+  test("网络抖动导致重复 delta 重放时应仍能恢复参数 JSON", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"start\",\"id\":\"tc_replay\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"delta\",\"id\":\"tc_replay\",\"args\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}",
+      "data: {\"event\":\"delta\",\"id\":\"tc_replay\",\"args\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.arguments.query).toBe("latest ai news");
+  });
+
+  test("随机顺序 fuzz 样本下双 tool_call 参数归属应保持稳定", async () => {
+    const adapter = createMockAdapter();
+    const scenarios: Array<{ name: string; lines: string[] }> = [
+      {
+        name: "normal-order",
+        lines: [
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}"
+        ]
+      },
+      {
+        name: "delta-before-first-start",
+        lines: [
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}"
+        ]
+      },
+      {
+        name: "reverse-start-order",
+        lines: [
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}"
+        ]
+      },
+      {
+        name: "delta-interleaved-replay",
+        lines: [
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}"
+        ]
+      }
+    ];
+
+    for (const scenario of scenarios) {
+      const body = [
+        ...scenario.lines,
+        "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+        "data: [DONE]"
+      ].join("\n");
+
+      const result = await streamSSE({
+        request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+        adapter,
+        onEvent: () => {},
+        fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+      });
+
+      const byId = new Map(result.toolCalls.map((toolCall) => [toolCall.id, toolCall.arguments.query]));
+      expect(byId.get("toolu_1")).toBe("q1");
+      expect(byId.get("toolu_2")).toBe("q2");
+    }
+  });
 });
