@@ -327,4 +327,34 @@ describe("chat-service tool activity", () => {
 
     expect(toolEvents.length).toBe(0);
   });
+
+  test("启用 suggest_agent_mode 且任务复杂时应发出推荐活动", async () => {
+    const conversation = createConversation("Agent 模式推荐活动");
+    const toolEvents: StreamToolActivityEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请帮我做一份竞品调研并给出技术选型报告和落地计划",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["suggest_agent_mode"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    const startEvent = toolEvents.find((event) => event.activity.type === "start");
+    const resultEvent = toolEvents.find((event) => event.activity.type === "result");
+    expect(startEvent?.activity.toolName).toBe("suggest_agent_mode");
+    expect(resultEvent?.activity.toolName).toBe("suggest_agent_mode");
+    expect(resultEvent?.activity.result).toContain("agent_recommendation");
+    expect(resultEvent?.activity.result).toContain("suggestedPrompt");
+  });
 });

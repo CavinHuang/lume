@@ -87,12 +87,12 @@
 - ✅ 已完成：输入区 ToolSelector（启用/禁用、不可用态“需配置”提示、跳转设置页）。
 - ✅ 已完成：`chat:stream:tool-activity` 流式事件通道、UI 活动指示器渲染、活动持久化到 assistant 消息。
 - ✅ 已完成：`chat-tools.json` 变更通知（`chat-tool:custom-tool-changed`）与前端自动刷新。
-- ✅ 已完成：最小闭环工具执行（`memory_search` / `web_search` / `custom http`）与 systemPromptAppend 注入。
+- ✅ 已完成：最小闭环工具执行（`memory_search` / `web_search` / `suggest_agent_mode` / `custom http`）与 systemPromptAppend 注入。
 - ✅ 已完成：自定义工具可用性判定（按 `credential.*` 占位符）。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
 - ⏳ 未做：Proma 完整“模型函数调用驱动”的工具执行编排（当前为 Lume 侧预执行策略）。
-- ⏳ 未做：Proma 全量内置工具族（如 nano banana / agent recommend）在 Chat 模式的完整复刻。
+- ⏳ 未做：Proma 全量内置工具族（如 nano banana）在 Chat 模式的完整复刻。
 
 **Proma 精确代码位置**
 - 工具设置页：
@@ -111,8 +111,8 @@
   - `/Users/cavinhuang/workspace/projects/ai-projects/Proma/apps/electron/src/preload/index.ts:800`
 
 **Lume 当前锚点**
-- Chat IPC 不含 `STREAM_TOOL_ACTIVITY`：`/Users/cavinhuang/workspace/projects/ai-projects/Lume/packages/shared/src/types/chat.ts:276`
-- 无独立 Chat Tool 设置页。
+- Chat IPC 已包含 `STREAM_TOOL_ACTIVITY`：`/Users/cavinhuang/workspace/projects/ai-projects/Lume/packages/shared/src/types/chat.ts:276`
+- 已具备独立 Chat Tool 设置页：`/Users/cavinhuang/workspace/projects/ai-projects/Lume/apps/web/components/settings/ToolSettings.tsx`
 
 **对齐动作**
 - 增加 Chat 工具状态与凭据管理模块。

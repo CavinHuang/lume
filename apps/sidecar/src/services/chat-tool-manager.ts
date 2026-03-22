@@ -2,7 +2,7 @@
  * Migrated from:
  * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\chat-tool-config.ts
  * Adaptation:
- * - 首期保留内置工具最小闭环（memory_search、web_search）。
+ * - 当前内置工具覆盖 memory_search、web_search、suggest_agent_mode。
  * - 补齐自定义工具元数据持久化（create/delete/list），执行链路后续对齐。
  */
 
@@ -40,6 +40,20 @@ const BUILTIN_CHAT_TOOLS: ChatToolMeta[] = [
     category: "builtin",
     executorType: "builtin",
     systemPromptAppend: "涉及时效性信息时，请优先使用 web_search 获取最新公开资料，再基于结果回答。"
+  },
+  {
+    id: "suggest_agent_mode",
+    name: "Agent 模式推荐",
+    description: "识别复杂任务并提示用户切换到 Agent 模式",
+    icon: "Sparkles",
+    category: "builtin",
+    executorType: "builtin",
+    params: [
+      { name: "reason", type: "string", description: "推荐原因", required: true },
+      { name: "suggestedPrompt", type: "string", description: "建议的 Agent 初始提示词", required: true }
+    ],
+    systemPromptAppend:
+      "当用户请求涉及调研、代码修改、文件操作或多步骤执行时，可优先建议切换 Agent 模式以获得更完整的执行能力。"
   }
 ];
 
@@ -178,7 +192,7 @@ function getDefaultToolStates(customTools: ChatToolMeta[] = []): Record<string, 
   return Object.fromEntries(
     [...BUILTIN_CHAT_TOOLS, ...customTools].map((tool) => [
       tool.id,
-      { enabled: tool.id === "memory_search" }
+      { enabled: tool.id === "memory_search" || tool.id === "suggest_agent_mode" }
     ])
   );
 }
@@ -465,6 +479,9 @@ export async function testChatTool(toolId: string): Promise<ChatToolTestResult> 
 
   if (toolId === "memory_search") {
     return { success: true, message: "连接成功，本地记忆检索工具可用" };
+  }
+  if (toolId === "suggest_agent_mode") {
+    return { success: true, message: "连接成功，Agent 模式推荐工具可用" };
   }
   if (toolId === "web_search") {
     const credentials = config.toolCredentials.web_search ?? {};

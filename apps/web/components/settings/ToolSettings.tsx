@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAtom } from "jotai";
-import { Brain, Globe, Trash2, Wrench } from "lucide-react";
+import { Brain, Globe, Sparkles, Trash2, Wrench } from "lucide-react";
 import type { ChatToolInfo } from "@lume/shared";
 import { chatToolsAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { SettingsCard, SettingsSection } from "./primitives";
 function getToolIcon(iconName?: string): React.ReactElement {
   if (iconName === "Brain") return <Brain className="size-4 text-muted-foreground" />;
   if (iconName === "Globe") return <Globe className="size-4 text-muted-foreground" />;
+  if (iconName === "Sparkles") return <Sparkles className="size-4 text-muted-foreground" />;
   return <Wrench className="size-4 text-muted-foreground" />;
 }
 

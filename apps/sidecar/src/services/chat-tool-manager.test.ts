@@ -36,12 +36,15 @@ describe("chat-tool-manager", () => {
     }
   });
 
-  test("应返回默认工具列表并包含 memory_search/web_search", () => {
+  test("应返回默认工具列表并包含 memory_search/web_search/suggest_agent_mode", () => {
     const tools = getAllChatToolInfos();
     expect(tools.some((item) => item.meta.id === "memory_search")).toBeTrue();
     expect(tools.some((item) => item.meta.id === "web_search")).toBeTrue();
+    expect(tools.some((item) => item.meta.id === "suggest_agent_mode")).toBeTrue();
     const memoryTool = tools.find((item) => item.meta.id === "memory_search");
+    const suggestTool = tools.find((item) => item.meta.id === "suggest_agent_mode");
     expect(memoryTool?.enabled).toBeTrue();
+    expect(suggestTool?.enabled).toBeTrue();
   });
 
   test("应支持更新工具开关状态", () => {
@@ -65,6 +68,12 @@ describe("chat-tool-manager", () => {
     const result = await testChatTool("memory_search");
     expect(result.success).toBeTrue();
     expect(result.message).toContain("本地记忆检索工具可用");
+  });
+
+  test("suggest_agent_mode 测试应直接返回成功", async () => {
+    const result = await testChatTool("suggest_agent_mode");
+    expect(result.success).toBeTrue();
+    expect(result.message).toContain("Agent 模式推荐工具可用");
   });
 
   test("web_search 在未配置 key 时应测试 DuckDuckGo", async () => {
