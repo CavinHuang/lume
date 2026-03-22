@@ -325,7 +325,18 @@ async function runEnabledToolsForChat(input: {
   enabledToolIds?: string[];
   emitToolActivity: (activity: ChatToolActivity) => void;
 }): Promise<string | undefined> {
-  const enabled = new Set((input.enabledToolIds ?? []).filter((item) => typeof item === "string"));
+  const toolInfos = getAllChatToolInfos();
+  const enabledAndAvailable = new Set(
+    toolInfos
+      .filter((tool) => tool.enabled && tool.available)
+      .map((tool) => tool.meta.id)
+  );
+  const requested = input.enabledToolIds
+    ? new Set((input.enabledToolIds ?? []).filter((item) => typeof item === "string"))
+    : enabledAndAvailable;
+  const enabled = new Set(
+    Array.from(requested).filter((toolId) => enabledAndAvailable.has(toolId))
+  );
   const contextSections: string[] = [];
 
   if (enabled.has("memory_search")) {
@@ -394,7 +405,6 @@ async function runEnabledToolsForChat(input: {
     }
   }
 
-  const toolInfos = getAllChatToolInfos();
   const customEnabledTools = toolInfos.filter(
     (tool) =>
       tool.meta.category === "custom" &&

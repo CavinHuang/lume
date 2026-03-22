@@ -93,6 +93,7 @@ describe("chat-service tool activity", () => {
   });
 
   test("web_search 配置 brave key 后应优先使用 brave provider", async () => {
+    updateChatToolState("web_search", { enabled: true });
     const requestedUrls: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -274,6 +275,56 @@ describe("chat-service tool activity", () => {
     );
 
     expect(requestedUrls.length).toBe(0);
+    expect(toolEvents.length).toBe(0);
+  });
+
+  test("enabledToolIds 缺省时应回退到配置默认启用工具执行", async () => {
+    const conversation = createConversation("默认启用工具执行");
+    const toolEvents: StreamToolActivityEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "回忆一下我们之前的结论",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model"
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(toolEvents.some((event) => event.activity.toolName === "memory_search")).toBeTrue();
+  });
+
+  test("工具在配置中被禁用时即使在 enabledToolIds 中也不应执行", async () => {
+    updateChatToolState("memory_search", { enabled: false });
+    const conversation = createConversation("禁用工具不执行");
+    const toolEvents: StreamToolActivityEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "回忆一下我们之前的结论",
+        messageHistory: [],
+        channelId: "mock-channel",
+        modelId: "mock-model",
+        enabledToolIds: ["memory_search"]
+      },
+      {
+        onChunk: () => {},
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
     expect(toolEvents.length).toBe(0);
   });
 });
