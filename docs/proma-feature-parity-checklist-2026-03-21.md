@@ -103,6 +103,7 @@
 - ✅ 已完成：`nano_banana` 多参考图优先级（当前 > 上一轮 assistant > 上一轮 user）与数量上限（最多 4 张）。
 - ✅ 已完成：Anthropic 异常顺序回归（`input_json_delta` 早于 `tool_use start`）并验证工具链路可恢复。
 - ✅ 已完成：Anthropic 同轮交错 `index delta` 归属恢复（双 `tool_use` 参数不串位）与端到端回归覆盖。
+- ✅ 已完成：OpenAI `tool_call arguments` 异常包裹（code fence JSON）解析恢复与续接回归覆盖。
 
 **当前剩余差异（非阻塞 P0，偏向 P1）**
 - ⏳ 未做：更高强度混沌注入（跨轮随机交错、截断 JSON、网络抖动重放）的压力回归覆盖。
