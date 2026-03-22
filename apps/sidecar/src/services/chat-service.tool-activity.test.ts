@@ -10,6 +10,7 @@ import type {
   StreamReasoningEvent,
   StreamToolActivityEvent
 } from "@lume/shared";
+import { createChannel } from "./channel-manager";
 import { createConversation, getConversationMessages } from "./conversation-manager";
 import { sendMessage } from "./chat-service";
 import { createCustomChatTool, updateChatToolCredentials, updateChatToolState } from "./chat-tool-manager";
@@ -381,5 +382,82 @@ describe("chat-service tool activity", () => {
     );
 
     expect(toolEvents.length).toBe(0);
+  });
+
+  test("openai 兼容 provider 启用工具时应走模型函数调用链路", async () => {
+    delete process.env.LUME_CHAT_MOCK_SUCCESS;
+    delete process.env.LUME_CHAT_MOCK_TEXT;
+
+    const channel = createChannel({
+      name: "openai-fc",
+      provider: "openai",
+      baseUrl: "https://mock-openai.example.com/v1",
+      apiKey: "sk-test",
+      models: [{ id: "gpt-test", name: "gpt-test", enabled: true }],
+      enabled: true
+    });
+    updateChatToolState("web_search", { enabled: true });
+
+    const requestBodies: unknown[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/chat/completions")) {
+        if (init?.body && typeof init.body === "string") {
+          requestBodies.push(JSON.parse(init.body));
+        }
+        if (requestBodies.length === 1) {
+          return new Response(
+            `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_web_1","function":{"name":"web_search","arguments":"{\\"query\\":\\"latest ai news\\"}"}}]}}]}\n` +
+            `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n` +
+            "data: [DONE]\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } }
+          );
+        }
+        return new Response(
+          `data: {"choices":[{"delta":{"content":"这是函数调用后的最终回答"}}]}\n` +
+          "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (url.includes("duckduckgo.com/html")) {
+        return new Response(
+          "<a class=\"result__a\" href=\"https://example.com/news\">Latest AI News</a><div class=\"result__snippet\">snippet</div>",
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const conversation = createConversation("函数调用工具链路");
+    const toolEvents: StreamToolActivityEvent[] = [];
+    const chunkEvents: StreamChunkEvent[] = [];
+
+    await sendMessage(
+      {
+        conversationId: conversation.id,
+        userMessage: "请帮我获取今天的 AI 新闻并总结",
+        messageHistory: [],
+        channelId: channel.id,
+        modelId: "gpt-test",
+        enabledToolIds: ["web_search"]
+      },
+      {
+        onChunk: (event) => { chunkEvents.push(event); },
+        onReasoning: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onToolActivity: (event) => { toolEvents.push(event); }
+      }
+    );
+
+    expect(requestBodies.length).toBe(2);
+    expect((requestBodies[0] as { tools?: unknown[] }).tools?.length ?? 0).toBeGreaterThan(0);
+
+    const secondMessages = (requestBodies[1] as { messages: Array<{ role: string; tool_call_id?: string }> }).messages;
+    expect(secondMessages.some((item) => item.role === "tool" && item.tool_call_id === "call_web_1")).toBeTrue();
+
+    expect(toolEvents.some((event) => event.activity.type === "start" && event.activity.toolName === "web_search")).toBeTrue();
+    expect(toolEvents.some((event) => event.activity.type === "result" && event.activity.toolName === "web_search")).toBeTrue();
+    expect(chunkEvents.some((event) => event.delta.includes("函数调用后的最终回答"))).toBeTrue();
   });
 });

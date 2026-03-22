@@ -21,7 +21,16 @@ import type {
   StreamToolActivityEvent
 } from "@lume/shared";
 import { CHAT_IPC_CHANNELS } from "@lume/shared";
-import { fetchTitle, getAdapter, streamSSE, type ImageAttachmentData } from "../providers";
+import {
+  fetchTitle,
+  getAdapter,
+  streamSSE,
+  type ContinuationMessage,
+  type ImageAttachmentData,
+  type ToolCall,
+  type ToolDefinition,
+  type ToolResult
+} from "../providers";
 import { isImageAttachment, readAttachmentAsBase64 } from "./attachment-service";
 import { decryptApiKey, listChannels } from "./channel-manager";
 import { extractTextFromAttachment, isDocumentAttachment } from "./document-parser";
@@ -35,6 +44,7 @@ import { searchWorkspaceMemory } from "./memory-service";
 import {
   getAllChatToolInfos,
   getChatToolCredentials,
+  getEnabledChatToolMetas,
   getEnabledChatToolSystemPromptAppend
 } from "./chat-tool-manager";
 import { executeHttpChatTool } from "./chat-tool-http-executor";
@@ -48,6 +58,7 @@ type ChatEventEmitter = {
 };
 
 const activeControllers = new Map<string, AbortController>();
+const MAX_TOOL_CALLING_ROUNDS = 6;
 
 function getImageAttachmentData(attachments?: FileAttachment[]): ImageAttachmentData[] {
   if (!attachments || attachments.length === 0) return [];
@@ -336,6 +347,217 @@ async function runCustomHttpTool(meta: ChatToolMeta, userMessage: string): Promi
   });
 }
 
+function getStringArgument(argumentsObj: Record<string, unknown>, key: string): string | undefined {
+  const value = argumentsObj[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function getDefaultToolDefinitions(enabledMetas: ChatToolMeta[]): ToolDefinition[] {
+  return enabledMetas.map((meta) => {
+    if (meta.id === "memory_search") {
+      return {
+        name: meta.id,
+        description: meta.description,
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "要检索的关键词或问题"
+            }
+          },
+          required: ["query"]
+        }
+      };
+    }
+
+    if (meta.id === "web_search") {
+      return {
+        name: meta.id,
+        description: meta.description,
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "要联网搜索的查询词"
+            }
+          },
+          required: ["query"]
+        }
+      };
+    }
+
+    if (meta.id === "suggest_agent_mode") {
+      return {
+        name: meta.id,
+        description: meta.description,
+        parameters: {
+          type: "object",
+          properties: {
+            reason: {
+              type: "string",
+              description: "推荐切换 Agent 模式的理由"
+            },
+            suggestedPrompt: {
+              type: "string",
+              description: "建议用户在 Agent 模式使用的初始提示词"
+            }
+          },
+          required: ["reason", "suggestedPrompt"]
+        }
+      };
+    }
+
+    const props = Object.fromEntries(
+      (meta.params ?? []).map((param) => [
+        param.name,
+        {
+          type: param.type,
+          description: param.description,
+          ...(param.enum && param.enum.length > 0 ? { enum: param.enum } : {})
+        }
+      ])
+    );
+    const properties = Object.keys(props).length > 0
+      ? props
+      : {
+        query: {
+          type: "string",
+          description: "输入查询内容"
+        }
+      };
+    const required = (meta.params ?? [])
+      .filter((param) => param.required)
+      .map((param) => param.name);
+
+    return {
+      name: meta.id,
+      description: meta.description,
+      parameters: {
+        type: "object",
+        properties,
+        ...(required.length > 0 ? { required } : {})
+      }
+    };
+  });
+}
+
+async function executeToolCallForChat(input: {
+  toolCall: ToolCall;
+  fallbackQuery: string;
+  enabledMetaMap: Map<string, ChatToolMeta>;
+  emitToolActivity: (activity: ChatToolActivity) => void;
+}): Promise<ToolResult> {
+  const { toolCall, fallbackQuery, enabledMetaMap } = input;
+  const meta = enabledMetaMap.get(toolCall.name);
+  if (!meta) {
+    return {
+      toolCallId: toolCall.id,
+      content: `工具未启用或不存在: ${toolCall.name}`,
+      isError: true
+    };
+  }
+
+  input.emitToolActivity({
+    type: "start",
+    toolName: toolCall.name,
+    toolCallId: toolCall.id
+  });
+
+  const query = getStringArgument(toolCall.arguments, "query")
+    ?? getStringArgument(toolCall.arguments, "message")
+    ?? fallbackQuery;
+
+  try {
+    if (toolCall.name === "memory_search") {
+      const workspace = ensureDefaultWorkspace();
+      const results = await searchWorkspaceMemory({
+        workspaceSlug: workspace.slug,
+        query,
+        maxResults: 5
+      });
+      const text = results.length === 0
+        ? "未检索到相关记忆。"
+        : results.map((item, index) => `${index + 1}. [${item.path}] ${item.snippet}`.trim()).join("\n\n");
+      input.emitToolActivity({
+        type: "result",
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        result: text
+      });
+      return { toolCallId: toolCall.id, content: text };
+    }
+
+    if (toolCall.name === "web_search") {
+      const { provider, result } = await searchWeb(query);
+      const text = `[provider=${provider}]\n${result}`;
+      input.emitToolActivity({
+        type: "result",
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        result: text
+      });
+      return { toolCallId: toolCall.id, content: text };
+    }
+
+    if (toolCall.name === "suggest_agent_mode") {
+      const reason = getStringArgument(toolCall.arguments, "reason");
+      const suggestedPrompt = getStringArgument(toolCall.arguments, "suggestedPrompt");
+      const recommendation = (reason && suggestedPrompt)
+        ? { reason, suggestedPrompt }
+        : buildAgentModeRecommendation(fallbackQuery);
+      const text = JSON.stringify({
+        type: "agent_recommendation",
+        ...recommendation
+      });
+      input.emitToolActivity({
+        type: "result",
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        result: text
+      });
+      return { toolCallId: toolCall.id, content: text };
+    }
+
+    if (meta.category === "custom") {
+      const customQuery = query || JSON.stringify(toolCall.arguments);
+      const result = await runCustomHttpTool(meta, customQuery);
+      input.emitToolActivity({
+        type: "result",
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        result
+      });
+      return { toolCallId: toolCall.id, content: result };
+    }
+
+    const message = `暂不支持的工具: ${toolCall.name}`;
+    input.emitToolActivity({
+      type: "result",
+      toolName: toolCall.name,
+      toolCallId: toolCall.id,
+      result: message,
+      isError: true
+    });
+    return { toolCallId: toolCall.id, content: message, isError: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    input.emitToolActivity({
+      type: "result",
+      toolName: toolCall.name,
+      toolCallId: toolCall.id,
+      result: message,
+      isError: true
+    });
+    return {
+      toolCallId: toolCall.id,
+      content: message,
+      isError: true
+    };
+  }
+}
+
 async function runEnabledToolsForChat(input: {
   conversationId: string;
   userMessage: string;
@@ -521,18 +743,14 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     emit.onToolActivity({ conversationId, activity });
   };
 
-  const toolContextAppendix = await runEnabledToolsForChat({
-    conversationId,
-    userMessage,
-    enabledToolIds,
-    emitToolActivity
-  });
-  const toolSystemPromptAppend = getEnabledChatToolSystemPromptAppend(enabledToolIds);
-  const effectiveSystemMessage = [systemMessage, toolSystemPromptAppend, toolContextAppendix]
-    .filter(Boolean)
-    .join("\n\n") || undefined;
-
   if (process.env.LUME_CHAT_MOCK_SUCCESS === "1") {
+    await runEnabledToolsForChat({
+      conversationId,
+      userMessage,
+      enabledToolIds,
+      emitToolActivity
+    });
+
     const mockDelta = (process.env.LUME_CHAT_MOCK_TEXT || "chat-mock-success").trim();
     appendMessage(conversationId, {
       id: randomUUID(),
@@ -571,6 +789,28 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     return;
   }
 
+  const selectedModelId = resolveRequestedModelIdForChannel(channel, modelId) ?? modelId;
+  const modelSelection = resolveChannelModelSelection({
+    channelProvider: channel.provider,
+    baseUrl: channel.baseUrl,
+    modelId: selectedModelId
+  });
+
+  const enabledToolMetas = getEnabledChatToolMetas(enabledToolIds);
+  const useModelToolCalling = modelSelection.adapterProvider === "openai" && enabledToolMetas.length > 0;
+  const toolContextAppendix = useModelToolCalling
+    ? undefined
+    : await runEnabledToolsForChat({
+      conversationId,
+      userMessage,
+      enabledToolIds,
+      emitToolActivity
+    });
+  const toolSystemPromptAppend = getEnabledChatToolSystemPromptAppend(enabledToolIds);
+  const effectiveSystemMessage = [systemMessage, toolSystemPromptAppend, toolContextAppendix]
+    .filter(Boolean)
+    .join("\n\n") || undefined;
+
   const controller = new AbortController();
   // 先中止同一对话的旧请求，防止 AbortController 泄漏
   const existing = activeControllers.get(conversationId);
@@ -584,43 +824,94 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
 
   let accumulatedContent = "";
   let accumulatedReasoning = "";
-  const selectedModelId = resolveRequestedModelIdForChannel(channel, modelId) ?? modelId;
-  const modelSelection = resolveChannelModelSelection({
-    channelProvider: channel.provider,
-    baseUrl: channel.baseUrl,
-    modelId: selectedModelId
-  });
+  let finalContent = "";
+  let finalReasoning = "";
 
   try {
     const adapter = getAdapter(modelSelection.adapterProvider);
-    const request = adapter.buildStreamRequest({
-      baseUrl: channel.baseUrl,
-      apiKey,
-      modelId: modelSelection.resolvedModelId,
-      history: enrichedHistory,
-      userMessage: enrichedUserMessage,
-      systemMessage: effectiveSystemMessage,
-      attachments,
-      readImageAttachments: getImageAttachmentData,
-      thinkingEnabled
-    });
-
-    const { content, reasoning } = await streamSSE({
-      request,
-      adapter,
-      signal: controller.signal,
-      onEvent: (event) => {
-        if (event.type === "chunk") {
-          accumulatedContent += event.delta;
-          emit.onChunk({ conversationId, delta: event.delta });
-          return;
-        }
-        if (event.type === "reasoning") {
-          accumulatedReasoning += event.delta;
-          emit.onReasoning({ conversationId, delta: event.delta });
-        }
+    const handleStreamEvent = (event: { type: string; delta?: string }): void => {
+      if (event.type === "chunk" && typeof event.delta === "string") {
+        accumulatedContent += event.delta;
+        emit.onChunk({ conversationId, delta: event.delta });
+        return;
       }
-    });
+      if (event.type === "reasoning" && typeof event.delta === "string") {
+        accumulatedReasoning += event.delta;
+        emit.onReasoning({ conversationId, delta: event.delta });
+      }
+    };
+
+    if (useModelToolCalling) {
+      const toolDefinitions = getDefaultToolDefinitions(enabledToolMetas);
+      const enabledMetaMap = new Map(enabledToolMetas.map((meta) => [meta.id, meta] as const));
+      const continuationMessages: ContinuationMessage[] = [];
+
+      for (let round = 0; round < MAX_TOOL_CALLING_ROUNDS; round += 1) {
+        const request = adapter.buildStreamRequest({
+          baseUrl: channel.baseUrl,
+          apiKey,
+          modelId: modelSelection.resolvedModelId,
+          history: enrichedHistory,
+          userMessage: enrichedUserMessage,
+          systemMessage: effectiveSystemMessage,
+          attachments,
+          readImageAttachments: getImageAttachmentData,
+          thinkingEnabled,
+          tools: toolDefinitions,
+          continuationMessages: continuationMessages.length > 0 ? continuationMessages : undefined
+        });
+
+        const { toolCalls, stopReason } = await streamSSE({
+          request,
+          adapter,
+          signal: controller.signal,
+          onEvent: handleStreamEvent
+        });
+
+        if (toolCalls.length === 0 || stopReason !== "tool_use") {
+          break;
+        }
+
+        const toolResults: ToolResult[] = [];
+        for (const toolCall of toolCalls) {
+          const result = await executeToolCallForChat({
+            toolCall,
+            fallbackQuery: userMessage,
+            enabledMetaMap,
+            emitToolActivity
+          });
+          toolResults.push(result);
+        }
+        continuationMessages.push(
+          { role: "assistant", content: "", toolCalls },
+          { role: "tool", results: toolResults }
+        );
+      }
+
+      finalContent = accumulatedContent;
+      finalReasoning = accumulatedReasoning;
+    } else {
+      const request = adapter.buildStreamRequest({
+        baseUrl: channel.baseUrl,
+        apiKey,
+        modelId: modelSelection.resolvedModelId,
+        history: enrichedHistory,
+        userMessage: enrichedUserMessage,
+        systemMessage: effectiveSystemMessage,
+        attachments,
+        readImageAttachments: getImageAttachmentData,
+        thinkingEnabled
+      });
+
+      const { content, reasoning } = await streamSSE({
+        request,
+        adapter,
+        signal: controller.signal,
+        onEvent: handleStreamEvent
+      });
+      finalContent = content;
+      finalReasoning = reasoning;
+    }
 
     // AI 调用成功后再写入用户消息和 AI 回复，保证一致性
     appendMessage(conversationId, {
@@ -634,10 +925,10 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     appendMessage(conversationId, {
       id: assistantMsgId,
       role: "assistant",
-      content,
+      content: finalContent,
       createdAt: Date.now(),
       model: modelSelection.modelRef,
-      reasoning: reasoning || undefined,
+      reasoning: finalReasoning || undefined,
       toolActivities: accumulatedToolActivities.length > 0 ? accumulatedToolActivities : undefined
     });
     updateConversationMeta(conversationId, {});

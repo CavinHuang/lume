@@ -24,6 +24,8 @@ import type {
   StreamEvent,
   TitleRequestInput,
   ImageAttachmentData,
+  ToolDefinition,
+  ContinuationMessage,
 } from './types'
 import { normalizeBaseUrl } from './url-utils'
 
@@ -38,14 +40,31 @@ interface OpenAIContentBlock {
 
 /** OpenAI 消息格式 */
 interface OpenAIMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string | OpenAIContentBlock[]
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string | OpenAIContentBlock[] | null
+  tool_calls?: OpenAIToolCall[]
+  tool_call_id?: string
+}
+
+/** OpenAI tool_call 格式 */
+interface OpenAIToolCall {
+  id: string
+  type: 'function'
+  function: { name: string; arguments: string }
 }
 
 /** OpenAI SSE 数据块 */
 interface OpenAIChunkData {
   choices?: Array<{
-    delta?: { content?: string; reasoning_content?: string }
+    delta?: {
+      content?: string
+      reasoning_content?: string
+      tool_calls?: Array<{
+        index?: number
+        id?: string
+        function?: { name?: string; arguments?: string }
+      }>
+    }
     finish_reason?: string | null
   }>
 }
@@ -123,6 +142,44 @@ function toOpenAIMessages(input: StreamRequestInput): OpenAIMessage[] {
   return messages
 }
 
+function toOpenAITools(tools: ToolDefinition[]): Array<Record<string, unknown>> {
+  return tools.map((tool) => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  }))
+}
+
+function appendContinuationMessages(
+  messages: OpenAIMessage[],
+  continuationMessages: ContinuationMessage[],
+): void {
+  for (const contMsg of continuationMessages) {
+    if (contMsg.role === 'assistant') {
+      messages.push({
+        role: 'assistant',
+        content: contMsg.content || null,
+        tool_calls: contMsg.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+        })),
+      })
+    } else if (contMsg.role === 'tool') {
+      for (const result of contMsg.results) {
+        messages.push({
+          role: 'tool',
+          content: result.content,
+          tool_call_id: result.toolCallId,
+        })
+      }
+    }
+  }
+}
+
 // ===== 适配器实现 =====
 
 export class OpenAIAdapter implements ProviderAdapter {
@@ -131,6 +188,18 @@ export class OpenAIAdapter implements ProviderAdapter {
   buildStreamRequest(input: StreamRequestInput): ProviderRequest {
     const url = normalizeBaseUrl(input.baseUrl)
     const messages = toOpenAIMessages(input)
+    const bodyObj: Record<string, unknown> = {
+      model: input.modelId,
+      messages,
+      stream: true,
+    }
+
+    if (input.tools && input.tools.length > 0) {
+      bodyObj.tools = toOpenAITools(input.tools)
+    }
+    if (input.continuationMessages && input.continuationMessages.length > 0) {
+      appendContinuationMessages(messages, input.continuationMessages)
+    }
 
     return {
       url: `${url}/chat/completions`,
@@ -138,11 +207,7 @@ export class OpenAIAdapter implements ProviderAdapter {
         'Authorization': `Bearer ${input.apiKey}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model: input.modelId,
-        messages,
-        stream: true,
-      }),
+      body: JSON.stringify(bodyObj),
     }
   }
 
@@ -159,6 +224,30 @@ export class OpenAIAdapter implements ProviderAdapter {
       // DeepSeek 等供应商的推理内容
       if (delta?.reasoning_content) {
         events.push({ type: 'reasoning', delta: delta.reasoning_content })
+      }
+
+      if (delta?.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          if (tc.function?.name) {
+            events.push({
+              type: 'tool_call_start',
+              toolCallId: tc.id || `tc_${tc.index ?? 0}`,
+              toolName: tc.function.name,
+            })
+          }
+          if (tc.function?.arguments) {
+            events.push({
+              type: 'tool_call_delta',
+              toolCallId: tc.id || '',
+              argumentsDelta: tc.function.arguments,
+            })
+          }
+        }
+      }
+
+      const finishReason = chunk.choices?.[0]?.finish_reason
+      if (finishReason === 'tool_calls') {
+        events.push({ type: 'done', stopReason: 'tool_use' })
       }
 
       return events

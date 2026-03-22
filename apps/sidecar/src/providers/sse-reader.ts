@@ -16,7 +16,7 @@
  * - 通过回调分发事件
  */
 
-import type { ProviderAdapter, ProviderRequest, StreamEventCallback } from './types'
+import type { ProviderAdapter, ProviderRequest, StreamEventCallback, ToolCall } from './types'
 
 // ===== 流式请求 =====
 
@@ -30,6 +30,8 @@ export interface StreamSSEOptions {
   onEvent: StreamEventCallback
   /** AbortSignal 用于取消请求 */
   signal?: AbortSignal
+  /** 自定义 fetch 函数（代理等场景下由调用方注入） */
+  fetchFn?: typeof globalThis.fetch
 }
 
 /** streamSSE 的返回结果 */
@@ -38,6 +40,10 @@ export interface StreamSSEResult {
   content: string
   /** 累积的推理内容 */
   reasoning: string
+  /** 本轮返回的工具调用列表 */
+  toolCalls: ToolCall[]
+  /** 停止原因（'tool_use' 表示需要执行工具后继续） */
+  stopReason?: string
 }
 
 /**
@@ -53,10 +59,10 @@ export interface StreamSSEResult {
  * 7. 返回完整内容
  */
 export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSEResult> {
-  const { request, adapter, onEvent, signal } = options
+  const { request, adapter, onEvent, signal, fetchFn = fetch } = options
 
   // 1. 发起请求
-  const response = await fetch(request.url, {
+  const response = await fetchFn(request.url, {
     method: 'POST',
     headers: request.headers,
     body: request.body,
@@ -76,9 +82,12 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   // 3. 读取流
   let content = ''
   let reasoning = ''
+  let stopReason: string | undefined
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  const pendingToolCalls = new Map<string, { id: string; name: string; args: string; metadata?: Record<string, unknown> }>()
+  let currentToolCallId: string | undefined
 
   try {
     while (true) {
@@ -91,9 +100,14 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
       buffer = lines.pop() || ''
 
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-
-        const data = line.slice(6).trim()
+        let data: string
+        if (line.startsWith('data: ')) {
+          data = line.slice(6).trim()
+        } else if (line.startsWith('data:')) {
+          data = line.slice(5).trim()
+        } else {
+          continue
+        }
         if (data === '[DONE]' || !data) continue
 
         // 4. 委托给 adapter 解析供应商特定 JSON
@@ -104,6 +118,24 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
             content += event.delta
           } else if (event.type === 'reasoning') {
             reasoning += event.delta
+          } else if (event.type === 'tool_call_start') {
+            currentToolCallId = event.toolCallId
+            pendingToolCalls.set(event.toolCallId, {
+              id: event.toolCallId,
+              name: event.toolName,
+              args: '',
+              metadata: event.metadata,
+            })
+          } else if (event.type === 'tool_call_delta') {
+            const tcId = event.toolCallId || currentToolCallId
+            if (tcId) {
+              const pending = pendingToolCalls.get(tcId)
+              if (pending) {
+                pending.args += event.argumentsDelta
+              }
+            }
+          } else if (event.type === 'done' && event.stopReason) {
+            stopReason = event.stopReason
           }
           onEvent(event)
         }
@@ -113,8 +145,31 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
     reader.releaseLock()
   }
 
-  onEvent({ type: 'done' })
-  return { content, reasoning }
+  const toolCalls: ToolCall[] = []
+  for (const [, pending] of pendingToolCalls) {
+    try {
+      toolCalls.push({
+        id: pending.id,
+        name: pending.name,
+        arguments: pending.args ? JSON.parse(pending.args) : {},
+        metadata: pending.metadata,
+      })
+    } catch {
+      toolCalls.push({
+        id: pending.id,
+        name: pending.name,
+        arguments: {},
+        metadata: pending.metadata,
+      })
+    }
+  }
+
+  if (toolCalls.length > 0 && !stopReason) {
+    stopReason = 'tool_use'
+  }
+
+  onEvent({ type: 'done', stopReason })
+  return { content, reasoning, toolCalls, stopReason }
 }
 
 // ===== 非流式标题请求 =====
