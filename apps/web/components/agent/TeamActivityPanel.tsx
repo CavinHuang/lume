@@ -189,6 +189,38 @@ function AgentCard({
         <div className="space-y-2 border-t border-border/60 px-3 py-2">
           <p className="text-[11px] leading-relaxed text-foreground/80">{agent.description}</p>
 
+          {agent.currentToolName && agent.status === 'running' ? (
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-75" />
+                <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
+              </span>
+              <span className="text-blue-600">{agent.currentToolName}</span>
+            </div>
+          ) : null}
+
+          {agent.progressDescription ? (
+            <p className="text-[10px] italic text-muted-foreground/90">{agent.progressDescription}</p>
+          ) : null}
+
+          {agent.toolHistory && agent.toolHistory.length > 0 ? (
+            <div className="flex flex-wrap gap-1 text-[10px]">
+              {agent.toolHistory.slice(-5).map((tool, i) => (
+                <span key={`${tool}-${i}`} className="rounded bg-muted px-1 py-0.5 text-muted-foreground/70">
+                  {tool}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          {(agent.durationMs || agent.toolCallCount || agent.tokenUsage) ? (
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+              {agent.durationMs ? <span>{Math.floor(agent.durationMs / 1000)}s</span> : null}
+              {agent.toolCallCount ? <span>{agent.toolCallCount} calls</span> : null}
+              {agent.tokenUsage ? <span>{agent.tokenUsage} tokens</span> : null}
+            </div>
+          ) : null}
+
           {(shortRunId || agent.usageEvents || agent.announceStatus || agent.errorCode) ? (
             <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground/80">
               {shortRunId ? <span className="rounded bg-muted px-1.5 py-0.5">run {shortRunId}</span> : null}

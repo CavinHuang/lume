@@ -8,6 +8,7 @@ const pendingToolPermissionResolvers = new Map<
   string,
   {
     sessionId: string;
+    approvalSessionId: string;
     resolve: (decision: AgentToolPermissionDecision | null) => void;
     timeout?: ReturnType<typeof setTimeout>;
   }
@@ -46,6 +47,14 @@ export function clearToolPermissionSession(sessionId: string): void {
   cancelPendingToolPermissionBySession(sessionId);
 }
 
+export function setToolPermissionApprovalSession(requestId: string, approvalSessionId: string): void {
+  const pending = pendingToolPermissionResolvers.get(requestId);
+  if (!pending) return;
+  const normalized = approvalSessionId.trim();
+  if (!normalized) return;
+  pending.approvalSessionId = normalized;
+}
+
 export function waitForToolPermissionDecision(
   request: AgentToolPermissionRequest,
   signal: AbortSignal,
@@ -80,6 +89,7 @@ export function waitForToolPermissionDecision(
 
     pendingToolPermissionResolvers.set(request.requestId, {
       sessionId: request.sessionId,
+      approvalSessionId: request.sessionId,
       resolve: done,
       timeout
     });
@@ -93,7 +103,7 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
   if (!pending) {
     return false;
   }
-  if (pending.sessionId !== input.sessionId) {
+  if (pending.approvalSessionId !== input.sessionId) {
     throw new Error("工具权限确认会话不匹配");
   }
   pending.resolve(input.decision);
@@ -102,7 +112,7 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
 
 export function cancelPendingToolPermissionBySession(sessionId: string): void {
   for (const [requestId, pending] of pendingToolPermissionResolvers) {
-    if (pending.sessionId !== sessionId) continue;
+    if (pending.sessionId !== sessionId && pending.approvalSessionId !== sessionId) continue;
     pending.resolve(null);
     pendingToolPermissionResolvers.delete(requestId);
   }

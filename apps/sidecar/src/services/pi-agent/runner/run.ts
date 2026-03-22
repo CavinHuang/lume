@@ -93,6 +93,10 @@ export async function stopPiAgent(sessionId: string): Promise<boolean> {
   return true;
 }
 
+export function isPiAgentSessionActive(sessionId: string): boolean {
+  return activePiSessions.has(sessionId);
+}
+
 export async function stopAllPiAgents(): Promise<void> {
   const all = Array.from(activePiSessions.entries());
   for (const [sessionId, active] of all) {

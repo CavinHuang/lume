@@ -62,6 +62,7 @@ import type {
   AgentStreamEvent,
   AgentWorkspace,
   FileEntry,
+  FileSearchResult,
   FileDialogResult,
   AgentCopyFolderInput,
   Channel,
@@ -651,6 +652,7 @@ export async function createAgentSession(params?: {
   title?: string;
   channelId?: string;
   workspaceId?: string;
+  parentSessionId?: string;
 }): Promise<AgentSessionMeta> {
   return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.CREATE_SESSION, params ?? {});
 }
@@ -665,6 +667,27 @@ export async function getRecentAgentSessionMessages(sessionId: string, limit: nu
 
 export async function updateAgentSessionTitle(sessionId: string, title: string): Promise<AgentSessionMeta> {
   return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.UPDATE_TITLE, { sessionId, title });
+}
+
+export async function migrateChatToAgentSession(
+  conversationId: string,
+  sessionId: string
+): Promise<{ ok: true; migrated: number }> {
+  return sidecarCall<{ ok: true; migrated: number }>(AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT, {
+    conversationId,
+    sessionId
+  });
+}
+
+export async function togglePinAgentSession(sessionId: string): Promise<AgentSessionMeta> {
+  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.TOGGLE_PIN_SESSION, { sessionId });
+}
+
+export async function moveAgentSessionToWorkspace(
+  sessionId: string,
+  workspaceId: string
+): Promise<AgentSessionMeta> {
+  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.MOVE_SESSION, { sessionId, workspaceId });
 }
 
 export async function deleteAgentSessionById(sessionId: string): Promise<{ ok: true }> {
@@ -939,6 +962,88 @@ export async function showAgentFileInFolder(
     workspaceSlug,
     sessionId,
     path
+  });
+}
+
+export async function previewAgentFile(
+  workspaceSlug: string,
+  sessionId: string,
+  path: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.PREVIEW_FILE, {
+    workspaceSlug,
+    sessionId,
+    path
+  });
+}
+
+export async function renameAgentFile(
+  workspaceSlug: string,
+  sessionId: string,
+  path: string,
+  newName: string
+): Promise<{ ok: true; path: string }> {
+  return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.RENAME_FILE, {
+    workspaceSlug,
+    sessionId,
+    path,
+    newName
+  });
+}
+
+export async function moveAgentFile(
+  workspaceSlug: string,
+  sessionId: string,
+  path: string,
+  targetDir: string
+): Promise<{ ok: true; path: string }> {
+  return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.MOVE_FILE, {
+    workspaceSlug,
+    sessionId,
+    path,
+    targetDir
+  });
+}
+
+export async function listAttachedDirectory(path: string): Promise<FileEntry[]> {
+  return sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY, { path });
+}
+
+export async function openAttachedFile(path: string): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.OPEN_ATTACHED_FILE, { path });
+}
+
+export async function showAttachedFileInFolder(path: string): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SHOW_ATTACHED_IN_FOLDER, { path });
+}
+
+export async function renameAttachedFile(path: string, newName: string): Promise<{ ok: true; path: string }> {
+  return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.RENAME_ATTACHED_FILE, {
+    path,
+    newName
+  });
+}
+
+export async function moveAttachedFile(path: string, targetDir: string): Promise<{ ok: true; path: string }> {
+  return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.MOVE_ATTACHED_FILE, {
+    path,
+    targetDir
+  });
+}
+
+export async function searchAgentWorkspaceFiles(
+  workspaceSlug: string,
+  sessionId: string,
+  query: string,
+  limit = 20,
+  rootPath?: string
+): Promise<FileSearchResult> {
+  return sidecarCall<FileSearchResult>(AGENT_IPC_CHANNELS.SEARCH_WORKSPACE_FILES, {
+    workspaceSlug,
+    sessionId,
+    query,
+    limit,
+    rootPath
   });
 }
 

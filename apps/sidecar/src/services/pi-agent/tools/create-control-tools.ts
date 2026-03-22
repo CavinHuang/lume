@@ -632,7 +632,7 @@ export function createPiControlTools(params: {
       description: EXIT_PLAN_MODE_PROMPT,
       parameters: Type.Object({
         allowedPrompts: Type.Optional(Type.Array(Type.Object({
-          tool: Type.Literal("Bash"),
+          tool: Type.String({ description: "Tool name for this prompt (currently only Bash is supported)" }),
           prompt: Type.String({ description: "Semantic action, e.g. run tests/install dependencies" })
         }))),
         pushToRemote: Type.Optional(Type.Boolean()),

@@ -54,7 +54,7 @@ function EmptyState(): React.ReactElement {
 }
 
 function ScrollTopLoader({ hasMore, loading, onLoadMore }: { hasMore: boolean; loading: boolean; onLoadMore: () => Promise<void> }): React.ReactElement | null {
-  const { scrollRef } = useConversationContext();
+  const { scrollableRef } = useConversationContext();
   const triggeredRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -62,7 +62,7 @@ function ScrollTopLoader({ hasMore, loading, onLoadMore }: { hasMore: boolean; l
   }, [hasMore]);
 
   React.useEffect(() => {
-    const el = scrollRef.current;
+    const el = scrollableRef.current;
     if (!el || !hasMore || triggeredRef.current) return;
 
     const handleScroll = (): void => {
@@ -79,7 +79,7 @@ function ScrollTopLoader({ hasMore, loading, onLoadMore }: { hasMore: boolean; l
 
     el.addEventListener("scroll", handleScroll, { passive: true });
     return () => el.removeEventListener("scroll", handleScroll);
-  }, [scrollRef, hasMore, onLoadMore]);
+  }, [scrollableRef, hasMore, onLoadMore]);
 
   if (!hasMore) return null;
 

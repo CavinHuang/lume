@@ -5,6 +5,7 @@ export * from "./chat-atoms";
 export * from "./chat-tool-atoms";
 export * from "./system-prompt-atoms";
 export * from "./agent-atoms";
+export * from "./onboarding";
 export * from "./theme";
 export * from "./user-profile";
 export * from "./updater";

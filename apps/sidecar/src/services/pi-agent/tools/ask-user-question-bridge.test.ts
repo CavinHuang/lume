@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  setAskUserQuestionApprovalSession,
   submitPiAskUserQuestionAnswers,
   waitForPiAskUserQuestionAnswers
 } from "./ask-user-question-bridge";
@@ -71,5 +72,35 @@ describe("ask-user-question-bridge", () => {
         process.env.LUME_ASK_USER_QUESTION_ALLOW_LOW_TIMEOUT = previousAllowLow;
       }
     }
+  });
+
+  test("应支持由父会话提交子会话 AskUserQuestion 答案", async () => {
+    const toolUseId = "tool-use-proxy";
+    const signal = new AbortController().signal;
+    const waitPromise = waitForPiAskUserQuestionAnswers(
+      "child-session",
+      toolUseId,
+      [{
+        header: "问题1",
+        question: "请选择",
+        options: [
+          { label: "A", description: "选项A" },
+          { label: "B", description: "选项B" }
+        ],
+        multiSelect: false
+      }],
+      signal,
+      () => {}
+    );
+    setAskUserQuestionApprovalSession(toolUseId, "parent-session");
+    const handled = submitPiAskUserQuestionAnswers({
+      sessionId: "parent-session",
+      toolUseId,
+      answers: { "问题1": "B" }
+    });
+    expect(handled).toBeTrue();
+    const result = await waitPromise;
+    expect(result.status).toBe("answered");
+    expect(result.answers).toEqual({ "问题1": "B" });
   });
 });

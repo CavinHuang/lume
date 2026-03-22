@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { ChevronDown, ChevronRight, Pin, PinOff, Plus, Settings, Trash2, Pencil, Plug, Zap, RefreshCw } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, ChevronRight, Pin, PinOff, Plus, Settings, Trash2, Pencil, Plug, Zap, RefreshCw } from "lucide-react";
 import type { AgentSessionMeta, ConversationMeta } from "@lume/shared";
 import {
   activeViewAtom,
@@ -33,6 +33,8 @@ import {
   listAgentSessions,
   listAgentWorkspaces,
   listConversations,
+  moveAgentSessionToWorkspace,
+  togglePinAgentSession,
   togglePinConversation,
   updateAgentSessionTitle,
   updateConversationTitle
@@ -54,6 +56,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger
 } from "@/components/ui/context-menu";
 import { ModeSwitcher } from "./ModeSwitcher";
@@ -109,12 +114,14 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentAgentWorkspaceIdAtom);
 
   const [pinnedExpanded, setPinnedExpanded] = useState(true);
+  const [agentPinnedExpanded, setAgentPinnedExpanded] = useState(true);
   const [capabilities, setCapabilities] = useState<CapabilityCounts>(null);
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget>(null);
   const [editing, setEditing] = useState<EditingTarget>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
   const [isRefreshingSessions, setIsRefreshingSessions] = useState(false);
+  const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const refreshAgentSessions = async (): Promise<void> => {
@@ -192,13 +199,45 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     [sortedConversations]
   );
 
+  // 子会话索引：parentSessionId → 子会话数组
+  const childSessionMap = useMemo(() => {
+    const map = new Map<string, AgentSessionMeta[]>();
+    for (const s of agentSessions) {
+      if (!s.parentSessionId) continue;
+      if (currentWorkspaceId && s.workspaceId !== currentWorkspaceId) continue;
+      const arr = map.get(s.parentSessionId) ?? [];
+      arr.push(s);
+      map.set(s.parentSessionId, arr);
+    }
+    for (const arr of map.values()) arr.sort((a, b) => a.createdAt - b.createdAt);
+    return map;
+  }, [agentSessions, currentWorkspaceId]);
+
   const filteredAgentSessions = useMemo(
     () => [...agentSessions]
-      .filter((item) => !currentWorkspaceId || item.workspaceId === currentWorkspaceId)
+      .filter((item) => !item.parentSessionId && (!currentWorkspaceId || item.workspaceId === currentWorkspaceId))
       .sort((a, b) => b.updatedAt - a.updatedAt),
     [agentSessions, currentWorkspaceId]
   );
+  const pinnedAgentSessions = useMemo(
+    () => filteredAgentSessions.filter((item) => item.pinned),
+    [filteredAgentSessions]
+  );
   const agentGroups = useMemo(() => groupByDate(filteredAgentSessions), [filteredAgentSessions]);
+
+  // 选中子会话时自动展开父会话
+  useEffect(() => {
+    if (!currentAgentSessionId) return;
+    const current = agentSessions.find((s) => s.id === currentAgentSessionId);
+    if (current?.parentSessionId) {
+      setExpandedParentIds((prev) => {
+        if (prev.has(current.parentSessionId!)) return prev;
+        const next = new Set(prev);
+        next.add(current.parentSessionId!);
+        return next;
+      });
+    }
+  }, [currentAgentSessionId, agentSessions]);
 
   const beginEditConversation = (item: ConversationMeta): void => {
     setEditing({ id: item.id, type: "conversation", draft: item.title });
@@ -260,6 +299,19 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     setAgentSessions((prev) => [created, ...prev]);
     setCurrentAgentSessionId(created.id);
     setActiveView("conversations");
+  };
+
+  const toggleAgentPin = async (sessionId: string): Promise<void> => {
+    const updated = await togglePinAgentSession(sessionId);
+    setAgentSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+  };
+
+  const moveAgentSession = async (sessionId: string, workspaceId: string): Promise<void> => {
+    const updated = await moveAgentSessionToWorkspace(sessionId, workspaceId);
+    setAgentSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    if (currentAgentSessionId === sessionId) {
+      setCurrentWorkspaceId(workspaceId);
+    }
   };
 
   const confirmDelete = async (): Promise<void> => {
@@ -372,6 +424,19 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         </div>
       ) : null}
 
+      {mode === "agent" ? (
+        <div className="px-3 pt-3">
+          <button
+            type="button"
+            className="titlebar-no-drag flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-[13px] text-foreground/70 transition-colors hover:bg-foreground/[0.04]"
+            onClick={() => setAgentPinnedExpanded((prev) => !prev)}
+          >
+            <span className="inline-flex items-center gap-2"><Pin size={14} />置顶会话</span>
+            {pinnedAgentSessions.length > 0 ? (agentPinnedExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
+          </button>
+        </div>
+      ) : null}
+
       {mode === "chat" && pinnedExpanded && pinnedConversations.length > 0 ? (
         <div className="px-3 pb-1">
           <div className="ml-2 flex flex-col gap-0.5 border-l-2 border-primary/20 pl-1">
@@ -439,6 +504,106 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   <ContextMenuItem className="gap-2 text-[13px] text-destructive focus:text-destructive" onSelect={() => setPendingDelete({ id: item.id, type: "conversation" })}>
+                    <Trash2 size={14} />删除
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {mode === "agent" && agentPinnedExpanded && pinnedAgentSessions.length > 0 ? (
+        <div className="px-3 pb-1">
+          <div className="ml-2 flex flex-col gap-0.5 border-l-2 border-primary/20 pl-1">
+            {pinnedAgentSessions.map((item) => (
+              <ContextMenu key={`agent-pin-${item.id}`}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className={rowClass(currentAgentSessionId === item.id)}
+                    onClick={() => {
+                      setCurrentAgentSessionId(item.id);
+                      setActiveView("conversations");
+                    }}
+                    onDoubleClick={() => beginEditAgent(item)}
+                    onMouseEnter={() => setHoveredId(`agent-pin-${item.id}`)}
+                    onMouseLeave={() => setHoveredId((prev) => (prev === `agent-pin-${item.id}` ? null : prev))}
+                  >
+                    {runningIds.has(item.id) ? (
+                      <span className="relative flex size-4 shrink-0 items-center justify-center">
+                        <span className="absolute size-2 rounded-full bg-blue-500/60 animate-ping" />
+                        <span className="relative block size-2 rounded-full bg-blue-500" />
+                      </span>
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                      {editing?.type === "agent" && editing.id === item.id ? (
+                        <input
+                          ref={inputRef}
+                          value={editing.draft}
+                          onChange={(event) => setEditing((prev) => (prev ? { ...prev, draft: event.target.value } : prev))}
+                          onBlur={() => { void saveEdit(); }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") { event.preventDefault(); void saveEdit(); }
+                            if (event.key === "Escape") setEditing(null);
+                          }}
+                          className="w-full border-b border-primary/50 bg-transparent text-[13px] outline-none"
+                        />
+                      ) : (
+                        <span className="truncate">{item.title}</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className={cn(
+                        "rounded-md p-1 text-foreground/30 transition-all hover:bg-destructive/10 hover:text-destructive",
+                        hoveredId === `agent-pin-${item.id}` && !(editing?.type === "agent" && editing.id === item.id)
+                          ? "opacity-100"
+                          : "pointer-events-none opacity-0"
+                      )}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setPendingDelete({ id: item.id, type: "agent" });
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-44">
+                  <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => { void toggleAgentPin(item.id); }}>
+                    <PinOff size={14} />取消置顶
+                  </ContextMenuItem>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger className="gap-2 text-[13px]">
+                      <ArrowRightLeft size={14} />移动到工作区
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-44">
+                      {agentWorkspaces.filter((workspace) => workspace.id !== item.workspaceId).length === 0 ? (
+                        <ContextMenuItem disabled className="text-[13px]">
+                          无可用工作区
+                        </ContextMenuItem>
+                      ) : (
+                        agentWorkspaces
+                          .filter((workspace) => workspace.id !== item.workspaceId)
+                          .map((workspace) => (
+                            <ContextMenuItem
+                              key={`move-agent-pin-${item.id}-${workspace.id}`}
+                              className="text-[13px]"
+                              onSelect={() => { void moveAgentSession(item.id, workspace.id); }}
+                            >
+                              {workspace.name}
+                            </ContextMenuItem>
+                          ))
+                      )}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => beginEditAgent(item)}>
+                    <Pencil size={14} />重命名
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem className="gap-2 text-[13px] text-destructive focus:text-destructive" onSelect={() => setPendingDelete({ id: item.id, type: "agent" })}>
                     <Trash2 size={14} />删除
                   </ContextMenuItem>
                 </ContextMenuContent>
@@ -531,72 +696,168 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
               <div key={group.label} className="mb-1">
                 <div className="select-none px-3 pt-2 pb-1 text-[11px] font-medium text-foreground/40">{group.label}</div>
                 <div className="flex flex-col gap-0.5">
-                  {group.items.map((item) => (
-                    <ContextMenu key={item.id}>
-                      <ContextMenuTrigger asChild>
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          className={rowClass(currentAgentSessionId === item.id)}
-                          onClick={() => {
-                            setCurrentAgentSessionId(item.id);
-                            setActiveView("conversations");
-                          }}
-                          onDoubleClick={() => beginEditAgent(item)}
-                          onMouseEnter={() => setHoveredId(item.id)}
-                          onMouseLeave={() => setHoveredId((prev) => (prev === item.id ? null : prev))}
-                        >
-                          {runningIds.has(item.id) ? (
-                            <span className="relative flex size-4 shrink-0 items-center justify-center">
-                              <span className="absolute size-2 rounded-full bg-blue-500/60 animate-ping" />
-                              <span className="relative block size-2 rounded-full bg-blue-500" />
-                            </span>
-                          ) : null}
-                          <div className="min-w-0 flex-1">
-                            {editing?.type === "agent" && editing.id === item.id ? (
-                              <input
-                                ref={inputRef}
-                                value={editing.draft}
-                                onChange={(event) => setEditing((prev) => (prev ? { ...prev, draft: event.target.value } : prev))}
-                                onBlur={() => { void saveEdit(); }}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") { event.preventDefault(); void saveEdit(); }
-                                  if (event.key === "Escape") setEditing(null);
+                  {group.items.map((item) => {
+                    const children = childSessionMap.get(item.id);
+                    const hasChildren = children && children.length > 0;
+                    const isExpanded = expandedParentIds.has(item.id);
+                    return (
+                      <div key={item.id}>
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              className={rowClass(currentAgentSessionId === item.id)}
+                              onClick={() => {
+                                setCurrentAgentSessionId(item.id);
+                                setActiveView("conversations");
+                              }}
+                              onDoubleClick={() => beginEditAgent(item)}
+                              onMouseEnter={() => setHoveredId(item.id)}
+                              onMouseLeave={() => setHoveredId((prev) => (prev === item.id ? null : prev))}
+                            >
+                              {hasChildren ? (
+                                <button
+                                  type="button"
+                                  className="shrink-0 rounded p-0.5 text-foreground/30 transition-colors hover:text-foreground/60"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setExpandedParentIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(item.id)) next.delete(item.id);
+                                      else next.add(item.id);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                </button>
+                              ) : null}
+                              {runningIds.has(item.id) ? (
+                                <span className="relative flex size-4 shrink-0 items-center justify-center">
+                                  <span className="absolute size-2 rounded-full bg-blue-500/60 animate-ping" />
+                                  <span className="relative block size-2 rounded-full bg-blue-500" />
+                                </span>
+                              ) : null}
+                              <div className="min-w-0 flex-1">
+                                {editing?.type === "agent" && editing.id === item.id ? (
+                                  <input
+                                    ref={inputRef}
+                                    value={editing.draft}
+                                    onChange={(event) => setEditing((prev) => (prev ? { ...prev, draft: event.target.value } : prev))}
+                                    onBlur={() => { void saveEdit(); }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") { event.preventDefault(); void saveEdit(); }
+                                      if (event.key === "Escape") setEditing(null);
+                                    }}
+                                    className="w-full border-b border-primary/50 bg-transparent text-[13px] outline-none"
+                                  />
+                                ) : (
+                                  <span className="truncate">{item.title}</span>
+                                )}
+                              </div>
+                              {hasChildren ? (
+                                <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                                  {children.length}
+                                </span>
+                              ) : null}
+                              <button
+                                type="button"
+                                className={cn(
+                                  "rounded-md p-1 text-foreground/30 transition-all hover:bg-destructive/10 hover:text-destructive",
+                                  hoveredId === item.id && !(editing?.type === "agent" && editing.id === item.id)
+                                    ? "opacity-100"
+                                    : "pointer-events-none opacity-0"
+                                )}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setPendingDelete({ id: item.id, type: "agent" });
                                 }}
-                                className="w-full border-b border-primary/50 bg-transparent text-[13px] outline-none"
-                              />
-                            ) : (
-                              <span className="truncate">{item.title}</span>
-                            )}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-44">
+                            <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => { void toggleAgentPin(item.id); }}>
+                              {item.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                              {item.pinned ? "取消置顶" : "置顶会话"}
+                            </ContextMenuItem>
+                            <ContextMenuSub>
+                              <ContextMenuSubTrigger className="gap-2 text-[13px]">
+                                <ArrowRightLeft size={14} />移动到工作区
+                              </ContextMenuSubTrigger>
+                              <ContextMenuSubContent className="w-44">
+                                {agentWorkspaces.filter((workspace) => workspace.id !== item.workspaceId).length === 0 ? (
+                                  <ContextMenuItem disabled className="text-[13px]">
+                                    无可用工作区
+                                  </ContextMenuItem>
+                                ) : (
+                                  agentWorkspaces
+                                    .filter((workspace) => workspace.id !== item.workspaceId)
+                                    .map((workspace) => (
+                                      <ContextMenuItem
+                                        key={`move-agent-${item.id}-${workspace.id}`}
+                                        className="text-[13px]"
+                                        onSelect={() => { void moveAgentSession(item.id, workspace.id); }}
+                                      >
+                                        {workspace.name}
+                                      </ContextMenuItem>
+                                    ))
+                                )}
+                              </ContextMenuSubContent>
+                            </ContextMenuSub>
+                            <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => beginEditAgent(item)}>
+                              <Pencil size={14} />重命名
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem className="gap-2 text-[13px] text-destructive focus:text-destructive" onSelect={() => setPendingDelete({ id: item.id, type: "agent" })}>
+                              <Trash2 size={14} />删除
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                        {hasChildren && isExpanded ? (
+                          <div className="ml-4 flex flex-col gap-0.5 border-l-2 border-primary/20 pl-1">
+                            {children.map((child) => (
+                              <div
+                                key={child.id}
+                                role="button"
+                                tabIndex={0}
+                                className={rowClass(currentAgentSessionId === child.id)}
+                                onClick={() => {
+                                  setCurrentAgentSessionId(child.id);
+                                  setActiveView("conversations");
+                                }}
+                                onMouseEnter={() => setHoveredId(child.id)}
+                                onMouseLeave={() => setHoveredId((prev) => (prev === child.id ? null : prev))}
+                              >
+                                {runningIds.has(child.id) ? (
+                                  <span className="relative flex size-4 shrink-0 items-center justify-center">
+                                    <span className="absolute size-2 rounded-full bg-blue-500/60 animate-ping" />
+                                    <span className="relative block size-2 rounded-full bg-blue-500" />
+                                  </span>
+                                ) : null}
+                                <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    "rounded-md p-1 text-foreground/30 transition-all hover:bg-destructive/10 hover:text-destructive",
+                                    hoveredId === child.id ? "opacity-100" : "pointer-events-none opacity-0"
+                                  )}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setPendingDelete({ id: child.id, type: "agent" });
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                          <button
-                            type="button"
-                            className={cn(
-                              "rounded-md p-1 text-foreground/30 transition-all hover:bg-destructive/10 hover:text-destructive",
-                              hoveredId === item.id && !(editing?.type === "agent" && editing.id === item.id)
-                                ? "opacity-100"
-                                : "pointer-events-none opacity-0"
-                            )}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setPendingDelete({ id: item.id, type: "agent" });
-                            }}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </ContextMenuTrigger>
-                      <ContextMenuContent className="w-40">
-                        <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => beginEditAgent(item)}>
-                          <Pencil size={14} />重命名
-                        </ContextMenuItem>
-                        <ContextMenuSeparator />
-                        <ContextMenuItem className="gap-2 text-[13px] text-destructive focus:text-destructive" onSelect={() => setPendingDelete({ id: item.id, type: "agent" })}>
-                          <Trash2 size={14} />删除
-                        </ContextMenuItem>
-                      </ContextMenuContent>
-                    </ContextMenu>
-                  ))}
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}

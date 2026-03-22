@@ -39,6 +39,11 @@
 **对齐动作**
 - 扩展 Lume `SettingsTab` 枚举和 `SettingsPanel` 渲染分发，显式恢复/补齐 Proma 的设置维度。
 
+**进展（2026-03-22）**
+- ✅ 已完成：`SettingsTab` 补齐 `prompts/tools/im-channel/tutorial` 关键入口。
+- ✅ 已完成：设置页新增 `教程` Tab（引导状态查看、重置新手引导、状态切换）。
+- ✅ 已完成：通用设置中保留 `Proxy` 配置面板，`IM渠道` 覆盖 Feishu 网关配置。
+
 **取舍点**
 - 方案 A（推荐）：保持 Lume 的信息架构，但新增缺失 tab，确保用户可见功能可达。
 - 方案 B：严格复制 Proma 设置布局。优点是一致性最高；缺点是会抬高 Lume 已有 AgentSettings 聚合面板的拆分成本。
@@ -73,6 +78,11 @@
 
 **对齐动作**
 - 在 Lume 新增 PromptSettings 视图和对应 sidecar 方法，打通 CRUD + default + append 开关。
+
+**进展（2026-03-22）**
+- ✅ 已完成：PromptSettings 页面支持系统提示词 `创建/编辑/删除`。
+- ✅ 已完成：默认提示词切换（`set default`）与会话级提示词选择映射。
+- ✅ 已完成：`appendDateTimeAndUserName` 开关读写联动（sidecar + web）。
 
 **取舍点**
 - 方案 A（推荐）：仅对齐 Chat 使用链路，Agent 继续走 Lume bootstrap prompt 体系。
@@ -168,6 +178,14 @@
 **对齐动作**
 - 引入最小新手引导（环境检查 + 首个示例会话）。
 
+**进展（2026-03-22）**
+- ✅ 已完成：Chat 首屏接入 `OnboardingView`（环境检查 + 一键创建欢迎对话 + 跳转模型设置）。
+- ✅ 已完成：首轮空会话接入 `TutorialBanner`（示例提问、模型设置入口、关闭引导）。
+- ✅ 已完成：引导状态本地持久化（`onboardingDismissed/onboardingCompleted`）。
+
+**当前剩余差异（偏向 P1）**
+- `tutorial viewer` 与完整教程内容管理（文案编排/多步骤内容）暂未引入，当前为轻量 onboarding。
+
 **取舍点**
 - 方案 A（推荐）：轻量 onboarding，仅保留关键路径，避免复制完整文案体系。
 - 方案 B：全量复制 Proma 教程体系，维护成本更高。
@@ -212,6 +230,8 @@
 - ✅ 已完成：Team 面板接入 run registry 轮询（`agent:list-subagent-runs`），补齐非流式回合下的子任务状态刷新。
 - ✅ 已完成：Team Agent 卡片接入 run 级 telemetry（runId/usage/errorCode/announce）。
 - ✅ 已完成：Team 面板增加 Inbox 通知时间线（基于 `subagentAnnounce` 消息聚合）。
+- ✅ 已完成：子任务权限/提问代理审批（子会话触发 `ToolPermission/AskUserQuestion` 时路由到父会话确认，不再自动中止）。
+- ✅ 已完成：审批面板展示来源上下文（`originSessionId + subagentRunId`）。
 
 **取舍点**
 - 方案 A（推荐）：保留 Lume 时间线，新增 Team 视图作为并列模式。
@@ -240,6 +260,14 @@
 
 **对齐动作**
 - 增补会话迁移与置顶能力，避免多工作区管理体验断层。
+
+**进展（2026-03-22）**
+- ✅ 已完成：共享契约补齐 `AgentSessionMeta.pinned`、`agent:toggle-pin-session`、`agent:move-session`。
+- ✅ 已完成：sidecar 补齐 `toggle pin` + `move session`（含运行中会话迁移拦截、session 工作目录覆盖迁移、跨设备兜底）。
+- ✅ 已完成：新增 `agent:migrate-chat-to-agent`（`chat -> agent` 文本消息迁移，保留 user/assistant 与 assistant model）。
+- ✅ 已完成：Chat 侧推荐横幅切换流程改为“创建会话 + 迁移历史 + 切 Agent”，并补充助手消息操作栏一键迁移入口。
+- ✅ 已完成：Web Sidebar Agent 会话右键菜单补齐“置顶/取消置顶 + 移动到工作区”，并新增 Agent 置顶分组展示。
+- ✅ 已完成：新增 `agent-session-manager` 单测覆盖 `toggle pin`、`move session`、`migrate chat->agent`。
 
 **取舍点**
 - 方案 A（推荐）：先补 `toggle pin` 与 `move session`。
@@ -272,6 +300,12 @@
 
 **对齐动作**
 - 增加 rename/move/preview/attached-dir/search API，并在文件浏览器暴露操作入口。
+
+**对齐进度（2026-03-22）**
+- ✅ 已完成：`rename/move/search` 全链路（`packages/shared` 通道、`sidecar` handler/service、`web desktop-api`、FileBrowser 搜索 + 右键操作入口）。
+- ✅ 已完成：`preview-file` 通道与 FileBrowser “预览”入口（文件右键菜单）。
+- ✅ 已完成：`attached-dir` 最小操作族（`list/open/show/rename/move` IPC + sidecar service + web desktop-api）。
+- ✅ 已完成：sidecar 文件服务单测补齐（`rename/move/search/attached-dir` 关键路径）。
 
 **取舍点**
 - 方案 A（推荐）：先补 rename/move/search（高频）。

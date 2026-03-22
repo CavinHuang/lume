@@ -249,6 +249,8 @@ export function extractTimelineEvents(message: AgentMessage): TimelineEvent[] {
 
       case "task_backgrounded":
       case "task_progress":
+      case "task_started":
+      case "task_notification":
       case "shell_backgrounded":
       case "usage_update":
       case "compacting":
@@ -297,10 +299,28 @@ export function extractTimelineEvents(message: AgentMessage): TimelineEvent[] {
   return timelineEvents;
 }
 
+export interface TeammateState {
+  taskId: string;
+  toolUseId?: string;
+  description: string;
+  agentName?: string;
+  index: number;
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  progressDescription?: string;
+  currentToolName?: string;
+  currentToolElapsedSeconds?: number;
+  toolHistory: string[];
+  summary?: string;
+  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+  startedAt: number;
+  endedAt?: number;
+}
+
 export interface AgentStreamState {
   running: boolean;
   content: string;
   toolActivities: ToolActivity[];
+  teammates: TeammateState[];
   events?: AgentEvent[];
   model?: string;
   inputTokens?: number;
@@ -329,6 +349,8 @@ export const agentStreamErrorsAtom = atom<Map<string, string>>(new Map());
 /** 持久化每个 session 最后一次上下文用量，确保非流式状态下也能显示 */
 export const agentSessionContextCacheAtom = atom<Map<string, { inputTokens: number; contextWindow?: number }>>(new Map());
 
+export const cachedTeammateStatesAtom = atom<Map<string, TeammateState[]>>(new Map());
+
 export const currentAgentStreamStateAtom = atom<AgentStreamState | null>((get) => {
   const currentId = get(currentAgentSessionIdAtom);
   if (!currentId) return null;
@@ -340,6 +362,12 @@ export const agentStreamingAtom = atom<boolean>((get) => !!get(currentAgentStrea
 export const agentStreamingContentAtom = atom<string>((get) => get(currentAgentStreamStateAtom)?.content ?? "");
 
 export const agentToolActivitiesAtom = atom<ToolActivity[]>((get) => get(currentAgentStreamStateAtom)?.toolActivities ?? []);
+
+export const teammateStatesAtom = atom<TeammateState[]>((get) => get(currentAgentStreamStateAtom)?.teammates ?? []);
+
+export const hasTeammatesAtom = atom<boolean>((get) => get(teammateStatesAtom).length > 0);
+
+export const runningTeammateCountAtom = atom<number>((get) => get(teammateStatesAtom).filter(t => t.status === 'running').length);
 
 export const agentStreamingTimelineEventsAtom = atom<TimelineEvent[]>((get) => {
   const streamState = get(currentAgentStreamStateAtom);
@@ -461,14 +489,70 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
             : item
         )
       };
-    case "task_progress":
-      return {
+    case "task_progress": {
+      let nextState = {
         ...prev,
         events: nextEvents,
         toolActivities: prev.toolActivities.map((item) =>
           item.toolUseId === event.toolUseId
             ? { ...item, elapsedSeconds: event.elapsedSeconds }
             : item
+        )
+      };
+      if (event.taskId) {
+        nextState = {
+          ...nextState,
+          teammates: nextState.teammates.map(t =>
+            t.taskId === event.taskId
+              ? {
+                  ...t,
+                  progressDescription: event.description ?? t.progressDescription,
+                  currentToolName: event.lastToolName ?? t.currentToolName,
+                  currentToolElapsedSeconds: event.elapsedSeconds ?? t.currentToolElapsedSeconds,
+                  toolHistory: event.lastToolName && !t.toolHistory.includes(event.lastToolName)
+                    ? [...t.toolHistory, event.lastToolName]
+                    : t.toolHistory,
+                  usage: event.usage ?? t.usage
+                }
+              : t
+          )
+        };
+      }
+      return nextState;
+    }
+    case "task_started": {
+      const existing = prev.teammates.find(t => t.taskId === event.taskId);
+      if (existing) return { ...prev, events: nextEvents };
+      const newTeammate: TeammateState = {
+        taskId: event.taskId,
+        toolUseId: event.toolUseId,
+        description: event.description,
+        agentName: event.agentName,
+        index: prev.teammates.length,
+        status: 'running',
+        toolHistory: [],
+        startedAt: Date.now()
+      };
+      return {
+        ...prev,
+        events: nextEvents,
+        teammates: [...prev.teammates, newTeammate]
+      };
+    }
+    case "task_notification":
+      return {
+        ...prev,
+        events: nextEvents,
+        teammates: prev.teammates.map(t =>
+          t.taskId === event.taskId
+            ? {
+                ...t,
+                status: event.status === 'completed' ? 'completed' : event.status === 'failed' ? 'failed' : 'stopped',
+                summary: event.summary,
+                usage: event.usage ?? t.usage,
+                endedAt: Date.now()
+              }
+            : t
         )
       };
     case "usage_update":
@@ -508,6 +592,9 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
         events: nextEvents,
         toolActivities: prev.toolActivities.map((item) =>
           item.done ? item : { ...item, done: true }
+        ),
+        teammates: prev.teammates.map(t =>
+          t.status === 'running' ? { ...t, status: 'stopped' as const, endedAt: Date.now() } : t
         )
       };
     case "error":

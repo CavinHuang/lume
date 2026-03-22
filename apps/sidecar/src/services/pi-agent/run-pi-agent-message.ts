@@ -18,8 +18,9 @@ export async function runPiAgentMessage(
   emit: PiAgentEventEmitter
 ): Promise<PiAgentRunResult> {
   if (!input.channelId || !input.modelId) {
-    emit.onError("Pi Agent runtime 缺少 channelId/modelId。");
-    return { status: "errored" };
+    const msg = "Pi Agent runtime 缺少 channelId/modelId。";
+    emit.onError(msg);
+    return { status: "errored", errorMessage: msg };
   }
   log.info("Pi Agent runtime 已接管请求，进入 runner", {
     sessionId: input.sessionId.slice(0, 8)

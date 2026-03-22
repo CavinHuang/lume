@@ -53,7 +53,9 @@ export type AgentEvent =
   | { type: 'tool_result'; toolUseId: string; toolName?: string; result: string; isError: boolean; input?: Record<string, unknown>; turnId?: string; parentToolUseId?: string }
   // 后台任务
   | { type: 'task_backgrounded'; toolUseId: string; taskId: string; intent?: string; turnId?: string }
-  | { type: 'task_progress'; toolUseId: string; elapsedSeconds: number; turnId?: string }
+  | { type: 'task_progress'; toolUseId: string; elapsedSeconds: number; turnId?: string; taskId?: string; description?: string; lastToolName?: string; usage?: { totalTokens?: number; toolUses?: number; durationMs?: number } }
+  | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; agentName?: string; turnId?: string }
+  | { type: 'task_notification'; taskId: string; toolUseId?: string; status: 'completed' | 'failed' | 'stopped'; summary: string; usage?: { totalTokens?: number; toolUses?: number; durationMs?: number }; turnId?: string }
   | { type: 'shell_backgrounded'; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
   | { type: 'shell_killed'; shellId: string; turnId?: string }
   // 控制流
@@ -86,6 +88,10 @@ export interface AgentSessionMeta {
   piSessionId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /** 父会话 ID（子任务会话归属） */
+  parentSessionId?: string
+  /** 是否置顶 */
+  pinned?: boolean
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
@@ -445,6 +451,10 @@ export interface AgentAskUserQuestionQuestion {
 
 export interface AgentAskUserQuestionRequest {
   sessionId: string
+  /** 原始触发会话（用于子任务代理路由） */
+  originSessionId?: string
+  /** 子任务 runId（用于 Team 面板定位） */
+  subagentRunId?: string
   toolUseId: string
   questions: AgentAskUserQuestionQuestion[]
 }
@@ -462,6 +472,10 @@ export type AgentToolPermissionDecision = 'allow_once' | 'allow_always' | 'deny'
 
 export interface AgentToolPermissionRequest {
   sessionId: string
+  /** 原始触发会话（用于子任务代理路由） */
+  originSessionId?: string
+  /** 子任务 runId（用于 Team 面板定位） */
+  subagentRunId?: string
   requestId: string
   toolUseId: string
   toolName: string
@@ -551,6 +565,22 @@ export interface FileEntry {
   children?: FileEntry[]
 }
 
+/** 文件索引条目（用于文件搜索） */
+export interface FileIndexEntry {
+  /** 文件/目录名称 */
+  name: string
+  /** 相对搜索根目录的路径 */
+  path: string
+  /** 条目类型 */
+  type: 'file' | 'dir'
+}
+
+/** 文件搜索结果 */
+export interface FileSearchResult {
+  entries: FileIndexEntry[]
+  total: number
+}
+
 // ===== Agent 附件 =====
 
 /** Agent 待发送文件（UI 侧暂存） */
@@ -600,6 +630,12 @@ export const AGENT_IPC_CHANNELS = {
   GET_RECENT_MESSAGES: 'agent:get-recent-messages',
   /** 更新会话标题 */
   UPDATE_TITLE: 'agent:update-title',
+  /** 迁移 Chat 对话消息到 Agent 会话 */
+  MIGRATE_CHAT_TO_AGENT: 'agent:migrate-chat-to-agent',
+  /** 置顶/取消置顶会话 */
+  TOGGLE_PIN_SESSION: 'agent:toggle-pin-session',
+  /** 移动会话到目标工作区 */
+  MOVE_SESSION: 'agent:move-session',
   /** 删除会话 */
   DELETE_SESSION: 'agent:delete-session',
   /** 从指定消息开始截断会话（包含该消息） */
@@ -696,6 +732,24 @@ export const AGENT_IPC_CHANNELS = {
   OPEN_FILE: 'agent:open-file',
   /** 在系统文件管理器中显示文件 */
   SHOW_IN_FOLDER: 'agent:show-in-folder',
+  /** 在新窗口中预览文件 */
+  PREVIEW_FILE: 'agent:preview-file',
+  /** 重命名文件/目录 */
+  RENAME_FILE: 'agent:rename-file',
+  /** 移动文件/目录到目标目录 */
+  MOVE_FILE: 'agent:move-file',
+  /** 列出附加目录内容（无工作区路径限制） */
+  LIST_ATTACHED_DIRECTORY: 'agent:list-attached-directory',
+  /** 用系统默认应用打开附加目录文件（无工作区路径限制） */
+  OPEN_ATTACHED_FILE: 'agent:open-attached-file',
+  /** 在文件管理器中显示附加目录文件（无工作区路径限制） */
+  SHOW_ATTACHED_IN_FOLDER: 'agent:show-attached-in-folder',
+  /** 重命名附加目录文件/目录（无工作区路径限制） */
+  RENAME_ATTACHED_FILE: 'agent:rename-attached-file',
+  /** 移动附加目录文件/目录（无工作区路径限制） */
+  MOVE_ATTACHED_FILE: 'agent:move-attached-file',
+  /** 搜索工作区文件（用于 @ 引用） */
+  SEARCH_WORKSPACE_FILES: 'agent:search-workspace-files',
 
   // 标题自动生成通知（主进程 → 渲染进程推送）
   /** 标题已更新（首次对话完成后自动生成） */

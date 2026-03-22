@@ -4,14 +4,18 @@ import * as React from "react";
 import type { FileEntry } from "@lume/shared";
 import { useAtomValue } from "jotai";
 import {
+  ArrowRightLeft,
   ChevronDown,
   ChevronRight,
+  Edit3,
+  Eye,
   ExternalLink,
   FileText,
   Folder,
   FolderOpen,
   FolderSearch,
   RefreshCw,
+  Search,
   Trash2,
   X
 } from "lucide-react";
@@ -30,7 +34,11 @@ import {
 import {
   deleteAgentFile,
   listAgentDirectory,
+  moveAgentFile,
   openAgentFile,
+  previewAgentFile,
+  renameAgentFile,
+  searchAgentWorkspaceFiles,
   showAgentFileInFolder
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
@@ -49,6 +57,30 @@ type FileBrowserProps = {
   onClose?: () => void;
 };
 
+function trimTrailingSeparators(path: string): string {
+  return path.replace(/[\\/]+$/, "");
+}
+
+function joinPathFromRoot(rootPath: string, relativePath: string): string {
+  const separator = rootPath.includes("\\") ? "\\" : "/";
+  let rel = relativePath.trim();
+  while (rel.startsWith("/") || rel.startsWith("\\")) {
+    rel = rel.slice(1);
+  }
+  rel = rel.replace(/[\\/]+/g, separator);
+  if (!rel) return rootPath;
+  return `${trimTrailingSeparators(rootPath)}${separator}${rel}`;
+}
+
+function resolveTargetDir(rootPath: string, rawInput: string): string | null {
+  const input = rawInput.trim();
+  if (!input) return null;
+  const isAbsolute = /^([a-zA-Z]:[\\/]|\/)/.test(input);
+  if (isAbsolute) return input;
+  if (input === "." || input === "./" || input === ".\\") return rootPath;
+  return joinPathFromRoot(rootPath, input);
+}
+
 export function FileBrowser({
   workspaceSlug,
   sessionId,
@@ -61,6 +93,10 @@ export function FileBrowser({
   const [error, setError] = React.useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<FileEntry | null>(null);
   const [contextMenu, setContextMenu] = React.useState<ContextMenuState | null>(null);
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [searching, setSearching] = React.useState(false);
+  const [searchTotal, setSearchTotal] = React.useState(0);
+  const [searchEntries, setSearchEntries] = React.useState<FileEntry[]>([]);
 
   const loadRoot = React.useCallback(async (): Promise<void> => {
     if (!rootPath || !workspaceSlug || !sessionId) return;
@@ -80,6 +116,46 @@ export function FileBrowser({
   React.useEffect(() => {
     void loadRoot();
   }, [loadRoot, filesVersion]);
+
+  React.useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      setSearchEntries([]);
+      setSearchTotal(0);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setSearching(true);
+      void searchAgentWorkspaceFiles(workspaceSlug, sessionId, trimmed, 100, rootPath)
+        .then((result) => {
+          if (cancelled) return;
+          setSearchTotal(result.total);
+          setSearchEntries(
+            result.entries.map((entry) => ({
+              name: entry.name,
+              path: joinPathFromRoot(rootPath, entry.path),
+              isDirectory: entry.type === "dir"
+            }))
+          );
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          console.error("[FileBrowser] search failed", err);
+          setSearchEntries([]);
+          setSearchTotal(0);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setSearching(false);
+          }
+        });
+    }, 240);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [rootPath, searchQuery, sessionId, workspaceSlug]);
 
   React.useEffect(() => {
     if (!contextMenu) return;
@@ -108,6 +184,13 @@ export function FileBrowser({
     setContextMenu(null);
   };
 
+  const handleMenuPreview = (): void => {
+    if (!contextMenu) return;
+    if (contextMenu.entry.isDirectory) return;
+    void previewAgentFile(workspaceSlug, sessionId, contextMenu.entry.path);
+    setContextMenu(null);
+  };
+
   const handleMenuShowInFolder = (): void => {
     if (!contextMenu) return;
     void showAgentFileInFolder(workspaceSlug, sessionId, contextMenu.entry.path);
@@ -118,6 +201,39 @@ export function FileBrowser({
     if (!contextMenu) return;
     setDeleteTarget(contextMenu.entry);
     setContextMenu(null);
+  };
+
+  const handleMenuRename = async (): Promise<void> => {
+    if (!contextMenu) return;
+    const target = contextMenu.entry;
+    const defaultName = target.name;
+    const nextName = window.prompt("请输入新名称", defaultName)?.trim();
+    setContextMenu(null);
+    if (!nextName || nextName === defaultName) return;
+    try {
+      await renameAgentFile(workspaceSlug, sessionId, target.path, nextName);
+      await loadRoot();
+    } catch (err) {
+      console.error("[FileBrowser] rename failed", err);
+      setError(err instanceof Error ? err.message : "重命名失败");
+    }
+  };
+
+  const handleMenuMove = async (): Promise<void> => {
+    if (!contextMenu) return;
+    const target = contextMenu.entry;
+    const rawTarget = window.prompt("请输入目标目录（相对会话根目录或绝对路径）", ".")?.trim();
+    setContextMenu(null);
+    if (!rawTarget) return;
+    const targetDir = resolveTargetDir(rootPath, rawTarget);
+    if (!targetDir) return;
+    try {
+      await moveAgentFile(workspaceSlug, sessionId, target.path, targetDir);
+      await loadRoot();
+    } catch (err) {
+      console.error("[FileBrowser] move failed", err);
+      setError(err instanceof Error ? err.message : "移动失败");
+    }
   };
 
   const handleDelete = async (): Promise<void> => {
@@ -180,17 +296,35 @@ export function FileBrowser({
         ) : null}
       </div>
 
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <Search className={cn("size-3.5 text-muted-foreground", searching && "animate-pulse")} />
+        <input
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="搜索文件（名称/路径）"
+          className="h-7 w-full rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+        />
+        {searchQuery.trim() ? (
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {searching ? "搜索中..." : `${searchEntries.length}/${searchTotal}`}
+          </span>
+        ) : null}
+      </div>
+
       <ScrollArea className="flex-1">
         <div className="py-1">
           {error ? <div className="px-3 py-2 text-xs text-destructive">{error}</div> : null}
-          {!error && entries.length === 0 && !loading ? (
+          {!error && searchQuery.trim() && !searching && searchEntries.length === 0 ? (
+            <div className="px-3 py-4 text-center text-xs text-muted-foreground">未找到匹配文件</div>
+          ) : null}
+          {!error && !searchQuery.trim() && entries.length === 0 && !loading ? (
             <div className="px-3 py-4 text-center text-xs text-muted-foreground">目录为空</div>
           ) : null}
-          {entries.map((entry) => (
+          {(searchQuery.trim() ? searchEntries : entries).map((entry) => (
             <FileTreeItem
               key={entry.path}
               entry={entry}
-              depth={0}
+              depth={searchQuery.trim() ? -1 : 0}
               workspaceSlug={workspaceSlug}
               sessionId={sessionId}
               onContextMenu={handleContextMenu}
@@ -216,15 +350,41 @@ export function FileBrowser({
               打开目录
             </button>
           ) : (
-            <button
-              type="button"
-              className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-              onClick={handleMenuOpen}
-            >
-              <ExternalLink className="mr-2 size-3.5" />
-              打开
-            </button>
+            <>
+              <button
+                type="button"
+                className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                onClick={handleMenuOpen}
+              >
+                <ExternalLink className="mr-2 size-3.5" />
+                打开
+              </button>
+              <button
+                type="button"
+                className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                onClick={handleMenuPreview}
+              >
+                <Eye className="mr-2 size-3.5" />
+                预览
+              </button>
+            </>
           )}
+          <button
+            type="button"
+            className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+            onClick={() => { void handleMenuRename(); }}
+          >
+            <Edit3 className="mr-2 size-3.5" />
+            重命名
+          </button>
+          <button
+            type="button"
+            className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+            onClick={() => { void handleMenuMove(); }}
+          >
+            <ArrowRightLeft className="mr-2 size-3.5" />
+            移动到...
+          </button>
           <button
             type="button"
             className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
@@ -287,6 +447,7 @@ function FileTreeItem({
   onContextMenu,
   onRefresh
 }: FileTreeItemProps): React.ReactElement {
+  const isSearchResult = depth < 0;
   const [expanded, setExpanded] = React.useState(false);
   const [children, setChildren] = React.useState<FileEntry[]>([]);
   const [childrenLoaded, setChildrenLoaded] = React.useState(false);
@@ -306,6 +467,10 @@ function FileTreeItem({
   };
 
   const handleClick = (): void => {
+    if (isSearchResult) {
+      void openAgentFile(workspaceSlug, sessionId, entry.path);
+      return;
+    }
     if (entry.isDirectory) {
       void toggleDir();
     } else {
@@ -325,7 +490,7 @@ function FileTreeItem({
     }
   };
 
-  const paddingLeft = 8 + depth * 16;
+  const paddingLeft = isSearchResult ? 8 : 8 + depth * 16;
 
   return (
     <>
@@ -335,7 +500,7 @@ function FileTreeItem({
         onClick={handleClick}
         onContextMenu={(event) => onContextMenu(event, entry)}
       >
-        {entry.isDirectory ? (
+        {!isSearchResult && entry.isDirectory ? (
           expanded ? (
             <ChevronDown className="size-3.5 flex-shrink-0 text-muted-foreground" />
           ) : (
@@ -358,7 +523,7 @@ function FileTreeItem({
         <span className="flex-1 truncate text-xs">{entry.name}</span>
       </div>
 
-      {expanded
+      {!isSearchResult && expanded
         ? children.map((child) => (
             <FileTreeItem
               key={child.path}

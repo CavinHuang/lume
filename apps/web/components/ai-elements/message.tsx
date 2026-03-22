@@ -115,6 +115,53 @@ export function MessageAction({
   );
 }
 
+// 提取 React 子树文本内容的辅助函数
+function extractText(node: React.ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (!node) return "";
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (React.isValidElement(node)) {
+    return extractText((node.props as { children?: React.ReactNode }).children);
+  }
+  return "";
+}
+
+// 模块级常量：Streamdown 自定义组件映射，避免每次 render 创建新对象
+const streamdownComponents = {
+  a: ({ href, children: linkChildren, ...linkProps }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a
+      {...linkProps}
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        if (!href) return;
+        if (href.startsWith("http://") || href.startsWith("https://")) {
+          void openExternalUrl(href);
+        }
+      }}
+      title={href}
+    >
+      {linkChildren}
+    </a>
+  ),
+  pre: ({ children: preChildren }: { children?: React.ReactNode }) => {
+    const codeChild = React.Children.toArray(preChildren).find(
+      (child): child is React.ReactElement => React.isValidElement(child) && child.type === "code"
+    );
+
+    if (codeChild) {
+      const codeProps = codeChild.props as { className?: string; children?: React.ReactNode };
+      if (codeProps.className?.includes("language-mermaid")) {
+        const mermaidCode = extractText(codeProps.children).replace(/\n$/, "");
+        return <MermaidBlock code={mermaidCode} />;
+      }
+    }
+
+    return <CodeBlock>{preChildren}</CodeBlock>;
+  }
+};
+
 interface MessageResponseProps {
   children: string;
   className?: string;
@@ -134,49 +181,7 @@ export const MessageResponse = React.memo(
         <Streamdown
           parseIncompleteMarkdown
           mode="streaming"
-          components={{
-            a: ({ href, children: linkChildren, ...linkProps }) => (
-              <a
-                {...linkProps}
-                href={href}
-                onClick={(event) => {
-                  event.preventDefault();
-                  if (!href) return;
-                  if (href.startsWith("http://") || href.startsWith("https://")) {
-                    void openExternalUrl(href);
-                  }
-                }}
-                title={href}
-              >
-                {linkChildren}
-              </a>
-            ),
-            pre: ({ children: preChildren }) => {
-              const codeChild = React.Children.toArray(preChildren).find(
-                (child): child is React.ReactElement => React.isValidElement(child) && child.type === "code"
-              );
-
-              if (codeChild) {
-                const codeProps = codeChild.props as { className?: string; children?: React.ReactNode };
-                if (codeProps.className?.includes("language-mermaid")) {
-                  const extractText = (node: React.ReactNode): string => {
-                    if (typeof node === "string") return node;
-                    if (typeof node === "number") return String(node);
-                    if (!node) return "";
-                    if (Array.isArray(node)) return node.map(extractText).join("");
-                    if (React.isValidElement(node)) {
-                      return extractText((node.props as { children?: React.ReactNode }).children);
-                    }
-                    return "";
-                  };
-                  const mermaidCode = extractText(codeProps.children).replace(/\n$/, "");
-                  return <MermaidBlock code={mermaidCode} />;
-                }
-              }
-
-              return <CodeBlock>{preChildren}</CodeBlock>;
-            }
-          }}
+          components={streamdownComponents}
         >
           {children}
         </Streamdown>

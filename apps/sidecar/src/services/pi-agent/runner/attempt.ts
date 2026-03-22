@@ -124,7 +124,8 @@ export async function runPiAgentAttempt(
     includeCitations,
     automationExecution,
     memoryToolPolicy: runtimeConfig.toolPolicy,
-    emitAskUserQuestion: emit.onAskUserQuestion
+    emitAskUserQuestion: emit.onAskUserQuestion,
+    emitToolPermissionRequest: emit.onToolPermissionRequest
   });
 
   const systemPrompt = buildSystemPromptAppend({

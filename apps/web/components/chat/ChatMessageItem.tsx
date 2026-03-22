@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
-import { Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import type { ChatMessage } from "@lume/shared";
 import { userProfileAtom } from "@/atoms";
 import {
@@ -29,6 +29,7 @@ import { AgentModeRecommendationBanner } from "./AgentModeRecommendationBanner";
 import { ChatToolActivityIndicator } from "./ChatToolActivityIndicator";
 import { UserAvatar } from "./UserAvatar";
 import { extractAgentModeRecommendation } from "./agent-mode-recommendation";
+import { useMigrateChatToAgent } from "./use-migrate-chat-to-agent";
 
 export function formatMessageTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -74,6 +75,7 @@ export function ChatMessageItem({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const userProfile = useAtomValue(userProfileAtom);
+  const { busy: migrateBusy, migrate } = useMigrateChatToAgent();
   const recommendation = useMemo(
     () => extractAgentModeRecommendation(message.toolActivities),
     [message.toolActivities]
@@ -183,6 +185,15 @@ export function ChatMessageItem({
             {message.role === "user" && onStartInlineEdit ? (
               <MessageAction tooltip="编辑后重发" onClick={() => onStartInlineEdit(message)}>
                 <Pencil className="size-3.5" />
+              </MessageAction>
+            ) : null}
+            {message.role === "assistant" ? (
+              <MessageAction
+                tooltip={migrateBusy ? "迁移中..." : "迁移到 Agent"}
+                disabled={migrateBusy}
+                onClick={() => { void migrate(); }}
+              >
+                {migrateBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Bot className="size-3.5" />}
               </MessageAction>
             ) : null}
             {onDeleteMessage ? (

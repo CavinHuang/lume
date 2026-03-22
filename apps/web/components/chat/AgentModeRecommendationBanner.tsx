@@ -1,67 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
 import { Loader2, Sparkles } from "lucide-react";
-import {
-  activeViewAtom,
-  agentChannelIdAtom,
-  agentPendingPromptAtom,
-  agentSessionsAtom,
-  appModeAtom,
-  currentAgentSessionIdAtom,
-  currentAgentWorkspaceIdAtom,
-  settingsTabAtom
-} from "@/atoms";
-import { createAgentSession, listAgentSessions } from "@/lib/desktop-api";
 import type { AgentModeRecommendation } from "./agent-mode-recommendation";
+import { useMigrateChatToAgent } from "./use-migrate-chat-to-agent";
 
 export function AgentModeRecommendationBanner({
   recommendation
 }: {
   recommendation: AgentModeRecommendation;
 }): React.ReactElement {
-  const agentChannelId = useAtomValue(agentChannelIdAtom);
-  const workspaceId = useAtomValue(currentAgentWorkspaceIdAtom);
-  const setAgentSessions = useSetAtom(agentSessionsAtom);
-  const setCurrentSessionId = useSetAtom(currentAgentSessionIdAtom);
-  const setPendingPrompt = useSetAtom(agentPendingPromptAtom);
-  const setAppMode = useSetAtom(appModeAtom);
-  const setActiveView = useSetAtom(activeViewAtom);
-  const setSettingsTab = useSetAtom(settingsTabAtom);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, migrate } = useMigrateChatToAgent();
 
   const handleCreateAgentSession = async (): Promise<void> => {
-    if (busy) return;
-    setError(null);
-
-    if (!agentChannelId) {
-      setAppMode("agent");
-      setActiveView("settings");
-      setSettingsTab("agent");
-      setError("未设置 Agent 渠道，已跳转到配置页。");
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const session = await createAgentSession({
-        channelId: agentChannelId,
-        workspaceId: workspaceId ?? undefined
-      });
-      const sessions = await listAgentSessions();
-      setAgentSessions(sessions);
-      setCurrentSessionId(session.id);
-      setPendingPrompt({ sessionId: session.id, message: recommendation.suggestedPrompt });
-      setAppMode("agent");
-      setActiveView("conversations");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(`创建 Agent 会话失败：${message}`);
-    } finally {
-      setBusy(false);
-    }
+    await migrate({ suggestedPrompt: recommendation.suggestedPrompt });
   };
 
   return (
@@ -78,7 +29,7 @@ export function AgentModeRecommendationBanner({
             className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-            <span>{agentChannelId ? "切换到 Agent 模式执行" : "去设置 Agent 渠道"}</span>
+            <span>切换到 Agent 模式执行</span>
           </button>
           {error ? <p className="mt-1 text-[11px] text-destructive">{error}</p> : null}
         </div>

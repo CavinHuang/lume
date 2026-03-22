@@ -11,13 +11,13 @@ interface TimelineTextEventProps {
   isLast?: boolean;
 }
 
-function TimelineTextEvent({ event, isLast }: TimelineTextEventProps): React.ReactElement {
+const TimelineTextEvent = React.memo(function TimelineTextEvent({ event, isLast }: TimelineTextEventProps): React.ReactElement {
   return (
     <div className={cn("text-foreground/90 py-1", !isLast && "border-b border-border/40")}>
       <MessageResponse>{event.content}</MessageResponse>
     </div>
   );
-}
+}, (prev, next) => prev.event === next.event && prev.isLast === next.isLast);
 
 function toToolActivity(
   startEvent: Extract<TimelineEvent, { type: "tool_start" }>,
@@ -41,13 +41,15 @@ interface EventTimelineProps {
   isStreaming?: boolean;
 }
 
-export const EventTimeline = React.memo(function EventTimeline({ events, isStreaming = false }: EventTimelineProps): React.ReactElement | null {
-  if (events.length === 0) return null;
+type TimelineText = Extract<TimelineEvent, { type: "text" }>;
+type TimelineToolStart = Extract<TimelineEvent, { type: "tool_start" }>;
+type TimelineToolResult = Extract<TimelineEvent, { type: "tool_result" }>;
 
-  type TimelineText = Extract<TimelineEvent, { type: "text" }>;
-  type TimelineToolStart = Extract<TimelineEvent, { type: "tool_start" }>;
-  type TimelineToolResult = Extract<TimelineEvent, { type: "tool_result" }>;
+type RenderSegment =
+  | { type: "text"; data: TimelineText }
+  | { type: "tools"; data: ToolActivity[] };
 
+function buildSegments(events: TimelineEvent[]): RenderSegment[] {
   const toolResultMap = new Map<string, TimelineToolResult[]>();
   for (const event of events) {
     if (event.type !== "tool_result") continue;
@@ -58,10 +60,6 @@ export const EventTimeline = React.memo(function EventTimeline({ events, isStrea
       toolResultMap.set(event.toolUseId, [event]);
     }
   }
-
-  type RenderSegment =
-    | { type: "text"; data: TimelineText }
-    | { type: "tools"; data: ToolActivity[] };
 
   const segments: RenderSegment[] = [];
   let pendingTools: ToolActivity[] = [];
@@ -74,10 +72,7 @@ export const EventTimeline = React.memo(function EventTimeline({ events, isStrea
 
   for (const event of events) {
     if (event.type === "text") {
-      // 忽略仅空白文本，避免打断连续工具段并产生“多个工具块”。
-      if (!event.content.trim()) {
-        continue;
-      }
+      if (!event.content.trim()) continue;
       flushPendingTools();
       segments.push({ type: "text", data: event });
       continue;
@@ -91,6 +86,13 @@ export const EventTimeline = React.memo(function EventTimeline({ events, isStrea
   }
 
   flushPendingTools();
+  return segments;
+}
+
+export const EventTimeline = React.memo(function EventTimeline({ events, isStreaming = false }: EventTimelineProps): React.ReactElement | null {
+  const segments = React.useMemo(() => buildSegments(events), [events]);
+
+  if (segments.length === 0) return null;
 
   return (
     <div className="space-y-0">

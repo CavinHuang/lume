@@ -221,7 +221,7 @@ function InlineEditForm({
 
 const AgentMessageItem = React.memo(function AgentMessageItem({
   message,
-  isStreaming,
+  actionsDisabled,
   isInlineEditing,
   onDeleteMessage,
   onResendMessage,
@@ -231,7 +231,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onCancelInlineEdit
 }: {
   message: AgentMessage;
-  isStreaming: boolean;
+  actionsDisabled: boolean;
   isInlineEditing: boolean;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
@@ -253,9 +253,14 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     [message]
   );
 
+  const { attachedFiles, messageText } = React.useMemo(() => {
+    if (message.role !== "user") return { attachedFiles: [] as AttachedFileRef[], messageText: "" };
+    const sanitized = stripPlanExecutionMarker(message.content);
+    const { files, text } = splitAttachedFiles(sanitized);
+    return { attachedFiles: files, messageText: text };
+  }, [message.role, message.content]);
+
   if (message.role === "user") {
-    const sanitizedContent = stripPlanExecutionMarker(message.content);
-    const { files: attachedFiles, text: messageText } = splitAttachedFiles(sanitizedContent);
 
     return (
       <Message from="user">
@@ -289,7 +294,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
           ) : null}
         </MessageContent>
 
-        {!isInlineEditing && !isStreaming ? (
+        {!isInlineEditing && !actionsDisabled ? (
           <MessageActions className="mt-0.5 pl-[46px]">
             <CopyButton content={messageText || message.content} />
             {onResendMessage ? (
@@ -346,7 +351,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             <MessageResponse>{message.content}</MessageResponse>
           ) : null}
         </MessageContent>
-        {!isStreaming && (message.content ?? "").trim().length > 0 ? (
+        {!actionsDisabled && (message.content ?? "").trim().length > 0 ? (
           <MessageActions className="mt-0.5 pl-[46px]">
             <CopyButton content={message.content} />
             {onSaveAsTask ? (
@@ -361,7 +366,11 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   }
 
   return null;
-})
+}, (prev, next) =>
+  prev.message === next.message &&
+  prev.actionsDisabled === next.actionsDisabled &&
+  prev.isInlineEditing === next.isInlineEditing
+)
 
 export function AgentMessages({
   isStreaming = false,
@@ -389,13 +398,8 @@ export function AgentMessages({
   const shouldShowStreamingMessage =
     (streaming || Boolean(smoothContent));
 
-  const stableOnDelete = actionsDisabled ? undefined : onDeleteMessage;
-  const stableOnResend = actionsDisabled ? undefined : onResendMessage;
-  const stableOnSaveAsTask = actionsDisabled ? undefined : onSaveAsTask;
-  const stableOnStartInlineEdit = actionsDisabled ? undefined : onStartInlineEdit;
-
   return (
-    <Conversation className={!streaming ? "cv-ready" : undefined}>
+    <Conversation className={!streaming ? "cv-ready" : undefined} key={!isSwitching && messages.length > 0 ? messages[0]!.id : ""}>
       <ConversationContent>
         {isSwitching ? (
           <div className="flex h-full items-center justify-center">
@@ -411,12 +415,12 @@ export function AgentMessages({
               <div key={message.id} data-message-id={message.id}>
                 <AgentMessageItem
                   message={message}
-                  isStreaming={actionsDisabled}
+                  actionsDisabled={actionsDisabled}
                   isInlineEditing={inlineEditingMessageId === message.id}
-                  onDeleteMessage={stableOnDelete}
-                  onResendMessage={stableOnResend}
-                  onSaveAsTask={stableOnSaveAsTask}
-                  onStartInlineEdit={stableOnStartInlineEdit}
+                  onDeleteMessage={onDeleteMessage}
+                  onResendMessage={onResendMessage}
+                  onSaveAsTask={onSaveAsTask}
+                  onStartInlineEdit={onStartInlineEdit}
                   onSubmitInlineEdit={onSubmitInlineEdit}
                   onCancelInlineEdit={onCancelInlineEdit}
                 />

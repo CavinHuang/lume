@@ -2,7 +2,7 @@
 
 import { useAtom, useAtomValue } from "jotai";
 import type { ReactNode } from "react";
-import { BookOpen, Clock, Info, MessageCircle, Plug, Radio, Settings, Sparkles, User, Wrench } from "lucide-react";
+import { BookOpen, Clock, GraduationCap, Info, MessageCircle, Plug, Radio, Settings, Sparkles, User, Wrench } from "lucide-react";
 import { appModeAtom, hasUpdateAtom, settingsTabAtom, type SettingsTab } from "@/atoms";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -16,6 +16,7 @@ import { IMChannelSettings } from "./IMChannelSettings";
 import { PromptSettings } from "./PromptSettings";
 import { SkillsSettings } from "./SkillsSettings";
 import { ToolSettings } from "./ToolSettings";
+import { TutorialSettings } from "./TutorialSettings";
 
 type TabItem = {
   id: SettingsTab;
@@ -27,7 +28,8 @@ const BASE_TABS: TabItem[] = [
   { id: "general", label: "通用", icon: <Settings size={16} /> },
   { id: "models", label: "模型&供应商", icon: <Radio size={16} /> },
   { id: "prompts", label: "提示词", icon: <BookOpen size={16} /> },
-  { id: "tools", label: "工具", icon: <Wrench size={16} /> }
+  { id: "tools", label: "工具", icon: <Wrench size={16} /> },
+  { id: "tutorial", label: "教程", icon: <GraduationCap size={16} /> }
 ];
 
 const AGENT_TAB: TabItem = { id: "agent", label: "配置", icon: <Plug size={16} /> };
@@ -58,6 +60,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <PromptSettings />;
     case "tools":
       return <ToolSettings />;
+    case "tutorial":
+      return <TutorialSettings />;
     case "im-channel":
       return <IMChannelSettings />;
     case "about":

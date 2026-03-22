@@ -1,4 +1,4 @@
-import type { AgentAskUserQuestionRequest } from "@lume/shared";
+import type { AgentAskUserQuestionRequest, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { MemoryToolPolicy } from "../../memory-policy";
@@ -45,6 +45,7 @@ export interface CreateLumePiToolsInput {
   includeCitations: boolean;
   automationExecution?: boolean;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
+  emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 }
 
 export interface CreateLumePiToolsOutput {
@@ -77,7 +78,9 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     channelId: input.channelId,
     sessionType: input.sessionType,
     chatType: input.chatType,
-    permissionMode: input.permissionMode
+    permissionMode: input.permissionMode,
+    emitAskUserQuestion: input.emitAskUserQuestion,
+    emitToolPermissionRequest: input.emitToolPermissionRequest
   });
 
   // 不再在这里过滤，由 tool-permission-gate.ts 基于 tool-metadata.ts 处理

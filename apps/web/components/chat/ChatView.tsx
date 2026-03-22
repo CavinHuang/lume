@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AlertCircle, MessageSquare, X } from "lucide-react";
 import {
+  activeViewAtom,
   activeToolIdsAtom,
   chatToolsAtom,
   chatStreamErrorsAtom,
@@ -21,13 +22,17 @@ import {
   promptConfigAtom,
   promptSidebarOpenAtom,
   resolveSystemMessage,
+  settingsTabAtom,
   selectedPromptIdAtom,
   selectedModelAtom,
   streamingStatesAtom,
   thinkingEnabledAtom,
-  userProfileAtom
+  userProfileAtom,
+  onboardingCompletedAtom,
+  onboardingDismissedAtom
 } from "@/atoms";
 import {
+  createConversation,
   saveChatAttachment,
   deleteChatAttachment,
   listConversations,
@@ -56,9 +61,11 @@ import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
 import { PromptEditorSidebar } from "./PromptEditorSidebar";
 import type { InlineEditSubmitPayload } from "./ChatMessageItem";
+import { OnboardingView } from "@/components/onboarding/OnboardingView";
+import { TutorialBanner } from "@/components/tutorial/TutorialBanner";
 
 export function ChatView(): React.ReactElement {
-  const [currentConversationId] = useAtom(currentConversationIdAtom);
+  const [currentConversationId, setCurrentConversationId] = useAtom(currentConversationIdAtom);
   const [currentMessages, setCurrentMessages] = useAtom(currentMessagesAtom);
   const [currentConversation] = useAtom(currentConversationAtom);
   const [selectedModel, setSelectedModel] = useAtom(selectedModelAtom);
@@ -69,6 +76,8 @@ export function ChatView(): React.ReactElement {
   const [promptConfig, setPromptConfig] = useAtom(promptConfigAtom);
   const [, setChatTools] = useAtom(chatToolsAtom);
   const [conversationPromptMap, setConversationPromptMap] = useAtom(conversationPromptIdAtom);
+  const [onboardingDismissed, setOnboardingDismissed] = useAtom(onboardingDismissedAtom);
+  const [onboardingCompleted, setOnboardingCompleted] = useAtom(onboardingCompletedAtom);
   const promptSidebarOpen = useAtomValue(promptSidebarOpenAtom);
   const selectedPromptId = useAtomValue(selectedPromptIdAtom);
   const userProfile = useAtomValue(userProfileAtom);
@@ -79,8 +88,11 @@ export function ChatView(): React.ReactElement {
   const [chatError] = useAtom(currentChatErrorAtom);
   const setErrors = useSetAtom(chatStreamErrorsAtom);
   const setConversations = useSetAtom(conversationsAtom);
+  const setActiveView = useSetAtom(activeViewAtom);
+  const setSettingsTab = useSetAtom(settingsTabAtom);
   const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [creatingWelcomeConversation, setCreatingWelcomeConversation] = useState(false);
   const pendingTitleRef = useRef(new Map<string, { userMessage: string; channelId: string; modelId: string }>());
   const currentConversationIdRef = useRef<string | null>(currentConversationId);
   const conversationsRef = useRef(conversations);
@@ -333,6 +345,37 @@ export function ChatView(): React.ReactElement {
     [currentConversationId, selectedModel]
   );
 
+  const openModelSettings = (): void => {
+    setSettingsTab("models");
+    setActiveView("settings");
+  };
+
+  const handleCreateWelcomeConversation = async (): Promise<void> => {
+    if (!selectedModel || creatingWelcomeConversation) return;
+    setCreatingWelcomeConversation(true);
+    try {
+      const created = await createConversation({
+        modelId: selectedModel.modelId,
+        channelId: selectedModel.channelId
+      });
+      setConversations((prev) => [created, ...prev]);
+      const nextPromptId = promptConfig.defaultPromptId ?? selectedPromptId ?? "builtin-default";
+      setConversationPromptMap((prev) => {
+        const next = new Map(prev);
+        next.set(created.id, nextPromptId);
+        return next;
+      });
+      setSelectedModel({ channelId: selectedModel.channelId, modelId: selectedModel.modelId });
+      setCurrentConversationId(created.id);
+      setOnboardingCompleted(true);
+      setOnboardingDismissed(true);
+    } catch (error) {
+      console.error("[ChatView] create welcome conversation failed:", error);
+    } finally {
+      setCreatingWelcomeConversation(false);
+    }
+  };
+
   const handleSend = async (
     content: string,
     options?: {
@@ -429,6 +472,11 @@ export function ChatView(): React.ReactElement {
       thinkingEnabled,
       enabledToolIds: activeToolIds
     };
+
+    if (content.trim().length > 0 && !onboardingCompleted) {
+      setOnboardingCompleted(true);
+      setOnboardingDismissed(true);
+    }
 
     void sendChatMessage(input).catch((error) => {
       console.error("[ChatView] send failed", error);
@@ -619,6 +667,19 @@ export function ChatView(): React.ReactElement {
   };
 
   if (!currentConversationId) {
+    if (!onboardingDismissed && !onboardingCompleted) {
+      return (
+        <OnboardingView
+          hasModelSelected={!!selectedModel}
+          hasPromptConfig={promptConfig.prompts.length > 0}
+          hasToolsEnabled={activeToolIds.length > 0}
+          creating={creatingWelcomeConversation}
+          onCreateWelcomeConversation={() => { void handleCreateWelcomeConversation(); }}
+          onOpenModelSettings={openModelSettings}
+          onDismiss={() => setOnboardingDismissed(true)}
+        />
+      );
+    }
     return (
       <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] flex-col items-center justify-center gap-4 text-muted-foreground" style={{ zoom: 1.1 }}>
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
@@ -636,6 +697,14 @@ export function ChatView(): React.ReactElement {
     <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <ChatHeader />
+        {currentMessages.length === 0 && !isStreaming && !onboardingCompleted ? (
+          <TutorialBanner
+            canSendExample={canSend}
+            onSendExample={() => { void handleSend("请用三句话介绍你可以帮我完成哪些任务。"); }}
+            onOpenModelSettings={openModelSettings}
+            onDismiss={() => setOnboardingCompleted(true)}
+          />
+        ) : null}
         <ChatMessages
           messages={currentMessages}
           isStreaming={isStreaming}

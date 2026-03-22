@@ -148,10 +148,21 @@ export function AskUserQuestionPanel({
         {/* 头部 */}
         <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-medium text-foreground">需要确认问题</span>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              {activeIndex + 1} / {totalQuestions}
-            </span>
+            <div className="space-y-1">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-foreground">需要确认问题</span>
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  {activeIndex + 1} / {totalQuestions}
+                </span>
+              </div>
+              {request.originSessionId || request.subagentRunId ? (
+                <div className="text-[11px] text-muted-foreground">
+                  {request.originSessionId ? `来源会话: ${request.originSessionId}` : ""}
+                  {request.originSessionId && request.subagentRunId ? " · " : ""}
+                  {request.subagentRunId ? `Run: ${request.subagentRunId}` : ""}
+                </div>
+              ) : null}
+            </div>
           </div>
           <button
             type="button"

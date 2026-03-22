@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  listAttachedDirectory,
+  moveAttachedPath,
+  renameAttachedPath,
+  moveAgentFile,
+  renameAgentFile,
+  searchAgentWorkspaceFiles,
   deleteAgentPlan,
   getAgentSessionPath,
   listAgentPlans,
@@ -70,5 +76,82 @@ describe("agent-files-service plans", () => {
     expect(() => readAgentPlan(workspaceSlug, sessionId, "../secrets.md")).toThrow(
       "Plan 路径超出会话 plans 目录"
     );
+  });
+});
+
+describe("agent-files-service file ops", () => {
+  test("应支持重命名文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-c";
+    const sessionId = "session-c";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const filePath = join(sessionDir, "old-name.txt");
+    writeFileSync(filePath, "hello", "utf-8");
+
+    const result = renameAgentFile(workspaceSlug, sessionId, filePath, "new-name.txt");
+    expect(result.ok).toBeTrue();
+    expect(existsSync(result.path)).toBeTrue();
+    expect(readdirSync(sessionDir)).toContain("new-name.txt");
+    expect(readdirSync(sessionDir)).not.toContain("old-name.txt");
+  });
+
+  test("应支持移动文件到目标目录", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-d";
+    const sessionId = "session-d";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const sourceDir = join(sessionDir, "src");
+    const targetDir = join(sessionDir, "dst");
+    mkdirSync(sourceDir, { recursive: true });
+    mkdirSync(targetDir, { recursive: true });
+    const sourcePath = join(sourceDir, "task.md");
+    writeFileSync(sourcePath, "# task", "utf-8");
+
+    const result = moveAgentFile(workspaceSlug, sessionId, sourcePath, targetDir);
+    expect(result.ok).toBeTrue();
+    expect(existsSync(result.path)).toBeTrue();
+    expect(existsSync(sourcePath)).toBeFalse();
+  });
+
+  test("应支持搜索工作区文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-e";
+    const sessionId = "session-e";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const docsDir = join(sessionDir, "docs");
+    mkdirSync(docsDir, { recursive: true });
+    writeFileSync(join(sessionDir, "README.md"), "root", "utf-8");
+    writeFileSync(join(docsDir, "agent-guide.md"), "guide", "utf-8");
+    writeFileSync(join(docsDir, "notes.txt"), "notes", "utf-8");
+
+    const result = searchAgentWorkspaceFiles(workspaceSlug, sessionId, "ag", 20, sessionDir);
+    expect(result.total).toBeGreaterThan(0);
+    expect(result.entries.some((entry) => entry.name === "agent-guide.md")).toBeTrue();
+  });
+
+  test("应支持附加目录列出/重命名/移动", () => {
+    createTempConfigDir();
+    const tempRoot = mkdtempSync(join(tmpdir(), "lume-attached-"));
+    createdDirs.push(tempRoot);
+    const docsDir = join(tempRoot, "docs");
+    const movedDir = join(tempRoot, "moved");
+    mkdirSync(docsDir, { recursive: true });
+    mkdirSync(movedDir, { recursive: true });
+    const sourceFile = join(docsDir, "todo.txt");
+    writeFileSync(sourceFile, "todo", "utf-8");
+
+    const listed = listAttachedDirectory(docsDir);
+    expect(listed.length).toBe(1);
+    expect(listed[0]?.name).toBe("todo.txt");
+
+    const renamed = renameAttachedPath(sourceFile, "tasks.txt");
+    expect(renamed.ok).toBeTrue();
+    expect(existsSync(renamed.path)).toBeTrue();
+    expect(existsSync(sourceFile)).toBeFalse();
+
+    const moved = moveAttachedPath(renamed.path, movedDir);
+    expect(moved.ok).toBeTrue();
+    expect(existsSync(moved.path)).toBeTrue();
+    expect(existsSync(renamed.path)).toBeFalse();
   });
 });

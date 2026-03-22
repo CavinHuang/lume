@@ -26,6 +26,7 @@ import {
   agentToolActivitiesAtom,
   agentStreamingStatesAtom,
   agentSessionContextCacheAtom,
+  cachedTeammateStatesAtom,
   agentWorkspacesAtom,
   applyAgentEvent,
   currentAgentErrorAtom,
@@ -293,7 +294,9 @@ export function AgentView(): React.ReactElement {
   const [workspaces] = useAtom(agentWorkspacesAtom);
   const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
+  const streamingStates = useAtomValue(agentStreamingStatesAtom);
   const setContextCache = useSetAtom(agentSessionContextCacheAtom);
+  const setCachedTeammates = useSetAtom(cachedTeammateStatesAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const toolActivities = useAtomValue(agentToolActivitiesAtom);
   const contextStatus = useAtomValue(agentContextStatusAtom);
@@ -896,6 +899,7 @@ export function AgentView(): React.ReactElement {
           running: true,
           content: "",
           toolActivities: [],
+          teammates: [],
           events: []
         };
         map.set(payload.sessionId, applyAgentEvent(current, payload.event));
@@ -914,6 +918,26 @@ export function AgentView(): React.ReactElement {
           return map;
         });
       }
+
+      // 检测 team 活动 -> 自动打开侧面板
+      if (payload.sessionId === currentSessionIdRef.current) {
+        const event = payload.event;
+        if (
+          event.type === 'task_started' ||
+          (event.type === 'tool_start' && (event.toolName === 'Agent' || event.toolName === 'Task' || event.toolName === 'sessions_spawn'))
+        ) {
+          setSidePanelOpenMap(prev => {
+            const map = new Map(prev);
+            map.set(payload.sessionId, true);
+            return map;
+          });
+          setSidePanelTabMap(prev => {
+            const map = new Map(prev);
+            map.set(payload.sessionId, 'team');
+            return map;
+          });
+        }
+      }
     }));
 
     trackUnlisten(onAgentStreamComplete((payload) => {
@@ -923,6 +947,14 @@ export function AgentView(): React.ReactElement {
       }
       markStreamCompleted(payload.sessionId);
       const finalize = (): void => {
+        const streamState = streamingStates.get(payload.sessionId);
+        if (streamState?.teammates && streamState.teammates.length > 0) {
+          setCachedTeammates(prev => {
+            const map = new Map(prev);
+            map.set(payload.sessionId, streamState.teammates);
+            return map;
+          });
+        }
         if (payload.sessionId === currentSessionIdRef.current) {
           setAskUserQuestionRequest(null);
           setToolPermissionRequest(null);
@@ -1121,7 +1153,7 @@ export function AgentView(): React.ReactElement {
     const timer = setTimeout(() => {
       setStreamingStates((prev) => {
         const map = new Map(prev);
-        map.set(sessionId, { running: true, content: "", toolActivities: [], events: [] });
+        map.set(sessionId, { running: true, content: "", toolActivities: [], teammates: [], events: [] });
         return map;
       });
 
@@ -1261,7 +1293,7 @@ export function AgentView(): React.ReactElement {
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
-      map.set(sessionId, { running: true, content: "", toolActivities: [], events: [] });
+      map.set(sessionId, { running: true, content: "", toolActivities: [], teammates: [], events: [] });
       return map;
     });
 
@@ -1350,6 +1382,7 @@ export function AgentView(): React.ReactElement {
         running: true,
         content: "",
         toolActivities: [],
+        teammates: [],
         events: [],
         model: outgoingModelId
       });
@@ -1425,6 +1458,7 @@ export function AgentView(): React.ReactElement {
         running: true,
         content: "",
         toolActivities: [],
+        teammates: [],
         events: [],
         model: outgoingModelId
       });
@@ -1995,6 +2029,13 @@ export function AgentView(): React.ReactElement {
             </div>
             <div className="space-y-2 px-4 py-3">
               <div className="text-xs text-muted-foreground">工具：{toolPermissionRequest.toolName}</div>
+              {toolPermissionRequest.originSessionId || toolPermissionRequest.subagentRunId ? (
+                <div className="text-xs text-muted-foreground">
+                  {toolPermissionRequest.originSessionId ? `来源会话: ${toolPermissionRequest.originSessionId}` : ""}
+                  {toolPermissionRequest.originSessionId && toolPermissionRequest.subagentRunId ? " · " : ""}
+                  {toolPermissionRequest.subagentRunId ? `Run: ${toolPermissionRequest.subagentRunId}` : ""}
+                </div>
+              ) : null}
               <pre className="max-h-40 overflow-auto rounded-md bg-muted/40 p-2 text-xs text-foreground">
                 {JSON.stringify(toolPermissionRequest.input, null, 2)}
               </pre>

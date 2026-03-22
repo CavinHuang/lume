@@ -8,6 +8,7 @@ const pendingPiAskUserQuestionResolvers = new Map<
   string,
   {
     sessionId: string;
+    approvalSessionId: string;
     resolve: (result: AskUserQuestionWaitResult) => void;
     timeout?: ReturnType<typeof setTimeout>;
   }
@@ -18,6 +19,14 @@ const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 export interface AskUserQuestionWaitResult {
   status: "answered" | "canceled" | "aborted" | "timeout";
   answers: Record<string, string> | null;
+}
+
+export function setAskUserQuestionApprovalSession(toolUseId: string, approvalSessionId: string): void {
+  const pending = pendingPiAskUserQuestionResolvers.get(toolUseId);
+  if (!pending) return;
+  const normalized = approvalSessionId.trim();
+  if (!normalized) return;
+  pending.approvalSessionId = normalized;
 }
 
 function resolveAskTimeoutMs(): number {
@@ -63,6 +72,7 @@ export function waitForPiAskUserQuestionAnswers(
     }
     pendingPiAskUserQuestionResolvers.set(toolUseId, {
       sessionId,
+      approvalSessionId: sessionId,
       resolve: done,
       timeout
     });
@@ -80,7 +90,7 @@ export function submitPiAskUserQuestionAnswers(input: AgentAskUserQuestionRespon
   if (!pending) {
     return false;
   }
-  if (pending.sessionId !== input.sessionId) {
+  if (pending.approvalSessionId !== input.sessionId) {
     throw new Error("AskUserQuestion 会话不匹配");
   }
   if (input.canceled) {
@@ -93,7 +103,7 @@ export function submitPiAskUserQuestionAnswers(input: AgentAskUserQuestionRespon
 
 export function cancelPendingPiAskUserQuestionBySession(sessionId: string): void {
   for (const [toolUseId, pending] of pendingPiAskUserQuestionResolvers) {
-    if (pending.sessionId !== sessionId) {
+    if (pending.sessionId !== sessionId && pending.approvalSessionId !== sessionId) {
       continue;
     }
     pending.resolve({ status: "canceled", answers: null });

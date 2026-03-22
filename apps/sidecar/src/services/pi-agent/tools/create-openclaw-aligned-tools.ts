@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { AgentSendInput, AgentEvent } from "@lume/shared";
+import type {
+  AgentAskUserQuestionRequest,
+  AgentSendInput,
+  AgentEvent,
+  AgentToolPermissionRequest
+} from "@lume/shared";
+import { getSessionEventBus } from "../session-event-bus";
 import {
   appendAgentMessage,
   createAgentSession,
@@ -20,6 +26,8 @@ import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { resolveSubagentSpawnPolicy } from "../subagents/subagent-policy";
 import { resolveSubagentThreadBinding } from "../subagents/subagent-thread-binding";
+import { setAskUserQuestionApprovalSession } from "./ask-user-question-bridge";
+import { setToolPermissionApprovalSession } from "./tool-permission-bridge";
 
 const DEFAULT_TIMEOUT_MS = 12_000;
 const DEFAULT_WEB_FETCH_MAX_CHARS = 12_000;
@@ -65,6 +73,8 @@ interface CreateOpenClawAlignedToolsInput {
   sessionType?: AgentSendInput["sessionType"];
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
+  emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }
 
 interface ResolveSessionTargetInput {
@@ -627,6 +637,12 @@ async function executeAgentTurn(params: {
   sessionType?: AgentSendInput["sessionType"];
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
+  approvalSessionId?: string;
+  emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+  parentSessionId?: string;
+  runId?: string;
+  taskDescription?: string;
 }): Promise<{
   status: "completed" | "aborted" | "errored" | "timed_out";
   error?: string;
@@ -657,8 +673,32 @@ async function executeAgentTurn(params: {
   };
   appendAgentMessage(params.sessionId, userMessageRecord);
 
+  let lastToolName = "";
+  let toolUseCount = 0;
+  const startedAt = Date.now();
+  let progressInterval: ReturnType<typeof setInterval> | undefined;
+
+  if (params.parentSessionId && params.runId) {
+    const bus = getSessionEventBus();
+    progressInterval = setInterval(() => {
+      bus.emit(params.parentSessionId!, {
+        type: 'task_progress',
+        toolUseId: params.runId!,
+        elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        taskId: params.runId!,
+        description: params.taskDescription,
+        lastToolName,
+        usage: { toolUses: toolUseCount, durationMs: Date.now() - startedAt }
+      });
+    }, 3000);
+  }
+
   const execution = runPiAgentMessage(input, {
     onEvent(event) {
+      if (event.type === 'tool_start') {
+        lastToolName = event.toolName;
+        toolUseCount++;
+      }
       const text = collectTextFromEvent(event);
       if (text) {
         collectedChunks.push(text);
@@ -673,21 +713,53 @@ async function executeAgentTurn(params: {
     onError(error) {
       runtimeError = error;
     },
-    onAskUserQuestion() {
-      runtimeError = "目标会话在自动执行中触发 AskUserQuestion，已中止";
-      void stopPiAgent(params.sessionId);
+    onAskUserQuestion(request) {
+      if (!params.emitAskUserQuestion) {
+        runtimeError = "目标会话在自动执行中触发 AskUserQuestion，但当前未配置交互回调，已中止";
+        void stopPiAgent(params.sessionId);
+        return;
+      }
+      const approvalSessionId = params.approvalSessionId?.trim();
+      if (approvalSessionId && approvalSessionId !== request.sessionId) {
+        setAskUserQuestionApprovalSession(request.toolUseId, approvalSessionId);
+        params.emitAskUserQuestion({
+          ...request,
+          sessionId: approvalSessionId,
+          originSessionId: request.sessionId,
+          ...(params.runId ? { subagentRunId: params.runId } : {})
+        });
+        return;
+      }
+      params.emitAskUserQuestion(request);
     },
     onToolPermissionRequest(request) {
-      runtimeError = `目标会话工具需要用户确认，自动执行已中止: ${request.toolName}`;
-      void stopPiAgent(params.sessionId);
+      if (!params.emitToolPermissionRequest) {
+        runtimeError = `目标会话工具需要用户确认，但当前未配置交互回调，已中止: ${request.toolName}`;
+        void stopPiAgent(params.sessionId);
+        return;
+      }
+      const approvalSessionId = params.approvalSessionId?.trim();
+      if (approvalSessionId && approvalSessionId !== request.sessionId) {
+        setToolPermissionApprovalSession(request.requestId, approvalSessionId);
+        params.emitToolPermissionRequest({
+          ...request,
+          sessionId: approvalSessionId,
+          originSessionId: request.sessionId,
+          ...(params.runId ? { subagentRunId: params.runId } : {})
+        });
+        return;
+      }
+      params.emitToolPermissionRequest(request);
     }
   });
 
   if (timeoutMs <= 0) {
     const result = await execution;
+    if (progressInterval) clearInterval(progressInterval);
     const runText = truncateText(collectedChunks.join(""), 8_000);
-    if (runtimeError) {
-      return { status: "errored", error: runtimeError, runText, usageEvents };
+    const errorMsg = runtimeError || result.errorMessage;
+    if (errorMsg || result.status === "errored") {
+      return { status: "errored", error: errorMsg || "子会话执行异常", runText, usageEvents };
     }
     return { status: result.status, runText, usageEvents };
   }
@@ -708,12 +780,14 @@ async function executeAgentTurn(params: {
         usageEvents
       };
     }
-    if (runtimeError) {
-      return { status: "errored", error: runtimeError, runText, usageEvents };
+    const errorMsg = runtimeError || result.errorMessage;
+    if (errorMsg || result.status === "errored") {
+      return { status: "errored", error: errorMsg || "子会话执行异常", runText, usageEvents };
     }
     return { status: result.status, runText, usageEvents };
   } finally {
     clearTimeout(timer);
+    if (progressInterval) clearInterval(progressInterval);
   }
 }
 
@@ -996,6 +1070,9 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: input.permissionMode,
+          approvalSessionId: input.sessionId,
+          emitAskUserQuestion: input.emitAskUserQuestion,
+          emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds,
           sessionType: input.sessionType,
           chatType: input.chatType
@@ -1226,7 +1303,8 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
         const created = createAgentSession(
           label || "子会话",
           route.channelId ?? currentMeta?.channelId ?? input.channelId,
-          currentMeta?.workspaceId ?? input.workspaceId
+          currentMeta?.workspaceId ?? input.workspaceId,
+          input.sessionId
         );
         const requestedModel = route.modelHint || extractLatestModelFromSession(input.sessionId);
         const thinking = typeof params.thinking === "string" ? params.thinking.trim() : "";
@@ -1276,6 +1354,14 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           0
         );
         if (waitSeconds > 0) {
+          const bus = getSessionEventBus();
+          bus.emit(input.sessionId, {
+            type: 'task_started',
+            taskId: runId,
+            toolUseId: _toolCallId,
+            description: task,
+            agentName: label || 'Subagent'
+          });
           runRegistry.update(runId, {
             status: "running",
             startedAt: Date.now()
@@ -1287,13 +1373,19 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
             channelId: resolvedChannelId,
             modelId: resolvedModelId,
             permissionMode: policyDecision.childPermissionMode,
+            approvalSessionId: input.sessionId,
+            emitAskUserQuestion: input.emitAskUserQuestion,
+            emitToolPermissionRequest: input.emitToolPermissionRequest,
             timeoutSeconds: waitSeconds,
             sessionType: "subagent",
             chatType: input.chatType,
             messageMetadata: {
               spawnedBy: input.sessionId,
               spawnDepth: policyDecision.depth
-            }
+            },
+            parentSessionId: input.sessionId,
+            runId,
+            taskDescription: task
           });
           runRegistry.update(runId, {
             status: mapRunStatusToSubagent(runResult.status),
@@ -1309,6 +1401,14 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
             },
             announceStatus: "delivered",
             announceAttempts: 0
+          });
+          bus.emit(input.sessionId, {
+            type: 'task_notification',
+            taskId: runId,
+            toolUseId: _toolCallId,
+            status: runResult.status === 'completed' ? 'completed' : 'failed',
+            summary: truncateText(runResult.runText, 200),
+            usage: { toolUses: runResult.usageEvents, durationMs: Date.now() - (runRegistry.get(runId)?.startedAt ?? Date.now()) }
           });
           if (cleanup === "delete") {
             try {
@@ -1340,6 +1440,14 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           status: "running",
           startedAt: Date.now()
         });
+        const bus = getSessionEventBus();
+        bus.emit(input.sessionId, {
+          type: 'task_started',
+          taskId: runId,
+          toolUseId: _toolCallId,
+          description: task,
+          agentName: label || 'Subagent'
+        });
         void executeAgentTurn({
           sessionId: created.id,
           userMessage: task,
@@ -1347,13 +1455,19 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: policyDecision.childPermissionMode,
+          approvalSessionId: input.sessionId,
+          emitAskUserQuestion: input.emitAskUserQuestion,
+          emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds: 0,
           sessionType: "subagent",
           chatType: input.chatType,
           messageMetadata: {
             spawnedBy: input.sessionId,
             spawnDepth: policyDecision.depth
-          }
+          },
+          parentSessionId: input.sessionId,
+          runId,
+          taskDescription: task
         }).then(async (runResult) => {
           await finalizeSubagentRun({
             runRegistry,
@@ -1361,6 +1475,17 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
             cleanup,
             childSessionId: created.id,
             result: runResult
+          });
+          bus.emit(input.sessionId, {
+            type: 'task_notification',
+            taskId: runId,
+            toolUseId: _toolCallId,
+            status: runResult.status === 'completed' ? 'completed' : 'failed',
+            summary: truncateText(runResult.runText, 200),
+            usage: {
+              toolUses: runResult.usageEvents,
+              durationMs: Date.now() - (runRegistry.get(runId)?.startedAt ?? Date.now())
+            }
           });
         }).catch((error) => {
           void finalizeSubagentRun({
@@ -1596,6 +1721,9 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: input.permissionMode,
+          approvalSessionId: input.sessionId,
+          emitAskUserQuestion: input.emitAskUserQuestion,
+          emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds,
           sessionType: "subagent",
           chatType: input.chatType,
@@ -1733,6 +1861,9 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
             channelId: resolvedChannelId,
             modelId: resolvedModelId,
             permissionMode: input.permissionMode,
+            approvalSessionId: input.sessionId,
+            emitAskUserQuestion: input.emitAskUserQuestion,
+            emitToolPermissionRequest: input.emitToolPermissionRequest,
             timeoutSeconds: waitSeconds,
             sessionType: "subagent",
             chatType: input.chatType,
@@ -1775,6 +1906,9 @@ export function createOpenClawAlignedTools(input: CreateOpenClawAlignedToolsInpu
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: input.permissionMode,
+          approvalSessionId: input.sessionId,
+          emitAskUserQuestion: input.emitAskUserQuestion,
+          emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds: 0,
           sessionType: "subagent",
           chatType: input.chatType,

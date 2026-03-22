@@ -35,6 +35,12 @@ export interface TeamAgentInfo {
   errorCode?: string;
   usageEvents?: number;
   childActivities: ToolActivity[];
+  currentToolName?: string;
+  progressDescription?: string;
+  toolHistory?: string[];
+  durationMs?: number;
+  tokenUsage?: number;
+  toolCallCount?: number;
 }
 
 export interface TeamOverview {
@@ -294,7 +300,7 @@ export function selectTeamActivities(activities: ToolActivity[]): ToolActivity[]
   return activities.filter((item) => includedIds.has(item.toolUseId));
 }
 
-export function extractTeamOverview(activities: ToolActivity[]): TeamOverview | null {
+export function extractTeamOverview(activities: ToolActivity[], teammates?: import("@/atoms/agent-atoms").TeammateState[]): TeamOverview | null {
   let teamName: string | undefined;
   let teamDescription: string | undefined;
   const tasks: TeamTaskItem[] = [];
@@ -368,20 +374,31 @@ export function extractTeamOverview(activities: ToolActivity[]): TeamOverview | 
       ?? activity.displayName
       ?? "子任务";
 
+    const runId = asNonEmptyString(activity.input.run_id);
+    const teammate = teammates?.find(t => t.taskId === runId || t.toolUseId === activity.toolUseId);
+
     return {
       toolUseId: activity.toolUseId,
       name,
       description,
       subagentType: asNonEmptyString(activity.input.subagent_type),
       teamName: asNonEmptyString(activity.input.team_name) ?? teamName,
-      status: getActivityStatus(activity),
+      status: teammate
+        ? (teammate.status === 'running' ? 'running' : teammate.status === 'completed' ? 'completed' : 'error')
+        : getActivityStatus(activity),
       elapsedSeconds: activity.elapsedSeconds,
-      runId: asNonEmptyString(activity.input.run_id),
+      runId,
       childSessionKey: asNonEmptyString(activity.input.child_session_key),
       announceStatus: asNonEmptyString(activity.input.announce_status),
       errorCode: asNonEmptyString(activity.input.error_code),
       usageEvents: asFiniteNumber(activity.input.usage_events),
-      childActivities: childMap.get(activity.toolUseId) ?? []
+      childActivities: childMap.get(activity.toolUseId) ?? [],
+      currentToolName: teammate?.currentToolName,
+      progressDescription: teammate?.progressDescription,
+      toolHistory: teammate?.toolHistory,
+      durationMs: teammate?.usage?.durationMs,
+      tokenUsage: teammate?.usage?.totalTokens,
+      toolCallCount: teammate?.usage?.toolUses
     };
   });
 

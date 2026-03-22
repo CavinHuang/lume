@@ -1,6 +1,7 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { z } from "zod";
+import { getSessionEventBus } from "./services/pi-agent/session-event-bus";
 import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, MEMORY_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type {
   AttachmentSaveInput,
@@ -82,6 +83,9 @@ import {
   getAgentSessionMessages,
   getRecentAgentMessages,
   listAgentSessions,
+  migrateChatToAgentSession,
+  moveAgentSessionToWorkspace,
+  toggleAgentSessionPin,
   truncateAgentMessagesFrom,
   updateAgentSessionMeta
 } from "./services/agent-session-manager";
@@ -98,11 +102,20 @@ import {
   deleteAgentFile,
   getAgentSessionPath,
   listAgentDirectory,
+  listAttachedDirectory,
   listAgentPlans,
+  moveAgentFile,
+  moveAttachedPath,
   openAgentPath,
+  openAttachedPath,
+  previewAgentPath,
   readAgentPlan,
+  renameAgentFile,
+  renameAttachedPath,
   resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
+  searchAgentWorkspaceFiles,
+  showAttachedPathInFolder,
   showAgentPathInFolder,
 } from "./services/agent-files-service";
 import {
@@ -198,6 +211,7 @@ import {
 } from "./services/channel-gateway/feishu-retry-worker";
 import { subscribeSubagentAnnounceEvent } from "./services/pi-agent/subagents/subagent-announce-bus";
 import { getSubagentRunRegistry } from "./services/pi-agent/subagents/subagent-run-registry";
+import { isPiAgentSessionActive } from "./services/pi-agent/runner/run";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 console.log = (...args: unknown[]) => {
@@ -443,7 +457,8 @@ const memorySaveInputSchema = z.object({
 const agentCreateSessionInputSchema = z.object({
   title: z.string().optional(),
   channelId: z.string().optional(),
-  workspaceId: z.string().optional()
+  workspaceId: z.string().optional(),
+  parentSessionId: z.string().optional()
 });
 
 const agentSessionIdInputSchema = z.object({
@@ -458,6 +473,16 @@ const agentRecentMessagesInputSchema = z.object({
 const agentUpdateTitleInputSchema = z.object({
   sessionId: idSchema,
   title: z.string().min(1)
+});
+
+const agentMigrateChatInputSchema = z.object({
+  conversationId: idSchema,
+  sessionId: idSchema
+});
+
+const agentMoveSessionInputSchema = z.object({
+  sessionId: idSchema,
+  workspaceId: idSchema
 });
 
 const agentTruncateInputSchema = z.object({
@@ -530,6 +555,42 @@ const pathFileInputSchema = z.object({
   workspaceSlug: idSchema,
   sessionId: idSchema,
   path: idSchema
+});
+
+const renameFileInputSchema = z.object({
+  workspaceSlug: idSchema,
+  sessionId: idSchema,
+  path: idSchema,
+  newName: z.string().min(1)
+});
+
+const moveFileInputSchema = z.object({
+  workspaceSlug: idSchema,
+  sessionId: idSchema,
+  path: idSchema,
+  targetDir: idSchema
+});
+
+const attachedPathInputSchema = z.object({
+  path: idSchema
+});
+
+const renameAttachedFileInputSchema = z.object({
+  path: idSchema,
+  newName: z.string().min(1)
+});
+
+const moveAttachedFileInputSchema = z.object({
+  path: idSchema,
+  targetDir: idSchema
+});
+
+const searchWorkspaceFilesInputSchema = z.object({
+  workspaceSlug: idSchema,
+  sessionId: idSchema,
+  query: z.string().default(""),
+  limit: z.number().int().min(1).max(200).optional(),
+  rootPath: z.string().optional()
 });
 
 const plansReadDeleteInputSchema = z.object({
@@ -1074,7 +1135,8 @@ const handlers: Record<string, RpcHandler> = {
     return createAgentSession(
       p.title,
       p.channelId,
-      p.workspaceId
+      p.workspaceId,
+      p.parentSessionId
     );
   },
   [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {
@@ -1112,6 +1174,25 @@ const handlers: Record<string, RpcHandler> = {
   [AGENT_IPC_CHANNELS.UPDATE_TITLE]: async (params) => {
     const input = validateInput(agentUpdateTitleInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_TITLE);
     return updateAgentSessionMeta(input.sessionId, { title: input.title });
+  },
+  [AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT]: async (params) => {
+    const input = validateInput(agentMigrateChatInputSchema, params, AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT);
+    const migrated = migrateChatToAgentSession(input.conversationId, input.sessionId);
+    return { ok: true, migrated };
+  },
+  [AGENT_IPC_CHANNELS.TOGGLE_PIN_SESSION]: async (params) => {
+    const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.TOGGLE_PIN_SESSION);
+    return toggleAgentSessionPin(input.sessionId);
+  },
+  [AGENT_IPC_CHANNELS.MOVE_SESSION]: async (params) => {
+    const input = validateInput(agentMoveSessionInputSchema, params, AGENT_IPC_CHANNELS.MOVE_SESSION);
+    if (isPiAgentSessionActive(input.sessionId)) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (isPiAgentSessionActive(input.sessionId)) {
+        throw new Error("会话正在运行中，请停止后再迁移");
+      }
+    }
+    return moveAgentSessionToWorkspace(input.sessionId, input.workspaceId);
   },
   [AGENT_IPC_CHANNELS.DELETE_SESSION]: async (params) => {
     const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.DELETE_SESSION);
@@ -1202,6 +1283,60 @@ const handlers: Record<string, RpcHandler> = {
     const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.SHOW_IN_FOLDER);
     return showAgentPathInFolder(input.workspaceSlug, input.sessionId, input.path);
   },
+  [AGENT_IPC_CHANNELS.PREVIEW_FILE]: async (params) => {
+    const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.PREVIEW_FILE);
+    return previewAgentPath(input.workspaceSlug, input.sessionId, input.path);
+  },
+  [AGENT_IPC_CHANNELS.RENAME_FILE]: async (params) => {
+    const input = validateInput(renameFileInputSchema, params, AGENT_IPC_CHANNELS.RENAME_FILE);
+    return renameAgentFile(input.workspaceSlug, input.sessionId, input.path, input.newName);
+  },
+  [AGENT_IPC_CHANNELS.MOVE_FILE]: async (params) => {
+    const input = validateInput(moveFileInputSchema, params, AGENT_IPC_CHANNELS.MOVE_FILE);
+    return moveAgentFile(input.workspaceSlug, input.sessionId, input.path, input.targetDir);
+  },
+  [AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY]: async (params) => {
+    const input = validateInput(attachedPathInputSchema, params, AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY);
+    return listAttachedDirectory(input.path);
+  },
+  [AGENT_IPC_CHANNELS.OPEN_ATTACHED_FILE]: async (params) => {
+    const input = validateInput(attachedPathInputSchema, params, AGENT_IPC_CHANNELS.OPEN_ATTACHED_FILE);
+    return openAttachedPath(input.path);
+  },
+  [AGENT_IPC_CHANNELS.SHOW_ATTACHED_IN_FOLDER]: async (params) => {
+    const input = validateInput(attachedPathInputSchema, params, AGENT_IPC_CHANNELS.SHOW_ATTACHED_IN_FOLDER);
+    return showAttachedPathInFolder(input.path);
+  },
+  [AGENT_IPC_CHANNELS.RENAME_ATTACHED_FILE]: async (params) => {
+    const input = validateInput(
+      renameAttachedFileInputSchema,
+      params,
+      AGENT_IPC_CHANNELS.RENAME_ATTACHED_FILE
+    );
+    return renameAttachedPath(input.path, input.newName);
+  },
+  [AGENT_IPC_CHANNELS.MOVE_ATTACHED_FILE]: async (params) => {
+    const input = validateInput(
+      moveAttachedFileInputSchema,
+      params,
+      AGENT_IPC_CHANNELS.MOVE_ATTACHED_FILE
+    );
+    return moveAttachedPath(input.path, input.targetDir);
+  },
+  [AGENT_IPC_CHANNELS.SEARCH_WORKSPACE_FILES]: async (params) => {
+    const input = validateInput(
+      searchWorkspaceFilesInputSchema,
+      params,
+      AGENT_IPC_CHANNELS.SEARCH_WORKSPACE_FILES
+    );
+    return searchAgentWorkspaceFiles(
+      input.workspaceSlug,
+      input.sessionId,
+      input.query,
+      input.limit ?? 20,
+      input.rootPath
+    );
+  },
   [AGENT_IPC_CHANNELS.LIST_PLANS]: async (params) => {
     const input = validateInput(plansListInputSchema, params, AGENT_IPC_CHANNELS.LIST_PLANS);
     const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugBySessionId(input.sessionId);
@@ -1267,6 +1402,13 @@ const handlers: Record<string, RpcHandler> = {
       const steps = planStateTracker.syncExecutionFromUserMessage(input.sessionId, input.userMessage);
       notifyPlanStateChange(input.sessionId, "executing", steps ? { steps } : undefined);
     }
+    const bus = getSessionEventBus();
+    const unsubscribe = bus.subscribe(input.sessionId, (event) => {
+      writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
+        sessionId: input.sessionId,
+        event
+      });
+    });
     void sendAgentMessage(input, {
       onEvent: (event) => {
         writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
@@ -1278,12 +1420,13 @@ const handlers: Record<string, RpcHandler> = {
           notifyPlanStateChange(input.sessionId, "planning");
           return;
         }
-        if (event.toolName === "ExitPlanMode") {
+        if (event.toolName === "ExitPlanMode" && !event.isError) {
           const planPath = planStateTracker.parsePlanPathFromToolResult(event.result);
           notifyPlanStateChange(input.sessionId, "review", planPath ? { planPath } : undefined);
         }
       },
       onComplete: () => {
+        unsubscribe();
         writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
           sessionId: input.sessionId
         });
@@ -1294,6 +1437,7 @@ const handlers: Record<string, RpcHandler> = {
       },
       onError: (error) =>
       {
+        unsubscribe();
         writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
           sessionId: input.sessionId,
           error

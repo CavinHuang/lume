@@ -7,8 +7,10 @@
  */
 
 import {
+  cpSync,
   appendFileSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -21,12 +23,14 @@ import { join } from "node:path";
 import type { AgentMessage, AgentRecentMessagesResult, AgentSessionMeta } from "@lume/shared";
 import {
   getAgentWorkspacesDir,
+  getAgentWorkspacePath,
   getAgentSessionMessagesPath,
   getAgentSessionWorkspacePath,
   getAgentSessionsDir,
   getAgentSessionsIndexPath
 } from "./config-paths";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
+import { getConversationMessages } from "./conversation-manager";
 
 interface AgentSessionsIndex {
   version: number;
@@ -88,7 +92,8 @@ export function getAgentSessionMeta(id: string): AgentSessionMeta | undefined {
 export function createAgentSession(
   title?: string,
   channelId?: string,
-  workspaceId?: string
+  workspaceId?: string,
+  parentSessionId?: string
 ): AgentSessionMeta {
   const index = readIndex();
   const now = Date.now();
@@ -98,6 +103,8 @@ export function createAgentSession(
     title: title || "新 Agent 会话",
     channelId,
     workspaceId,
+    parentSessionId,
+    pinned: false,
     createdAt: now,
     updatedAt: now
   };
@@ -170,7 +177,7 @@ export function updateAgentSessionMeta(
   updates: Partial<
     Pick<
       AgentSessionMeta,
-      "title" | "channelId" | "sdkSessionId" | "piSessionId" | "workspaceId"
+      "title" | "channelId" | "sdkSessionId" | "piSessionId" | "workspaceId" | "pinned"
     >
   >
 ): AgentSessionMeta {
@@ -192,6 +199,119 @@ export function updateAgentSessionMeta(
 
   console.log(`[Agent 会话] 已更新会话: ${updated.title} (${updated.id})`);
   return updated;
+}
+
+export function toggleAgentSessionPin(id: string): AgentSessionMeta {
+  const meta = getAgentSessionMeta(id);
+  if (!meta) {
+    throw new Error(`Agent 会话不存在: ${id}`);
+  }
+  return updateAgentSessionMeta(id, { pinned: !meta.pinned });
+}
+
+function moveSessionDir(sourceDir: string, targetDir: string): void {
+  if (!existsSync(sourceDir)) return;
+  if (existsSync(targetDir)) {
+    rmSync(targetDir, { recursive: true, force: true });
+  }
+  try {
+    renameSync(sourceDir, targetDir);
+  } catch (error) {
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    if (errorCode !== "EXDEV") {
+      throw error;
+    }
+    cpSync(sourceDir, targetDir, { recursive: true });
+    rmSync(sourceDir, { recursive: true, force: true });
+  }
+}
+
+function resolveExistingSessionDir(sessionId: string, preferredWorkspaceSlug?: string): string | null {
+  if (preferredWorkspaceSlug) {
+    const preferredPath = join(getAgentWorkspacePath(preferredWorkspaceSlug), sessionId);
+    if (existsSync(preferredPath)) {
+      return preferredPath;
+    }
+  }
+  const workspacesDir = getAgentWorkspacesDir();
+  if (!existsSync(workspacesDir)) {
+    return null;
+  }
+  const entries = readdirSync(workspacesDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const candidate = join(workspacesDir, entry.name, sessionId);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+export function moveAgentSessionToWorkspace(id: string, workspaceId: string): AgentSessionMeta {
+  const targetWorkspace = getAgentWorkspace(workspaceId);
+  if (!targetWorkspace) {
+    throw new Error(`目标工作区不存在: ${workspaceId}`);
+  }
+  ensureWorkspaceAgentAssets(targetWorkspace.slug, targetWorkspace.name);
+  const currentMeta = getAgentSessionMeta(id);
+  if (!currentMeta) {
+    throw new Error(`Agent 会话不存在: ${id}`);
+  }
+
+  const currentWorkspace = currentMeta.workspaceId
+    ? getAgentWorkspace(currentMeta.workspaceId)
+    : undefined;
+  const sourceDir = resolveExistingSessionDir(id, currentWorkspace?.slug);
+  const targetDir = join(getAgentWorkspacePath(targetWorkspace.slug), id);
+
+  if (sourceDir && sourceDir !== targetDir) {
+    moveSessionDir(sourceDir, targetDir);
+  } else if (!existsSync(targetDir)) {
+    mkdirSync(targetDir, { recursive: true });
+  }
+
+  return updateAgentSessionMeta(id, {
+    workspaceId: workspaceId,
+    sdkSessionId: undefined,
+    piSessionId: undefined
+  });
+}
+
+/**
+ * 迁移 Chat 对话消息到指定 Agent 会话。
+ * 仅迁移 user/assistant 且有文本内容的消息，忽略工具活动与附件。
+ */
+export function migrateChatToAgentSession(conversationId: string, agentSessionId: string): number {
+  const session = getAgentSessionMeta(agentSessionId);
+  if (!session) {
+    throw new Error(`Agent 会话不存在: ${agentSessionId}`);
+  }
+
+  const chatMessages = getConversationMessages(conversationId);
+  if (chatMessages.length === 0) {
+    return 0;
+  }
+
+  let migratedCount = 0;
+  for (const message of chatMessages) {
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    if (!message.content.trim()) continue;
+
+    appendAgentMessage(agentSessionId, {
+      id: randomUUID(),
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+      model: message.role === "assistant" ? message.model : undefined
+    });
+    migratedCount += 1;
+  }
+
+  if (migratedCount > 0) {
+    updateAgentSessionMeta(agentSessionId, {});
+  }
+  return migratedCount;
 }
 
 export function deleteAgentSession(id: string): void {
