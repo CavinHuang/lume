@@ -397,6 +397,11 @@
 **Lume 当前锚点**
 - About 页有 updater 状态，但无 release 历史浏览。
 
+**进展（2026-03-22）**
+- ✅ 已完成：共享契约补齐 `github-release:get-latest/list/get-by-tag`。
+- ✅ 已完成：sidecar 接入 GitHub Release 拉取服务（含 5 分钟缓存与失败回退缓存）。
+- ✅ 已完成：About 页新增“版本历史与发布说明”区块（版本列表、展开查看 Markdown Release Notes、外链跳转）。
+
 **取舍点**
 - 方案 A（推荐）：新增只读 Release Notes 与历史列表。
 - 方案 B：保持简版 About（如果产品定位强调极简）。

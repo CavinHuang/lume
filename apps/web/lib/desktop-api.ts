@@ -7,6 +7,7 @@ import {
   CHANNEL_IPC_CHANNELS,
   CHAT_IPC_CHANNELS,
   CHAT_TOOL_IPC_CHANNELS,
+  GITHUB_RELEASE_IPC_CHANNELS,
   MEMORY_IPC_CHANNELS,
   SYSTEM_PROMPT_IPC_CHANNELS
 } from "@lume/shared";
@@ -75,6 +76,8 @@ import type {
   FetchModelsInput,
   FetchModelsResult,
   GenerateTitleInput,
+  GitHubRelease,
+  GitHubReleaseListOptions,
   HealthcheckResult,
   RecentMessagesResult,
   StreamChunkEvent,
@@ -248,6 +251,20 @@ export async function installBrowserExtension(): Promise<{ path: string }> {
 
 export async function getBrowserRelayStatus(): Promise<BrowserRelayStatus> {
   return sidecarCall<BrowserRelayStatus>("browser:get-relay-status");
+}
+
+export async function getLatestGitHubRelease(): Promise<GitHubRelease | null> {
+  return sidecarCall<GitHubRelease | null>(GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE);
+}
+
+export async function listGitHubReleases(
+  options?: GitHubReleaseListOptions
+): Promise<GitHubRelease[]> {
+  return sidecarCall<GitHubRelease[]>(GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES, options ?? {});
+}
+
+export async function getGitHubReleaseByTag(tag: string): Promise<GitHubRelease | null> {
+  return sidecarCall<GitHubRelease | null>(GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG, { tag });
 }
 
 export async function listAutomationJobs(): Promise<AutomationJob[]> {

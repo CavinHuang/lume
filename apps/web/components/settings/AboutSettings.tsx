@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { AlertCircle, CheckCircle2, Download, Loader2, RefreshCw } from "lucide-react";
 import { checkForUpdates, installUpdate, updateStatusAtom, updaterAvailableAtom } from "@/atoms";
+import { getAppVersion } from "@/lib/app-version";
 import { desktopHealthcheck, sidecarHealthcheck } from "@/lib/desktop-api";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
+import { VersionHistory } from "./VersionHistory";
 
 type HealthState = {
   desktop: string;
@@ -16,7 +18,7 @@ export function AboutSettings(): React.ReactElement {
   const [updateStatus, setUpdateStatus] = useAtom(updateStatusAtom);
   const updaterAvailable = useAtomValue(updaterAvailableAtom);
   const [health, setHealth] = useState<HealthState>({ desktop: "checking", sidecar: "checking" });
-  const appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+  const appVersion = getAppVersion();
   const [checking, setChecking] = useState(false);
 
   useEffect(() => {
@@ -121,6 +123,10 @@ export function AboutSettings(): React.ReactElement {
             ) : null}
           </SettingsCard>
         ) : null}
+      </SettingsSection>
+
+      <SettingsSection title="版本历史与发布说明" description="查看近期版本更新内容（Release Notes）">
+        <VersionHistory />
       </SettingsSection>
     </div>
   );

@@ -2,7 +2,7 @@ import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { getSessionEventBus } from "./services/pi-agent/session-event-bus";
-import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, MEMORY_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, CHANNEL_GATEWAY_IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, MEMORY_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type {
   AttachmentSaveInput,
   AgentListSubagentRunsInput,
@@ -29,6 +29,7 @@ import type {
   SystemPromptCreateInput,
   SystemPromptUpdateInput,
   FetchModelsInput,
+  GitHubReleaseListOptions,
   GenerateTitleInput,
   WorkspaceMcpConfig
 } from "@lume/shared";
@@ -205,6 +206,11 @@ import {
   startFeishuWsIngressServer,
   stopFeishuWsIngressServer
 } from "./services/channel-gateway/feishu-ws-ingress-service";
+import {
+  getGitHubReleaseByTag,
+  getLatestGitHubRelease,
+  listGitHubReleases
+} from "./services/github-release-service";
 import {
   startFeishuRetryWorker,
   stopFeishuRetryWorker
@@ -764,6 +770,10 @@ const feishuGatewaySaveInputSchema = z.object({
   webhookPath: z.string().optional()
 });
 
+const githubReleaseByTagInputSchema = z.object({
+  tag: z.string().min(1)
+});
+
 function validateInput<T>(schema: z.ZodType<T>, payload: unknown, method: string): T {
   const parsed = schema.safeParse(payload);
   if (parsed.success) {
@@ -795,6 +805,18 @@ const handlers: Record<string, RpcHandler> = {
     pid: process.pid
   }),
   "rpc:list-methods": async () => Object.keys(handlers).sort(),
+  [GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE]: async () => getLatestGitHubRelease(),
+  [GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES]: async (params) => listGitHubReleases(
+    (params ?? {}) as GitHubReleaseListOptions
+  ),
+  [GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG]: async (params) => {
+    const input = validateInput(
+      githubReleaseByTagInputSchema,
+      params,
+      GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG
+    );
+    return getGitHubReleaseByTag(input.tag);
+  },
 
   [CHANNEL_IPC_CHANNELS.LIST]: async () => listChannels(),
   [CHANNEL_IPC_CHANNELS.CREATE]: async (params) => createChannel(params as ChannelCreateInput),
