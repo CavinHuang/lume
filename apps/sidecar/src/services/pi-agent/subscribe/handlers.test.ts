@@ -80,4 +80,25 @@ describe("pi subscribe handlers", () => {
     }]);
     expect(accumulator.text).toBe("hello world");
   });
+
+  test("message_update 非标准 output_text 结构时应回退提取文本", () => {
+    const accumulator = createAgentStreamAccumulatorState();
+    const event = {
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "output_text", text: "glm-fallback" }]
+      },
+      assistantMessageEvent: { type: "thinking_delta", delta: "..." }
+    } as unknown as PiCoreAgentEvent;
+
+    const mapped = handlePiSessionEvent({
+      event,
+      accumulator,
+      onEvent: () => undefined
+    });
+
+    expect(mapped).toEqual([{ type: "text_delta", text: "glm-fallback" }]);
+    expect(accumulator.text).toBe("glm-fallback");
+  });
 });

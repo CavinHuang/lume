@@ -9,15 +9,31 @@ import { ToolActivityList } from "./ToolActivityItem";
 interface TimelineTextEventProps {
   event: TimelineEvent & { type: "text" };
   isLast?: boolean;
+  /** 最后一段文字且前面紧跟着工具组时，视为"结论段"，加分割线强调 */
+  isConclusion?: boolean;
 }
 
-const TimelineTextEvent = React.memo(function TimelineTextEvent({ event, isLast }: TimelineTextEventProps): React.ReactElement {
+const TimelineTextEvent = React.memo(function TimelineTextEvent({
+  event,
+  isLast,
+  isConclusion,
+}: TimelineTextEventProps): React.ReactElement {
   return (
-    <div className={cn("text-foreground/90 py-1", !isLast && "border-b border-border/40")}>
+    <div
+      className={cn(
+        "py-1 text-foreground/90",
+        !isLast && "border-b border-border/40",
+        isConclusion && "mt-2 border-t border-border/30 pt-3",
+      )}
+    >
       <MessageResponse>{event.content}</MessageResponse>
     </div>
   );
-}, (prev, next) => prev.event === next.event && prev.isLast === next.isLast);
+}, (prev, next) =>
+  prev.event === next.event &&
+  prev.isLast === next.isLast &&
+  prev.isConclusion === next.isConclusion
+);
 
 function toToolActivity(
   startEvent: Extract<TimelineEvent, { type: "tool_start" }>,
@@ -32,7 +48,7 @@ function toToolActivity(
     parentToolUseId: startEvent.parentToolUseId,
     done: !!resultEvent,
     result: resultEvent?.result,
-    isError: resultEvent?.isError
+    isError: resultEvent?.isError,
   };
 }
 
@@ -77,7 +93,6 @@ function buildSegments(events: TimelineEvent[]): RenderSegment[] {
       segments.push({ type: "text", data: event });
       continue;
     }
-
     if (event.type === "tool_start") {
       const resultQueue = toolResultMap.get(event.toolUseId);
       const resultEvent = resultQueue?.shift();
@@ -89,33 +104,50 @@ function buildSegments(events: TimelineEvent[]): RenderSegment[] {
   return segments;
 }
 
-export const EventTimeline = React.memo(function EventTimeline({ events, isStreaming = false }: EventTimelineProps): React.ReactElement | null {
+export const EventTimeline = React.memo(function EventTimeline({
+  events,
+  isStreaming = false,
+}: EventTimelineProps): React.ReactElement | null {
   const segments = React.useMemo(() => buildSegments(events), [events]);
 
   if (segments.length === 0) return null;
+
+  // 只有当消息中同时存在文字和工具时，工具组才折叠（纯工具响应不折叠）
+  const hasTextSegments = segments.some((s) => s.type === "text");
+  const shouldCollapse = !isStreaming && hasTextSegments;
 
   return (
     <div className="space-y-0">
       {segments.map((segment, index) => {
         if (segment.type === "text") {
           const isLast = index === segments.length - 1;
+          // 结论段：最后一个文字段且前面紧跟工具组
+          const prevSegment = index > 0 ? segments[index - 1] : null;
+          const isConclusion = isLast && prevSegment?.type === "tools";
+
           return (
             <TimelineTextEvent
               key={`${segment.data.eventId}-${index}`}
               event={segment.data}
               isLast={isLast}
+              isConclusion={isConclusion}
             />
           );
         }
 
         const firstTool = segment.data[0];
         const key = firstTool ? `${firstTool.toolUseId}-${index}` : `tools-${index}`;
+
         return (
-          <div key={key} className="my-2">
-            <ToolActivityList activities={segment.data} animate={isStreaming} />
+          <div key={key} className="my-1.5">
+            <ToolActivityList
+              activities={segment.data}
+              animate={isStreaming}
+              defaultCollapsed={shouldCollapse}
+            />
           </div>
         );
       })}
     </div>
   );
-})
+});

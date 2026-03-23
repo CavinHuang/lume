@@ -2,6 +2,7 @@ import type { AgentEvent } from "@lume/shared";
 import type { AgentEvent as PiCoreAgentEvent } from "@mariozechner/pi-agent-core";
 import type { AgentStreamAccumulatorState } from "../../agent-stream-accumulator";
 import { appendAgentEvents } from "../../agent-stream-accumulator";
+import { extractRenderableAssistantText } from "../content-extraction";
 import { mapPiSessionEventToAgentEvents } from "./map-pi-session-event";
 
 interface HandlePiSessionEventInput {
@@ -57,20 +58,5 @@ function extractAssistantTextFromPiEvent(event: PiCoreAgentEvent): string {
   if (event.message.role !== "assistant") {
     return "";
   }
-  return extractTextFromContent(event.message.content);
-}
-
-function extractTextFromContent(content: unknown): string {
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  const parts: string[] = [];
-  for (const item of content) {
-    if (!item || typeof item !== "object") continue;
-    const block = item as { type?: string; text?: unknown };
-    if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) {
-      parts.push(block.text);
-    }
-  }
-  return parts.join("");
+  return extractRenderableAssistantText(event.message.content);
 }

@@ -112,4 +112,20 @@ describe("map-pi-session-event", () => {
     }]);
   });
 
+  test("message_end 非标准 output_text 结构也应映射为 text_complete", () => {
+    const event = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "output_text", text: "glm-text" }]
+      }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped).toEqual([{
+      type: "text_complete",
+      text: "glm-text",
+      isIntermediate: false
+    }]);
+  });
+
 });

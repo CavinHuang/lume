@@ -4,15 +4,19 @@ import * as React from "react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
 import { useAtomValue } from "jotai";
-import { Bot, CalendarClock, ChevronRight, FileImage, FileText, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, CalendarClock, ChevronRight, FileImage, FileText, Home, Loader2, Pencil, RotateCcw, Trash2, Wrench } from "lucide-react";
 import {
+  agentIsCompactingAtom,
   agentModelIdAtom,
   agentStreamingAtom,
   agentStreamingContentAtom,
   agentStreamingTimelineEventsAtom,
+  agentThinkingSecondsAtom,
+  cachedTeammateStatesAtom,
   currentAgentMessagesAtom,
+  currentAgentSessionIdAtom,
   extractTimelineEvents,
-  type ToolActivity,
+  teammateStatesAtom,
   userProfileAtom
 } from "@/atoms";
 import {
@@ -35,6 +39,7 @@ import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { getModelLogo } from "@/lib/model-logo";
 import { EventTimeline } from "./EventTimeline";
+import { SubagentLiveCards } from "./SubagentLiveCard";
 
 export interface AgentInlineEditSubmitPayload {
   content: string;
@@ -85,6 +90,28 @@ function parseAnnounceContent(content: string): AnnounceInfo {
   return { label, status, outputText, errorText };
 }
 
+function ThinkingTimeIndicator({ seconds }: { seconds: number }): React.ReactElement {
+  const [expanded, setExpanded] = React.useState(false);
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-muted/40"
+      >
+        <Loader2 className="size-3 shrink-0 text-muted-foreground/50 animate-spin" />
+        <span className="text-foreground/60">思考了 {seconds.toFixed(1)} 秒</span>
+        <ChevronRight className={`size-3 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-90" : ""}`} />
+      </button>
+      {expanded ? (
+        <div className="mt-1 px-2 py-1 text-[11px] text-muted-foreground/50">
+          模型推理阶段
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SubagentAnnounceMessage({
   message,
   onOpenSession
@@ -96,69 +123,78 @@ function SubagentAnnounceMessage({
     () => parseAnnounceContent(message.content),
     [message.content]
   );
-  // 超过 280 字符时默认折叠，让用户主动展开
-  const [collapsed, setCollapsed] = React.useState(() => (outputText?.length ?? 0) > 280);
+  const [expanded, setExpanded] = React.useState(false);
   const metadata = message.metadata as Record<string, unknown>;
   const childSessionId = typeof metadata?.childSessionId === "string" ? metadata.childSessionId : undefined;
   const isCompleted = status === "completed";
+  const isFailed = status === "failed" || status === "stopped";
+
+  // 尝试从 metadata 获取工具计数
+  const toolUses = typeof metadata?.toolUses === "number" ? metadata.toolUses : undefined;
+  // 如果没有，尝试从 cachedTeammateStates 查找
+  const currentSessionId = useAtomValue(currentAgentSessionIdAtom);
+  const cachedTeammates = useAtomValue(cachedTeammateStatesAtom);
+  const cachedToolUses = React.useMemo(() => {
+    if (toolUses !== undefined || !currentSessionId || !childSessionId) return undefined;
+    const teammates = cachedTeammates.get(currentSessionId);
+    const teammate = teammates?.find(t => t.taskId === childSessionId);
+    return teammate?.usage?.toolUses ?? teammate?.toolHistory.length;
+  }, [toolUses, currentSessionId, childSessionId, cachedTeammates]);
+
+  const finalToolUses = toolUses ?? cachedToolUses;
+  const taskId = childSessionId?.slice(0, 8) ?? "unknown";
 
   return (
-    <Message from="assistant">
-      <MessageHeader
-        model="subagent"
-        time={formatMessageTime(message.createdAt)}
-        logo={
-          <div className="size-[35px] rounded-[25%] bg-primary/10 flex items-center justify-center">
-            <Bot size={18} className="text-primary" />
-          </div>
-        }
-      />
-      <MessageContent>
-        <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
-          {/* 标题行 */}
+    <div className="rounded-lg border border-border/60 bg-muted/20 overflow-hidden">
+      {/* 折叠行 */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30"
+      >
+        <Home className="size-3 shrink-0 text-muted-foreground/50" />
+        <span className="text-xs font-medium text-foreground/70">TaskOutput {taskId}</span>
+        <span
+          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+            isCompleted
+              ? "bg-green-500/10 text-green-600"
+              : "bg-destructive/10 text-destructive"
+          }`}
+        >
+          {isCompleted ? "Completed" : "Failed"}
+        </span>
+        {finalToolUses !== undefined ? (
+          <span className="flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            <Wrench className="size-2.5" />
+            {finalToolUses} tools
+          </span>
+        ) : null}
+        <div className="flex-1" />
+        <ChevronRight className={`size-3 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-90" : ""}`} />
+      </button>
+
+      {/* 展开详情 */}
+      {expanded ? (
+        <div className="border-t border-border/40 px-3 py-2.5 space-y-2">
           <div className="flex items-center gap-2">
             <Bot className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="text-xs font-medium flex-1 truncate">{label}</span>
-            <span
-              className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                isCompleted
-                  ? "bg-green-500/10 text-green-600"
-                  : "bg-destructive/10 text-destructive"
-              }`}
-            >
-              {status}
-            </span>
           </div>
 
-          {/* 输出文本区 */}
           {outputText ? (
             <div className="rounded-md bg-muted/30 px-2.5 py-2">
-              <div
-                className={collapsed ? "line-clamp-3 text-[11px] leading-relaxed text-foreground/80" : "text-[11px] leading-relaxed text-foreground/80"}
-              >
+              <div className="text-[11px] leading-relaxed text-foreground/80">
                 <MessageResponse>{outputText}</MessageResponse>
               </div>
-              {(outputText.length > 280) ? (
-                <button
-                  type="button"
-                  onClick={() => setCollapsed((v) => !v)}
-                  className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <ChevronRight className={`size-3 transition-transform duration-150 ${collapsed ? "" : "rotate-90"}`} />
-                  {collapsed ? "展开全部" : "收起"}
-                </button>
-              ) : null}
             </div>
           ) : null}
 
-          {/* 错误区 */}
           {errorText ? (
             <div className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
               <span className="font-medium">错误: </span>{errorText}
             </div>
           ) : null}
 
-          {/* 操作行 */}
           {childSessionId && onOpenSession ? (
             <button
               type="button"
@@ -169,8 +205,8 @@ function SubagentAnnounceMessage({
             </button>
           ) : null}
         </div>
-      </MessageContent>
-    </Message>
+      ) : null}
+    </div>
   );
 }
 
@@ -194,69 +230,6 @@ function AssistantLogo({ model }: { model?: string }): React.ReactElement {
       <Bot size={18} className="text-primary" />
     </div>
   );
-}
-
-function extractToolActivities(events: AgentMessage["events"]): ToolActivity[] {
-  if (!events) return [];
-
-  const activities: ToolActivity[] = [];
-  for (const event of events) {
-    if (event.type === "tool_start") {
-      const existingIdx = activities.findIndex((item) => item.toolUseId === event.toolUseId);
-      if (existingIdx >= 0) {
-        const current = activities[existingIdx]!;
-        activities[existingIdx] = {
-          ...current,
-          input: event.input,
-          intent: event.intent || current.intent,
-          displayName: event.displayName || current.displayName,
-          parentToolUseId: event.parentToolUseId || current.parentToolUseId,
-          done: false,
-        };
-      } else {
-        activities.push({
-          toolUseId: event.toolUseId,
-          toolName: event.toolName,
-          input: event.input,
-          intent: event.intent,
-          displayName: event.displayName,
-          parentToolUseId: event.parentToolUseId,
-          done: false,
-        });
-      }
-    } else if (event.type === "tool_result") {
-      const idx = activities.findIndex((item) => item.toolUseId === event.toolUseId);
-      if (idx >= 0) {
-        const current = activities[idx]!;
-        activities[idx] = {
-          ...current,
-          result: event.result,
-          isError: event.isError,
-          done: true,
-        };
-      }
-    } else if (event.type === "task_backgrounded") {
-      const idx = activities.findIndex((item) => item.toolUseId === event.toolUseId);
-      if (idx >= 0) {
-        const current = activities[idx]!;
-        activities[idx] = { ...current, isBackground: true, taskId: event.taskId };
-      }
-    } else if (event.type === "task_progress") {
-      const idx = activities.findIndex((item) => item.toolUseId === event.toolUseId);
-      if (idx >= 0) {
-        const current = activities[idx]!;
-        activities[idx] = { ...current, elapsedSeconds: event.elapsedSeconds };
-      }
-    } else if (event.type === "shell_backgrounded") {
-      const idx = activities.findIndex((item) => item.toolUseId === event.toolUseId);
-      if (idx >= 0) {
-        const current = activities[idx]!;
-        activities[idx] = { ...current, isBackground: true, shellId: event.shellId };
-      }
-    }
-  }
-
-  return activities;
 }
 
 interface AttachedFileRef {
@@ -372,10 +345,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     () => message.role === "assistant" ? extractTimelineEvents(message) : [],
     [message]
   );
-  const toolActivities = React.useMemo(
-    () => message.role === "assistant" ? extractToolActivities(message.events) : [],
-    [message]
-  );
 
   const { attachedFiles, messageText } = React.useMemo(() => {
     if (message.role !== "user") return { attachedFiles: [] as AttachedFileRef[], messageText: "" };
@@ -471,11 +440,12 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
 
         <MessageContent>
           {timelineEvents.length > 0 ? (
-            <div className="mb-3">
+            <div className="mb-2">
               <EventTimeline events={timelineEvents} />
             </div>
           ) : null}
-          {message.content && timelineEvents.length === 0 && toolActivities.length === 0 ? (
+          {/* 安全网：当 timeline 中没有文本段时，直接展示 message.content */}
+          {message.content && !timelineEvents.some((e) => e.type === "text") ? (
             <MessageResponse>{message.content}</MessageResponse>
           ) : null}
         </MessageContent>
@@ -518,6 +488,9 @@ export function AgentMessages({
   const streamingContent = useAtomValue(agentStreamingContentAtom);
   const streamingTimelineEvents = useAtomValue(agentStreamingTimelineEventsAtom);
   const agentModelId = useAtomValue(agentModelIdAtom);
+  const teammateStates = useAtomValue(teammateStatesAtom);
+  const isCompacting = useAtomValue(agentIsCompactingAtom);
+  const thinkingSeconds = useAtomValue(agentThinkingSecondsAtom);
 
   const { displayedContent: smoothContent } = useSmoothStream({
     content: streamingContent,
@@ -525,8 +498,14 @@ export function AgentMessages({
   });
 
   const actionsDisabled = isStreaming || streaming;
-  const shouldShowStreamingMessage =
-    (streaming || Boolean(smoothContent));
+  const shouldShowStreamingMessage = streaming || Boolean(smoothContent);
+
+  // 当 streaming timeline 中已有文本段时，文字由 EventTimeline 渲染，不需要 smoothContent 单独展示
+  const hasTextInStreamingTimeline = streamingTimelineEvents.some((e) => e.type === "text");
+  // 需要独立展示 smoothContent 的条件：有内容 且 timeline 中尚无文本段
+  const showSmoothContent = Boolean(smoothContent) && !hasTextInStreamingTimeline;
+  // 等待第一个 token 时显示三点 loading（有子Agent卡片时不显示）
+  const showLoadingDots = streaming && !smoothContent && streamingTimelineEvents.length === 0 && teammateStates.length === 0;
 
   return (
     <Conversation className={!streaming ? "cv-ready" : undefined} key={!isSwitching && messages.length > 0 ? messages[0]!.id : ""}>
@@ -565,23 +544,40 @@ export function AgentMessages({
                   logo={<AssistantLogo model={agentModelId ?? undefined} />}
                 />
                 <MessageContent>
+                  {thinkingSeconds !== null && streaming ? (
+                    <ThinkingTimeIndicator seconds={thinkingSeconds} />
+                  ) : null}
+
                   {streamingTimelineEvents.length > 0 ? (
-                    <div className="mb-3">
+                    <div className="mb-2">
                       <EventTimeline events={streamingTimelineEvents} isStreaming={streaming} />
                     </div>
                   ) : null}
 
-                  {smoothContent && streamingTimelineEvents.length === 0 ? (
+                  {isCompacting ? (
+                    <div className="mb-2 flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground/60">
+                      <Loader2 className="size-3 animate-spin shrink-0" />
+                      上下文压缩中...
+                    </div>
+                  ) : null}
+
+                  {teammateStates.length > 0 ? (
+                    <div className="mb-2">
+                      <SubagentLiveCards teammates={teammateStates} />
+                    </div>
+                  ) : null}
+
+                  {showSmoothContent ? (
                     <>
                       <MessageResponse>{smoothContent}</MessageResponse>
                       {streaming ? <StreamingIndicator /> : null}
                     </>
-                  ) : (
-                    streaming && streamingTimelineEvents.length === 0
-                      ? <MessageLoading />
-                      : null
-                  )}
-                  {streaming && streamingTimelineEvents.length > 0 && !smoothContent ? <StreamingIndicator /> : null}
+                  ) : showLoadingDots ? (
+                    <MessageLoading />
+                  ) : streaming && streamingTimelineEvents.length > 0 ? (
+                    // 工具执行中或等待工具后的文字 token
+                    <StreamingIndicator />
+                  ) : null}
                 </MessageContent>
               </Message>
             ) : null}

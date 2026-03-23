@@ -182,7 +182,7 @@ export function ChatMessages({
   const dividerSet = new Set(contextDividers);
 
   return (
-    <Conversation className={ready ? "opacity-100 transition-opacity duration-200" : "opacity-0"}>
+    <Conversation resize="instant" className={ready ? "opacity-100 transition-opacity duration-200" : "opacity-0"}>
       <ScrollTopLoader
         hasMore={hasMore}
         loading={loadingMore ?? internalLoadingMore}

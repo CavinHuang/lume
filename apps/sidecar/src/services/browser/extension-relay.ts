@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
+import type { AddressInfo } from "node:net";
 
 const DEFAULT_PORT = 18792;
 
@@ -103,7 +104,7 @@ export async function startRelayServer(port = resolveRelayPort()): Promise<{ por
   }
   currentRelayToken = resolveRelayToken();
 
-  server = createServer((req, res) => {
+  const nextServer = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
     if (path === "/extension/status") {
@@ -126,11 +127,36 @@ export async function startRelayServer(port = resolveRelayPort()): Promise<{ por
     res.end("Lume Relay OK");
   });
 
-  wss = new WebSocketServer({ server, path: "/extension" });
-  wss.on("connection", handleExtensionConnection);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const handleListening = () => {
+        nextServer.off("error", handleError);
+        resolve();
+      };
+      const handleError = (error: Error & { code?: string }) => {
+        nextServer.off("listening", handleListening);
+        reject(error);
+      };
 
-  await new Promise<void>((resolve) => server!.listen(port, "127.0.0.1", resolve));
-  const addr = server.address();
+      nextServer.once("listening", handleListening);
+      nextServer.once("error", handleError);
+      nextServer.listen(port, "127.0.0.1");
+    });
+  } catch (error) {
+    nextServer.close();
+    const message = error instanceof Error ? error.message : String(error);
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    if (code === "EADDRINUSE") {
+      throw new Error(`浏览器 Relay 端口 ${port} 已被占用，请关闭占用进程或设置 LUME_BROWSER_RELAY_PORT`);
+    }
+    throw new Error(`浏览器 Relay 启动失败: ${message}`);
+  }
+
+  const nextWss = new WebSocketServer({ server: nextServer, path: "/extension" });
+  nextWss.on("connection", handleExtensionConnection);
+  server = nextServer;
+  wss = nextWss;
+  const addr = server.address() as AddressInfo | null;
   const actualPort = addr && typeof addr === "object" ? addr.port : port;
   return { port: actualPort };
 }

@@ -188,7 +188,7 @@ export async function sendAgentMessage(
     onToolPermissionRequest: emit.onToolPermissionRequest
   });
   if (piResult.status === "completed" && shouldTryAutoTitle) {
-    void autoGenerateAgentTitle(sessionId, userMessage, resolvedChannelId, resolvedModelId, emit);
+    void autoGenerateAgentTitle(sessionId, userMessage, emit);
   }
   return;
 }
@@ -270,13 +270,11 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
   }
 }
 
-async function autoGenerateAgentTitle(
+function autoGenerateAgentTitle(
   sessionId: string,
   fallbackUserMessage: string,
-  channelId: string | undefined,
-  modelId: string | undefined,
   emit: AgentEventEmitter
-): Promise<void> {
+): void {
   try {
     const meta = getAgentSessionMeta(sessionId);
     if (!meta) {
@@ -297,55 +295,18 @@ async function autoGenerateAgentTitle(
       log.debug("自动标题跳过：未能生成可用标题", { sessionId });
       return;
     }
-
     updateAgentSessionMeta(sessionId, { title: fallbackTitle });
-    log.info("自动标题更新成功", {
+    log.info("自动标题更新成功（临时）", {
       sessionId,
       title: fallbackTitle,
       source: "fallback"
     });
     emit.onTitleUpdated(fallbackTitle);
-
-    if (!channelId || !modelId) {
-      return;
-    }
-
-    const modelTitle = await withTimeout(
-      generateAgentTitle({ sourceText, channelId, modelId }),
-      4_000
-    );
-    if (!modelTitle || modelTitle === fallbackTitle) {
-      return;
-    }
-    const latestMeta = getAgentSessionMeta(sessionId);
-    if (!latestMeta || !shouldAutoGenerateSessionTitle(latestMeta.title) && latestMeta.title !== fallbackTitle) {
-      return;
-    }
-    updateAgentSessionMeta(sessionId, { title: modelTitle });
-    log.info("自动标题模型覆盖成功", {
-      sessionId,
-      title: modelTitle,
-      source: "model"
-    });
-    emit.onTitleUpdated(modelTitle);
   } catch (error) {
     log.warn("自动标题生成流程异常", {
       sessionId,
-      channelId,
-      modelId,
       error: error instanceof Error ? error.message : String(error)
     });
   }
 }
 
-async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), timeoutMs);
-  });
-  try {
-    return await Promise.race([task, timeoutPromise]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}

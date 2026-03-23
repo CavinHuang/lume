@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createLogger } from "../../logger";
 import { getAgentRuntimeConfigPath } from "../../config-paths";
 import { applyMemoryToolPolicy } from "../../memory-policy";
@@ -14,6 +14,16 @@ import type { ProviderType } from "@lume/shared";
 import type { AgentRuntimeToolPolicyConfig, AgentToolPolicy } from "@lume/shared";
 
 const log = createLogger("pi-tool-policy");
+
+// ===== 配置文件缓存 =====
+interface PolicyConfigCache {
+  config: AgentRuntimeToolPolicyConfig;
+  mtimeMs: number;
+  checkedAt: number;
+}
+
+const CACHE_RECHECK_INTERVAL_MS = 1000;
+let _policyConfigCache: PolicyConfigCache | null = null;
 
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",
@@ -196,22 +206,39 @@ function parsePolicyObject(raw: unknown): ToolPolicy | undefined {
 
 function readRuntimeToolPolicyConfig(): AgentRuntimeToolPolicyConfig {
   const path = getAgentRuntimeConfigPath();
+  const now = Date.now();
+
+  // 缓存命中：距上次检查不足 1 秒，直接返回
+  if (_policyConfigCache && now - _policyConfigCache.checkedAt < CACHE_RECHECK_INTERVAL_MS) {
+    return _policyConfigCache.config;
+  }
+
   if (!existsSync(path)) {
+    const config = DEFAULT_AGENT_TOOL_POLICY_CONFIG;
     try {
-      writeFileSync(path, JSON.stringify(DEFAULT_AGENT_TOOL_POLICY_CONFIG, null, 2), "utf-8");
+      writeFileSync(path, JSON.stringify(config, null, 2), "utf-8");
     } catch (error) {
       log.warn("写入默认 Agent tool policy 配置失败", {
         error: error instanceof Error ? error.message : String(error)
       });
     }
-    return DEFAULT_AGENT_TOOL_POLICY_CONFIG;
+    _policyConfigCache = { config, mtimeMs: 0, checkedAt: now };
+    return config;
   }
+
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as AgentRuntimeToolPolicyConfig;
-    if (!parsed || typeof parsed !== "object") {
-      return DEFAULT_AGENT_TOOL_POLICY_CONFIG;
+    const mtimeMs = statSync(path).mtimeMs;
+    // mtime 未变化，更新检查时间戳后直接返回缓存
+    if (_policyConfigCache && mtimeMs === _policyConfigCache.mtimeMs) {
+      _policyConfigCache.checkedAt = now;
+      return _policyConfigCache.config;
     }
-    return normalizeRuntimeToolPolicyConfig(parsed);
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as AgentRuntimeToolPolicyConfig;
+    const config = (!parsed || typeof parsed !== "object")
+      ? DEFAULT_AGENT_TOOL_POLICY_CONFIG
+      : normalizeRuntimeToolPolicyConfig(parsed);
+    _policyConfigCache = { config, mtimeMs, checkedAt: now };
+    return config;
   } catch (error) {
     log.warn("读取 Agent tool policy 配置失败，使用默认策略", {
       error: error instanceof Error ? error.message : String(error)
@@ -256,8 +283,12 @@ export function saveAgentRuntimeToolPolicyConfig(
   input: AgentRuntimeToolPolicyConfig
 ): AgentRuntimeToolPolicyConfig {
   const normalized = normalizeRuntimeToolPolicyConfig(input);
+  const path = getAgentRuntimeConfigPath();
   try {
-    writeFileSync(getAgentRuntimeConfigPath(), JSON.stringify(normalized, null, 2), "utf-8");
+    writeFileSync(path, JSON.stringify(normalized, null, 2), "utf-8");
+    // 写入成功后立即更新缓存，避免下次调用再读盘
+    const mtimeMs = statSync(path).mtimeMs;
+    _policyConfigCache = { config: normalized, mtimeMs, checkedAt: Date.now() };
   } catch (error) {
     log.error("保存 Agent tool policy 配置失败", {
       error: error instanceof Error ? error.message : String(error)

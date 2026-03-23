@@ -1,5 +1,9 @@
 import type { AgentEvent } from "@lume/shared";
 import type { AgentEvent as PiCoreAgentEvent } from "@mariozechner/pi-agent-core";
+import { extractRenderableAssistantText } from "../content-extraction";
+
+const TOOL_RESULT_MAX_BYTES = 20_000;
+const TOOL_RESULT_TRUNCATE_SUFFIX = "\n...(输出过长已截断)";
 
 interface MapPiSessionEventOptions {
   contextWindow?: number;
@@ -74,6 +78,16 @@ export function mapPiSessionEventToAgentEvents(
         result: stringifyResult(event.result),
         isError: event.isError
       }];
+    case "tool_execution_update": {
+      const description = extractPartialResultText(event.partialResult);
+      if (!description) return [];
+      return [{
+        type: "task_progress",
+        toolUseId: event.toolCallId,
+        elapsedSeconds: 0,
+        description
+      }];
+    }
     default:
       return [];
   }
@@ -87,36 +101,40 @@ function toRecord(value: unknown): Record<string, unknown> {
 }
 
 function stringifyResult(value: unknown): string {
+  let result: string;
   if (typeof value === "string") {
-    return value;
+    result = value;
+  } else {
+    try {
+      result = JSON.stringify(value, null, 2);
+    } catch {
+      result = String(value);
+    }
   }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
+  if (result.length > TOOL_RESULT_MAX_BYTES) {
+    return result.slice(0, TOOL_RESULT_MAX_BYTES) + TOOL_RESULT_TRUNCATE_SUFFIX;
   }
+  return result;
+}
+
+function extractPartialResultText(partialResult: unknown): string {
+  if (!partialResult || typeof partialResult !== "object") return "";
+  const record = partialResult as { content?: unknown };
+  if (!Array.isArray(record.content)) return "";
+  const parts: string[] = [];
+  for (const item of record.content) {
+    if (!item || typeof item !== "object") continue;
+    const block = item as { type?: string; text?: unknown };
+    if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
+      parts.push(block.text.trim());
+    }
+  }
+  const text = parts.join(" ");
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
 
 function extractAssistantText(message: {
   content?: unknown;
 }): string {
-  const content = message.content;
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const parts: string[] = [];
-  for (const item of content) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-    const block = item as { type?: string; text?: unknown };
-    if (block.type !== "text") {
-      continue;
-    }
-    if (typeof block.text === "string" && block.text.trim()) {
-      parts.push(block.text);
-    }
-  }
-  return parts.join("");
+  return extractRenderableAssistantText(message.content);
 }

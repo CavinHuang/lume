@@ -20,6 +20,8 @@ export interface ToolActivity {
   shellId?: string;
   isBackground?: boolean;
   elapsedSeconds?: number;
+  /** 工具执行中的进度描述（来自 tool_execution_update 事件） */
+  progressDescription?: string;
   result?: string;
   isError?: boolean;
   done: boolean;
@@ -326,6 +328,10 @@ export interface AgentStreamState {
   inputTokens?: number;
   contextWindow?: number;
   isCompacting?: boolean;
+  /** 流开始时间（第一个事件到达时记录） */
+  streamStartedAt?: number;
+  /** 第一个可见输出的时间（text_delta/tool_start） */
+  firstOutputAt?: number;
 }
 
 export const agentSessionsAtom = atom<AgentSessionMeta[]>([]);
@@ -399,6 +405,15 @@ export const agentContextStatusAtom = atom<{
   };
 });
 
+export const agentIsCompactingAtom = atom<boolean>((get) => get(agentContextStatusAtom).isCompacting);
+
+export const agentThinkingSecondsAtom = atom<number | null>((get) => {
+  const state = get(currentAgentStreamStateAtom);
+  if (!state?.streamStartedAt || !state.firstOutputAt) return null;
+  const seconds = (state.firstOutputAt - state.streamStartedAt) / 1000;
+  return seconds >= 1 ? seconds : null;
+});
+
 export const currentAgentSessionAtom = atom<AgentSessionMeta | null>((get) => {
   const sessions = get(agentSessionsAtom);
   const currentId = get(currentAgentSessionIdAtom);
@@ -423,23 +438,31 @@ export const currentAgentErrorAtom = atom<string | null>((get) => {
 
 export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): AgentStreamState {
   const nextEvents = [...(prev.events ?? []), event];
+  const now = Date.now();
+  // 记录流开始时间（第一个事件到达时）
+  const streamStartedAt = prev.streamStartedAt ?? now;
+  // 记录第一个可见输出时间
+  const isOutputEvent = event.type === "text_delta" || event.type === "text_complete" || event.type === "tool_start";
+  const firstOutputAt = prev.firstOutputAt ?? (isOutputEvent ? now : undefined);
+
+  const base = { ...prev, streamStartedAt, firstOutputAt };
   switch (event.type) {
     case "text_delta":
-      return { ...prev, content: prev.content + event.text, events: nextEvents };
+      return { ...base, content: base.content + event.text, events: nextEvents };
     case "text_complete":
       return {
-        ...prev,
-        content: mergeStreamingText(prev.content, event.text),
+        ...base,
+        content: mergeStreamingText(base.content, event.text),
         events: nextEvents
       };
     case "tool_start":
       {
-        const exists = prev.toolActivities.find((item) => item.toolUseId === event.toolUseId);
+        const exists = base.toolActivities.find((item) => item.toolUseId === event.toolUseId);
         if (exists) {
           return {
-            ...prev,
+            ...base,
             events: nextEvents,
-            toolActivities: prev.toolActivities.map((item) =>
+            toolActivities: base.toolActivities.map((item) =>
               item.toolUseId === event.toolUseId
                 ? {
                     ...item,
@@ -454,10 +477,10 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
         }
       }
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
         toolActivities: [
-          ...prev.toolActivities,
+          ...base.toolActivities,
           {
             toolUseId: event.toolUseId,
             toolName: event.toolName,
@@ -471,9 +494,9 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
       };
     case "tool_result":
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
-        toolActivities: prev.toolActivities.map((item) =>
+        toolActivities: base.toolActivities.map((item) =>
           item.toolUseId === event.toolUseId
             ? { ...item, done: true, isError: event.isError, result: event.result }
             : item
@@ -481,9 +504,9 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
       };
     case "task_backgrounded":
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
-        toolActivities: prev.toolActivities.map((item) =>
+        toolActivities: base.toolActivities.map((item) =>
           item.toolUseId === event.toolUseId
             ? { ...item, isBackground: true, taskId: event.taskId }
             : item
@@ -491,11 +514,15 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
       };
     case "task_progress": {
       let nextState = {
-        ...prev,
+        ...base,
         events: nextEvents,
-        toolActivities: prev.toolActivities.map((item) =>
+        toolActivities: base.toolActivities.map((item) =>
           item.toolUseId === event.toolUseId
-            ? { ...item, elapsedSeconds: event.elapsedSeconds }
+            ? {
+                ...item,
+                elapsedSeconds: event.elapsedSeconds || item.elapsedSeconds,
+                progressDescription: event.description ?? item.progressDescription
+              }
             : item
         )
       };
@@ -521,29 +548,29 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
       return nextState;
     }
     case "task_started": {
-      const existing = prev.teammates.find(t => t.taskId === event.taskId);
-      if (existing) return { ...prev, events: nextEvents };
+      const existing = base.teammates.find(t => t.taskId === event.taskId);
+      if (existing) return { ...base, events: nextEvents };
       const newTeammate: TeammateState = {
         taskId: event.taskId,
         toolUseId: event.toolUseId,
         description: event.description,
         agentName: event.agentName,
-        index: prev.teammates.length,
+        index: base.teammates.length,
         status: 'running',
         toolHistory: [],
         startedAt: Date.now()
       };
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
-        teammates: [...prev.teammates, newTeammate]
+        teammates: [...base.teammates, newTeammate]
       };
     }
     case "task_notification":
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
-        teammates: prev.teammates.map(t =>
+        teammates: base.teammates.map(t =>
           t.taskId === event.taskId
             ? {
                 ...t,
@@ -557,28 +584,28 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
       };
     case "usage_update":
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
         inputTokens: event.usage.inputTokens,
-        contextWindow: event.usage.contextWindow ?? prev.contextWindow
+        contextWindow: event.usage.contextWindow ?? base.contextWindow
       };
     case "compacting":
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
         isCompacting: true
       };
     case "compact_complete":
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
         isCompacting: false
       };
     case "shell_backgrounded":
       return {
-        ...prev,
+        ...base,
         events: nextEvents,
-        toolActivities: prev.toolActivities.map((item) =>
+        toolActivities: base.toolActivities.map((item) =>
           item.toolUseId === event.toolUseId
             ? { ...item, isBackground: true, shellId: event.shellId }
             : item
@@ -586,29 +613,29 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
       };
     case "complete":
       return {
-        ...prev,
+        ...base,
         running: false,
         isCompacting: false,
         events: nextEvents,
-        toolActivities: prev.toolActivities.map((item) =>
+        toolActivities: base.toolActivities.map((item) =>
           item.done ? item : { ...item, done: true }
         ),
-        teammates: prev.teammates.map(t =>
+        teammates: base.teammates.map(t =>
           t.status === 'running' ? { ...t, status: 'stopped' as const, endedAt: Date.now() } : t
         )
       };
     case "error":
       return {
-        ...prev,
+        ...base,
         running: false,
         isCompacting: false,
         events: nextEvents,
-        toolActivities: prev.toolActivities.map((item) =>
+        toolActivities: base.toolActivities.map((item) =>
           item.done ? item : { ...item, done: true, isError: true }
         )
       };
     default:
-      return { ...prev, events: nextEvents };
+      return { ...base, events: nextEvents };
   }
 }
 

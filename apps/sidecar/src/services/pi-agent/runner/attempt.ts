@@ -30,6 +30,8 @@ import {
 import { decryptApiKey, listChannels } from "../../channel-manager";
 import { getAgentSessionWorkspacePath } from "../../config-paths";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent-workspace-manager";
+import { createLogger } from "../../logger";
+import { extractRenderableAssistantText, summarizeAssistantContent } from "../content-extraction";
 import { cancelPendingPiAskUserQuestionBySession } from "../tools/ask-user-question-bridge";
 import { createCoreCodingTools } from "../tools/create-core-coding-tools";
 import { createLumePiTools } from "../tools/create-lume-tools";
@@ -39,6 +41,8 @@ import { cancelPendingToolPermissionBySession } from "../tools/tool-permission-b
 import { handlePiSessionEvent } from "../subscribe/handlers";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "./types";
 import { resolvePiProviderCandidates } from "./provider-resolution";
+import { adaptModelCapabilities, resolveAgentThinkingLevel } from "./model-capabilities";
+import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "./provider-routing";
 import { consumeMemoryFlushPrompt } from "../../agent-service";
 import {
   getCompactionSettings,
@@ -48,6 +52,8 @@ import {
   saveStoredCompaction,
   buildCompactedContextPrompt
 } from "../compaction";
+
+const log = createLogger("pi-agent-attempt");
 
 interface RunPiAgentAttemptOptions {
   registerAbort: (sessionId: string, abort: () => Promise<void>) => void;
@@ -92,6 +98,7 @@ export async function runPiAgentAttempt(
     };
   }
   const { provider, resolvedModelId, model } = modelResolution;
+  const effectiveModel = adaptModelCapabilities(model, channel.baseUrl);
 
   let workspaceSlug: string | undefined;
   let workspaceName: string | undefined;
@@ -231,9 +238,9 @@ export async function runPiAgentAttempt(
       return undefined;
     },
     initialState: {
-      model,
+      model: effectiveModel,
       systemPrompt,
-      thinkingLevel: "medium",
+      thinkingLevel: resolveAgentThinkingLevel(effectiveModel, channel.baseUrl),
       tools: allTools
     }
   });
@@ -244,11 +251,11 @@ export async function runPiAgentAttempt(
 
   const unsubscribe = agent.subscribe((event) => {
     handlePiSessionEvent({
-      event,
-      contextWindow: (model as { contextWindow?: number }).contextWindow,
-      accumulator,
-      onEvent: silentMode ? () => {} : emit.onEvent
-    });
+        event,
+        contextWindow: (effectiveModel as { contextWindow?: number }).contextWindow,
+        accumulator,
+        onEvent: silentMode ? () => {} : emit.onEvent
+      });
   });
 
   options.registerAbort(runtime.sessionId, async () => {
@@ -272,12 +279,22 @@ export async function runPiAgentAttempt(
     await agent.prompt(contextualMessage);
     backfillAssistantTextFromAgentState(agent.state.messages, accumulator, emit.onEvent);
     if (!hasRenderableAssistantOutput(accumulator)) {
+      const lastAssistant = [...agent.state.messages].reverse().find((message) => message.role === "assistant");
+      log.error("Pi Agent 未检测到可渲染输出", {
+        sessionId: runtime.sessionId.slice(0, 8),
+        provider: channel.provider,
+        baseUrl: channel.baseUrl,
+        model: resolvedModelId,
+        stopReason: lastAssistant?.stopReason ?? "unknown",
+        contentBlocks: summarizeAssistantContent(lastAssistant?.content),
+        extractedTextLength: extractRenderableAssistantText(lastAssistant?.content).length
+      });
       return {
         status: "errored",
-        errorMessage: `模型返回空内容，请检查渠道配置（provider=${channel.provider}, baseUrl=${channel.baseUrl}, model=${resolvedModelId}）`
+        errorMessage: `模型未返回可渲染内容，请检查渠道配置或模型兼容性（provider=${channel.provider}, baseUrl=${channel.baseUrl}, model=${resolvedModelId}）`
       };
     }
-    const usage = buildCompleteUsage(agent.state.messages);
+  const usage = buildCompleteUsage(agent.state.messages);
     const stopReason = resolveStopReason(agent.state.messages);
     emit.onEvent({ type: "complete", stopReason, ...(usage ? { usage } : {}) });
     updateAgentSessionMeta(runtime.sessionId, {
@@ -343,12 +360,12 @@ function runMockSuccessAttempt(
 function applyChannelBaseUrl(model: Model<any>, baseUrl?: string): Model<any> {
   const trimmedBaseUrl = baseUrl?.trim();
   if (!trimmedBaseUrl) {
-    return model;
+    return adaptModelCapabilities(model);
   }
-  return {
+  return adaptModelCapabilities({
     ...model,
     baseUrl: trimmedBaseUrl
-  };
+  }, trimmedBaseUrl);
 }
 
 function resolvePiModelForChannel(params: {
@@ -368,13 +385,16 @@ function resolvePiModelForChannel(params: {
       modelId: candidateModelId,
       baseUrl: params.baseUrl
     });
-    for (const provider of candidates) {
+    for (const provider of prioritizeProvidersForBaseUrl(candidates, params.baseUrl)) {
       const catalogModel = getModel(provider, modelId as never);
       if (catalogModel) {
         return {
           provider,
           resolvedModelId: modelId,
-          model: applyChannelBaseUrl(catalogModel, params.baseUrl)
+          model: applyChannelBaseUrl(
+            catalogModel,
+            shouldApplyChannelBaseUrl(provider, params.baseUrl) ? params.baseUrl : undefined
+          )
         };
       }
     }
@@ -414,12 +434,25 @@ function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?:
     provider,
     api,
     baseUrl: normalizedBaseUrl,
-    reasoning: true,
+    reasoning: supportsReasoning(provider, normalizedBaseUrl),
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200000,
     maxTokens: 32768
   };
+}
+
+function supportsReasoning(provider: KnownProvider, baseUrl?: string): boolean {
+  if (provider !== "anthropic") {
+    return true;
+  }
+  return resolveAgentThinkingLevel({
+    id: "tmp",
+    name: "tmp",
+    provider,
+    api: "anthropic-messages",
+    reasoning: true
+  } as Model<Api>, baseUrl) !== undefined;
 }
 
 function resolveStopReason(messages: Array<{ role: string; stopReason?: string }>): string {
@@ -493,21 +526,7 @@ function extractLatestAssistantText(
     if (!message || message.role !== "assistant") {
       continue;
     }
-    const content = message.content;
-    if (!Array.isArray(content)) {
-      continue;
-    }
-    const textParts: string[] = [];
-    for (const block of content) {
-      if (!block || typeof block !== "object") {
-        continue;
-      }
-      const item = block as { type?: string; text?: unknown };
-      if (item.type === "text" && typeof item.text === "string" && item.text.length > 0) {
-        textParts.push(item.text);
-      }
-    }
-    const combined = textParts.join("");
+    const combined = extractRenderableAssistantText(message.content);
     if (combined.length > 0) {
       return combined;
     }

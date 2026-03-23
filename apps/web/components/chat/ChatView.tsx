@@ -61,7 +61,8 @@ import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
 import { PromptEditorSidebar } from "./PromptEditorSidebar";
 import type { InlineEditSubmitPayload } from "./ChatMessageItem";
-import { resolveStreamRefreshResult } from "./stream-refresh";
+import { finalizeStreamRefresh } from "./stream-finalizer";
+import { getStreamRefreshRecentLimit } from "./stream-refresh-policy";
 import { OnboardingView } from "@/components/onboarding/OnboardingView";
 import { TutorialBanner } from "@/components/tutorial/TutorialBanner";
 
@@ -222,6 +223,47 @@ export function ChatView(): React.ReactElement {
     const unsubs: Array<() => void> = [];
     let disposed = false;
 
+    const clearStreamingStateForConversation = (conversationId: string): void => {
+      setStreamingStates((prev) => {
+        if (!prev.has(conversationId)) return prev;
+        const map = new Map(prev);
+        map.delete(conversationId);
+        return map;
+      });
+    };
+
+    const refreshConversationAfterStream = (
+      conversationId: string,
+      options?: { logPrefix?: string }
+    ): void => {
+      void finalizeStreamRefresh({
+        fetchRecentMessages: async () => {
+          const limit = getStreamRefreshRecentLimit({
+            visibleCount: currentMessagesRef.current.length,
+            hadMore: hasMoreMessagesRef.current,
+            minLimit: INITIAL_MESSAGE_LIMIT
+          });
+          const result = await getRecentConversationMessages(conversationId, limit);
+          return {
+            messages: result.messages,
+            hasMore: result.hasMore
+          };
+        },
+        applyRefresh: (resolved) => {
+          if (conversationId !== currentConversationIdRef.current) return;
+          setCurrentMessages(resolved.messages);
+          setHasMoreMessages(resolved.hasMore);
+        },
+        clearStreaming: () => {
+          clearStreamingStateForConversation(conversationId);
+        },
+        onFetchError: (error) => {
+          if (!options?.logPrefix) return;
+          console.error(options.logPrefix, error);
+        }
+      });
+    };
+
     const trackUnlisten = (promise: Promise<() => void>): void => {
       void promise.then((fn) => {
         if (disposed) {
@@ -273,25 +315,8 @@ export function ChatView(): React.ReactElement {
     }));
 
     trackUnlisten(onChatStreamComplete((event) => {
-      setStreamingStates((prev) => {
-        const map = new Map(prev);
-        map.delete(event.conversationId);
-        return map;
-      });
-
-      void getConversationMessages(event.conversationId).then((messages) => {
-        if (event.conversationId === currentConversationIdRef.current) {
-          const resolved = resolveStreamRefreshResult({
-            persistedMessages: messages,
-            visibleCountBeforeRefresh: currentMessagesRef.current.length,
-            hadMoreBeforeRefresh: hasMoreMessagesRef.current,
-            minTailSize: INITIAL_MESSAGE_LIMIT
-          });
-          setCurrentMessages(resolved.messages);
-          setHasMoreMessages(resolved.hasMore);
-        }
-      }).catch((error) => {
-        console.error("[ChatView] 刷新消息失败:", error);
+      refreshConversationAfterStream(event.conversationId, {
+        logPrefix: "[ChatView] 刷新消息失败:"
       });
 
       // 增量更新当前会话元数据，避免 complete 阶段全量刷新对话列表导致侧栏闪烁。
@@ -332,29 +357,14 @@ export function ChatView(): React.ReactElement {
     }));
 
     trackUnlisten(onChatStreamError((event) => {
-      setStreamingStates((prev) => {
-        const map = new Map(prev);
-        map.delete(event.conversationId);
-        return map;
-      });
-
       setErrors((prev) => {
         const map = new Map(prev);
         map.set(event.conversationId, event.error);
         return map;
       });
 
-      void getConversationMessages(event.conversationId).then((messages) => {
-        if (event.conversationId === currentConversationIdRef.current) {
-          const resolved = resolveStreamRefreshResult({
-            persistedMessages: messages,
-            visibleCountBeforeRefresh: currentMessagesRef.current.length,
-            hadMoreBeforeRefresh: hasMoreMessagesRef.current,
-            minTailSize: INITIAL_MESSAGE_LIMIT
-          });
-          setCurrentMessages(resolved.messages);
-          setHasMoreMessages(resolved.hasMore);
-        }
+      refreshConversationAfterStream(event.conversationId, {
+        logPrefix: "[ChatView] 刷新失败后的消息失败:"
       });
     }));
 

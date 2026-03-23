@@ -67,7 +67,9 @@ import {
   truncateAgentMessagesFrom,
   submitAgentAskUserQuestionAnswers,
   submitAgentToolPermission,
-  stopAgentRun
+  stopAgentRun,
+  generateAgentSessionTitle,
+  updateAgentSessionTitle
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
 import { AgentHeader } from "./AgentHeader";
@@ -81,6 +83,7 @@ import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentSidePanel, type AgentSidePanelTab } from "./AgentSidePanel";
+import { resolveAgentSessionWorkspace } from "./workspace-selection";
 import {
   buildTeamActivitiesFromRuns,
   buildTeamActivitiesFromSession,
@@ -386,16 +389,7 @@ export function AgentView(): React.ReactElement {
 
   const planStreamCaptureRef = useRef(false);
   const currentWorkspace = useMemo(() => {
-    const preferredWorkspaceId = workspaceId ?? session?.workspaceId ?? null;
-    if (preferredWorkspaceId) {
-      const hit = workspaces.find((item) => item.id === preferredWorkspaceId);
-      if (hit) return hit;
-    }
-    if (session?.workspaceId) {
-      const fromSession = workspaces.find((item) => item.id === session.workspaceId);
-      if (fromSession) return fromSession;
-    }
-    return null;
+    return resolveAgentSessionWorkspace(workspaces, workspaceId, session?.workspaceId);
   }, [workspaceId, session?.workspaceId, workspaces]);
 
   type TodoItem = {
@@ -593,6 +587,7 @@ export function AgentView(): React.ReactElement {
   const currentPermissionModeRef = useRef(agentPermissionMode);
   const modeNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAgentEventAtRef = useRef<Map<string, number>>(new Map());
+  const pendingTitleRef = useRef(new Map<string, { userMessage: string; channelId: string; modelId: string }>());
   useEffect(() => {
     currentSessionIdRef.current = sessionId;
   }, [sessionId]);
@@ -843,7 +838,7 @@ export function AgentView(): React.ReactElement {
   }, [resetPlan, sessionId, setMessages, setPlanState, setStreamErrors]);
 
   useEffect(() => {
-    if (!sessionId || !workspaceId) {
+    if (!sessionId) {
       setSessionRootPath(null);
       return;
     }
@@ -855,7 +850,7 @@ export function AgentView(): React.ReactElement {
     void getAgentSessionPath(workspace.slug, sessionId)
       .then(setSessionRootPath)
       .catch(() => setSessionRootPath(null));
-  }, [currentWorkspace, sessionId, workspaceId, workspaces]);
+  }, [currentWorkspace, sessionId]);
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -1023,6 +1018,25 @@ export function AgentView(): React.ReactElement {
         }
         removeState(payload.sessionId);
         void listAgentSessions().then(setSessions);
+
+        const titleInput = pendingTitleRef.current.get(payload.sessionId);
+        pendingTitleRef.current.delete(payload.sessionId);
+        if (titleInput) {
+          void generateAgentSessionTitle(titleInput).then((title) => {
+            const nextTitle = title?.trim() || titleInput.userMessage.trim().slice(0, 20);
+            if (!nextTitle) return;
+            void updateAgentSessionTitle(payload.sessionId, nextTitle)
+              .then((updated) => { setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s))); })
+              .catch((err) => { console.error("[AgentView] 自动更新 Agent 标题失败:", err); });
+          }).catch(() => {
+            const fallback = titleInput.userMessage.trim().slice(0, 20);
+            if (fallback) {
+              void updateAgentSessionTitle(payload.sessionId, fallback)
+                .then((updated) => { setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s))); })
+                .catch(() => {});
+            }
+          });
+        }
       };
 
       if (payload.sessionId === currentSessionIdRef.current) {
@@ -1433,6 +1447,14 @@ export function AgentView(): React.ReactElement {
     }
 
     const finalMessage = `${fileReferences}${text}`;
+
+    const DEFAULT_AGENT_TITLES = ["新 Agent 会话", "新会话", "新对话", "new agent session"];
+    const currentTitle = session?.title ?? "";
+    const isDefaultTitle = !currentTitle || DEFAULT_AGENT_TITLES.some((t) => t.toLowerCase() === currentTitle.toLowerCase());
+    if (text.trim().length > 0 && isDefaultTitle && agentChannelId && outgoingModelId && !pendingTitleRef.current.has(sessionId)) {
+      pendingTitleRef.current.set(sessionId, { userMessage: text, channelId: agentChannelId, modelId: outgoingModelId });
+    }
+
     planStreamCaptureRef.current = agentPermissionMode === "plan";
     if (agentPermissionMode === "plan") {
       enterPlan();
@@ -1489,6 +1511,7 @@ export function AgentView(): React.ReactElement {
     inputContent,
     pendingFiles,
     pendingFolderRefs,
+    session,
     sessionId,
     backendReady,
     agentChannelId,
