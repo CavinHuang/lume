@@ -30,6 +30,7 @@ export interface TeamAgentInfo {
   status: TeamActivityStatus;
   elapsedSeconds?: number;
   runId?: string;
+  parentRunId?: string;
   childSessionKey?: string;
   announceStatus?: string;
   errorCode?: string;
@@ -41,6 +42,7 @@ export interface TeamAgentInfo {
   durationMs?: number;
   tokenUsage?: number;
   toolCallCount?: number;
+  outputResult?: string;
 }
 
 export interface TeamOverview {
@@ -58,6 +60,8 @@ export interface TeamInboxItem {
   status?: string;
   summary: string;
   isError: boolean;
+  outputText?: string;
+  label?: string;
 }
 
 const TEAM_ROOT_TOOL_NAMES = new Set(["Task", "Agent"]);
@@ -84,9 +88,31 @@ function truncateSummary(value: string, maxChars = 120): string {
   return `${value.slice(0, maxChars)}...`;
 }
 
+function extractAnnounceLabel(content: string): string | undefined {
+  const firstLine = content.trim().split("\n")[0]?.trim() ?? "";
+  // 格式: "子任务完成通知: {label} ({status})"
+  const match = firstLine.match(/^子任务完成通知:\s*(.+?)\s*\([^)]+\)\s*$/);
+  return match?.[1]?.trim() ?? (firstLine ? firstLine : undefined);
+}
+
+function extractAnnounceOutputText(content: string): string | undefined {
+  const normalized = content.trim();
+  const outputIdx = normalized.indexOf("输出摘要:");
+  if (outputIdx === -1) return undefined;
+  const afterOutput = normalized.slice(outputIdx + "输出摘要:".length).trim();
+  if (!afterOutput) return undefined;
+  // 截到下一个 section（"错误:"）或末尾
+  const errorIdx = afterOutput.indexOf("\n错误:");
+  const outputText = errorIdx !== -1 ? afterOutput.slice(0, errorIdx).trim() : afterOutput.trim();
+  return outputText.length > 0 ? outputText : undefined;
+}
+
 function extractAnnounceSummary(content: string): string {
   const normalized = content.trim();
   if (!normalized) return "子任务状态更新";
+  // 优先返回"输出摘要:"后面的第一段内容
+  const outputText = extractAnnounceOutputText(normalized);
+  if (outputText) return truncateSummary(outputText);
   const lines = normalized
     .split("\n")
     .map((item) => item.trim())
@@ -376,6 +402,10 @@ export function extractTeamOverview(activities: ToolActivity[], teammates?: impo
 
     const runId = asNonEmptyString(activity.input.run_id);
     const teammate = teammates?.find(t => t.taskId === runId || t.toolUseId === activity.toolUseId);
+    // parentRunId: 从 parentToolUseId 中提取（格式 "subagent-run:{runId}"）
+    const parentRunId = activity.parentToolUseId?.startsWith("subagent-run:")
+      ? activity.parentToolUseId.slice("subagent-run:".length)
+      : undefined;
 
     return {
       toolUseId: activity.toolUseId,
@@ -388,6 +418,7 @@ export function extractTeamOverview(activities: ToolActivity[], teammates?: impo
         : getActivityStatus(activity),
       elapsedSeconds: activity.elapsedSeconds,
       runId,
+      parentRunId,
       childSessionKey: asNonEmptyString(activity.input.child_session_key),
       announceStatus: asNonEmptyString(activity.input.announce_status),
       errorCode: asNonEmptyString(activity.input.error_code),
@@ -398,7 +429,8 @@ export function extractTeamOverview(activities: ToolActivity[], teammates?: impo
       toolHistory: teammate?.toolHistory,
       durationMs: teammate?.usage?.durationMs,
       tokenUsage: teammate?.usage?.totalTokens,
-      toolCallCount: teammate?.usage?.toolUses
+      toolCallCount: teammate?.usage?.toolUses,
+      outputResult: activity.result
     };
   });
 
@@ -437,8 +469,65 @@ export function extractTeamInboxFromMessages(messages: AgentMessage[]): TeamInbo
       childSessionKey: asNonEmptyString(metadata.childSessionId),
       status,
       summary: extractAnnounceSummary(message.content),
-      isError: status !== "completed"
+      isError: status !== "completed",
+      outputText: extractAnnounceOutputText(message.content),
+      label: extractAnnounceLabel(message.content)
     });
   }
   return items.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export interface AgentTreeNode {
+  activity: TeamAgentInfo;
+  children: AgentTreeNode[];
+  depth: number;
+}
+
+export function buildAgentTree(agents: TeamAgentInfo[]): AgentTreeNode[] {
+  // 以 runId 为 key 建 map（用于 parentRunId 查找）
+  const byRunId = new Map<string, TeamAgentInfo>();
+  // 以 toolUseId 为 key 建 map（用于 parentToolUseId 查找 subagent-run: 格式）
+  const byToolUseId = new Map<string, TeamAgentInfo>();
+  for (const agent of agents) {
+    if (agent.runId) byRunId.set(agent.runId, agent);
+    byToolUseId.set(agent.toolUseId, agent);
+  }
+
+  const childrenMap = new Map<string, AgentTreeNode[]>();
+  const roots: AgentTreeNode[] = [];
+
+  // 先构建所有节点
+  const nodeMap = new Map<string, AgentTreeNode>();
+  for (const agent of agents) {
+    nodeMap.set(agent.toolUseId, { activity: agent, children: [], depth: 0 });
+  }
+
+  // 建立父子关系
+  for (const agent of agents) {
+    const node = nodeMap.get(agent.toolUseId)!;
+    let parentNode: AgentTreeNode | undefined;
+
+    if (agent.parentRunId) {
+      const parentAgent = byRunId.get(agent.parentRunId);
+      if (parentAgent) parentNode = nodeMap.get(parentAgent.toolUseId);
+    }
+
+    if (parentNode) {
+      parentNode.children.push(node);
+      childrenMap.set(agent.toolUseId, parentNode.children);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  // 设置 depth
+  const setDepth = (nodes: AgentTreeNode[], depth: number): void => {
+    for (const node of nodes) {
+      node.depth = depth;
+      setDepth(node.children, depth + 1);
+    }
+  };
+  setDepth(roots, 0);
+
+  return roots;
 }

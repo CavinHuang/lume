@@ -30,6 +30,8 @@ interface AgentSidePanelProps {
   activeTab: AgentSidePanelTab;
   onOpenChange: (open: boolean) => void;
   onTabChange: (tab: AgentSidePanelTab) => void;
+  onOpenSession?: (sessionId: string) => void;
+  onLoadChildSession?: (childSessionId: string) => Promise<ToolActivity[]>;
 }
 
 export function AgentSidePanel({
@@ -41,7 +43,9 @@ export function AgentSidePanel({
   open,
   activeTab,
   onOpenChange,
-  onTabChange
+  onTabChange,
+  onOpenSession,
+  onLoadChildSession
 }: AgentSidePanelProps): React.ReactElement | null {
   const teamOverview = React.useMemo(() => extractTeamOverview(teamActivities), [teamActivities]);
   const hasTeamActivity = !!teamOverview;
@@ -125,7 +129,12 @@ export function AgentSidePanel({
 
         <div className="min-h-0 flex-1">
           {activeTab === "team" ? (
-            <TeamActivityPanel activities={teamActivities} inboxItems={inboxItems} />
+            <TeamActivityPanel
+              activities={teamActivities}
+              inboxItems={inboxItems}
+              onOpenSession={onOpenSession}
+              onLoadChildSession={onLoadChildSession}
+            />
           ) : hasFiles && workspaceSlug && sessionPath ? (
             <FileBrowser
               workspaceSlug={workspaceSlug}

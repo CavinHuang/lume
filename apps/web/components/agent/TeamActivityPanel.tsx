@@ -9,13 +9,16 @@
 "use client";
 
 import * as React from "react";
-import { Bell, Bot, CheckCircle2, ChevronRight, Circle, Clock, ListChecks, Loader2, Users, XCircle } from "lucide-react";
+import * as Collapsible from "@radix-ui/react-collapsible";
+import { Bell, Bot, CheckCircle2, ChevronRight, Circle, Clock, ExternalLink, ListChecks, Loader2, Users, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ToolActivity } from "@/atoms/agent-atoms";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  buildAgentTree,
   extractTeamOverview,
   getActivityStatus,
+  type AgentTreeNode,
   type TeamActivityStatus,
   type TeamAgentInfo,
   type TeamInboxItem,
@@ -25,6 +28,8 @@ import {
 interface TeamActivityPanelProps {
   activities: ToolActivity[];
   inboxItems: TeamInboxItem[];
+  onOpenSession?: (sessionId: string) => void;
+  onLoadChildSession?: (childSessionId: string) => Promise<ToolActivity[]>;
 }
 
 function formatElapsed(seconds?: number): string | null {
@@ -84,7 +89,13 @@ function formatTime(ts: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function InboxTimeline({ items }: { items: TeamInboxItem[] }): React.ReactElement | null {
+function InboxTimeline({
+  items,
+  onOpenSession,
+}: {
+  items: TeamInboxItem[];
+  onOpenSession?: (sessionId: string) => void;
+}): React.ReactElement | null {
   if (items.length === 0) return null;
   return (
     <div className="rounded-lg bg-foreground/[0.03] px-3 py-2.5">
@@ -94,25 +105,32 @@ function InboxTimeline({ items }: { items: TeamInboxItem[] }): React.ReactElemen
         <span className="ml-auto text-[10px] text-muted-foreground/70">{items.length}</span>
       </div>
       <div className="space-y-1.5">
-        {items.slice(0, 12).map((item) => (
-          <div key={item.messageId} className="rounded-md border border-border/60 bg-background/70 px-2 py-1.5">
-            <div className="flex items-center gap-1.5 text-[10px]">
-              {item.isError ? (
-                <XCircle className="size-3 text-destructive" />
-              ) : (
-                <CheckCircle2 className="size-3 text-green-500" />
+        {items.slice(0, 12).map((item) => {
+          const clickable = !!(item.childSessionKey && onOpenSession);
+          return (
+            <div
+              key={item.messageId}
+              onClick={() => clickable && onOpenSession!(item.childSessionKey!)}
+              className={cn(
+                "rounded-md border border-border/60 bg-background/70 px-2 py-1.5 transition-colors",
+                clickable && "cursor-pointer hover:border-primary/40 hover:bg-muted/40"
               )}
-              <span className="truncate text-foreground/90">{item.summary}</span>
-              <span className="ml-auto text-muted-foreground/70">{formatTime(item.createdAt)}</span>
-            </div>
-            {(item.runId || item.status) ? (
-              <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/80">
-                {item.runId ? <span>run {item.runId.slice(0, 8)}</span> : null}
-                {item.status ? <span>{item.status}</span> : null}
+            >
+              <div className="flex items-center gap-1.5 text-[10px]">
+                {item.isError ? (
+                  <XCircle className="size-3 shrink-0 text-destructive" />
+                ) : (
+                  <CheckCircle2 className="size-3 shrink-0 text-green-500" />
+                )}
+                <span className="truncate text-foreground/90">{item.label ?? item.summary}</span>
+                <span className="ml-auto shrink-0 text-muted-foreground/70">{formatTime(item.createdAt)}</span>
               </div>
-            ) : null}
-          </div>
-        ))}
+              {item.outputText ? (
+                <p className="mt-1 line-clamp-2 text-[10px] text-foreground/60">{item.outputText}</p>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -158,110 +176,254 @@ function TaskBoard({ tasks }: { tasks: TeamTaskItem[] }): React.ReactElement | n
 function AgentCard({
   agent,
   expanded,
-  onToggle
+  onToggle,
+  onOpenSession,
+  onLoadChildSession
 }: {
   agent: TeamAgentInfo;
   expanded: boolean;
   onToggle: () => void;
+  onOpenSession?: (sessionId: string) => void;
+  onLoadChildSession?: (childSessionId: string) => Promise<ToolActivity[]>;
 }): React.ReactElement {
   const elapsed = formatElapsed(agent.elapsedSeconds);
   const shortRunId = agent.runId ? agent.runId.slice(0, 8) : null;
 
+  // 子 session 懒加载
+  const [childSessionActivities, setChildSessionActivities] = React.useState<ToolActivity[] | null>(null);
+  const [childSessionLoading, setChildSessionLoading] = React.useState(false);
+  const hasLoadedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!expanded || !agent.childSessionKey || !onLoadChildSession || hasLoadedRef.current) return;
+    hasLoadedRef.current = true;
+    setChildSessionLoading(true);
+    onLoadChildSession(agent.childSessionKey)
+      .then((activities) => { setChildSessionActivities(activities); })
+      .catch(() => { setChildSessionActivities([]); })
+      .finally(() => { setChildSessionLoading(false); });
+  }, [expanded, agent.childSessionKey, onLoadChildSession]);
+
+  // 完成瞬间高亮
+  const prevStatusRef = React.useRef(agent.status);
+  const [justCompleted, setJustCompleted] = React.useState(false);
+  React.useEffect(() => {
+    if (prevStatusRef.current === "running" && agent.status === "completed") {
+      setJustCompleted(true);
+      const timer = setTimeout(() => setJustCompleted(false), 2000);
+      return () => clearTimeout(timer);
+    }
+    prevStatusRef.current = agent.status;
+  }, [agent.status]);
+
   return (
-    <div className="rounded-lg border border-border/70 bg-background/80">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30"
+    <Collapsible.Root open={expanded} onOpenChange={onToggle}>
+      <div
+        className={cn(
+          "rounded-lg border bg-background/80 transition-colors duration-500",
+          justCompleted
+            ? "border-green-500/60 animate-pulse-border"
+            : "border-border/70"
+        )}
       >
-        <ChevronRight className={cn("size-3 text-muted-foreground/70 transition-transform", expanded && "rotate-90")} />
-        {statusIcon(agent.status)}
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">{agent.name}</span>
-        {agent.subagentType ? (
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{agent.subagentType}</span>
-        ) : null}
-        {elapsed ? (
-          <span className="text-[10px] tabular-nums text-muted-foreground/70">{elapsed}</span>
-        ) : null}
-      </button>
-
-      {expanded ? (
-        <div className="space-y-2 border-t border-border/60 px-3 py-2">
-          <p className="text-[11px] leading-relaxed text-foreground/80">{agent.description}</p>
-
-          {agent.currentToolName && agent.status === 'running' ? (
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <span className="relative flex size-2">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-75" />
-                <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
+        {/* 折叠/展开触发器 */}
+        <Collapsible.Trigger asChild>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30"
+          >
+            <ChevronRight className={cn("size-3 shrink-0 text-muted-foreground/70 transition-transform duration-200", expanded && "rotate-90")} />
+            {statusIcon(agent.status)}
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">{agent.name}</span>
+            {/* 折叠状态显示当前执行工具 */}
+            {!expanded && agent.status === "running" && agent.currentToolName ? (
+              <span className="flex shrink-0 items-center gap-1 text-[10px] text-blue-500/90">
+                <span className="size-1.5 rounded-full bg-blue-500 animate-pulse" />
+                {agent.currentToolName}
               </span>
-              <span className="text-blue-600">{agent.currentToolName}</span>
-            </div>
-          ) : null}
+            ) : null}
+            {agent.subagentType && !(!expanded && agent.status === "running" && agent.currentToolName) ? (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{agent.subagentType}</span>
+            ) : null}
+            {elapsed ? (
+              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">{elapsed}</span>
+            ) : null}
+          </button>
+        </Collapsible.Trigger>
 
-          {agent.progressDescription ? (
-            <p className="text-[10px] italic text-muted-foreground/90">{agent.progressDescription}</p>
-          ) : null}
+        {/* 折叠状态下的描述预览 */}
+        {!expanded && agent.description ? (
+          <p className="truncate px-8 pb-2 text-[10px] leading-none text-muted-foreground/60">
+            {agent.description}
+          </p>
+        ) : null}
 
-          {agent.toolHistory && agent.toolHistory.length > 0 ? (
-            <div className="flex flex-wrap gap-1 text-[10px]">
-              {agent.toolHistory.slice(-5).map((tool, i) => (
-                <span key={`${tool}-${i}`} className="rounded bg-muted px-1 py-0.5 text-muted-foreground/70">
-                  {tool}
+        {/* 展开内容（带动画） */}
+        <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+          <div className="space-y-2 border-t border-border/60 px-3 py-2">
+            <p className="text-[11px] leading-relaxed text-foreground/80">{agent.description}</p>
+
+            {agent.currentToolName && agent.status === "running" ? (
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-75" />
+                  <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
                 </span>
-              ))}
-            </div>
-          ) : null}
+                <span className="text-blue-600">{agent.currentToolName}</span>
+                {agent.progressDescription ? (
+                  <span className="truncate text-muted-foreground/80">{agent.progressDescription}</span>
+                ) : null}
+              </div>
+            ) : null}
 
-          {(agent.durationMs || agent.toolCallCount || agent.tokenUsage) ? (
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
-              {agent.durationMs ? <span>{Math.floor(agent.durationMs / 1000)}s</span> : null}
-              {agent.toolCallCount ? <span>{agent.toolCallCount} calls</span> : null}
-              {agent.tokenUsage ? <span>{agent.tokenUsage} tokens</span> : null}
-            </div>
-          ) : null}
+            {agent.toolHistory && agent.toolHistory.length > 0 ? (
+              <div className="flex flex-wrap gap-1 text-[10px]">
+                {agent.toolHistory.slice(-6).map((tool, i) => (
+                  <span key={`${tool}-${i}`} className="rounded bg-muted px-1 py-0.5 text-muted-foreground/70">
+                    {tool}
+                  </span>
+                ))}
+              </div>
+            ) : null}
 
-          {(shortRunId || agent.usageEvents || agent.announceStatus || agent.errorCode) ? (
-            <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground/80">
-              {shortRunId ? <span className="rounded bg-muted px-1.5 py-0.5">run {shortRunId}</span> : null}
-              {typeof agent.usageEvents === "number" ? (
-                <span className="rounded bg-muted px-1.5 py-0.5">usage {agent.usageEvents}</span>
-              ) : null}
-              {agent.announceStatus ? (
-                <span className="rounded bg-muted px-1.5 py-0.5">announce {agent.announceStatus}</span>
-              ) : null}
-              {agent.errorCode ? (
-                <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-destructive">{agent.errorCode}</span>
-              ) : null}
-            </div>
-          ) : null}
+            {(agent.durationMs || agent.toolCallCount || agent.tokenUsage) ? (
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+                {agent.durationMs ? <span>{Math.floor(agent.durationMs / 1000)}s</span> : null}
+                {agent.toolCallCount ? <span>{agent.toolCallCount} calls</span> : null}
+                {agent.tokenUsage ? <span>{agent.tokenUsage} tokens</span> : null}
+              </div>
+            ) : null}
 
-          {agent.childActivities.length > 0 ? (
-            <div className="space-y-1 rounded-md bg-muted/30 px-2 py-1.5">
-              {agent.childActivities.map((activity) => {
-                const summary = summarizeInput(activity.input);
-                const childStatus = getActivityStatus(activity);
-                return (
-                  <div key={activity.toolUseId} className="flex items-center gap-1.5 text-[10px]">
-                    {statusIcon(childStatus)}
-                    <span className="shrink-0 text-foreground/80">{activity.toolName}</span>
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground/80">
-                      {activity.intent || summary || statusLabel(childStatus)}
-                    </span>
+            {(shortRunId || agent.errorCode) ? (
+              <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground/80">
+                {shortRunId ? <span className="rounded bg-muted px-1.5 py-0.5">run {shortRunId}</span> : null}
+                {agent.errorCode ? (
+                  <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-destructive">{agent.errorCode}</span>
+                ) : null}
+              </div>
+            ) : null}
+
+            {agent.outputResult ? (
+              <div className="rounded-md bg-muted/20 px-2.5 py-2">
+                <div className="mb-1 text-[10px] font-medium text-muted-foreground">输出结果</div>
+                <p className="line-clamp-5 text-[11px] leading-relaxed text-foreground/80">{agent.outputResult}</p>
+              </div>
+            ) : null}
+
+            {agent.childActivities.length > 0 ? (
+              <div className="space-y-1 rounded-md bg-muted/30 px-2 py-1.5">
+                {agent.childActivities.map((activity) => {
+                  const summary = summarizeInput(activity.input);
+                  const childStatus = getActivityStatus(activity);
+                  return (
+                    <div key={activity.toolUseId} className="flex items-center gap-1.5 text-[10px]">
+                      {statusIcon(childStatus)}
+                      <span className="shrink-0 text-foreground/80">{activity.toolName}</span>
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground/80">
+                        {activity.intent || summary || statusLabel(childStatus)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {/* 子 session 工具历史懒加载 */}
+            {agent.childSessionKey && onLoadChildSession ? (
+              <div className="rounded-md bg-muted/20 px-2 py-1.5">
+                <div className="mb-1 text-[10px] font-medium text-muted-foreground">子任务工具历史</div>
+                {childSessionLoading ? (
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" />
+                    <span>加载中...</span>
                   </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-[10px] text-muted-foreground/80">暂无子工具活动</div>
-          )}
-        </div>
-      ) : null}
+                ) : childSessionActivities && childSessionActivities.length > 0 ? (
+                  <div className="space-y-1">
+                    {childSessionActivities.slice(0, 10).map((activity) => {
+                      const summary = summarizeInput(activity.input);
+                      const childStatus = getActivityStatus(activity);
+                      return (
+                        <div key={activity.toolUseId} className="flex items-center gap-1.5 text-[10px]">
+                          {statusIcon(childStatus)}
+                          <span className="shrink-0 text-foreground/80">{activity.toolName}</span>
+                          <span className="min-w-0 flex-1 truncate text-muted-foreground/80">
+                            {activity.intent || summary || statusLabel(childStatus)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {childSessionActivities.length > 10 ? (
+                      <div className="text-[10px] text-muted-foreground/70">+{childSessionActivities.length - 10} 条更多</div>
+                    ) : null}
+                  </div>
+                ) : childSessionActivities ? (
+                  <div className="text-[10px] text-muted-foreground/70">暂无工具调用记录</div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* 查看完整对话按钮 */}
+            {agent.childSessionKey && onOpenSession ? (
+              <button
+                type="button"
+                onClick={() => onOpenSession(agent.childSessionKey!)}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ExternalLink className="size-3" />
+                查看完整对话
+              </button>
+            ) : null}
+          </div>
+        </Collapsible.Content>
+      </div>
+    </Collapsible.Root>
+  );
+}
+
+function AgentTreeView({
+  nodes,
+  depth = 0,
+  expandedId,
+  onToggle,
+  onOpenSession,
+  onLoadChildSession
+}: {
+  nodes: AgentTreeNode[];
+  depth?: number;
+  expandedId: string | null;
+  onToggle: (id: string) => void;
+  onOpenSession?: (sessionId: string) => void;
+  onLoadChildSession?: (childSessionId: string) => Promise<ToolActivity[]>;
+}): React.ReactElement | null {
+  if (nodes.length === 0) return null;
+  return (
+    <div className={depth > 0 ? "ml-3 border-l border-border/40 pl-3" : "space-y-2"}>
+      {nodes.map((node) => (
+        <React.Fragment key={node.activity.toolUseId}>
+          <AgentCard
+            agent={node.activity}
+            expanded={expandedId === node.activity.toolUseId}
+            onToggle={() => onToggle(node.activity.toolUseId)}
+            onOpenSession={onOpenSession}
+            onLoadChildSession={onLoadChildSession}
+          />
+          {node.children.length > 0 ? (
+            <AgentTreeView
+              nodes={node.children}
+              depth={depth + 1}
+              expandedId={expandedId}
+              onToggle={onToggle}
+              onOpenSession={onOpenSession}
+              onLoadChildSession={onLoadChildSession}
+            />
+          ) : null}
+        </React.Fragment>
+      ))}
     </div>
   );
 }
 
-export function TeamActivityPanel({ activities, inboxItems }: TeamActivityPanelProps): React.ReactElement {
+export function TeamActivityPanel({ activities, inboxItems, onOpenSession, onLoadChildSession }: TeamActivityPanelProps): React.ReactElement {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const overview = React.useMemo(() => extractTeamOverview(activities), [activities]);
   const hasOverviewData = !!overview && (
@@ -309,17 +471,16 @@ export function TeamActivityPanel({ activities, inboxItems }: TeamActivityPanelP
 
       <ScrollArea className="flex-1">
         <div className="space-y-2 p-2">
-          <InboxTimeline items={inboxItems} />
+          <InboxTimeline items={inboxItems} onOpenSession={onOpenSession} />
           <TaskBoard tasks={overview?.tasks ?? []} />
 
-          {(overview?.agents ?? []).map((agent) => (
-            <AgentCard
-              key={agent.toolUseId}
-              agent={agent}
-              expanded={expandedId === agent.toolUseId}
-              onToggle={() => setExpandedId((prev) => (prev === agent.toolUseId ? null : agent.toolUseId))}
-            />
-          ))}
+          <AgentTreeView
+            nodes={buildAgentTree(overview?.agents ?? [])}
+            expandedId={expandedId}
+            onToggle={(id) => setExpandedId((prev) => (prev === id ? null : id))}
+            onOpenSession={onOpenSession}
+            onLoadChildSession={onLoadChildSession}
+          />
         </div>
       </ScrollArea>
     </div>

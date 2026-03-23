@@ -85,7 +85,11 @@ import {
   buildTeamActivitiesFromRuns,
   buildTeamActivitiesFromSession,
   extractTeamInboxFromMessages,
-  mergeToolActivities
+  extractTeamOverview,
+  extractToolActivitiesFromMessages,
+  mergeToolActivities,
+  selectTeamActivities,
+  type TeamAgentInfo
 } from "./team-activity";
 
 function fileToBase64(file: File): Promise<string> {
@@ -287,8 +291,48 @@ function recoverPlanFromMessages(messages: AgentMessage[]): {
   return { planPath: null, draft: "" };
 }
 
+function TeamActivityBar({
+  agents,
+  onOpenTeamPanel,
+}: {
+  agents: TeamAgentInfo[];
+  onOpenTeamPanel: () => void;
+}): React.ReactElement {
+  const activeTools = agents
+    .filter((a) => a.currentToolName)
+    .map((a) => a.currentToolName as string)
+    .slice(0, 3);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenTeamPanel}
+      className="mx-4 mb-2 flex w-[calc(100%-2rem)] items-center gap-2.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-left transition-colors hover:bg-muted/60 animate-slide-in-down"
+    >
+      <span className="relative flex size-2 shrink-0">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/60 opacity-75" />
+        <span className="relative inline-flex size-2 rounded-full bg-primary" />
+      </span>
+      <span className="text-[11px] font-medium text-foreground/80 shrink-0">
+        {agents.length} 个 Agent 运行中
+      </span>
+      {activeTools.length > 0 ? (
+        <>
+          <span className="text-[11px] text-muted-foreground/50">·</span>
+          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/70">
+            {activeTools.join("、")}
+          </span>
+        </>
+      ) : (
+        <span className="flex-1" />
+      )}
+      <span className="shrink-0 text-[10px] text-muted-foreground/50">查看详情 →</span>
+    </button>
+  );
+}
+
 export function AgentView(): React.ReactElement {
-  const [sessionId] = useAtom(currentAgentSessionIdAtom);
+  const [sessionId, setCurrentSessionId] = useAtom(currentAgentSessionIdAtom);
   const session = useAtomValue(currentAgentSessionAtom);
   const [workspaceId] = useAtom(currentAgentWorkspaceIdAtom);
   const [workspaces] = useAtom(agentWorkspacesAtom);
@@ -411,6 +455,13 @@ export function AgentView(): React.ReactElement {
     [teamActivitiesFromSession, teamRunActivities]
   );
 
+  const runningTeamAgents = useMemo(() => {
+    const overview = extractTeamOverview(teamActivities);
+    return (overview?.agents ?? []).filter(
+      (a) => a.status === "running" || a.status === "backgrounded"
+    );
+  }, [teamActivities]);
+
   const todoProgressText = useMemo(() => {
     if (!latestTodoItems || latestTodoItems.length === 0) return null;
     const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
@@ -438,6 +489,17 @@ export function AgentView(): React.ReactElement {
       return map;
     });
   }, [sessionId]);
+
+  const handleOpenSession = useCallback((targetSessionId: string): void => {
+    startTransition(() => {
+      setCurrentSessionId(targetSessionId);
+    });
+  }, [setCurrentSessionId]);
+
+  const handleLoadChildSession = useCallback(async (childSessionId: string) => {
+    const messages = await getAgentSessionMessages(childSessionId);
+    return selectTeamActivities(extractToolActivitiesFromMessages(messages));
+  }, []);
 
   const handleToggleFileBrowser = useCallback((): void => {
     if (!sessionId) return;
@@ -1704,6 +1766,7 @@ export function AgentView(): React.ReactElement {
           <AgentHeader
             onToggleFileBrowser={handleToggleFileBrowser}
             fileBrowserOpen={fileBrowserOpen}
+            onOpenSession={handleOpenSession}
           />
 
           <AgentMessages
@@ -1716,7 +1779,19 @@ export function AgentView(): React.ReactElement {
             onStartInlineEdit={handleStartInlineEdit}
             onSubmitInlineEdit={handleSubmitInlineEdit}
             onCancelInlineEdit={handleCancelInlineEdit}
+            onOpenSession={handleOpenSession}
           />
+
+          {/* Agent Team 运行状态条 */}
+          {runningTeamAgents.length > 0 ? (
+            <TeamActivityBar
+              agents={runningTeamAgents}
+              onOpenTeamPanel={() => {
+                setCurrentSidePanelTab("team");
+                setCurrentSidePanelOpen(true);
+              }}
+            />
+          ) : null}
 
           {latestTodoItems && latestTodoItems.length > 0 ? (
             <div className="mb-2 ml-[72px] mr-4 inline-flex max-w-[calc(100%-5.5rem)] flex-col rounded-md border border-border/60 bg-muted/20 px-3 py-2">
@@ -2004,6 +2079,8 @@ export function AgentView(): React.ReactElement {
             activeTab={currentSidePanelTab}
             onOpenChange={setCurrentSidePanelOpen}
             onTabChange={setCurrentSidePanelTab}
+            onOpenSession={handleOpenSession}
+            onLoadChildSession={handleLoadChildSession}
           />
         </div>
       {askUserQuestionRequest ? (

@@ -4,7 +4,7 @@ import * as React from "react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
 import { useAtomValue } from "jotai";
-import { Bot, CalendarClock, FileImage, FileText, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, CalendarClock, ChevronRight, FileImage, FileText, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import {
   agentModelIdAtom,
   agentStreamingAtom,
@@ -50,6 +50,128 @@ interface AgentMessagesProps {
   onStartInlineEdit?: (message: AgentMessage) => void;
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
+  onOpenSession?: (sessionId: string) => void;
+}
+
+interface AnnounceInfo {
+  label: string;
+  status: string;
+  outputText?: string;
+  errorText?: string;
+}
+
+function parseAnnounceContent(content: string): AnnounceInfo {
+  const normalized = content.trim();
+  const firstLine = normalized.split("\n")[0]?.trim() ?? "";
+  // 格式: "子任务完成通知: {label} ({status})"
+  const headerMatch = firstLine.match(/^子任务完成通知:\s*(.+?)\s*\(([^)]+)\)\s*$/);
+  const label = headerMatch?.[1]?.trim() ?? firstLine;
+  const status = headerMatch?.[2]?.trim() ?? "";
+
+  const outputIdx = normalized.indexOf("输出摘要:");
+  let outputText: string | undefined;
+  if (outputIdx !== -1) {
+    const afterOutput = normalized.slice(outputIdx + "输出摘要:".length).trim();
+    const errorIdx = afterOutput.indexOf("\n错误:");
+    outputText = (errorIdx !== -1 ? afterOutput.slice(0, errorIdx).trim() : afterOutput.trim()) || undefined;
+  }
+
+  const errorIdx = normalized.indexOf("\n错误:");
+  let errorText: string | undefined;
+  if (errorIdx !== -1) {
+    errorText = normalized.slice(errorIdx + "\n错误:".length).trim() || undefined;
+  }
+
+  return { label, status, outputText, errorText };
+}
+
+function SubagentAnnounceMessage({
+  message,
+  onOpenSession
+}: {
+  message: AgentMessage;
+  onOpenSession?: (sessionId: string) => void;
+}): React.ReactElement {
+  const { label, status, outputText, errorText } = React.useMemo(
+    () => parseAnnounceContent(message.content),
+    [message.content]
+  );
+  // 超过 280 字符时默认折叠，让用户主动展开
+  const [collapsed, setCollapsed] = React.useState(() => (outputText?.length ?? 0) > 280);
+  const metadata = message.metadata as Record<string, unknown>;
+  const childSessionId = typeof metadata?.childSessionId === "string" ? metadata.childSessionId : undefined;
+  const isCompleted = status === "completed";
+
+  return (
+    <Message from="assistant">
+      <MessageHeader
+        model="subagent"
+        time={formatMessageTime(message.createdAt)}
+        logo={
+          <div className="size-[35px] rounded-[25%] bg-primary/10 flex items-center justify-center">
+            <Bot size={18} className="text-primary" />
+          </div>
+        }
+      />
+      <MessageContent>
+        <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
+          {/* 标题行 */}
+          <div className="flex items-center gap-2">
+            <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-xs font-medium flex-1 truncate">{label}</span>
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                isCompleted
+                  ? "bg-green-500/10 text-green-600"
+                  : "bg-destructive/10 text-destructive"
+              }`}
+            >
+              {status}
+            </span>
+          </div>
+
+          {/* 输出文本区 */}
+          {outputText ? (
+            <div className="rounded-md bg-muted/30 px-2.5 py-2">
+              <div
+                className={collapsed ? "line-clamp-3 text-[11px] leading-relaxed text-foreground/80" : "text-[11px] leading-relaxed text-foreground/80"}
+              >
+                <MessageResponse>{outputText}</MessageResponse>
+              </div>
+              {(outputText.length > 280) ? (
+                <button
+                  type="button"
+                  onClick={() => setCollapsed((v) => !v)}
+                  className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <ChevronRight className={`size-3 transition-transform duration-150 ${collapsed ? "" : "rotate-90"}`} />
+                  {collapsed ? "展开全部" : "收起"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* 错误区 */}
+          {errorText ? (
+            <div className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+              <span className="font-medium">错误: </span>{errorText}
+            </div>
+          ) : null}
+
+          {/* 操作行 */}
+          {childSessionId && onOpenSession ? (
+            <button
+              type="button"
+              onClick={() => onOpenSession(childSessionId)}
+              className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              查看子任务对话 →
+            </button>
+          ) : null}
+        </div>
+      </MessageContent>
+    </Message>
+  );
 }
 
 function EmptyState(): React.ReactElement {
@@ -228,7 +350,8 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onSaveAsTask,
   onStartInlineEdit,
   onSubmitInlineEdit,
-  onCancelInlineEdit
+  onCancelInlineEdit,
+  onOpenSession
 }: {
   message: AgentMessage;
   actionsDisabled: boolean;
@@ -239,6 +362,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onStartInlineEdit?: (message: AgentMessage) => void;
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
+  onOpenSession?: (sessionId: string) => void;
 }): React.ReactElement | null {
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -333,6 +457,10 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   }
 
   if (message.role === "assistant") {
+    if ((message.metadata as Record<string, unknown>)?.subagentAnnounce === true) {
+      return <SubagentAnnounceMessage message={message} onOpenSession={onOpenSession} />;
+    }
+
     return (
       <Message from="assistant">
         <MessageHeader
@@ -369,7 +497,8 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
 }, (prev, next) =>
   prev.message === next.message &&
   prev.actionsDisabled === next.actionsDisabled &&
-  prev.isInlineEditing === next.isInlineEditing
+  prev.isInlineEditing === next.isInlineEditing &&
+  prev.onOpenSession === next.onOpenSession
 )
 
 export function AgentMessages({
@@ -381,7 +510,8 @@ export function AgentMessages({
   onSaveAsTask,
   onStartInlineEdit,
   onSubmitInlineEdit,
-  onCancelInlineEdit
+  onCancelInlineEdit,
+  onOpenSession
 }: AgentMessagesProps): React.ReactElement {
   const messages = useAtomValue(currentAgentMessagesAtom);
   const streaming = useAtomValue(agentStreamingAtom);
@@ -423,6 +553,7 @@ export function AgentMessages({
                   onStartInlineEdit={onStartInlineEdit}
                   onSubmitInlineEdit={onSubmitInlineEdit}
                   onCancelInlineEdit={onCancelInlineEdit}
+                  onOpenSession={onOpenSession}
                 />
               </div>
             ))}
