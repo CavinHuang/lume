@@ -61,6 +61,7 @@ import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
 import { PromptEditorSidebar } from "./PromptEditorSidebar";
 import type { InlineEditSubmitPayload } from "./ChatMessageItem";
+import { resolveStreamRefreshResult } from "./stream-refresh";
 import { OnboardingView } from "@/components/onboarding/OnboardingView";
 import { TutorialBanner } from "@/components/tutorial/TutorialBanner";
 
@@ -84,6 +85,7 @@ export function ChatView(): React.ReactElement {
   const activeToolIds = useAtomValue(activeToolIdsAtom);
   const [pendingAttachments, setPendingAttachments] = useAtom(pendingAttachmentsAtom);
   const conversations = useAtomValue(conversationsAtom);
+  const hasMoreMessages = useAtomValue(hasMoreMessagesAtom);
   const setHasMoreMessages = useSetAtom(hasMoreMessagesAtom);
   const [chatError] = useAtom(currentChatErrorAtom);
   const setErrors = useSetAtom(chatStreamErrorsAtom);
@@ -95,6 +97,8 @@ export function ChatView(): React.ReactElement {
   const [creatingWelcomeConversation, setCreatingWelcomeConversation] = useState(false);
   const pendingTitleRef = useRef(new Map<string, { userMessage: string; channelId: string; modelId: string }>());
   const currentConversationIdRef = useRef<string | null>(currentConversationId);
+  const currentMessagesRef = useRef(currentMessages);
+  const hasMoreMessagesRef = useRef(hasMoreMessages);
   const conversationsRef = useRef(conversations);
 
   const streamState = currentConversationId ? streamingStates.get(currentConversationId) : undefined;
@@ -107,6 +111,14 @@ export function ChatView(): React.ReactElement {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    currentMessagesRef.current = currentMessages;
+  }, [currentMessages]);
+
+  useEffect(() => {
+    hasMoreMessagesRef.current = hasMoreMessages;
+  }, [hasMoreMessages]);
 
   useEffect(() => {
     setInlineEditingMessageId(null);
@@ -269,8 +281,14 @@ export function ChatView(): React.ReactElement {
 
       void getConversationMessages(event.conversationId).then((messages) => {
         if (event.conversationId === currentConversationIdRef.current) {
-          setCurrentMessages(messages);
-          setHasMoreMessages(false);
+          const resolved = resolveStreamRefreshResult({
+            persistedMessages: messages,
+            visibleCountBeforeRefresh: currentMessagesRef.current.length,
+            hadMoreBeforeRefresh: hasMoreMessagesRef.current,
+            minTailSize: INITIAL_MESSAGE_LIMIT
+          });
+          setCurrentMessages(resolved.messages);
+          setHasMoreMessages(resolved.hasMore);
         }
       }).catch((error) => {
         console.error("[ChatView] 刷新消息失败:", error);
@@ -328,8 +346,14 @@ export function ChatView(): React.ReactElement {
 
       void getConversationMessages(event.conversationId).then((messages) => {
         if (event.conversationId === currentConversationIdRef.current) {
-          setCurrentMessages(messages);
-          setHasMoreMessages(false);
+          const resolved = resolveStreamRefreshResult({
+            persistedMessages: messages,
+            visibleCountBeforeRefresh: currentMessagesRef.current.length,
+            hadMoreBeforeRefresh: hasMoreMessagesRef.current,
+            minTailSize: INITIAL_MESSAGE_LIMIT
+          });
+          setCurrentMessages(resolved.messages);
+          setHasMoreMessages(resolved.hasMore);
         }
       });
     }));
