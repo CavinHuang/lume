@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { Model } from "@mariozechner/pi-ai";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreSessionDir } from "./session-store";
 
@@ -92,5 +93,39 @@ describe("runtime-core run", () => {
     expect(second.session.messages.some((message) => message.role === "user")).toBeTrue();
     expect(second.session.sessionId).toBe(firstUpstreamSessionId);
     second.session.dispose();
+  });
+
+  test("应接受显式 resolvedModel，避免重新回退到 catalog 查询", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-explicit-model-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const resolvedModel: Model<"openai-responses"> = {
+      id: "custom-runtime-model",
+      name: "custom-runtime-model",
+      provider: "openai",
+      api: "openai-responses",
+      baseUrl: "https://example.invalid/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 32768
+    };
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "explicit-model-session",
+      cwd,
+      agentDir,
+      provider: "openai",
+      modelId: "non-existent-catalog-model",
+      resolvedModel,
+      apiKey: "test-key",
+      permissionMode: "plan"
+    });
+
+    expect(result.session.model?.id).toBe("custom-runtime-model");
+    expect(result.session.model?.baseUrl).toBe("https://example.invalid/v1");
+    result.session.dispose();
   });
 });
