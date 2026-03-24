@@ -69,7 +69,11 @@ export function resolvePiChannelModel(params: {
   return {
     provider: fallbackProvider,
     resolvedModelId: modelId,
-    model: createFallbackModel(fallbackProvider, modelId, params.baseUrl)
+    model: createFallbackModel(
+      fallbackProvider,
+      modelId,
+      shouldApplyChannelBaseUrl(fallbackProvider, params.baseUrl) ? params.baseUrl : undefined
+    )
   };
 }
 
@@ -87,7 +91,7 @@ function applyChannelBaseUrl(model: Model<Api>, baseUrl?: string): Model<Api> {
 }
 
 function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?: string): Model<Api> {
-  const normalizedBaseUrl = baseUrl?.trim() || "https://api.openai.com/v1";
+  const normalizedBaseUrl = baseUrl?.trim();
   const api =
     provider === "anthropic"
       ? "anthropic-messages"
@@ -99,7 +103,7 @@ function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?:
     name: modelId,
     provider,
     api,
-    baseUrl: normalizedBaseUrl,
+    ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
     reasoning: supportsReasoning(provider, normalizedBaseUrl),
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
