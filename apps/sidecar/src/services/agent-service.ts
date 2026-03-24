@@ -167,7 +167,8 @@ export async function sendAgentMessage(
   }
 
   updateAgentSessionMeta(sessionId, {
-    channelId: resolvedChannelId
+    channelId: resolvedChannelId,
+    modelId: resolvedModelId
   });
   runtimeStatusManager.markStreaming(sessionId);
 

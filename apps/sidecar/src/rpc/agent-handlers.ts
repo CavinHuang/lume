@@ -143,6 +143,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return createAgentSession(
         input.title,
         input.channelId,
+        input.modelId,
         input.workspaceId,
         input.parentSessionId
       );

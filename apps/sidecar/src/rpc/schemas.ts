@@ -196,6 +196,7 @@ export const memorySaveInputSchema = z.object({
 export const agentCreateSessionInputSchema = z.object({
   title: z.string().optional(),
   channelId: z.string().optional(),
+  modelId: z.string().optional(),
   workspaceId: z.string().optional(),
   parentSessionId: z.string().optional()
 });
