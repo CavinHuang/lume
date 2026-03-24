@@ -31,8 +31,11 @@ describe("runtime-core run", () => {
   });
 
   test("应为同一个 Lume session 使用稳定 transcript 目录", () => {
-    const first = getRuntimeCoreSessionDir("agent:main:test");
-    const second = getRuntimeCoreSessionDir("agent:main:test");
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-stable-dir-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+    const first = getRuntimeCoreSessionDir("agent:main:test", agentDir);
+    const second = getRuntimeCoreSessionDir("agent:main:test", agentDir);
     expect(first).toBe(second);
   });
 
