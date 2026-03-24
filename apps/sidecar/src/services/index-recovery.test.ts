@@ -10,7 +10,6 @@ import {
   getAgentWorkspacesIndexPath,
   getConversationMessagesPath
 } from "./config-paths";
-import { getRuntimeCoreCompatibilityMessagesPath } from "./pi-agent/runtime-core/session-store";
 
 describe("index recovery", () => {
   let previousConfigDir: string | undefined;
@@ -54,20 +53,6 @@ describe("index recovery", () => {
 
     const files = readdirSync(tempConfigDir);
     expect(files.some((name) => name.startsWith("agent-workspaces.json.corrupt-"))).toBeTrue();
-  });
-
-  test("agent session 消息文件损坏时应自动备份并回退空列表", () => {
-    const sessionId = "session-broken";
-    const messagesPath = getRuntimeCoreCompatibilityMessagesPath(sessionId);
-    mkdirSync(join(tempConfigDir, "agent", "runtime-core", "sessions", sessionId), { recursive: true });
-    writeFileSync(messagesPath, "{bad-json-line}\n", "utf-8");
-
-    const messages = getAgentSessionMessages(sessionId);
-    expect(messages).toEqual([]);
-
-    const sessionDir = join(tempConfigDir, "agent", "runtime-core", "sessions", sessionId);
-    const files = readdirSync(sessionDir);
-    expect(files.some((name) => name.startsWith("compatibility.ndjson.corrupt-"))).toBeTrue();
   });
 
   test("conversation 消息文件损坏时应自动备份并回退空列表", () => {

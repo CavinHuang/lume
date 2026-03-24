@@ -6,7 +6,6 @@ import { createAgentSession } from "../agent-session-manager";
 import { createAgentWorkspace } from "../agent-workspace-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
-  getRuntimeCoreCompatibilityMessagesPath,
   getRuntimeCoreSessionDirPath
 } from "../pi-agent/runtime-core/session-store";
 import { listSessionEntriesForWorkspace } from "./session-files";
@@ -63,7 +62,6 @@ describe("memory session-files", () => {
 
     const entries = listSessionEntriesForWorkspace(workspace.id);
 
-    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeFalse();
     expect(entries).toHaveLength(1);
     expect(entries[0]?.path).toBe(`sessions/${session.id}`);
     expect(entries[0]?.absPath).toBe(getRuntimeCoreSessionDirPath(session.id));

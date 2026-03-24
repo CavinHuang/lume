@@ -22,6 +22,7 @@ import {
   truncateAgentMessagesFrom,
   updateAgentSessionMeta
 } from "../services/agent-session-manager";
+import { getAgentRuntimeStatusManager } from "../services/agent-runtime-status-manager";
 import {
   generateAgentTitle,
   sendAgentMessage,
@@ -204,8 +205,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.DELETE_SESSION]: async (params) => {
       const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.DELETE_SESSION);
       deleteAgentSession(input.sessionId);
+      getAgentRuntimeStatusManager().clearSession(input.sessionId);
       context.planStateTracker.clearSession(input.sessionId);
       return { ok: true };
+    },
+    [AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS]: async (params) => {
+      const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS);
+      return getAgentRuntimeStatusManager().get(input.sessionId) ?? {
+        sessionId: input.sessionId,
+        phase: "idle",
+        updatedAt: Date.now()
+      };
     },
     [AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM]: async (params) => {
       const input = validateInput(agentTruncateInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM);

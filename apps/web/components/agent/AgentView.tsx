@@ -21,8 +21,11 @@ import {
   agentPendingFilesAtom,
   agentPendingPromptAtom,
   agentPermissionModeAtom,
+  agentAskUserQuestionRequestsAtom,
+  agentRuntimeStatusesAtom,
   agentStreamingAtom,
   agentStreamErrorsAtom,
+  agentToolPermissionRequestsAtom,
   agentToolActivitiesAtom,
   agentStreamingStatesAtom,
   agentSessionContextCacheAtom,
@@ -30,9 +33,12 @@ import {
   agentWorkspacesAtom,
   applyAgentEvent,
   currentAgentErrorAtom,
+  currentAgentAskUserQuestionRequestAtom,
   currentAgentMessagesAtom,
+  currentAgentRuntimeStatusAtom,
   currentAgentSessionAtom,
   currentAgentSessionIdAtom,
+  currentAgentToolPermissionRequestAtom,
   currentAgentWorkspaceIdAtom
 } from "@/atoms";
 import {
@@ -47,6 +53,7 @@ import {
 import {
   createAutomationJob,
   getAgentSessionMessages,
+  getAgentRuntimeStatus,
   getAgentSessionPath,
   listAgentSessions,
   listSubagentRuns,
@@ -55,6 +62,7 @@ import {
   onAgentStreamError,
   onAgentStreamEvent,
   onAgentMessageAppended,
+  onAgentRuntimeStatusChanged,
   onAgentAskUserQuestion,
   onAgentPlanStateChanged,
   onAgentToolPermissionRequest,
@@ -341,6 +349,9 @@ export function AgentView(): React.ReactElement {
   const [workspaces] = useAtom(agentWorkspacesAtom);
   const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
+  const setRuntimeStatuses = useSetAtom(agentRuntimeStatusesAtom);
+  const setAskUserQuestionRequests = useSetAtom(agentAskUserQuestionRequestsAtom);
+  const setToolPermissionRequests = useSetAtom(agentToolPermissionRequestsAtom);
   const streamingStates = useAtomValue(agentStreamingStatesAtom);
   const setContextCache = useSetAtom(agentSessionContextCacheAtom);
   const setCachedTeammates = useSetAtom(cachedTeammateStatesAtom);
@@ -348,6 +359,9 @@ export function AgentView(): React.ReactElement {
   const toolActivities = useAtomValue(agentToolActivitiesAtom);
   const contextStatus = useAtomValue(agentContextStatusAtom);
   const [agentError] = useAtom(currentAgentErrorAtom);
+  const currentRuntimeStatus = useAtomValue(currentAgentRuntimeStatusAtom);
+  const askUserQuestionRequest = useAtomValue(currentAgentAskUserQuestionRequestAtom);
+  const toolPermissionRequest = useAtomValue(currentAgentToolPermissionRequestAtom);
   const setActiveView = useSetAtom(activeViewAtom);
   const setSessions = useSetAtom(agentSessionsAtom);
   const setStreamErrors = useSetAtom(agentStreamErrorsAtom);
@@ -366,11 +380,9 @@ export function AgentView(): React.ReactElement {
   const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
   const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
   const [modeNotice, setModeNotice] = useState<string | null>(null);
-  const [askUserQuestionRequest, setAskUserQuestionRequest] = useState<AgentAskUserQuestionRequest | null>(null);
   const [askUserAnswers, setAskUserAnswers] = useState<Record<string, { selected: string[]; otherText: string }>>({});
   const [askUserError, setAskUserError] = useState<string | null>(null);
   const [askUserSubmitting, setAskUserSubmitting] = useState(false);
-  const [toolPermissionRequest, setToolPermissionRequest] = useState<AgentToolPermissionRequest | null>(null);
   const [toolPermissionSubmitting, setToolPermissionSubmitting] = useState(false);
   const [toolPermissionError, setToolPermissionError] = useState<string | null>(null);
 
@@ -690,14 +702,18 @@ export function AgentView(): React.ReactElement {
         toolUseId: askUserQuestionRequest.toolUseId,
         answers
       });
-      setAskUserQuestionRequest(null);
+      setAskUserQuestionRequests((prev) => {
+        const map = new Map(prev);
+        map.delete(askUserQuestionRequest.sessionId);
+        return map;
+      });
       setAskUserAnswers({});
     } catch (error) {
       setAskUserError(error instanceof Error ? error.message : "提交回答失败");
     } finally {
       setAskUserSubmitting(false);
     }
-  }, [askUserQuestionRequest, askUserAnswers]);
+  }, [askUserQuestionRequest, askUserAnswers, setAskUserQuestionRequests]);
 
   const cancelAskUserQuestion = useCallback(async (): Promise<void> => {
     if (!askUserQuestionRequest || askUserSubmitting) return;
@@ -709,14 +725,18 @@ export function AgentView(): React.ReactElement {
         toolUseId: askUserQuestionRequest.toolUseId,
         canceled: true
       });
-      setAskUserQuestionRequest(null);
+      setAskUserQuestionRequests((prev) => {
+        const map = new Map(prev);
+        map.delete(askUserQuestionRequest.sessionId);
+        return map;
+      });
       setAskUserAnswers({});
     } catch (error) {
       setAskUserError(error instanceof Error ? error.message : "取消提问失败");
     } finally {
       setAskUserSubmitting(false);
     }
-  }, [askUserQuestionRequest, askUserSubmitting]);
+  }, [askUserQuestionRequest, askUserSubmitting, setAskUserQuestionRequests]);
 
   const submitToolPermissionDecision = useCallback(async (decision: "allow_once" | "allow_always" | "deny"): Promise<void> => {
     if (!toolPermissionRequest || toolPermissionSubmitting) return;
@@ -728,13 +748,17 @@ export function AgentView(): React.ReactElement {
         requestId: toolPermissionRequest.requestId,
         decision
       });
-      setToolPermissionRequest(null);
+      setToolPermissionRequests((prev) => {
+        const map = new Map(prev);
+        map.delete(toolPermissionRequest.sessionId);
+        return map;
+      });
     } catch (error) {
       setToolPermissionError(error instanceof Error ? error.message : "提交工具权限失败");
     } finally {
       setToolPermissionSubmitting(false);
     }
-  }, [toolPermissionRequest, toolPermissionSubmitting]);
+  }, [toolPermissionRequest, toolPermissionSubmitting, setToolPermissionRequests]);
 
   useEffect(() => {
     void listChannels().then((next) => setChannels(next));
@@ -774,7 +798,6 @@ export function AgentView(): React.ReactElement {
     if (!sessionId) {
       setMessages([]);
       setSessionRootPath(null);
-      setToolPermissionRequest(null);
       resetPlan();
       setSessionSwitching(false);
       return;
@@ -786,7 +809,6 @@ export function AgentView(): React.ReactElement {
     setPendingFolderRefs([]);
     setInlineEditingMessageId(null);
     setInputContent("");
-    setToolPermissionRequest(null);
     resetPlan();
 
     let cancelled = false;
@@ -1018,8 +1040,16 @@ export function AgentView(): React.ReactElement {
           });
         }
         if (payload.sessionId === currentSessionIdRef.current) {
-          setAskUserQuestionRequest(null);
-          setToolPermissionRequest(null);
+          setAskUserQuestionRequests((prev) => {
+            const map = new Map(prev);
+            map.delete(payload.sessionId);
+            return map;
+          });
+          setToolPermissionRequests((prev) => {
+            const map = new Map(prev);
+            map.delete(payload.sessionId);
+            return map;
+          });
         }
         removeState(payload.sessionId);
         void listAgentSessions().then(setSessions);
@@ -1100,8 +1130,16 @@ export function AgentView(): React.ReactElement {
       });
       const finalize = (): void => {
         if (payload.sessionId === currentSessionIdRef.current) {
-          setAskUserQuestionRequest(null);
-          setToolPermissionRequest(null);
+          setAskUserQuestionRequests((prev) => {
+            const map = new Map(prev);
+            map.delete(payload.sessionId);
+            return map;
+          });
+          setToolPermissionRequests((prev) => {
+            const map = new Map(prev);
+            map.delete(payload.sessionId);
+            return map;
+          });
         }
         removeState(payload.sessionId);
       };
@@ -1140,6 +1178,13 @@ export function AgentView(): React.ReactElement {
           }
           return [...prev, payload.message];
         });
+      });
+    }));
+    trackUnlisten(onAgentRuntimeStatusChanged((payload) => {
+      setRuntimeStatuses((prev) => {
+        const map = new Map(prev);
+        map.set(payload.status.sessionId, payload.status);
+        return map;
       });
     }));
 
@@ -1196,14 +1241,22 @@ export function AgentView(): React.ReactElement {
         return;
       }
       setAskUserError(null);
-      setAskUserQuestionRequest(payload);
+      setAskUserQuestionRequests((prev) => {
+        const map = new Map(prev);
+        map.set(payload.sessionId, payload);
+        return map;
+      });
     }));
     trackUnlisten(onAgentToolPermissionRequest((payload) => {
       if (payload.sessionId !== currentSessionIdRef.current) {
         return;
       }
       setToolPermissionError(null);
-      setToolPermissionRequest(payload);
+      setToolPermissionRequests((prev) => {
+        const map = new Map(prev);
+        map.set(payload.sessionId, payload);
+        return map;
+      });
     }));
 
     return () => {
@@ -1212,16 +1265,55 @@ export function AgentView(): React.ReactElement {
     };
   }, [
     setMessages,
+    setAskUserQuestionRequests,
+    setRuntimeStatuses,
     setSessions,
     setPlanState,
     setStreamErrors,
     setStreamingStates,
+    setToolPermissionRequests,
     setAgentPermissionMode,
     showModeNotice,
     applyPlanStateChanged,
     planSessionActive,
     agentPermissionMode
   ]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+    void getAgentRuntimeStatus(sessionId)
+      .then((status) => {
+        setRuntimeStatuses((prev) => {
+          const map = new Map(prev);
+          map.set(sessionId, status);
+          return map;
+        });
+      })
+      .catch(() => undefined);
+  }, [sessionId, setRuntimeStatuses]);
+
+  useEffect(() => {
+    if (currentRuntimeStatus && currentRuntimeStatus.phase !== "awaiting_user_answer") {
+      setAskUserQuestionRequests((prev) => {
+        const map = new Map(prev);
+        if (sessionId) {
+          map.delete(sessionId);
+        }
+        return map;
+      });
+    }
+    if (currentRuntimeStatus && currentRuntimeStatus.phase !== "awaiting_permission") {
+      setToolPermissionRequests((prev) => {
+        const map = new Map(prev);
+        if (sessionId) {
+          map.delete(sessionId);
+        }
+        return map;
+      });
+    }
+  }, [currentRuntimeStatus, sessionId, setAskUserQuestionRequests, setToolPermissionRequests]);
 
   useEffect(() => {
     if (!pendingPrompt) return;
@@ -1614,6 +1706,8 @@ export function AgentView(): React.ReactElement {
       if (disposed || pending) return;
       const lastEventAt = lastAgentEventAtRef.current.get(sessionId) ?? 0;
       const lastActiveAt = lastEventAt > 0 ? lastEventAt : streamStartedAt;
+      const isAwaitingInteractiveInput = currentRuntimeStatus?.phase === "awaiting_permission"
+        || currentRuntimeStatus?.phase === "awaiting_user_answer";
       const activeTools = toolActivities.filter((item) => !item.done);
       const hasRunningWebSearch = activeTools.some((item) => item.toolName === "web_search");
       const idleTimeoutMs = hasRunningWebSearch
@@ -1621,7 +1715,7 @@ export function AgentView(): React.ReactElement {
         : activeTools.length > 0
           ? 120_000
           : 45_000;
-      if (!askUserQuestionRequest && !toolPermissionRequest && Date.now() - lastActiveAt > idleTimeoutMs) {
+      if (!isAwaitingInteractiveInput && Date.now() - lastActiveAt > idleTimeoutMs) {
         setStreamErrors((prev) => {
           const map = new Map(prev);
           map.set(sessionId, "Agent 长时间无响应，已自动停止本次生成，请重试。");
@@ -1683,8 +1777,7 @@ export function AgentView(): React.ReactElement {
   }, [
     sessionId,
     streaming,
-    askUserQuestionRequest,
-    toolPermissionRequest,
+    currentRuntimeStatus,
     toolActivities,
     setMessages,
     setStreamErrors,

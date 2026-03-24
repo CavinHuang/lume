@@ -8,6 +8,6 @@ export interface DiscoverRuntimeCoreModelRegistryInput {
 export function discoverRuntimeCoreModelRegistry(
   input: DiscoverRuntimeCoreModelRegistryInput
 ): ModelRegistry {
-  const authStorage = AuthStorage.create(join(input.agentDir, "auth.json"));
+  const authStorage = new AuthStorage(join(input.agentDir, "auth.json"));
   return new ModelRegistry(authStorage, join(input.agentDir, "models.json"));
 }

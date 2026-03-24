@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  appendAgentCompatibilityMessage,
+  appendAgentTranscriptMessage,
   createAgentSession,
   deleteAgentSession,
   getAgentSessionMeta,
@@ -20,7 +20,6 @@ import { getAgentWorkspacePath } from "./config-paths";
 import { appendMessage, createConversation } from "./conversation-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
-  getRuntimeCoreCompatibilityMessagesPath,
   getRuntimeCoreSessionDirPath
 } from "./pi-agent/runtime-core/session-store";
 
@@ -145,7 +144,6 @@ describe("agent-session-manager advanced ops", () => {
     expect(messages[1]?.role).toBe("assistant");
     expect(messages[1]?.content).toBe("我在");
     expect(messages[1]?.model).toBe("unknown/demo-model");
-    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeFalse();
   });
 
   test("JSONL 缺失时应回退到 runtime-core transcript 消息", () => {
@@ -224,15 +222,13 @@ describe("agent-session-manager advanced ops", () => {
 
   test("deleteAgentSession 应清理 runtime-core transcript 目录", () => {
     const session = createAgentSession("delete transcript");
-    appendAgentCompatibilityMessage(session.id, {
-      id: "jsonl-user",
-      role: "user",
-      content: "jsonl",
+    appendAgentTranscriptMessage(session.id, {
+      id: "announce-delete",
+      role: "assistant",
+      content: "子任务完成通知: delete transcript (completed)\nrunId: run-delete\nchildSessionKey: child-delete",
       createdAt: 1,
-      metadata: {
-        planExecutionKey: "plan-delete"
-      }
-    }, "message_metadata_overlay");
+      model: "subagent/announce"
+    });
     const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
     sessionManager.appendMessage({
       role: "user",
@@ -259,12 +255,10 @@ describe("agent-session-manager advanced ops", () => {
 
     const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(session.id);
     expect(existsSync(runtimeCoreSessionDir)).toBeTrue();
-    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeTrue();
 
     deleteAgentSession(session.id);
 
     expect(existsSync(runtimeCoreSessionDir)).toBeFalse();
-    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeFalse();
   });
 
   test("truncateAgentMessagesFrom 应直接重建裁剪后的 transcript", () => {
@@ -305,7 +299,6 @@ describe("agent-session-manager advanced ops", () => {
 
     expect(kept.length).toBe(2);
     expect(existsSync(runtimeCoreSessionDir)).toBeTrue();
-    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeFalse();
     expect(messagesAfter.length).toBe(2);
     expect(messagesAfter[0]?.content).toBe("第一条");
     expect(messagesAfter[1]?.content).toBe("第二条");

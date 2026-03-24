@@ -29,7 +29,14 @@ function resolveLogsDir(): string {
   return join(tmpdir(), "lume-logs");
 }
 
-const LOGS_DIR = resolveLogsDir();
+let logsDir: string | null = null;
+
+function getResolvedLogsDir(): string {
+  if (!logsDir) {
+    logsDir = resolveLogsDir();
+  }
+  return logsDir;
+}
 
 // 获取当前日期字符串
 function getDateStr(): string {
@@ -43,38 +50,43 @@ type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 const MIN_LEVEL: LogLevel = (process.env.LUME_LOG_LEVEL as LogLevel) || "info";
 const CONSOLE_ENABLED = process.env.LUME_LOG_CONSOLE !== "false";
 
-// 创建日志传输配置
-const transports = [];
+let baseLogger: pino.Logger | null = null;
 
-// 文件传输 - 多行 JSON 格式
-transports.push({
-  target: "pino/file",
-  options: {
-    destination: join(LOGS_DIR, `${getDateStr()}.log`),
-    mkdir: true
+function getBaseLogger(): pino.Logger {
+  if (baseLogger) {
+    return baseLogger;
   }
-});
 
-// 控制台传输 - 美化输出
-if (CONSOLE_ENABLED) {
-  transports.push({
-    target: "pino-pretty",
-    options: {
-      colorize: true,
-      translateTime: "SYS:standard",
-      ignore: "pid,hostname"
+  const transports: Array<{ target: string; options: Record<string, unknown> }> = [
+    {
+      target: "pino/file",
+      options: {
+        destination: join(getResolvedLogsDir(), `${getDateStr()}.log`),
+        mkdir: true
+      }
     }
-  });
-}
+  ];
 
-// 创建 logger 实例
-const baseLogger = pino(
-  {
-    level: MIN_LEVEL,
-    timestamp: pino.stdTimeFunctions.isoTime
-  },
-  pino.transport({ targets: transports })
-);
+  if (CONSOLE_ENABLED) {
+    transports.push({
+      target: "pino-pretty",
+      options: {
+        colorize: true,
+        translateTime: "SYS:standard",
+        ignore: "pid,hostname"
+      }
+    });
+  }
+
+  baseLogger = pino(
+    {
+      level: MIN_LEVEL,
+      timestamp: pino.stdTimeFunctions.isoTime
+    },
+    pino.transport({ targets: transports })
+  );
+  return baseLogger;
+}
 
 // 上下文日志器
 export interface Logger {
@@ -89,28 +101,37 @@ export interface Logger {
 
 // 创建带上下文的日志器
 export function createLogger(context: string, sessionId?: string): Logger {
-  const child = baseLogger.child({ context, sessionId });
+  const getChild = () => getBaseLogger().child({ context, sessionId });
 
   return {
-    trace: (msg: string, data?: Record<string, unknown>) => child.trace(data ?? {}, msg),
-    debug: (msg: string, data?: Record<string, unknown>) => child.debug(data ?? {}, msg),
-    info: (msg: string, data?: Record<string, unknown>) => child.info(data ?? {}, msg),
-    warn: (msg: string, data?: Record<string, unknown>) => child.warn(data ?? {}, msg),
-    error: (msg: string, data?: Record<string, unknown>) => child.error(data ?? {}, msg),
-    fatal: (msg: string, data?: Record<string, unknown>) => child.fatal(data ?? {}, msg),
+    trace: (msg: string, data?: Record<string, unknown>) => getChild().trace(data ?? {}, msg),
+    debug: (msg: string, data?: Record<string, unknown>) => getChild().debug(data ?? {}, msg),
+    info: (msg: string, data?: Record<string, unknown>) => getChild().info(data ?? {}, msg),
+    warn: (msg: string, data?: Record<string, unknown>) => getChild().warn(data ?? {}, msg),
+    error: (msg: string, data?: Record<string, unknown>) => getChild().error(data ?? {}, msg),
+    fatal: (msg: string, data?: Record<string, unknown>) => getChild().fatal(data ?? {}, msg),
     child: (bindings) => createLogger(bindings.context ?? context, bindings.sessionId ?? sessionId)
   };
 }
 
 // 默认导出
-export const logger = createLogger("app");
+export const logger = {
+  trace: (msg: string, data?: Record<string, unknown>) => createLogger("app").trace(msg, data),
+  debug: (msg: string, data?: Record<string, unknown>) => createLogger("app").debug(msg, data),
+  info: (msg: string, data?: Record<string, unknown>) => createLogger("app").info(msg, data),
+  warn: (msg: string, data?: Record<string, unknown>) => createLogger("app").warn(msg, data),
+  error: (msg: string, data?: Record<string, unknown>) => createLogger("app").error(msg, data),
+  fatal: (msg: string, data?: Record<string, unknown>) => createLogger("app").fatal(msg, data),
+  child: (bindings: { context?: string; sessionId?: string }) =>
+    createLogger(bindings.context ?? "app", bindings.sessionId)
+} satisfies Logger;
 
 // 获取日志目录路径
 export function getLogsDir(): string {
-  return LOGS_DIR;
+  return getResolvedLogsDir();
 }
 
 // 获取当前日志文件路径
 export function getCurrentLogPath(): string {
-  return join(LOGS_DIR, `${getDateStr()}.log`);
+  return join(getResolvedLogsDir(), `${getDateStr()}.log`);
 }

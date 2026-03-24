@@ -3,13 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  appendAgentCompatibilityMessage,
+  appendAgentTranscriptMessage,
   createAgentSession,
   getAgentSessionMessages
 } from "./agent-session-manager";
-import { createOrResumeRuntimeCoreSessionManager } from "./pi-agent/runtime-core/session-store";
 
-describe("agent-session-manager transcript compatibility merge", () => {
+describe("agent-session-manager transcript projection", () => {
   let previousConfigDir: string | undefined;
   let tempConfigDir = "";
 
@@ -31,91 +30,23 @@ describe("agent-session-manager transcript compatibility merge", () => {
     }
   });
 
-  test("transcript 已存在时应合并兼容层追加的子任务通知", () => {
+  test("subagent announce 应直接写入 transcript 并保留派生 metadata", () => {
     const session = createAgentSession("append transcript");
-    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
-    sessionManager.appendMessage({
-      role: "user",
-      content: [{ type: "text", text: "已有用户消息" }],
-      timestamp: 100
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      api: "anthropic-messages",
-      stopReason: "stop",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-      },
-      content: [{ type: "text", text: "已有助手回复" }],
-      timestamp: 150
-    });
-
-    appendAgentCompatibilityMessage(session.id, {
+    appendAgentTranscriptMessage(session.id, {
       id: "announce-1",
       role: "assistant",
-      content: "后续补充通知",
+      content: "子任务完成通知: 测试子任务 (completed)\nrunId: run-123\nchildSessionKey: child-456",
       createdAt: 200,
-      model: "subagent/announce",
-      metadata: {
-        subagentAnnounce: true
-      }
-    }, "subagent_announce");
-
-    const messages = getAgentSessionMessages(session.id);
-    expect(messages).toHaveLength(3);
-    expect(messages[0]?.content).toBe("已有用户消息");
-    expect(messages[1]?.content).toBe("已有助手回复");
-    expect(messages[2]?.content).toBe("后续补充通知");
-    expect(messages[2]?.model).toBe("subagent/announce");
-  });
-
-  test("transcript 已存在时应把 metadata 兼容层并回对应主消息", () => {
-    const session = createAgentSession("metadata overlay");
-    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
-    sessionManager.appendMessage({
-      role: "user",
-      content: [{ type: "text", text: "计划执行请求" }],
-      timestamp: 100
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      api: "anthropic-messages",
-      stopReason: "stop",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-      },
-      content: [{ type: "text", text: "好的，开始执行" }],
-      timestamp: 150
-    });
-
-    appendAgentCompatibilityMessage(session.id, {
-      id: "overlay-1",
-      role: "user",
-      content: "计划执行请求",
-      createdAt: 101,
-      metadata: {
-        planExecutionKey: "plan-001"
-      }
+      model: "subagent/announce"
     });
 
     const messages = getAgentSessionMessages(session.id);
-    expect(messages).toHaveLength(2);
-    expect(messages[0]?.content).toBe("计划执行请求");
-    expect(messages[0]?.metadata?.planExecutionKey).toBe("plan-001");
-    expect(messages[1]?.content).toBe("好的，开始执行");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toContain("子任务完成通知");
+    expect(messages[0]?.model).toBe("subagent/announce");
+    expect(messages[0]?.metadata?.subagentAnnounce).toBe(true);
+    expect(messages[0]?.metadata?.runId).toBe("run-123");
+    expect(messages[0]?.metadata?.childSessionId).toBe("child-456");
+    expect(messages[0]?.metadata?.status).toBe("completed");
   });
 });

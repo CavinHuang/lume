@@ -6,25 +6,23 @@
  * - Keep sidecar event emitter contract (no Electron webContents dependency).
  */
 
-import { randomUUID } from "node:crypto";
 import type {
   AgentEvent,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
-  AgentGenerateTitleInput,
-  AgentMessage
+  AgentGenerateTitleInput
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../providers";
 import { decryptApiKey, listChannels } from "./channel-manager";
 import {
-  appendAgentCompatibilityMessage,
   getAgentSessionMessages,
   getAgentSessionMeta,
   updateAgentSessionMeta
 } from "./agent-session-manager";
+import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
 import { createLogger } from "./logger";
 import {
@@ -70,12 +68,6 @@ const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 
 const log = createLogger("agent-service");
 
-function hasCompatibilityMessageMetadata(
-  metadata: AgentSendInput["messageMetadata"]
-): metadata is Record<string, unknown> {
-  return Boolean(metadata && Object.keys(metadata).length > 0);
-}
-
 function handleRuntimeSessionStateEvent(
   sessionId: string,
   event: AgentEvent,
@@ -118,6 +110,7 @@ function handleRuntimeSessionStateEvent(
 export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): { ok: true } {
   const handledByPi = submitPiAskUserQuestionAnswers(input);
   if (handledByPi) {
+    getAgentRuntimeStatusManager().markStreaming(input.sessionId);
     return { ok: true };
   }
   throw new Error("未找到待确认的 AskUserQuestion 请求");
@@ -126,6 +119,7 @@ export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponse
 export function submitAgentToolPermission(input: AgentToolPermissionResponseInput): { ok: true } {
   const handled = submitToolPermissionDecision(input);
   if (handled) {
+    getAgentRuntimeStatusManager().markStreaming(input.sessionId);
     return { ok: true };
   }
   throw new Error("未找到待确认的工具权限请求");
@@ -154,16 +148,6 @@ export async function sendAgentMessage(
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
-  if (shouldAppendUserMessage && hasCompatibilityMessageMetadata(input.messageMetadata)) {
-    const compatibilityUserMessage: AgentMessage = {
-      id: randomUUID(),
-      role: "user",
-      content: userMessage,
-      createdAt: Date.now(),
-      metadata: input.messageMetadata
-    };
-    appendAgentCompatibilityMessage(sessionId, compatibilityUserMessage);
-  }
 
   let stateWorkspaceSlug: string | undefined;
   if (workspaceId) {
@@ -174,6 +158,7 @@ export async function sendAgentMessage(
   }
 
   const sessionStateManager = getSessionStateManager();
+  const runtimeStatusManager = getAgentRuntimeStatusManager();
   sessionStateManager.getOrCreate(sessionId, stateWorkspaceSlug);
   if (stateWorkspaceSlug) {
     startSessionHeartbeat(sessionId, stateWorkspaceSlug, async () => {
@@ -184,6 +169,7 @@ export async function sendAgentMessage(
   updateAgentSessionMeta(sessionId, {
     channelId: resolvedChannelId
   });
+  runtimeStatusManager.markStreaming(sessionId);
 
   const { runPiAgentMessage } = await import("./pi-agent/run-pi-agent-message");
   const piResult = await runPiAgentMessage({
@@ -193,12 +179,33 @@ export async function sendAgentMessage(
   }, {
     onEvent: (event) => {
       handleRuntimeSessionStateEvent(sessionId, event, sessionStateManager);
+      if (event.type === "compacting") {
+        runtimeStatusManager.markCompacting(sessionId);
+      }
       emit.onEvent(event);
     },
-    onComplete: emit.onComplete,
-    onError: emit.onError,
-    onAskUserQuestion: emit.onAskUserQuestion,
-    onToolPermissionRequest: emit.onToolPermissionRequest
+    onComplete: () => {
+      runtimeStatusManager.markCompleted(sessionId);
+      emit.onComplete();
+    },
+    onError: (error) => {
+      runtimeStatusManager.markErrored(sessionId, error);
+      emit.onError(error);
+    },
+    onAskUserQuestion: (request) => {
+      runtimeStatusManager.markAwaitingUserAnswer(sessionId, {
+        toolUseId: request.toolUseId
+      });
+      emit.onAskUserQuestion(request);
+    },
+    onToolPermissionRequest: (request) => {
+      runtimeStatusManager.markAwaitingPermission(sessionId, {
+        requestId: request.requestId,
+        toolUseId: request.toolUseId,
+        toolName: request.toolName
+      });
+      emit.onToolPermissionRequest(request);
+    }
   });
   if (piResult.status === "completed" && shouldTryAutoTitle) {
     void autoGenerateAgentTitle(sessionId, userMessage, emit);
@@ -213,6 +220,7 @@ export function stopAgent(sessionId: string): void {
     stopSessionHeartbeat(state.workspaceSlug);
   }
   sessionStateManager.delete(sessionId);
+  getAgentRuntimeStatusManager().markIdle(sessionId);
   void import("./pi-agent/runner/run")
     .then((module) => module.stopPiAgent(sessionId))
     .catch(() => undefined);

@@ -28,10 +28,6 @@ export function getRuntimeCoreSessionDir(lumeSessionId: string, agentDir?: strin
   return dir;
 }
 
-export function getRuntimeCoreCompatibilityMessagesPath(lumeSessionId: string, agentDir?: string): string {
-  return join(getRuntimeCoreSessionDirPath(lumeSessionId, agentDir), "compatibility.ndjson");
-}
-
 export function hasRuntimeCoreSessionTranscript(lumeSessionId: string, agentDir?: string): boolean {
   const sessionDir = getRuntimeCoreSessionDirPath(lumeSessionId, agentDir);
   if (!existsSync(sessionDir)) {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { updateAgentSessionMeta } from "../../agent-session-manager";
 import {
   appendAgentEvents,
@@ -8,9 +9,14 @@ import { getAgentSessionWorkspacePath } from "../../config-paths";
 import { decryptApiKey, listChannels } from "../../channel-manager";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent-workspace-manager";
 import { createLogger } from "../../logger";
+import { waitForPiAskUserQuestionAnswers } from "../tools/ask-user-question-bridge";
+import { waitForToolPermissionDecision } from "../tools/tool-permission-bridge";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { projectRuntimeCoreEventToLumeEvents } from "./subscribe";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreAgentDir } from "./session-store";
+import { applyRuntimeCoreStreamWrappers, createRuntimeCoreStreamWrapperState } from "./stream-wrappers";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
 import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
@@ -85,15 +91,20 @@ export async function runRuntimeCoreAttempt(
   }
 
   const accumulator = createAgentStreamAccumulatorState();
+  const streamWrapperState = createRuntimeCoreStreamWrapperState();
   const unsubscribe = session.subscribe((event) => {
     const mappedEvents = projectRuntimeCoreEventToLumeEvents(event, {
       contextWindow: session.model?.contextWindow
     });
-    for (const mappedEvent of mappedEvents) {
+    const wrappedEvents = applyRuntimeCoreStreamWrappers(mappedEvents, streamWrapperState, {
+      provider: session.model?.provider,
+      baseUrl: session.model?.baseUrl
+    });
+    for (const mappedEvent of wrappedEvents) {
       emit.onEvent(mappedEvent);
     }
-    if (mappedEvents.length > 0) {
-      appendAgentEvents(accumulator, mappedEvents);
+    if (wrappedEvents.length > 0) {
+      appendAgentEvents(accumulator, wrappedEvents);
     }
   });
 
@@ -195,6 +206,15 @@ async function runRuntimeCoreMockSuccessAttempt(
     content: [{ type: "text", text: mockText }],
     timestamp: Date.now()
   });
+  const interactiveResult = await runMockInteractiveBridges(runtime.sessionId, emit);
+  if (interactiveResult.status !== "ok") {
+    session.dispose();
+    return {
+      status: "errored",
+      errorMessage: interactiveResult.error
+    };
+  }
+  await maybeEmitMockSubagentAnnounce(runtime.sessionId);
   emit.onEvent(textEvent);
   emit.onEvent({
     type: "complete",
@@ -212,6 +232,112 @@ async function runRuntimeCoreMockSuccessAttempt(
   session.dispose();
   emit.onComplete();
   return { status: "completed" };
+}
+
+async function runMockInteractiveBridges(
+  sessionId: string,
+  emit: PiAgentRuntimeEmitter
+): Promise<{ status: "ok" } | { status: "errored"; error: string }> {
+  if (process.env.LUME_PI_AGENT_MOCK_TOOL_PERMISSION === "1") {
+    const controller = new AbortController();
+    const decision = await waitForToolPermissionDecision(
+      {
+        sessionId,
+        requestId: `mock-permission:${sessionId}`,
+        toolUseId: `mock-tool-use:${sessionId}`,
+        toolName: "write",
+        risk: "high",
+        reason: "mock permission request",
+        input: { path: "mock-permission.txt" }
+      },
+      controller.signal,
+      emit.onToolPermissionRequest
+    );
+    if (decision !== "allow_once" && decision !== "allow_always") {
+      return {
+        status: "errored",
+        error: "mock tool permission denied"
+      };
+    }
+  }
+
+  if (process.env.LUME_PI_AGENT_MOCK_ASK_USER_QUESTION === "1") {
+    const controller = new AbortController();
+    const answerResult = await waitForPiAskUserQuestionAnswers(
+      sessionId,
+      `mock-ask:${sessionId}`,
+      [
+        {
+          header: "范围",
+          question: "是否继续执行 smoke bridge？",
+          options: [
+            { label: "继续", description: "继续后续步骤" }
+          ],
+          multiSelect: false
+        }
+      ],
+      controller.signal,
+      emit.onAskUserQuestion
+    );
+    if (answerResult.status !== "answered") {
+      return {
+        status: "errored",
+        error: `mock ask user question not answered: ${answerResult.status}`
+      };
+    }
+  }
+
+  return { status: "ok" };
+}
+
+async function maybeEmitMockSubagentAnnounce(sessionId: string): Promise<void> {
+  if (process.env.LUME_PI_AGENT_MOCK_SUBAGENT_ANNOUNCE !== "1") {
+    return;
+  }
+  const runId = `mock-subagent-run:${sessionId}`;
+  const registry = getSubagentRunRegistry();
+  if (!registry.get(runId)) {
+    registry.create({
+      runId,
+      parentSessionId: sessionId,
+      rootSessionId: sessionId,
+      childSessionId: `mock-child-session:${sessionId}`,
+      label: "Mock Subagent",
+      task: "mock subagent completion",
+      cleanup: "keep",
+      status: "completed",
+      announceStatus: "pending"
+    });
+  }
+
+  const result = await announceSubagentCompletion({
+    run: {
+      runId,
+      parentSessionId: sessionId,
+      rootSessionId: sessionId,
+      depth: 1,
+      childSessionId: `mock-child-session:${sessionId}`,
+      label: "Mock Subagent",
+      task: "mock subagent completion",
+      status: "completed",
+      cleanup: "keep",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      startedAt: Date.now() - 10,
+      endedAt: Date.now(),
+      outcome: {
+        output: "mock subagent announce output",
+        usageEvents: 1
+      }
+    }
+  });
+
+  registry.update(runId, {
+    announceStatus: result.delivered ? "delivered" : "failed",
+    announceAttempts: result.attempts,
+    announceLastError: result.error,
+    announceDeliveredAt: result.delivered ? Date.now() : undefined
+  });
 }
 
 async function runRuntimeCoreMockCompactionAttempt(
