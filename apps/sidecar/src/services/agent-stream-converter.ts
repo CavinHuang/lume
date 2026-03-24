@@ -26,6 +26,7 @@ export interface SDKAssistantMessage {
     }>;
     usage?: {
       input_tokens: number;
+      output_tokens?: number;
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
     };
@@ -149,15 +150,20 @@ export function convertAgentSdkMessage(
 
     if (!assistantMessage.parent_tool_use_id && assistantMessage.message.usage) {
       const usage = assistantMessage.message.usage;
-      const inputTokens =
-        usage.input_tokens +
-        (usage.cache_read_input_tokens ?? 0) +
-        (usage.cache_creation_input_tokens ?? 0);
+      const inputTokens = usage.input_tokens;
+      const outputTokens = usage.output_tokens ?? 0;
+      const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+      const cacheCreationTokens = usage.cache_creation_input_tokens ?? 0;
+      const totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens;
 
       events.push({
         type: "usage_update",
         usage: {
           inputTokens,
+          outputTokens,
+          cacheReadTokens,
+          cacheCreationTokens,
+          totalTokens,
           contextWindow: state.cachedContextWindow
         }
       });
@@ -377,11 +383,15 @@ export function convertAgentSdkMessage(
     }
 
     const usage = {
-      inputTokens:
+      inputTokens: resultMessage.usage.input_tokens,
+      outputTokens: resultMessage.usage.output_tokens,
+      cacheReadTokens: resultMessage.usage.cache_read_input_tokens ?? 0,
+      cacheCreationTokens: resultMessage.usage.cache_creation_input_tokens ?? 0,
+      totalTokens:
         resultMessage.usage.input_tokens +
+        resultMessage.usage.output_tokens +
         (resultMessage.usage.cache_read_input_tokens ?? 0) +
         (resultMessage.usage.cache_creation_input_tokens ?? 0),
-      outputTokens: resultMessage.usage.output_tokens,
       costUsd: resultMessage.total_cost_usd,
       contextWindow: primaryModelUsage?.contextWindow
     };

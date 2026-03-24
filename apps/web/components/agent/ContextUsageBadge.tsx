@@ -9,7 +9,7 @@ const WARNING_RATIO = 0.8;
 const MEMORY_FLUSH_RATIO = 0.7; // Memory Flush 提示阈值
 
 interface ContextUsageBadgeProps {
-  inputTokens?: number;
+  totalTokens?: number;
   contextWindow?: number;
   isCompacting: boolean;
   isProcessing: boolean;
@@ -23,7 +23,7 @@ function formatTokens(tokens: number): string {
 }
 
 export function ContextUsageBadge({
-  inputTokens,
+  totalTokens,
   contextWindow,
   isCompacting,
   isProcessing,
@@ -38,19 +38,19 @@ export function ContextUsageBadge({
     );
   }
 
-  if (!inputTokens || inputTokens <= 0) return null;
+  if (!totalTokens || totalTokens <= 0) return null;
 
   const compactThreshold = contextWindow ? Math.floor(contextWindow * COMPACT_THRESHOLD_RATIO) : undefined;
-  const usageRatio = compactThreshold ? inputTokens / compactThreshold : undefined;
+  const usageRatio = compactThreshold ? totalTokens / compactThreshold : undefined;
   const isWarning = usageRatio !== undefined && usageRatio >= WARNING_RATIO;
   const isFlushHint = usageRatio !== undefined && usageRatio >= MEMORY_FLUSH_RATIO && !isWarning;
   // 主显示：当前 token / 压缩阈值（如 1.2k/155k）
   const displayText = compactThreshold
-    ? `${formatTokens(inputTokens)}/${formatTokens(compactThreshold)}`
-    : formatTokens(inputTokens);
+    ? `${formatTokens(totalTokens)}/${formatTokens(compactThreshold)}`
+    : formatTokens(totalTokens);
   const tooltipText = contextWindow
-    ? `上下文: ${inputTokens.toLocaleString()} / ${compactThreshold?.toLocaleString()} tokens\n模型窗口: ${contextWindow.toLocaleString()} tokens${isWarning ? "\n点击手动压缩" : isFlushHint ? "\n上下文即将达到上限" : ""}`
-    : `上下文: ${inputTokens.toLocaleString()} tokens`;
+    ? `上下文: ${totalTokens.toLocaleString()} / ${compactThreshold?.toLocaleString()} tokens\n模型窗口: ${contextWindow.toLocaleString()} tokens${isWarning ? "\n点击手动压缩" : isFlushHint ? "\n上下文即将达到上限" : ""}`
+    : `上下文: ${totalTokens.toLocaleString()} tokens`;
 
   return (
     <Tooltip>

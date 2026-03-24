@@ -10,12 +10,13 @@ export function projectRuntimeCoreEventToLumeEvents(
   event: AgentSessionEvent,
   options: ProjectRuntimeCoreEventOptions = {}
 ): AgentEvent[] {
-  if (
-    event.type === "auto_compaction_start"
-    || event.type === "auto_compaction_end"
-    || event.type === "auto_retry_start"
-    || event.type === "auto_retry_end"
-  ) {
+  if (event.type === "auto_compaction_start") {
+    return [{ type: "compacting" }];
+  }
+  if (event.type === "auto_compaction_end") {
+    return [{ type: "compact_complete" }];
+  }
+  if (event.type === "auto_retry_start" || event.type === "auto_retry_end") {
     return [];
   }
   return mapPiSessionEventToAgentEvents(event, {

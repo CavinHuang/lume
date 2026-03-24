@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@lume/shared";
+import type { AgentEvent, AgentEventUsage } from "@lume/shared";
 import type { AgentEvent as PiCoreAgentEvent } from "@mariozechner/pi-agent-core";
 import { extractRenderableAssistantText } from "../content-extraction";
 
@@ -51,14 +51,14 @@ export function mapPiSessionEventToAgentEvents(
       }
       if (
         event.message.usage &&
-        typeof event.message.usage.totalTokens === "number"
+        (
+          typeof event.message.usage.input === "number"
+          || typeof event.message.usage.totalTokens === "number"
+        )
       ) {
         mapped.push({
           type: "usage_update",
-          usage: {
-            inputTokens: event.message.usage.totalTokens,
-            contextWindow: options.contextWindow
-          }
+          usage: mapPiUsage(event.message.usage, options.contextWindow)
         });
       }
       return mapped;
@@ -137,4 +137,34 @@ function extractAssistantText(message: {
   content?: unknown;
 }): string {
   return extractRenderableAssistantText(message.content);
+}
+
+function mapPiUsage(
+  usage: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    totalTokens?: number;
+    cost?: { total?: number };
+  },
+  contextWindow?: number
+): AgentEventUsage {
+  const inputTokens = usage.input ?? 0;
+  const outputTokens = usage.output ?? 0;
+  const cacheReadTokens = usage.cacheRead ?? 0;
+  const cacheCreationTokens = usage.cacheWrite ?? 0;
+  const totalTokens = typeof usage.totalTokens === "number"
+    ? usage.totalTokens
+    : inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens;
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    totalTokens,
+    costUsd: usage.cost?.total,
+    contextWindow
+  };
 }

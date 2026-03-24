@@ -97,11 +97,11 @@ class SessionStateManager {
   /**
    * 更新 token 使用量
    */
-  updateTokens(sessionId: string, inputTokens: number, contextWindow?: number): SessionState | null {
+  updateTokens(sessionId: string, totalTokens: number, contextWindow?: number): SessionState | null {
     const state = this.states.get(sessionId);
     if (!state) return null;
 
-    state.totalTokens = inputTokens;
+    state.totalTokens = totalTokens;
     if (contextWindow) {
       state.contextWindow = contextWindow;
     }
@@ -109,7 +109,7 @@ class SessionStateManager {
 
     log.debug("更新 token 使用量", {
       sessionId: sessionId.slice(0, 8),
-      totalTokens: inputTokens,
+      totalTokens,
       contextWindow: state.contextWindow,
     });
 

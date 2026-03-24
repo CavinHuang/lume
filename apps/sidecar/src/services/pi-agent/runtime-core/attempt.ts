@@ -24,6 +24,7 @@ interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
   agentDir: string;
   workspaceName?: string;
+  workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   apiKey: string;
 }
@@ -49,6 +50,9 @@ export async function runRuntimeCoreAttempt(
     return runRuntimeCoreMockDelayedAttempt(params, emit, options, mockDelayMs, prepared);
   }
   if (process.env.LUME_PI_AGENT_MOCK_SUCCESS === "1") {
+    if (shouldRunMockCompaction(input.userMessage)) {
+      return runRuntimeCoreMockCompactionAttempt(params, emit, prepared);
+    }
     return runRuntimeCoreMockSuccessAttempt(params, emit, prepared);
   }
 
@@ -59,7 +63,15 @@ export async function runRuntimeCoreAttempt(
     provider: prepared.modelResolution.provider,
     modelId: prepared.modelResolution.resolvedModelId,
     apiKey: prepared.apiKey,
-    permissionMode: input.permissionMode
+    workspaceId: runtime.workspaceId,
+    workspaceSlug: prepared.workspaceSlug,
+    channelId: runtime.channelId,
+    sessionType: runtime.sessionType,
+    chatType: input.chatType,
+    permissionMode: input.permissionMode,
+    messageMetadata: input.messageMetadata,
+    emitAskUserQuestion: emit.onAskUserQuestion,
+    emitToolPermissionRequest: emit.onToolPermissionRequest
   });
 
   const session = upstream.session;
@@ -144,9 +156,18 @@ async function runRuntimeCoreMockSuccessAttempt(
     provider: prepared.modelResolution.provider,
     modelId: prepared.modelResolution.resolvedModelId,
     apiKey: prepared.apiKey,
-    permissionMode: input.permissionMode
+    workspaceId: runtime.workspaceId,
+    workspaceSlug: prepared.workspaceSlug,
+    channelId: runtime.channelId,
+    sessionType: runtime.sessionType,
+    chatType: input.chatType,
+    permissionMode: input.permissionMode,
+    messageMetadata: input.messageMetadata,
+    emitAskUserQuestion: emit.onAskUserQuestion,
+    emitToolPermissionRequest: emit.onToolPermissionRequest
   });
   const { session, sessionManager } = upstream;
+  logMockSessionPersistence("mock_success", runtime.sessionId, sessionManager);
   const accumulator = createAgentStreamAccumulatorState();
   const textEvent = { type: "text_delta" as const, text: mockText };
   appendAgentEvents(accumulator, [textEvent]);
@@ -181,6 +202,63 @@ async function runRuntimeCoreMockSuccessAttempt(
     usage: {
       inputTokens: 0,
       outputTokens: 0,
+      totalTokens: 0,
+      costUsd: 0
+    }
+  });
+  updateAgentSessionMeta(runtime.sessionId, {
+    piSessionId: session.sessionId
+  });
+  session.dispose();
+  emit.onComplete();
+  return { status: "completed" };
+}
+
+async function runRuntimeCoreMockCompactionAttempt(
+  params: PiAgentRunParams,
+  emit: PiAgentRuntimeEmitter,
+  prepared: PreparedRuntimeCoreAttempt
+): Promise<PiAgentRunResult> {
+  const { input, runtime } = params;
+  const summary = (process.env.LUME_PI_AGENT_MOCK_COMPACTION_SUMMARY || "mock compaction summary").trim();
+  const upstream = await createRuntimeCoreSession({
+    lumeSessionId: runtime.sessionId,
+    cwd: prepared.agentCwd,
+    agentDir: prepared.agentDir,
+    provider: prepared.modelResolution.provider,
+    modelId: prepared.modelResolution.resolvedModelId,
+    apiKey: prepared.apiKey,
+    workspaceId: runtime.workspaceId,
+    workspaceSlug: prepared.workspaceSlug,
+    channelId: runtime.channelId,
+    sessionType: runtime.sessionType,
+    chatType: input.chatType,
+    permissionMode: input.permissionMode,
+    messageMetadata: input.messageMetadata,
+    emitAskUserQuestion: emit.onAskUserQuestion,
+    emitToolPermissionRequest: emit.onToolPermissionRequest
+  });
+  const { session, sessionManager } = upstream;
+  logMockSessionPersistence("mock_compaction", runtime.sessionId, sessionManager);
+  sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
+  sessionManager.appendThinkingLevelChange("medium");
+  const currentLeafId = sessionManager.appendMessage({
+    role: "user",
+    content: [{ type: "text", text: input.userMessage }],
+    timestamp: Date.now()
+  });
+  emit.onEvent({ type: "compacting" });
+  sessionManager.appendCompaction(summary, currentLeafId, 0, {
+    source: "mock-runtime-core"
+  });
+  emit.onEvent({ type: "compact_complete" });
+  emit.onEvent({
+    type: "complete",
+    stopReason: "completed",
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
       costUsd: 0
     }
   });
@@ -219,9 +297,18 @@ async function runRuntimeCoreMockDelayedAttempt(
     provider: prepared.modelResolution.provider,
     modelId: prepared.modelResolution.resolvedModelId,
     apiKey: prepared.apiKey,
-    permissionMode: input.permissionMode
+    workspaceId: runtime.workspaceId,
+    workspaceSlug: prepared.workspaceSlug,
+    channelId: runtime.channelId,
+    sessionType: runtime.sessionType,
+    chatType: input.chatType,
+    permissionMode: input.permissionMode,
+    messageMetadata: input.messageMetadata,
+    emitAskUserQuestion: emit.onAskUserQuestion,
+    emitToolPermissionRequest: emit.onToolPermissionRequest
   });
   const { session, sessionManager } = upstream;
+  logMockSessionPersistence("mock_delayed", runtime.sessionId, sessionManager);
   sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
   sessionManager.appendThinkingLevelChange("medium");
   sessionManager.appendMessage({
@@ -284,6 +371,7 @@ async function runRuntimeCoreMockDelayedAttempt(
       usage: {
         inputTokens: 0,
         outputTokens: 0,
+        totalTokens: 0,
         costUsd: 0
       }
     });
@@ -346,10 +434,12 @@ function prepareRuntimeCoreAttempt(
 
   let agentCwd = process.cwd();
   let workspaceName: string | undefined;
+  let workspaceSlug: string | undefined;
   if (runtime.workspaceId) {
     const workspace = getAgentWorkspace(runtime.workspaceId);
     if (workspace) {
       workspaceName = workspace.name;
+      workspaceSlug = workspace.slug;
       agentCwd = getAgentSessionWorkspacePath(workspace.slug, runtime.sessionId);
       ensurePluginManifest(workspace.slug, workspace.name);
     }
@@ -359,6 +449,7 @@ function prepareRuntimeCoreAttempt(
     agentCwd,
     agentDir: getRuntimeCoreAgentDir(),
     workspaceName,
+    workspaceSlug,
     modelResolution,
     apiKey
   };
@@ -373,6 +464,28 @@ function resolveMockDelayMs(): number {
   return Math.floor(parsed);
 }
 
+function shouldRunMockCompaction(userMessage: string): boolean {
+  if (process.env.LUME_PI_AGENT_MOCK_COMPACTION !== "1") {
+    return false;
+  }
+  return userMessage.trim() === "/compact";
+}
+
+function logMockSessionPersistence(kind: string, sessionId: string, sessionManager: {
+  getSessionDir(): string;
+  getSessionFile(): string | undefined;
+}): void {
+  if (process.env.LUME_PI_AGENT_MOCK_TRACE_SESSION !== "1") {
+    return;
+  }
+  log.info("runtime-core mock session persistence", {
+    kind,
+    sessionId: sessionId.slice(0, 8),
+    sessionDir: sessionManager.getSessionDir(),
+    sessionFile: sessionManager.getSessionFile()
+  });
+}
+
 function resolveStopReason(messages: Array<{ role: string; stopReason?: string }>): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
@@ -384,7 +497,17 @@ function resolveStopReason(messages: Array<{ role: string; stopReason?: string }
 }
 
 function buildCompleteUsage(
-  messages: Array<{ role: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost?: { total: number } } }>
+  messages: Array<{
+    role: string;
+    usage?: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      totalTokens?: number;
+      cost?: { total: number };
+    }
+  }>
 ) {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
@@ -396,6 +519,9 @@ function buildCompleteUsage(
       outputTokens: message.usage.output,
       cacheReadTokens: message.usage.cacheRead,
       cacheCreationTokens: message.usage.cacheWrite,
+      totalTokens:
+        message.usage.totalTokens
+        ?? (message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite),
       costUsd: message.usage.cost?.total
     };
   }

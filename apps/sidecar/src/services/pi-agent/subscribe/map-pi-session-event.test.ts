@@ -86,7 +86,12 @@ describe("map-pi-session-event", () => {
       {
         type: "usage_update",
         usage: {
-          inputTokens: 30,
+          inputTokens: 10,
+          outputTokens: 20,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          totalTokens: 30,
+          costUsd: 0,
           contextWindow: 200000
         }
       }

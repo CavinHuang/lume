@@ -964,13 +964,18 @@ export function AgentView(): React.ReactElement {
       });
 
       // 持久化 usage 到缓存，确保非流式状态下也能显示上下文用量
-      if (payload.event.type === "usage_update") {
-        const usageEvent = payload.event;
+      const usageEvent = payload.event.type === "usage_update"
+        ? payload.event.usage
+        : payload.event.type === "complete"
+          ? payload.event.usage
+          : undefined;
+      if (usageEvent) {
         setContextCache((prev) => {
           const map = new Map(prev);
           map.set(payload.sessionId, {
-            inputTokens: usageEvent.usage.inputTokens,
-            contextWindow: usageEvent.usage.contextWindow ?? prev.get(payload.sessionId)?.contextWindow
+            inputTokens: usageEvent.inputTokens,
+            totalTokens: usageEvent.totalTokens ?? prev.get(payload.sessionId)?.totalTokens ?? usageEvent.inputTokens,
+            contextWindow: usageEvent.contextWindow ?? prev.get(payload.sessionId)?.contextWindow
           });
           return map;
         });
@@ -2051,7 +2056,7 @@ export function AgentView(): React.ReactElement {
 
                 {backendReady ? (
                   <ContextUsageBadge
-                    inputTokens={contextStatus.inputTokens}
+                    totalTokens={contextStatus.totalTokens}
                     contextWindow={contextStatus.contextWindow}
                     isCompacting={contextStatus.isCompacting}
                     isProcessing={streaming}

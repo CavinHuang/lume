@@ -326,6 +326,7 @@ export interface AgentStreamState {
   events?: AgentEvent[];
   model?: string;
   inputTokens?: number;
+  totalTokens?: number;
   contextWindow?: number;
   isCompacting?: boolean;
   /** 流开始时间（第一个事件到达时记录） */
@@ -353,7 +354,11 @@ export const agentStreamingStatesAtom = atom<Map<string, AgentStreamState>>(new 
 export const agentStreamErrorsAtom = atom<Map<string, string>>(new Map());
 
 /** 持久化每个 session 最后一次上下文用量，确保非流式状态下也能显示 */
-export const agentSessionContextCacheAtom = atom<Map<string, { inputTokens: number; contextWindow?: number }>>(new Map());
+export const agentSessionContextCacheAtom = atom<Map<string, {
+  inputTokens?: number;
+  totalTokens: number;
+  contextWindow?: number;
+}>>(new Map());
 
 export const cachedTeammateStatesAtom = atom<Map<string, TeammateState[]>>(new Map());
 
@@ -391,6 +396,7 @@ export const agentStreamingTimelineEventsAtom = atom<TimelineEvent[]>((get) => {
 });
 
 export const agentContextStatusAtom = atom<{
+  totalTokens?: number;
   inputTokens?: number;
   contextWindow?: number;
   isCompacting: boolean;
@@ -399,6 +405,7 @@ export const agentContextStatusAtom = atom<{
   const currentId = get(currentAgentSessionIdAtom);
   const cache = currentId ? get(agentSessionContextCacheAtom).get(currentId) : undefined;
   return {
+    totalTokens: state?.totalTokens ?? cache?.totalTokens,
     inputTokens: state?.inputTokens ?? cache?.inputTokens,
     contextWindow: state?.contextWindow ?? cache?.contextWindow,
     isCompacting: !!state?.isCompacting
@@ -587,6 +594,7 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
         ...base,
         events: nextEvents,
         inputTokens: event.usage.inputTokens,
+        totalTokens: event.usage.totalTokens ?? base.totalTokens ?? event.usage.inputTokens,
         contextWindow: event.usage.contextWindow ?? base.contextWindow
       };
     case "compacting":
@@ -617,6 +625,9 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
         running: false,
         isCompacting: false,
         events: nextEvents,
+        inputTokens: event.usage?.inputTokens ?? base.inputTokens,
+        totalTokens: event.usage?.totalTokens ?? base.totalTokens,
+        contextWindow: event.usage?.contextWindow ?? base.contextWindow,
         toolActivities: base.toolActivities.map((item) =>
           item.done ? item : { ...item, done: true }
         ),

@@ -35,6 +35,7 @@ export interface AgentEventUsage {
   outputTokens?: number
   cacheReadTokens?: number
   cacheCreationTokens?: number
+  totalTokens?: number
   costUsd?: number
   contextWindow?: number
 }
@@ -62,7 +63,7 @@ export type AgentEvent =
   | { type: 'complete'; stopReason?: string; usage?: AgentEventUsage }
   | { type: 'error'; message: string }
   // Usage 更新
-  | { type: 'usage_update'; usage: { inputTokens: number; contextWindow?: number } }
+  | { type: 'usage_update'; usage: AgentEventUsage }
   // 上下文压缩
   | { type: 'compacting' }
   | { type: 'compact_complete' }

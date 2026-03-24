@@ -34,6 +34,7 @@ import {
 } from "./session-state-manager";
 import { submitPiAskUserQuestionAnswers } from "./pi-agent/tools/ask-user-question-bridge";
 import { submitToolPermissionDecision } from "./pi-agent/tools/tool-permission-bridge";
+import { resolveAgentEventTotalTokens } from "./pi-agent/usage";
 import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
@@ -80,11 +81,17 @@ function handleRuntimeSessionStateEvent(
   event: AgentEvent,
   sessionStateManager: ReturnType<typeof getSessionStateManager>
 ): void {
-  if (event.type === "usage_update") {
+  const usage = event.type === "usage_update"
+    ? event.usage
+    : event.type === "complete"
+      ? event.usage
+      : undefined;
+
+  if (usage) {
     sessionStateManager.updateTokens(
       sessionId,
-      event.usage.inputTokens,
-      event.usage.contextWindow
+      resolveAgentEventTotalTokens(usage),
+      usage.contextWindow
     );
 
     const flushCheck = sessionStateManager.checkMemoryFlush(sessionId);

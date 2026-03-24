@@ -4,7 +4,11 @@ import {
   type AgentSession,
   type CreateAgentSessionResult
 } from "@mariozechner/pi-coding-agent";
-import type { AgentSendInput } from "@lume/shared";
+import type {
+  AgentAskUserQuestionRequest,
+  AgentSendInput,
+  AgentToolPermissionRequest
+} from "@lume/shared";
 import { resolveRuntimeCoreModel } from "./model";
 import { discoverRuntimeCoreModelRegistry } from "./pi-model-discovery";
 import { buildRuntimeCoreTools } from "./pi-tools";
@@ -18,7 +22,15 @@ export interface CreateRuntimeCoreSessionInput {
   provider: KnownProvider;
   modelId: string;
   apiKey: string;
+  workspaceId?: string;
+  workspaceSlug?: string;
+  channelId?: string;
+  sessionType?: AgentSendInput["sessionType"];
+  chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
+  messageMetadata?: Record<string, unknown>;
+  emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   sessionManager?: SessionManager;
 }
 
@@ -44,13 +56,28 @@ export async function createRuntimeCoreSession(
   modelRegistry.registerProvider(input.provider, {
     apiKey: input.apiKey
   });
+  const toolset = buildRuntimeCoreTools({
+    cwd: input.cwd,
+    sessionId: input.lumeSessionId,
+    workspaceId: input.workspaceId,
+    workspaceSlug: input.workspaceSlug,
+    channelId: input.channelId,
+    provider: input.provider,
+    sessionType: input.sessionType,
+    chatType: input.chatType,
+    permissionMode: input.permissionMode,
+    messageMetadata: input.messageMetadata,
+    emitAskUserQuestion: input.emitAskUserQuestion,
+    emitToolPermissionRequest: input.emitToolPermissionRequest
+  });
   const upstream = await createAgentSession({
     cwd: input.cwd,
     agentDir: input.agentDir,
     model,
     modelRegistry,
     sessionManager,
-    tools: buildRuntimeCoreTools(input.cwd, input.permissionMode)
+    tools: toolset.tools,
+    customTools: toolset.customTools
   });
 
   return {

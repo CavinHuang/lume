@@ -24,6 +24,7 @@ describe("runtime-core run", () => {
     expect(result.session.sessionId).toBe(result.sessionManager.getSessionId());
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
+    expect(result.session.getActiveToolNames()).toContain("sessions_list");
 
     result.session.dispose();
   });

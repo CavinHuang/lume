@@ -60,11 +60,11 @@
 3. 历史迁移工具已不再需要。
 4. 当前为 transcript-first 恢复，JSONL 仍保留为兼容投影。
 
-### Phase 5：工具链与权限链对齐
+### Phase 5：工具链与权限链对齐（进行中）
 
-1. 基于 `codingTools` 重建 `pi-tools` 组装器。
-2. 将 Lume policy/permission gate 变为中间件并统一挂载。
-3. 实现 ToolDefinition 适配层，统一 execute 参数和返回规范。
+1. 已将 `createLumePiTools + tool-policy + tool-permission-gate` 接入 `runtime-core` 主链。
+2. 已实现 `AgentTool -> ToolDefinition` 适配层，并通过 `customTools` 挂载到上游 `createAgentSession(...)`。
+3. 剩余工作主要是补更贴近真实运行的工具链 smoke，而不是继续维护旧注入路径。
 
 ### Phase 6：流式传输对齐
 
@@ -80,9 +80,9 @@
 
 ### Phase 8：Compaction 对齐
 
-1. 删除当前 Lume ↔ Pi 手工拼装压缩路径。
-2. 切换为 transcript 原生 compaction。
-3. 保证压缩摘要、保留窗口、后续续写语义一致。
+1. 已删除当前 Lume ↔ Pi 手工拼装压缩路径。
+2. 已接入 runtime-core native `auto_compaction_*` lifecycle。
+3. 已补 `smoke:agent-new-runtime:compact`，剩余工作是扩大到更真实的长会话输入规模。
 
 ### Phase 9：切流与清理（进行中）
 
@@ -112,7 +112,7 @@
 | EVT-002 | 修正 usage 语义映射 | `.../subscribe/map-pi-session-event.ts`, `packages/shared/src/types/agent.ts` | 0.5d | EVT-001 | usage 单测 | 兼容旧字段 |
 | DATA-001 | transcript 主存储 + JSONL 双写过渡 | `apps/sidecar/src/services/agent-session-manager.ts`, `.../runtime-core/session-store.ts` | 2d | CORE-005 | 重启恢复 smoke | 仅保留 JSONL |
 | DATA-002 | 历史数据迁移脚本 | 已取消 | 0d | 无 | 无 | 无 |
-| CMP-001 | compaction 切原生 transcript 流程 | `.../compaction/compaction-service.ts`, `.../runtime-core/compaction.ts`, `.../compaction/compaction-store.ts` | 2d | DATA-001, EVT-001 | 长会话 smoke | 回退旧 compaction |
+| CMP-001 | compaction 切原生 transcript 流程 | `apps/sidecar/src/services/pi-agent/runtime-core/subscribe.ts`, `apps/sidecar/src/services/pi-agent/compaction/*（已删除）` | 2d | DATA-001, EVT-001 | 长会话 smoke | git 回退 |
 | REL-001 | 双跑比较器 + 灰度门控 + 自动回退 | 已取消 | 0d | 无 | 无 | 无 |
 
 ## 7. 验收门禁（每周）
@@ -120,7 +120,7 @@
 1. W1：`typecheck` + ARC/CORE 单测全绿。
 2. W2：`smoke:agent-new-runtime`、`smoke:agent-new-runtime:error` 全绿。
 3. W3：工具权限回归（plan/default/acceptEdits/bypassPermissions）全绿。
-4. W4：长会话 compaction + 重启恢复 + subagent E2E 全绿。
+4. W4：`smoke:agent-new-runtime:compact` + 重启恢复 + subagent E2E 全绿。
 5. `new` 模式多轮恢复 smoke 通过。
 6. legacy 独立执行链已删除。
 
@@ -134,8 +134,8 @@
 
 1. 上游接口漂移：用 `pi-upstream-compat.test.ts` 提前失败。
 2. transcript/JSONL 双源漂移：通过 transcript-first 回填逐步收敛。
-3. compaction / usage 语义仍未完全对齐：继续单独收口。
-4. 子任务与复杂工具链仍需继续挂载到新主链。
+3. usage 语义已对齐，compaction 已有运行级 smoke，但长会话规模覆盖仍可继续增强。
+4. 子任务与复杂工具链已挂到新主链，剩余风险转为真实运行 smoke 覆盖不足。
 
 ## 10. 本周开工顺序（建议）
 
