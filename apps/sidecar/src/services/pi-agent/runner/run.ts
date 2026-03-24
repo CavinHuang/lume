@@ -1,6 +1,6 @@
-import { runPiAgentAttempt } from "./attempt";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "./types";
 import { createLogger } from "../../logger";
+import { runRuntimeCoreAttempt } from "../runtime-core/attempt";
 
 const activePiSessions = new Map<string, { abort: () => Promise<void> }>();
 const log = createLogger("pi-agent-runner");
@@ -17,7 +17,7 @@ export async function runPiAgent(
 
   while (attempt < maxAttempts) {
     attempt += 1;
-    const result = await runPiAgentAttempt(params, emit, {
+    const result = await runRuntimeCoreAttempt(params, emit, {
       registerAbort: (sessionId, abort) => {
         activePiSessions.set(sessionId, { abort });
       },

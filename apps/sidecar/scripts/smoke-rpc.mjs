@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
 
 function createSidecarProcess(configHome) {
   const sidecarEntry = resolve(SCRIPT_DIR, "../dist/index.js");
@@ -13,7 +14,7 @@ function createSidecarProcess(configHome) {
   env.HOME = configHome;
   env.USERPROFILE = configHome;
 
-  const child = spawn(process.execPath, [sidecarEntry], {
+  const child = spawn(SIDECAR_EXECUTABLE, [sidecarEntry], {
     stdio: ["pipe", "pipe", "inherit"],
     env
   });

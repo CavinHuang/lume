@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import {
-  appendAgentMessage,
   createAgentSession,
   getAgentSessionMessages
 } from "../../../agent-session-manager";
@@ -13,6 +11,7 @@ import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
 } from "../subagent-run-registry";
+import { createOrResumeRuntimeCoreSessionManager } from "../../runtime-core/session-store";
 
 mock.module("undici", () => ({
   EnvHttpProxyAgent: class {},
@@ -94,12 +93,22 @@ describe("subagent-e2e-flow", () => {
     resetSubagentRunRegistryForTest();
 
     const parent = createAgentSession("父会话", "channel-current");
-    appendAgentMessage(parent.id, {
-      id: randomUUID(),
+    createOrResumeRuntimeCoreSessionManager(process.cwd(), parent.id).appendMessage({
       role: "assistant",
-      content: "model hint",
-      createdAt: Date.now(),
-      model: "model-e2e"
+      provider: "unknown",
+      model: "model-e2e",
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: "model hint" }],
+      timestamp: Date.now()
     });
     const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
     const tools = createOpenClawAlignedTools({

@@ -110,15 +110,6 @@ export function getAgentSessionsIndexPath(): string {
   return join(getConfigDir(), "agent-sessions.json");
 }
 
-export function getAgentSessionsDir(): string {
-  return ensureDir(join(getConfigDir(), "agent-sessions"), "Agent 会话目录");
-}
-
-export function getAgentSessionMessagesPath(id: string): string {
-  const safeId = assertSafeSegment(id, "agent session id");
-  return join(getAgentSessionsDir(), `${safeId}.jsonl`);
-}
-
 export function getAgentWorkspacesIndexPath(): string {
   return join(getConfigDir(), "agent-workspaces.json");
 }

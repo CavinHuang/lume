@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   appendAgentEvents,
-  buildAssistantAgentMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "./agent-stream-accumulator";
@@ -27,7 +26,6 @@ describe("agent-stream-accumulator", () => {
       usage: { inputTokens: 12 }
     }]);
     expect(hasRenderableAssistantOutput(state)).toBeFalse();
-    expect(buildAssistantAgentMessage(state, "zai/glm-4.7")).toBeNull();
   });
 
   test("tool 事件应被视为可渲染输出", () => {

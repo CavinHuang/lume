@@ -3,17 +3,26 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  appendAgentCompatibilityMessage,
   createAgentSession,
+  deleteAgentSession,
   getAgentSessionMeta,
   getAgentSessionMessages,
+  getRecentAgentMessages,
   migrateChatToAgentSession,
   moveAgentSessionToWorkspace,
+  truncateAgentMessagesFrom,
   updateAgentSessionMeta,
   toggleAgentSessionPin
 } from "./agent-session-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentWorkspacePath } from "./config-paths";
 import { appendMessage, createConversation } from "./conversation-manager";
+import {
+  createOrResumeRuntimeCoreSessionManager,
+  getRuntimeCoreCompatibilityMessagesPath,
+  getRuntimeCoreSessionDirPath
+} from "./pi-agent/runtime-core/session-store";
 
 describe("agent-session-manager advanced ops", () => {
   let previousConfigDir: string | undefined;
@@ -135,6 +144,171 @@ describe("agent-session-manager advanced ops", () => {
     expect(messages[0]?.content).toBe("你好");
     expect(messages[1]?.role).toBe("assistant");
     expect(messages[1]?.content).toBe("我在");
-    expect(messages[1]?.model).toBe("demo-model");
+    expect(messages[1]?.model).toBe("unknown/demo-model");
+    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeFalse();
+  });
+
+  test("JSONL 缺失时应回退到 runtime-core transcript 消息", () => {
+    const session = createAgentSession("runtime-core fallback");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "来自 transcript 的用户消息" }],
+      timestamp: 11
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: "来自 transcript 的助手消息" }],
+      timestamp: 22
+    });
+
+    const messages = getAgentSessionMessages(session.id);
+    const recent = getRecentAgentMessages(session.id, 1);
+
+    expect(messages.length).toBe(2);
+    expect(messages[0]?.role).toBe("user");
+    expect(messages[0]?.content).toBe("来自 transcript 的用户消息");
+    expect(messages[1]?.role).toBe("assistant");
+    expect(messages[1]?.content).toBe("来自 transcript 的助手消息");
+    expect(messages[1]?.model).toBe("anthropic/claude-sonnet-4-5-20250929");
+    expect(recent.total).toBe(2);
+    expect(recent.hasMore).toBeTrue();
+    expect(recent.messages[0]?.content).toBe("来自 transcript 的助手消息");
+  });
+
+  test("transcript 存在时应按 transcript 主消息读取", () => {
+    const session = createAgentSession("transcript first");
+
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "来自 transcript 的新消息" }],
+      timestamp: 2
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: "transcript assistant" }],
+      timestamp: 3
+    });
+
+    const messages = getAgentSessionMessages(session.id);
+    expect(messages.length).toBe(2);
+    expect(messages[0]?.content).toBe("来自 transcript 的新消息");
+    expect(messages[1]?.content).toBe("transcript assistant");
+  });
+
+  test("deleteAgentSession 应清理 runtime-core transcript 目录", () => {
+    const session = createAgentSession("delete transcript");
+    appendAgentCompatibilityMessage(session.id, {
+      id: "jsonl-user",
+      role: "user",
+      content: "jsonl",
+      createdAt: 1,
+      metadata: {
+        planExecutionKey: "plan-delete"
+      }
+    }, "message_metadata_overlay");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "transcript user" }],
+      timestamp: 2
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: "transcript assistant" }],
+      timestamp: 3
+    });
+
+    const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(session.id);
+    expect(existsSync(runtimeCoreSessionDir)).toBeTrue();
+    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeTrue();
+
+    deleteAgentSession(session.id);
+
+    expect(existsSync(runtimeCoreSessionDir)).toBeFalse();
+    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeFalse();
+  });
+
+  test("truncateAgentMessagesFrom 应直接重建裁剪后的 transcript", () => {
+    const session = createAgentSession("truncate transcript");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "第一条" }],
+      timestamp: 1
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: "第二条" }],
+      timestamp: 2
+    });
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "第三条" }],
+      timestamp: 3
+    });
+
+    const messagesBefore = getAgentSessionMessages(session.id);
+    const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(session.id);
+    const kept = truncateAgentMessagesFrom(session.id, messagesBefore[2]!.id);
+    const messagesAfter = getAgentSessionMessages(session.id);
+
+    expect(kept.length).toBe(2);
+    expect(existsSync(runtimeCoreSessionDir)).toBeTrue();
+    expect(existsSync(getRuntimeCoreCompatibilityMessagesPath(session.id))).toBeFalse();
+    expect(messagesAfter.length).toBe(2);
+    expect(messagesAfter[0]?.content).toBe("第一条");
+    expect(messagesAfter[1]?.content).toBe("第二条");
+    expect(getAgentSessionMeta(session.id)?.piSessionId).toBeUndefined();
   });
 });

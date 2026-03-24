@@ -9,7 +9,7 @@ Define a safe migration path from current JSON/JSONL local storage to SQLite, wi
 3. `~/.lume/conversations/{conversationId}.jsonl`
 4. `~/.lume/agent-workspaces.json`
 5. `~/.lume/agent-sessions.json`
-6. `~/.lume/agent-sessions/{sessionId}.jsonl`
+6. `~/.lume/agent/runtime-core/sessions/{sessionId}/` (`transcript + compatibility.ndjson`)
 7. `~/.lume/settings.json`
 
 ## Target SQLite Layout
@@ -51,7 +51,7 @@ Single DB file: `~/.lume/lume.db`
    - create DB and schema
    - load channels + models
    - load conversations index + JSONL messages
-   - load agent workspaces/sessions + JSONL messages
+   - load agent workspaces/sessions + runtime-core transcript/compatibility data
    - load settings
    - verify record counts
    - write migration marker in `schema_migrations`

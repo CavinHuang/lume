@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getAgentSessionMessages, listAgentSessions } from "./agent-session-manager";
 import { listAgentWorkspaces } from "./agent-workspace-manager";
 import { getConversationMessages } from "./conversation-manager";
 import {
-  getAgentSessionMessagesPath,
   getAgentSessionsIndexPath,
   getAgentWorkspacesIndexPath,
   getConversationMessagesPath
 } from "./config-paths";
+import { getRuntimeCoreCompatibilityMessagesPath } from "./pi-agent/runtime-core/session-store";
 
 describe("index recovery", () => {
   let previousConfigDir: string | undefined;
@@ -58,15 +58,16 @@ describe("index recovery", () => {
 
   test("agent session 消息文件损坏时应自动备份并回退空列表", () => {
     const sessionId = "session-broken";
-    const messagesPath = getAgentSessionMessagesPath(sessionId);
+    const messagesPath = getRuntimeCoreCompatibilityMessagesPath(sessionId);
+    mkdirSync(join(tempConfigDir, "agent", "runtime-core", "sessions", sessionId), { recursive: true });
     writeFileSync(messagesPath, "{bad-json-line}\n", "utf-8");
 
     const messages = getAgentSessionMessages(sessionId);
     expect(messages).toEqual([]);
 
-    const sessionDir = join(tempConfigDir, "agent-sessions");
+    const sessionDir = join(tempConfigDir, "agent", "runtime-core", "sessions", sessionId);
     const files = readdirSync(sessionDir);
-    expect(files.some((name) => name.startsWith(`${sessionId}.jsonl.corrupt-`))).toBeTrue();
+    expect(files.some((name) => name.startsWith("compatibility.ndjson.corrupt-"))).toBeTrue();
   });
 
   test("conversation 消息文件损坏时应自动备份并回退空列表", () => {

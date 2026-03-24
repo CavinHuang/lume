@@ -20,7 +20,7 @@ import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../providers";
 import { decryptApiKey, listChannels } from "./channel-manager";
 import {
-  appendAgentMessage,
+  appendAgentCompatibilityMessage,
   getAgentSessionMessages,
   getAgentSessionMeta,
   updateAgentSessionMeta
@@ -68,6 +68,12 @@ export function consumeMemoryFlushPrompt(sessionId: string): string | undefined 
 const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 
 const log = createLogger("agent-service");
+
+function hasCompatibilityMessageMetadata(
+  metadata: AgentSendInput["messageMetadata"]
+): metadata is Record<string, unknown> {
+  return Boolean(metadata && Object.keys(metadata).length > 0);
+}
 
 function handleRuntimeSessionStateEvent(
   sessionId: string,
@@ -141,15 +147,15 @@ export async function sendAgentMessage(
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
-  if (shouldAppendUserMessage) {
-    const userMessageRecord: AgentMessage = {
+  if (shouldAppendUserMessage && hasCompatibilityMessageMetadata(input.messageMetadata)) {
+    const compatibilityUserMessage: AgentMessage = {
       id: randomUUID(),
       role: "user",
       content: userMessage,
       createdAt: Date.now(),
       metadata: input.messageMetadata
     };
-    appendAgentMessage(sessionId, userMessageRecord);
+    appendAgentCompatibilityMessage(sessionId, compatibilityUserMessage);
   }
 
   let stateWorkspaceSlug: string | undefined;
@@ -309,4 +315,3 @@ function autoGenerateAgentTitle(
     });
   }
 }
-

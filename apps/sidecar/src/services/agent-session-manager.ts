@@ -15,7 +15,6 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -24,13 +23,18 @@ import type { AgentMessage, AgentRecentMessagesResult, AgentSessionMeta } from "
 import {
   getAgentWorkspacesDir,
   getAgentWorkspacePath,
-  getAgentSessionMessagesPath,
   getAgentSessionWorkspacePath,
-  getAgentSessionsDir,
   getAgentSessionsIndexPath
 } from "./config-paths";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getConversationMessages } from "./conversation-manager";
+import { extractRenderableAssistantText } from "./pi-agent/content-extraction";
+import {
+  createOrResumeRuntimeCoreSessionManager,
+  getRuntimeCoreCompatibilityMessagesPath,
+  getRuntimeCoreSessionDirPath,
+  hasRuntimeCoreSessionTranscript
+} from "./pi-agent/runtime-core/session-store";
 
 interface AgentSessionsIndex {
   version: number;
@@ -38,6 +42,20 @@ interface AgentSessionsIndex {
 }
 
 const INDEX_VERSION = 1;
+
+interface RuntimeCoreContextMessage {
+  role: string;
+  content?: unknown;
+  timestamp?: number;
+  provider?: string;
+  model?: string;
+}
+
+type AgentCompatibilityKind = "subagent_announce" | "message_metadata_overlay";
+
+interface AgentCompatibilityMetadata extends Record<string, unknown> {
+  __lumeCompatibilityKind?: AgentCompatibilityKind;
+}
 
 function writeTextAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -112,8 +130,6 @@ export function createAgentSession(
   index.sessions.push(meta);
   writeIndex(index);
 
-  getAgentSessionsDir();
-
   if (workspaceId) {
     const workspace = getAgentWorkspace(workspaceId);
     if (workspace) {
@@ -127,48 +143,38 @@ export function createAgentSession(
 }
 
 export function getAgentSessionMessages(id: string): AgentMessage[] {
-  const filePath = getAgentSessionMessagesPath(id);
-  if (!existsSync(filePath)) {
-    return [];
+  const transcriptMessages = readRuntimeCoreTranscriptMessages(id);
+  if (transcriptMessages.length > 0) {
+    return mergeTranscriptWithCompatibilityMessages(transcriptMessages, readAgentCompatibilityMessages(id));
   }
 
-  try {
-    return readFileSync(filePath, "utf-8")
-      .split("\n")
-      .filter((line) => line.trim())
-      .map((line) => JSON.parse(line) as AgentMessage);
-  } catch (error) {
-    console.error(`[Agent 会话] 读取消息失败 (${id}):`, error);
-    backupCorruptFile(filePath, "Agent 会话消息");
-    return [];
-  }
+  return readAgentCompatibilityMessages(id);
 }
 
 export function getRecentAgentMessages(id: string, limit: number): AgentRecentMessagesResult {
-  const filePath = getAgentSessionMessagesPath(id);
-  if (!existsSync(filePath)) return { messages: [], total: 0, hasMore: false };
-  try {
-    const lines = readFileSync(filePath, "utf-8").split("\n").filter((line) => line.trim());
-    const total = lines.length;
-    if (total <= limit) {
-      return { messages: lines.map((line) => JSON.parse(line) as AgentMessage), total, hasMore: false };
-    }
-    const recent = lines.slice(-limit).map((line) => JSON.parse(line) as AgentMessage);
-    return { messages: recent, total, hasMore: true };
-  } catch (error) {
-    console.error(`[Agent 会话] 读取最近消息失败 (${id}):`, error);
-    backupCorruptFile(filePath, "Agent 会话消息");
-    return { messages: [], total: 0, hasMore: false };
+  const transcriptMessages = readRuntimeCoreTranscriptMessages(id);
+  if (transcriptMessages.length > 0) {
+    return sliceRecentAgentMessages(
+      mergeTranscriptWithCompatibilityMessages(transcriptMessages, readAgentCompatibilityMessages(id)),
+      limit
+    );
   }
+
+  return sliceRecentAgentMessages(readAgentCompatibilityMessages(id), limit);
 }
 
-export function appendAgentMessage(id: string, message: AgentMessage): void {
-  const filePath = getAgentSessionMessagesPath(id);
+export function appendAgentCompatibilityMessage(
+  id: string,
+  message: AgentMessage,
+  kind: AgentCompatibilityKind = "message_metadata_overlay"
+): void {
+  const filePath = getRuntimeCoreCompatibilityMessagesPath(id);
   try {
-    appendFileSync(filePath, `${JSON.stringify(message)}\n`, "utf-8");
+    mkdirSync(getRuntimeCoreSessionDirPath(id), { recursive: true });
+    appendFileSync(filePath, `${JSON.stringify(withCompatibilityKind(message, kind))}\n`, "utf-8");
   } catch (error) {
-    console.error(`[Agent 会话] 追加消息失败 (${id}):`, error);
-    throw new Error("追加 Agent 消息失败");
+    console.error(`[Agent 会话] 追加兼容消息失败 (${id}):`, error);
+    throw new Error("追加 Agent 兼容消息失败");
   }
 }
 
@@ -293,17 +299,48 @@ export function migrateChatToAgentSession(conversationId: string, agentSessionId
     return 0;
   }
 
+  const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(agentSessionId);
+  if (existsSync(runtimeCoreSessionDir)) {
+    rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
+  }
+
+  const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentSessionCwd(agentSessionId), agentSessionId);
   let migratedCount = 0;
   for (const message of chatMessages) {
     if (message.role !== "user" && message.role !== "assistant") continue;
     if (!message.content.trim()) continue;
+    if (message.role === "user") {
+      sessionManager.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: message.content }],
+        timestamp: message.createdAt
+      });
+      migratedCount += 1;
+      continue;
+    }
 
-    appendAgentMessage(agentSessionId, {
-      id: randomUUID(),
-      role: message.role,
-      content: message.content,
-      createdAt: message.createdAt,
-      model: message.role === "assistant" ? message.model : undefined
+    const resolvedModel = typeof message.model === "string" ? message.model.trim() : "";
+    const [provider, ...restModel] = resolvedModel.split("/");
+    const assistantModel = restModel.length > 0
+      ? restModel.join("/")
+      : (resolvedModel || "unknown");
+    const assistantProvider = provider && restModel.length > 0 ? provider : "unknown";
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: assistantProvider,
+      model: assistantModel,
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: message.content }],
+      timestamp: message.createdAt
     });
     migratedCount += 1;
   }
@@ -324,15 +361,6 @@ export function deleteAgentSession(id: string): void {
   const removed = index.sessions.splice(idx, 1)[0] as AgentSessionMeta;
   writeIndex(index);
 
-  const filePath = getAgentSessionMessagesPath(id);
-  if (existsSync(filePath)) {
-    try {
-      unlinkSync(filePath);
-    } catch (error) {
-      console.warn(`[Agent 会话] 删除消息文件失败 (${id}):`, error);
-    }
-  }
-
   try {
     const workspacesDir = getAgentWorkspacesDir();
     const workspaceEntries = readdirSync(workspacesDir, { withFileTypes: true });
@@ -347,6 +375,16 @@ export function deleteAgentSession(id: string): void {
     console.warn(`[Agent 会话] 清理 session 工作目录失败 (${id}):`, error);
   }
 
+  const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(id);
+  if (existsSync(runtimeCoreSessionDir)) {
+    try {
+      rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
+      console.log(`[Agent 会话] 已清理 runtime-core transcript: ${runtimeCoreSessionDir}`);
+    } catch (error) {
+      console.warn(`[Agent 会话] 清理 runtime-core transcript 失败 (${id}):`, error);
+    }
+  }
+
   console.log(`[Agent 会话] 已删除会话: ${removed.title} (${removed.id})`);
 }
 
@@ -358,15 +396,227 @@ export function truncateAgentMessagesFrom(sessionId: string, messageId: string):
   }
 
   const kept = messages.slice(0, targetIndex);
-  const content = kept.map((msg) => JSON.stringify(msg)).join("\n");
-  const payload = content ? `${content}\n` : "";
-  const filePath = getAgentSessionMessagesPath(sessionId);
-  writeTextAtomic(filePath, payload);
+  const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(sessionId);
+  if (existsSync(runtimeCoreSessionDir)) {
+    rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
+  }
+  rebuildRuntimeCoreTranscript(sessionId, kept);
 
-  // 截断会话后重置 SDK 会话衔接，避免 resume 命中旧上下文。
+  // 截断会话后重置 transcript / SDK 会话衔接，避免 resume 命中旧上下文。
   updateAgentSessionMeta(sessionId, {
     sdkSessionId: undefined,
     piSessionId: undefined
   });
   return kept;
+}
+
+function rebuildRuntimeCoreTranscript(sessionId: string, messages: AgentMessage[]): void {
+  if (messages.length === 0) {
+    return;
+  }
+  const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentSessionCwd(sessionId), sessionId);
+  for (const message of messages) {
+    if (!message.content.trim()) {
+      continue;
+    }
+    if (message.role === "user") {
+      sessionManager.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: message.content }],
+        timestamp: message.createdAt
+      });
+      continue;
+    }
+    if (message.role === "assistant") {
+      const resolvedModel = typeof message.model === "string" ? message.model.trim() : "";
+      const [provider, ...restModel] = resolvedModel.split("/");
+      const assistantModel = restModel.length > 0
+        ? restModel.join("/")
+        : (resolvedModel || "unknown");
+      const assistantProvider = provider && restModel.length > 0 ? provider : "unknown";
+      sessionManager.appendMessage({
+        role: "assistant",
+        provider: assistantProvider,
+        model: assistantModel,
+        api: "anthropic-messages",
+        stopReason: "stop",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+        },
+        content: [{ type: "text", text: message.content }],
+        timestamp: message.createdAt
+      });
+    }
+  }
+}
+
+function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessage[] {
+  if (!hasRuntimeCoreSessionTranscript(sessionId)) {
+    return [];
+  }
+  const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentSessionCwd(sessionId), sessionId);
+  const messages = sessionManager.buildSessionContext().messages as RuntimeCoreContextMessage[];
+  const projectedMessages = messages
+    .flatMap((message, index) => {
+      if (message.role !== "user" && message.role !== "assistant") {
+        return [];
+      }
+      const content = extractRenderableAssistantText(message.content).trim();
+      if (!content) {
+        return [];
+      }
+      return [{
+        id: `runtime-core:${sessionId}:${index}`,
+        role: message.role,
+        content,
+        createdAt: resolveRuntimeCoreMessageTimestamp(message, index),
+        model: message.role === "assistant" ? resolveRuntimeCoreMessageModel(message) : undefined
+      } satisfies AgentMessage];
+    });
+  return projectedMessages;
+}
+
+function resolveRuntimeCoreMessageTimestamp(message: RuntimeCoreContextMessage, index: number): number {
+  if (typeof message.timestamp === "number" && Number.isFinite(message.timestamp)) {
+    return message.timestamp;
+  }
+  return index;
+}
+
+function resolveRuntimeCoreMessageModel(message: RuntimeCoreContextMessage): string | undefined {
+  const provider = typeof message.provider === "string" ? message.provider.trim() : "";
+  const model = typeof message.model === "string" ? message.model.trim() : "";
+  if (provider && model) {
+    return `${provider}/${model}`;
+  }
+  return model || undefined;
+}
+
+function resolveAgentSessionCwd(sessionId: string): string {
+  const meta = getAgentSessionMeta(sessionId);
+  if (!meta?.workspaceId) {
+    return process.cwd();
+  }
+  const workspace = getAgentWorkspace(meta.workspaceId);
+  if (!workspace) {
+    return process.cwd();
+  }
+  return getAgentSessionWorkspacePath(workspace.slug, sessionId);
+}
+
+function readAgentCompatibilityMessages(id: string): AgentMessage[] {
+  return readAgentMessageRows(id).filter((message) => readCompatibilityKind(message) !== null);
+}
+
+function readAgentMessageRows(id: string): AgentMessage[] {
+  const filePath = getRuntimeCoreCompatibilityMessagesPath(id);
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  try {
+    return readFileSync(filePath, "utf-8")
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => JSON.parse(line) as AgentMessage);
+  } catch (error) {
+    console.error(`[Agent 会话] 读取消息失败 (${id}):`, error);
+    backupCorruptFile(filePath, "Agent 会话消息");
+    return [];
+  }
+}
+
+function mergeTranscriptWithCompatibilityMessages(
+  transcriptMessages: AgentMessage[],
+  compatibilityMessages: AgentMessage[]
+): AgentMessage[] {
+  if (compatibilityMessages.length === 0) {
+    return transcriptMessages;
+  }
+  const merged = [...transcriptMessages];
+  for (const message of compatibilityMessages) {
+    const compatibilityKind = readCompatibilityKind(message);
+    if (compatibilityKind === "subagent_announce") {
+      merged.push(stripCompatibilityKind(message));
+      continue;
+    }
+    if (compatibilityKind === "message_metadata_overlay") {
+      mergeCompatibilityMetadataOverlay(merged, message);
+    }
+  }
+  merged.sort((a, b) => a.createdAt - b.createdAt);
+  return merged;
+}
+
+function mergeCompatibilityMetadataOverlay(
+  transcriptMessages: AgentMessage[],
+  compatibilityMessage: AgentMessage
+): void {
+  for (let index = transcriptMessages.length - 1; index >= 0; index -= 1) {
+    const candidate = transcriptMessages[index];
+    if (!candidate) continue;
+    if (candidate.role !== compatibilityMessage.role) continue;
+    if (candidate.content !== compatibilityMessage.content) continue;
+    transcriptMessages[index] = {
+      ...candidate,
+      metadata: {
+        ...(candidate.metadata ?? {}),
+        ...stripCompatibilityMetadata(compatibilityMessage.metadata)
+      }
+    };
+    return;
+  }
+  transcriptMessages.push(stripCompatibilityKind(compatibilityMessage));
+}
+
+function withCompatibilityKind(message: AgentMessage, kind: AgentCompatibilityKind): AgentMessage {
+  return {
+    ...message,
+    metadata: {
+      ...(message.metadata ?? {}),
+      __lumeCompatibilityKind: kind
+    }
+  };
+}
+
+function readCompatibilityKind(message: AgentMessage): AgentCompatibilityKind | null {
+  const metadata = message.metadata as AgentCompatibilityMetadata | undefined;
+  const kind = metadata?.__lumeCompatibilityKind;
+  return kind === "subagent_announce" || kind === "message_metadata_overlay" ? kind : null;
+}
+
+function stripCompatibilityKind(message: AgentMessage): AgentMessage {
+  const metadata = stripCompatibilityMetadata(message.metadata);
+  return {
+    ...message,
+    ...(metadata ? { metadata } : {})
+  };
+}
+
+function stripCompatibilityMetadata(
+  metadata: AgentMessage["metadata"]
+): AgentMessage["metadata"] | undefined {
+  if (!metadata) return undefined;
+  const { __lumeCompatibilityKind: _kind, ...rest } = metadata as AgentCompatibilityMetadata;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
+function sliceRecentAgentMessages(messages: AgentMessage[], limit: number): AgentRecentMessagesResult {
+  if (messages.length <= limit) {
+    return {
+      messages,
+      total: messages.length,
+      hasMore: false
+    };
+  }
+  return {
+    messages: messages.slice(-limit),
+    total: messages.length,
+    hasMore: true
+  };
 }

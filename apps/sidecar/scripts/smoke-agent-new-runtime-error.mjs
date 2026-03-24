@@ -6,8 +6,8 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const STREAM_EVENT_METHOD = "agent:stream:event";
-const STREAM_COMPLETE_METHOD = "agent:stream:complete";
+const STREAM_ERROR_METHOD = "agent:stream:error";
+const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
 
 function createSidecarProcess(configHome) {
   const sidecarEntry = resolve(SCRIPT_DIR, "../dist/index.js");
@@ -15,10 +15,10 @@ function createSidecarProcess(configHome) {
   env.HOME = configHome;
   env.USERPROFILE = configHome;
   env.LUME_AGENT_RUNTIME = "pi_agent";
-  env.LUME_PI_AGENT_MOCK_SUCCESS = "1";
-  env.LUME_PI_AGENT_MOCK_TEXT = "smoke-success";
+  env.LUME_PI_AGENT_MOCK_ERROR = "1";
+  env.LUME_PI_AGENT_MOCK_ERROR_TEXT = "smoke-new-runtime-error";
 
-  const child = spawn(process.execPath, [sidecarEntry], {
+  const child = spawn(SIDECAR_EXECUTABLE, [sidecarEntry], {
     stdio: ["pipe", "pipe", "inherit"],
     env
   });
@@ -97,7 +97,7 @@ function assert(condition, message) {
 }
 
 async function run() {
-  const configHome = mkdtempSync(join(tmpdir(), "lume-sidecar-agent-success-smoke-"));
+  const configHome = mkdtempSync(join(tmpdir(), "lume-sidecar-agent-new-runtime-error-"));
   let sidecar = null;
 
   try {
@@ -109,7 +109,7 @@ async function run() {
     assert(typeof workspace?.id === "string", "default workspace not ready");
 
     const channel = await sidecar.call("channel:create", {
-      name: "smoke-anthropic-success",
+      name: "smoke-anthropic-new-runtime-error",
       provider: "anthropic",
       baseUrl: "https://api.anthropic.com",
       apiKey: "sk-smoke-dummy",
@@ -119,7 +119,7 @@ async function run() {
     assert(typeof channel?.id === "string", "channel create failed");
 
     const session = await sidecar.call("agent:create-session", {
-      title: "smoke-agent-success",
+      title: "smoke-agent-new-runtime-error",
       workspaceId: workspace.id,
       channelId: channel.id
     });
@@ -127,36 +127,24 @@ async function run() {
 
     await sidecar.call("agent:send-message", {
       sessionId: session.id,
-      userMessage: "smoke success",
+      userMessage: "smoke new runtime error",
       workspaceId: workspace.id,
       channelId: channel.id,
-      modelId: "mock-model",
+      modelId: "claude-sonnet-4-5-20250929",
       permissionMode: "bypassPermissions"
     });
 
-    await sidecar.waitForNotification(
-      STREAM_EVENT_METHOD,
-      (params) => params?.sessionId === session.id && params?.event?.type === "text_delta",
-      12000
-    );
-    await sidecar.waitForNotification(
-      STREAM_COMPLETE_METHOD,
+    const errorEvent = await sidecar.waitForNotification(
+      STREAM_ERROR_METHOD,
       (params) => params?.sessionId === session.id,
       12000
     );
+    assert(
+      typeof errorEvent?.error === "string" && errorEvent.error.includes("Pi Agent runtime 执行失败"),
+      "unexpected new runtime error payload"
+    );
 
-    await sidecar.close();
-    sidecar = createSidecarProcess(configHome);
-
-    const restoredSessions = await sidecar.call("agent:list-sessions");
-    assert(Array.isArray(restoredSessions), "list sessions failed after restart");
-    assert(restoredSessions.some((item) => item.id === session.id), "session not restored");
-
-    const messages = await sidecar.call("agent:get-messages", { sessionId: session.id });
-    assert(Array.isArray(messages), "messages not restored");
-    assert(messages.some((m) => m.role === "assistant" && typeof m.content === "string" && m.content.includes("smoke-success")), "assistant message restore failed");
-
-    console.log("SMOKE_AGENT_SUCCESS_RESTORE_OK");
+    console.log("SMOKE_AGENT_NEW_RUNTIME_ERROR_OK");
   } finally {
     if (sidecar) {
       try {
@@ -170,6 +158,6 @@ async function run() {
 }
 
 run().catch((error) => {
-  console.error("SMOKE_AGENT_SUCCESS_RESTORE_FAIL", error instanceof Error ? error.message : String(error));
+  console.error("SMOKE_AGENT_NEW_RUNTIME_ERROR_FAIL", error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

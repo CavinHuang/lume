@@ -6,8 +6,7 @@
  * - Keeps persistent payload generation independent from UI/event transport.
  */
 
-import { randomUUID } from "node:crypto";
-import type { AgentEvent, AgentMessage } from "@lume/shared";
+import type { AgentEvent } from "@lume/shared";
 
 export interface AgentStreamAccumulatorState {
   text: string;
@@ -52,25 +51,6 @@ function mergeAccumulatedText(current: string, next: string): string {
     }
   }
   return current + next;
-}
-
-export function buildAssistantAgentMessage(
-  state: AgentStreamAccumulatorState,
-  modelId: string,
-  now = Date.now()
-): AgentMessage | null {
-  if (!hasRenderableAssistantOutput(state)) {
-    return null;
-  }
-
-  return {
-    id: randomUUID(),
-    role: "assistant",
-    content: state.text,
-    createdAt: now,
-    model: modelId,
-    events: state.events
-  };
 }
 
 export function hasRenderableAssistantOutput(state: AgentStreamAccumulatorState): boolean {

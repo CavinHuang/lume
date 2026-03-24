@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  appendAgentMessage,
   createAgentSession,
   getAgentSessionMessages,
   getAgentSessionMeta
 } from "../../agent-session-manager";
+import { createOrResumeRuntimeCoreSessionManager } from "../runtime-core/session-store";
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
@@ -66,6 +66,42 @@ function resolveTool(tools: AgentTool[], name: string): AgentTool {
   return tool;
 }
 
+function appendTranscriptTextMessages(
+  sessionId: string,
+  messages: Array<{ role: "user" | "assistant"; content: string; model?: string; timestamp?: number }>
+): void {
+  const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), sessionId);
+  for (const message of messages) {
+    if (message.role === "user") {
+      sessionManager.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: message.content }],
+        timestamp: message.timestamp ?? Date.now()
+      });
+      continue;
+    }
+    const resolvedModel = typeof message.model === "string" ? message.model.trim() : "";
+    const [provider, ...restModel] = resolvedModel.split("/");
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: provider && restModel.length > 0 ? provider : "unknown",
+      model: restModel.length > 0 ? restModel.join("/") : (resolvedModel || "unknown"),
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: message.content }],
+      timestamp: message.timestamp ?? Date.now()
+    });
+  }
+}
+
 describe("create-openclaw-aligned-tools", () => {
   test("agents_list 应返回可用于 sessions_spawn 的会话 agentId", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
@@ -100,13 +136,12 @@ describe("create-openclaw-aligned-tools", () => {
     try {
       const current = createAgentSession("当前会话", "channel-current");
       const target = createAgentSession("目标 Agent", "channel-target");
-      appendAgentMessage(target.id, {
-        id: randomUUID(),
+      appendTranscriptTextMessages(target.id, [{
         role: "assistant",
         content: "hello",
-        createdAt: Date.now(),
+        timestamp: Date.now(),
         model: "model-target"
-      });
+      }]);
 
       const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
       const tools = createOpenClawAlignedTools({
@@ -127,7 +162,7 @@ describe("create-openclaw-aligned-tools", () => {
       };
       expect(details.status).toBe("completed");
       expect(typeof details.runId).toBe("string");
-      expect(details.model).toBe("model-target");
+      expect(details.model).toBe("unknown/model-target");
       expect(details.requestedAgentId).toBe(target.id);
       expect(details.resolvedAgentId).toBe(target.id);
 
@@ -137,7 +172,7 @@ describe("create-openclaw-aligned-tools", () => {
       expect(persisted?.status).toBe("completed");
       expect(persisted?.requestedAgentId).toBe(target.id);
       expect(persisted?.resolvedAgentId).toBe(target.id);
-      expect(persisted?.modelId).toBe("model-target");
+      expect(persisted?.modelId).toBe("unknown/model-target");
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -584,19 +619,19 @@ describe("create-openclaw-aligned-tools", () => {
     try {
       const current = createAgentSession("当前会话");
       const target = createAgentSession("目标会话");
-      appendAgentMessage(target.id, {
-        id: randomUUID(),
-        role: "user",
-        content: "hello",
-        createdAt: Date.now()
-      });
-      appendAgentMessage(target.id, {
-        id: randomUUID(),
-        role: "assistant",
-        content: "world",
-        createdAt: Date.now(),
-        model: "test/model"
-      });
+      appendTranscriptTextMessages(target.id, [
+        {
+          role: "user",
+          content: "hello",
+          timestamp: Date.now()
+        },
+        {
+          role: "assistant",
+          content: "world",
+          timestamp: Date.now(),
+          model: "test/model"
+        }
+      ]);
 
       const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
       const tools = createOpenClawAlignedTools({
@@ -633,12 +668,11 @@ describe("create-openclaw-aligned-tools", () => {
     try {
       const current = createAgentSession("当前会话");
       const target = createAgentSession("目标会话");
-      appendAgentMessage(target.id, {
-        id: randomUUID(),
+      appendTranscriptTextMessages(target.id, [{
         role: "user",
         content: "待删除消息",
-        createdAt: Date.now()
-      });
+        timestamp: Date.now()
+      }]);
 
       const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
       const tools = createOpenClawAlignedTools({

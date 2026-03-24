@@ -9,7 +9,6 @@ import type {
 } from "@lume/shared";
 import { getSessionEventBus } from "../session-event-bus";
 import {
-  appendAgentMessage,
   createAgentSession,
   deleteAgentSession,
   getAgentSessionMessages,
@@ -665,14 +664,6 @@ async function executeAgentTurn(params: {
     chatType: params.chatType,
     messageMetadata: params.messageMetadata
   };
-  const userMessageRecord: AgentMessage = {
-    id: randomUUID(),
-    role: "user",
-    content: params.userMessage,
-    createdAt: Date.now()
-  };
-  appendAgentMessage(params.sessionId, userMessageRecord);
-
   let lastToolName = "";
   let toolUseCount = 0;
   const startedAt = Date.now();

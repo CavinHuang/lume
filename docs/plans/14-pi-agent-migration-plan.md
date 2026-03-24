@@ -1,5 +1,13 @@
 # Lume Pi Agent 迁移实施方案（对齐 OpenClaw）
 
+> 归档说明
+>
+> 本文档已不再代表当前执行状态。
+> 当前主链已从文中描述的 `方案 B：pi-agent-core Agent 直连` 切换到 `runtime-core + createAgentSession/SessionManager`。
+> 后续请以以下文档为准：
+> - `docs/plans/2026-03-24-openclaw-runtime-realignment-adr.md`
+> - `docs/plans/openclaw-alignment-full-refactor-plan.md`
+
 ## 1. 背景与目标
 
 当前 Lume Agent 运行时已完成从 `@anthropic-ai/claude-agent-sdk` 到 Pi Agent 的迁移收敛。
@@ -263,8 +271,8 @@
   - heartbeat 启动
 - Pi 完成后已支持自动标题生成（与 Claude 路径一致）。
 - 关键单测与 `apps/sidecar` typecheck 通过。
-- 已新增 `smoke:agent-stream` 自动化脚本，覆盖 `agent:send-message -> stream:error` 通知链路（无外网依赖）。
-- 已新增 `smoke:agent-success-restore` 自动化脚本，覆盖 `agent:send-message` 成功路径（mock）与 sidecar 重启后会话/消息恢复链路。
+- 已新增 `smoke:agent-new-runtime:error` 自动化脚本，覆盖 `agent:send-message -> stream:error` 通知链路（无外网依赖）。
+- 已新增 `smoke:agent-new-runtime` 自动化脚本，覆盖 `agent:send-message` 成功路径（mock）与 sidecar 重启后会话/消息恢复链路。
 - 已新增 `smoke:chat-stream` 自动化脚本，覆盖 `chat:send-message` 的 chunk/complete 流事件与消息落盘验证（mock）。
 
 ### 12.2 待完成（明确剩余）

@@ -23,11 +23,12 @@ export async function runPiAgentMessage(
     return { status: "errored", errorMessage: msg };
   }
   log.info("Pi Agent runtime 已接管请求，进入 runner", {
-    sessionId: input.sessionId.slice(0, 8)
+    sessionId: input.sessionId.slice(0, 8),
+    runtimeMode: "new"
   });
   const channelId = input.channelId;
   const modelId = input.modelId;
-  const { runPiAgent } = await withPiAiBunCompatibility(async () => import("./runner/run"));
+  const { runPiAgent } = await import("./runner/run");
   return runPiAgent(
     {
       input,
@@ -41,19 +42,4 @@ export async function runPiAgentMessage(
     },
     emit
   );
-}
-
-async function withPiAiBunCompatibility<T>(task: () => Promise<T>): Promise<T> {
-  const versions = process.versions as Record<string, string | undefined>;
-  const isBunRuntime = Boolean(versions.bun);
-  const originalNodeVersion = versions.node;
-  if (!isBunRuntime) {
-    return task();
-  }
-  versions.node = "";
-  try {
-    return await task();
-  } finally {
-    versions.node = originalNodeVersion;
-  }
 }

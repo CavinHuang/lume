@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@lume/shared";
 import {
-  appendAgentMessage,
+  appendAgentCompatibilityMessage,
   getAgentSessionMeta,
   updateAgentSessionMeta
 } from "../../agent-session-manager";
@@ -139,7 +139,7 @@ export async function announceSubagentCompletion(params: {
   let lastError = "";
   for (let attempt = 1; attempt <= ANNOUNCE_MAX_RETRIES; attempt += 1) {
     try {
-      appendAgentMessage(targetSessionId, announceMessage);
+      appendAgentCompatibilityMessage(targetSessionId, announceMessage, "subagent_announce");
       updateAgentSessionMeta(targetSessionId, {});
       emitSubagentAnnounceEvent({
         sessionId: targetSessionId,
