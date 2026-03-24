@@ -102,6 +102,7 @@ export function getAgentSessionMeta(id: string): AgentSessionMeta | undefined {
 export function createAgentSession(
   title?: string,
   channelId?: string,
+  modelId?: string,
   workspaceId?: string,
   parentSessionId?: string
 ): AgentSessionMeta {
@@ -112,6 +113,7 @@ export function createAgentSession(
     id: randomUUID(),
     title: title || "新 Agent 会话",
     channelId,
+    modelId,
     workspaceId,
     parentSessionId,
     pinned: false,
@@ -192,7 +194,7 @@ export function updateAgentSessionMeta(
   updates: Partial<
     Pick<
       AgentSessionMeta,
-      "title" | "channelId" | "sdkSessionId" | "piSessionId" | "workspaceId" | "pinned"
+      "title" | "channelId" | "modelId" | "sdkSessionId" | "piSessionId" | "workspaceId" | "pinned"
     >
   >
 ): AgentSessionMeta {
