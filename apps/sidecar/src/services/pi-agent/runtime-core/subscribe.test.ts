@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { projectRuntimeCoreEventToLumeEvents } from "./subscribe";
+import {
+  projectLifecycleRuntimeCoreEventToLumeEvents,
+  projectMessageRuntimeCoreEventToLumeEvents,
+  projectRuntimeCoreEventToLumeEvents,
+  projectToolRuntimeCoreEventToLumeEvents
+} from "./subscribe";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
 describe("runtime-core subscribe", () => {
@@ -33,5 +38,43 @@ describe("runtime-core subscribe", () => {
     } as AgentSessionEvent;
 
     expect(projectRuntimeCoreEventToLumeEvents(event)).toEqual([]);
+  });
+
+  test("lifecycle 层应只处理 auto_compaction 和 auto_retry", () => {
+    const compactionStart = {
+      type: "auto_compaction_start",
+      reason: "threshold"
+    } as AgentSessionEvent;
+    const toolStart = {
+      type: "tool_execution_start",
+      toolName: "Read",
+      toolCallId: "call_1",
+      args: { path: "README.md" }
+    } as unknown as AgentSessionEvent;
+
+    expect(projectLifecycleRuntimeCoreEventToLumeEvents(compactionStart)).toEqual([{ type: "compacting" }]);
+    expect(projectLifecycleRuntimeCoreEventToLumeEvents(toolStart)).toEqual(null);
+  });
+
+  test("message 层应处理 assistant message 事件", () => {
+    const event = {
+      type: "message_update",
+      message: {} as never,
+      assistantMessageEvent: { type: "text_delta", delta: "你好" }
+    } as unknown as AgentSessionEvent;
+
+    expect(projectMessageRuntimeCoreEventToLumeEvents(event)).toEqual([{ type: "text_delta", text: "你好" }]);
+  });
+
+  test("tool 层应处理 tool_execution 事件", () => {
+    const event = {
+      type: "tool_execution_start",
+      toolName: "Read",
+      toolCallId: "call_1",
+      args: { path: "README.md" }
+    } as unknown as AgentSessionEvent;
+
+    const mapped = projectToolRuntimeCoreEventToLumeEvents(event);
+    expect(mapped?.[0]?.type).toBe("tool_start");
   });
 });

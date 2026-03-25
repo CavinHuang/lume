@@ -56,6 +56,8 @@ import type {
   AgentMessage,
   AgentMessageAppendedEvent,
   AgentRecentMessagesResult,
+  AgentRuntimeStatus,
+  AgentRuntimeStatusChangedEvent,
   AgentSaveFilesInput,
   AgentSavedFile,
   AgentSendInput,
@@ -665,9 +667,14 @@ export async function listSubagentRuns(
   return sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, input ?? {});
 }
 
+export async function getAgentRuntimeStatus(sessionId: string): Promise<AgentRuntimeStatus> {
+  return sidecarCall<AgentRuntimeStatus>(AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS, { sessionId });
+}
+
 export async function createAgentSession(params?: {
   title?: string;
   channelId?: string;
+  modelId?: string;
   workspaceId?: string;
   parentSessionId?: string;
 }): Promise<AgentSessionMeta> {
@@ -684,6 +691,18 @@ export async function getRecentAgentSessionMessages(sessionId: string, limit: nu
 
 export async function updateAgentSessionTitle(sessionId: string, title: string): Promise<AgentSessionMeta> {
   return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.UPDATE_TITLE, { sessionId, title });
+}
+
+export async function updateAgentSessionModelSelection(
+  sessionId: string,
+  modelId?: string,
+  channelId?: string
+): Promise<AgentSessionMeta> {
+  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION, {
+    sessionId,
+    modelId,
+    channelId
+  });
 }
 
 export async function migrateChatToAgentSession(
@@ -872,6 +891,14 @@ export async function onAgentMessageAppended(
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, (params) => {
     handler(params as AgentMessageAppendedEvent);
+  });
+}
+
+export async function onAgentRuntimeStatusChanged(
+  handler: (event: AgentRuntimeStatusChangedEvent) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, (params) => {
+    handler(params as AgentRuntimeStatusChangedEvent);
   });
 }
 

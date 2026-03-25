@@ -196,6 +196,7 @@ export const memorySaveInputSchema = z.object({
 export const agentCreateSessionInputSchema = z.object({
   title: z.string().optional(),
   channelId: z.string().optional(),
+  modelId: z.string().optional(),
   workspaceId: z.string().optional(),
   parentSessionId: z.string().optional()
 });
@@ -212,6 +213,12 @@ export const agentRecentMessagesInputSchema = z.object({
 export const agentUpdateTitleInputSchema = z.object({
   sessionId: idSchema,
   title: z.string().min(1)
+});
+
+export const agentUpdateModelSelectionInputSchema = z.object({
+  sessionId: idSchema,
+  channelId: z.string().optional(),
+  modelId: z.string().optional()
 });
 
 export const agentMigrateChatInputSchema = z.object({

@@ -69,7 +69,11 @@ export function resolvePiChannelModel(params: {
   return {
     provider: fallbackProvider,
     resolvedModelId: modelId,
-    model: createFallbackModel(fallbackProvider, modelId, params.baseUrl)
+    model: createFallbackModel(
+      fallbackProvider,
+      modelId,
+      shouldApplyChannelBaseUrl(fallbackProvider, params.baseUrl) ? params.baseUrl : undefined
+    )
   };
 }
 
@@ -87,7 +91,7 @@ function applyChannelBaseUrl(model: Model<Api>, baseUrl?: string): Model<Api> {
 }
 
 function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?: string): Model<Api> {
-  const normalizedBaseUrl = baseUrl?.trim() || "https://api.openai.com/v1";
+  const normalizedBaseUrl = baseUrl?.trim() || resolveFallbackBaseUrl(provider);
   const api =
     provider === "anthropic"
       ? "anthropic-messages"
@@ -106,6 +110,26 @@ function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?:
     contextWindow: 200000,
     maxTokens: 32768
   };
+}
+
+function resolveFallbackBaseUrl(provider: KnownProvider): string {
+  switch (provider) {
+    case "anthropic":
+      return "https://api.anthropic.com";
+    case "google":
+      return "https://generativelanguage.googleapis.com";
+    case "openrouter":
+      return "https://openrouter.ai/api/v1";
+    case "zai":
+      return "https://open.bigmodel.cn/api/paas/v4";
+    case "minimax":
+    case "minimax-cn":
+      return "https://api.minimax.chat/v1";
+    case "kimi-coding":
+      return "https://api.moonshot.cn/v1";
+    default:
+      return "https://api.openai.com/v1";
+  }
 }
 
 function supportsReasoning(provider: KnownProvider, baseUrl?: string): boolean {

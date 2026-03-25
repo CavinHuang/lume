@@ -22,6 +22,7 @@ import {
   truncateAgentMessagesFrom,
   updateAgentSessionMeta
 } from "../services/agent-session-manager";
+import { getAgentRuntimeStatusManager } from "../services/agent-runtime-status-manager";
 import {
   generateAgentTitle,
   sendAgentMessage,
@@ -71,7 +72,7 @@ import {
   installGlobalPlugin
 } from "../services/global-discovery-service";
 import { createLogger, getLogsDir } from "../services/logger";
-import type { PlanStateTracker } from "../services/plan-state-tracker";
+import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { getSessionEventBus } from "../services/pi-agent/session-event-bus";
 import { isPiAgentSessionActive } from "../services/pi-agent/runner/run";
 import { getSubagentRunRegistry } from "../services/pi-agent/subagents/subagent-run-registry";
@@ -94,6 +95,7 @@ import {
   agentSessionIdInputSchema,
   agentTruncateInputSchema,
   agentUpdateTitleInputSchema,
+  agentUpdateModelSelectionInputSchema,
   attachedPathInputSchema,
   copyFolderToSessionInputSchema,
   deleteSkillInputSchema,
@@ -143,7 +145,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         input.title,
         input.channelId,
         input.workspaceId,
-        input.parentSessionId
+        input.parentSessionId,
+        input.modelId
       );
     },
     [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {
@@ -182,6 +185,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(agentUpdateTitleInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_TITLE);
       return updateAgentSessionMeta(input.sessionId, { title: input.title });
     },
+    [AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION]: async (params) => {
+      const input = validateInput(
+        agentUpdateModelSelectionInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION
+      );
+      return updateAgentSessionMeta(input.sessionId, {
+        channelId: input.channelId,
+        modelId: input.modelId
+      });
+    },
     [AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT]: async (params) => {
       const input = validateInput(agentMigrateChatInputSchema, params, AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT);
       const migrated = migrateChatToAgentSession(input.conversationId, input.sessionId);
@@ -204,8 +218,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.DELETE_SESSION]: async (params) => {
       const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.DELETE_SESSION);
       deleteAgentSession(input.sessionId);
+      getAgentRuntimeStatusManager().clearSession(input.sessionId);
       context.planStateTracker.clearSession(input.sessionId);
       return { ok: true };
+    },
+    [AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS]: async (params) => {
+      const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS);
+      return getAgentRuntimeStatusManager().get(input.sessionId) ?? {
+        sessionId: input.sessionId,
+        phase: "idle",
+        updatedAt: Date.now()
+      };
     },
     [AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM]: async (params) => {
       const input = validateInput(agentTruncateInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM);

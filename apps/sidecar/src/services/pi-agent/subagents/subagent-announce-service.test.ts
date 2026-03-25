@@ -62,8 +62,9 @@ describe("subagent-announce-service", () => {
       const last = messages[messages.length - 1];
       expect(last?.role).toBe("assistant");
       expect(last?.content).toContain("子任务完成通知");
-      expect(last?.events?.some((event) => event.type === "tool_start" && event.toolName === "Agent")).toBe(true);
-      expect(last?.events?.some((event) => event.type === "tool_result" && event.toolName === "Agent")).toBe(true);
+      expect(last?.metadata?.subagentAnnounce).toBe(true);
+      expect(last?.metadata?.runId).toBe(run.runId);
+      expect(last?.metadata?.childSessionId).toBe(run.childSessionId);
       expect(events).toHaveLength(1);
       expect(events[0]?.sessionId).toBe(parent.id);
       expect(events[0]?.runId).toBe(run.runId);

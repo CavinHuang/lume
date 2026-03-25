@@ -8,6 +8,7 @@ import {
   activeViewAtom,
   agentRunningSessionIdsAtom,
   agentChannelIdAtom,
+  agentModelIdAtom,
   agentSessionsAtom,
   agentWorkspacesAtom,
   appModeAtom,
@@ -100,6 +101,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const streamingIds = useAtomValue(streamingConversationIdsAtom);
   const runningIds = useAtomValue(agentRunningSessionIdsAtom);
   const agentChannelId = useAtomValue(agentChannelIdAtom);
+  const agentModelId = useAtomValue(agentModelIdAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
   const promptConfig = useAtomValue(promptConfigAtom);
   const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom);
@@ -294,6 +296,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     const created = await createAgentSession({
       title: "新 Agent 会话",
       channelId: agentChannelId ?? undefined,
+      modelId: agentModelId ?? undefined,
       workspaceId: currentWorkspaceId ?? undefined
     });
     setAgentSessions((prev) => [created, ...prev]);

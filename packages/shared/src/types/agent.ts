@@ -68,6 +68,25 @@ export type AgentEvent =
   | { type: 'compacting' }
   | { type: 'compact_complete' }
 
+export type AgentRuntimePhase =
+  | 'idle'
+  | 'streaming'
+  | 'awaiting_permission'
+  | 'awaiting_user_answer'
+  | 'compacting'
+  | 'completed'
+  | 'errored'
+
+export interface AgentRuntimeStatus {
+  sessionId: string
+  phase: AgentRuntimePhase
+  requestId?: string
+  toolUseId?: string
+  toolName?: string
+  error?: string
+  updatedAt: number
+}
+
 // ===== Agent 会话管理 =====
 
 /**
@@ -83,6 +102,8 @@ export interface AgentSessionMeta {
   title: string
   /** 使用的渠道 ID */
   channelId?: string
+  /** 最近一次运行使用的模型 ID */
+  modelId?: string
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
   sdkSessionId?: string
   /** Pi Agent 会话 ID（用于显式恢复） */
@@ -552,6 +573,10 @@ export interface AgentMessageAppendedEvent {
   message: AgentMessage
 }
 
+export interface AgentRuntimeStatusChangedEvent {
+  status: AgentRuntimeStatus
+}
+
 // ===== 文件浏览器 =====
 
 /** 文件/目录条目（用于文件浏览器树形视图） */
@@ -631,6 +656,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_RECENT_MESSAGES: 'agent:get-recent-messages',
   /** 更新会话标题 */
   UPDATE_TITLE: 'agent:update-title',
+  /** 更新会话模型/渠道选择 */
+  UPDATE_MODEL_SELECTION: 'agent:update-model-selection',
   /** 迁移 Chat 对话消息到 Agent 会话 */
   MIGRATE_CHAT_TO_AGENT: 'agent:migrate-chat-to-agent',
   /** 置顶/取消置顶会话 */
@@ -705,6 +732,8 @@ export const AGENT_IPC_CHANNELS = {
   MESSAGE_APPENDED: 'agent:message-appended',
   /** 查询 subagent run 状态（调试/观测） */
   LIST_SUBAGENT_RUNS: 'agent:list-subagent-runs',
+  /** 获取当前会话 runtime status */
+  GET_RUNTIME_STATUS: 'agent:get-runtime-status',
   /** AskUserQuestion 请求（sidecar -> web） */
   ASK_USER_QUESTION: 'agent:ask-user-question',
   /** AskUserQuestion 回答提交（web -> sidecar） */
@@ -713,6 +742,8 @@ export const AGENT_IPC_CHANNELS = {
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */
   SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
+  /** runtime status 变化通知（sidecar -> web） */
+  RUNTIME_STATUS_CHANGED: 'agent:runtime-status-changed',
 
   // 附件
   /** 保存文件到 Agent session 工作目录 */

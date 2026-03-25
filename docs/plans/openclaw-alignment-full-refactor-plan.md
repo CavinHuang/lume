@@ -18,14 +18,18 @@
 1. `runtime-core`（OpenClaw 对齐层）：`run.ts`、`run/attempt.ts`、`model.ts`、`pi-model-discovery.ts`、`pi-tools.ts`、`subscribe.ts`。
 2. `runtime-adapters`（Lume 注入层）：渠道/API key、权限审批、workspace、session 工具、automation/memory。
 3. `ui-projection`（展示层）：把 Pi 事件映射成 Lume `AgentEvent`，不参与核心调度。
-4. 单一事实源：Pi transcript（`SessionManager`）为主，Lume JSONL 仅过渡兼容，最终退出。
+4. 单一事实源：Pi transcript（`SessionManager`）为主，不再保留 Agent 消息兼容层。
 
 ## 4. 当前状态
 
 1. `runtime-core` 已成为唯一执行主链。
 2. `legacy` 独立执行实现已删除，`dual` 未落地且已放弃。
 3. Bun patch / Bun runtime hack 已删除。
-4. transcript 已用于 `new` 模式恢复与 JSONL 缺失回填。
+4. transcript 已用于 `new` 模式恢复与消息读取主路径。
+5. sidecar `index.ts` 已收敛为入口装配层，RPC handler 已按 `channel/chat/agent/memory/automation/channel-gateway/system` 分域拆出。
+6. `runtime-core subscribe + stream-wrappers` 已形成事件归一化单点。
+7. `AgentRuntimeStatus` 已打通 `shared -> sidecar -> web -> smoke` 的最小共享运行时状态链路。
+8. provider 配置切换链路已打通到运行时，新增 `smoke:agent-new-runtime:provider-switch` 与 `smoke:chat-provider-switch` 覆盖 Agent/Chat 的 channel/model/provider 切换与重启恢复。
 
 ## 5. 分阶段详细执行
 
@@ -52,31 +56,38 @@
 1. 实现 `discoverAuthStorage` 与 `discoverModels`。
 2. 实现 `resolveModelAsync`（provider/model/baseUrl/模型候选解析）。
 3. `runner/run.ts` 已只接入新模型解析主链。
+4. `createRuntimeCoreSession(...)` 已接受显式 resolved model，避免 fallback/custom model 在 upstream create-session 时丢失。
 
 ### Phase 4：会话与持久化对齐（进行中）
 
 1. `run/attempt.ts` 切换为 `createAgentSession(...)` 主链。
 2. `SessionManager` 接管 transcript 读写。
 3. 历史迁移工具已不再需要。
-4. 当前为 transcript-first 恢复，JSONL 仍保留为兼容投影。
+4. 当前已收口为 transcript 主存储，不再保留 Agent 消息兼容投影。
 
 ### Phase 5：工具链与权限链对齐（进行中）
 
 1. 已将 `createLumePiTools + tool-policy + tool-permission-gate` 接入 `runtime-core` 主链。
 2. 已实现 `AgentTool -> ToolDefinition` 适配层，并通过 `customTools` 挂载到上游 `createAgentSession(...)`。
-3. 剩余工作主要是补更贴近真实运行的工具链 smoke，而不是继续维护旧注入路径。
+3. 已补 `smoke:agent-new-runtime:bridges`，覆盖 permission / ask-user / subagent announce / runtime status。
+4. 剩余工作主要是扩大真实工具链 smoke，而不是继续维护旧注入路径。
 
-### Phase 6：流式传输对齐
+### Phase 6：流式传输对齐（进行中）
 
-1. 实现统一 stream wrapper 链：sanitize/repair/provider quirks。
-2. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）。
-3. 移除 Bun patch 与 postinstall 修改路径。
+1. 已补 `runtime-core/stream-wrappers.ts` 骨架，并接入空文本过滤、重复 `text_complete` 去重。
+2. 剩余工作是把 provider-specific quirks 显式化（如 Anthropic-compat/ZAI 差异）。
+3. 已补第一条 provider-specific quirk：BigModel Anthropic-compatible 端点下忽略仅空白差异的最终 `text_complete`。
+4. 已补 `smoke:agent-new-runtime:provider-switch`，覆盖 Agent channel/model/provider 切换到运行链路。
+5. 已补 `smoke:chat-provider-switch`，覆盖 Chat channel/model/provider 切换到运行链路。
+6. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍可继续扩充。
+7. Bun patch 与 postinstall 修改路径已删除。
 
-### Phase 7：事件语义对齐
+### Phase 7：事件语义对齐（进行中）
 
-1. 将 subscribe 处理分层为 message/tool/lifecycle。
-2. 修复 usage 语义口径，避免把 `totalTokens` 当 `inputTokens`。
-3. 对齐文本回填、去重和终止事件语义。
+1. 已将 subscribe 处理分层为 `message/tool/lifecycle`。
+2. usage 语义已修复，不再把 `totalTokens` 当 `inputTokens`。
+3. 文本回填、去重和终止事件语义已开始由 sidecar 单点保证。
+4. 剩余工作是继续把前端本地推断收回到共享事件/共享状态契约。
 
 ### Phase 8：Compaction 对齐
 
@@ -88,7 +99,7 @@
 
 1. 已默认切到 `new`。
 2. 已删除 legacy 路径与临时 Bun 适配代码。
-3. 剩余工作聚焦于 transcript-first 存储和 compaction。
+3. sidecar 入口层结构拆分已完成，剩余工作聚焦于 transcript-first 存储、compaction 和真实 smoke 覆盖。
 
 ## 6. 工单总表（20 张）
 
@@ -110,7 +121,7 @@
 | STREAM-002 | 移除 Bun patch 依赖 | `package.json`, `run-pi-agent-message.ts` | 1d | STREAM-001 | 全 smoke + typecheck | 无 |
 | EVT-001 | 订阅处理对齐 | `.../runtime-core/subscribe.ts`, `.../subscribe/map-pi-session-event.ts` | 1.5d | CORE-005 | 事件单测 | 回旧订阅 |
 | EVT-002 | 修正 usage 语义映射 | `.../subscribe/map-pi-session-event.ts`, `packages/shared/src/types/agent.ts` | 0.5d | EVT-001 | usage 单测 | 兼容旧字段 |
-| DATA-001 | transcript 主存储 + JSONL 双写过渡 | `apps/sidecar/src/services/agent-session-manager.ts`, `.../runtime-core/session-store.ts` | 2d | CORE-005 | 重启恢复 smoke | 仅保留 JSONL |
+| DATA-001 | transcript 主存储收口并删除兼容层 | `apps/sidecar/src/services/agent-session-manager.ts`, `.../runtime-core/session-store.ts` | 2d | CORE-005 | 重启恢复 smoke | git 回退 |
 | DATA-002 | 历史数据迁移脚本 | 已取消 | 0d | 无 | 无 | 无 |
 | CMP-001 | compaction 切原生 transcript 流程 | `apps/sidecar/src/services/pi-agent/runtime-core/subscribe.ts`, `apps/sidecar/src/services/pi-agent/compaction/*（已删除）` | 2d | DATA-001, EVT-001 | 长会话 smoke | git 回退 |
 | REL-001 | 双跑比较器 + 灰度门控 + 自动回退 | 已取消 | 0d | 无 | 无 | 无 |
@@ -133,17 +144,17 @@
 ## 9. 风险清单与应对
 
 1. 上游接口漂移：用 `pi-upstream-compat.test.ts` 提前失败。
-2. transcript/JSONL 双源漂移：通过 transcript-first 回填逐步收敛。
-3. usage 语义已对齐，compaction 已有运行级 smoke，但长会话规模覆盖仍可继续增强。
-4. 子任务与复杂工具链已挂到新主链，剩余风险转为真实运行 smoke 覆盖不足。
+2. transcript 读取/投影语义漂移：通过运行级 smoke 与会话读取测试提前暴露。
+3. usage 语义已对齐，compaction 已有长会话 smoke，但 provider-specific stream quirks 仍需继续覆盖。
+4. 子任务、permission、ask-user、runtime status 与 provider switch 已挂到新主链，剩余风险转为更多 provider smoke 覆盖和前端本地推断残留。
 
 ## 10. 本周开工顺序（建议）
 
-1. DATA-001
-2. EVT-002
-3. CMP-001
-4. subagent / permission 复杂链路并回
-5. 删除剩余 JSONL-first 读路径
+1. 跑完当前 sidecar `build + smoke:agent-new-runtime*` 验证闭环
+2. 继续清理 web 侧剩余本地运行态推断，优先收口 `AgentView/agent-atoms`
+3. 为 `AgentRuntimeStatus` 增加更细粒度相位/上下文字段时，先走 shared 契约评审
+4. 继续补 provider-specific stream wrapper 与 provider smoke（OpenAI/Anthropic/Google/ZAI）
+5. 保留 `pi-upstream-compat` 与包版本守卫，跟随上游升级时先看这里
 
 ---
 

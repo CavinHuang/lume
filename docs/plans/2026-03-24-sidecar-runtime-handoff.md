@@ -9,7 +9,7 @@
 1. `apps/sidecar` 的 Pi/OpenClaw runtime 对齐收尾。
 2. `apps/sidecar/src/index.ts` 和 sidecar 代码结构拆分，降低入口文件和职责混杂问题。
 
-当前状态是：runtime 对齐这条线已经推进到“可运行、可验证、但尚未提交”；结构拆分这条线已经开始，但停在中途，需要下一次会话继续完成。
+当前状态是：runtime 对齐这条线已经推进到“可运行、可验证、但尚未提交”；入口结构拆分已继续推进，`index.ts` 不再承载具体 RPC 业务逻辑；Agent 会话消息也已收口为 transcript-only，不再保留 `compatibility.ndjson` 兼容层。
 
 ## 2. 最近一个已提交检查点
 
@@ -101,15 +101,15 @@
 
 - 我尝试过把 `apps/sidecar/package.json` 的 smoke script 改成自动先 build 再跑，但在当前环境会触发 Bun shim 的 `EPERM`/`Failed to start process`，所以已回退，没有保留这种改法。
 
-## 5. 当前正在进行但未完成的结构重组
+## 5. 当前结构重组状态
 
-这部分是本次会话最后停下来的地方。
+这部分记录当前已经落地的入口层重组结果，以及真正还未完成的后续项。
 
 ### 5.1 目标
 
 目标是把 [index.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/index.ts) 从巨型入口文件拆成“入口装配 + RPC handler 模块”，并理清 sidecar 的职责边界。
 
-### 5.2 已开始的结构拆分
+### 5.2 已完成的结构拆分
 
 已新增：
 
@@ -118,30 +118,53 @@
 - [schemas.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/schemas.ts)
 - [chat-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/chat-handlers.ts)
 - [agent-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/agent-handlers.ts)
+- [channel-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/channel-handlers.ts)
+- [memory-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/memory-handlers.ts)
+- [automation-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/automation-handlers.ts)
+- [channel-gateway-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/channel-gateway-handlers.ts)
+- [system-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/system-handlers.ts)
+- [create-rpc-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/create-rpc-handlers.ts)
+- [create-rpc-handlers.test.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/create-rpc-handlers.test.ts)
 
 并且：
 
-- [index.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/index.ts) 已经接入 `createChatHandlers(writeNotification)`。
+- [index.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/index.ts) 已改为通过 `createRpcHandlers({ writeNotification })` 统一装配 handler。
+- `index.ts` 现在只保留：
+  - JSON-RPC request/response 写出
+  - `handleRpcLine`
+  - sidecar `boot` / watcher / relay / ingress / runner 生命周期
+- 与本轮拆分配套，`pi-model-discovery.ts` 已顺手切到当前 SDK 的 `new AuthStorage(...)` 构造方式，避免 sidecar `typecheck` 被旧接口卡住。
+- Agent 消息存储已切到 transcript-only：
+  - 删除了 `compatibility.ndjson` 路径与相关读写/merge 逻辑
+  - `message_metadata_overlay` 不再写入或参与读取
+  - `subagent announce` 改为直接写 transcript，并在消息投影时派生回 `subagentAnnounce/runId/childSessionId/status`
 
 ### 5.3 当前停下来的点
 
-`index.ts` 对 `agent` handler 的替换还没有做完。
+`index.ts` 的 handler 拆分不再是阻塞项，这部分已经完成。
 
 当前实际状态：
 
-- `createAgentHandlers(...)` 模块已经写出来了。
-- `index.ts` 顶部已经引入了 `createAgentHandlers`。
-- 但 `handlers` 对象里旧的 agent handler 大块仍然还在，尚未被替换为：
-  - `...createAgentHandlers({ writeNotification, planStateTracker, notifyPlanStateChange })`
-- 因此，这轮“入口结构拆分”现在是半完成状态。
+- handler 维度的拆分已经覆盖 `channel/chat/agent/memory/automation/channel-gateway/system`。
+- `index.ts` 目前的职责边界已经符合“入口装配层”的目标。
+- 已补最小注册器测试：`rpc:list-methods` 和 `healthcheck`。
+- `bun test apps/sidecar/src/rpc/create-rpc-handlers.test.ts` 与 `bun run --filter @lume/sidecar typecheck` 已通过。
+- transcript-only 收口也已完成，相关 `agent-session-manager` / `subagent announce` 测试通过。
 
-换句话说：runtime 功能线是可验证的，但 `index.ts` 的结构重组当前不能算完成。
+换句话说：结构重组这条线已从“实现中”转入“验证与是否继续细化”的阶段。
 
 ## 6. 当前工作树的重点文件
 
 与本轮未提交改动直接相关的主要文件：
 
 - [index.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/index.ts)
+- [create-rpc-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/create-rpc-handlers.ts)
+- [system-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/system-handlers.ts)
+- [channel-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/channel-handlers.ts)
+- [memory-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/memory-handlers.ts)
+- [automation-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/automation-handlers.ts)
+- [channel-gateway-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/channel-gateway-handlers.ts)
+- [create-rpc-handlers.test.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/create-rpc-handlers.test.ts)
 - [package.json](/E:/projects/ai-projects/lume/apps/sidecar/package.json)
 - [smoke-agent-new-runtime-error.mjs](/E:/projects/ai-projects/lume/apps/sidecar/scripts/smoke-agent-new-runtime-error.mjs)
 - [smoke-agent-new-runtime-compact.mjs](/E:/projects/ai-projects/lume/apps/sidecar/scripts/smoke-agent-new-runtime-compact.mjs)
@@ -168,19 +191,17 @@
 
 推荐顺序：
 
-1. 完成 `index.ts` 的 `agent` handler 替换，把旧 agent 大块挪到 [agent-handlers.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/rpc/agent-handlers.ts)。
-2. 清理 `index.ts` 里已不再需要的 imports 和本地 schema/helper 定义。
-3. 如果入口仍然偏大，再继续把 `memory/automation/channel-gateway` handler 也拆出去。
-4. 结构拆分完成后，重新跑：
-   - `bun run --filter @lume/sidecar typecheck`
+1. 跑当前工作树的 sidecar 验证闭环：
    - `bun run --filter @lume/sidecar build`
    - `bun run --filter @lume/sidecar smoke:agent-new-runtime`
    - `bun run --filter @lume/sidecar smoke:agent-new-runtime:error`
    - `bun run --filter @lume/sidecar smoke:agent-new-runtime:stop`
    - `bun run --filter @lume/sidecar smoke:agent-new-runtime:compact`
+2. 如果验证全绿，评估是否还要继续拆 `rpc/schemas.ts`；这已经是可选清理项，不是当前阻塞。
+3. runtime 对齐主线回到真实剩余项：长会话 compaction smoke、复杂工具链/权限链 smoke、以及 transcript 投影语义的继续验证。
 
 ## 8. 开新会话时可直接使用的提示
 
 如果要在新会话继续，可以直接说明：
 
-`继续处理 docs/plans/2026-03-24-sidecar-runtime-handoff.md 里记录的 sidecar runtime/结构重组任务，先完成 index.ts 的 agent handler 拆分，再跑 sidecar typecheck 和 4 条 agent smoke。`
+`继续处理 docs/plans/2026-03-24-sidecar-runtime-handoff.md 里记录的 sidecar runtime 收尾任务。index.ts 的 RPC handler 拆分和 transcript-only 收口已经完成，优先扩大 compaction 与复杂工具链 smoke，再评估是否继续拆 rpc/schemas.ts。`

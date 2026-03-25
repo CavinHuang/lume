@@ -4,6 +4,7 @@ import {
   type AgentSession,
   type CreateAgentSessionResult
 } from "@mariozechner/pi-coding-agent";
+import type { Api, Model } from "@mariozechner/pi-ai";
 import type {
   AgentAskUserQuestionRequest,
   AgentSendInput,
@@ -21,6 +22,7 @@ export interface CreateRuntimeCoreSessionInput {
   agentDir: string;
   provider: KnownProvider;
   modelId: string;
+  resolvedModel?: Model<Api>;
   apiKey: string;
   workspaceId?: string;
   workspaceSlug?: string;
@@ -43,7 +45,7 @@ export interface CreateRuntimeCoreSessionResult {
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
-  const model = resolveRuntimeCoreModel({
+  const model = input.resolvedModel ?? resolveRuntimeCoreModel({
     provider: input.provider,
     modelId: input.modelId
   });
