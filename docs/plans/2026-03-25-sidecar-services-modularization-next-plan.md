@@ -28,6 +28,8 @@
 10. 完成 automation/runtime 重组后的 `typecheck + 相关测试` 验证
 11. 把 `config-paths / logger` 收进 `services/infra/`
 12. 完成 infra 重组后的 `typecheck + config-paths 测试` 验证
+13. 把 `memory-service / memory-mcp-service / memory-policy / memory-sync-watcher / memory-tool-response / memory-flush-service` 收进 `services/memory/`
+14. 完成 memory 入口重组后的 `typecheck + memory 相关测试` 验证
 
 ## 2. 最近已提交检查点
 

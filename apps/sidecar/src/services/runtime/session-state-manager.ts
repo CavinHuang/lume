@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { MemoryFlushCheckParams, MemoryFlushResult } from "@lume/shared";
-import { getMemoryFlushService } from "../memory-flush-service";
+import { getMemoryFlushService } from "../memory/memory-flush-service";
 import { getHeartbeatService } from "./heartbeat-service";
 import { getSessionStatesPath } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";

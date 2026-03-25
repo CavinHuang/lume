@@ -8,7 +8,7 @@
  */
 
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent/agent-workspace-manager";
-import type { MemoryCitationsMode } from "./memory-policy";
+import type { MemoryCitationsMode } from "./memory/memory-policy";
 import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath

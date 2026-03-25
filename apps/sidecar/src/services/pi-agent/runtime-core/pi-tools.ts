@@ -9,7 +9,7 @@ import type {
   AgentSendInput,
   AgentToolPermissionRequest
 } from "@lume/shared";
-import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-policy";
+import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
 import { createLumePiTools } from "../tools/create-lume-tools";
 import { wrapToolsWithPermissionGate } from "../tools/tool-permission-gate";
 import { applyPiToolPolicies } from "../tools/tool-policy";

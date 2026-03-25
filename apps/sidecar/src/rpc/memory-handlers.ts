@@ -8,7 +8,7 @@ import {
   indexWorkspaceMemoryFile,
   saveWorkspaceMemory,
   searchWorkspaceMemory
-} from "../services/memory-service";
+} from "../services/memory/memory-service";
 import {
   memoryGetInputSchema,
   memoryIndexFileInputSchema,

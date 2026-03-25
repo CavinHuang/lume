@@ -1,7 +1,7 @@
 import type { AgentAskUserQuestionRequest, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { MemoryToolPolicy } from "../../memory-policy";
+import type { MemoryToolPolicy } from "../../memory/memory-policy";
 import { createPiControlTools } from "./create-control-tools";
 import { createPiMemoryTools } from "./create-memory-tools";
 import { createOpenClawAlignedTools } from "./create-openclaw-aligned-tools";
