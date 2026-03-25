@@ -87,4 +87,22 @@ describe("runtime-core stream-wrappers", () => {
 
     expect(second).toHaveLength(1);
   });
+
+  test("新一轮 text_delta 到达后不应继续用上一轮 final text_complete 去重", () => {
+    const state = createRuntimeCoreStreamWrapperState();
+
+    const first = applyRuntimeCoreStreamWrappers([
+      { type: "text_complete", text: "hello world", isIntermediate: false }
+    ], state);
+    const second = applyRuntimeCoreStreamWrappers([
+      { type: "text_delta", text: "hello " },
+      { type: "text_complete", text: "hello world", isIntermediate: false }
+    ], state);
+
+    expect(first).toHaveLength(1);
+    expect(second).toEqual([
+      { type: "text_delta", text: "hello " },
+      { type: "text_complete", text: "hello world", isIntermediate: false }
+    ]);
+  });
 });

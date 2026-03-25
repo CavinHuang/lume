@@ -28,6 +28,8 @@ export function applyRuntimeCoreStreamWrappers(
       if (!event.text) {
         continue;
       }
+      // 新的 delta 表示已经进入下一轮输出，不应继续拿上一轮的 final complete 去重。
+      state.lastFinalTextComplete = null;
       wrapped.push(event);
       continue;
     }
