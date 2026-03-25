@@ -1,6 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { PlanStep } from "@lume/shared";
-import { getAgentRuntimeStatusManager } from "../services/agent-runtime-status-manager";
+import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { createAgentHandlers } from "./agent-handlers";
 import { createAutomationHandlers } from "./automation-handlers";

@@ -16,12 +16,12 @@ import {
   toggleAgentSessionPin
 } from "./agent-session-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
-import { getAgentWorkspacePath } from "./config-paths";
-import { appendMessage, createConversation } from "./conversation-manager";
+import { getAgentWorkspacePath } from "../config-paths";
+import { appendMessage, createConversation } from "../conversation-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath
-} from "./pi-agent/runtime-core/session-store";
+} from "../pi-agent/runtime-core/session-store";
 
 describe("agent-session-manager advanced ops", () => {
   let previousConfigDir: string | undefined;

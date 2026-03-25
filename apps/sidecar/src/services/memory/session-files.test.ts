@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAgentSession } from "../agent-session-manager";
-import { createAgentWorkspace } from "../agent-workspace-manager";
+import { createAgentSession } from "../agent/agent-session-manager";
+import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath

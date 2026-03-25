@@ -7,7 +7,7 @@ import {
   createAgentSession,
   getAgentSessionMessages,
   getAgentSessionMeta
-} from "../../agent-session-manager";
+} from "../../agent/agent-session-manager";
 import { createOrResumeRuntimeCoreSessionManager } from "../runtime-core/session-store";
 import {
   getSubagentRunRegistry,

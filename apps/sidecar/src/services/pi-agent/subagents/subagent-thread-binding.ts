@@ -1,4 +1,4 @@
-import { getAgentSessionMeta } from "../../agent-session-manager";
+import { getAgentSessionMeta } from "../../agent/agent-session-manager";
 
 function normalizeSessionId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

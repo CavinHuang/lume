@@ -7,7 +7,7 @@
  * - Integrated Soul/Memory system from OpenClaw design.
  */
 
-import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
+import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent/agent-workspace-manager";
 import type { MemoryCitationsMode } from "./memory-policy";
 import {
   readSystemPromptComponents,

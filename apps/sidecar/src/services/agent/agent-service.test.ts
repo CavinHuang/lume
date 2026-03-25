@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   deriveFallbackAgentTitleFromUserMessage,
   resolveAgentTitleSourceText
-} from "./agent/session-title-summarizer";
+} from "./session-title-summarizer";
 
 describe("agent-service fallback title", () => {
   test("应从用户消息生成兜底标题", () => {

@@ -15,8 +15,8 @@ import type {
   AgentGenerateTitleInput
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
-import { fetchTitle, getAdapter } from "../providers";
-import { decryptApiKey, listChannels } from "./channel-manager";
+import { fetchTitle, getAdapter } from "../../providers";
+import { decryptApiKey, listChannels } from "../channel-manager";
 import {
   getAgentSessionMessages,
   getAgentSessionMeta,
@@ -24,19 +24,19 @@ import {
 } from "./agent-session-manager";
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
-import { createLogger } from "./logger";
+import { createLogger } from "../logger";
 import {
   getSessionStateManager,
   startSessionHeartbeat,
   stopSessionHeartbeat,
-} from "./session-state-manager";
-import { submitPiAskUserQuestionAnswers } from "./pi-agent/tools/ask-user-question-bridge";
-import { submitToolPermissionDecision } from "./pi-agent/tools/tool-permission-bridge";
-import { resolveAgentEventTotalTokens } from "./pi-agent/usage";
+} from "../session-state-manager";
+import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/ask-user-question-bridge";
+import { submitToolPermissionDecision } from "../pi-agent/tools/tool-permission-bridge";
+import { resolveAgentEventTotalTokens } from "../pi-agent/usage";
 import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
-} from "./model-selection";
+} from "../model-selection";
 import {
   AGENT_TITLE_PROMPT_FROM_SUMMARY,
   deriveFallbackAgentTitleFromSourceText,
@@ -44,7 +44,7 @@ import {
   resolveAgentTitleSourceText,
   sanitizeGeneratedTitle,
   shouldAutoGenerateSessionTitle
-} from "./agent/session-title-summarizer";
+} from "./session-title-summarizer";
 
 type AgentEventEmitter = {
   onEvent: (event: AgentEvent) => void;
@@ -172,7 +172,7 @@ export async function sendAgentMessage(
   });
   runtimeStatusManager.markStreaming(sessionId);
 
-  const { runPiAgentMessage } = await import("./pi-agent/run-pi-agent-message");
+  const { runPiAgentMessage } = await import("../pi-agent/run-pi-agent-message");
   const piResult = await runPiAgentMessage({
     ...input,
     channelId: resolvedChannelId,
@@ -222,17 +222,17 @@ export function stopAgent(sessionId: string): void {
   }
   sessionStateManager.delete(sessionId);
   getAgentRuntimeStatusManager().markIdle(sessionId);
-  void import("./pi-agent/runner/run")
+  void import("../pi-agent/runner/run")
     .then((module) => module.stopPiAgent(sessionId))
     .catch(() => undefined);
 }
 
 export function stopAllAgents(): void {
   // 停止所有 Heartbeat 定时器
-  const { getHeartbeatService } = require("./heartbeat-service");
+  const { getHeartbeatService } = require("../heartbeat-service");
   const heartbeatService = getHeartbeatService();
   heartbeatService.stopAllTimers();
-  void import("./pi-agent/runner/run")
+  void import("../pi-agent/runner/run")
     .then((module) => module.stopAllPiAgents())
     .catch(() => undefined);
 }

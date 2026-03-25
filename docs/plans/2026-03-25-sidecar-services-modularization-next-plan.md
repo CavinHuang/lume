@@ -1,10 +1,10 @@
 # Sidecar Services Modularization Next Plan
 
-最后更新：2026-03-25
+最后更新：2026-03-25（第一阶段完成）
 
 ## 1. 背景
 
-当前 `apps/sidecar/src/services` 已经开始进行模块化整理，但还没有完成第一阶段。
+当前 `apps/sidecar/src/services` 的 `agent` 第一阶段整理已经完成，并完成了验证闭环。
 
 本轮之前已经完成：
 
@@ -14,11 +14,11 @@
 4. Agent/Chat 的 provider switch 运行级 smoke
 5. 少量无引用壳文件删除
 
-当前需要继续的是：
+本轮已完成：
 
-1. 把 `services` 根目录下仍然散落的 Agent 主链文件继续收进按模块分组的目录
-2. 在不破坏运行链路的前提下，逐阶段清理无用文件和中转壳文件
-3. 维持现有 smoke/typecheck 全绿
+1. 把 `services` 根目录下散落的 Agent 主链文件收进 `services/agent/`
+2. 修正 `rpc / memory / channel-gateway / pi-agent` 等引用链路
+3. 恢复本地依赖并完成 `typecheck / build / 单测 / smoke` 验证
 
 ## 2. 最近已提交检查点
 
@@ -40,14 +40,30 @@
 - `plan-state-tracker.test.ts`
 - `session-title-summarizer.ts`
 - `session-title-summarizer.test.ts`
+- `agent-session-manager.ts`
+- `agent-session-manager.test.ts`
+- `agent-session-manager.transcript-append.test.ts`
+- `agent-workspace-manager.ts`
+- `agent-files-service.ts`
+- `agent-files-service.test.ts`
+- `agent-runtime-status-manager.ts`
+- `agent-runtime-status-manager.test.ts`
+- `agent-service.ts`
+- `agent-service.test.ts`
 
 已同步 import 的主要文件：
 
-- `apps/sidecar/src/services/agent-service.ts`
-- `apps/sidecar/src/services/agent-service.test.ts`
 - `apps/sidecar/src/services/pi-agent/runtime-core/attempt.ts`
 - `apps/sidecar/src/rpc/agent-handlers.ts`
 - `apps/sidecar/src/rpc/create-rpc-handlers.ts`
+- `apps/sidecar/src/services/automation-runner-service.ts`
+- `apps/sidecar/src/services/channel-gateway/gateway-service.ts`
+- `apps/sidecar/src/services/memory/session-files.ts`
+- `apps/sidecar/src/services/memory/session-files.test.ts`
+- `apps/sidecar/src/services/index-recovery.test.ts`
+- `apps/sidecar/src/services/global-discovery-service.ts`
+- `apps/sidecar/src/services/chat-service.ts`
+- `apps/sidecar/src/services/agent-prompt-builder.ts`
 
 已删除的无用/壳文件：
 
@@ -62,9 +78,9 @@
 
 - `apps/sidecar/src/rpc/agent-handlers.ts`
 - `apps/sidecar/src/rpc/create-rpc-handlers.ts`
-- `apps/sidecar/src/services/agent-service.ts`
-- `apps/sidecar/src/services/agent-service.test.ts`
 - `apps/sidecar/src/services/pi-agent/runtime-core/attempt.ts`
+- `apps/sidecar/src/services/pi-agent/runtime-core/pi-model-discovery.ts`
+- `apps/sidecar/src/services/pi-agent/pi-upstream-compat.test.ts`
 
 新增但未提交：
 
@@ -74,28 +90,38 @@
 - `apps/sidecar/src/services/agent/plan-state-tracker.test.ts`
 - `apps/sidecar/src/services/agent/session-title-summarizer.ts`
 - `apps/sidecar/src/services/agent/session-title-summarizer.test.ts`
+- `apps/sidecar/src/services/agent/agent-session-manager.ts`
+- `apps/sidecar/src/services/agent/agent-session-manager.test.ts`
+- `apps/sidecar/src/services/agent/agent-session-manager.transcript-append.test.ts`
+- `apps/sidecar/src/services/agent/agent-workspace-manager.ts`
+- `apps/sidecar/src/services/agent/agent-files-service.ts`
+- `apps/sidecar/src/services/agent/agent-files-service.test.ts`
+- `apps/sidecar/src/services/agent/agent-runtime-status-manager.ts`
+- `apps/sidecar/src/services/agent/agent-runtime-status-manager.test.ts`
+- `apps/sidecar/src/services/agent/agent-service.ts`
+- `apps/sidecar/src/services/agent/agent-service.test.ts`
 
 ### 3.3 当前状态结论
 
-第一阶段整理已经开始并验证通过，但还没完成。
+`services/agent/` 第一阶段整理已完成，并已完成验证。
 
 换句话说：
 
-1. 目录策略已经落地
-2. 第一批低风险文件已经迁移
-3. 接下来应继续迁移 Agent 主链核心文件，而不是再扩到 chat/memory/browser
+1. `agent` 主链核心文件已全部收口到 `services/agent/`
+2. 运行链路相关引用已修正
+3. 当前下一步不应继续搬目录，而应进入提交收尾或下一阶段范围确认
 
-## 4. 推荐的下一阶段范围
+## 4. 本阶段结果
 
-只做 `pi-agent + agent` 主链的第一阶段整理，不扩到整个 `services`。
+本阶段实际完成范围仍然只覆盖 `pi-agent + agent` 主链的第一阶段整理，没有扩到整个 `services`。
 
-### 4.1 目标目录边界
+### 4.1 已完成的目标目录边界
 
-继续收口到：
+已收口到：
 
 - `apps/sidecar/src/services/agent/`
 
-本阶段优先迁移：
+本阶段已完成迁移：
 
 1. `agent-session-manager.ts`
 2. `agent-session-manager.test.ts`
@@ -107,7 +133,7 @@
 8. `agent-service.ts`
 9. `agent-service.test.ts`
 
-本阶段明确不动：
+本阶段明确未动：
 
 1. `services/pi-agent/**`
 2. `channel-manager.ts`
@@ -117,7 +143,7 @@
 6. `channel-gateway/**`
 7. `automation-*`
 
-## 5. 推荐执行顺序
+## 5. 实际执行顺序
 
 ### Step 1: 搬会话与工作区相关文件
 
@@ -154,34 +180,53 @@
 2. 它依赖会话、工作区、状态机、Pi runtime
 3. 放最后改 import 风险最低
 
-## 6. 每步验证命令
+## 6. 验证结果
 
-每完成一批搬迁后至少跑：
+已执行：
 
 ```bash
-bun run --filter @lume/sidecar typecheck
+bun run typecheck
 ```
 
-第一阶段全部完成后跑：
+```bash
+bun run build
+```
 
 ```bash
 bun test \
-  apps/sidecar/src/services/agent/agent-stream-accumulator.test.ts \
-  apps/sidecar/src/services/agent/plan-state-tracker.test.ts \
-  apps/sidecar/src/services/agent/session-title-summarizer.test.ts \
-  apps/sidecar/src/services/agent-service.test.ts \
-  apps/sidecar/src/services/agent-session-manager.test.ts \
-  apps/sidecar/src/services/agent-session-manager.transcript-append.test.ts
+  src/services/agent/agent-stream-accumulator.test.ts \
+  src/services/agent/plan-state-tracker.test.ts \
+  src/services/agent/session-title-summarizer.test.ts \
+  src/services/agent/agent-service.test.ts \
+  src/services/agent/agent-session-manager.test.ts \
+  src/services/agent/agent-session-manager.transcript-append.test.ts \
+  src/services/agent/agent-files-service.test.ts \
+  src/services/agent/agent-runtime-status-manager.test.ts
 ```
-
-然后跑：
 
 ```bash
-bun run --filter @lume/sidecar build
-bun run --filter @lume/sidecar smoke:agent-new-runtime
-bun run --filter @lume/sidecar smoke:agent-new-runtime:bridges
-bun run --filter @lume/sidecar smoke:agent-new-runtime:provider-switch
+bun run smoke:agent-new-runtime
 ```
+
+```bash
+bun run smoke:agent-new-runtime:bridges
+```
+
+```bash
+bun run smoke:agent-new-runtime:provider-switch
+```
+
+验证结果：
+
+1. `typecheck` 通过
+2. `build` 通过
+3. 8 个相关测试文件共 39 个用例全部通过
+4. `agent-new-runtime / bridges / provider-switch` smoke 全部通过
+
+补充修复：
+
+1. 依赖安装后发现 `AuthStorage` 上游 API 已改为 `AuthStorage.create(...)`
+2. 已同步修正 `runtime-core/pi-model-discovery.ts` 与 `pi-upstream-compat.test.ts`
 
 ## 7. 风险与注意事项
 
@@ -190,8 +235,9 @@ bun run --filter @lume/sidecar smoke:agent-new-runtime:provider-switch
 3. `services/pi-agent/**` 先不要动路径；当前它已经承担 `runtime-core / runner / tools / subagents / subscribe` 结构，路径变化会把风险放大。
 4. 删除文件只做“确认无运行时代码引用”的安全删除，不要先删大文件再看报错。
 
-## 8. 开新会话可直接使用的提示
+## 8. 下一步建议
 
-可以直接说明：
+建议从以下两个方向二选一继续：
 
-`继续处理 docs/plans/2026-03-25-sidecar-services-modularization-next-plan.md，先完成 services/agent/ 第一阶段整理，把 agent-session-manager / agent-workspace-manager / agent-files-service / agent-runtime-status-manager / agent-service 收到 agent/ 目录，并在每一批后跑 sidecar typecheck，最后跑 agent-new-runtime / bridges / provider-switch smoke。`
+1. 提交这一批 `services/agent/` 第一阶段整理，结束本阶段
+2. 进入下一阶段，但先重新定义范围，不沿用这份“第一阶段整理”计划继续推进

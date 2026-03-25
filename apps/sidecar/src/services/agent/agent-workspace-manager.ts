@@ -30,9 +30,9 @@ import {
   getDefaultSkillsDir,
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
-} from "./config-paths";
-import { seedDefaultSkills } from "./default-skills-seeder";
-import { ensureBootstrapFiles } from "./workspace-bootstrap-service";
+} from "../config-paths";
+import { seedDefaultSkills } from "../default-skills-seeder";
+import { ensureBootstrapFiles } from "../workspace-bootstrap-service";
 
 interface AgentWorkspacesIndex {
   version: number;

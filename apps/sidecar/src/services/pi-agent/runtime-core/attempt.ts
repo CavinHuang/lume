@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { updateAgentSessionMeta } from "../../agent-session-manager";
+import { updateAgentSessionMeta } from "../../agent/agent-session-manager";
 import {
   appendAgentEvents,
   createAgentStreamAccumulatorState,
@@ -7,7 +7,7 @@ import {
 } from "../../agent/agent-stream-accumulator";
 import { getAgentSessionWorkspacePath } from "../../config-paths";
 import { decryptApiKey, listChannels } from "../../channel-manager";
-import { ensurePluginManifest, getAgentWorkspace } from "../../agent-workspace-manager";
+import { ensurePluginManifest, getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../logger";
 import { waitForPiAskUserQuestionAnswers } from "../tools/ask-user-question-bridge";
 import { waitForToolPermissionDecision } from "../tools/tool-permission-bridge";

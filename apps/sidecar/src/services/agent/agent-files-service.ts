@@ -20,7 +20,7 @@ import type {
   FileSearchResult,
   PlanFileMeta
 } from "@lume/shared";
-import { getAgentSessionWorkspacePath, getAgentWorkspacesDir } from "./config-paths";
+import { getAgentSessionWorkspacePath, getAgentWorkspacesDir } from "../config-paths";
 
 function validatePathSegment(value: string, label: string): void {
   if (!/^[a-zA-Z0-9._-]+$/.test(value)) {

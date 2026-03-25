@@ -10,8 +10,8 @@ import type {
   ChannelProvider
 } from "@lume/shared";
 import type { Channel } from "@lume/shared";
-import { createAgentSession, getAgentSessionMessages } from "../agent-session-manager";
-import { sendAgentMessage } from "../agent-service";
+import { createAgentSession, getAgentSessionMessages } from "../agent/agent-session-manager";
+import { sendAgentMessage } from "../agent/agent-service";
 import { listChannels } from "../channel-manager";
 import { getChannelGatewayDeliveryPath } from "../config-paths";
 import {

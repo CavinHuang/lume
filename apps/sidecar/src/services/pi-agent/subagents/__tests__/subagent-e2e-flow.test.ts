@@ -6,7 +6,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import {
   createAgentSession,
   getAgentSessionMessages
-} from "../../../agent-session-manager";
+} from "../../../agent/agent-session-manager";
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest

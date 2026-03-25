@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getAgentSessionMessages, listAgentSessions } from "./agent-session-manager";
-import { listAgentWorkspaces } from "./agent-workspace-manager";
+import { getAgentSessionMessages, listAgentSessions } from "./agent/agent-session-manager";
+import { listAgentWorkspaces } from "./agent/agent-workspace-manager";
 import { getConversationMessages } from "./conversation-manager";
 import {
   getAgentSessionsIndexPath,

@@ -7,9 +7,9 @@ import type {
   AutomationRunNowInput,
   Channel
 } from "@lume/shared";
-import { createAgentSession } from "./agent-session-manager";
-import { getAgentSessionMeta } from "./agent-session-manager";
-import { sendAgentMessage } from "./agent-service";
+import { createAgentSession } from "./agent/agent-session-manager";
+import { getAgentSessionMeta } from "./agent/agent-session-manager";
+import { sendAgentMessage } from "./agent/agent-service";
 import { listAutomationJobs, updateAutomationJob } from "./automation-manager";
 import { listChannels } from "./channel-manager";
 import { getAutomationRunsPath } from "./config-paths";

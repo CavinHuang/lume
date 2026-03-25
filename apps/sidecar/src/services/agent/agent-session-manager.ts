@@ -24,15 +24,15 @@ import {
   getAgentWorkspacePath,
   getAgentSessionWorkspacePath,
   getAgentSessionsIndexPath
-} from "./config-paths";
+} from "../config-paths";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
-import { getConversationMessages } from "./conversation-manager";
-import { extractRenderableAssistantText } from "./pi-agent/content-extraction";
+import { getConversationMessages } from "../conversation-manager";
+import { extractRenderableAssistantText } from "../pi-agent/content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath,
   hasRuntimeCoreSessionTranscript
-} from "./pi-agent/runtime-core/session-store";
+} from "../pi-agent/runtime-core/session-store";
 
 interface AgentSessionsIndex {
   version: number;

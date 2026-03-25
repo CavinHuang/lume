@@ -4,7 +4,7 @@ import {
   appendAgentTranscriptMessage,
   getAgentSessionMeta,
   updateAgentSessionMeta
-} from "../../agent-session-manager";
+} from "../../agent/agent-session-manager";
 import { createLogger } from "../../logger";
 import { subagentLogFields } from "./subagent-observability";
 import type { SubagentRun } from "./subagent-run.types";

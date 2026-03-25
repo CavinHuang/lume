@@ -36,7 +36,7 @@ import {
 import {
   getWorkspaceMcpConfig,
   saveWorkspaceMcpConfig
-} from "./agent-workspace-manager";
+} from "./agent/agent-workspace-manager";
 
 const GLOBAL_DISCOVERY_VERSION = 1;
 const CLAUDE_PROVIDER = "claude" as const;

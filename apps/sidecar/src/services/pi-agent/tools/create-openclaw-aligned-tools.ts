@@ -15,7 +15,7 @@ import {
   getAgentSessionMeta,
   listAgentSessions,
   updateAgentSessionMeta
-} from "../../agent-session-manager";
+} from "../../agent/agent-session-manager";
 import type { AgentMessage } from "@lume/shared";
 import { decryptApiKey, listChannels } from "../../channel-manager";
 import { resolveRequestedModelIdForChannel } from "../../model-selection";

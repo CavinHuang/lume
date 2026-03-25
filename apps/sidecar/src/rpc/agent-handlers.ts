@@ -21,15 +21,15 @@ import {
   toggleAgentSessionPin,
   truncateAgentMessagesFrom,
   updateAgentSessionMeta
-} from "../services/agent-session-manager";
-import { getAgentRuntimeStatusManager } from "../services/agent-runtime-status-manager";
+} from "../services/agent/agent-session-manager";
+import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import {
   generateAgentTitle,
   sendAgentMessage,
   stopAgent,
   submitAgentToolPermission,
   submitAskUserQuestionAnswers
-} from "../services/agent-service";
+} from "../services/agent/agent-service";
 import {
   copyFolderToSession,
   deleteAgentFile,
@@ -51,7 +51,7 @@ import {
   searchAgentWorkspaceFiles,
   showAgentPathInFolder,
   showAttachedPathInFolder
-} from "../services/agent-files-service";
+} from "../services/agent/agent-files-service";
 import {
   createAgentWorkspace,
   deleteAgentWorkspace,
@@ -63,7 +63,7 @@ import {
   listAgentWorkspaces,
   saveWorkspaceMcpConfig,
   updateAgentWorkspace
-} from "../services/agent-workspace-manager";
+} from "../services/agent/agent-workspace-manager";
 import {
   getGlobalDiscoverySnapshot,
   getGlobalMarketplaceDetail,

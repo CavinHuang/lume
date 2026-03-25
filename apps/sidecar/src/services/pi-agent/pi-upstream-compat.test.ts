@@ -67,7 +67,7 @@ describe("pi upstream compat", () => {
     const authPath = join(agentDir, "auth.json");
     const modelsPath = join(agentDir, "models.json");
 
-    const authStorage = new AuthStorage(authPath);
+    const authStorage = AuthStorage.create(authPath);
     const modelRegistry = new ModelRegistry(authStorage, modelsPath);
     modelRegistry.registerProvider("anthropic", { apiKey: "sk-test" });
 

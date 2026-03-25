@@ -39,7 +39,7 @@ import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
 } from "./model-selection";
-import { ensureDefaultWorkspace } from "./agent-workspace-manager";
+import { ensureDefaultWorkspace } from "./agent/agent-workspace-manager";
 import { searchWorkspaceMemory } from "./memory-service";
 import {
   getAllChatToolInfos,

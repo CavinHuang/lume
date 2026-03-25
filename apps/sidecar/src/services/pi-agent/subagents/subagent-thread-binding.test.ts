@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAgentSession } from "../../agent-session-manager";
+import { createAgentSession } from "../../agent/agent-session-manager";
 import { resolveSubagentThreadBinding } from "./subagent-thread-binding";
 
 describe("subagent-thread-binding", () => {

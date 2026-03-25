@@ -5,7 +5,7 @@ import {
   getWorkspaceMemoryDbPath
 } from "./config-paths";
 import { MemoryIndexManager } from "./memory/memory-index-manager";
-import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
+import { getAgentWorkspaceBySlug } from "./agent/agent-workspace-manager";
 import { resolveMemoryRuntimeConfig } from "./memory-policy";
 import { isMemoryPath, normalizeRelPath } from "./openclaw/memory-path-utils";
 import { getEmbeddingCacheStats } from "./memory/embedding-ops";
