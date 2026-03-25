@@ -64,10 +64,17 @@ export function waitForPiAskUserQuestionAnswers(
     if (existing) {
       existing.resolve({ status: "canceled", answers: null });
     }
+    const timeoutMs = resolveAskTimeoutMs();
     const timeout = setTimeout(() => {
       done({ status: "timeout", answers: null });
-    }, resolveAskTimeoutMs());
-    if (typeof timeout === "object" && "unref" in timeout && typeof timeout.unref === "function") {
+    }, timeoutMs);
+    // Bun test 环境下超短 unref timer 可能不会按预期触发，测试专用短超时不做 unref。
+    if (
+      timeoutMs >= 1000
+      && typeof timeout === "object"
+      && "unref" in timeout
+      && typeof timeout.unref === "function"
+    ) {
       timeout.unref();
     }
     pendingPiAskUserQuestionResolvers.set(toolUseId, {
