@@ -73,7 +73,8 @@
 1. 已将 `createLumePiTools + tool-policy + tool-permission-gate` 接入 `runtime-core` 主链。
 2. 已实现 `AgentTool -> ToolDefinition` 适配层，并通过 `customTools` 挂载到上游 `createAgentSession(...)`。
 3. 已补 `smoke:agent-new-runtime:bridges`，覆盖 permission / ask-user / subagent announce / runtime status。
-4. 剩余工作主要是扩大真实工具链 smoke，而不是继续维护旧注入路径。
+4. 已补工具链核心测试覆盖：`sessions/subagents/web_search/automation/control/policy` 等关键工具路径已具备单测保护。
+5. 剩余工作主要是扩大真实工具链 smoke，而不是继续维护旧注入路径。
 
 ### Phase 6：流式传输对齐（进行中）
 
