@@ -32,6 +32,7 @@
 8. provider 配置切换链路已打通到运行时，新增 `smoke:agent-new-runtime:provider-switch` 与 `smoke:chat-provider-switch` 覆盖 Agent/Chat 的 channel/model/provider 切换与重启恢复。
 9. web 侧 `agent-atoms/AgentView` 已进一步收口运行态判断，当前优先信任共享 `AgentRuntimeStatus`，仅在状态缺失时回退到本地 streaming state。
 10. `AgentRuntimeStatus` 已新增 `interactiveKind / originSessionId / subagentRunId` 上下文字段，并从 sidecar 透传到 web 契约层。
+11. web `AgentView` 已开始消费这些交互上下文字段：在刷新/恢复后即使详细请求载荷未补齐，也能基于共享 runtime status 渲染等待提示。
 
 ## 5. 分阶段详细执行
 
@@ -94,7 +95,8 @@
 4. 剩余工作是继续把前端本地推断收回到共享事件/共享状态契约。
 5. 已完成第一轮前端运行态收口：`agentStreamingAtom`、`agentRunningSessionIdsAtom` 与 `AgentView` 统一改为“共享 runtime status 优先，本地 streaming 仅缺失兜底”。
 6. 已补第一轮更细粒度共享状态字段：交互等待态现在可携带 `interactiveKind / originSessionId / subagentRunId`。
-7. 下一步重点转向补 UI 行为回归测试或继续扩展更细粒度上下文字段，而不是继续保留双重状态语义。
+7. web 已补第一轮消费逻辑：共享交互状态可在请求明细缺失时回退成轻量提示，而不至于完全丢失上下文。
+8. 下一步重点转向补更完整的 UI 行为回归测试或继续扩展更细粒度上下文字段，而不是继续保留双重状态语义。
 
 ### Phase 8：Compaction 对齐
 

@@ -82,6 +82,7 @@ import {
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
 import {
+  formatAgentRuntimeStatusHint,
   isAgentRuntimeAwaitingInput,
   isAgentRuntimeStatusActive,
   resolveAgentBusyState
@@ -422,6 +423,12 @@ export function AgentView(): React.ReactElement {
   const isAwaitingInteractiveInput = isAgentRuntimeAwaitingInput(currentRuntimeStatus);
   const isRuntimeActivePhase = isAgentRuntimeStatusActive(currentRuntimeStatus);
   const isAgentBusy = resolveAgentBusyState(currentRuntimeStatus, streaming);
+  const runtimeStatusHint = useMemo(() => {
+    if (toolPermissionRequest || askUserQuestionRequest) {
+      return null;
+    }
+    return formatAgentRuntimeStatusHint(currentRuntimeStatus);
+  }, [askUserQuestionRequest, currentRuntimeStatus, toolPermissionRequest]);
 
   type TodoItem = {
     content: string;
@@ -2000,6 +2007,12 @@ export function AgentView(): React.ReactElement {
         {modeNotice ? (
           <div className="mx-4 mb-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-foreground/80">
             {modeNotice}
+          </div>
+        ) : null}
+
+        {runtimeStatusHint ? (
+          <div className="mx-4 mb-2 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-xs text-foreground/75">
+            {runtimeStatusHint}
           </div>
         ) : null}
 

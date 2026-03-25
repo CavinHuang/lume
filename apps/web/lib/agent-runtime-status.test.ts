@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentRuntimeStatus } from "@lume/shared";
 import {
+  formatAgentRuntimeStatusHint,
   isAgentRuntimeAwaitingInput,
   isAgentRuntimePhaseActive,
   isAgentRuntimeStatusActive,
@@ -50,5 +51,27 @@ describe("agent runtime status helpers", () => {
       phase: "streaming",
       updatedAt: Date.now()
     })).toBe(false);
+  });
+
+  test("应格式化 awaiting_permission 的共享状态提示", () => {
+    expect(formatAgentRuntimeStatusHint({
+      sessionId: "session-1",
+      phase: "awaiting_permission",
+      interactiveKind: "tool_permission",
+      toolName: "write",
+      originSessionId: "origin-1",
+      subagentRunId: "run-1",
+      updatedAt: Date.now()
+    })).toBe("等待工具权限确认 · 工具: write · 来源会话: origin-1 · Run: run-1");
+  });
+
+  test("应格式化 awaiting_user_answer 的共享状态提示", () => {
+    expect(formatAgentRuntimeStatusHint({
+      sessionId: "session-1",
+      phase: "awaiting_user_answer",
+      interactiveKind: "ask_user_question",
+      originSessionId: "origin-2",
+      updatedAt: Date.now()
+    })).toBe("等待用户回答问题 · 来源会话: origin-2");
   });
 });

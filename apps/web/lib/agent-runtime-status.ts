@@ -24,3 +24,38 @@ export function resolveAgentBusyState(
   }
   return localStreaming;
 }
+
+export function formatAgentRuntimeStatusHint(
+  status: AgentRuntimeStatus | null | undefined
+): string | null {
+  if (!status) {
+    return null;
+  }
+
+  if (status.phase === "awaiting_permission") {
+    return joinRuntimeStatusHintParts([
+      status.interactiveKind === "tool_permission" ? "等待工具权限确认" : "等待权限确认",
+      status.toolName ? `工具: ${status.toolName}` : null,
+      status.originSessionId ? `来源会话: ${status.originSessionId}` : null,
+      status.subagentRunId ? `Run: ${status.subagentRunId}` : null
+    ]);
+  }
+
+  if (status.phase === "awaiting_user_answer") {
+    return joinRuntimeStatusHintParts([
+      status.interactiveKind === "ask_user_question" ? "等待用户回答问题" : "等待用户输入",
+      status.originSessionId ? `来源会话: ${status.originSessionId}` : null,
+      status.subagentRunId ? `Run: ${status.subagentRunId}` : null
+    ]);
+  }
+
+  return null;
+}
+
+function joinRuntimeStatusHintParts(parts: Array<string | null>): string | null {
+  const filtered = parts.filter((part): part is string => Boolean(part));
+  if (filtered.length === 0) {
+    return null;
+  }
+  return filtered.join(" · ");
+}
