@@ -77,6 +77,7 @@ import {
   submitAgentToolPermission,
   stopAgentRun,
   generateAgentSessionTitle,
+  updateAgentSessionModelSelection,
   updateAgentSessionTitle
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
@@ -250,6 +251,15 @@ function extractLatestAssistantText(messages: AgentMessage[]): string {
     if (text.length > 0) return text;
   }
   return "";
+}
+
+function pickDefaultEnabledModelId(channel: Channel | undefined): string | null {
+  if (!channel) return null;
+  const configuredDefault = channel.defaultModelId?.trim();
+  if (configuredDefault && channel.models.some((model) => model.enabled && model.id === configuredDefault)) {
+    return configuredDefault;
+  }
+  return channel.models.find((model) => model.enabled)?.id ?? null;
 }
 
 function recoverPlanFromMessages(messages: AgentMessage[]): {
@@ -777,20 +787,35 @@ export function AgentView(): React.ReactElement {
 
   useEffect(() => {
     if (channels.length === 0) return;
-    if (!agentChannelId) {
+    const enabledChannels = channels.filter((item) => item.enabled);
+    const preferredChannel =
+      (session?.channelId ? enabledChannels.find((item) => item.id === session.channelId) : undefined)
+      ?? (agentChannelId ? enabledChannels.find((item) => item.id === agentChannelId) : undefined)
+      ?? enabledChannels[0];
+
+    if (!preferredChannel) {
+      setAgentChannelId(null);
       setAgentModelId(null);
       return;
     }
-    const channel = channels.find((item) => item.id === agentChannelId && item.enabled);
-    if (!channel) {
-      setAgentModelId(null);
-      return;
+
+    if (agentChannelId !== preferredChannel.id) {
+      setAgentChannelId(preferredChannel.id);
     }
-    const modelValid = !!agentModelId && channel.models.some((model) => model.enabled && model.id === agentModelId);
-    if (!modelValid) {
-      setAgentModelId(channel.models.find((model) => model.enabled)?.id ?? null);
+
+    const preferredModelId =
+      (session?.modelId && preferredChannel.models.some((model) => model.enabled && model.id === session.modelId)
+        ? session.modelId
+        : null)
+      ?? (agentModelId && preferredChannel.models.some((model) => model.enabled && model.id === agentModelId)
+        ? agentModelId
+        : null)
+      ?? pickDefaultEnabledModelId(preferredChannel);
+
+    if ((preferredModelId ?? null) !== (agentModelId ?? null)) {
+      setAgentModelId(preferredModelId ?? null);
     }
-  }, [agentChannelId, agentModelId, channels, setAgentModelId]);
+  }, [agentChannelId, agentModelId, channels, session?.channelId, session?.modelId, setAgentChannelId, setAgentModelId]);
 
   const [sessionSwitching, setSessionSwitching] = useState(false);
 
@@ -1854,7 +1879,16 @@ export function AgentView(): React.ReactElement {
   const handleModelSelect = useCallback((option: ModelOption): void => {
     setAgentChannelId(option.channelId);
     setAgentModelId(option.modelId);
-  }, []);
+    if (sessionId) {
+      void updateAgentSessionModelSelection(sessionId, option.modelId, option.channelId)
+        .then((updated) => {
+          setSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        })
+        .catch((error) => {
+          console.error("[AgentView] update model selection failed", error);
+        });
+    }
+  }, [sessionId, setAgentChannelId, setAgentModelId, setSessions]);
 
   const externalSelectedModel = useMemo(() => {
     if (!agentChannelId) return null;
@@ -1862,7 +1896,9 @@ export function AgentView(): React.ReactElement {
     return { channelId: agentChannelId, modelId: agentModelId };
   }, [agentChannelId, agentModelId]);
 
-  const canSend = (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
+  const canSend = !!agentChannelId
+    && !!outgoingModelId
+    && (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
     && backendReady
     && !streaming;
 
@@ -2140,11 +2176,10 @@ export function AgentView(): React.ReactElement {
                 ) : null}
 
                 {backendReady ? (
-                  <ModelSelector
-                    filterChannelId={agentChannelId ?? undefined}
-                    externalSelectedModel={externalSelectedModel}
-                    onModelSelect={handleModelSelect}
-                  />
+            <ModelSelector
+              externalSelectedModel={externalSelectedModel}
+              onModelSelect={handleModelSelect}
+            />
                 ) : null}
 
                 {backendReady ? (

@@ -57,6 +57,14 @@ describe("agent-session-manager advanced ops", () => {
     expect(getAgentSessionMeta(created.id)?.pinned).toBeFalse();
   });
 
+  test("createAgentSession 应保存 channelId 和 modelId", () => {
+    const created = createAgentSession("模型会话", "channel-1", undefined, undefined, "provider/model-1");
+
+    expect(created.channelId).toBe("channel-1");
+    expect(created.modelId).toBe("provider/model-1");
+    expect(getAgentSessionMeta(created.id)?.modelId).toBe("provider/model-1");
+  });
+
   test("moveAgentSessionToWorkspace 应迁移 session 工作目录并更新 workspaceId", () => {
     const sourceWorkspace = createAgentWorkspace("源工作区");
     const targetWorkspace = createAgentWorkspace("目标工作区");

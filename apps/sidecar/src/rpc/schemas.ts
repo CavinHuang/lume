@@ -215,6 +215,12 @@ export const agentUpdateTitleInputSchema = z.object({
   title: z.string().min(1)
 });
 
+export const agentUpdateModelSelectionInputSchema = z.object({
+  sessionId: idSchema,
+  channelId: z.string().optional(),
+  modelId: z.string().optional()
+});
+
 export const agentMigrateChatInputSchema = z.object({
   conversationId: idSchema,
   sessionId: idSchema

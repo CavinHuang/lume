@@ -674,6 +674,7 @@ export async function getAgentRuntimeStatus(sessionId: string): Promise<AgentRun
 export async function createAgentSession(params?: {
   title?: string;
   channelId?: string;
+  modelId?: string;
   workspaceId?: string;
   parentSessionId?: string;
 }): Promise<AgentSessionMeta> {
@@ -690,6 +691,18 @@ export async function getRecentAgentSessionMessages(sessionId: string, limit: nu
 
 export async function updateAgentSessionTitle(sessionId: string, title: string): Promise<AgentSessionMeta> {
   return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.UPDATE_TITLE, { sessionId, title });
+}
+
+export async function updateAgentSessionModelSelection(
+  sessionId: string,
+  modelId?: string,
+  channelId?: string
+): Promise<AgentSessionMeta> {
+  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION, {
+    sessionId,
+    modelId,
+    channelId
+  });
 }
 
 export async function migrateChatToAgentSession(

@@ -95,6 +95,7 @@ import {
   agentSessionIdInputSchema,
   agentTruncateInputSchema,
   agentUpdateTitleInputSchema,
+  agentUpdateModelSelectionInputSchema,
   attachedPathInputSchema,
   copyFolderToSessionInputSchema,
   deleteSkillInputSchema,
@@ -143,9 +144,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return createAgentSession(
         input.title,
         input.channelId,
-        input.modelId,
         input.workspaceId,
-        input.parentSessionId
+        input.parentSessionId,
+        input.modelId
       );
     },
     [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {
@@ -183,6 +184,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.UPDATE_TITLE]: async (params) => {
       const input = validateInput(agentUpdateTitleInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_TITLE);
       return updateAgentSessionMeta(input.sessionId, { title: input.title });
+    },
+    [AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION]: async (params) => {
+      const input = validateInput(
+        agentUpdateModelSelectionInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION
+      );
+      return updateAgentSessionMeta(input.sessionId, {
+        channelId: input.channelId,
+        modelId: input.modelId
+      });
     },
     [AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT]: async (params) => {
       const input = validateInput(agentMigrateChatInputSchema, params, AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT);

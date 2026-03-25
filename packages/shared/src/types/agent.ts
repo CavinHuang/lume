@@ -656,6 +656,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_RECENT_MESSAGES: 'agent:get-recent-messages',
   /** 更新会话标题 */
   UPDATE_TITLE: 'agent:update-title',
+  /** 更新会话模型/渠道选择 */
+  UPDATE_MODEL_SELECTION: 'agent:update-model-selection',
   /** 迁移 Chat 对话消息到 Agent 会话 */
   MIGRATE_CHAT_TO_AGENT: 'agent:migrate-chat-to-agent',
   /** 置顶/取消置顶会话 */

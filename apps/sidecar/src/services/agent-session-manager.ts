@@ -102,9 +102,9 @@ export function getAgentSessionMeta(id: string): AgentSessionMeta | undefined {
 export function createAgentSession(
   title?: string,
   channelId?: string,
-  modelId?: string,
   workspaceId?: string,
-  parentSessionId?: string
+  parentSessionId?: string,
+  modelId?: string
 ): AgentSessionMeta {
   const index = readIndex();
   const now = Date.now();

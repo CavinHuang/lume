@@ -193,8 +193,8 @@ async function runRuntimeCoreMockSuccessAttempt(
   });
   sessionManager.appendMessage({
     role: "assistant",
-    provider: "anthropic",
-    model: runtime.modelId,
+    provider: prepared.modelResolution.provider,
+    model: prepared.modelResolution.resolvedModelId,
     api: "anthropic-messages",
     stopReason: "stop",
     usage: {
@@ -473,8 +473,8 @@ async function runRuntimeCoreMockDelayedAttempt(
     if (aborted) {
       sessionManager.appendMessage({
         role: "assistant",
-        provider: "anthropic",
-        model: runtime.modelId,
+        provider: prepared.modelResolution.provider,
+        model: prepared.modelResolution.resolvedModelId,
         api: "anthropic-messages",
         stopReason: "aborted",
         usage: {
@@ -507,8 +507,8 @@ async function runRuntimeCoreMockDelayedAttempt(
     });
     sessionManager.appendMessage({
       role: "assistant",
-      provider: "anthropic",
-      model: runtime.modelId,
+      provider: prepared.modelResolution.provider,
+      model: prepared.modelResolution.resolvedModelId,
       api: "anthropic-messages",
       stopReason: "stop",
       usage: {

@@ -29,6 +29,7 @@
 5. sidecar `index.ts` 已收敛为入口装配层，RPC handler 已按 `channel/chat/agent/memory/automation/channel-gateway/system` 分域拆出。
 6. `runtime-core subscribe + stream-wrappers` 已形成事件归一化单点。
 7. `AgentRuntimeStatus` 已打通 `shared -> sidecar -> web -> smoke` 的最小共享运行时状态链路。
+8. provider 配置切换链路已打通到运行时，新增 `smoke:agent-new-runtime:provider-switch` 与 `smoke:chat-provider-switch` 覆盖 Agent/Chat 的 channel/model/provider 切换与重启恢复。
 
 ## 5. 分阶段详细执行
 
@@ -55,6 +56,7 @@
 1. 实现 `discoverAuthStorage` 与 `discoverModels`。
 2. 实现 `resolveModelAsync`（provider/model/baseUrl/模型候选解析）。
 3. `runner/run.ts` 已只接入新模型解析主链。
+4. `createRuntimeCoreSession(...)` 已接受显式 resolved model，避免 fallback/custom model 在 upstream create-session 时丢失。
 
 ### Phase 4：会话与持久化对齐（进行中）
 
@@ -74,8 +76,11 @@
 
 1. 已补 `runtime-core/stream-wrappers.ts` 骨架，并接入空文本过滤、重复 `text_complete` 去重。
 2. 剩余工作是把 provider-specific quirks 显式化（如 Anthropic-compat/ZAI 差异）。
-3. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍待补充。
-4. Bun patch 与 postinstall 修改路径已删除。
+3. 已补第一条 provider-specific quirk：BigModel Anthropic-compatible 端点下忽略仅空白差异的最终 `text_complete`。
+4. 已补 `smoke:agent-new-runtime:provider-switch`，覆盖 Agent channel/model/provider 切换到运行链路。
+5. 已补 `smoke:chat-provider-switch`，覆盖 Chat channel/model/provider 切换到运行链路。
+6. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍可继续扩充。
+7. Bun patch 与 postinstall 修改路径已删除。
 
 ### Phase 7：事件语义对齐（进行中）
 
@@ -141,14 +146,14 @@
 1. 上游接口漂移：用 `pi-upstream-compat.test.ts` 提前失败。
 2. transcript 读取/投影语义漂移：通过运行级 smoke 与会话读取测试提前暴露。
 3. usage 语义已对齐，compaction 已有长会话 smoke，但 provider-specific stream quirks 仍需继续覆盖。
-4. 子任务、permission、ask-user 与 runtime status 已挂到新主链，剩余风险转为真实运行 smoke 覆盖和前端本地推断残留。
+4. 子任务、permission、ask-user、runtime status 与 provider switch 已挂到新主链，剩余风险转为更多 provider smoke 覆盖和前端本地推断残留。
 
 ## 10. 本周开工顺序（建议）
 
 1. 跑完当前 sidecar `build + smoke:agent-new-runtime*` 验证闭环
 2. 继续清理 web 侧剩余本地运行态推断，优先收口 `AgentView/agent-atoms`
 3. 为 `AgentRuntimeStatus` 增加更细粒度相位/上下文字段时，先走 shared 契约评审
-4. 补 provider-specific stream wrapper 与 provider smoke（OpenAI/Anthropic/Google/ZAI）
+4. 继续补 provider-specific stream wrapper 与 provider smoke（OpenAI/Anthropic/Google/ZAI）
 5. 保留 `pi-upstream-compat` 与包版本守卫，跟随上游升级时先看这里
 
 ---
