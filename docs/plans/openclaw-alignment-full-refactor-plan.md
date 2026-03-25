@@ -102,7 +102,7 @@
 
 1. 已删除当前 Lume ↔ Pi 手工拼装压缩路径。
 2. 已接入 runtime-core native `auto_compaction_*` lifecycle。
-3. 已补 `smoke:agent-new-runtime:compact`，剩余工作是扩大到更真实的长会话输入规模。
+3. 已补 `smoke:agent-new-runtime:compact`，并已将种子扩到更重的多轮长会话输入，当前断言会校验 compaction 持久化与历史标记保留。
 
 ### Phase 9：切流与清理（进行中）
 

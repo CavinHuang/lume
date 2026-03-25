@@ -13,7 +13,8 @@ const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const STREAM_EVENT_METHOD = "agent:stream:event";
 const STREAM_COMPLETE_METHOD = "agent:stream:complete";
 const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
-const SEED_TURN_COUNT = 4;
+const SEED_TURN_COUNT = Number(process.env.LUME_SMOKE_COMPACT_TURN_COUNT || 6);
+const SEED_PAYLOAD_REPEATS = Number(process.env.LUME_SMOKE_COMPACT_PAYLOAD_REPEATS || 4);
 const MOCK_TEXT_MARKER = "smoke-new-runtime-compact";
 const COMPACTION_SUMMARY = "smoke compaction summary";
 
@@ -158,7 +159,8 @@ async function run() {
 
     const seedMessages = buildLongCompactionSeedMessages({
       turnCount: SEED_TURN_COUNT,
-      marker: "compact-seed"
+      marker: "compact-seed",
+      payloadRepeats: SEED_PAYLOAD_REPEATS
     });
     let completedSeedTurns = 0;
     for (const userMessage of seedMessages) {
@@ -215,7 +217,8 @@ async function run() {
       compactEvents: compactEvents.map((item) => item.params?.event ?? {}),
       persistedJsonlContents,
       completedSeedTurns,
-      compactionSummary: COMPACTION_SUMMARY
+      compactionSummary: COMPACTION_SUMMARY,
+      expectedSeedMarker: "compact-seed"
     });
 
     console.log("SMOKE_AGENT_NEW_RUNTIME_COMPACT_OK");
