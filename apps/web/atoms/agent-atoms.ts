@@ -11,6 +11,10 @@ import type {
   AgentWorkspace,
   AgentSendInput
 } from "@lume/shared";
+import {
+  isAgentRuntimePhaseActive,
+  resolveAgentBusyState
+} from "@/lib/agent-runtime-status";
 
 export interface ToolActivity {
   toolUseId: string;
@@ -395,14 +399,7 @@ export const currentAgentToolPermissionRequestAtom = atom<AgentToolPermissionReq
 export const agentStreamingAtom = atom<boolean>((get) => {
   const status = get(currentAgentRuntimeStatusAtom);
   const localRunning = !!get(currentAgentStreamStateAtom)?.running;
-  if (status) {
-    return status.phase === "streaming"
-      || status.phase === "awaiting_permission"
-      || status.phase === "awaiting_user_answer"
-      || status.phase === "compacting"
-      || localRunning;
-  }
-  return localRunning;
+  return resolveAgentBusyState(status, localRunning);
 });
 
 export const agentStreamingContentAtom = atom<string>((get) => get(currentAgentStreamStateAtom)?.content ?? "");
@@ -473,16 +470,11 @@ export const agentRunningSessionIdsAtom = atom<Set<string>>((get) => {
   const ids = new Set<string>();
   const runtimeStatuses = get(agentRuntimeStatusesAtom);
   for (const [id, status] of runtimeStatuses) {
-    if (
-      status.phase === "streaming"
-      || status.phase === "awaiting_permission"
-      || status.phase === "awaiting_user_answer"
-      || status.phase === "compacting"
-    ) {
+    if (isAgentRuntimePhaseActive(status.phase)) {
       ids.add(id);
     }
   }
-  if (ids.size > 0) {
+  if (runtimeStatuses.size > 0) {
     return ids;
   }
   const states = get(agentStreamingStatesAtom);

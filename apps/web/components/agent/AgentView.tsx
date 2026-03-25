@@ -81,6 +81,11 @@ import {
   updateAgentSessionTitle
 } from "@/lib/desktop-api";
 import { cn } from "@/lib/utils";
+import {
+  isAgentRuntimeAwaitingInput,
+  isAgentRuntimeStatusActive,
+  resolveAgentBusyState
+} from "@/lib/agent-runtime-status";
 import { AgentHeader } from "./AgentHeader";
 import { AgentMessages } from "./AgentMessages";
 import type { AgentInlineEditSubmitPayload } from "./AgentMessages";
@@ -413,6 +418,10 @@ export function AgentView(): React.ReactElement {
   const currentWorkspace = useMemo(() => {
     return resolveAgentSessionWorkspace(workspaces, workspaceId, session?.workspaceId);
   }, [workspaceId, session?.workspaceId, workspaces]);
+  const hasSharedRuntimeStatus = currentRuntimeStatus !== null;
+  const isAwaitingInteractiveInput = isAgentRuntimeAwaitingInput(currentRuntimeStatus);
+  const isRuntimeActivePhase = isAgentRuntimeStatusActive(currentRuntimeStatus);
+  const isAgentBusy = resolveAgentBusyState(currentRuntimeStatus, streaming);
 
   type TodoItem = {
     content: string;
@@ -1343,7 +1352,7 @@ export function AgentView(): React.ReactElement {
   useEffect(() => {
     if (!pendingPrompt) return;
     if (!sessionId || pendingPrompt.sessionId !== sessionId) return;
-    if (!backendReady || streaming) return;
+    if (!backendReady || isAgentBusy) return;
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
@@ -1396,7 +1405,7 @@ export function AgentView(): React.ReactElement {
     agentModelId,
     agentPermissionMode,
     workspaceId,
-    streaming,
+    isAgentBusy,
     setPendingPrompt,
     setStreamingStates,
     setMessages
@@ -1487,7 +1496,7 @@ export function AgentView(): React.ReactElement {
   }, []);
 
   const handleCompact = useCallback((): void => {
-    if (!sessionId || !agentChannelId || streaming) return;
+    if (!sessionId || !agentChannelId || isAgentBusy) return;
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
@@ -1505,7 +1514,7 @@ export function AgentView(): React.ReactElement {
       chatType: "direct",
       permissionMode: agentPermissionMode
     });
-  }, [sessionId, agentChannelId, outgoingModelId, agentPermissionMode, workspaceId, streaming, setStreamingStates]);
+  }, [sessionId, agentChannelId, outgoingModelId, agentPermissionMode, workspaceId, isAgentBusy, setStreamingStates]);
 
   const handleStop = useCallback((): void => {
     if (!sessionId) return;
@@ -1523,7 +1532,7 @@ export function AgentView(): React.ReactElement {
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputContent.trim();
-    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !sessionId || !backendReady || streaming) {
+    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !sessionId || !backendReady || isAgentBusy) {
       return;
     }
 
@@ -1641,14 +1650,14 @@ export function AgentView(): React.ReactElement {
     agentPermissionMode,
     workspaceId,
     workspaces,
-    streaming,
+    isAgentBusy,
     setStreamErrors,
     setStreamingStates,
     setMessages
   ]);
 
   const sendFromMessageContent = useCallback((content: string, messageMetadata?: Record<string, unknown>): void => {
-    if (!sessionId || !backendReady || streaming) return;
+    if (!sessionId || !backendReady || isAgentBusy) return;
     planStreamCaptureRef.current = agentPermissionMode === "plan";
     if (agentPermissionMode === "plan") {
       enterPlan();
@@ -1710,7 +1719,7 @@ export function AgentView(): React.ReactElement {
     enterPlan,
     sessionId,
     backendReady,
-    streaming,
+    isAgentBusy,
     agentChannelId,
     outgoingModelId,
     workspaceId,
@@ -1721,7 +1730,7 @@ export function AgentView(): React.ReactElement {
   ]);
 
   useEffect(() => {
-    if (!sessionId || !streaming) return;
+    if (!sessionId || !isAgentBusy) return;
 
     let disposed = false;
     let pending = false;
@@ -1731,8 +1740,6 @@ export function AgentView(): React.ReactElement {
       if (disposed || pending) return;
       const lastEventAt = lastAgentEventAtRef.current.get(sessionId) ?? 0;
       const lastActiveAt = lastEventAt > 0 ? lastEventAt : streamStartedAt;
-      const isAwaitingInteractiveInput = currentRuntimeStatus?.phase === "awaiting_permission"
-        || currentRuntimeStatus?.phase === "awaiting_user_answer";
       const activeTools = toolActivities.filter((item) => !item.done);
       const hasRunningWebSearch = activeTools.some((item) => item.toolName === "web_search");
       const idleTimeoutMs = hasRunningWebSearch
@@ -1801,8 +1808,8 @@ export function AgentView(): React.ReactElement {
     };
   }, [
     sessionId,
-    streaming,
-    currentRuntimeStatus,
+    isAgentBusy,
+    isAwaitingInteractiveInput,
     toolActivities,
     setMessages,
     setStreamErrors,
@@ -1816,21 +1823,21 @@ export function AgentView(): React.ReactElement {
   }, [sessionId, setMessages]);
 
   const handleResendMessage = useCallback(async (message: AgentMessage): Promise<void> => {
-    if (streaming || !sessionId) return;
+    if (isAgentBusy || !sessionId) return;
     await truncateFromMessage(message.id);
     sendFromMessageContent(message.content ?? "");
-  }, [sessionId, streaming, sendFromMessageContent, truncateFromMessage]);
+  }, [sessionId, isAgentBusy, sendFromMessageContent, truncateFromMessage]);
 
   const handleDeleteMessage = useCallback(async (message: AgentMessage): Promise<void> => {
-    if (streaming || !sessionId) return;
+    if (isAgentBusy || !sessionId) return;
     await truncateFromMessage(message.id);
     setInlineEditingMessageId(null);
-  }, [sessionId, streaming, truncateFromMessage]);
+  }, [sessionId, isAgentBusy, truncateFromMessage]);
 
   const handleStartInlineEdit = useCallback((message: AgentMessage): void => {
-    if (streaming) return;
+    if (isAgentBusy) return;
     setInlineEditingMessageId(message.id);
-  }, [streaming]);
+  }, [isAgentBusy]);
 
   const handleCancelInlineEdit = useCallback((): void => {
     setInlineEditingMessageId(null);
@@ -1840,7 +1847,7 @@ export function AgentView(): React.ReactElement {
     message: AgentMessage,
     payload: AgentInlineEditSubmitPayload
   ): Promise<void> => {
-    if (streaming || !sessionId) return;
+    if (isAgentBusy || !sessionId) return;
     const { block } = splitAttachedFiles(message.content ?? "");
     const text = payload.content.trim();
     const nextContent = block
@@ -1850,7 +1857,7 @@ export function AgentView(): React.ReactElement {
     await truncateFromMessage(message.id);
     sendFromMessageContent(nextContent);
     setInlineEditingMessageId(null);
-  }, [sessionId, streaming, truncateFromMessage, sendFromMessageContent]);
+  }, [sessionId, isAgentBusy, truncateFromMessage, sendFromMessageContent]);
 
   const handleSaveAsTask = useCallback(async (message: AgentMessage): Promise<void> => {
     const prompt = (message.content ?? "").trim();
@@ -1900,7 +1907,7 @@ export function AgentView(): React.ReactElement {
     && !!outgoingModelId
     && (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
     && backendReady
-    && !streaming;
+    && !isAgentBusy;
 
   if (!sessionId) {
     return (
@@ -1927,7 +1934,7 @@ export function AgentView(): React.ReactElement {
           />
 
           <AgentMessages
-            isStreaming={streaming}
+            isStreaming={isAgentBusy}
             isSwitching={sessionSwitching}
             inlineEditingMessageId={inlineEditingMessageId}
             onDeleteMessage={handleDeleteMessage}
@@ -2187,14 +2194,14 @@ export function AgentView(): React.ReactElement {
                     totalTokens={contextStatus.totalTokens}
                     contextWindow={contextStatus.contextWindow}
                     isCompacting={contextStatus.isCompacting}
-                    isProcessing={streaming}
+                    isProcessing={isAgentBusy}
                     onCompact={handleCompact}
                   />
                 ) : null}
               </div>
 
               <div className="flex items-center gap-1.5">
-                {streaming ? (
+                {isAgentBusy ? (
                   <Button
                     type="button"
                     variant="ghost"

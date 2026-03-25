@@ -31,12 +31,22 @@ describe("agent-runtime-status contract", () => {
     expect(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED).toBe("agent:runtime-status-changed");
   });
 
-  test("共享 runtime status 为 idle 时应允许本地 running 兜底", () => {
+  test("共享 runtime status 为 idle 时不应再被本地 running 覆盖", () => {
     const store = createStore();
     store.set(currentAgentSessionIdAtom, "session-1");
     store.set(agentRuntimeStatusesAtom, new Map([
       ["session-1", { sessionId: "session-1", phase: "idle", updatedAt: Date.now() }]
     ]));
+    store.set(agentStreamingStatesAtom, new Map([
+      ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
+    ]));
+
+    expect(store.get(agentStreamingAtom)).toBe(false);
+  });
+
+  test("共享 runtime status 缺失时应允许本地 running 兜底", () => {
+    const store = createStore();
+    store.set(currentAgentSessionIdAtom, "session-1");
     store.set(agentStreamingStatesAtom, new Map([
       ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
     ]));
@@ -61,7 +71,19 @@ describe("agent-runtime-status contract", () => {
   test("running session ids 应优先使用共享 runtime status", () => {
     const store = createStore();
     store.set(agentRuntimeStatusesAtom, new Map([
-      ["session-1", { sessionId: "session-1", phase: "awaiting_permission", updatedAt: Date.now() }]
+      ["session-1", { sessionId: "session-1", phase: "idle", updatedAt: Date.now() }]
+    ]));
+    store.set(agentStreamingStatesAtom, new Map([
+      ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
+    ]));
+
+    expect(store.get(agentRunningSessionIdsAtom).has("session-1")).toBe(false);
+  });
+
+  test("running session ids 在共享 runtime status 缺失时应回退到本地 streaming state", () => {
+    const store = createStore();
+    store.set(agentStreamingStatesAtom, new Map([
+      ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
     ]));
 
     expect(store.get(agentRunningSessionIdsAtom).has("session-1")).toBe(true);

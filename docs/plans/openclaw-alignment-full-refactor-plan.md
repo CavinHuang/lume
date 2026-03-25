@@ -30,6 +30,7 @@
 6. `runtime-core subscribe + stream-wrappers` 已形成事件归一化单点。
 7. `AgentRuntimeStatus` 已打通 `shared -> sidecar -> web -> smoke` 的最小共享运行时状态链路。
 8. provider 配置切换链路已打通到运行时，新增 `smoke:agent-new-runtime:provider-switch` 与 `smoke:chat-provider-switch` 覆盖 Agent/Chat 的 channel/model/provider 切换与重启恢复。
+9. web 侧 `agent-atoms/AgentView` 已进一步收口运行态判断，当前优先信任共享 `AgentRuntimeStatus`，仅在状态缺失时回退到本地 streaming state。
 
 ## 5. 分阶段详细执行
 
@@ -88,6 +89,8 @@
 2. usage 语义已修复，不再把 `totalTokens` 当 `inputTokens`。
 3. 文本回填、去重和终止事件语义已开始由 sidecar 单点保证。
 4. 剩余工作是继续把前端本地推断收回到共享事件/共享状态契约。
+5. 已完成第一轮前端运行态收口：`agentStreamingAtom`、`agentRunningSessionIdsAtom` 与 `AgentView` 统一改为“共享 runtime status 优先，本地 streaming 仅缺失兜底”。
+6. 下一步重点转向更细粒度共享状态字段或补 UI 行为回归测试，而不是继续保留双重状态语义。
 
 ### Phase 8：Compaction 对齐
 
@@ -151,11 +154,11 @@
 ## 10. 本周开工顺序（建议）
 
 1. 跑完当前 sidecar `build + smoke:agent-new-runtime*` 验证闭环
-2. 继续清理 web 侧剩余本地运行态推断，优先收口 `AgentView/agent-atoms`
-3. 为 `AgentRuntimeStatus` 增加更细粒度相位/上下文字段时，先走 shared 契约评审
+2. 为 `AgentRuntimeStatus` 增加更细粒度相位/上下文字段时，先走 shared 契约评审
+3. 继续补 web 侧围绕共享 runtime status 的行为回归测试
 4. 继续补 provider-specific stream wrapper 与 provider smoke（OpenAI/Anthropic/Google/ZAI）
 5. 保留 `pi-upstream-compat` 与包版本守卫，跟随上游升级时先看这里
 
 ---
 
-最后更新：2026-03-24
+最后更新：2026-03-25
