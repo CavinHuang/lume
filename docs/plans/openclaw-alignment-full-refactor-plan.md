@@ -61,12 +61,12 @@
 3. `runner/run.ts` 已只接入新模型解析主链。
 4. `createRuntimeCoreSession(...)` 已接受显式 resolved model，避免 fallback/custom model 在 upstream create-session 时丢失。
 
-### Phase 4：会话与持久化对齐（进行中）
+### Phase 4：会话与持久化对齐（已完成）
 
 1. `run/attempt.ts` 切换为 `createAgentSession(...)` 主链。
 2. `SessionManager` 接管 transcript 读写。
 3. 历史迁移工具已不再需要。
-4. 当前已收口为 transcript 主存储，不再保留 Agent 消息兼容投影。
+4. 当前已收口为 transcript 主存储，不再保留 Agent 消息兼容投影；重启恢复与 transcript-only 读取路径已完成验证。
 
 ### Phase 5：工具链与权限链对齐（进行中）
 
