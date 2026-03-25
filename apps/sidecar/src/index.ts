@@ -7,7 +7,7 @@ import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory
 import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat/chat-tools-watcher";
 import { seedDefaultSkills } from "./services/default-skills-seeder";
 import { startRelayServer, stopRelayServer } from "./services/browser/extension-relay";
-import { initProxySettings } from "./services/proxy-settings-manager";
+import { initProxySettings } from "./services/system/proxy-settings-manager";
 import {
   startAutomationRunner,
   stopAutomationRunner

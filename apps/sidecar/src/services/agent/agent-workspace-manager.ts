@@ -32,7 +32,7 @@ import {
   getWorkspaceSkillsDir
 } from "../config-paths";
 import { seedDefaultSkills } from "../default-skills-seeder";
-import { ensureBootstrapFiles } from "../workspace-bootstrap-service";
+import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 
 interface AgentWorkspacesIndex {
   version: number;

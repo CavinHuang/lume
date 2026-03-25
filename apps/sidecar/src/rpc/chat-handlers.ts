@@ -28,7 +28,7 @@ import {
   setDefaultPrompt,
   updateAppendSetting,
   updateSystemPrompt
-} from "../services/system-prompt-manager";
+} from "../services/system/system-prompt-manager";
 import {
   createCustomChatTool,
   deleteCustomChatTool,

@@ -70,7 +70,7 @@ import {
   importGlobalMcpToWorkspace,
   importGlobalSkillToWorkspace,
   installGlobalPlugin
-} from "../services/global-discovery-service";
+} from "../services/system/global-discovery-service";
 import { createLogger, getLogsDir } from "../services/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { getSessionEventBus } from "../services/pi-agent/session-event-bus";
@@ -83,8 +83,8 @@ import {
 import {
   getAgentProxyStatus,
   saveAgentProxySettings
-} from "../services/proxy-settings-manager";
-import { readBootstrapFile, writeBootstrapFile } from "../services/workspace-bootstrap-service";
+} from "../services/system/proxy-settings-manager";
+import { readBootstrapFile, writeBootstrapFile } from "../services/system/workspace-bootstrap-service";
 import {
   agentCreateSessionInputSchema,
   agentListSubagentRunsInputSchema,

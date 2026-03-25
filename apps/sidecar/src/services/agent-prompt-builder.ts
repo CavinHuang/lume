@@ -12,7 +12,7 @@ import type { MemoryCitationsMode } from "./memory-policy";
 import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
-} from "./workspace-bootstrap-service";
+} from "./system/workspace-bootstrap-service";
 import { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-service";
 import type { SessionType } from "@lume/shared";
 
