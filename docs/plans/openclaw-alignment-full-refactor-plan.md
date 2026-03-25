@@ -104,11 +104,11 @@
 2. 已接入 runtime-core native `auto_compaction_*` lifecycle。
 3. 已补 `smoke:agent-new-runtime:compact`，并已将种子扩到更重的多轮长会话输入，当前断言会校验 compaction 持久化与历史标记保留。
 
-### Phase 9：切流与清理（进行中）
+### Phase 9：切流与清理（已完成）
 
 1. 已默认切到 `new`。
 2. 已删除 legacy 路径与临时 Bun 适配代码。
-3. sidecar 入口层结构拆分已完成，剩余工作聚焦于 transcript-first 存储、compaction 和真实 smoke 覆盖。
+3. sidecar 入口层结构拆分已完成，`build + smoke:agent-new-runtime* + smoke:chat-provider-switch` 已完成一轮验证闭环。
 
 ## 6. 工单总表（20 张）
 
@@ -164,6 +164,10 @@
 3. 如需继续扩展 `AgentRuntimeStatus` 细粒度字段，先走 shared 契约评审
 4. 继续补 provider-specific stream wrapper 与 provider smoke（OpenAI/Anthropic/Google/ZAI）
 5. 保留 `pi-upstream-compat` 与包版本守卫，跟随上游升级时先看这里
+
+注：
+
+1. 上述后续事项属于增强覆盖与后续优化，不再阻塞 Phase 9 的“切流与清理”收口。
 
 ---
 
