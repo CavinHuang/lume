@@ -81,8 +81,9 @@
 4. 已补 `smoke:agent-new-runtime:provider-switch`，覆盖 Agent channel/model/provider 切换到运行链路。
 5. 已补 `smoke:chat-provider-switch`，覆盖 Chat channel/model/provider 切换到运行链路。
 6. 已修正 stream wrapper 的跨轮去重残留：新一轮 `text_delta` 到达后会重置上一轮 `final text_complete` 记忆，避免误吞同文案的下一轮结束事件。
-7. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍可继续扩充。
-8. Bun patch 与 postinstall 修改路径已删除。
+7. 当前已验证 `smoke:agent-new-runtime`、`smoke:agent-new-runtime:error`、`smoke:agent-new-runtime:stop`、`smoke:agent-new-runtime:compact`、`smoke:agent-new-runtime:bridges`、`smoke:agent-new-runtime:provider-switch` 与 `smoke:chat-provider-switch`。
+8. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍可继续扩充。
+9. Bun patch 与 postinstall 修改路径已删除。
 
 ### Phase 7：事件语义对齐（进行中）
 
@@ -133,9 +134,9 @@
 ## 7. 验收门禁（每周）
 
 1. W1：`typecheck` + ARC/CORE 单测全绿。
-2. W2：`smoke:agent-new-runtime`、`smoke:agent-new-runtime:error` 全绿。
-3. W3：工具权限回归（plan/default/acceptEdits/bypassPermissions）全绿。
-4. W4：`smoke:agent-new-runtime:compact` + 重启恢复 + subagent E2E 全绿。
+2. W2：`smoke:agent-new-runtime`、`smoke:agent-new-runtime:error`、`smoke:agent-new-runtime:stop` 全绿。
+3. W3：工具权限回归（plan/default/acceptEdits/bypassPermissions）全绿；`smoke:agent-new-runtime:bridges` 已通过。
+4. W4：`smoke:agent-new-runtime:compact` + 重启恢复 + subagent E2E 全绿；其中 compact smoke 当前已通过。
 5. `new` 模式多轮恢复 smoke 通过。
 6. legacy 独立执行链已删除。
 
@@ -154,7 +155,7 @@
 
 ## 10. 本周开工顺序（建议）
 
-1. 跑完当前 sidecar `build + smoke:agent-new-runtime*` 验证闭环
+1. 当前 sidecar `build + smoke:agent-new-runtime* + smoke:chat-provider-switch` 已完成一轮验证闭环
 2. 为 `AgentRuntimeStatus` 增加更细粒度相位/上下文字段时，先走 shared 契约评审
 3. 继续补 web 侧围绕共享 runtime status 的行为回归测试
 4. 继续补 provider-specific stream wrapper 与 provider smoke（OpenAI/Anthropic/Google/ZAI）
