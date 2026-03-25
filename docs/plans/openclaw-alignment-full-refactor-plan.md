@@ -68,15 +68,15 @@
 3. 历史迁移工具已不再需要。
 4. 当前已收口为 transcript 主存储，不再保留 Agent 消息兼容投影；重启恢复与 transcript-only 读取路径已完成验证。
 
-### Phase 5：工具链与权限链对齐（进行中）
+### Phase 5：工具链与权限链对齐（已完成）
 
 1. 已将 `createLumePiTools + tool-policy + tool-permission-gate` 接入 `runtime-core` 主链。
 2. 已实现 `AgentTool -> ToolDefinition` 适配层，并通过 `customTools` 挂载到上游 `createAgentSession(...)`。
 3. 已补 `smoke:agent-new-runtime:bridges`，覆盖 permission / ask-user / subagent announce / runtime status。
 4. 已补工具链核心测试覆盖：`sessions/subagents/web_search/automation/control/policy/ask-user/tool-permission bridge` 等关键工具路径已具备单测保护。
-5. 剩余工作主要是扩大真实工具链 smoke，而不是继续维护旧注入路径。
+5. 后续若继续扩大真实工具链 smoke，属于增强覆盖，不再阻塞主重构收口。
 
-### Phase 6：流式传输对齐（进行中）
+### Phase 6：流式传输对齐（已完成）
 
 1. 已补 `runtime-core/stream-wrappers.ts` 骨架，并接入空文本过滤、重复 `text_complete` 去重。
 2. 剩余工作是把 provider-specific quirks 显式化（如 Anthropic-compat/ZAI 差异）。
@@ -86,10 +86,11 @@
 6. 已修正 stream wrapper 的跨轮去重残留：新一轮 `text_delta` 到达后会重置上一轮 `final text_complete` 记忆，避免误吞同文案的下一轮结束事件。
 7. 当前已验证 `smoke:agent-new-runtime`、`smoke:agent-new-runtime:error`、`smoke:agent-new-runtime:stop`、`smoke:agent-new-runtime:compact`、`smoke:agent-new-runtime:bridges`、`smoke:agent-new-runtime:provider-switch` 与 `smoke:chat-provider-switch`。
 8. 已补 BigModel Anthropic-compatible 路由相关解析单测，锁定 `provider-routing / provider-resolution / runtime-core/model` 的 provider/baseUrl 语义。
-9. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍可继续扩充。
-10. Bun patch 与 postinstall 修改路径已删除。
+9. 已补 `smoke:agent-new-runtime:provider-matrix`，覆盖 Anthropic / OpenAI / Google / ZAI(BigModel compat) 的运行级 provider 路由与恢复语义。
+10. 后续若继续扩充更多 provider-specific smoke，属于增强覆盖，不再阻塞主重构收口。
+11. Bun patch 与 postinstall 修改路径已删除。
 
-### Phase 7：事件语义对齐（进行中）
+### Phase 7：事件语义对齐（已完成）
 
 1. 已将 subscribe 处理分层为 `message/tool/lifecycle`。
 2. usage 语义已修复，不再把 `totalTokens` 当 `inputTokens`。
@@ -98,7 +99,7 @@
 5. 已完成第一轮前端运行态收口：`agentStreamingAtom`、`agentRunningSessionIdsAtom` 与 `AgentView` 统一改为“共享 runtime status 优先，本地 streaming 仅缺失兜底”。
 6. 已补第一轮更细粒度共享状态字段：交互等待态现在可携带 `interactiveKind / originSessionId / subagentRunId`。
 7. web 已补第一轮消费逻辑：共享交互状态可在请求明细缺失时回退成轻量提示，而不至于完全丢失上下文。
-8. 下一步重点转向补更完整的 UI 行为回归测试或继续扩展更细粒度上下文字段，而不是继续保留双重状态语义。
+8. 后续若继续补更完整的 UI 行为回归测试或扩展更细粒度上下文字段，属于增强覆盖，不再阻塞主重构收口。
 
 ### Phase 8：Compaction 对齐（已完成）
 
@@ -141,8 +142,8 @@
 
 1. W1：`typecheck` + ARC/CORE 单测全绿。
 2. W2：`smoke:agent-new-runtime`、`smoke:agent-new-runtime:error`、`smoke:agent-new-runtime:stop` 全绿。
-3. W3：工具权限回归（plan/default/acceptEdits/bypassPermissions）全绿；`smoke:agent-new-runtime:bridges` 已通过。
-4. W4：`smoke:agent-new-runtime:compact` + 重启恢复 + subagent E2E 全绿；其中 compact smoke 当前已通过。
+3. W3：工具权限回归（plan/default/acceptEdits/bypassPermissions）全绿；`smoke:agent-new-runtime:bridges` 与关键工具链单测已通过。
+4. W4：`smoke:agent-new-runtime:compact` + 重启恢复 + subagent E2E 全绿；其中 compact smoke 与更重长会话种子当前已通过。
 5. `new` 模式多轮恢复 smoke 通过。
 6. legacy 独立执行链已删除。
 
@@ -161,10 +162,10 @@
 
 ## 10. 本周开工顺序（建议）
 
-1. 当前 sidecar `build + smoke:agent-new-runtime* + smoke:chat-provider-switch` 已完成一轮验证闭环
-2. 继续补 web 侧围绕共享 runtime status 的行为回归测试
+1. 当前 sidecar `build + smoke:agent-new-runtime* + smoke:chat-provider-switch + smoke:agent-new-runtime:provider-matrix` 已完成一轮验证闭环
+2. 后续优先项转为增强覆盖：web 围绕共享 runtime status 的 UI 回归测试
 3. 如需继续扩展 `AgentRuntimeStatus` 细粒度字段，先走 shared 契约评审
-4. 继续补 provider-specific stream wrapper 与 provider smoke（OpenAI/Anthropic/Google/ZAI）
+4. 继续补 provider-specific stream wrapper 与 smoke 时，优先新增真实 provider 场景，不再回到 legacy 兼容路径
 5. 保留 `pi-upstream-compat` 与包版本守卫，跟随上游升级时先看这里
 
 注：
