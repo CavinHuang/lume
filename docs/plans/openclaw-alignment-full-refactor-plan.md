@@ -84,8 +84,9 @@
 5. 已补 `smoke:chat-provider-switch`，覆盖 Chat channel/model/provider 切换到运行链路。
 6. 已修正 stream wrapper 的跨轮去重残留：新一轮 `text_delta` 到达后会重置上一轮 `final text_complete` 记忆，避免误吞同文案的下一轮结束事件。
 7. 当前已验证 `smoke:agent-new-runtime`、`smoke:agent-new-runtime:error`、`smoke:agent-new-runtime:stop`、`smoke:agent-new-runtime:compact`、`smoke:agent-new-runtime:bridges`、`smoke:agent-new-runtime:provider-switch` 与 `smoke:chat-provider-switch`。
-8. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍可继续扩充。
-9. Bun patch 与 postinstall 修改路径已删除。
+8. 已补 BigModel Anthropic-compatible 路由相关解析单测，锁定 `provider-routing / provider-resolution / runtime-core/model` 的 provider/baseUrl 语义。
+9. 逐 provider smoke（OpenAI/Anthropic/Google/ZAI 等）仍可继续扩充。
+10. Bun patch 与 postinstall 修改路径已删除。
 
 ### Phase 7：事件语义对齐（进行中）
 
