@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getAgentSessionMessages, listAgentSessions } from "./agent/agent-session-manager";
 import { listAgentWorkspaces } from "./agent/agent-workspace-manager";
-import { getConversationMessages } from "./conversation-manager";
+import { getConversationMessages } from "./chat/conversation-manager";
 import {
   getAgentSessionsIndexPath,
   getAgentWorkspacesIndexPath,

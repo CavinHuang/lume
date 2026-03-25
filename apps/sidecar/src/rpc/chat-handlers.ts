@@ -19,8 +19,8 @@ import {
   truncateMessagesFrom,
   updateContextDividers,
   updateConversationMeta
-} from "../services/conversation-manager";
-import { generateTitle, sendMessage, stopGeneration } from "../services/chat-service";
+} from "../services/chat/conversation-manager";
+import { generateTitle, sendMessage, stopGeneration } from "../services/chat/chat-service";
 import {
   createSystemPrompt,
   deleteSystemPrompt,
@@ -37,12 +37,12 @@ import {
   testChatTool,
   updateChatToolCredentials,
   updateChatToolState
-} from "../services/chat-tool-manager";
+} from "../services/chat/chat-tool-manager";
 import {
   deleteAttachment,
   readAttachmentAsBase64,
   saveAttachment
-} from "../services/attachment-service";
+} from "../services/chat/attachment-service";
 import { extractTextFromAttachment } from "../services/document-parser";
 import {
   chatContextDividersInputSchema,

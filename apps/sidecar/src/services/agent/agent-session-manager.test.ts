@@ -17,7 +17,7 @@ import {
 } from "./agent-session-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentWorkspacePath } from "../config-paths";
-import { appendMessage, createConversation } from "../conversation-manager";
+import { appendMessage, createConversation } from "../chat/conversation-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath

@@ -4,7 +4,7 @@
 
 ## 1. 背景
 
-当前 `apps/sidecar/src/services` 的 `agent` 第一阶段整理已经完成，并完成了验证闭环。
+当前 `apps/sidecar/src/services` 的 `agent` 第一阶段整理已经完成，并完成了验证闭环；`chat` 域第二阶段整理也已开始并完成首批收口。
 
 本轮之前已经完成：
 
@@ -19,6 +19,8 @@
 1. 把 `services` 根目录下散落的 Agent 主链文件收进 `services/agent/`
 2. 修正 `rpc / memory / channel-gateway / pi-agent` 等引用链路
 3. 恢复本地依赖并完成 `typecheck / build / 单测 / smoke` 验证
+4. 把 `chat-service / conversation-manager / attachment-service / chat-tool-* / chat-tools-watcher` 收进 `services/chat/`
+5. 完成 chat 域重组后的 `typecheck + chat 相关测试` 验证
 
 ## 2. 最近已提交检查点
 
@@ -239,5 +241,5 @@ bun run smoke:agent-new-runtime:provider-switch
 
 建议从以下两个方向二选一继续：
 
-1. 提交这一批 `services/agent/` 第一阶段整理，结束本阶段
-2. 进入下一阶段，但先重新定义范围，不沿用这份“第一阶段整理”计划继续推进
+1. 继续按域收口，把 `system-prompt / workspace-bootstrap / global-discovery / proxy-settings` 等更偏配置与基础设施的模块做第二轮分组
+2. 先停在当前状态，等待更大范围的 `services` 分层方案再继续推进

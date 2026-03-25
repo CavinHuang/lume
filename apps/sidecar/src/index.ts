@@ -4,7 +4,7 @@ import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { ChannelGatewayIngressStatus } from "@lume/shared";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory-sync-watcher";
-import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat-tools-watcher";
+import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat/chat-tools-watcher";
 import { seedDefaultSkills } from "./services/default-skills-seeder";
 import { startRelayServer, stopRelayServer } from "./services/browser/extension-relay";
 import { initProxySettings } from "./services/proxy-settings-manager";

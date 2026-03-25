@@ -6,7 +6,7 @@ import {
   clearNanoBananaConversationHistory,
   generateNanoBananaImage
 } from "./nano-banana-service";
-import { saveAttachment } from "./attachment-service";
+import { saveAttachment } from "./chat/attachment-service";
 
 describe("nano-banana-service", () => {
   let prevConfigDir: string | undefined;

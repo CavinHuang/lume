@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { ChatToolTestResult, FileAttachment } from "@lume/shared";
-import { isImageAttachment, readAttachmentAsBase64, saveAttachment } from "./attachment-service";
+import { isImageAttachment, readAttachmentAsBase64, saveAttachment } from "./chat/attachment-service";
 
 export const NANO_BANANA_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 export const NANO_BANANA_DEFAULT_MODEL = "gemini-3.1-flash-image-preview";
