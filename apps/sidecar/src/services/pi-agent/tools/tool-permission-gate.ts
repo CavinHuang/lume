@@ -195,10 +195,10 @@ export function wrapToolsWithPermissionGate(
         const normalizedToolName = toolName.trim().toLowerCase();
         if (normalizedToolName === "enterplanmode") {
           runtimeState.inPlanMode = true;
-          try { const { getSessionStateManager } = await import("../../session-state-manager"); getSessionStateManager().setPlanMode(input.sessionId, true); } catch { /* ignore */ }
+          try { const { getSessionStateManager } = await import("../../runtime/session-state-manager"); getSessionStateManager().setPlanMode(input.sessionId, true); } catch { /* ignore */ }
         } else if (normalizedToolName === "exitplanmode") {
           runtimeState.inPlanMode = false;
-          try { const { getSessionStateManager } = await import("../../session-state-manager"); getSessionStateManager().setPlanMode(input.sessionId, false); } catch { /* ignore */ }
+          try { const { getSessionStateManager } = await import("../../runtime/session-state-manager"); getSessionStateManager().setPlanMode(input.sessionId, false); } catch { /* ignore */ }
         }
         return result;
       }

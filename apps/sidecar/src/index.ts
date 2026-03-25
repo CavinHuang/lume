@@ -11,7 +11,7 @@ import { initProxySettings } from "./services/system/proxy-settings-manager";
 import {
   startAutomationRunner,
   stopAutomationRunner
-} from "./services/automation-runner-service";
+} from "./services/automation/automation-runner-service";
 import {
   getFeishuGatewayConfig,
 } from "./services/channel-gateway/feishu-config-manager";

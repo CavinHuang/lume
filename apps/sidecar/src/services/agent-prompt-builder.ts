@@ -13,7 +13,7 @@ import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
 } from "./system/workspace-bootstrap-service";
-import { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-service";
+import { isHeartbeatContentEffectivelyEmpty } from "./runtime/heartbeat-service";
 import type { SessionType } from "@lume/shared";
 
 export const LUME_AGENT_IDENTITY_LINE = "You are a personal assistant running inside Lume.";

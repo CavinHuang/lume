@@ -11,12 +11,12 @@ import {
   deleteAutomationJob,
   listAutomationJobs,
   updateAutomationJob
-} from "../services/automation-manager";
+} from "../services/automation/automation-manager";
 import {
   listAutomationRuns,
   refreshAutomationRunnerJobs,
   runAutomationJobNow
-} from "../services/automation-runner-service";
+} from "../services/automation/automation-runner-service";
 import {
   automationCreateInputSchema,
   automationDeleteInputSchema,

@@ -23,6 +23,9 @@
 5. 完成 chat 域重组后的 `typecheck + chat 相关测试` 验证
 6. 把 `system-prompt-manager / workspace-bootstrap-service / global-discovery-service / proxy-settings-manager` 收进 `services/system/`
 7. 完成 system 域重组后的 `typecheck + system 相关测试` 验证
+8. 把 `automation-manager / automation-runner-service` 收进 `services/automation/`
+9. 把 `session-state-manager / heartbeat-service` 收进 `services/runtime/`
+10. 完成 automation/runtime 重组后的 `typecheck + 相关测试` 验证
 
 ## 2. 最近已提交检查点
 
@@ -243,5 +246,5 @@ bun run smoke:agent-new-runtime:provider-switch
 
 建议从以下两个方向二选一继续：
 
-1. 继续按域收口，把 `system-prompt / workspace-bootstrap / global-discovery / proxy-settings` 等更偏配置与基础设施的模块做第二轮分组
-2. 继续按域收口，把 `automation / runtime-state / infra(config/logger)` 进一步拆成明确分组
+1. 继续按域收口，把 `infra(config-paths/logger)` 是否独立成基础设施目录做最终决策
+2. 如继续细化，可考虑把 `memory` 域再拆为 `memory/indexing` 与 `memory/runtime`

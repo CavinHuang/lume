@@ -29,7 +29,7 @@ import {
   getSessionStateManager,
   startSessionHeartbeat,
   stopSessionHeartbeat,
-} from "../session-state-manager";
+} from "../runtime/session-state-manager";
 import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/ask-user-question-bridge";
 import { submitToolPermissionDecision } from "../pi-agent/tools/tool-permission-bridge";
 import { resolveAgentEventTotalTokens } from "../pi-agent/usage";
@@ -233,7 +233,7 @@ export function stopAgent(sessionId: string): void {
 
 export function stopAllAgents(): void {
   // 停止所有 Heartbeat 定时器
-  const { getHeartbeatService } = require("../heartbeat-service");
+  const { getHeartbeatService } = require("../runtime/heartbeat-service");
   const heartbeatService = getHeartbeatService();
   heartbeatService.stopAllTimers();
   void import("../pi-agent/runner/run")

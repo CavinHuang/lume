@@ -6,8 +6,8 @@ import {
   deleteAutomationJob,
   listAutomationJobs,
   updateAutomationJob
-} from "../../automation-manager";
-import { listAutomationRuns, runAutomationJobNow } from "../../automation-runner-service";
+} from "../../automation/automation-manager";
+import { listAutomationRuns, runAutomationJobNow } from "../../automation/automation-runner-service";
 
 interface CreateAutomationToolsInput {
   workspaceId?: string;
