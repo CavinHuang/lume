@@ -18,7 +18,7 @@ import type {
 } from "@lume/shared";
 import { getChatToolsPath } from "../infra/config-paths";
 import { executeHttpChatTool } from "./chat-tool-http-executor";
-import { testNanoBananaConnection } from "../nano-banana-service";
+import { testNanoBananaConnection } from "../chat/nano-banana-service";
 
 const CHAT_TOOL_CONFIG_VERSION = 1;
 const TOOL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;

@@ -16,7 +16,7 @@ import type {
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
-import { decryptApiKey, listChannels } from "../channel-manager";
+import { decryptApiKey, listChannels } from "../channel/channel-manager";
 import {
   getAgentSessionMessages,
   getAgentSessionMeta,
@@ -36,7 +36,7 @@ import { resolveAgentEventTotalTokens } from "../pi-agent/usage";
 import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
-} from "../model-selection";
+} from "../channel/model-selection";
 import {
   AGENT_TITLE_PROMPT_FROM_SUMMARY,
   deriveFallbackAgentTitleFromSourceText,

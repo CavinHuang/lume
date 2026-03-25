@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatMessage, ConversationMeta, RecentMessagesResult } from "@lume/shared";
 import { deleteAttachment, deleteConversationAttachments } from "./attachment-service";
 import { getConversationMessagesPath, getConversationsDir, getConversationsIndexPath } from "../infra/config-paths";
-import { clearNanoBananaConversationHistory } from "../nano-banana-service";
+import { clearNanoBananaConversationHistory } from "../chat/nano-banana-service";
 
 interface ConversationsIndex {
   version: number;

@@ -17,8 +17,8 @@ import {
   updateAgentSessionMeta
 } from "../../agent/agent-session-manager";
 import type { AgentMessage } from "@lume/shared";
-import { decryptApiKey, listChannels } from "../../channel-manager";
-import { resolveRequestedModelIdForChannel } from "../../model-selection";
+import { decryptApiKey, listChannels } from "../../channel/channel-manager";
+import { resolveRequestedModelIdForChannel } from "../../channel/model-selection";
 import { runPiAgentMessage } from "../run-pi-agent-message";
 import { stopPiAgent } from "../runner/run";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";

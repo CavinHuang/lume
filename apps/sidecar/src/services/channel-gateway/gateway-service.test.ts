@@ -29,7 +29,7 @@ describe("channel-gateway gateway-service", () => {
   });
 
   test("应基于 externalMessageId 去重", async () => {
-    const { createChannel } = await import("../channel-manager");
+    const { createChannel } = await import("../channel/channel-manager");
     const { simulateChannelGatewayIngress } = await import("./gateway-service");
     createChannel({
       name: "mock",
@@ -57,7 +57,7 @@ describe("channel-gateway gateway-service", () => {
   });
 
   test("同一 chat 的后续消息应路由到同一 session 绑定", async () => {
-    const { createChannel } = await import("../channel-manager");
+    const { createChannel } = await import("../channel/channel-manager");
     const {
       simulateChannelGatewayIngress,
       listChannelGatewayBindings

@@ -32,13 +32,13 @@ import {
   type ToolResult
 } from "../../providers";
 import { isImageAttachment, readAttachmentAsBase64 } from "./attachment-service";
-import { decryptApiKey, listChannels } from "../channel-manager";
-import { extractTextFromAttachment, isDocumentAttachment } from "../document-parser";
+import { decryptApiKey, listChannels } from "../channel/channel-manager";
+import { extractTextFromAttachment, isDocumentAttachment } from "./document-parser";
 import { appendMessage, getConversationMessages, updateConversationMeta } from "./conversation-manager";
 import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
-} from "../model-selection";
+} from "../channel/model-selection";
 import { ensureDefaultWorkspace } from "../agent/agent-workspace-manager";
 import { searchWorkspaceMemory } from "../memory/memory-service";
 import {
@@ -48,7 +48,7 @@ import {
   getEnabledChatToolSystemPromptAppend
 } from "./chat-tool-manager";
 import { executeHttpChatTool } from "./chat-tool-http-executor";
-import { generateNanoBananaImage } from "../nano-banana-service";
+import { generateNanoBananaImage } from "./nano-banana-service";
 
 type ChatEventEmitter = {
   onChunk: (event: StreamChunkEvent) => void;

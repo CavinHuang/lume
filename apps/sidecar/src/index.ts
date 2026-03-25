@@ -2,10 +2,10 @@ import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { ChannelGatewayIngressStatus } from "@lume/shared";
-import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/workspace-watcher";
+import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory/memory-sync-watcher";
 import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat/chat-tools-watcher";
-import { seedDefaultSkills } from "./services/default-skills-seeder";
+import { seedDefaultSkills } from "./services/system/default-skills-seeder";
 import { startRelayServer, stopRelayServer } from "./services/browser/extension-relay";
 import { initProxySettings } from "./services/system/proxy-settings-manager";
 import {

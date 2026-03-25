@@ -30,6 +30,12 @@
 12. 完成 infra 重组后的 `typecheck + config-paths 测试` 验证
 13. 把 `memory-service / memory-mcp-service / memory-policy / memory-sync-watcher / memory-tool-response / memory-flush-service` 收进 `services/memory/`
 14. 完成 memory 入口重组后的 `typecheck + memory 相关测试` 验证
+15. 把 `channel-manager / model-selection` 收进 `services/channel/`
+16. 把 `agent-prompt-builder` 收进 `services/agent/`
+17. 把 `document-parser / nano-banana-service` 收进 `services/chat/`
+18. 把 `aieos-identity / default-skills-seeder / workspace-watcher / github-release-service` 收进 `services/system/`
+19. 把 `index-recovery.test.ts` 收进 `services/infra/`
+20. 当前 `services` 根目录已不再保留业务文件，只保留按域划分的目录
 
 ## 2. 最近已提交检查点
 
@@ -114,23 +120,29 @@
 
 ### 3.3 当前状态结论
 
-`services/agent/` 第一阶段整理已完成，并已完成验证。
+当前 `services` 已完成一轮按域收口，根目录业务文件已基本清空。
 
 换句话说：
 
-1. `agent` 主链核心文件已全部收口到 `services/agent/`
-2. 运行链路相关引用已修正
-3. 当前下一步不应继续搬目录，而应进入提交收尾或下一阶段范围确认
+1. `agent / chat / system / automation / runtime / infra / memory` 等核心域已形成明确目录边界
+2. 运行链路相关引用已修正并验证
+3. 后续如果继续，不再是“清理杂乱根目录”，而是更细粒度的二次分层设计
 
 ## 4. 本阶段结果
 
-本阶段实际完成范围仍然只覆盖 `pi-agent + agent` 主链的第一阶段整理，没有扩到整个 `services`。
+本阶段实际已扩展为整个 `services` 的第一轮按域收口，不再仅限 `pi-agent + agent`。
 
 ### 4.1 已完成的目标目录边界
 
 已收口到：
 
 - `apps/sidecar/src/services/agent/`
+- `apps/sidecar/src/services/chat/`
+- `apps/sidecar/src/services/system/`
+- `apps/sidecar/src/services/automation/`
+- `apps/sidecar/src/services/runtime/`
+- `apps/sidecar/src/services/infra/`
+- `apps/sidecar/src/services/memory/`
 
 本阶段已完成迁移：
 
@@ -143,16 +155,45 @@
 7. `agent-runtime-status-manager.test.ts`
 8. `agent-service.ts`
 9. `agent-service.test.ts`
+10. `chat-service.ts`
+11. `conversation-manager.ts`
+12. `attachment-service.ts`
+13. `chat-tool-manager.ts`
+14. `chat-tool-http-executor.ts`
+15. `chat-tools-watcher.ts`
+16. `system-prompt-manager.ts`
+17. `workspace-bootstrap-service.ts`
+18. `global-discovery-service.ts`
+19. `proxy-settings-manager.ts`
+20. `automation-manager.ts`
+21. `automation-runner-service.ts`
+22. `session-state-manager.ts`
+23. `heartbeat-service.ts`
+24. `config-paths.ts`
+25. `logger.ts`
+26. `memory-service.ts`
+27. `memory-mcp-service.ts`
+28. `memory-policy.ts`
+29. `memory-sync-watcher.ts`
+30. `memory-tool-response.ts`
+31. `memory-flush-service.ts`
+32. `channel-manager.ts`
+33. `model-selection.ts`
+34. `agent-prompt-builder.ts`
+35. `document-parser.ts`
+36. `nano-banana-service.ts`
+37. `aieos-identity.ts`
+38. `default-skills-seeder.ts`
+39. `workspace-watcher.ts`
+40. `github-release-service.ts`
+41. `index-recovery.test.ts`
 
 本阶段明确未动：
 
 1. `services/pi-agent/**`
-2. `channel-manager.ts`
-3. `model-selection.ts`
-4. `memory/**`
-5. `browser/**`
-6. `channel-gateway/**`
-7. `automation-*`
+2. `services/browser/**`
+3. `services/channel-gateway/**`
+4. `services/openclaw/**`
 
 ## 5. 实际执行顺序
 

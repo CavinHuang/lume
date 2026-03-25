@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { parseAieos, aieosToSystemPrompt } from "../aieos-identity";
+import { parseAieos, aieosToSystemPrompt } from "./aieos-identity";
 import { fileURLToPath } from "node:url";
 import type {
   BootstrapFileType,

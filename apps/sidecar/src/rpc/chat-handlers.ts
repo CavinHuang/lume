@@ -43,7 +43,7 @@ import {
   readAttachmentAsBase64,
   saveAttachment
 } from "../services/chat/attachment-service";
-import { extractTextFromAttachment } from "../services/document-parser";
+import { extractTextFromAttachment } from "../services/chat/document-parser";
 import {
   chatContextDividersInputSchema,
   chatConversationIdInputSchema,

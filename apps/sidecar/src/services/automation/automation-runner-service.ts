@@ -11,7 +11,7 @@ import { createAgentSession } from "../agent/agent-session-manager";
 import { getAgentSessionMeta } from "../agent/agent-session-manager";
 import { sendAgentMessage } from "../agent/agent-service";
 import { listAutomationJobs, updateAutomationJob } from "./automation-manager";
-import { listChannels } from "../channel-manager";
+import { listChannels } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
 
 type JobDisposer = () => void;

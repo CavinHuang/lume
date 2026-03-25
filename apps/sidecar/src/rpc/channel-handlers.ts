@@ -9,7 +9,7 @@ import {
   testChannel,
   testChannelDirect,
   updateChannel
-} from "../services/channel-manager";
+} from "../services/channel/channel-manager";
 import type { RpcHandler } from "./types";
 import { asObject, asString } from "./validation";
 

@@ -31,7 +31,7 @@ import {
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
-import { seedDefaultSkills } from "../default-skills-seeder";
+import { seedDefaultSkills } from "../system/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 
 interface AgentWorkspacesIndex {

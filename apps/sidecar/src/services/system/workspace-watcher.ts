@@ -11,7 +11,7 @@ import type { FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import { getAgentWorkspacesDir } from "./infra/config-paths";
+import { getAgentWorkspacesDir } from "../infra/config-paths";
 
 type NotificationEmitter = (method: string, params: unknown) => void;
 

@@ -10,7 +10,7 @@ import type {
   StreamReasoningEvent,
   StreamToolActivityEvent
 } from "@lume/shared";
-import { createChannel } from "../channel-manager";
+import { createChannel } from "../channel/channel-manager";
 import { createConversation, getConversationMessages } from "./conversation-manager";
 import { sendMessage } from "./chat-service";
 import { createCustomChatTool, updateChatToolCredentials, updateChatToolState } from "./chat-tool-manager";

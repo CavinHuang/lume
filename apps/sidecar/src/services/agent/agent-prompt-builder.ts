@@ -7,13 +7,13 @@
  * - Integrated Soul/Memory system from OpenClaw design.
  */
 
-import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent/agent-workspace-manager";
-import type { MemoryCitationsMode } from "./memory/memory-policy";
+import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
+import type { MemoryCitationsMode } from "../memory/memory-policy";
 import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
-} from "./system/workspace-bootstrap-service";
-import { isHeartbeatContentEffectivelyEmpty } from "./runtime/heartbeat-service";
+} from "../system/workspace-bootstrap-service";
+import { isHeartbeatContentEffectivelyEmpty } from "../runtime/heartbeat-service";
 import type { SessionType } from "@lume/shared";
 
 export const LUME_AGENT_IDENTITY_LINE = "You are a personal assistant running inside Lume.";

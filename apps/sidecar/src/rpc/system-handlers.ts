@@ -10,7 +10,7 @@ import {
   getGitHubReleaseByTag,
   getLatestGitHubRelease,
   listGitHubReleases
-} from "../services/github-release-service";
+} from "../services/system/github-release-service";
 import { githubReleaseByTagInputSchema } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";

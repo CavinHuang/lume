@@ -12,7 +12,7 @@ import type {
 import type { Channel } from "@lume/shared";
 import { createAgentSession, getAgentSessionMessages } from "../agent/agent-session-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { listChannels } from "../channel-manager";
+import { listChannels } from "../channel/channel-manager";
 import { getChannelGatewayDeliveryPath } from "../infra/config-paths";
 import {
   findChannelSessionBinding,

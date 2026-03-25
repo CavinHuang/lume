@@ -10,7 +10,7 @@
 
 import { cpSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getDefaultSkillsDir } from "./infra/config-paths";
+import { getDefaultSkillsDir } from "../infra/config-paths";
 
 function resolveBundledDefaultSkillsDir(): string | null {
   const fromEnv = process.env.LUME_DEFAULT_SKILLS_DIR?.trim();
@@ -48,4 +48,3 @@ export function seedDefaultSkills(): void {
     console.warn("[配置] 同步默认 Skills 失败:", error);
   }
 }
-

@@ -1,5 +1,5 @@
 import { getModel, type KnownProvider, type Model, type Api } from "@mariozechner/pi-ai";
-import { resolveModelCandidatesForChannel } from "../../model-selection";
+import { resolveModelCandidatesForChannel } from "../../channel/model-selection";
 import { adaptModelCapabilities, resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "../runner/provider-routing";
 import { resolvePiProviderCandidates } from "../runner/provider-resolution";

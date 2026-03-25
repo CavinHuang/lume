@@ -6,7 +6,7 @@ import {
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
 import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
-import { decryptApiKey, listChannels } from "../../channel-manager";
+import { decryptApiKey, listChannels } from "../../channel/channel-manager";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../infra/logger";
 import { waitForPiAskUserQuestionAnswers } from "../tools/ask-user-question-bridge";
