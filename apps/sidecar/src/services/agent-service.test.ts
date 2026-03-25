@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   deriveFallbackAgentTitleFromUserMessage,
   resolveAgentTitleSourceText
-} from "./session-title-summarizer";
+} from "./agent/session-title-summarizer";
 
 describe("agent-service fallback title", () => {
   test("应从用户消息生成兜底标题", () => {
@@ -36,7 +36,6 @@ describe("agent-service fallback title", () => {
       ],
       "用户原始问题"
     );
-    expect(source).toContain("用户目标：用户原始问题");
-    expect(source).toContain("Agent 回答总结：我已完成工具对齐与风险排查总结");
+    expect(source).toBe("用户原始问题");
   });
 });

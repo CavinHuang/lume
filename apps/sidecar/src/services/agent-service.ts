@@ -44,7 +44,7 @@ import {
   resolveAgentTitleSourceText,
   sanitizeGeneratedTitle,
   shouldAutoGenerateSessionTitle
-} from "./session-title-summarizer";
+} from "./agent/session-title-summarizer";
 
 type AgentEventEmitter = {
   onEvent: (event: AgentEvent) => void;

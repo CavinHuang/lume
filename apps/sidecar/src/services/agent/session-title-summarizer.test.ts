@@ -27,4 +27,3 @@ describe("session-title-summarizer", () => {
     expect(isWeakGeneratedTitle("供应商与工具对齐计划")).toBe(false);
   });
 });
-

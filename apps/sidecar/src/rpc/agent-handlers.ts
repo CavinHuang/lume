@@ -72,7 +72,7 @@ import {
   installGlobalPlugin
 } from "../services/global-discovery-service";
 import { createLogger, getLogsDir } from "../services/logger";
-import type { PlanStateTracker } from "../services/plan-state-tracker";
+import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { getSessionEventBus } from "../services/pi-agent/session-event-bus";
 import { isPiAgentSessionActive } from "../services/pi-agent/runner/run";
 import { getSubagentRunRegistry } from "../services/pi-agent/subagents/subagent-run-registry";

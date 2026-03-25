@@ -4,7 +4,7 @@ import {
   appendAgentEvents,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
-} from "../../agent-stream-accumulator";
+} from "../../agent/agent-stream-accumulator";
 import { getAgentSessionWorkspacePath } from "../../config-paths";
 import { decryptApiKey, listChannels } from "../../channel-manager";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent-workspace-manager";
