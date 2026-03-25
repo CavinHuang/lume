@@ -68,6 +68,29 @@ describe("agent-runtime-status contract", () => {
     expect(store.get(currentAgentToolPermissionRequestAtom)?.requestId).toBe("req-1");
   });
 
+  test("共享 runtime status 应保留交互上下文字段", () => {
+    const store = createStore();
+    store.set(currentAgentSessionIdAtom, "session-1");
+    store.set(agentRuntimeStatusesAtom, new Map([
+      ["session-1", {
+        sessionId: "session-1",
+        phase: "awaiting_permission",
+        interactiveKind: "tool_permission",
+        requestId: "req-1",
+        toolUseId: "tool-1",
+        toolName: "write",
+        originSessionId: "origin-1",
+        subagentRunId: "run-1",
+        updatedAt: Date.now()
+      }]
+    ]));
+
+    const status = store.get(agentRuntimeStatusesAtom).get("session-1");
+    expect(status?.interactiveKind).toBe("tool_permission");
+    expect(status?.originSessionId).toBe("origin-1");
+    expect(status?.subagentRunId).toBe("run-1");
+  });
+
   test("running session ids 应优先使用共享 runtime status", () => {
     const store = createStore();
     store.set(agentRuntimeStatusesAtom, new Map([

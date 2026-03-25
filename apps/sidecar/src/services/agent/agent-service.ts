@@ -195,7 +195,9 @@ export async function sendAgentMessage(
     },
     onAskUserQuestion: (request) => {
       runtimeStatusManager.markAwaitingUserAnswer(sessionId, {
-        toolUseId: request.toolUseId
+        toolUseId: request.toolUseId,
+        originSessionId: request.originSessionId,
+        subagentRunId: request.subagentRunId
       });
       emit.onAskUserQuestion(request);
     },
@@ -203,7 +205,9 @@ export async function sendAgentMessage(
       runtimeStatusManager.markAwaitingPermission(sessionId, {
         requestId: request.requestId,
         toolUseId: request.toolUseId,
-        toolName: request.toolName
+        toolName: request.toolName,
+        originSessionId: request.originSessionId,
+        subagentRunId: request.subagentRunId
       });
       emit.onToolPermissionRequest(request);
     }

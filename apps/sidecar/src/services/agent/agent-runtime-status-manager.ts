@@ -4,9 +4,12 @@ type AgentRuntimeStatusListener = (status: AgentRuntimeStatus) => void;
 
 interface RuntimeStatusPatch {
   phase: AgentRuntimePhase;
+  interactiveKind?: "tool_permission" | "ask_user_question";
   requestId?: string;
   toolUseId?: string;
   toolName?: string;
+  originSessionId?: string;
+  subagentRunId?: string;
   error?: string;
 }
 
@@ -31,23 +34,35 @@ export class AgentRuntimeStatusManager {
 
   markAwaitingPermission(
     sessionId: string,
-    input: { requestId: string; toolUseId?: string; toolName?: string }
+    input: {
+      requestId: string;
+      toolUseId?: string;
+      toolName?: string;
+      originSessionId?: string;
+      subagentRunId?: string;
+    }
   ): AgentRuntimeStatus {
     return this.update(sessionId, {
       phase: "awaiting_permission",
+      interactiveKind: "tool_permission",
       requestId: input.requestId,
       toolUseId: input.toolUseId,
-      toolName: input.toolName
+      toolName: input.toolName,
+      originSessionId: input.originSessionId,
+      subagentRunId: input.subagentRunId
     });
   }
 
   markAwaitingUserAnswer(
     sessionId: string,
-    input: { toolUseId: string }
+    input: { toolUseId: string; originSessionId?: string; subagentRunId?: string }
   ): AgentRuntimeStatus {
     return this.update(sessionId, {
       phase: "awaiting_user_answer",
-      toolUseId: input.toolUseId
+      interactiveKind: "ask_user_question",
+      toolUseId: input.toolUseId,
+      originSessionId: input.originSessionId,
+      subagentRunId: input.subagentRunId
     });
   }
 
@@ -75,9 +90,12 @@ export class AgentRuntimeStatusManager {
     const next: AgentRuntimeStatus = {
       sessionId,
       phase: patch.phase,
+      ...(patch.interactiveKind ? { interactiveKind: patch.interactiveKind } : {}),
       ...(patch.requestId ? { requestId: patch.requestId } : {}),
       ...(patch.toolUseId ? { toolUseId: patch.toolUseId } : {}),
       ...(patch.toolName ? { toolName: patch.toolName } : {}),
+      ...(patch.originSessionId ? { originSessionId: patch.originSessionId } : {}),
+      ...(patch.subagentRunId ? { subagentRunId: patch.subagentRunId } : {}),
       ...(patch.error ? { error: patch.error } : {}),
       updatedAt: Date.now()
     };

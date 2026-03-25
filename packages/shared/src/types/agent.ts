@@ -80,9 +80,12 @@ export type AgentRuntimePhase =
 export interface AgentRuntimeStatus {
   sessionId: string
   phase: AgentRuntimePhase
+  interactiveKind?: 'tool_permission' | 'ask_user_question'
   requestId?: string
   toolUseId?: string
   toolName?: string
+  originSessionId?: string
+  subagentRunId?: string
   error?: string
   updatedAt: number
 }
