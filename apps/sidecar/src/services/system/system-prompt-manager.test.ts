@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BUILTIN_DEFAULT_ID } from "@lume/shared";
-import { getSystemPromptsPath } from "../config-paths";
+import { getSystemPromptsPath } from "../infra/config-paths";
 import {
   createSystemPrompt,
   deleteSystemPrompt,

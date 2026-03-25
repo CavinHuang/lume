@@ -16,7 +16,7 @@ import {
   type SystemPromptCreateInput,
   type SystemPromptUpdateInput
 } from "@lume/shared";
-import { getSystemPromptsPath } from "../config-paths";
+import { getSystemPromptsPath } from "../infra/config-paths";
 
 const SYSTEM_PROMPT_CONFIG_VERSION = 1;
 

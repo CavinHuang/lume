@@ -37,4 +37,3 @@ describe("config-paths", () => {
     created.push(resolved);
   });
 });
-

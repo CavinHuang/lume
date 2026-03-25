@@ -1,4 +1,4 @@
-import { createLogger } from "../logger";
+import { createLogger } from "../infra/logger";
 import type { AgentAskUserQuestionRequest, AgentEvent, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { PiAgentRunResult } from "./runner/types";

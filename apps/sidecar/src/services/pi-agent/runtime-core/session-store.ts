@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
-import { getAgentConfigDir } from "../../config-paths";
+import { getAgentConfigDir } from "../../infra/config-paths";
 
 function toSafeSessionSegment(sessionId: string): string {
   const trimmed = sessionId.trim();

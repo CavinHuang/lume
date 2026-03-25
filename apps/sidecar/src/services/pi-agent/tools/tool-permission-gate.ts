@@ -13,7 +13,7 @@ import {
   inferToolMetadata,
   isToolAllowedInPlanMode
 } from "./tool-metadata";
-import { createLogger } from "../../logger";
+import { createLogger } from "../../infra/logger";
 
 const auditLog = createLogger("tool-audit");
 

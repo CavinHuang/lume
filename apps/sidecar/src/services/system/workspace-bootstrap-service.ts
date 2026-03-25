@@ -25,7 +25,7 @@ import type {
 } from "@lume/shared";
 import {
   getAgentWorkspacePath,
-} from "../config-paths";
+} from "../infra/config-paths";
 import { stripFrontMatter } from "../openclaw/workspace-template-utils";
 
 // ===== 常量 =====

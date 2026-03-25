@@ -8,7 +8,7 @@ import type {
   AutomationSchedule,
   AutomationUpdateJobInput
 } from "@lume/shared";
-import { getAutomationJobsPath } from "../config-paths";
+import { getAutomationJobsPath } from "../infra/config-paths";
 
 const INDEX_VERSION = 1;
 

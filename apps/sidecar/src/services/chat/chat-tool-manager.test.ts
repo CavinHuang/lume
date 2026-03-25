@@ -12,7 +12,7 @@ import {
   updateChatToolCredentials,
   updateChatToolState
 } from "./chat-tool-manager";
-import { getChatToolsPath } from "../config-paths";
+import { getChatToolsPath } from "../infra/config-paths";
 
 describe("chat-tool-manager", () => {
   let tempConfigDir: string;

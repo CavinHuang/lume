@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CHAT_TOOL_IPC_CHANNELS } from "@lume/shared";
-import { getChatToolsPath } from "../config-paths";
+import { getChatToolsPath } from "../infra/config-paths";
 import { getAllChatToolInfos } from "./chat-tool-manager";
 import { startChatToolsWatcher, stopChatToolsWatcher } from "./chat-tools-watcher";
 

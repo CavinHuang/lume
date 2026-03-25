@@ -71,7 +71,7 @@ import {
   importGlobalSkillToWorkspace,
   installGlobalPlugin
 } from "../services/system/global-discovery-service";
-import { createLogger, getLogsDir } from "../services/logger";
+import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { getSessionEventBus } from "../services/pi-agent/session-event-bus";
 import { isPiAgentSessionActive } from "../services/pi-agent/runner/run";

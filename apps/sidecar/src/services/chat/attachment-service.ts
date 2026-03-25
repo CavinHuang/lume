@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { AttachmentSaveInput, AttachmentSaveResult } from "@lume/shared";
-import { getConversationAttachmentsDir, resolveAttachmentPath } from "../config-paths";
+import { getConversationAttachmentsDir, resolveAttachmentPath } from "../infra/config-paths";
 
 export function saveAttachment(input: AttachmentSaveInput): AttachmentSaveResult {
   const { conversationId, filename, mediaType, data } = input;

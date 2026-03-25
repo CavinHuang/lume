@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeMemoryManagers, syncWorkspaceMemoryPath } from "./memory-service";
-import { getAgentWorkspacePath } from "./config-paths";
+import { getAgentWorkspacePath } from "./infra/config-paths";
 
 describe("memory-service", () => {
   let prevConfigDir: string | undefined;

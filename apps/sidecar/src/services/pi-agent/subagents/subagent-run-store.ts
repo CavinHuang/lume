@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { getAgentConfigDir } from "../../config-paths";
-import { createLogger } from "../../logger";
+import { getAgentConfigDir } from "../../infra/config-paths";
+import { createLogger } from "../../infra/logger";
 import {
   SUBAGENT_RUN_STORE_VERSION,
   type SubagentRun,

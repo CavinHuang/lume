@@ -32,7 +32,7 @@ import type {
 } from "@lume/shared";
 import {
   getWorkspaceSkillsDir
-} from "../config-paths";
+} from "../infra/config-paths";
 import {
   getWorkspaceMcpConfig,
   saveWorkspaceMcpConfig

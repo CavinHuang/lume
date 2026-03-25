@@ -5,7 +5,7 @@ import {
   getAgentSessionMeta,
   updateAgentSessionMeta
 } from "../../agent/agent-session-manager";
-import { createLogger } from "../../logger";
+import { createLogger } from "../../infra/logger";
 import { subagentLogFields } from "./subagent-observability";
 import type { SubagentRun } from "./subagent-run.types";
 import { emitSubagentAnnounceEvent } from "./subagent-announce-bus";

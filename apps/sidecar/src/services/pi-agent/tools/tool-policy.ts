@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createLogger } from "../../logger";
-import { getAgentRuntimeConfigPath } from "../../config-paths";
+import { createLogger } from "../../infra/logger";
+import { getAgentRuntimeConfigPath } from "../../infra/config-paths";
 import { applyMemoryToolPolicy } from "../../memory-policy";
 import type { MemoryToolPolicy } from "../../memory-policy";
 import {

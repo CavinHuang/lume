@@ -8,7 +8,7 @@ import {
   resolveSystemPromptMode,
   shouldLoadLongTermMemory
 } from "./agent-prompt-builder";
-import { getAgentWorkspacePath } from "./config-paths";
+import { getAgentWorkspacePath } from "./infra/config-paths";
 
 describe("agent-prompt-builder", () => {
   let prevConfigDir: string | undefined;

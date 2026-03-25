@@ -1,5 +1,5 @@
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "./types";
-import { createLogger } from "../../logger";
+import { createLogger } from "../../infra/logger";
 import { runRuntimeCoreAttempt } from "../runtime-core/attempt";
 
 const activePiSessions = new Map<string, { abort: () => Promise<void> }>();

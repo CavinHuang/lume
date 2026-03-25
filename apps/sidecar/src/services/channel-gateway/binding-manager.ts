@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { ChannelSessionBinding, ChannelProvider } from "@lume/shared";
-import { getChannelGatewayBindingsPath } from "../config-paths";
+import { getChannelGatewayBindingsPath } from "../infra/config-paths";
 
 interface ChannelBindingsIndex {
   version: number;

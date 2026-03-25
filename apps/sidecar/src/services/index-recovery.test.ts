@@ -9,7 +9,7 @@ import {
   getAgentSessionsIndexPath,
   getAgentWorkspacesIndexPath,
   getConversationMessagesPath
-} from "./config-paths";
+} from "./infra/config-paths";
 
 describe("index recovery", () => {
   let previousConfigDir: string | undefined;

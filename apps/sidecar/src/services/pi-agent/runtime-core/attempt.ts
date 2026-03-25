@@ -5,10 +5,10 @@ import {
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
-import { getAgentSessionWorkspacePath } from "../../config-paths";
+import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { decryptApiKey, listChannels } from "../../channel-manager";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { createLogger } from "../../logger";
+import { createLogger } from "../../infra/logger";
 import { waitForPiAskUserQuestionAnswers } from "../tools/ask-user-question-bridge";
 import { waitForToolPermissionDecision } from "../tools/tool-permission-bridge";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";

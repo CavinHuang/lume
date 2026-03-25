@@ -8,7 +8,7 @@
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { getChannelsPath } from "./config-paths";
+import { getChannelsPath } from "./infra/config-paths";
 import { PROVIDER_API_FAMILIES } from "@lume/shared";
 import type {
   Channel,

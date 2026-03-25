@@ -16,7 +16,7 @@ import type {
   ChatToolState,
   ChatToolTestResult
 } from "@lume/shared";
-import { getChatToolsPath } from "../config-paths";
+import { getChatToolsPath } from "../infra/config-paths";
 import { executeHttpChatTool } from "./chat-tool-http-executor";
 import { testNanoBananaConnection } from "../nano-banana-service";
 

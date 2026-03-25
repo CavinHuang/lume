@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentWorkspacePath } from "../config-paths";
+import { getAgentWorkspacePath } from "../infra/config-paths";
 import {
   ensureBootstrapFiles,
   filterComponentsForSessionType,

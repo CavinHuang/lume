@@ -8,7 +8,7 @@ import {
   listAutomationJobs,
   updateAutomationJob
 } from "./automation-manager";
-import { getAutomationJobsPath } from "../config-paths";
+import { getAutomationJobsPath } from "../infra/config-paths";
 
 describe("automation-manager", () => {
   let prevConfigDir: string | undefined;

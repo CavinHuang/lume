@@ -24,7 +24,7 @@ import {
   DEFAULT_HEARTBEAT_EVERY,
   DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
 } from "@lume/shared";
-import { getAgentWorkspacePath } from "../config-paths";
+import { getAgentWorkspacePath } from "../infra/config-paths";
 
 // ===== 配置解析 =====
 

@@ -30,7 +30,7 @@ import {
   getDefaultSkillsDir,
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
-} from "../config-paths";
+} from "../infra/config-paths";
 import { seedDefaultSkills } from "../default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 

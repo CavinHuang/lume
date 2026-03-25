@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import type { ChannelDeliveryRecord } from "@lume/shared";
-import { getChannelGatewayDeliveryPath } from "../config-paths";
+import { getChannelGatewayDeliveryPath } from "../infra/config-paths";
 import { sendFeishuTextMessage } from "./feishu-api";
 import { dequeueDueChannelRetries, enqueueChannelRetry } from "./retry-queue-manager";
 

@@ -10,7 +10,7 @@
 import { cp, mkdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { getConfigDir } from "../config-paths";
+import { getConfigDir } from "../infra/config-paths";
 
 const DEFAULT_RELAY_PORT = 18792;
 const EXTENSION_SUBPATH = join("browser", "chrome-extension");

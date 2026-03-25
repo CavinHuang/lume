@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import type { ChannelInboundEvent } from "@lume/shared";
-import { getChannelGatewayDedupPath } from "../config-paths";
+import { getChannelGatewayDedupPath } from "../infra/config-paths";
 
 interface DedupEntry {
   key: string;

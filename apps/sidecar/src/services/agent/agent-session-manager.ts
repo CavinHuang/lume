@@ -24,7 +24,7 @@ import {
   getAgentWorkspacePath,
   getAgentSessionWorkspacePath,
   getAgentSessionsIndexPath
-} from "../config-paths";
+} from "../infra/config-paths";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getConversationMessages } from "../chat/conversation-manager";
 import { extractRenderableAssistantText } from "../pi-agent/content-extraction";

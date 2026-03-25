@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { ChannelProvider, ChannelRetryItem } from "@lume/shared";
-import { getChannelGatewayRetryQueuePath } from "../config-paths";
+import { getChannelGatewayRetryQueuePath } from "../infra/config-paths";
 
 interface RetryQueueIndex {
   version: number;

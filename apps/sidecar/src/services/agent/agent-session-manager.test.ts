@@ -16,7 +16,7 @@ import {
   toggleAgentSessionPin
 } from "./agent-session-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
-import { getAgentWorkspacePath } from "../config-paths";
+import { getAgentWorkspacePath } from "../infra/config-paths";
 import { appendMessage, createConversation } from "../chat/conversation-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,

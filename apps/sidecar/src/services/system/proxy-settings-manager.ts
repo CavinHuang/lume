@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentProxySettings, AgentProxyStatus } from "@lume/shared";
-import { getSettingsPath } from "../config-paths";
+import { getSettingsPath } from "../infra/config-paths";
 
 interface StoredSettings {
   version: 1;

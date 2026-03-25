@@ -24,7 +24,7 @@ import {
 } from "./agent-session-manager";
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
-import { createLogger } from "../logger";
+import { createLogger } from "../infra/logger";
 import {
   getSessionStateManager,
   startSessionHeartbeat,

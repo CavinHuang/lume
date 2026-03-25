@@ -1,7 +1,7 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { basename } from "node:path";
 import { CHAT_TOOL_IPC_CHANNELS } from "@lume/shared";
-import { getChatToolsPath, getConfigDir } from "../config-paths";
+import { getChatToolsPath, getConfigDir } from "../infra/config-paths";
 
 type NotificationEmitter = (method: string, params: unknown) => void;
 

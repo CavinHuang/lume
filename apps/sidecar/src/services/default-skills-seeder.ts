@@ -10,7 +10,7 @@
 
 import { cpSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getDefaultSkillsDir } from "./config-paths";
+import { getDefaultSkillsDir } from "./infra/config-paths";
 
 function resolveBundledDefaultSkillsDir(): string | null {
   const fromEnv = process.env.LUME_DEFAULT_SKILLS_DIR?.trim();

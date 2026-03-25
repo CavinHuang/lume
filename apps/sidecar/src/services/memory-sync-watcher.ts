@@ -1,6 +1,6 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { resolve } from "node:path";
-import { getAgentWorkspacesDir } from "./config-paths";
+import { getAgentWorkspacesDir } from "./infra/config-paths";
 import { syncWorkspaceMemoryPath } from "./memory-service";
 
 const MEMORY_DEBOUNCE_MS = 1500;

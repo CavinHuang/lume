@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { getMemoryConfigPath } from "./config-paths";
+import { getMemoryConfigPath } from "./infra/config-paths";
 
 export type MemoryCitationsMode = "on" | "off" | "auto";
 export type MemoryChatType = "direct" | "group" | "channel";

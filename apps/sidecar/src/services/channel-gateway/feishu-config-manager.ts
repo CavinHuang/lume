@@ -6,7 +6,7 @@ import type {
   FeishuGatewayConfigInput,
   FeishuGatewayConfigView
 } from "@lume/shared";
-import { getChannelGatewayFeishuConfigPath } from "../config-paths";
+import { getChannelGatewayFeishuConfigPath } from "../infra/config-paths";
 
 const AES_ALGO = "aes-256-gcm";
 const CONFIG_VERSION = 1;

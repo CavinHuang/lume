@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
-import { resolveAttachmentPath } from "./config-paths";
+import { resolveAttachmentPath } from "./infra/config-paths";
 
 const TEXT_EXTS = new Set([".txt", ".md", ".json", ".ts", ".tsx", ".js", ".jsx", ".rs", ".py", ".yml", ".yaml"]);
 

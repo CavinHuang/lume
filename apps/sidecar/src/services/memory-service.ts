@@ -3,7 +3,7 @@ import { relative, resolve } from "node:path";
 import {
   getAgentWorkspacePath,
   getWorkspaceMemoryDbPath
-} from "./config-paths";
+} from "./infra/config-paths";
 import { MemoryIndexManager } from "./memory/memory-index-manager";
 import { getAgentWorkspaceBySlug } from "./agent/agent-workspace-manager";
 import { resolveMemoryRuntimeConfig } from "./memory-policy";
