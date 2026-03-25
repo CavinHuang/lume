@@ -98,11 +98,11 @@
 7. web 已补第一轮消费逻辑：共享交互状态可在请求明细缺失时回退成轻量提示，而不至于完全丢失上下文。
 8. 下一步重点转向补更完整的 UI 行为回归测试或继续扩展更细粒度上下文字段，而不是继续保留双重状态语义。
 
-### Phase 8：Compaction 对齐
+### Phase 8：Compaction 对齐（已完成）
 
 1. 已删除当前 Lume ↔ Pi 手工拼装压缩路径。
 2. 已接入 runtime-core native `auto_compaction_*` lifecycle。
-3. 已补 `smoke:agent-new-runtime:compact`，并已将种子扩到更重的多轮长会话输入，当前断言会校验 compaction 持久化与历史标记保留。
+3. 已补 `smoke:agent-new-runtime:compact`，并已验证更重的多轮长会话输入；当前断言会校验 compaction 持久化与历史标记保留。
 
 ### Phase 9：切流与清理（已完成）
 
