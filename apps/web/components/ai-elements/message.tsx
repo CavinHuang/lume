@@ -8,7 +8,8 @@ import type { FileAttachment } from "@lume/shared";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { openExternalUrl, readChatAttachment } from "@/lib/desktop-api";
+import { readChatAttachment } from "@/lib/desktop-api/chat";
+import { openExternalUrl } from "@/lib/desktop-api/core";
 
 type MessageRole = "user" | "assistant" | "system";
 

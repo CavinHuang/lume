@@ -4,7 +4,7 @@ import * as React from "react";
 import { Brain, ChevronDown } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { openExternalUrl } from "@/lib/desktop-api";
+import { openExternalUrl } from "@/lib/desktop-api/core";
 import { cn } from "@/lib/utils";
 
 type ReasoningContextValue = {

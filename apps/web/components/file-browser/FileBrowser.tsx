@@ -40,7 +40,7 @@ import {
   renameAgentFile,
   searchAgentWorkspaceFiles,
   showAgentFileInFolder
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/agent";
 import { cn } from "@/lib/utils";
 import { workspaceFilesVersionAtom } from "@/atoms";
 

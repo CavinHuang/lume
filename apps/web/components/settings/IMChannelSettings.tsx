@@ -23,7 +23,7 @@ import {
   startChannelGatewayIngress,
   stopChannelGatewayIngress,
   testFeishuGatewayConfig
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/system";
 import {
   SettingsCard,
   SettingsInput,

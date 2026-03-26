@@ -22,15 +22,17 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
   createAgentSession,
-  getBrowserExtensionInfo,
-  getBrowserRelayStatus,
   getAgentWorkspaceMcpConfig,
   listAgentSessions,
-  openExternalUrl,
-  saveAgentWorkspaceMcpConfig,
+  saveAgentWorkspaceMcpConfig
+} from "@/lib/desktop-api/agent";
+import { openExternalUrl } from "@/lib/desktop-api/core";
+import {
+  getBrowserExtensionInfo,
+  getBrowserRelayStatus,
   installBrowserExtension,
   startBrowserRelay
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/system";
 import { McpServerForm } from "./McpServerForm";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
 

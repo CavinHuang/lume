@@ -34,7 +34,7 @@ import {
   fetchChannelModels,
   testChannelDirect,
   updateChannel
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/system";
 import {
   SettingsCard,
   SettingsInput,

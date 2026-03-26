@@ -13,7 +13,7 @@ import {
   currentAgentWorkspaceIdAtom,
   settingsTabAtom
 } from "@/atoms";
-import { createAgentSession, listAgentSessions, migrateChatToAgentSession } from "@/lib/desktop-api";
+import { createAgentSession, listAgentSessions, migrateChatToAgentSession } from "@/lib/desktop-api/agent";
 
 interface MigrateOptions {
   suggestedPrompt?: string;

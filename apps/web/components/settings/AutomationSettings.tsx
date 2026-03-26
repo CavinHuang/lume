@@ -18,7 +18,7 @@ import {
   listAutomationRuns,
   runAutomationJobNow,
   updateAutomationJob
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/system";
 import { SettingsCard, SettingsSection } from "./primitives";
 
 export function AutomationSettings(): React.ReactElement {

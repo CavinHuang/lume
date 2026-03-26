@@ -5,7 +5,7 @@ import { Paperclip, SendHorizontal, X } from "lucide-react";
 import type { ChatMessage, FileAttachment } from "@lume/shared";
 import { MessageAction } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
-import { openChatFileDialog, readChatAttachment } from "@/lib/desktop-api";
+import { openChatFileDialog, readChatAttachment } from "@/lib/desktop-api/chat";
 import { AttachmentPreviewItem } from "./AttachmentPreviewItem";
 
 function fileToBase64(file: File): Promise<string> {

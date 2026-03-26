@@ -3,7 +3,7 @@
 import * as React from "react";
 import type { GitHubRelease } from "@lume/shared";
 import { ChevronDown, ChevronUp, Loader2, RefreshCw } from "lucide-react";
-import { listGitHubReleases } from "@/lib/desktop-api";
+import { listGitHubReleases } from "@/lib/desktop-api/system";
 import { SettingsCard } from "./primitives";
 import { ReleaseNotesViewer } from "./ReleaseNotesViewer";
 

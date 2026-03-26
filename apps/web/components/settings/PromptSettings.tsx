@@ -19,7 +19,7 @@ import {
   setDefaultSystemPrompt,
   updateSystemPrompt,
   updateSystemPromptAppendSetting
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/chat";
 import { SettingsCard, SettingsSection, SettingsToggle } from "./primitives";
 
 const DEBOUNCE_DELAY_MS = 500;

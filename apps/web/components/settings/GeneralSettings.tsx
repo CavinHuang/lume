@@ -11,7 +11,7 @@ import { UserAvatar } from "@/components/chat/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { getAgentProxySettings, saveAgentProxySettings } from "@/lib/desktop-api";
+import { getAgentProxySettings, saveAgentProxySettings } from "@/lib/desktop-api/agent";
 import { SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSegmentedControl, SettingsSelect } from "./primitives";
 
 interface EmojiMartEmoji {

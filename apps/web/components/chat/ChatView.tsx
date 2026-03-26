@@ -32,37 +32,21 @@ import {
   onboardingDismissedAtom
 } from "@/atoms";
 import {
-  createConversation,
-  saveChatAttachment,
-  deleteChatAttachment,
-  listConversations,
-  getConversationMessages,
   getRecentConversationMessages,
-  getSystemPromptConfig,
-  getChatTools,
-  deleteConversationMessage,
-  onChatStreamChunk,
-  onChatStreamComplete,
-  onChatStreamError,
-  onChatStreamReasoning,
-  onChatStreamToolActivity,
-  onChatToolChanged,
-  sendChatMessage,
-  stopChatGeneration,
-  truncateConversationMessagesFrom,
+  listConversations,
   updateConversationContextDividers,
-  updateConversationTitle,
-  generateConversationTitle
-} from "@/lib/desktop-api";
-import type { AttachmentSaveInput, ChatMessage, ChatSendInput, FileAttachment } from "@lume/shared";
+} from "@/lib/desktop-api/chat";
+import type { ChatMessage } from "@lume/shared";
 import { cn } from "@/lib/utils";
 import { ChatHeader } from "./ChatHeader";
 import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
 import { PromptEditorSidebar } from "./PromptEditorSidebar";
 import type { InlineEditSubmitPayload } from "./ChatMessageItem";
-import { finalizeStreamRefresh } from "./stream-finalizer";
-import { getStreamRefreshRecentLimit } from "./stream-refresh-policy";
+import { useChatComposer } from "./hooks/useChatComposer";
+import { useChatOnboardingFlow } from "./hooks/useChatOnboardingFlow";
+import { useChatSessionLifecycle } from "./hooks/useChatSessionLifecycle";
+import { useChatStreamSubscriptions } from "./hooks/useChatStreamSubscriptions";
 import { OnboardingView } from "@/components/onboarding/OnboardingView";
 import { TutorialBanner } from "@/components/tutorial/TutorialBanner";
 
@@ -95,284 +79,45 @@ export function ChatView(): React.ReactElement {
   const setSettingsTab = useSetAtom(settingsTabAtom);
   const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const [creatingWelcomeConversation, setCreatingWelcomeConversation] = useState(false);
   const pendingTitleRef = useRef(new Map<string, { userMessage: string; channelId: string; modelId: string }>());
-  const currentConversationIdRef = useRef<string | null>(currentConversationId);
-  const currentMessagesRef = useRef(currentMessages);
-  const hasMoreMessagesRef = useRef(hasMoreMessages);
-  const conversationsRef = useRef(conversations);
+  const {
+    currentConversationIdRef,
+    currentMessagesRef,
+    hasMoreMessagesRef,
+    conversationsRef
+  } = useChatSessionLifecycle({
+    currentConversationId,
+    currentConversation,
+    currentMessages,
+    hasMoreMessages,
+    conversations,
+    selectedPromptId,
+    conversationPromptMap,
+    promptConfig,
+    setPromptConfig,
+    setChatTools,
+    setConversationPromptMap,
+    setCurrentMessages,
+    setContextDividers,
+    setHasMoreMessages,
+    setSelectedModel,
+    setInlineEditingMessageId
+  });
 
   const streamState = currentConversationId ? streamingStates.get(currentConversationId) : undefined;
   const isStreaming = !!streamState?.streaming;
 
-  useEffect(() => {
-    currentConversationIdRef.current = currentConversationId;
-  }, [currentConversationId]);
-
-  useEffect(() => {
-    conversationsRef.current = conversations;
-  }, [conversations]);
-
-  useEffect(() => {
-    currentMessagesRef.current = currentMessages;
-  }, [currentMessages]);
-
-  useEffect(() => {
-    hasMoreMessagesRef.current = hasMoreMessages;
-  }, [hasMoreMessages]);
-
-  useEffect(() => {
-    setInlineEditingMessageId(null);
-  }, [currentConversationId]);
-
-  useEffect(() => {
-    void getSystemPromptConfig().then((config) => {
-      setPromptConfig(config);
-    }).catch((error) => {
-      console.error("[ChatView] 加载系统提示词配置失败:", error);
-    });
-  }, [setPromptConfig]);
-
-  useEffect(() => {
-    void getChatTools().then((tools) => {
-      setChatTools(tools);
-    }).catch((error) => {
-      console.error("[ChatView] 加载工具配置失败:", error);
-    });
-  }, [setChatTools]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    void onChatToolChanged(() => {
-      void getChatTools().then((tools) => {
-        if (!disposed) {
-          setChatTools(tools);
-        }
-      }).catch((error) => {
-        console.error("[ChatView] 工具配置变更刷新失败:", error);
-      });
-    }).then((fn) => {
-      if (disposed) {
-        void fn();
-        return;
-      }
-      unlisten = fn;
-    }).catch((error) => {
-      console.error("[ChatView] 订阅工具配置变更失败:", error);
-    });
-
-    return () => {
-      disposed = true;
-      if (unlisten) {
-        void unlisten();
-      }
-    };
-  }, [setChatTools]);
-
-  useEffect(() => {
-    if (!currentConversationId) return;
-    const existingPromptId = conversationPromptMap.get(currentConversationId);
-    if (existingPromptId && promptConfig.prompts.some((item) => item.id === existingPromptId)) {
-      return;
-    }
-    const nextPromptId = promptConfig.defaultPromptId ?? selectedPromptId;
-    if (!nextPromptId) return;
-    setConversationPromptMap((prev) => {
-      const next = new Map(prev);
-      next.set(currentConversationId, nextPromptId);
-      return next;
-    });
-  }, [
-    currentConversationId,
-    conversationPromptMap,
-    promptConfig.prompts,
-    promptConfig.defaultPromptId,
-    selectedPromptId,
-    setConversationPromptMap
-  ]);
-
-  useEffect(() => {
-    if (!currentConversationId) {
-      setCurrentMessages([]);
-      setContextDividers([]);
-      setHasMoreMessages(false);
-      return;
-    }
-
-    // 切换到新会话时先清空旧消息，避免发送首条消息时读取到上一个会话的消息计数。
-    setCurrentMessages([]);
-    setHasMoreMessages(false);
-
-    const targetConversationId = currentConversationId;
-    void getRecentConversationMessages(targetConversationId, INITIAL_MESSAGE_LIMIT).then((result) => {
-      if (currentConversationIdRef.current !== targetConversationId) return;
-      setCurrentMessages(result.messages);
-      setHasMoreMessages(result.hasMore);
-    });
-    setContextDividers(currentConversation?.contextDividers ?? []);
-    if (currentConversation?.modelId && currentConversation?.channelId) {
-      setSelectedModel({
-        channelId: currentConversation.channelId,
-        modelId: currentConversation.modelId
-      });
-    }
-  }, [currentConversation?.contextDividers, currentConversation?.modelId, currentConversation?.channelId, currentConversationId, setContextDividers, setCurrentMessages, setHasMoreMessages, setSelectedModel]);
-
-  useEffect(() => {
-    const unsubs: Array<() => void> = [];
-    let disposed = false;
-
-    const clearStreamingStateForConversation = (conversationId: string): void => {
-      setStreamingStates((prev) => {
-        if (!prev.has(conversationId)) return prev;
-        const map = new Map(prev);
-        map.delete(conversationId);
-        return map;
-      });
-    };
-
-    const refreshConversationAfterStream = (
-      conversationId: string,
-      options?: { logPrefix?: string }
-    ): void => {
-      void finalizeStreamRefresh({
-        fetchRecentMessages: async () => {
-          const limit = getStreamRefreshRecentLimit({
-            visibleCount: currentMessagesRef.current.length,
-            hadMore: hasMoreMessagesRef.current,
-            minLimit: INITIAL_MESSAGE_LIMIT
-          });
-          const result = await getRecentConversationMessages(conversationId, limit);
-          return {
-            messages: result.messages,
-            hasMore: result.hasMore
-          };
-        },
-        applyRefresh: (resolved) => {
-          if (conversationId !== currentConversationIdRef.current) return;
-          setCurrentMessages(resolved.messages);
-          setHasMoreMessages(resolved.hasMore);
-        },
-        clearStreaming: () => {
-          clearStreamingStateForConversation(conversationId);
-        },
-        onFetchError: (error) => {
-          if (!options?.logPrefix) return;
-          console.error(options.logPrefix, error);
-        }
-      });
-    };
-
-    const trackUnlisten = (promise: Promise<() => void>): void => {
-      void promise.then((fn) => {
-        if (disposed) {
-          void fn();
-          return;
-        }
-        unsubs.push(fn);
-      }).catch((error) => {
-        console.error("[ChatView] subscribe stream failed:", error);
-      });
-    };
-
-    trackUnlisten(onChatStreamChunk((event) => {
-      setStreamingStates((prev) => {
-        const map = new Map(prev);
-        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "", toolActivities: [] };
-        map.set(event.conversationId, {
-          ...current,
-          streaming: true,
-          content: current.content + event.delta
-        });
-        return map;
-      });
-    }));
-
-    trackUnlisten(onChatStreamReasoning((event) => {
-      setStreamingStates((prev) => {
-        const map = new Map(prev);
-        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "", toolActivities: [] };
-        map.set(event.conversationId, {
-          ...current,
-          streaming: true,
-          reasoning: current.reasoning + event.delta
-        });
-        return map;
-      });
-    }));
-
-    trackUnlisten(onChatStreamToolActivity((event) => {
-      setStreamingStates((prev) => {
-        const map = new Map(prev);
-        const current = map.get(event.conversationId) ?? { streaming: true, content: "", reasoning: "", toolActivities: [] };
-        map.set(event.conversationId, {
-          ...current,
-          toolActivities: [...current.toolActivities, event.activity]
-        });
-        return map;
-      });
-    }));
-
-    trackUnlisten(onChatStreamComplete((event) => {
-      refreshConversationAfterStream(event.conversationId, {
-        logPrefix: "[ChatView] 刷新消息失败:"
-      });
-
-      // 增量更新当前会话元数据，避免 complete 阶段全量刷新对话列表导致侧栏闪烁。
-      setConversations((prev) =>
-        prev.map((item) =>
-          item.id === event.conversationId
-            ? {
-                ...item,
-                modelId: event.model || item.modelId,
-                updatedAt: Date.now()
-              }
-            : item
-        )
-      );
-
-      const titleInput = pendingTitleRef.current.get(event.conversationId);
-      pendingTitleRef.current.delete(event.conversationId);
-      if (!titleInput) return;
-
-      void generateConversationTitle(titleInput).then((title) => {
-        const nextTitle = title?.trim() || titleInput.userMessage.trim().slice(0, 20);
-        if (!nextTitle) return;
-        void updateConversationTitle(event.conversationId, nextTitle).then((updated) => {
-          setConversations((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
-        }).catch((error) => {
-          console.error("[ChatView] 自动更新标题失败:", error);
-        });
-      }).catch((error) => {
-        console.error("[ChatView] 自动生成标题失败:", error);
-        const fallback = titleInput.userMessage.trim().slice(0, 20);
-        if (!fallback) return;
-        void updateConversationTitle(event.conversationId, fallback).then((updated) => {
-          setConversations((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
-        }).catch((updateError) => {
-          console.error("[ChatView] 回退标题更新失败:", updateError);
-        });
-      });
-    }));
-
-    trackUnlisten(onChatStreamError((event) => {
-      setErrors((prev) => {
-        const map = new Map(prev);
-        map.set(event.conversationId, event.error);
-        return map;
-      });
-
-      refreshConversationAfterStream(event.conversationId, {
-        logPrefix: "[ChatView] 刷新失败后的消息失败:"
-      });
-    }));
-
-    return () => {
-      disposed = true;
-      for (const fn of unsubs) fn();
-    };
-  }, [currentConversationId, setConversations, setCurrentMessages, setErrors, setHasMoreMessages, setStreamingStates]);
+  useChatStreamSubscriptions({
+    currentConversationIdRef,
+    currentMessagesRef,
+    hasMoreMessagesRef,
+    pendingTitleRef,
+    setStreamingStates,
+    setCurrentMessages,
+    setHasMoreMessages,
+    setConversations,
+    setErrors
+  });
 
   const canSend = useMemo(
     () => !!currentConversationId && !!selectedModel,
@@ -383,151 +128,69 @@ export function ChatView(): React.ReactElement {
     setSettingsTab("models");
     setActiveView("settings");
   };
+  const {
+    creatingWelcomeConversation,
+    showOnboardingView,
+    showTutorialBanner,
+    handleCreateWelcomeConversation,
+    dismissOnboarding,
+    completeOnboarding
+  } = useChatOnboardingFlow({
+    currentConversationId,
+    currentMessagesCount: currentMessages.length,
+    isStreaming,
+    onboardingDismissed,
+    setOnboardingDismissed,
+    onboardingCompleted,
+    setOnboardingCompleted,
+    selectedModel,
+    promptConfig,
+    selectedPromptId,
+    setConversations,
+    setConversationPromptMap,
+    setSelectedModel,
+    setCurrentConversationId
+  });
 
-  const handleCreateWelcomeConversation = async (): Promise<void> => {
-    if (!selectedModel || creatingWelcomeConversation) return;
-    setCreatingWelcomeConversation(true);
-    try {
-      const created = await createConversation({
-        modelId: selectedModel.modelId,
-        channelId: selectedModel.channelId
-      });
-      setConversations((prev) => [created, ...prev]);
-      const nextPromptId = promptConfig.defaultPromptId ?? selectedPromptId ?? "builtin-default";
-      setConversationPromptMap((prev) => {
-        const next = new Map(prev);
-        next.set(created.id, nextPromptId);
-        return next;
-      });
-      setSelectedModel({ channelId: selectedModel.channelId, modelId: selectedModel.modelId });
-      setCurrentConversationId(created.id);
-      setOnboardingCompleted(true);
-      setOnboardingDismissed(true);
-    } catch (error) {
-      console.error("[ChatView] create welcome conversation failed:", error);
-    } finally {
-      setCreatingWelcomeConversation(false);
-    }
-  };
-
-  const handleSend = async (
-    content: string,
-    options?: {
-      attachments?: FileAttachment[];
-      consumePendingAttachments?: boolean;
-      messageCountBeforeSend?: number;
-      contextDividersOverride?: string[];
-    }
-  ): Promise<void> => {
-    if (!canSend || !currentConversationId || !selectedModel) return;
-    const consumePending = options?.consumePendingAttachments ?? true;
-
-    setErrors((prev) => {
-      if (!prev.has(currentConversationId)) return prev;
-      const map = new Map(prev);
-      map.delete(currentConversationId);
-      return map;
-    });
-
-    const messageCountBeforeSend = options?.messageCountBeforeSend ?? currentMessages.length;
-    const currentMeta = conversationsRef.current.find((item) => item.id === currentConversationId);
-    const isDefaultTitledConversation = !currentMeta || currentMeta.title === "新对话";
-    const shouldPrepareAutoTitle =
-      content.trim().length > 0 &&
-      (messageCountBeforeSend === 0 || isDefaultTitledConversation) &&
-      !pendingTitleRef.current.has(currentConversationId);
-    if (shouldPrepareAutoTitle) {
-      pendingTitleRef.current.set(currentConversationId, {
-        userMessage: content,
-        channelId: selectedModel.channelId,
-        modelId: selectedModel.modelId
-      });
-    }
-
-    let savedAttachments: FileAttachment[] = options?.attachments ?? [];
-    if (consumePending) {
-      const currentPending = [...pendingAttachments];
-      savedAttachments = [];
-      for (const att of currentPending) {
-        const data = window.__pendingAttachmentData?.get(att.id);
-        if (!data) continue;
-        try {
-          const input: AttachmentSaveInput = {
-            conversationId: currentConversationId,
-            filename: att.filename,
-            mediaType: att.mediaType,
-            data
-          };
-          const result = await saveChatAttachment(input);
-          savedAttachments.push(result.attachment);
-        } catch (error) {
-          console.error("[ChatView] save attachment failed:", error);
-        }
-      }
-
-      for (const att of currentPending) {
-        if (att.previewUrl?.startsWith("blob:")) {
-          URL.revokeObjectURL(att.previewUrl);
-        }
-        window.__pendingAttachmentData?.delete(att.id);
-      }
-      setPendingAttachments([]);
-    }
-
-    const optimistic: ChatMessage = {
-      id: `temp-${Date.now()}`,
-      role: "user",
-      content,
-      createdAt: Date.now(),
-      attachments: savedAttachments.length > 0 ? savedAttachments : undefined
-    };
-    setCurrentMessages((prev) => [...prev, optimistic]);
-
-    setStreamingStates((prev) => {
-      const map = new Map(prev);
-      map.set(currentConversationId, { streaming: true, content: "", reasoning: "", toolActivities: [] });
-      return map;
-    });
-
-    const input: ChatSendInput = {
-      conversationId: currentConversationId,
-      userMessage: content,
-      messageHistory: [],
-      channelId: selectedModel.channelId,
-      modelId: selectedModel.modelId,
-      systemMessage: resolveSystemMessage(
-        conversationPromptMap.get(currentConversationId) ?? selectedPromptId,
-        promptConfig,
-        userProfile.userName
-      ),
-      contextLength,
-      contextDividers: options?.contextDividersOverride ?? contextDividers,
-      attachments: savedAttachments.length > 0 ? savedAttachments : undefined,
-      thinkingEnabled,
-      enabledToolIds: activeToolIds
-    };
-
-    if (content.trim().length > 0 && !onboardingCompleted) {
-      setOnboardingCompleted(true);
-      setOnboardingDismissed(true);
-    }
-
-    void sendChatMessage(input).catch((error) => {
-      console.error("[ChatView] send failed", error);
-      const message = error instanceof Error ? error.message : String(error);
-      setErrors((prev) => {
-        const map = new Map(prev);
-        map.set(currentConversationId, `发送失败：${message}`);
-        return map;
-      });
-      setStreamingStates((prev) => {
-        if (!prev.has(currentConversationId)) return prev;
-        const map = new Map(prev);
-        map.delete(currentConversationId);
-        return map;
-      });
-    });
-  };
+  const {
+    handleSend,
+    handleDeleteMessage,
+    handleClearContext,
+    handleLoadMore,
+    handleStop,
+    handleResendMessage,
+    handleSubmitInlineEdit: submitInlineEditMessage
+  } = useChatComposer({
+    currentConversationId,
+    currentConversationIdRef,
+    currentMessages,
+    currentMessagesRef,
+    selectedModel,
+    canSend,
+    isStreaming,
+    contextLength,
+    contextDividers,
+    setContextDividers,
+    promptConfig,
+    conversationPromptMap,
+    selectedPromptId,
+    userName: userProfile.userName,
+    thinkingEnabled,
+    activeToolIds,
+    pendingAttachments,
+    setPendingAttachments,
+    pendingTitleRef,
+    conversationsRef,
+    setCurrentMessages,
+    setHasMoreMessages,
+    setStreamingStates,
+    setErrors,
+    onboardingCompleted,
+    setOnboardingCompleted,
+    setOnboardingDismissed,
+    resolveSystemMessage: (promptId, config, userNameValue) =>
+      resolveSystemMessage(promptId ?? undefined, config, userNameValue ?? "")
+  });
 
   const handleReconnect = async (): Promise<void> => {
     if (isReconnecting) return;
@@ -562,100 +225,6 @@ export function ChatView(): React.ReactElement {
     }
   };
 
-  const handleDeleteMessage = async (messageId: string): Promise<void> => {
-    if (!currentConversationId) return;
-    const messages = await deleteConversationMessage(currentConversationId, messageId);
-    setCurrentMessages(messages);
-
-    if (contextDividers.includes(messageId)) {
-      const next = contextDividers.filter((id) => id !== messageId);
-      setContextDividers(next);
-      await updateConversationContextDividers(currentConversationId, next);
-    }
-  };
-
-  const handleClearContext = async (): Promise<void> => {
-    if (!currentConversationId || currentMessages.length === 0) return;
-    const lastId = currentMessages[currentMessages.length - 1]?.id;
-    if (!lastId) return;
-    const next = contextDividers.includes(lastId)
-      ? contextDividers.filter((id) => id !== lastId)
-      : [...contextDividers, lastId];
-    setContextDividers(next);
-    await updateConversationContextDividers(currentConversationId, next);
-  };
-
-  const handleLoadMore = async (): Promise<void> => {
-    if (!currentConversationId) return;
-    const allMessages = await getConversationMessages(currentConversationId);
-    setCurrentMessages(allMessages);
-    setHasMoreMessages(false);
-  };
-
-  const handleStop = (): void => {
-    if (!currentConversationId) return;
-    setStreamingStates((prev) => {
-      const current = prev.get(currentConversationId);
-      if (!current) return prev;
-      const map = new Map(prev);
-      map.set(currentConversationId, { ...current, streaming: false });
-      return map;
-    });
-    void stopChatGeneration(currentConversationId);
-  };
-
-  const syncContextDividers = async (
-    conversationId: string,
-    messages: Array<{ id: string }>
-  ): Promise<string[]> => {
-    const messageIdSet = new Set(messages.map((msg) => msg.id));
-    const next = contextDividers.filter((id) => messageIdSet.has(id));
-    if (next.length !== contextDividers.length) {
-      setContextDividers(next);
-      await updateConversationContextDividers(conversationId, next);
-    }
-    return next;
-  };
-
-  const truncateFromMessage = async (
-    messageId: string,
-    preserveFirstMessageAttachments = false
-  ): Promise<{
-    targetAttachments: FileAttachment[];
-    messageCountBeforeSend: number;
-    contextDividersAfterTruncate: string[];
-  }> => {
-    if (!currentConversationId) {
-      return { targetAttachments: [], messageCountBeforeSend: 0, contextDividersAfterTruncate: [] };
-    }
-    const target = currentMessages.find((msg) => msg.id === messageId);
-    const targetIndex = currentMessages.findIndex((msg) => msg.id === messageId);
-    const updatedMessages = await truncateConversationMessagesFrom(
-      currentConversationId,
-      messageId,
-      preserveFirstMessageAttachments
-    );
-    setCurrentMessages(updatedMessages);
-    setHasMoreMessages(false);
-    const contextDividersAfterTruncate = await syncContextDividers(currentConversationId, updatedMessages);
-    return {
-      targetAttachments: target?.attachments ?? [],
-      messageCountBeforeSend: targetIndex >= 0 ? targetIndex : updatedMessages.length,
-      contextDividersAfterTruncate
-    };
-  };
-
-  const handleResendMessage = async (message: ChatMessage): Promise<void> => {
-    if (!currentConversationId || isStreaming) return;
-    const truncated = await truncateFromMessage(message.id, true);
-    await handleSend(message.content ?? "", {
-      attachments: truncated.targetAttachments,
-      consumePendingAttachments: false,
-      messageCountBeforeSend: truncated.messageCountBeforeSend,
-      contextDividersOverride: truncated.contextDividersAfterTruncate
-    });
-  };
-
   const handleStartInlineEdit = (message: ChatMessage): void => {
     if (isStreaming) return;
     setInlineEditingMessageId(message.id);
@@ -669,39 +238,12 @@ export function ChatView(): React.ReactElement {
     message: ChatMessage,
     payload: InlineEditSubmitPayload
   ): Promise<void> => {
-    if (!currentConversationId || !selectedModel || isStreaming) return;
-    const trimmed = payload.content.trim();
-    if (!trimmed && payload.keepExistingAttachments.length === 0 && payload.newAttachments.length === 0) return;
-
-    const truncated = await truncateFromMessage(message.id, true);
-    const keepPathSet = new Set(payload.keepExistingAttachments.map((att) => att.localPath));
-    const removed = truncated.targetAttachments.filter((att) => !keepPathSet.has(att.localPath));
-    for (const item of removed) {
-      await deleteChatAttachment(item.localPath);
-    }
-
-    const newSaved: FileAttachment[] = [];
-    for (const item of payload.newAttachments) {
-      const result = await saveChatAttachment({
-        conversationId: currentConversationId,
-        filename: item.filename,
-        mediaType: item.mediaType,
-        data: item.data
-      });
-      newSaved.push(result.attachment);
-    }
-
-    await handleSend(trimmed, {
-      attachments: [...payload.keepExistingAttachments, ...newSaved],
-      consumePendingAttachments: false,
-      messageCountBeforeSend: truncated.messageCountBeforeSend,
-      contextDividersOverride: truncated.contextDividersAfterTruncate
-    });
+    await submitInlineEditMessage(message, payload);
     setInlineEditingMessageId(null);
   };
 
   if (!currentConversationId) {
-    if (!onboardingDismissed && !onboardingCompleted) {
+    if (showOnboardingView) {
       return (
         <OnboardingView
           hasModelSelected={!!selectedModel}
@@ -710,7 +252,7 @@ export function ChatView(): React.ReactElement {
           creating={creatingWelcomeConversation}
           onCreateWelcomeConversation={() => { void handleCreateWelcomeConversation(); }}
           onOpenModelSettings={openModelSettings}
-          onDismiss={() => setOnboardingDismissed(true)}
+          onDismiss={dismissOnboarding}
         />
       );
     }
@@ -731,12 +273,12 @@ export function ChatView(): React.ReactElement {
     <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <ChatHeader />
-        {currentMessages.length === 0 && !isStreaming && !onboardingCompleted ? (
+        {showTutorialBanner ? (
           <TutorialBanner
             canSendExample={canSend}
             onSendExample={() => { void handleSend("请用三句话介绍你可以帮我完成哪些任务。"); }}
             onOpenModelSettings={openModelSettings}
-            onDismiss={() => setOnboardingCompleted(true)}
+            onDismiss={completeOnboarding}
           />
         ) : null}
         <ChatMessages

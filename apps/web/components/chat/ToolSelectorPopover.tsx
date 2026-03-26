@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getChatTools, updateChatToolState } from "@/lib/desktop-api";
+import { getChatTools, updateChatToolState } from "@/lib/desktop-api/chat";
 import { cn } from "@/lib/utils";
 
 function getToolIcon(iconName?: string): React.ReactElement {

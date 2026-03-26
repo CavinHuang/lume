@@ -13,7 +13,7 @@ import {
   thinkingEnabledAtom,
   type PendingAttachment
 } from "@/atoms/chat-atoms";
-import { openChatFileDialog } from "@/lib/desktop-api";
+import { openChatFileDialog } from "@/lib/desktop-api/chat";
 import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { SpeechButton } from "@/components/ai-elements/speech-button";
 import { AttachmentPreviewItem } from "./AttachmentPreviewItem";

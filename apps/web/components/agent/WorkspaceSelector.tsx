@@ -23,7 +23,7 @@ import {
   createAgentWorkspace,
   deleteAgentWorkspace,
   updateAgentWorkspace,
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/agent";
 
 type WorkspaceSelectorProps = {
   workspaces: AgentWorkspace[];

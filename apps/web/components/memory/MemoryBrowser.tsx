@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 import { Search, Loader2 } from "lucide-react";
 import type { MemorySearchResult } from "@lume/shared";
-import { searchWorkspaceMemory } from "@/lib/desktop-api";
+import { searchWorkspaceMemory } from "@/lib/desktop-api/agent";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 

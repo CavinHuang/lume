@@ -7,7 +7,8 @@ import { themeModeAtom, type ThemeMode, workspaceCapabilitiesVersionAtom, worksp
 import { AppShell } from "./components/app-shell/AppShell";
 import { TooltipProvider } from "./components/ui/tooltip";
 import type { AppShellContextType } from "./contexts/AppShellContext";
-import { onAgentCapabilitiesChanged, onAgentWorkspaceFilesChanged, sidecarCall } from "./lib/desktop-api";
+import { onAgentCapabilitiesChanged, onAgentWorkspaceFilesChanged } from "./lib/desktop-api/agent";
+import { sidecarCall } from "./lib/desktop-api/core";
 
 function resolveTheme(mode: ThemeMode): "dark" | "light" {
   if (mode !== "system") {

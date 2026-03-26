@@ -7,7 +7,7 @@ import {
   agentWorkspacesAtom,
   currentAgentWorkspaceIdAtom
 } from "@/atoms";
-import { readAgentBootstrapFile, writeAgentBootstrapFile } from "@/lib/desktop-api";
+import { readAgentBootstrapFile, writeAgentBootstrapFile } from "@/lib/desktop-api/agent";
 import { Button } from "@/components/ui/button";
 import { MemoryBrowser } from "@/components/memory/MemoryBrowser";
 import { SettingsCard, SettingsSection } from "./primitives";

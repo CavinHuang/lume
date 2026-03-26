@@ -14,7 +14,7 @@ import {
   deleteChannel,
   listChannels,
   updateChannel
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/system";
 import { getChannelLogo } from "@/lib/model-logo";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";

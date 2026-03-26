@@ -5,7 +5,7 @@ import { useAtom, useAtomValue } from "jotai";
 import { AlertCircle, CheckCircle2, Download, Loader2, RefreshCw } from "lucide-react";
 import { checkForUpdates, installUpdate, updateStatusAtom, updaterAvailableAtom } from "@/atoms";
 import { getAppVersion } from "@/lib/app-version";
-import { desktopHealthcheck, sidecarHealthcheck } from "@/lib/desktop-api";
+import { desktopHealthcheck, sidecarHealthcheck } from "@/lib/desktop-api/core";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
 import { VersionHistory } from "./VersionHistory";
 

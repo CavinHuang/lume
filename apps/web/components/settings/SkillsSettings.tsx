@@ -21,7 +21,7 @@ import {
   deleteAgentWorkspaceSkill,
   listAgentSessions,
   listAgentWorkspaceSkills
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/agent";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
 
 export function SkillsSettings(): React.ReactElement {

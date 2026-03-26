@@ -19,7 +19,7 @@ import {
   testChatTool,
   updateChatToolCredentials,
   updateChatToolState
-} from "@/lib/desktop-api";
+} from "@/lib/desktop-api/chat";
 import { SettingsCard, SettingsSection } from "./primitives";
 
 function getToolIcon(iconName?: string): React.ReactElement {

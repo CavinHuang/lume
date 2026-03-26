@@ -1,6 +1,6 @@
 # Web 渲染与动作逻辑拆分计划
 
-最后更新：2026-03-25
+最后更新：2026-03-26
 
 ## 1. 背景
 
@@ -18,6 +18,14 @@
 3. `components/app-shell/LeftSidebar.tsx`
 4. `atoms/agent-atoms.ts`
 5. `lib/desktop-api.ts`
+
+当前规模（2026-03-26）：
+
+1. `components/agent/AgentView.tsx`: `873` 行
+2. `components/chat/ChatView.tsx`: `358` 行
+3. `components/app-shell/LeftSidebar.tsx`: `427` 行
+4. `atoms/agent-atoms.ts`: `185` 行
+5. `lib/desktop-api.ts`: `7` 行
 
 本计划的目标不是重写前端，而是把已存在的逻辑边界显式化，使：
 
@@ -110,8 +118,10 @@
 
 当前状态：
 
-1. `core.ts / chat.ts / agent.ts / system.ts / index.ts / types.ts` 已创建
-2. 当前仍未迁移现有调用方，兼容出口仍保留在 `lib/desktop-api.ts`
+1. `core.ts / chat.ts / agent.ts / system.ts / index.ts / types.ts` 已创建并投入使用
+2. `apps/web` 调用方已迁移到分域入口
+3. `lib/desktop-api.ts` 已缩减为兼容 re-export shim
+4. `@lume/web typecheck` 已通过
 
 ### Phase B：拆 `AgentView`
 
@@ -132,6 +142,28 @@
 2. hook 调用
 3. JSX 组合
 
+当前状态：
+
+1. 已创建：
+   - `hooks/useAgentSessionLifecycle.ts`
+   - `hooks/useAgentStreamSubscriptions.ts`
+   - `hooks/useAgentComposer.ts`
+   - `hooks/useAgentPlanFlow.ts`
+   - `hooks/useAgentRuntimeGuard.ts`
+   - `hooks/useAgentSidePanelState.ts`
+   - `hooks/useAgentInteractiveRequests.ts`
+   - `hooks/useAgentTeamActivity.ts`
+2. 已补纯逻辑模块：
+   - `agent-session-lifecycle.ts`
+   - `agent-stream-subscriptions.ts`
+   - `agent-runtime-guard.ts`
+   - `agent-composer.ts`
+   - `agent-plan-flow.ts`
+   - `agent-side-panel-state.ts`
+   - `agent-interactive-requests.ts`
+   - `agent-team-activity.ts`
+3. `AgentView.tsx` 已明显减负，但仍保留页面编排与少量局部渲染逻辑
+
 ### Phase C：拆 `ChatView`
 
 目标：
@@ -143,6 +175,20 @@
 3. `hooks/useChatComposer.ts`
 4. `hooks/useChatPromptSelection.ts`
 5. `hooks/useChatOnboardingFlow.ts`
+
+当前状态：
+
+1. 已创建：
+   - `hooks/useChatSessionLifecycle.ts`
+   - `hooks/useChatStreamSubscriptions.ts`
+   - `hooks/useChatComposer.ts`
+   - `hooks/useChatOnboardingFlow.ts`
+2. 已补纯逻辑模块：
+   - `chat-session-lifecycle.ts`
+   - `chat-stream-subscriptions.ts`
+   - `chat-composer.ts`
+   - `chat-onboarding-flow.ts`
+3. `ChatView.tsx` 已进入轻量页面编排状态
 
 ### Phase D：拆 `LeftSidebar`
 
@@ -157,6 +203,16 @@
 5. `AgentSidebarSection.tsx`
 6. `SidebarSettingsEntry.tsx`
 
+当前状态：
+
+1. 已创建：
+   - `hooks/useConversationListController.ts`
+   - `hooks/useAgentSessionListController.ts`
+   - `ConversationSidebarSection.tsx`
+   - `AgentSidebarSection.tsx`
+2. `LeftSidebar.tsx` 已从控制器 + 大段列表模板混合体缩减为主编排层
+3. `useWorkspaceSidebarState.ts / SidebarSettingsEntry.tsx` 仍可后续补齐，但当前优先级已下降
+
 ### Phase E：给 `agent-atoms.ts` 减负
 
 目标：
@@ -168,6 +224,15 @@
 3. `lib/agent-tool-activity.ts`
 
 保留 atom 作为“状态层”，不继续增长成前端 runtime。
+
+当前状态：
+
+1. 已创建：
+   - `lib/agent-timeline.ts`
+   - `lib/agent-streaming.ts`
+   - `lib/agent-tool-activity.ts`
+2. `atoms/agent-atoms.ts` 已改为以状态定义与 atom 导出为主
+3. `team-activity.ts` 已开始复用 `lib/agent-tool-activity.ts`
 
 ## 5. 推荐执行顺序
 
@@ -207,10 +272,10 @@ bun run --filter @lume/web typecheck
 
 ## 7. 当前结论
 
-当前前端“方向合理，但控制器文件过重”。
+当前前端“方向合理，主要控制器与 runtime helper 已完成一轮系统减负”。
 
 因此：
 
 1. 不需要推翻现有架构
-2. 需要通过 hook/controller + `desktop-api` 拆分降低复杂度
-3. 拆分应逐步进行，优先减轻 `AgentView / ChatView / LeftSidebar`
+2. `desktop-api / AgentView / ChatView / LeftSidebar / agent-atoms` 五条主线都已进入后半段
+3. 后续重点从“继续拆分”转向“判断剩余拆分项的实际收益，并及时收口”

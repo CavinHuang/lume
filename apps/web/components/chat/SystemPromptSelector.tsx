@@ -11,7 +11,7 @@ import {
   promptConfigAtom,
   selectedPromptIdAtom
 } from "@/atoms";
-import { getSystemPromptConfig } from "@/lib/desktop-api";
+import { getSystemPromptConfig } from "@/lib/desktop-api/chat";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,

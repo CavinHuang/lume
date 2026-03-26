@@ -1,6 +1,6 @@
 "use client";
 
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
 import type {
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
@@ -33,6 +33,8 @@ import type {
   ImportGlobalSkillToWorkspaceInput,
   InstallGlobalPluginInput,
   InstallGlobalPluginResult,
+  MemorySearchResult,
+  MemoryStats,
   PlanFileMeta,
   PlanStateChangedEvent,
   WorkspaceCapabilities,
@@ -526,3 +528,46 @@ export async function writeAgentBootstrapFile(
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>("agent:write-bootstrap-file", { workspaceSlug, fileType, content });
 }
+
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
+export interface WriteLogInput {
+  level?: LogLevel;
+  context?: string;
+  message: string;
+  sessionId?: string;
+  data?: Record<string, unknown>;
+}
+
+export async function writeLog(input: WriteLogInput): Promise<{ ok: boolean }> {
+  return sidecarCall<{ ok: boolean }>(AGENT_IPC_CHANNELS.WRITE_LOG, input);
+}
+
+export async function getLogsDir(): Promise<{ path: string }> {
+  return sidecarCall<{ path: string }>(AGENT_IPC_CHANNELS.GET_LOGS_DIR);
+}
+
+export async function searchWorkspaceMemory(
+  workspaceSlug: string,
+  query: string,
+  maxResults = 10
+): Promise<MemorySearchResult[]> {
+  return sidecarCall<MemorySearchResult[]>(MEMORY_IPC_CHANNELS.SEARCH, { workspaceSlug, query, maxResults });
+}
+
+export async function getWorkspaceMemoryStats(
+  workspaceSlug: string
+): Promise<MemoryStats> {
+  return sidecarCall<MemoryStats>(MEMORY_IPC_CHANNELS.STATS, { workspaceSlug });
+}
+
+export const log = {
+  debug: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "debug", message, data, sessionId }),
+  info: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "info", message, data, sessionId }),
+  warn: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "warn", message, data, sessionId }),
+  error: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
+    writeLog({ level: "error", message, data, sessionId })
+};

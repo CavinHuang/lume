@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { conversationsAtom, currentConversationAtom, parallelModeAtom } from "@/atoms/chat-atoms";
-import { togglePinConversation, updateConversationTitle } from "@/lib/desktop-api";
+import { togglePinConversation, updateConversationTitle } from "@/lib/desktop-api/chat";
 import { SystemPromptSelector } from "./SystemPromptSelector";
 
 export function ChatHeader(): React.ReactElement | null {

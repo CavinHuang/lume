@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { cn } from "@/lib/utils";
 import { getChannelLogo, getModelLogo } from "@/lib/model-logo";
 import { conversationsAtom, currentConversationIdAtom, selectedModelAtom } from "@/atoms/chat-atoms";
-import { listChannels, updateConversationModel } from "@/lib/desktop-api";
+import { updateConversationModel } from "@/lib/desktop-api/chat";
+import { listChannels } from "@/lib/desktop-api/system";
 import type { Channel, ModelOption } from "@lume/shared";
 
 function buildModelOptions(channels: Channel[], filterChannelId?: string): ModelOption[] {

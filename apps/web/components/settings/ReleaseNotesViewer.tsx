@@ -7,7 +7,7 @@ import { CodeBlock } from "@lume/ui";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
-import { openExternalUrl } from "@/lib/desktop-api";
+import { openExternalUrl } from "@/lib/desktop-api/core";
 
 interface ReleaseNotesViewerProps {
   release: GitHubRelease;

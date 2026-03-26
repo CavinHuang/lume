@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import type { McpServerEntry, McpTransportType, WorkspaceMcpConfig } from "@lume/shared";
 import { Button } from "@/components/ui/button";
-import { getAgentWorkspaceMcpConfig, saveAgentWorkspaceMcpConfig } from "@/lib/desktop-api";
+import { getAgentWorkspaceMcpConfig, saveAgentWorkspaceMcpConfig } from "@/lib/desktop-api/agent";
 import {
   SettingsCard,
   SettingsInput,

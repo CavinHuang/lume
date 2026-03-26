@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { agentSessionsAtom, currentAgentSessionAtom } from "@/atoms";
-import { updateAgentSessionTitle } from "@/lib/desktop-api";
+import { updateAgentSessionTitle } from "@/lib/desktop-api/agent";
 
 interface AgentHeaderProps {
   onToggleFileBrowser?: () => void;
