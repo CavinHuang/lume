@@ -1,6 +1,6 @@
 # Sidecar Services Modularization Next Plan
 
-最后更新：2026-03-25（第一阶段完成）
+最后更新：2026-03-26（第一阶段完成，已补二次分层决策）
 
 ## 1. 背景
 
@@ -289,7 +289,12 @@ bun run smoke:agent-new-runtime:provider-switch
 
 ## 8. 下一步建议
 
-建议从以下两个方向二选一继续：
+当前建议不再二选一直接开工，而是先按 [2026-03-26-sidecar-second-layering-decision.md](E:/projects/ai-projects/lume/docs/plans/2026-03-26-sidecar-second-layering-decision.md) 执行第二轮分层决策。
 
-1. 如继续细化，可考虑把 `memory` 域再拆为 `memory/indexing` 与 `memory/runtime`
-2. 或者暂停在当前目录结构，等待更大范围的 sidecar 分层 ADR 再继续推进
+结论是：
+
+1. 暂不立即继续做 `memory/` 目录级拆分
+2. 优先处理 `chat-service.ts` 的二次分层
+3. `memory-index-manager.ts` 放在 `chat-service.ts` 收口之后
+4. `pi-agent / channel-gateway / browser / openclaw` 继续保持路径冻结
+5. `chat-service.ts` 的第一刀 facade 拆分已开始，后续继续在 `chat-send-service.ts` 内做更细的 stream/history/tool 编排下沉

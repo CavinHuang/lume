@@ -21,10 +21,10 @@
 
 当前规模（2026-03-26）：
 
-1. `components/agent/AgentView.tsx`: `873` 行
-2. `components/chat/ChatView.tsx`: `358` 行
-3. `components/app-shell/LeftSidebar.tsx`: `427` 行
-4. `atoms/agent-atoms.ts`: `185` 行
+1. `components/agent/AgentView.tsx`: `822` 行
+2. `components/chat/ChatView.tsx`: `344` 行
+3. `components/app-shell/LeftSidebar.tsx`: `325` 行
+4. `atoms/agent-atoms.ts`: `164` 行
 5. `lib/desktop-api.ts`: `7` 行
 
 本计划的目标不是重写前端，而是把已存在的逻辑边界显式化，使：
@@ -208,10 +208,12 @@
 1. 已创建：
    - `hooks/useConversationListController.ts`
    - `hooks/useAgentSessionListController.ts`
+   - `hooks/useWorkspaceSidebarState.ts`
    - `ConversationSidebarSection.tsx`
    - `AgentSidebarSection.tsx`
+   - `SidebarSettingsEntry.tsx`
 2. `LeftSidebar.tsx` 已从控制器 + 大段列表模板混合体缩减为主编排层
-3. `useWorkspaceSidebarState.ts / SidebarSettingsEntry.tsx` 仍可后续补齐，但当前优先级已下降
+3. workspace 初始化 / capability badge / settings 入口已收口到独立 hook/组件
 
 ### Phase E：给 `agent-atoms.ts` 减负
 
@@ -258,6 +260,26 @@
 bun run --filter @lume/web typecheck
 ```
 
+当前已补统一验证入口：
+
+```bash
+bun run --filter @lume/web test
+```
+
+```bash
+bun run --filter @lume/web test:smoke
+```
+
+仓库根也可直接执行：
+
+```bash
+bun run test:web
+```
+
+```bash
+bun run smoke:web
+```
+
 并根据阶段补相应测试：
 
 1. `desktop-api` 导出测试
@@ -277,5 +299,9 @@ bun run --filter @lume/web typecheck
 因此：
 
 1. 不需要推翻现有架构
-2. `desktop-api / AgentView / ChatView / LeftSidebar / agent-atoms` 五条主线都已进入后半段
-3. 后续重点从“继续拆分”转向“判断剩余拆分项的实际收益，并及时收口”
+2. `desktop-api / AgentView / ChatView / LeftSidebar / agent-atoms` 五条主线已基本完成本轮拆分目标
+3. `apps/web` 当前更适合进入“维护态 + 回归验证优先”，而不是继续做通用拆分
+4. 后续重点应转向：
+   - 保持 `bun run --filter @lume/web test` 与 `bun run smoke:web` 常态化回归
+   - 仅在 `AgentView.tsx` 出现明确可证明收益时再继续下沉少量局部逻辑
+   - 主精力切换到 sidecar 下一阶段分层与服务边界收口

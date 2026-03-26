@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -10,6 +10,9 @@ const STREAM_COMPLETE_METHOD = "chat:stream:complete";
 
 function createSidecarProcess(configHome) {
   const sidecarEntry = resolve(SCRIPT_DIR, "../dist/index.js");
+  if (!existsSync(sidecarEntry)) {
+    throw new Error(`sidecar build missing: ${sidecarEntry}`);
+  }
   const env = { ...process.env };
   env.HOME = configHome;
   env.USERPROFILE = configHome;
@@ -19,6 +22,9 @@ function createSidecarProcess(configHome) {
   const child = spawn(process.execPath, [sidecarEntry], {
     stdio: ["pipe", "pipe", "inherit"],
     env
+  });
+  child.once("error", (error) => {
+    console.error("SMOKE_CHAT_PROVIDER_SWITCH_CHILD_ERROR", error instanceof Error ? error.message : String(error));
   });
 
   let nextId = 1;

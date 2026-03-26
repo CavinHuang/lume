@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --port 3000",
     "build": "vite build",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test .",
+    "test:smoke": "bun scripts/smoke-web-regression.mjs"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
