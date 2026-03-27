@@ -195,6 +195,37 @@ describe("agent-session-manager advanced ops", () => {
     expect(recent.messages[0]?.content).toBe("来自 transcript 的助手消息");
   });
 
+  test("transcript 回放应分离 reasoning 与正式正文", () => {
+    const session = createAgentSession("reasoning transcript");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: "zai",
+      model: "glm-5-turbo",
+      api: "openai-completions",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [
+        { type: "thinking", thinking: "先读取工作区文件" },
+        { type: "text", text: "这是正式回答" }
+      ],
+      timestamp: 33
+    });
+
+    const messages = getAgentSessionMessages(session.id);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toBe("这是正式回答");
+    expect(messages[0]?.reasoning).toBe("先读取工作区文件");
+  });
+
   test("transcript 存在时应按 transcript 主消息读取", () => {
     const session = createAgentSession("transcript first");
 

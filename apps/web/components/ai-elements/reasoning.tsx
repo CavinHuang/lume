@@ -12,6 +12,7 @@ type ReasoningContextValue = {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
   duration: number | undefined;
+  elapsedSeconds: number;
 };
 
 const ReasoningContext = React.createContext<ReasoningContextValue | null>(null);
@@ -85,8 +86,22 @@ export const Reasoning = React.memo(function Reasoning({
     }
   }, [durationProp]);
 
+  // 实时计时：streaming 时每秒更新 elapsed
+  const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
+  React.useEffect(() => {
+    if (!isStreaming) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const t0 = Date.now();
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - t0) / MS_IN_S));
+    }, MS_IN_S);
+    return () => clearInterval(timer);
+  }, [isStreaming]);
+
   return (
-    <ReasoningContext.Provider value={{ isStreaming, isOpen, setIsOpen, duration }}>
+    <ReasoningContext.Provider value={{ isStreaming, isOpen, setIsOpen, duration, elapsedSeconds }}>
       <Collapsible className={cn("not-prose mb-4", className)} open={isOpen} onOpenChange={setIsOpen} {...props}>
         {children}
       </Collapsible>
@@ -95,17 +110,21 @@ export const Reasoning = React.memo(function Reasoning({
 });
 
 interface ReasoningTriggerProps extends React.ComponentProps<typeof CollapsibleTrigger> {
-  getThinkingMessage?: (isStreaming: boolean, duration?: number) => React.ReactNode;
+  getThinkingMessage?: (isStreaming: boolean, duration?: number, elapsedSeconds?: number) => React.ReactNode;
 }
 
-function defaultThinkingMessage(isStreaming: boolean, duration?: number): React.ReactNode {
-  if (isStreaming || duration === 0) {
+function defaultThinkingMessage(isStreaming: boolean, duration?: number, elapsedSeconds?: number): React.ReactNode {
+  if (isStreaming) {
+    // 实时计时：思考中... 1s / 2s / ...
+    if (elapsedSeconds && elapsedSeconds > 0) {
+      return <span>思考中... {elapsedSeconds}s</span>;
+    }
     return <span className="animate-pulse">思考中...</span>;
   }
-  if (duration === undefined) {
-    return <p>思考了几秒</p>;
+  if (duration !== undefined && duration > 0) {
+    return <p>思考了 {duration} 秒</p>;
   }
-  return <p>思考了 {duration} 秒</p>;
+  return <p>思考过程</p>;
 }
 
 export const ReasoningTrigger = React.memo(function ReasoningTrigger({
@@ -114,7 +133,7 @@ export const ReasoningTrigger = React.memo(function ReasoningTrigger({
   getThinkingMessage = defaultThinkingMessage,
   ...props
 }: ReasoningTriggerProps): React.ReactElement {
-  const { isStreaming, isOpen, duration } = useReasoning();
+  const { isStreaming, isOpen, duration, elapsedSeconds } = useReasoning();
 
   return (
     <CollapsibleTrigger
@@ -127,7 +146,7 @@ export const ReasoningTrigger = React.memo(function ReasoningTrigger({
       {children ?? (
         <>
           <Brain className="size-4" />
-          {getThinkingMessage(isStreaming, duration)}
+          {getThinkingMessage(isStreaming, duration, elapsedSeconds)}
           <ChevronDown className={cn("size-4 transition-transform", isOpen ? "rotate-180" : "rotate-0")} />
         </>
       )}

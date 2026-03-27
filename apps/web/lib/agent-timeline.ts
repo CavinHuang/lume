@@ -131,6 +131,9 @@ export function extractTimelineEvents(message: AgentMessage): TimelineEvent[] {
         textBuffer = "";
         textEventIds = [];
         break;
+      case "reasoning_delta":
+      case "reasoning_complete":
+        break;
       case "tool_start": {
         if (textBuffer) {
           appendOrMergeTextEvent({

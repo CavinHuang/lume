@@ -19,19 +19,34 @@ describe("agent runtime status helpers", () => {
     expect(isAgentRuntimePhaseActive("errored")).toBe(false);
   });
 
-  test("共享 runtime status 存在时应优先信任共享状态", () => {
+  test("localStreaming 为 true 时应始终返回 busy，即使 runtime status 为 idle/completed", () => {
     const idleStatus: AgentRuntimeStatus = {
       sessionId: "session-1",
       phase: "idle",
       updatedAt: Date.now()
     };
+    const completedStatus: AgentRuntimeStatus = {
+      sessionId: "session-1",
+      phase: "completed",
+      updatedAt: Date.now()
+    };
 
     expect(isAgentRuntimeStatusActive(idleStatus)).toBe(false);
-    expect(resolveAgentBusyState(idleStatus, true)).toBe(false);
+    // localStreaming 优先：前端已发送消息并设 running=true，不应被残留的 runtime status 覆盖
+    expect(resolveAgentBusyState(idleStatus, true)).toBe(true);
+    expect(resolveAgentBusyState(completedStatus, true)).toBe(true);
+    expect(resolveAgentBusyState(null, true)).toBe(true);
   });
 
-  test("共享 runtime status 缺失时应回退到本地 streaming", () => {
-    expect(resolveAgentBusyState(null, true)).toBe(true);
+  test("localStreaming 为 false 时应信任 runtime status", () => {
+    const streamingStatus: AgentRuntimeStatus = {
+      sessionId: "session-1",
+      phase: "streaming",
+      updatedAt: Date.now()
+    };
+
+    expect(resolveAgentBusyState(streamingStatus, false)).toBe(true);
+    expect(resolveAgentBusyState(null, false)).toBe(false);
     expect(resolveAgentBusyState(undefined, false)).toBe(false);
   });
 

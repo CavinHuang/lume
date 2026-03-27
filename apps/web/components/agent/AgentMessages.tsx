@@ -8,8 +8,11 @@ import { Bot, CalendarClock, ChevronRight, FileImage, FileText, Home, Loader2, P
 import {
   agentIsCompactingAtom,
   agentModelIdAtom,
+  agentStatusLineAtom,
   agentStreamingAtom,
   agentStreamingContentAtom,
+  agentToolActivitiesAtom,
+  agentStreamingReasoningAtom,
   agentStreamingTimelineEventsAtom,
   agentThinkingSecondsAtom,
   cachedTeammateStatesAtom,
@@ -30,6 +33,9 @@ import {
   MessageHeader,
   MessageLoading,
   MessageResponse,
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
   StreamingIndicator,
   UserMessageContent,
 } from "@/components/ai-elements";
@@ -37,7 +43,9 @@ import { formatMessageTime } from "@/components/chat/ChatMessageItem";
 import { CopyButton } from "@/components/chat/CopyButton";
 import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
 import { UserAvatar } from "@/components/chat/UserAvatar";
+import { extractToolActivitiesFromMessages } from "@/lib/agent-tool-activity";
 import { getModelLogo } from "@/lib/model-logo";
+import { AgentStatusLine } from "./AgentStatusLine";
 import { EventTimeline } from "./EventTimeline";
 import { SubagentLiveCards } from "./SubagentLiveCard";
 
@@ -345,6 +353,18 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     () => message.role === "assistant" ? extractTimelineEvents(message) : [],
     [message]
   );
+  const messageToolActivities = React.useMemo(
+    () => {
+      if (message.role !== "assistant") return [];
+      const metadata = message.metadata as Record<string, unknown> | undefined;
+      const snapshot = metadata?.toolActivitiesSnapshot;
+      if (Array.isArray(snapshot)) {
+        return snapshot as ReturnType<typeof extractToolActivitiesFromMessages>;
+      }
+      return extractToolActivitiesFromMessages([message]);
+    },
+    [message]
+  );
 
   const { attachedFiles, messageText } = React.useMemo(() => {
     if (message.role !== "user") return { attachedFiles: [] as AttachedFileRef[], messageText: "" };
@@ -439,9 +459,20 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
         />
 
         <MessageContent>
+          {message.reasoning ? (
+            <Reasoning
+              defaultOpen={false}
+              duration={typeof (message.metadata as Record<string, unknown>)?.thinkingDuration === "number"
+                ? ((message.metadata as Record<string, unknown>).thinkingDuration as number)
+                : undefined}
+            >
+              <ReasoningTrigger />
+              <ReasoningContent>{message.reasoning}</ReasoningContent>
+            </Reasoning>
+          ) : null}
           {timelineEvents.length > 0 ? (
             <div className="mb-2">
-              <EventTimeline events={timelineEvents} />
+              <EventTimeline events={timelineEvents} activities={messageToolActivities} />
             </div>
           ) : null}
           {/* 安全网：当 timeline 中没有文本段时，直接展示 message.content */}
@@ -484,13 +515,17 @@ export function AgentMessages({
   onOpenSession
 }: AgentMessagesProps): React.ReactElement {
   const messages = useAtomValue(currentAgentMessagesAtom);
+  const sessionId = useAtomValue(currentAgentSessionIdAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const streamingContent = useAtomValue(agentStreamingContentAtom);
+  const streamingReasoning = useAtomValue(agentStreamingReasoningAtom);
   const streamingTimelineEvents = useAtomValue(agentStreamingTimelineEventsAtom);
+  const streamingToolActivities = useAtomValue(agentToolActivitiesAtom);
   const agentModelId = useAtomValue(agentModelIdAtom);
   const teammateStates = useAtomValue(teammateStatesAtom);
   const isCompacting = useAtomValue(agentIsCompactingAtom);
   const thinkingSeconds = useAtomValue(agentThinkingSecondsAtom);
+  const statusLine = useAtomValue(agentStatusLineAtom);
 
   const { displayedContent: smoothContent } = useSmoothStream({
     content: streamingContent,
@@ -504,11 +539,14 @@ export function AgentMessages({
   const hasTextInStreamingTimeline = streamingTimelineEvents.some((e) => e.type === "text");
   // 需要独立展示 smoothContent 的条件：有内容 且 timeline 中尚无文本段
   const showSmoothContent = Boolean(smoothContent) && !hasTextInStreamingTimeline;
-  // 等待第一个 token 时显示三点 loading（有子Agent卡片时不显示）
-  const showLoadingDots = streaming && !smoothContent && streamingTimelineEvents.length === 0 && teammateStates.length === 0;
+  // reasoning 是否还在活跃输出（用于控制 Reasoning 组件的 streaming 状态和 auto-close）
+  // 当有正式内容输出或工具调用开始时，reasoning 阶段视为结束
+  const reasoningStillActive = streaming && !streamingContent && streamingTimelineEvents.length === 0;
+  // 等待第一个 token 时显示状态行（reasoning/子Agent卡片已有内容时不显示）
+  const showLoadingDots = streaming && !smoothContent && !streamingReasoning && streamingTimelineEvents.length === 0 && teammateStates.length === 0;
 
   return (
-    <Conversation className={!streaming ? "cv-ready" : undefined} key={!isSwitching && messages.length > 0 ? messages[0]!.id : ""}>
+    <Conversation className={!streaming ? "cv-ready" : undefined} key={sessionId ?? ""}>
       <ConversationContent>
         {isSwitching ? (
           <div className="flex h-full items-center justify-center">
@@ -544,13 +582,19 @@ export function AgentMessages({
                   logo={<AssistantLogo model={agentModelId ?? undefined} />}
                 />
                 <MessageContent>
-                  {thinkingSeconds !== null && streaming ? (
-                    <ThinkingTimeIndicator seconds={thinkingSeconds} />
+                  {streamingReasoning ? (
+                    <Reasoning isStreaming={reasoningStillActive} defaultOpen>
+                      <ReasoningTrigger />
+                      <ReasoningContent>{streamingReasoning}</ReasoningContent>
+                    </Reasoning>
                   ) : null}
-
                   {streamingTimelineEvents.length > 0 ? (
                     <div className="mb-2">
-                      <EventTimeline events={streamingTimelineEvents} isStreaming={streaming} />
+                      <EventTimeline
+                        events={streamingTimelineEvents}
+                        activities={streamingToolActivities}
+                        isStreaming={streaming}
+                      />
                     </div>
                   ) : null}
 
@@ -573,10 +617,10 @@ export function AgentMessages({
                       {streaming ? <StreamingIndicator /> : null}
                     </>
                   ) : showLoadingDots ? (
-                    <MessageLoading />
-                  ) : streaming && streamingTimelineEvents.length > 0 ? (
-                    // 工具执行中或等待工具后的文字 token
-                    <StreamingIndicator />
+                    <AgentStatusLine text={statusLine ?? "正在处理..."} />
+                  ) : streaming && streamingTimelineEvents.length > 0 && statusLine ? (
+                    // 工具执行中或等待工具后的文字 token → 状态行描述
+                    <AgentStatusLine text={statusLine} />
                   ) : null}
                 </MessageContent>
               </Message>

@@ -76,7 +76,8 @@ export function extractToolActivitiesFromMessages(messages: AgentMessage[]): Too
           const current = ensureEntry(event.toolUseId);
           map.set(event.toolUseId, {
             ...current,
-            elapsedSeconds: event.elapsedSeconds
+            elapsedSeconds: event.elapsedSeconds,
+            elapsedMs: event.usage?.durationMs ?? current.elapsedMs
           });
           break;
         }
@@ -122,7 +123,9 @@ function upsertActivity(
     parentToolUseId: activity.parentToolUseId ?? current.parentToolUseId,
     result: activity.result ?? current.result,
     isError: activity.isError ?? current.isError,
+    startedAt: activity.startedAt ?? current.startedAt,
     elapsedSeconds: activity.elapsedSeconds ?? current.elapsedSeconds,
+    elapsedMs: activity.elapsedMs ?? current.elapsedMs,
     taskId: activity.taskId ?? current.taskId,
     shellId: activity.shellId ?? current.shellId,
     isBackground: activity.isBackground ?? current.isBackground,
@@ -158,6 +161,7 @@ export function buildTeamActivitiesFromRuns(runs: SubagentRunRecord[]): ToolActi
   return runs.map((run, index) => {
     const endedAt = run.endedAt ?? Date.now();
     const elapsedSeconds = run.startedAt ? Math.max(0, Math.floor((endedAt - run.startedAt) / 1000)) : undefined;
+    const elapsedMs = run.startedAt ? Math.max(0, endedAt - run.startedAt) : undefined;
     const done = isTerminalRunStatus(run.status);
     const isError = run.status !== "completed" && done;
     return {
@@ -176,7 +180,9 @@ export function buildTeamActivitiesFromRuns(runs: SubagentRunRecord[]): ToolActi
       },
       intent: run.task,
       displayName: run.label,
+      startedAt: run.startedAt,
       elapsedSeconds,
+      elapsedMs,
       result: run.outcome?.output ?? run.outcome?.error,
       isError,
       done

@@ -49,4 +49,21 @@ describe("agent-session-manager transcript projection", () => {
     expect(messages[0]?.metadata?.childSessionId).toBe("child-456");
     expect(messages[0]?.metadata?.status).toBe("completed");
   });
+
+  test("appendAgentTranscriptMessage 应保留 reasoning", () => {
+    const session = createAgentSession("append reasoning");
+    appendAgentTranscriptMessage(session.id, {
+      id: "assistant-1",
+      role: "assistant",
+      content: "正式回答",
+      reasoning: "先检查配置再回答",
+      createdAt: 300,
+      model: "zai/glm-5-turbo"
+    });
+
+    const messages = getAgentSessionMessages(session.id);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toBe("正式回答");
+    expect(messages[0]?.reasoning).toBe("先检查配置再回答");
+  });
 });

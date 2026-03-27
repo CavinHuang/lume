@@ -38,4 +38,14 @@ describe("agent-stream-accumulator", () => {
     }]);
     expect(hasRenderableAssistantOutput(state)).toBeTrue();
   });
+
+  test("reasoning-only 事件也应被视为可渲染输出", () => {
+    const state = createAgentStreamAccumulatorState();
+    appendAgentEvents(state, [{
+      type: "reasoning_complete",
+      text: "先检查配置",
+      isIntermediate: false
+    }]);
+    expect(hasRenderableAssistantOutput(state)).toBeTrue();
+  });
 });

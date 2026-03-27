@@ -29,6 +29,7 @@ import type {
 import {
   extractTimelineEvents
 } from "@/lib/agent-timeline";
+import { formatToolStatusLine } from "@/lib/agent-status-line";
 
 export type { AgentStreamState, TeammateState, ToolActivity } from "@/lib/agent-streaming";
 export type { TimelineEvent, TimelineTextEvent, TimelineToolResultEvent, TimelineToolStartEvent } from "@/lib/agent-timeline";
@@ -95,6 +96,7 @@ export const agentStreamingAtom = atom<boolean>((get) => {
 });
 
 export const agentStreamingContentAtom = atom<string>((get) => get(currentAgentStreamStateAtom)?.content ?? "");
+export const agentStreamingReasoningAtom = atom<string>((get) => get(currentAgentStreamStateAtom)?.reasoning ?? "");
 
 export const agentToolActivitiesAtom = atom<ToolActivity[]>((get) => get(currentAgentStreamStateAtom)?.toolActivities ?? []);
 
@@ -182,4 +184,58 @@ export const currentAgentErrorAtom = atom<string | null>((get) => {
   const currentId = get(currentAgentSessionIdAtom);
   if (!currentId) return null;
   return get(agentStreamErrorsAtom).get(currentId) ?? null;
+});
+
+/**
+ * 派生 atom：根据当前 Agent 流式状态自动生成一行状态描述文字。
+ *
+ * 优先级逻辑：
+ * - 压缩中 → 最高优先
+ * - 有内容正在输出 → "正在生成回复..."（内容已出现后，不再显示工具/思考状态）
+ * - 有工具正在执行 → 显示工具描述（仅在内容尚未输出时）
+ * - 子 Agent 运行中 → 显示子 Agent 描述
+ * - 正在推理 → "正在思考..."
+ * - 默认 → "正在处理..."
+ */
+export const agentStatusLineAtom = atom<string | null>((get) => {
+  const streaming = get(agentStreamingAtom);
+  if (!streaming) return null;
+
+  // 1. 上下文压缩中（始终最高优先级）
+  const isCompacting = get(agentIsCompactingAtom);
+  if (isCompacting) return "正在压缩上下文...";
+
+  // 2. 有内容正在输出 → 不再需要状态行提示
+  const content = get(agentStreamingContentAtom);
+  if (content) return null;
+
+  // 3. 有正在执行的工具 → 取最后一个未完成的工具生成描述
+  const toolActivities = get(agentToolActivitiesAtom);
+  let runningTool: ToolActivity | undefined;
+  for (let i = toolActivities.length - 1; i >= 0; i--) {
+    if (!toolActivities[i]!.done) { runningTool = toolActivities[i]; break; }
+  }
+  if (runningTool) {
+    const desc =
+      runningTool.progressDescription ||
+      formatToolStatusLine(runningTool.toolName, runningTool.intent);
+    return desc.endsWith("...") ? desc : `${desc}...`;
+  }
+
+  // 4. 子 Agent 正在运行
+  const teammates = get(teammateStatesAtom);
+  const runningTeammate = teammates.find((t) => t.status === "running");
+  if (runningTeammate) {
+    const desc = runningTeammate.description;
+    return desc.endsWith("...") ? desc : `${desc}...`;
+  }
+
+  // 5. 正在推理
+  const reasoning = get(agentStreamingReasoningAtom);
+  if (reasoning) return "正在思考...";
+  const thinkingSeconds = get(agentThinkingSecondsAtom);
+  if (thinkingSeconds !== null) return "正在思考...";
+
+  // 6. 默认
+  return "正在处理...";
 });

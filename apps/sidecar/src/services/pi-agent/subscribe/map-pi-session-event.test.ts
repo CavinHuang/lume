@@ -98,6 +98,32 @@ describe("map-pi-session-event", () => {
     ]);
   });
 
+  test("message_end assistant 应分离 reasoning 与正式正文", () => {
+    const event = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "先检查配置" },
+          { type: "text", text: "这是正式回答" }
+        ]
+      }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped).toEqual([
+      {
+        type: "reasoning_complete",
+        text: "先检查配置",
+        isIntermediate: false
+      },
+      {
+        type: "text_complete",
+        text: "这是正式回答",
+        isIntermediate: false
+      }
+    ]);
+  });
+
   test("message_update done 应回填完整文本", () => {
     const event = {
       type: "message_update",
@@ -115,6 +141,35 @@ describe("map-pi-session-event", () => {
       text: "done-text",
       isIntermediate: false
     }]);
+  });
+
+  test("message_update done 应同时回填 reasoning 与正文", () => {
+    const event = {
+      type: "message_update",
+      message: {} as never,
+      assistantMessageEvent: {
+        type: "done",
+        message: {
+          content: [
+            { type: "reasoning", reasoning: "逐步分析" },
+            { type: "text", text: "done-text" }
+          ]
+        }
+      }
+    } as unknown as PiCoreAgentEvent;
+    const mapped = mapPiSessionEventToAgentEvents(event);
+    expect(mapped).toEqual([
+      {
+        type: "reasoning_complete",
+        text: "逐步分析",
+        isIntermediate: false
+      },
+      {
+        type: "text_complete",
+        text: "done-text",
+        isIntermediate: false
+      }
+    ]);
   });
 
   test("message_end 非标准 output_text 结构也应映射为 text_complete", () => {

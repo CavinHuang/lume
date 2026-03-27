@@ -31,7 +31,7 @@ describe("agent-runtime-status contract", () => {
     expect(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED).toBe("agent:runtime-status-changed");
   });
 
-  test("共享 runtime status 为 idle 时不应再被本地 running 覆盖", () => {
+  test("本地 running 为 true 时应始终标记为 streaming，即使残留的 runtime status 为 idle", () => {
     const store = createStore();
     store.set(currentAgentSessionIdAtom, "session-1");
     store.set(agentRuntimeStatusesAtom, new Map([
@@ -41,7 +41,9 @@ describe("agent-runtime-status contract", () => {
       ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
     ]));
 
-    expect(store.get(agentStreamingAtom)).toBe(false);
+    // localStreaming 优先：前端在发送消息时立即设置 running=true，
+    // 不应被尚未更新的残留 runtime status 覆盖，避免产生 UI 空白
+    expect(store.get(agentStreamingAtom)).toBe(true);
   });
 
   test("共享 runtime status 缺失时应允许本地 running 兜底", () => {

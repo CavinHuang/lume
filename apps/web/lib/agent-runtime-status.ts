@@ -19,10 +19,13 @@ export function resolveAgentBusyState(
   status: AgentRuntimeStatus | null | undefined,
   localStreaming: boolean
 ): boolean {
+  // localStreaming 由前端在发送消息时立即设置为 true，
+  // 优先尊重它，避免残留的 runtime status (如 completed) 导致状态回退为 false
+  if (localStreaming) return true;
   if (status) {
     return isAgentRuntimeStatusActive(status);
   }
-  return localStreaming;
+  return false;
 }
 
 export function formatAgentRuntimeStatusHint(

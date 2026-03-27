@@ -49,6 +49,8 @@ export type AgentEvent =
   // 文本流式输出
   | { type: 'text_delta'; text: string; turnId?: string; parentToolUseId?: string }
   | { type: 'text_complete'; text: string; isIntermediate: boolean; turnId?: string; parentToolUseId?: string }
+  | { type: 'reasoning_delta'; text: string; turnId?: string; parentToolUseId?: string }
+  | { type: 'reasoning_complete'; text: string; isIntermediate: boolean; turnId?: string; parentToolUseId?: string }
   // 工具执行
   | { type: 'tool_start'; toolName: string; toolUseId: string; input: Record<string, unknown>; intent?: string; displayName?: string; turnId?: string; parentToolUseId?: string }
   | { type: 'tool_result'; toolUseId: string; toolName?: string; result: string; isError: boolean; input?: Record<string, unknown>; turnId?: string; parentToolUseId?: string }
@@ -135,6 +137,8 @@ export interface AgentMessage {
   role: 'user' | 'assistant' | 'tool' | 'status'
   /** 消息内容 */
   content: string
+  /** 模型思考内容 */
+  reasoning?: string
   /** 创建时间戳 */
   createdAt: number
   /** 使用的模型 ID（assistant 消息） */

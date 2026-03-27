@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect } from "react";
+import { startTransition, useEffect, useRef } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
   AgentAskUserQuestionRequest,
@@ -39,6 +39,58 @@ function isAgentDebugEnabled(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 将本轮流式的 thinking duration 注入到消息列表中最后一条带 reasoning 的 assistant 消息。
+ * 前端渲染已完成消息时可用此值显示精确思考秒数。
+ */
+function injectThinkingDuration(messages: AgentMessage[], duration: number | undefined): AgentMessage[] {
+  if (duration === undefined) return messages;
+  // 从后往前找到第一条有 reasoning 的 assistant 消息
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    if (msg.role === "assistant" && msg.reasoning) {
+      const patched = [...messages];
+      patched[i] = {
+        ...msg,
+        metadata: { ...msg.metadata, thinkingDuration: duration }
+      };
+      return patched;
+    }
+  }
+  return messages;
+}
+
+function injectToolActivitiesSnapshot(messages: AgentMessage[], toolActivities: AgentStreamState["toolActivities"] | undefined): AgentMessage[] {
+  if (!toolActivities || toolActivities.length === 0) return messages;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    if (msg.role === "assistant") {
+      const patched = [...messages];
+      patched[i] = {
+        ...msg,
+        metadata: { ...msg.metadata, toolActivitiesSnapshot: toolActivities }
+      };
+      return patched;
+    }
+  }
+  return messages;
+}
+
+function enrichAssistantMessage(
+  message: AgentMessage,
+  thinkingDuration: number | undefined,
+  toolActivities: AgentStreamState["toolActivities"] | undefined
+): AgentMessage {
+  return {
+    ...message,
+    metadata: {
+      ...message.metadata,
+      ...(thinkingDuration !== undefined ? { thinkingDuration } : {}),
+      ...(toolActivities && toolActivities.length > 0 ? { toolActivitiesSnapshot: toolActivities } : {})
+    }
+  };
 }
 
 interface UseAgentStreamSubscriptionsParams {
@@ -120,6 +172,12 @@ export function useAgentStreamSubscriptions({
   applyPlanStateChanged,
   showModeNotice
 }: UseAgentStreamSubscriptionsParams): void {
+  // 用 ref 持有 streamingStates 的最新值，避免将其放入 useEffect deps
+  // 否则每次 streaming state 更新都会导致 effect 重新执行（注销+重新注册所有监听器）
+  const streamingStatesRef = useRef(streamingStates);
+  streamingStatesRef.current = streamingStates;
+  const pendingAssistantMessagesRef = useRef<Map<string, AgentMessage>>(new Map());
+
   useEffect(() => {
     const unsubs: Array<() => void> = [];
     let disposed = false;
@@ -156,7 +214,13 @@ export function useAgentStreamSubscriptions({
         const current = prev.get(targetSessionId);
         if (!current) return prev;
         const map = new Map(prev);
-        map.set(targetSessionId, { ...current, running: false });
+        // 防御：stream 结束后，将所有仍 done:false 的工具标记为完成
+        // 避免后端 tool_result 事件缺失导致工具永远显示 loading
+        const hasStuckTools = current.toolActivities.some((t) => !t.done);
+        const toolActivities = hasStuckTools
+          ? current.toolActivities.map((t) => t.done ? t : { ...t, done: true })
+          : current.toolActivities;
+        map.set(targetSessionId, { ...current, running: false, toolActivities });
         return map;
       });
     };
@@ -268,7 +332,7 @@ export function useAgentStreamSubscriptions({
       }
       markStreamCompleted(payload.sessionId);
       const finalize = (): void => {
-        const streamState = streamingStates.get(payload.sessionId);
+        const streamState = streamingStatesRef.current.get(payload.sessionId);
         if (streamState?.teammates && streamState.teammates.length > 0) {
           setCachedTeammates((prev) => {
             const map = new Map(prev);
@@ -317,7 +381,56 @@ export function useAgentStreamSubscriptions({
         }
       };
 
+      // 在流结束后计算本轮思考耗时，后续注入到最后一条 assistant 消息
+      const streamStateForDuration = streamingStatesRef.current.get(payload.sessionId);
+      let thinkingDuration: number | undefined;
+      if (streamStateForDuration?.streamStartedAt && streamStateForDuration.firstOutputAt) {
+        const sec = (streamStateForDuration.firstOutputAt - streamStateForDuration.streamStartedAt) / 1000;
+        if (sec >= 1) {
+          thinkingDuration = Math.ceil(sec);
+        }
+      }
+
       if (payload.sessionId === currentSessionIdRef.current) {
+        const pendingAssistantMessage = pendingAssistantMessagesRef.current.get(payload.sessionId);
+        if (pendingAssistantMessage) {
+          startTransition(() => {
+            const enrichedMessage = enrichAssistantMessage(
+              pendingAssistantMessage,
+              thinkingDuration,
+              streamStateForDuration?.toolActivities
+            );
+            if (planStreamCaptureRef.current) {
+              const fallbackText = enrichedMessage.content;
+              if (fallbackText) {
+                setPlanState((prev) => (
+                  prev.draft.content.trim().length > 0
+                    ? prev
+                    : {
+                      ...prev,
+                      draft: {
+                        content: fallbackText,
+                        updatedAt: Date.now()
+                      }
+                    }
+                ));
+              }
+            }
+            setMessages((prev) => {
+              const withoutTemp = prev.filter((m) => !m.id.startsWith("temp-"));
+              const existingIndex = withoutTemp.findIndex((m) => m.id === enrichedMessage.id);
+              if (existingIndex !== -1) {
+                const patched = [...withoutTemp];
+                patched[existingIndex] = enrichedMessage;
+                return patched;
+              }
+              return [...withoutTemp, enrichedMessage];
+            });
+            pendingAssistantMessagesRef.current.delete(payload.sessionId);
+            finalize();
+          });
+          return;
+        }
         void getAgentSessionMessages(payload.sessionId)
           .then((next) => {
             startTransition(() => {
@@ -337,10 +450,13 @@ export function useAgentStreamSubscriptions({
                   ));
                 }
               }
+              // 将本轮思考耗时注入到最后一条 assistant 消息的 metadata 中
+              const withThinkingDuration = injectThinkingDuration(next, thinkingDuration);
+              const enriched = injectToolActivitiesSnapshot(withThinkingDuration, streamStateForDuration?.toolActivities);
               setMessages((prev) => {
-                const nextIds = new Set(next.map((m) => m.id));
+                const nextIds = new Set(enriched.map((m) => m.id));
                 const filteredPrev = prev.filter((m) => !m.id.startsWith("temp-"));
-                return [...filteredPrev.filter((m) => !nextIds.has(m.id)), ...next];
+                return [...filteredPrev.filter((m) => !nextIds.has(m.id)), ...enriched];
               });
               finalize();
             });
@@ -355,6 +471,7 @@ export function useAgentStreamSubscriptions({
             finalize();
           });
       } else {
+        pendingAssistantMessagesRef.current.delete(payload.sessionId);
         finalize();
       }
     }));
@@ -383,6 +500,7 @@ export function useAgentStreamSubscriptions({
           });
         }
         removeState(payload.sessionId);
+        pendingAssistantMessagesRef.current.delete(payload.sessionId);
       };
 
       if (payload.sessionId === currentSessionIdRef.current) {
@@ -412,10 +530,27 @@ export function useAgentStreamSubscriptions({
       if (payload.sessionId !== currentSessionIdRef.current) {
         return;
       }
+      const currentStreamState = streamingStatesRef.current.get(payload.sessionId);
+      if (payload.message.role === "assistant" && currentStreamState?.running) {
+        pendingAssistantMessagesRef.current.set(payload.sessionId, payload.message);
+        return;
+      }
       startTransition(() => {
         setMessages((prev) => {
           if (prev.some((item) => item.id === payload.message.id)) {
             return prev;
+          }
+          if (payload.message.role === "user") {
+            const tempIndex = prev.findIndex((item) => (
+              item.id.startsWith("temp-")
+              && item.role === "user"
+              && item.content === payload.message.content
+            ));
+            if (tempIndex !== -1) {
+              const next = [...prev];
+              next[tempIndex] = payload.message;
+              return next;
+            }
           }
           return [...prev, payload.message];
         });
@@ -536,7 +671,6 @@ export function useAgentStreamSubscriptions({
     setToolPermissionError,
     setToolPermissionRequests,
     showModeNotice,
-    streamingStates,
     updatePlanDraft
   ]);
 }

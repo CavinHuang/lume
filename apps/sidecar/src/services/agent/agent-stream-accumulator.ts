@@ -60,6 +60,8 @@ export function hasRenderableAssistantOutput(state: AgentStreamAccumulatorState)
   return state.events.some((event) =>
     event.type === "text_delta"
     || event.type === "text_complete"
+    || event.type === "reasoning_delta"
+    || event.type === "reasoning_complete"
     || event.type === "tool_start"
     || event.type === "tool_result"
   );

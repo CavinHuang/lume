@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { AgentMessage, AgentRecentMessagesResult, AgentSessionMeta } from "@lume/shared";
+import type { AgentEvent, AgentMessage, AgentRecentMessagesResult, AgentSessionMeta } from "@lume/shared";
 import {
   getAgentWorkspacesDir,
   getAgentWorkspacePath,
@@ -27,7 +27,7 @@ import {
 } from "../infra/config-paths";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getConversationMessages } from "../chat/conversation-manager";
-import { extractRenderableAssistantText } from "../pi-agent/content-extraction";
+import { extractAssistantReasoningText, extractRenderableAssistantText } from "../pi-agent/content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath,
@@ -163,6 +163,13 @@ export function appendAgentTranscriptMessage(
     }
     if (message.role === "assistant") {
       const { provider, model } = resolveTranscriptAppendModel(message.model);
+      const contentBlocks: Array<Record<string, unknown>> = [];
+      if (message.reasoning?.trim()) {
+        contentBlocks.push({ type: "reasoning", reasoning: message.reasoning });
+      }
+      if (message.content.trim()) {
+        contentBlocks.push({ type: "text", text: message.content });
+      }
       sessionManager.appendMessage({
         role: "assistant",
         provider,
@@ -177,7 +184,7 @@ export function appendAgentTranscriptMessage(
           totalTokens: 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
         },
-        content: [{ type: "text", text: message.content }],
+        content: contentBlocks,
         timestamp: message.createdAt
       });
       return;
@@ -440,6 +447,13 @@ function rebuildRuntimeCoreTranscript(sessionId: string, messages: AgentMessage[
     }
     if (message.role === "assistant") {
       const { provider, model } = resolveTranscriptAppendModel(message.model);
+      const contentBlocks: Array<Record<string, unknown>> = [];
+      if (message.reasoning?.trim()) {
+        contentBlocks.push({ type: "reasoning", reasoning: message.reasoning });
+      }
+      if (message.content.trim()) {
+        contentBlocks.push({ type: "text", text: message.content });
+      }
       sessionManager.appendMessage({
         role: "assistant",
         provider,
@@ -454,7 +468,7 @@ function rebuildRuntimeCoreTranscript(sessionId: string, messages: AgentMessage[
           totalTokens: 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
         },
-        content: [{ type: "text", text: message.content }],
+        content: contentBlocks,
         timestamp: message.createdAt
       });
     }
@@ -485,25 +499,244 @@ function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessage[] {
   }
   const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentSessionCwd(sessionId), sessionId);
   const messages = sessionManager.buildSessionContext().messages as RuntimeCoreContextMessage[];
-  const projectedMessages = messages
-    .flatMap((message, index) => {
-      if (message.role !== "user" && message.role !== "assistant") {
-        return [];
-      }
+
+  // 两遍扫描：
+  // 第一遍：投影 user/assistant 消息，同时从 assistant content 中提取 toolCall events
+  // 第二遍：将 toolResult 消息关联到最近的 assistant 消息的 events 中
+  const projectedMessages: AgentMessage[] = [];
+  // 跟踪 toolCallId → 最近拥有该 toolCall 的 assistant 消息在 projectedMessages 中的索引
+  const toolCallOwnerMap = new Map<string, number>();
+
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]!;
+
+    if (message.role === "user" || message.role === "assistant") {
       const content = extractRenderableAssistantText(message.content).trim();
-      if (!content) {
-        return [];
+      const reasoning = extractAssistantReasoningText(message.content).trim();
+      const turnId = `runtime-core:${sessionId}:${index}`;
+
+      if (!content && !reasoning) {
+        // assistant 消息可能只有 toolCall 没有文本，也需要提取工具事件
+        if (message.role === "assistant") {
+          const contentEvents = extractContentEventsInOrder(message.content, turnId);
+          if (contentEvents.length > 0) {
+            const projected: AgentMessage = {
+              id: turnId,
+              role: "assistant",
+              content: "",
+              createdAt: resolveRuntimeCoreMessageTimestamp(message, index),
+              model: resolveRuntimeCoreMessageModel(message),
+              events: contentEvents
+            };
+            projectedMessages.push(projected);
+            const pIdx = projectedMessages.length - 1;
+            for (const tc of extractToolCallsFromContent(message.content)) {
+              toolCallOwnerMap.set(tc.id, pIdx);
+            }
+          }
+        }
+        continue;
       }
-      return [{
-        id: `runtime-core:${sessionId}:${index}`,
+
+      const decorations = message.role === "assistant" ? deriveRuntimeCoreAssistantDecorations(content, message) : {};
+      const existingEvents = decorations.events ?? [];
+      // 从 content 按原始顺序提取文本和工具调用事件
+      const contentEvents = message.role === "assistant"
+        ? extractContentEventsInOrder(message.content, turnId)
+        : [];
+      const allEvents = [...existingEvents, ...contentEvents];
+
+      const projected: AgentMessage = {
+        id: turnId,
         role: message.role,
         content,
+        ...(reasoning ? { reasoning } : {}),
         createdAt: resolveRuntimeCoreMessageTimestamp(message, index),
         model: message.role === "assistant" ? resolveRuntimeCoreMessageModel(message) : undefined,
-        ...(message.role === "assistant" ? deriveRuntimeCoreAssistantDecorations(content, message) : {})
-      } satisfies AgentMessage];
-    });
-  return projectedMessages;
+        ...decorations,
+        ...(allEvents.length > 0 ? { events: allEvents } : {})
+      };
+      projectedMessages.push(projected);
+
+      if (message.role === "assistant") {
+        const pIdx = projectedMessages.length - 1;
+        for (const tc of extractToolCallsFromContent(message.content)) {
+          toolCallOwnerMap.set(tc.id, pIdx);
+        }
+      }
+    } else if (message.role === "toolResult") {
+      // 将工具结果关联到拥有对应 toolCall 的 assistant 消息
+      const toolResult = message as RuntimeCoreContextMessage & {
+        toolCallId?: string;
+        toolName?: string;
+        isError?: boolean;
+      };
+      const toolCallId = typeof toolResult.toolCallId === "string" ? toolResult.toolCallId : "";
+      if (!toolCallId) continue;
+
+      const ownerIdx = toolCallOwnerMap.get(toolCallId);
+      if (ownerIdx === undefined) continue;
+
+      const resultText = extractRenderableAssistantText(toolResult.content).trim();
+      const toolResultEvent: AgentEvent = {
+        type: "tool_result",
+        toolUseId: toolCallId,
+        toolName: typeof toolResult.toolName === "string" ? toolResult.toolName : undefined,
+        result: resultText.length > 20_000
+          ? resultText.slice(0, 20_000) + "\n...(输出过长已截断)"
+          : resultText,
+        isError: !!toolResult.isError
+      };
+
+      const owner = projectedMessages[ownerIdx]!;
+      owner.events = [...(owner.events ?? []), toolResultEvent];
+    }
+  }
+
+  return mergeAdjacentAssistantMessages(projectedMessages);
+}
+
+/**
+ * 合并相邻的 assistant 消息为一条。
+ *
+ * SDK transcript 在一次用户请求中可能产生多个 assistant 回合
+ * （因为中间穿插了工具调用、AskUserQuestion 等交互），后端将每个回合
+ * 投影为独立的 AgentMessage。前端应将中间没有 user 消息间隔的相邻
+ * assistant 消息合并为一条，避免 UI 显示为多个独立消息气泡。
+ *
+ * 合并规则：
+ * - reasoning：取第一条有 reasoning 的值（通常只有第一个回合有）
+ * - content：拼接所有回合的 content（用换行分隔）
+ * - createdAt：保留最早的时间戳
+ * - events：合并所有回合的 events
+ * - model / metadata：保留最后一条的值
+ */
+function mergeAdjacentAssistantMessages(messages: AgentMessage[]): AgentMessage[] {
+  const result: AgentMessage[] = [];
+  for (const msg of messages) {
+    const prev = result.length > 0 ? result[result.length - 1]! : null;
+    if (
+      prev
+      && prev.role === "assistant"
+      && msg.role === "assistant"
+    ) {
+      // 合并相邻 assistant 消息
+      const mergedContent = [prev.content, msg.content].filter(Boolean).join("\n\n");
+      result[result.length - 1] = {
+        ...msg,
+        content: mergedContent,
+        reasoning: prev.reasoning || msg.reasoning,
+        createdAt: prev.createdAt,
+        events: mergeOptionalEvents(prev.events, msg.events),
+      };
+    } else {
+      result.push(msg);
+    }
+  }
+  return result;
+}
+
+function mergeOptionalEvents(
+  a: AgentMessage["events"],
+  b: AgentMessage["events"],
+): AgentMessage["events"] {
+  if (!a && !b) return undefined;
+  return [...(a ?? []), ...(b ?? [])];
+}
+
+interface ExtractedToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/**
+ * 从 assistant message 的 content 数组中提取 toolCall 块。
+ *
+ * SDK transcript 中 assistant message content 是一个 content block 数组，
+ * 其中 type="toolCall" 的块包含工具调用信息。
+ */
+function extractToolCallsFromContent(content: unknown): ExtractedToolCall[] {
+  if (!Array.isArray(content)) return [];
+  const toolCalls: ExtractedToolCall[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const block = item as { type?: string; id?: string; name?: string; arguments?: unknown };
+    if (block.type !== "toolCall" && block.type !== "tool_use") continue;
+    const id = typeof block.id === "string" ? block.id : "";
+    const name = typeof block.name === "string" ? block.name : "";
+    if (!id || !name) continue;
+    const args = block.arguments && typeof block.arguments === "object" && !Array.isArray(block.arguments)
+      ? (block.arguments as Record<string, unknown>)
+      : {};
+    toolCalls.push({ id, name, arguments: args });
+  }
+  return toolCalls;
+}
+
+/**
+ * 从 assistant message 的 content 数组中按原始顺序提取事件。
+ *
+ * 按照 content block 的出现顺序生成 text_complete 和 tool_start 事件，
+ * 使前端 EventTimeline 能按正确的时间顺序交替展示文本和工具调用。
+ * thinking/reasoning 块不在此提取（已由 extractAssistantReasoningText 处理）。
+ */
+function extractContentEventsInOrder(content: unknown, turnId: string): AgentEvent[] {
+  if (!Array.isArray(content)) return [];
+  const events: AgentEvent[] = [];
+  let textAccum = "";
+
+  function flushText(): void {
+    const text = textAccum.trim();
+    if (text) {
+      events.push({
+        type: "text_complete" as const,
+        text,
+        isIntermediate: false,
+        turnId
+      });
+    }
+    textAccum = "";
+  }
+
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const block = item as { type?: string; id?: string; name?: string; arguments?: unknown; text?: string; thinking?: string };
+    const blockType = typeof block.type === "string" ? block.type : "";
+
+    if (blockType === "thinking" || blockType === "reasoning") {
+      // reasoning 由 extractAssistantReasoningText 单独处理，这里跳过
+      continue;
+    }
+
+    if (blockType === "toolCall" || blockType === "tool_use") {
+      flushText();
+      const id = typeof block.id === "string" ? block.id : "";
+      const name = typeof block.name === "string" ? block.name : "";
+      if (id && name) {
+        const args = block.arguments && typeof block.arguments === "object" && !Array.isArray(block.arguments)
+          ? (block.arguments as Record<string, unknown>)
+          : {};
+        events.push({
+          type: "tool_start" as const,
+          toolName: name,
+          toolUseId: id,
+          input: args,
+          turnId
+        });
+      }
+      continue;
+    }
+
+    // text / output_text / outputText / 无类型 → 文本块
+    if (blockType === "text" || blockType === "output_text" || blockType === "outputText" || !blockType) {
+      const text = typeof block.text === "string" ? block.text : "";
+      if (text) textAccum += text;
+    }
+  }
+
+  flushText();
+  return events;
 }
 
 function deriveRuntimeCoreAssistantDecorations(

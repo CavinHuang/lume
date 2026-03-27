@@ -37,7 +37,8 @@ const TimelineTextEvent = React.memo(function TimelineTextEvent({
 
 function toToolActivity(
   startEvent: Extract<TimelineEvent, { type: "tool_start" }>,
-  resultEvent?: Extract<TimelineEvent, { type: "tool_result" }>
+  resultEvent?: Extract<TimelineEvent, { type: "tool_result" }>,
+  activityMeta?: ToolActivity
 ): ToolActivity {
   return {
     toolUseId: startEvent.toolUseId,
@@ -49,11 +50,16 @@ function toToolActivity(
     done: !!resultEvent,
     result: resultEvent?.result,
     isError: resultEvent?.isError,
+    elapsedSeconds: activityMeta?.elapsedSeconds,
+    elapsedMs: activityMeta?.elapsedMs,
+    isBackground: activityMeta?.isBackground,
+    progressDescription: activityMeta?.progressDescription,
   };
 }
 
 interface EventTimelineProps {
   events: TimelineEvent[];
+  activities?: ToolActivity[];
   isStreaming?: boolean;
 }
 
@@ -65,8 +71,9 @@ type RenderSegment =
   | { type: "text"; data: TimelineText }
   | { type: "tools"; data: ToolActivity[] };
 
-function buildSegments(events: TimelineEvent[]): RenderSegment[] {
+function buildSegments(events: TimelineEvent[], activities: ToolActivity[] = []): RenderSegment[] {
   const toolResultMap = new Map<string, TimelineToolResult[]>();
+  const activityMetaMap = new Map<string, ToolActivity>();
   for (const event of events) {
     if (event.type !== "tool_result") continue;
     const queue = toolResultMap.get(event.toolUseId);
@@ -75,6 +82,9 @@ function buildSegments(events: TimelineEvent[]): RenderSegment[] {
     } else {
       toolResultMap.set(event.toolUseId, [event]);
     }
+  }
+  for (const activity of activities) {
+    activityMetaMap.set(activity.toolUseId, activity);
   }
 
   const segments: RenderSegment[] = [];
@@ -96,7 +106,7 @@ function buildSegments(events: TimelineEvent[]): RenderSegment[] {
     if (event.type === "tool_start") {
       const resultQueue = toolResultMap.get(event.toolUseId);
       const resultEvent = resultQueue?.shift();
-      pendingTools.push(toToolActivity(event as TimelineToolStart, resultEvent));
+      pendingTools.push(toToolActivity(event as TimelineToolStart, resultEvent, activityMetaMap.get(event.toolUseId)));
     }
   }
 
@@ -106,15 +116,12 @@ function buildSegments(events: TimelineEvent[]): RenderSegment[] {
 
 export const EventTimeline = React.memo(function EventTimeline({
   events,
+  activities,
   isStreaming = false,
 }: EventTimelineProps): React.ReactElement | null {
-  const segments = React.useMemo(() => buildSegments(events), [events]);
+  const segments = React.useMemo(() => buildSegments(events, activities), [activities, events]);
 
   if (segments.length === 0) return null;
-
-  // 只有当消息中同时存在文字和工具时，工具组才折叠（纯工具响应不折叠）
-  const hasTextSegments = segments.some((s) => s.type === "text");
-  const shouldCollapse = !isStreaming && hasTextSegments;
 
   return (
     <div className="space-y-0">
@@ -140,11 +147,7 @@ export const EventTimeline = React.memo(function EventTimeline({
 
         return (
           <div key={key} className="my-1.5">
-            <ToolActivityList
-              activities={segment.data}
-              animate={isStreaming}
-              defaultCollapsed={shouldCollapse}
-            />
+            <ToolActivityList activities={segment.data} animate={isStreaming} />
           </div>
         );
       })}

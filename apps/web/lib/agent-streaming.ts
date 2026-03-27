@@ -10,7 +10,9 @@ export interface ToolActivity {
   taskId?: string;
   shellId?: string;
   isBackground?: boolean;
+  startedAt?: number;
   elapsedSeconds?: number;
+  elapsedMs?: number;
   progressDescription?: string;
   result?: string;
   isError?: boolean;
@@ -37,6 +39,7 @@ export interface TeammateState {
 export interface AgentStreamState {
   running: boolean;
   content: string;
+  reasoning?: string;
   toolActivities: ToolActivity[];
   teammates: TeammateState[];
   events?: AgentEvent[];
@@ -69,7 +72,11 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
   const nextEvents = [...(prev.events ?? []), event];
   const now = Date.now();
   const streamStartedAt = prev.streamStartedAt ?? now;
-  const isOutputEvent = event.type === "text_delta" || event.type === "text_complete" || event.type === "tool_start";
+  const isOutputEvent = event.type === "text_delta"
+    || event.type === "text_complete"
+    || event.type === "reasoning_delta"
+    || event.type === "reasoning_complete"
+    || event.type === "tool_start";
   const firstOutputAt = prev.firstOutputAt ?? (isOutputEvent ? now : undefined);
 
   const base = { ...prev, streamStartedAt, firstOutputAt };
@@ -80,6 +87,18 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
       return {
         ...base,
         content: mergeStreamingText(base.content, event.text),
+        events: nextEvents
+      };
+    case "reasoning_delta":
+      return {
+        ...base,
+        reasoning: (base.reasoning ?? "") + event.text,
+        events: nextEvents
+      };
+    case "reasoning_complete":
+      return {
+        ...base,
+        reasoning: mergeStreamingText(base.reasoning ?? "", event.text),
         events: nextEvents
       };
     case "tool_start": {
@@ -113,6 +132,7 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
             intent: event.intent,
             displayName: event.displayName,
             parentToolUseId: event.parentToolUseId,
+            startedAt: now,
             done: false
           }
         ]
@@ -124,7 +144,13 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
         events: nextEvents,
         toolActivities: base.toolActivities.map((item) =>
           item.toolUseId === event.toolUseId
-            ? { ...item, done: true, isError: event.isError, result: event.result }
+            ? {
+                ...item,
+                done: true,
+                isError: event.isError,
+                result: event.result,
+                elapsedMs: item.startedAt ? Math.max(0, now - item.startedAt) : item.elapsedMs
+              }
             : item
         )
       };
@@ -147,6 +173,7 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
             ? {
                 ...item,
                 elapsedSeconds: event.elapsedSeconds || item.elapsedSeconds,
+                elapsedMs: event.usage?.durationMs ?? item.elapsedMs,
                 progressDescription: event.description ?? item.progressDescription
               }
             : item

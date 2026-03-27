@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentEventUsage } from "@lume/shared";
 import type { AgentEvent as PiCoreAgentEvent } from "@mariozechner/pi-agent-core";
-import { extractRenderableAssistantText } from "../content-extraction";
+import { extractAssistantReasoningText, extractRenderableAssistantText } from "../content-extraction";
 
 const TOOL_RESULT_MAX_BYTES = 20_000;
 const TOOL_RESULT_TRUNCATE_SUFFIX = "\n...(输出过长已截断)";
@@ -15,6 +15,21 @@ export function mapPiSessionEventToAgentEvents(
 ): AgentEvent[] {
   switch (event.type) {
     case "message_update": {
+      const reasoningEvents = extractReasoningUpdates(event.assistantMessageEvent);
+      if (event.assistantMessageEvent.type === "done") {
+        const text = extractAssistantText(event.assistantMessageEvent.message);
+        const mapped: AgentEvent[] = [...reasoningEvents];
+        if (!text) return mapped;
+        mapped.push({
+          type: "text_complete",
+          text,
+          isIntermediate: false
+        });
+        return mapped;
+      }
+      if (reasoningEvents.length > 0) {
+        return reasoningEvents;
+      }
       if (event.assistantMessageEvent.type === "text_delta") {
         return [{ type: "text_delta", text: event.assistantMessageEvent.delta }];
       }
@@ -22,15 +37,6 @@ export function mapPiSessionEventToAgentEvents(
         return [{
           type: "text_complete",
           text: event.assistantMessageEvent.content,
-          isIntermediate: false
-        }];
-      }
-      if (event.assistantMessageEvent.type === "done") {
-        const text = extractAssistantText(event.assistantMessageEvent.message);
-        if (!text) return [];
-        return [{
-          type: "text_complete",
-          text,
           isIntermediate: false
         }];
       }
@@ -42,6 +48,14 @@ export function mapPiSessionEventToAgentEvents(
       }
       const mapped: AgentEvent[] = [];
       const text = extractAssistantText(event.message);
+      const reasoning = extractAssistantReasoning(event.message);
+      if (reasoning) {
+        mapped.push({
+          type: "reasoning_complete",
+          text: reasoning,
+          isIntermediate: false
+        });
+      }
       if (text) {
         mapped.push({
           type: "text_complete",
@@ -137,6 +151,62 @@ function extractAssistantText(message: {
   content?: unknown;
 }): string {
   return extractRenderableAssistantText(message.content);
+}
+
+function extractAssistantReasoning(message: {
+  content?: unknown;
+}): string {
+  return extractAssistantReasoningText(message.content);
+}
+
+function extractReasoningUpdates(assistantMessageEvent: unknown): AgentEvent[] {
+  if (!assistantMessageEvent || typeof assistantMessageEvent !== "object") {
+    return [];
+  }
+  const record = assistantMessageEvent as {
+    type?: unknown;
+    delta?: unknown;
+    content?: unknown;
+    reasoning?: unknown;
+    thinking?: unknown;
+    message?: { content?: unknown };
+  };
+  const eventType = typeof record.type === "string" ? record.type : "";
+
+  if (eventType === "reasoning_delta" || eventType === "thinking_delta") {
+    const delta = typeof record.delta === "string"
+      ? record.delta
+      : typeof record.reasoning === "string"
+        ? record.reasoning
+        : typeof record.thinking === "string"
+          ? record.thinking
+          : "";
+    return delta
+      ? [{ type: "reasoning_delta", text: delta }]
+      : [];
+  }
+
+  if (eventType === "reasoning_end" || eventType === "thinking_end") {
+    const content = typeof record.content === "string"
+      ? record.content
+      : typeof record.reasoning === "string"
+        ? record.reasoning
+        : typeof record.thinking === "string"
+          ? record.thinking
+          : "";
+    return content
+      ? [{ type: "reasoning_complete", text: content, isIntermediate: false }]
+      : [];
+  }
+
+  if (eventType === "done" && record.message) {
+    const reasoning = extractAssistantReasoning(record.message);
+    return reasoning
+      ? [{ type: "reasoning_complete", text: reasoning, isIntermediate: false }]
+      : [];
+  }
+
+  return [];
 }
 
 function mapPiUsage(

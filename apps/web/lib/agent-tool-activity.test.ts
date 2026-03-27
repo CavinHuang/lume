@@ -77,13 +77,61 @@ describe("agent-tool-activity", () => {
         parentToolUseId: undefined,
         result: "old",
         isError: undefined,
+        startedAt: undefined,
         elapsedSeconds: undefined,
+        elapsedMs: undefined,
         taskId: undefined,
         shellId: undefined,
         isBackground: undefined,
         done: false
       }
     ]);
+  });
+
+  test("extractToolActivitiesFromMessages 应恢复 task_progress 上报的毫秒时长", () => {
+    const messages: AgentMessage[] = [
+      {
+        id: "m2",
+        role: "assistant",
+        content: "",
+        createdAt: 1,
+        events: [
+          {
+            type: "tool_start",
+            toolUseId: "tool-2",
+            toolName: "Bash",
+            input: { command: "ls -la" }
+          },
+          {
+            type: "task_progress",
+            toolUseId: "tool-2",
+            elapsedSeconds: 1,
+            usage: { durationMs: 975 }
+          },
+          {
+            type: "tool_result",
+            toolUseId: "tool-2",
+            toolName: "Bash",
+            result: "ok",
+            isError: false
+          }
+        ]
+      }
+    ];
+
+    expect(extractToolActivitiesFromMessages(messages)).toEqual([{
+      toolUseId: "tool-2",
+      toolName: "Bash",
+      input: { command: "ls -la" },
+      intent: undefined,
+      displayName: undefined,
+      parentToolUseId: undefined,
+      elapsedSeconds: 1,
+      elapsedMs: 975,
+      result: "ok",
+      isError: false,
+      done: true
+    }]);
   });
 
   test("getToolActivityStatus 应区分 background/running/error/completed", () => {

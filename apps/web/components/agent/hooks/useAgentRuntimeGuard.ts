@@ -7,6 +7,19 @@ import type { AgentStreamState, ToolActivity } from "@/atoms/agent-atoms";
 import { getAgentSessionMessages } from "@/lib/desktop-api/agent";
 import { resolveAgentWatchdogIdleTimeoutMs } from "../agent-runtime-guard";
 
+function mergeServerMessagesWithPending(prev: AgentMessage[], next: AgentMessage[]): AgentMessage[] {
+  const persistedUserContents = new Set(
+    next
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)
+  );
+  const pendingTempMessages = prev.filter((message) => (
+    message.id.startsWith("temp-")
+    && !persistedUserContents.has(message.content)
+  ));
+  return [...next, ...pendingTempMessages];
+}
+
 function isAgentDebugEnabled(): boolean {
   try {
     return window.localStorage.getItem("lume.debug.agent") === "1";
@@ -73,11 +86,12 @@ export function useAgentRuntimeGuard({
           if (disposed) return;
           startTransition(() => {
             setMessages((prev) => {
-              if (prev.length === next.length) {
-                const same = prev.every((item, index) => item.id === next[index]?.id && item.content === next[index]?.content);
-                return same ? prev : next;
+              const merged = mergeServerMessagesWithPending(prev, next);
+              if (prev.length === merged.length) {
+                const same = prev.every((item, index) => item.id === merged[index]?.id && item.content === merged[index]?.content);
+                return same ? prev : merged;
               }
-              return next;
+              return merged;
             });
           });
 
