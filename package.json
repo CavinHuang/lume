@@ -13,10 +13,12 @@
     "typecheck": "bun run --filter @lume/shared typecheck && bun run --filter @lume/ui typecheck && bun run --filter @lume/sidecar typecheck && bun run --filter @lume/web typecheck",
     "test:web": "bun run --filter @lume/web test",
     "smoke:web": "bun run --filter @lume/web test:smoke",
-    "clean:package-input": "bun scripts/clean-package-input.mjs"
+    "clean:package-input": "bun scripts/clean-package-input.mjs",
+    "as": "asar extract /Applications/Alma.app/Contents/Resources/app.asar ./output_folder"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
+    "asar": "^3.2.0",
     "concurrently": "^9.2.1",
     "typescript": "^5.7.2"
   },
@@ -24,4 +26,3 @@
     "use-stick-to-bottom": "^1.1.3"
   }
 }
-

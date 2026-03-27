@@ -159,3 +159,5 @@ bun run --filter @lume/sidecar smoke:chat-stream
 ```bash
 bun run --filter @lume/sidecar smoke:chat-provider-switch
 ```
+
+

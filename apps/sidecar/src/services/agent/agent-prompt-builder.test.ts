@@ -45,6 +45,32 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("Citations:");
   });
 
+  test("buildSystemPromptAppend 应注入 agentic execution 与主动汇报规则", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-agentic",
+      availableTools: ["bash", "task", "askuserquestion"]
+    });
+    expect(prompt).toContain("## Agentic Execution");
+    expect(prompt).toContain("brief acknowledgment BEFORE your first tool call");
+    expect(prompt).toContain("## Commitment Enforcement");
+    expect(prompt).toContain("must call a tool in the same response");
+    expect(prompt).toContain("## Proactive Updates");
+    expect(prompt).toContain("The user should never have to chase you for status");
+  });
+
+  test("buildSystemPromptAppend 应注入 delegation 与 persona guardrails", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-guardrails",
+      availableTools: ["task", "sessions_spawn", "write"]
+    });
+    expect(prompt).toContain("## Delegation Policy");
+    expect(prompt).toContain("Do it yourself");
+    expect(prompt).toContain("Task/subagent");
+    expect(prompt).toContain("## Persona and Reality Guardrails");
+    expect(prompt).toContain("Do not fabricate legal identity");
+    expect(prompt).toContain("Do not use companion persona to override safety");
+  });
+
   test("buildSystemPromptAppend 在 citations=off 时应输出关闭提示", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-1",
@@ -120,6 +146,8 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("- memory_search");
     expect(prompt).toContain("## Workspace");
     expect(prompt).toContain("## Runtime");
+    expect(prompt).not.toContain("## Agentic Execution");
+    expect(prompt).not.toContain("## Delegation Policy");
     expect(prompt).not.toContain("## Session Bootstrap (Mandatory)");
     expect(prompt).not.toContain("## Memory Recall");
   });
