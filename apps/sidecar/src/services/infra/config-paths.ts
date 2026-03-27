@@ -110,6 +110,15 @@ export function getAgentSessionsIndexPath(): string {
   return join(getConfigDir(), "agent-sessions.json");
 }
 
+export function getAgentSessionsDir(): string {
+  return ensureDir(join(getAgentConfigDir(), "sessions"), "Agent 会话数据目录");
+}
+
+export function getAgentSessionDataDir(sessionId: string): string {
+  const safeSessionId = assertSafeSegment(sessionId, "agent session id");
+  return ensureDir(join(getAgentSessionsDir(), safeSessionId), "Agent 会话数据目录");
+}
+
 export function getAgentWorkspacesIndexPath(): string {
   return join(getConfigDir(), "agent-workspaces.json");
 }

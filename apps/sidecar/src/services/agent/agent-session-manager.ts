@@ -20,12 +20,17 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AgentEvent, AgentMessage, AgentRecentMessagesResult, AgentSessionMeta } from "@lume/shared";
 import {
+  getAgentSessionDataDir,
   getAgentWorkspacesDir,
   getAgentWorkspacePath,
   getAgentSessionWorkspacePath,
   getAgentSessionsIndexPath
 } from "../infra/config-paths";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
+import {
+  getVisibleAgentMessages,
+  syncVersionStoreFromMessages
+} from "./agent-message-versioning-service";
 import { getConversationMessages } from "../chat/conversation-manager";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "../pi-agent/content-extraction";
 import {
@@ -137,7 +142,9 @@ export function createAgentSession(
 }
 
 export function getAgentSessionMessages(id: string): AgentMessage[] {
-  return readRuntimeCoreTranscriptMessages(id);
+  const transcriptMessages = readRuntimeCoreTranscriptMessages(id);
+  syncVersionStoreFromMessages(id, transcriptMessages);
+  return getVisibleAgentMessages(id);
 }
 
 export function getRecentAgentMessages(id: string, limit: number): AgentRecentMessagesResult {
@@ -403,6 +410,16 @@ export function deleteAgentSession(id: string): void {
     }
   }
 
+  const sessionDataDir = getAgentSessionDataDir(id);
+  if (existsSync(sessionDataDir)) {
+    try {
+      rmSync(sessionDataDir, { recursive: true, force: true });
+      console.log(`[Agent 会话] 已清理会话版本数据: ${sessionDataDir}`);
+    } catch (error) {
+      console.warn(`[Agent 会话] 清理会话版本数据失败 (${id}):`, error);
+    }
+  }
+
   console.log(`[Agent 会话] 已删除会话: ${removed.title} (${removed.id})`);
 }
 
@@ -426,6 +443,18 @@ export function truncateAgentMessagesFrom(sessionId: string, messageId: string):
     piSessionId: undefined
   });
   return kept;
+}
+
+export function replaceAgentSessionTranscript(sessionId: string, messages: AgentMessage[]): void {
+  const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(sessionId);
+  if (existsSync(runtimeCoreSessionDir)) {
+    rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
+  }
+  rebuildRuntimeCoreTranscript(sessionId, messages);
+  updateAgentSessionMeta(sessionId, {
+    sdkSessionId: undefined,
+    piSessionId: undefined
+  });
 }
 
 function rebuildRuntimeCoreTranscript(sessionId: string, messages: AgentMessage[]): void {
@@ -493,7 +522,7 @@ function resolveTranscriptAppendModel(model: string | undefined): {
   };
 }
 
-function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessage[] {
+export function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessage[] {
   if (!hasRuntimeCoreSessionTranscript(sessionId)) {
     return [];
   }

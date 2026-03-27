@@ -30,6 +30,7 @@ import {
   onAgentToolPermissionRequest,
   updateAgentSessionTitle
 } from "@/lib/desktop-api/agent";
+import { mergeServerMessagesWithPending, replaceVisibleMessage } from "@/lib/agent-message-merge";
 import { extractLatestAssistantText, parseExitPlanResult } from "../agent-session-lifecycle";
 import { shouldAutoOpenTeamPanel } from "../agent-stream-subscriptions";
 
@@ -45,8 +46,24 @@ function isAgentDebugEnabled(): boolean {
  * 将本轮流式的 thinking duration 注入到消息列表中最后一条带 reasoning 的 assistant 消息。
  * 前端渲染已完成消息时可用此值显示精确思考秒数。
  */
-function injectThinkingDuration(messages: AgentMessage[], duration: number | undefined): AgentMessage[] {
+function injectThinkingDuration(
+  messages: AgentMessage[],
+  duration: number | undefined,
+  targetMessageId?: string
+): AgentMessage[] {
   if (duration === undefined) return messages;
+  if (targetMessageId) {
+    const targetIndex = messages.findIndex((message) => message.id === targetMessageId);
+    if (targetIndex !== -1) {
+      const msg = messages[targetIndex]!;
+      const patched = [...messages];
+      patched[targetIndex] = {
+        ...msg,
+        metadata: { ...msg.metadata, thinkingDuration: duration }
+      };
+      return patched;
+    }
+  }
   // 从后往前找到第一条有 reasoning 的 assistant 消息
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]!;
@@ -62,8 +79,24 @@ function injectThinkingDuration(messages: AgentMessage[], duration: number | und
   return messages;
 }
 
-function injectToolActivitiesSnapshot(messages: AgentMessage[], toolActivities: AgentStreamState["toolActivities"] | undefined): AgentMessage[] {
+function injectToolActivitiesSnapshot(
+  messages: AgentMessage[],
+  toolActivities: AgentStreamState["toolActivities"] | undefined,
+  targetMessageId?: string
+): AgentMessage[] {
   if (!toolActivities || toolActivities.length === 0) return messages;
+  if (targetMessageId) {
+    const targetIndex = messages.findIndex((message) => message.id === targetMessageId);
+    if (targetIndex !== -1) {
+      const msg = messages[targetIndex]!;
+      const patched = [...messages];
+      patched[targetIndex] = {
+        ...msg,
+        metadata: { ...msg.metadata, toolActivitiesSnapshot: toolActivities }
+      };
+      return patched;
+    }
+  }
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]!;
     if (msg.role === "assistant") {
@@ -417,14 +450,7 @@ export function useAgentStreamSubscriptions({
               }
             }
             setMessages((prev) => {
-              const withoutTemp = prev.filter((m) => !m.id.startsWith("temp-"));
-              const existingIndex = withoutTemp.findIndex((m) => m.id === enrichedMessage.id);
-              if (existingIndex !== -1) {
-                const patched = [...withoutTemp];
-                patched[existingIndex] = enrichedMessage;
-                return patched;
-              }
-              return [...withoutTemp, enrichedMessage];
+              return replaceVisibleMessage(prev, enrichedMessage);
             });
             pendingAssistantMessagesRef.current.delete(payload.sessionId);
             finalize();
@@ -451,12 +477,15 @@ export function useAgentStreamSubscriptions({
                 }
               }
               // 将本轮思考耗时注入到最后一条 assistant 消息的 metadata 中
-              const withThinkingDuration = injectThinkingDuration(next, thinkingDuration);
-              const enriched = injectToolActivitiesSnapshot(withThinkingDuration, streamStateForDuration?.toolActivities);
+              const latestAssistantId = [...next].reverse().find((message) => message.role === "assistant")?.id;
+              const withThinkingDuration = injectThinkingDuration(next, thinkingDuration, latestAssistantId);
+              const enriched = injectToolActivitiesSnapshot(
+                withThinkingDuration,
+                streamStateForDuration?.toolActivities,
+                latestAssistantId
+              );
               setMessages((prev) => {
-                const nextIds = new Set(enriched.map((m) => m.id));
-                const filteredPrev = prev.filter((m) => !m.id.startsWith("temp-"));
-                return [...filteredPrev.filter((m) => !nextIds.has(m.id)), ...enriched];
+                return mergeServerMessagesWithPending(prev, enriched);
               });
               finalize();
             });
@@ -507,7 +536,7 @@ export function useAgentStreamSubscriptions({
         void getAgentSessionMessages(payload.sessionId)
           .then((next) => {
             startTransition(() => {
-              setMessages(next);
+              setMessages((prev) => mergeServerMessagesWithPending(prev, next));
               finalize();
             });
           })
@@ -537,22 +566,7 @@ export function useAgentStreamSubscriptions({
       }
       startTransition(() => {
         setMessages((prev) => {
-          if (prev.some((item) => item.id === payload.message.id)) {
-            return prev;
-          }
-          if (payload.message.role === "user") {
-            const tempIndex = prev.findIndex((item) => (
-              item.id.startsWith("temp-")
-              && item.role === "user"
-              && item.content === payload.message.content
-            ));
-            if (tempIndex !== -1) {
-              const next = [...prev];
-              next[tempIndex] = payload.message;
-              return next;
-            }
-          }
-          return [...prev, payload.message];
+          return replaceVisibleMessage(prev, payload.message);
         });
       });
     }));

@@ -25,6 +25,10 @@ import {
   shouldQueueAgentTitleGeneration
 } from "../agent-composer";
 
+function createPendingClientMessageId(): string {
+  return `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 interface UseAgentComposerParams {
   sessionId: string | null;
   sessionTitle: string;
@@ -123,11 +127,15 @@ export function useAgentComposer({
         return map;
       });
 
+      const pendingClientMessageId = createPendingClientMessageId();
       const tempUserMessage: AgentMessage = {
         id: `temp-${Date.now()}`,
         role: "user",
         content: prompt.message,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        metadata: {
+          pendingClientMessageId
+        }
       };
       setMessages((prev) => [...prev, tempUserMessage]);
       planStreamCaptureRef.current = agentPermissionMode === "plan";
@@ -138,6 +146,9 @@ export function useAgentComposer({
       void sendAgentMessage({
         sessionId: sessionId as string,
         userMessage: prompt.message,
+        messageMetadata: {
+          pendingClientMessageId
+        },
         channelId: agentChannelId ?? undefined,
         modelId: outgoingModelId,
         workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
@@ -290,7 +301,11 @@ export function useAgentComposer({
     void stopAgentRun(sessionId);
   }, [sessionId, setStreamingStates]);
 
-  const sendFromMessageContent = useCallback((content: string, messageMetadata?: Record<string, unknown>): void => {
+  const sendFromMessageContent = useCallback((
+    content: string,
+    messageMetadata?: Record<string, unknown>,
+    sendOverrides?: Pick<AgentSendInput, "resendFromMessageId" | "editFromMessageId">
+  ): void => {
     if (!sessionId || !backendReady || isAgentBusy) return;
     planStreamCaptureRef.current = agentPermissionMode === "plan";
     if (agentPermissionMode === "plan") {
@@ -315,19 +330,26 @@ export function useAgentComposer({
       return map;
     });
 
+    const pendingClientMessageId = createPendingClientMessageId();
+    const finalMessageMetadata = {
+      ...messageMetadata,
+      pendingClientMessageId
+    };
+
     const tempMessage: AgentMessage = {
       id: `temp-${Date.now()}`,
       role: "user",
       content,
       createdAt: Date.now(),
-      metadata: messageMetadata
+      metadata: finalMessageMetadata
     };
     setMessages((prev) => [...prev, tempMessage]);
 
     void sendAgentMessage({
       sessionId,
       userMessage: content,
-      messageMetadata,
+      messageMetadata: finalMessageMetadata,
+      ...sendOverrides,
       channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
@@ -373,9 +395,10 @@ export function useAgentComposer({
 
   const handleResendMessage = useCallback(async (message: AgentMessage): Promise<void> => {
     if (isAgentBusy || !sessionId) return;
-    await truncateFromMessage(message.id);
-    sendFromMessageContent(message.content ?? "");
-  }, [isAgentBusy, sessionId, truncateFromMessage, sendFromMessageContent]);
+    sendFromMessageContent(message.content ?? "", undefined, {
+      resendFromMessageId: message.id
+    });
+  }, [isAgentBusy, sessionId, sendFromMessageContent]);
 
   const handleDeleteMessage = useCallback(async (message: AgentMessage): Promise<void> => {
     if (isAgentBusy || !sessionId) return;
@@ -390,10 +413,11 @@ export function useAgentComposer({
       ? `${(message.content.match(/<attached_files>[\s\S]*?<\/attached_files>\n*/)?.[0] ?? "")}${text}`.trim()
       : text;
     if (!nextContent) return;
-    await truncateFromMessage(message.id);
-    sendFromMessageContent(nextContent);
+    sendFromMessageContent(nextContent, undefined, {
+      editFromMessageId: message.id
+    });
     setInlineEditingMessageId(null);
-  }, [isAgentBusy, sessionId, truncateFromMessage, sendFromMessageContent, setInlineEditingMessageId]);
+  }, [isAgentBusy, sessionId, sendFromMessageContent, setInlineEditingMessageId]);
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputContent.trim();
@@ -477,7 +501,10 @@ export function useAgentComposer({
       id: `temp-${Date.now()}`,
       role: "user",
       content: finalMessage,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      metadata: {
+        pendingClientMessageId: createPendingClientMessageId()
+      }
     };
     setMessages((prev) => [...prev, tempMessage]);
     setInputContent("");
@@ -485,6 +512,7 @@ export function useAgentComposer({
     void sendAgentMessage({
       sessionId,
       userMessage: finalMessage,
+      messageMetadata: tempMessage.metadata,
       channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,

@@ -22,6 +22,7 @@ import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath
 } from "../pi-agent/runtime-core/session-store";
+import { getAgentMessageVersionStorePath, readAgentMessageVersionStore } from "./agent-message-version-store";
 
 describe("agent-session-manager advanced ops", () => {
   let previousConfigDir: string | undefined;
@@ -257,6 +258,25 @@ describe("agent-session-manager advanced ops", () => {
     expect(messages.length).toBe(2);
     expect(messages[0]?.content).toBe("来自 transcript 的新消息");
     expect(messages[1]?.content).toBe("transcript assistant");
+  });
+
+  test("getAgentSessionMessages 应自动初始化消息版本 store", () => {
+    const session = createAgentSession("version store init");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "来自 transcript 的版本消息" }],
+      timestamp: 1
+    });
+
+    const messages = getAgentSessionMessages(session.id);
+    const store = readAgentMessageVersionStore(session.id);
+
+    expect(existsSync(getAgentMessageVersionStorePath(session.id))).toBeTrue();
+    expect(messages[0]?.versionIndex).toBe(1);
+    expect(messages[0]?.versionCount).toBe(1);
+    expect(messages[0]?.isLatestVersion).toBeTrue();
+    expect(store?.messages.length).toBe(1);
   });
 
   test("deleteAgentSession 应清理 runtime-core transcript 目录", () => {

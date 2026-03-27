@@ -22,6 +22,7 @@ import {
   truncateAgentMessagesFrom,
   updateAgentSessionMeta
 } from "../services/agent/agent-session-manager";
+import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import {
   generateAgentTitle,
@@ -87,6 +88,7 @@ import {
 import { readBootstrapFile, writeBootstrapFile } from "../services/system/workspace-bootstrap-service";
 import {
   agentCreateSessionInputSchema,
+  agentGetMessageVersionsInputSchema,
   agentListSubagentRunsInputSchema,
   agentMigrateChatInputSchema,
   agentMoveSessionInputSchema,
@@ -152,6 +154,18 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {
       const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.GET_MESSAGES);
       return getAgentSessionMessages(input.sessionId);
+    },
+    [AGENT_IPC_CHANNELS.GET_MESSAGE_VERSIONS]: async (params) => {
+      const input = validateInput(
+        agentGetMessageVersionsInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_MESSAGE_VERSIONS
+      );
+      return {
+        sessionId: input.sessionId,
+        versionGroupId: input.versionGroupId,
+        messages: getAgentMessageVersions(input.sessionId, input.versionGroupId)
+      };
     },
     [AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES]: async (params) => {
       const input = validateInput(agentRecentMessagesInputSchema, params, AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES);

@@ -20,8 +20,15 @@ import { decryptApiKey, listChannels } from "../channel/channel-manager";
 import {
   getAgentSessionMessages,
   getAgentSessionMeta,
+  readRuntimeCoreTranscriptMessages,
+  replaceAgentSessionTranscript,
   updateAgentSessionMeta
 } from "./agent-session-manager";
+import {
+  createAssistantMessageVersion,
+  createUserMessageVersion,
+  getLatestVisibleMessagesForSession
+} from "./agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
 import { createLogger } from "../infra/logger";
@@ -132,6 +139,17 @@ function pickModelId(channelId: string | undefined, requestedModelId?: string): 
   return resolveRequestedModelIdForChannel(channel, requestedModelId) ?? DEFAULT_MODEL_ID;
 }
 
+function resolveLatestAssistantTranscriptMessage(sessionId: string) {
+  const transcriptMessages = readRuntimeCoreTranscriptMessages(sessionId);
+  for (let index = transcriptMessages.length - 1; index >= 0; index--) {
+    const message = transcriptMessages[index]!;
+    if (message.role === "assistant") {
+      return message;
+    }
+  }
+  return null;
+}
+
 
 export async function sendAgentMessage(
   input: AgentSendInput,
@@ -148,6 +166,22 @@ export async function sendAgentMessage(
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
+  let activeTurnId: string | null = null;
+
+  if (shouldAppendUserMessage) {
+    const sourceMessageId = input.editFromMessageId ?? input.resendFromMessageId;
+    const createdUserVersion = createUserMessageVersion({
+      sessionId,
+      content: userMessage,
+      createdAt: Date.now(),
+      metadata: input.messageMetadata,
+      sourceMessageId
+    });
+    activeTurnId = createdUserVersion.turnId;
+    if (sourceMessageId) {
+      replaceAgentSessionTranscript(sessionId, getLatestVisibleMessagesForSession(sessionId));
+    }
+  }
 
   let stateWorkspaceSlug: string | undefined;
   if (workspaceId) {
@@ -171,6 +205,7 @@ export async function sendAgentMessage(
     modelId: resolvedModelId
   });
   runtimeStatusManager.markStreaming(sessionId);
+  let runtimeCompleted = false;
 
   const { runPiAgentMessage } = await import("../pi-agent/run-pi-agent-message");
   const piResult = await runPiAgentMessage({
@@ -186,8 +221,7 @@ export async function sendAgentMessage(
       emit.onEvent(event);
     },
     onComplete: () => {
-      runtimeStatusManager.markCompleted(sessionId);
-      emit.onComplete();
+      runtimeCompleted = true;
     },
     onError: (error) => {
       runtimeStatusManager.markErrored(sessionId, error);
@@ -212,6 +246,20 @@ export async function sendAgentMessage(
       emit.onToolPermissionRequest(request);
     }
   });
+  if (piResult.status === "completed" && activeTurnId) {
+    const latestAssistantMessage = resolveLatestAssistantTranscriptMessage(sessionId);
+    if (latestAssistantMessage) {
+      createAssistantMessageVersion({
+        sessionId,
+        turnId: activeTurnId,
+        message: latestAssistantMessage
+      });
+    }
+  }
+  if (runtimeCompleted && piResult.status === "completed") {
+    runtimeStatusManager.markCompleted(sessionId);
+    emit.onComplete();
+  }
   if (piResult.status === "completed" && shouldTryAutoTitle) {
     void autoGenerateAgentTitle(sessionId, userMessage, emit);
   }

@@ -5,20 +5,8 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { AgentMessage } from "@lume/shared";
 import type { AgentStreamState, ToolActivity } from "@/atoms/agent-atoms";
 import { getAgentSessionMessages } from "@/lib/desktop-api/agent";
+import { mergeServerMessagesWithPending } from "@/lib/agent-message-merge";
 import { resolveAgentWatchdogIdleTimeoutMs } from "../agent-runtime-guard";
-
-function mergeServerMessagesWithPending(prev: AgentMessage[], next: AgentMessage[]): AgentMessage[] {
-  const persistedUserContents = new Set(
-    next
-      .filter((message) => message.role === "user")
-      .map((message) => message.content)
-  );
-  const pendingTempMessages = prev.filter((message) => (
-    message.id.startsWith("temp-")
-    && !persistedUserContents.has(message.content)
-  ));
-  return [...next, ...pendingTempMessages];
-}
 
 function isAgentDebugEnabled(): boolean {
   try {

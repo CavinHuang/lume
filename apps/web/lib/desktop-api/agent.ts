@@ -10,6 +10,7 @@ import type {
   AgentListSubagentRunsResult,
   AgentMessage,
   AgentMessageAppendedEvent,
+  AgentMessageVersionsResult,
   AgentProxySettings,
   AgentProxyStatus,
   AgentRecentMessagesResult,
@@ -69,6 +70,17 @@ export async function createAgentSession(params?: {
 
 export async function getAgentSessionMessages(sessionId: string): Promise<AgentMessage[]> {
   return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.GET_MESSAGES, { sessionId });
+}
+
+export async function getAgentMessageVersions(
+  sessionId: string,
+  versionGroupId: string
+): Promise<AgentMessage[]> {
+  const result = await sidecarCall<AgentMessageVersionsResult>(AGENT_IPC_CHANNELS.GET_MESSAGE_VERSIONS, {
+    sessionId,
+    versionGroupId
+  });
+  return result.messages;
 }
 
 export async function getRecentAgentSessionMessages(sessionId: string, limit: number): Promise<AgentRecentMessagesResult> {

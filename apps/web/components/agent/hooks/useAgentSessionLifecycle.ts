@@ -5,9 +5,11 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import type { AgentSavedFile, Channel } from "@lume/shared";
 import {
   agentChannelIdAtom,
+  agentMessageVersionsByGroupAtom,
   agentModelIdAtom,
   agentPendingFilesAtom,
   agentRuntimeStatusesAtom,
+  agentSelectedVersionIndexByGroupAtom,
   agentStreamErrorsAtom,
   agentWorkspacesAtom,
   currentAgentMessagesAtom,
@@ -52,6 +54,8 @@ export function useAgentSessionLifecycle({
   const [, setMessages] = useAtom(currentAgentMessagesAtom);
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
+  const setMessageVersionsByGroup = useSetAtom(agentMessageVersionsByGroupAtom);
+  const setSelectedVersionIndexByGroup = useSetAtom(agentSelectedVersionIndexByGroupAtom);
   const setPendingFiles = useSetAtom(agentPendingFilesAtom);
   const setStreamErrors = useSetAtom(agentStreamErrorsAtom);
   const setRuntimeStatuses = useSetAtom(agentRuntimeStatusesAtom);
@@ -100,6 +104,8 @@ export function useAgentSessionLifecycle({
   useEffect(() => {
     if (!sessionId) {
       setMessages([]);
+      setMessageVersionsByGroup({});
+      setSelectedVersionIndexByGroup({});
       setSessionRootPath(null);
       resetPlan();
       setSessionSwitching(false);
@@ -111,6 +117,8 @@ export function useAgentSessionLifecycle({
     setPendingFolderRefs([]);
     setInlineEditingMessageId(null);
     setInputContent("");
+    setMessageVersionsByGroup({});
+    setSelectedVersionIndexByGroup({});
     resetPlan();
 
     let cancelled = false;
@@ -168,7 +176,9 @@ export function useAgentSessionLifecycle({
     setPendingFiles,
     setPendingFolderRefs,
     setPlanState,
-    setStreamErrors
+    setMessageVersionsByGroup,
+    setStreamErrors,
+    setSelectedVersionIndexByGroup
   ]);
 
   useEffect(() => {

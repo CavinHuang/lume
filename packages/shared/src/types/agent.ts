@@ -147,6 +147,18 @@ export interface AgentMessage {
   metadata?: Record<string, unknown>
   /** 工具活动数据（agent 事件列表，用于回放工具调用） */
   events?: AgentEvent[]
+  /** 同一逻辑消息链的版本组 ID */
+  versionGroupId?: string
+  /** 当前消息在版本组中的 1-based 版本序号 */
+  versionIndex?: number
+  /** 当前版本组总版本数 */
+  versionCount?: number
+  /** 当前版本替代的上一条消息 ID */
+  supersedesMessageId?: string
+  /** 当前版本被哪条更新版本替代 */
+  supersededByMessageId?: string
+  /** 当前版本是否为该组最新可见版本 */
+  isLatestVersion?: boolean
 }
 
 /**
@@ -464,6 +476,21 @@ export interface AgentSendInput {
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
+  /** 重发目标消息 ID */
+  resendFromMessageId?: string
+  /** 编辑后重发目标消息 ID */
+  editFromMessageId?: string
+}
+
+export interface AgentGetMessageVersionsInput {
+  sessionId: string
+  versionGroupId: string
+}
+
+export interface AgentMessageVersionsResult {
+  sessionId: string
+  versionGroupId: string
+  messages: AgentMessage[]
 }
 
 export interface AgentAskUserQuestionOption {
@@ -659,6 +686,8 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_SESSION: 'agent:create-session',
   /** 获取会话消息 */
   GET_MESSAGES: 'agent:get-messages',
+  /** 获取单个消息版本组 */
+  GET_MESSAGE_VERSIONS: 'agent:get-message-versions',
   /** 获取最近 N 条会话消息（分页） */
   GET_RECENT_MESSAGES: 'agent:get-recent-messages',
   /** 更新会话标题 */

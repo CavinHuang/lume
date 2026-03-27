@@ -3,11 +3,13 @@
 import * as React from "react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
-import { useAtomValue } from "jotai";
-import { Bot, CalendarClock, ChevronRight, FileImage, FileText, Home, Loader2, Pencil, RotateCcw, Trash2, Wrench } from "lucide-react";
+import { useAtom, useAtomValue } from "jotai";
+import { Bot, CalendarClock, ChevronLeft, ChevronRight, FileImage, FileText, Home, Loader2, Pencil, RotateCcw, Trash2, Wrench } from "lucide-react";
 import {
   agentIsCompactingAtom,
+  agentMessageVersionsByGroupAtom,
   agentModelIdAtom,
+  agentSelectedVersionIndexByGroupAtom,
   agentStatusLineAtom,
   agentStreamingAtom,
   agentStreamingContentAtom,
@@ -43,7 +45,15 @@ import { formatMessageTime } from "@/components/chat/ChatMessageItem";
 import { CopyButton } from "@/components/chat/CopyButton";
 import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
 import { UserAvatar } from "@/components/chat/UserAvatar";
+import {
+  canMoveToNextVersion,
+  canMoveToPreviousVersion,
+  getDisplayedAgentMessage,
+  getLatestVersionIndex,
+  getVersionLabel
+} from "@/lib/agent-message-versions";
 import { extractToolActivitiesFromMessages } from "@/lib/agent-tool-activity";
+import { getAgentMessageVersions } from "@/lib/desktop-api/agent";
 import { getModelLogo } from "@/lib/model-logo";
 import { AgentStatusLine } from "./AgentStatusLine";
 import { EventTimeline } from "./EventTimeline";
@@ -116,6 +126,44 @@ function ThinkingTimeIndicator({ seconds }: { seconds: number }): React.ReactEle
           模型推理阶段
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function VersionNavigator({
+  label,
+  canGoPrev,
+  canGoNext,
+  onPrev,
+  onNext,
+  loading
+}: {
+  label: string;
+  canGoPrev: boolean;
+  canGoNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  loading: boolean;
+}): React.ReactElement {
+  return (
+    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+      <button
+        type="button"
+        disabled={!canGoPrev || loading}
+        onClick={onPrev}
+        className="inline-flex size-6 items-center justify-center rounded-md border border-border/60 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChevronLeft className="size-3.5" />
+      </button>
+      <div className="min-w-[44px] text-center tabular-nums">{label}</div>
+      <button
+        type="button"
+        disabled={!canGoNext || loading}
+        onClick={onNext}
+        className="inline-flex size-6 items-center justify-center rounded-md border border-border/60 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {loading ? <Loader2 className="size-3.5 animate-spin" /> : <ChevronRight className="size-3.5" />}
+      </button>
     </div>
   );
 }
@@ -324,8 +372,15 @@ function InlineEditForm({
 
 const AgentMessageItem = React.memo(function AgentMessageItem({
   message,
+  displayedMessage,
   actionsDisabled,
   isInlineEditing,
+  versionLabel,
+  canGoPrevVersion,
+  canGoNextVersion,
+  onPrevVersion,
+  onNextVersion,
+  versionLoading,
   onDeleteMessage,
   onResendMessage,
   onSaveAsTask,
@@ -335,8 +390,15 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onOpenSession
 }: {
   message: AgentMessage;
+  displayedMessage: AgentMessage;
   actionsDisabled: boolean;
   isInlineEditing: boolean;
+  versionLabel?: string | null;
+  canGoPrevVersion: boolean;
+  canGoNextVersion: boolean;
+  onPrevVersion?: () => void;
+  onNextVersion?: () => void;
+  versionLoading: boolean;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
   onSaveAsTask?: (message: AgentMessage) => Promise<void>;
@@ -350,30 +412,30 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   const userProfile = useAtomValue(userProfileAtom);
 
   const timelineEvents = React.useMemo(
-    () => message.role === "assistant" ? extractTimelineEvents(message) : [],
-    [message]
+    () => displayedMessage.role === "assistant" ? extractTimelineEvents(displayedMessage) : [],
+    [displayedMessage]
   );
   const messageToolActivities = React.useMemo(
     () => {
-      if (message.role !== "assistant") return [];
-      const metadata = message.metadata as Record<string, unknown> | undefined;
+      if (displayedMessage.role !== "assistant") return [];
+      const metadata = displayedMessage.metadata as Record<string, unknown> | undefined;
       const snapshot = metadata?.toolActivitiesSnapshot;
       if (Array.isArray(snapshot)) {
         return snapshot as ReturnType<typeof extractToolActivitiesFromMessages>;
       }
-      return extractToolActivitiesFromMessages([message]);
+      return extractToolActivitiesFromMessages([displayedMessage]);
     },
-    [message]
+    [displayedMessage]
   );
 
   const { attachedFiles, messageText } = React.useMemo(() => {
-    if (message.role !== "user") return { attachedFiles: [] as AttachedFileRef[], messageText: "" };
-    const sanitized = stripPlanExecutionMarker(message.content);
+    if (displayedMessage.role !== "user") return { attachedFiles: [] as AttachedFileRef[], messageText: "" };
+    const sanitized = stripPlanExecutionMarker(displayedMessage.content);
     const { files, text } = splitAttachedFiles(sanitized);
     return { attachedFiles: files, messageText: text };
-  }, [message.role, message.content]);
+  }, [displayedMessage.role, displayedMessage.content]);
 
-  if (message.role === "user") {
+  if (displayedMessage.role === "user") {
 
     return (
       <Message from="user">
@@ -381,7 +443,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
           <UserAvatar avatar={userProfile.avatar} size={35} />
           <div className="flex h-[35px] flex-col justify-between">
             <span className="text-sm font-semibold leading-none text-foreground/60">{userProfile.userName}</span>
-            <span className="text-[10px] leading-none text-foreground/[0.38]">{formatMessageTime(message.createdAt)}</span>
+            <span className="text-[10px] leading-none text-foreground/[0.38]">{formatMessageTime(displayedMessage.createdAt)}</span>
           </div>
         </div>
 
@@ -398,7 +460,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
               initialValue={messageText}
               onSubmit={(payload) => {
                 if (!onSubmitInlineEdit) return;
-                void onSubmitInlineEdit(message, payload);
+                void onSubmitInlineEdit(displayedMessage, payload);
               }}
               onCancel={() => onCancelInlineEdit?.()}
             />
@@ -409,14 +471,14 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
 
         {!isInlineEditing && !actionsDisabled ? (
           <MessageActions className="mt-0.5 pl-[46px]">
-            <CopyButton content={messageText || message.content} />
+            <CopyButton content={messageText || displayedMessage.content} />
             {onResendMessage ? (
-              <MessageAction tooltip="重新发送" onClick={() => void onResendMessage(message)}>
+              <MessageAction tooltip="重新发送" onClick={() => void onResendMessage(displayedMessage)}>
                 <RotateCcw className="size-3.5" />
               </MessageAction>
             ) : null}
             {onStartInlineEdit ? (
-              <MessageAction tooltip="编辑后重发" onClick={() => onStartInlineEdit(message)}>
+              <MessageAction tooltip="编辑后重发" onClick={() => onStartInlineEdit(displayedMessage)}>
                 <Pencil className="size-3.5" />
               </MessageAction>
             ) : null}
@@ -426,6 +488,19 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
               </MessageAction>
             ) : null}
           </MessageActions>
+        ) : null}
+
+        {versionLabel && onPrevVersion && onNextVersion ? (
+          <div className="pl-[46px]">
+            <VersionNavigator
+              label={versionLabel}
+              canGoPrev={canGoPrevVersion}
+              canGoNext={canGoNextVersion}
+              onPrev={onPrevVersion}
+              onNext={onNextVersion}
+              loading={versionLoading}
+            />
+          </div>
         ) : null}
 
         <DeleteMessageDialog
@@ -445,29 +520,29 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     );
   }
 
-  if (message.role === "assistant") {
-    if ((message.metadata as Record<string, unknown>)?.subagentAnnounce === true) {
-      return <SubagentAnnounceMessage message={message} onOpenSession={onOpenSession} />;
+  if (displayedMessage.role === "assistant") {
+    if ((displayedMessage.metadata as Record<string, unknown>)?.subagentAnnounce === true) {
+      return <SubagentAnnounceMessage message={displayedMessage} onOpenSession={onOpenSession} />;
     }
 
     return (
       <Message from="assistant">
         <MessageHeader
-          model={message.model}
-          time={formatMessageTime(message.createdAt)}
-          logo={<AssistantLogo model={message.model} />}
+          model={displayedMessage.model}
+          time={formatMessageTime(displayedMessage.createdAt)}
+          logo={<AssistantLogo model={displayedMessage.model} />}
         />
 
         <MessageContent>
-          {message.reasoning ? (
+          {displayedMessage.reasoning ? (
             <Reasoning
               defaultOpen={false}
-              duration={typeof (message.metadata as Record<string, unknown>)?.thinkingDuration === "number"
-                ? ((message.metadata as Record<string, unknown>).thinkingDuration as number)
+              duration={typeof (displayedMessage.metadata as Record<string, unknown>)?.thinkingDuration === "number"
+                ? ((displayedMessage.metadata as Record<string, unknown>).thinkingDuration as number)
                 : undefined}
             >
               <ReasoningTrigger />
-              <ReasoningContent>{message.reasoning}</ReasoningContent>
+              <ReasoningContent>{displayedMessage.reasoning}</ReasoningContent>
             </Reasoning>
           ) : null}
           {timelineEvents.length > 0 ? (
@@ -476,19 +551,31 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             </div>
           ) : null}
           {/* 安全网：当 timeline 中没有文本段时，直接展示 message.content */}
-          {message.content && !timelineEvents.some((e) => e.type === "text") ? (
-            <MessageResponse>{message.content}</MessageResponse>
+          {displayedMessage.content && !timelineEvents.some((e) => e.type === "text") ? (
+            <MessageResponse>{displayedMessage.content}</MessageResponse>
           ) : null}
         </MessageContent>
-        {!actionsDisabled && (message.content ?? "").trim().length > 0 ? (
+        {!actionsDisabled && (displayedMessage.content ?? "").trim().length > 0 ? (
           <MessageActions className="mt-0.5 pl-[46px]">
-            <CopyButton content={message.content} />
+            <CopyButton content={displayedMessage.content} />
             {onSaveAsTask ? (
-              <MessageAction tooltip="保存为任务" onClick={() => void onSaveAsTask(message)}>
+              <MessageAction tooltip="保存为任务" onClick={() => void onSaveAsTask(displayedMessage)}>
                 <CalendarClock className="size-3.5" />
               </MessageAction>
             ) : null}
           </MessageActions>
+        ) : null}
+        {versionLabel && onPrevVersion && onNextVersion ? (
+          <div className="pl-[46px]">
+            <VersionNavigator
+              label={versionLabel}
+              canGoPrev={canGoPrevVersion}
+              canGoNext={canGoNextVersion}
+              onPrev={onPrevVersion}
+              onNext={onNextVersion}
+              loading={versionLoading}
+            />
+          </div>
         ) : null}
       </Message>
     );
@@ -497,8 +584,13 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   return null;
 }, (prev, next) =>
   prev.message === next.message &&
+  prev.displayedMessage === next.displayedMessage &&
   prev.actionsDisabled === next.actionsDisabled &&
   prev.isInlineEditing === next.isInlineEditing &&
+  prev.versionLabel === next.versionLabel &&
+  prev.canGoPrevVersion === next.canGoPrevVersion &&
+  prev.canGoNextVersion === next.canGoNextVersion &&
+  prev.versionLoading === next.versionLoading &&
   prev.onOpenSession === next.onOpenSession
 )
 
@@ -516,6 +608,8 @@ export function AgentMessages({
 }: AgentMessagesProps): React.ReactElement {
   const messages = useAtomValue(currentAgentMessagesAtom);
   const sessionId = useAtomValue(currentAgentSessionIdAtom);
+  const [messageVersionsByGroup, setMessageVersionsByGroup] = useAtom(agentMessageVersionsByGroupAtom);
+  const [selectedVersionIndexByGroup, setSelectedVersionIndexByGroup] = useAtom(agentSelectedVersionIndexByGroupAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const streamingContent = useAtomValue(agentStreamingContentAtom);
   const streamingReasoning = useAtomValue(agentStreamingReasoningAtom);
@@ -544,6 +638,54 @@ export function AgentMessages({
   const reasoningStillActive = streaming && !streamingContent && streamingTimelineEvents.length === 0;
   // 等待第一个 token 时显示状态行（reasoning/子Agent卡片已有内容时不显示）
   const showLoadingDots = streaming && !smoothContent && !streamingReasoning && streamingTimelineEvents.length === 0 && teammateStates.length === 0;
+  const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
+
+  const ensureVersionsLoaded = React.useCallback(async (message: AgentMessage): Promise<AgentMessage[] | null> => {
+    const groupId = message.versionGroupId;
+    if (!sessionId || !groupId || (message.versionCount ?? 1) <= 1) {
+      return null;
+    }
+    const cached = messageVersionsByGroup[groupId];
+    if (cached && cached.length > 0) {
+      return cached;
+    }
+    setLoadingGroupIds((prev) => ({ ...prev, [groupId]: true }));
+    try {
+      const versions = await getAgentMessageVersions(sessionId, groupId);
+      setMessageVersionsByGroup((prev) => ({ ...prev, [groupId]: versions }));
+      setSelectedVersionIndexByGroup((prev) => ({
+        ...prev,
+        [groupId]: getLatestVersionIndex(versions)
+      }));
+      return versions;
+    } finally {
+      setLoadingGroupIds((prev) => {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      });
+    }
+  }, [messageVersionsByGroup, sessionId, setMessageVersionsByGroup, setSelectedVersionIndexByGroup]);
+
+  const moveVersion = React.useCallback(async (message: AgentMessage, delta: -1 | 1): Promise<void> => {
+    const groupId = message.versionGroupId;
+    if (!groupId) {
+      return;
+    }
+    const versions = await ensureVersionsLoaded(message);
+    if (!versions || versions.length <= 1) {
+      return;
+    }
+    const displayedMessage = getDisplayedAgentMessage(message, messageVersionsByGroup, selectedVersionIndexByGroup);
+    const currentIndex = versions.findIndex((item) => item.id === displayedMessage.id);
+    const fallbackIndex = getLatestVersionIndex(versions);
+    const baseIndex = currentIndex === -1 ? fallbackIndex : currentIndex;
+    const nextIndex = Math.max(0, Math.min(versions.length - 1, baseIndex + delta));
+    setSelectedVersionIndexByGroup((prev) => ({
+      ...prev,
+      [groupId]: nextIndex
+    }));
+  }, [ensureVersionsLoaded, messageVersionsByGroup, selectedVersionIndexByGroup, setSelectedVersionIndexByGroup]);
 
   return (
     <Conversation className={!streaming ? "cv-ready" : undefined} key={sessionId ?? ""}>
@@ -558,22 +700,38 @@ export function AgentMessages({
           <EmptyState />
         ) : (
           <>
-            {messages.map((message) => (
-              <div key={message.id} data-message-id={message.id}>
-                <AgentMessageItem
-                  message={message}
-                  actionsDisabled={actionsDisabled}
-                  isInlineEditing={inlineEditingMessageId === message.id}
-                  onDeleteMessage={onDeleteMessage}
-                  onResendMessage={onResendMessage}
-                  onSaveAsTask={onSaveAsTask}
-                  onStartInlineEdit={onStartInlineEdit}
-                  onSubmitInlineEdit={onSubmitInlineEdit}
-                  onCancelInlineEdit={onCancelInlineEdit}
-                  onOpenSession={onOpenSession}
-                />
-              </div>
-            ))}
+            {messages.map((message) => {
+              const displayedMessage = getDisplayedAgentMessage(
+                message,
+                messageVersionsByGroup,
+                selectedVersionIndexByGroup
+              );
+              const versionLabel = getVersionLabel(message, displayedMessage, messageVersionsByGroup);
+
+              return (
+                <div key={message.id} data-message-id={message.id}>
+                  <AgentMessageItem
+                    message={message}
+                    displayedMessage={displayedMessage}
+                    actionsDisabled={actionsDisabled}
+                    isInlineEditing={inlineEditingMessageId === message.id || inlineEditingMessageId === displayedMessage.id}
+                    versionLabel={versionLabel}
+                    canGoPrevVersion={canMoveToPreviousVersion(message, displayedMessage, messageVersionsByGroup)}
+                    canGoNextVersion={canMoveToNextVersion(message, displayedMessage, messageVersionsByGroup)}
+                    onPrevVersion={() => { void moveVersion(message, -1); }}
+                    onNextVersion={() => { void moveVersion(message, 1); }}
+                    versionLoading={Boolean(message.versionGroupId && loadingGroupIds[message.versionGroupId])}
+                    onDeleteMessage={onDeleteMessage}
+                    onResendMessage={onResendMessage}
+                    onSaveAsTask={onSaveAsTask}
+                    onStartInlineEdit={onStartInlineEdit}
+                    onSubmitInlineEdit={onSubmitInlineEdit}
+                    onCancelInlineEdit={onCancelInlineEdit}
+                    onOpenSession={onOpenSession}
+                  />
+                </div>
+              );
+            })}
             {shouldShowStreamingMessage ? (
               <Message from="assistant">
                 <MessageHeader

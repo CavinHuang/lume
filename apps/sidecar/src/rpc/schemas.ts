@@ -158,7 +158,9 @@ export const agentSendInputSchema = z.object({
   chatType: z.enum(["direct", "group", "channel"]).optional(),
   sessionType: z.enum(["main", "subagent", "group", "channel"]).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).optional(),
-  messageMetadata: z.record(z.string(), z.unknown()).optional()
+  messageMetadata: z.record(z.string(), z.unknown()).optional(),
+  resendFromMessageId: z.string().optional(),
+  editFromMessageId: z.string().optional()
 });
 
 export const memoryIndexWorkspaceInputSchema = z.object({
@@ -208,6 +210,11 @@ export const agentSessionIdInputSchema = z.object({
 export const agentRecentMessagesInputSchema = z.object({
   sessionId: idSchema,
   limit: z.number().int().min(1).max(2000)
+});
+
+export const agentGetMessageVersionsInputSchema = z.object({
+  sessionId: idSchema,
+  versionGroupId: idSchema
 });
 
 export const agentUpdateTitleInputSchema = z.object({

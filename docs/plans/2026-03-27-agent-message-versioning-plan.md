@@ -1,5 +1,22 @@
 # 2026-03-27 Agent 消息版本切换实现计划
 
+## 执行进展（2026-03-28）
+
+已完成：
+
+- shared contract 已补齐 AgentMessage 版本字段
+- sidecar 已引入消息版本 store，并在旧 transcript 读取时自动初始化
+- `agent:get-message-versions` 已接通
+- resend / 编辑后重发 已改为写入新版本并重建 latest visible chain
+- web 已支持单条消息的版本切换查看
+- temp user / 最终 user / assistant latest 的合并逻辑已初步对齐
+
+未完成或待继续验证：
+
+- 仍缺完整组件级 UI 测试
+- 仍缺一轮 smoke 级联调验证（刷新恢复、多轮重发、流式结束无重复消息）
+- 当前环境下 `agent-session-manager.test.ts` 受 `@mariozechner/pi-coding-agent` 依赖缺失影响，未完成完整回归
+
 ## 1. 目标
 
 为 Lume Agent 消息列表增加“版本记录与切换查看”能力，支持类似 `5/5` 的版本导航条，让用户在以下场景中查看同一消息组的历史版本：
