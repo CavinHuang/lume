@@ -1,0 +1,1253 @@
+[
+  {
+    "function": {
+      "description": "Execute bash commands inside the workspace. Supports foreground execution and background shells retrievable via BashOutput.",
+      "name": "Bash",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "run_in_background": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "exclusiveMinimum": 0,
+            "maximum": 600000,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Retrieve stdout/stderr from a running or completed background bash command.",
+      "name": "BashOutput",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "bash_id": {
+            "type": "string"
+          },
+          "filter": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bash_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Terminate a running background bash shell.",
+      "name": "KillShell",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "shell_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "shell_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Read text from a file. Output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+      "name": "Read",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "description": "Path to the file to read (relative to workspace or absolute)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum number of lines to read. Default/max: 2000",
+            "exclusiveMinimum": 0,
+            "maximum": 10000,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 1,
+            "description": "Line number to start reading from (1-indexed). Default: 1",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Write (or overwrite) a file inside the workspace. Always inspect files before overwriting.",
+      "name": "Write",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "create_directories": {
+            "type": "boolean"
+          },
+          "file_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Perform search-and-replace operations inside a file. Always inspect the file with Read first.",
+      "name": "Edit",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string"
+          },
+          "new_string": {
+            "default": "",
+            "type": "string"
+          },
+          "old_string": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "replace_all": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file_path",
+          "old_string"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Find files by glob pattern relative to a workspace directory.",
+      "name": "Glob",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "includeStats": {
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 200,
+            "exclusiveMinimum": 0,
+            "maximum": 2000,
+            "type": "integer"
+          },
+          "path": {
+            "default": ".",
+            "type": "string"
+          },
+          "pattern": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Search file contents using ripgrep with optional glob/type filters.",
+      "name": "Grep",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "-A": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "-B": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "-C": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "-i": {
+            "type": "boolean"
+          },
+          "-n": {
+            "type": "boolean"
+          },
+          "glob": {
+            "type": "string"
+          },
+          "head_limit": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "multiline": {
+            "type": "boolean"
+          },
+          "offset": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output_mode": {
+            "default": "files_with_matches",
+            "enum": [
+              "content",
+              "files_with_matches",
+              "count"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "default": ".",
+            "type": "string"
+          },
+          "pattern": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Launch a new agent to handle complex, multi-step tasks autonomously.\n\nThe Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.\n\nYou can invoke agents in two ways:\n- subagent_type: pick a raw execution lane such as coder or Plan\n- agent_id: pick a managed specialist profile configured in Alma; the runtime maps it to the right execution lane and injects the role brief\n\nAvailable agent types and the tools they have access to:\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\n- statusline-setup: Use this agent to configure the user's status line setting. (Tools: Read, Edit)\n- Explore: Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. \"src/components/**/*.tsx\"), search code for keywords (eg. \"API endpoints\"), or answer questions about the codebase (eg. \"how do API endpoints work?\"). When calling this agent, specify the desired thoroughness level: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions. (Tools: All tools)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools)\n- alma-guide: Use this agent when the user asks questions (\"Can Alma...\", \"Does Alma...\", \"How do I...\", \"Can you...\", \"Do you...\") about: (1) Alma (the desktop app) - features, settings, providers, models, workspaces, chat threads; (2) How to configure or use Alma; (3) Alma's architecture and implementation details. **NOTE:** When users say \"you\" in questions like \"Can you do X?\" or \"Do you support Y?\", they are referring to Alma (the app), not the AI assistant. **IMPORTANT:** Before spawning a new agent, check if there is already a running or recently completed alma-guide agent that you can resume using the \"resume\" parameter. (Tools: Glob, Grep, Read, WebFetch, WebSearch)\n- coder: Use this agent to write, fix, or refactor code. This is your go-to agent for implementing bug fixes, adding features, and making code changes. It can read the codebase, make targeted edits, and verify changes by running tests or type-checks. Use this when the user asks you to fix a bug, implement a feature, or make any code modification. (Tools: Bash, Glob, Grep, Read, Edit, Write, Skill)\n- alma-operator: Use this agent to read or modify Alma's runtime configuration. This includes: (1) Reading current settings (language, theme, chat options, memory settings, etc.); (2) Updating settings; (3) Managing AI providers (list, create, update, delete, test connection); (4) Fetching available models from providers. **NOTE:** When users say \"you\" in requests like \"Change your theme\" or \"Update your settings\", they are referring to Alma (the app). The agent reads ~/.config/alma/api-spec.md for the actual API port. (Tools: Bash, Read)\n\nBuilt-in managed specialist agents:\n- designer: Designer. Shapes flows, interaction details, and visual direction before code lands. (execution mode: general-purpose)\n- product-manager: Product Manager. Breaks goals into requirements, rollout slices, and accountable handoffs. (execution mode: Plan)\n- developer: Developer. Implements changes, validates them, and keeps technical debt contained. (execution mode: coder)\n- researcher: Researcher. Finds the facts, compares options, and hands back usable evidence. (execution mode: general-purpose)\n- operator: Operator. Owns runtime configuration, provider wiring, and operational follow-through. (execution mode: alma-operator)\n\nWhen using the Task tool, you must specify either subagent_type or agent_id.\n\nWhen NOT to use the Task tool:\n- If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly\n- If you are searching for a specific class definition like \"class Foo\", use the Glob tool instead, to find the match more quickly\n- If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly\n- Other tasks that are not related to the agent descriptions above\n\n\nUsage notes:\n- Always include a short description (3-5 words) summarizing what the agent will do\n- When delegating specialist-to-specialist work, prefer filling the handoff packet so the receiving agent gets a clear goal, constraints, and deliverable\n- handoff must be literal JSON. Never emit placeholder syntax like <parameter name=\"goal\">...</parameter>, and never wrap arrays such as constraints in quotes\n- For user-facing specialist work, prefer foreground execution so the user can watch the agent's progress stream inline. Use run_in_background only when concurrency matters more than live visibility, or when the user explicitly wants background work.\n- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses\n- When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.\n- You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will need to use TaskOutput to retrieve its results once it's done. You can continue to work while background agents run - When you need their results to continue you can use TaskOutput in blocking mode to pause and wait for their results.\n- Agents can be resumed using the `resume` parameter by passing the agent ID from a previous invocation. When resumed, the agent continues with its full previous context preserved. When NOT resuming, each invocation starts fresh and you should provide a detailed task description with all necessary context.\n- When the agent is done, it will return a single message back to you along with its agent ID. You can use this ID to resume the agent later if needed for follow-up work.\n- Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.\n- Agents with \"access to current context\" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., \"investigate the error discussed above\") instead of repeating information. The agent will receive all prior messages and understand the context.\n- The agent's outputs should generally be trusted\n- Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent\n- If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.\n- If the user specifies that they want you to run agents \"in parallel\", you MUST send a single message with multiple Task tool use content blocks. For example, if you need to launch both a code-reviewer agent and a test-runner agent in parallel, send a single message with both tool calls.\n\nValid handoff example:\n{\n  \"agent_id\": \"product-manager\",\n  \"description\": \"Plan blog system\",\n  \"prompt\": \"Create an MVP development plan for a blog system.\",\n  \"handoff\": {\n    \"goal\": \"Produce the initial development plan.\",\n    \"deliverable\": \"A structured plan with scope, phases, and acceptance criteria.\",\n    \"constraints\": [\"MVP first\", \"Frontend/backend separation\", \"Include database and deployment considerations\"],\n    \"writeBack\": \"artifact\"\n  }\n}\n\nExample usage:\n\n<example_agent_descriptions>\n\"code-reviewer\": use this agent after you are done writing a signficant piece of code\n\"greeting-responder\": use this agent when to respond to user greetings with a friendly joke\n</example_agent_description>\n\n<example>\nuser: \"Please write a function that checks if a number is prime\"\nassistant: Sure let me write a function that checks if a number is prime\nassistant: First let me use the Write tool to write a function that checks if a number is prime\nassistant: I'm going to use the Write tool to write the following code:\n<code>\nfunction isPrime(n) {\n  if (n <= 1) return false\n  for (let i = 2; i * i <= n; i++) {\n    if (n % i === 0) return false\n  }\n  return true\n}\n</code>\n<commentary>\nSince a signficant piece of code was written and the task was completed, now use the code-reviewer agent to review the code\n</commentary>\nassistant: Now let me use the code-reviewer agent to review the code\nassistant: Uses the Task tool to launch the code-reviewer agent\n</example>\n\n<example>\nuser: \"Hello\"\n<commentary>\nSince the user is greeting, use the greeting-responder agent to respond with a friendly joke\n</commentary>\nassistant: \"I'm going to use the Task tool to launch the greeting-responder agent\"\n</example>\n",
+      "name": "Task",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "description": "Optional managed specialist agent ID, such as designer, product-manager, developer, researcher, or operator. When provided, Alma maps it to the configured execution mode and injects the specialist brief.",
+            "type": "string"
+          },
+          "description": {
+            "description": "A short (3-5 word) description of the task",
+            "maxLength": 80,
+            "minLength": 3,
+            "type": "string"
+          },
+          "handoff": {
+            "additionalProperties": false,
+            "description": "Optional structured handoff packet used for crew timeline and specialist collaboration. Must be a plain JSON object. Never use XML/HTML tags such as <parameter name=\"goal\">...</parameter>.",
+            "properties": {
+              "acceptanceCriteria": {
+                "description": "Concrete checks that define a successful handoff completion. Use a real JSON array like [\"...\"], not a quoted JSON string.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "artifactRefs": {
+                "description": "Relevant file paths, URLs, IDs, or artifact handles to inspect. Use a real JSON array like [\"...\"], not a quoted JSON string.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "constraints": {
+                "description": "Non-negotiable constraints such as deadlines, scope limits, or technical boundaries. Use a real JSON array like [\"...\"], not a quoted JSON string.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "context": {
+                "description": "Compact context bullets the receiving agent should know before acting.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "deliverable": {
+                "description": "The artifact or answer the receiving agent should return.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "goal": {
+                "description": "Why this agent is being engaged and what outcome it owns.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "writeBack": {
+                "description": "How the receiving agent should package the result for the caller.",
+                "enum": [
+                  "summary",
+                  "artifact",
+                  "decision",
+                  "patch"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "model": {
+            "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer smaller models for quick, straightforward tasks to minimize cost and latency.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The task for the agent to perform. Should be clear and detailed so the agent can work autonomously.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "resume": {
+            "description": "Optional agent ID to resume from. If provided, the agent will continue from the previous execution transcript.",
+            "type": "string"
+          },
+          "run_in_background": {
+            "description": "Set to true to run this agent in the background. Use TaskOutput to read the output later.",
+            "type": "boolean"
+          },
+          "subagent_type": {
+            "description": "The type of specialized agent to use for this task. Optional when agent_id is provided.",
+            "enum": [
+              "general-purpose",
+              "statusline-setup",
+              "Explore",
+              "Plan",
+              "alma-guide",
+              "alma-operator",
+              "coder"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "prompt"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "- Retrieves output from a running or completed task (background shell, agent, or remote session)\n- Takes a task_id parameter identifying the task\n- Returns the task output along with status information\n- Use block=true (default) to wait for task completion\n- Use block=false for non-blocking check of current status\n- Task IDs can be found using the /tasks command\n- Works with all task types: background shells, async agents, and remote sessions",
+      "name": "TaskOutput",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "block": {
+            "description": "Whether to wait for completion",
+            "type": "boolean"
+          },
+          "task_id": {
+            "description": "The task ID to get output from",
+            "type": "string"
+          },
+          "timeout": {
+            "default": 30000,
+            "description": "Max wait time in ms",
+            "maximum": 600000,
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Execute a skill within the main conversation\n\n<skills_instructions>\nWhen users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.\n\nHow to invoke:\n- Use this tool with the skill name only (no arguments)\n- Examples:\n  - skill: \"pdf\" - invoke the pdf skill\n  - skill: \"code-review\" - invoke the code-review skill\n\nImportant:\n- When a skill is relevant, you must invoke this tool IMMEDIATELY as your first action\n- NEVER just announce or mention a skill in your text response without actually calling this tool\n- This is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task\n- Only use skills listed in <available_skills> below\n- Do not invoke a skill that is already running\n</skills_instructions>\n",
+      "name": "Skill",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "skill": {
+            "description": "The skill name (no arguments). E.g., \"test-skill\" or \"code-review\"",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Search and discover available tools using semantic search.\nUse this tool to find relevant tools when you need to:\n- Discover what tools are available for a specific task\n- Find MCP server tools by describing what you want to do\n- Get tool definitions and input schemas before using them\n- Explore capabilities across built-in and MCP tools\n\nThis tool uses AI to understand your query and find matching tools semantically.",
+      "name": "ToolSearch",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of tools to return",
+            "exclusiveMinimum": 0,
+            "maximum": 50,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Search query to find tools - describe what you want to do or the type of tool you need",
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "default": "all",
+            "description": "Filter by tool type: \"builtin\" for built-in tools, \"mcp\" for MCP server tools, \"plugin\" for plugin-registered tools, or \"all\" for all",
+            "enum": [
+              "builtin",
+              "mcp",
+              "plugin",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Search the web and return cleaned content from top results. Each result is numbered [1], [2], etc. When citing information from search results in your response, use these numbers as inline citations like [1], [2], or [1,2] for multiple sources. This helps users identify the source of information.",
+      "name": "WebSearch",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "allowed_domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "blocked_domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "include_markdown": {
+            "default": false,
+            "type": "boolean"
+          },
+          "max_results": {
+            "default": 5,
+            "exclusiveMinimum": 0,
+            "maximum": 10,
+            "type": "integer"
+          },
+          "query": {
+            "minLength": 2,
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Fetch a URL using hidden browser window to capture JS-rendered content, convert HTML to markdown, and return prompt-aligned highlights.",
+      "name": "WebFetch",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "max_bytes": {
+            "default": 200000,
+            "exclusiveMinimum": 0,
+            "maximum": 2000000,
+            "type": "integer"
+          },
+          "prompt": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "prompt"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Open a visible browser window and navigate to a URL. The window persists across tool calls so you can interact with the page. Creates the window if not already open, or navigates the existing window to a new URL. Use for browsing the web visually, filling forms, or interacting with web applications.",
+      "name": "BrowserOpen",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "description": "The URL to open in the browser",
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Click an element in the browser by CSS selector. The element is scrolled into view before clicking. Use BrowserScreenshot or BrowserEval first to identify elements on the page.",
+      "name": "BrowserClick",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "selector": {
+            "description": "CSS selector of the element to click",
+            "type": "string"
+          }
+        },
+        "required": [
+          "selector"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Type text into an input field in the browser. Optionally press Enter after typing. Use BrowserScreenshot or BrowserEval first to identify input fields.",
+      "name": "BrowserType",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "pressEnter": {
+            "default": false,
+            "description": "Whether to press Enter after typing (useful for search boxes)",
+            "type": "boolean"
+          },
+          "selector": {
+            "description": "CSS selector of the input or textarea element",
+            "type": "string"
+          },
+          "text": {
+            "description": "Text to type into the element",
+            "type": "string"
+          }
+        },
+        "required": [
+          "selector",
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Take a screenshot of the browser window. Returns a resized image for visual analysis. Use this to see what the page looks like, verify actions worked, or identify interactive elements.",
+      "name": "BrowserScreenshot",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Read the current browser page content as markdown. Uses Mozilla Readability for article extraction with fallbacks. Good for understanding page content textually.",
+      "name": "BrowserRead",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Read all interactive DOM elements on the current page (links, buttons, inputs, selects, textareas, etc.). Returns a JSON array with each element's tag, id, name, type, text, href, placeholder, aria-label, value, and a CSS selector hint. Use this to discover what you can click or type into before using BrowserClick or BrowserType.",
+      "name": "BrowserReadDom",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Go back to the previous page in browser history. Returns success=false if there is no previous page.",
+      "name": "BrowserBack",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Go forward to the next page in browser history. Returns success=false if there is no next page.",
+      "name": "BrowserForward",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Reload the current browser page. Waits for the page to finish loading before returning.",
+      "name": "BrowserReload",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Execute JavaScript code in the browser page context. Returns the stringified result. Use for advanced interactions like scrolling, extracting specific data, selecting dropdown options, or querying DOM elements.",
+      "name": "BrowserEval",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "JavaScript code to execute in the browser page context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Close the browser window. Call this when you are done browsing to clean up resources.",
+      "name": "BrowserClose",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "List all open tabs in the user's real Chrome browser. Returns tab IDs, URLs, titles, and active state. Use this to discover which tabs are available before interacting with them.",
+      "name": "ChromeRelayListTabs",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Navigate a tab in the user's Chrome browser to a URL. If tabId is omitted, creates a new tab. Use ChromeRelayListTabs first to see available tabs.",
+      "name": "ChromeRelayNavigate",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "description": "Tab ID to navigate. If omitted, creates a new tab.",
+            "type": "number"
+          },
+          "url": {
+            "description": "URL to navigate to",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Click an element in a Chrome browser tab by CSS selector. The element is scrolled into view before clicking. Use ChromeRelayReadDom or ChromeRelayScreenshot first to identify elements.",
+      "name": "ChromeRelayClick",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "selector": {
+            "description": "CSS selector of the element to click",
+            "type": "string"
+          },
+          "tabId": {
+            "description": "Tab ID",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId",
+          "selector"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Type text into an input field in a Chrome browser tab. Optionally press Enter after typing.",
+      "name": "ChromeRelayType",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "pressEnter": {
+            "default": false,
+            "description": "Press Enter after typing",
+            "type": "boolean"
+          },
+          "selector": {
+            "description": "CSS selector of input element",
+            "type": "string"
+          },
+          "tabId": {
+            "description": "Tab ID",
+            "type": "number"
+          },
+          "text": {
+            "description": "Text to type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tabId",
+          "selector",
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Take a visual screenshot of a Chrome browser tab. Returns a resized preview for model context and saves full resolution to disk. Use this only when visual layout or images matter. For reading text content, use ChromeRelayRead instead.",
+      "name": "ChromeRelayScreenshot",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "description": "Tab ID. If omitted, captures the active tab.",
+            "type": "number"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Read and extract text content from a Chrome browser tab as clean markdown. This is the PREFERRED tool for reading, summarizing, or understanding page content. Uses Mozilla Readability for clean article extraction. Prefer this over ChromeRelayScreenshot when the user wants to read or understand text content.",
+      "name": "ChromeRelayRead",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "description": "Tab ID to read",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Read all interactive DOM elements (links, buttons, inputs, selects, etc.) in a Chrome browser tab. Returns element details with CSS selector hints for use with ChromeRelayClick and ChromeRelayType.",
+      "name": "ChromeRelayReadDom",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "description": "Tab ID to read",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Execute JavaScript code in a Chrome browser tab's page context. Returns the stringified result. Use for advanced interactions like scrolling, extracting specific data, or querying DOM.",
+      "name": "ChromeRelayEval",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "JavaScript code to execute in the page context",
+            "type": "string"
+          },
+          "tabId": {
+            "description": "Tab ID",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId",
+          "code"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Scroll a Chrome browser tab up or down by a specified pixel amount.",
+      "name": "ChromeRelayScroll",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "default": 500,
+            "description": "Scroll amount in pixels",
+            "type": "number"
+          },
+          "direction": {
+            "description": "Scroll direction",
+            "enum": [
+              "up",
+              "down"
+            ],
+            "type": "string"
+          },
+          "tabId": {
+            "description": "Tab ID",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId",
+          "direction"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Navigate back in a Chrome browser tab's history.",
+      "name": "ChromeRelayBack",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "description": "Tab ID",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Navigate forward in a Chrome browser tab's history.",
+      "name": "ChromeRelayForward",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "description": "Tab ID",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Upload a file to a file input element in a Chrome browser tab. Use this to attach images to tweets, Slack messages, etc. The file input is usually hidden — this tool finds it and sets the file directly via CDP.",
+      "name": "ChromeRelayUpload",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "filePath": {
+            "description": "Absolute path to the file to upload",
+            "type": "string"
+          },
+          "selector": {
+            "default": "input[type=\"file\"]",
+            "description": "CSS selector for the file input element",
+            "type": "string"
+          },
+          "tabId": {
+            "description": "Tab ID",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tabId",
+          "filePath"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Returns design guidelines for widgetRenderer (CSS patterns, colors, typography, layout rules, examples). Call once before your first widgetRenderer call. Do NOT mention this call to the user — it is an internal setup step.",
+      "name": "widgetReadme",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "modules": {
+            "description": "Which design guideline modules to load. Pick all that fit the use case: art, mockup, interactive, chart, diagram.",
+            "items": {
+              "enum": [
+                "art",
+                "mockup",
+                "interactive",
+                "chart",
+                "diagram"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "modules"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Render an interactive HTML/SVG visualization in the chat. IMPORTANT: Call widgetReadme once before your first widgetRenderer call to load design guidelines. Use this tool when the user asks you to visualize, diagram, illustrate, or explain something visually. Great for: algorithm visualizations, architecture diagrams, flowcharts, interactive simulations, math plots, data dashboards, step-by-step animations, and any visual explanation. The HTML runs in a sandboxed iframe with theming support. Always prefer this over describing visuals in text.",
+      "name": "widgetRenderer",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "One-sentence explanation of what this visualization demonstrates",
+            "type": "string"
+          },
+          "html": {
+            "description": "Self-contained HTML fragment (no DOCTYPE/html/head/body tags). Style inline or with <style>. The widget renders inside the app with the SAME theme. Use these CSS variables for seamless look: Colors: var(--foreground), var(--background), var(--muted), var(--muted-foreground), var(--primary), var(--primary-foreground), var(--secondary), var(--secondary-foreground), var(--border), var(--card), var(--card-foreground), var(--destructive), var(--accent), var(--input), var(--ring). Charts: var(--chart-1) through var(--chart-5). Layout: var(--radius) for border-radius, var(--font-sans), var(--font-mono). Pre-styled elements: button, input, select, textarea, table, code, pre, .card, .badge, .badge.primary, hr. CDN libraries allowed: cdnjs.cloudflare.com, esm.sh, cdn.jsdelivr.net, unpkg.com. Scripts run ONLY after streaming completes, so interactive controls work correctly.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Short title for the visualization, e.g. \"Binary Search\" or \"Load Balancer Architecture\"",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "html"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Display data as an interactive pie chart in the chat. Use when showing proportions, percentages, or part-of-whole relationships. Provide a title, description, and data points with labels and numeric values.",
+      "name": "pieChart",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "description": "Data points for the pie chart",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "description": "Category label",
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Numeric value",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "description": {
+            "description": "Brief description or subtitle",
+            "type": "string"
+          },
+          "title": {
+            "description": "Chart title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "data"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Display data as an interactive bar chart in the chat. Use when comparing quantities across categories, showing rankings, or displaying discrete data points. Provide a title, description, and data points with labels and numeric values.",
+      "name": "barChart",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "description": "Data points for the bar chart",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "description": "Category label",
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Numeric value",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "description": {
+            "description": "Brief description or subtitle",
+            "type": "string"
+          },
+          "title": {
+            "description": "Chart title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "data"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "After each tool use, the user will respond with the result of that tool use, i.e. if it succeeded or failed, along with any reasons for failure. Once you've received the results of tool uses and can confirm that the task is complete, use this tool to present the result of your work to the user. Optionally you may provide a CLI command to showcase the result of your work. The user may respond with feedback if they are not satisfied with the result, which you can use to make improvements and try again.\nIMPORTANT NOTE: This tool CANNOT be used until you've confirmed from the user that any previous tool uses were successful. Failure to do so will result in code corruption and system failure. Before using this tool, you must ask yourself if you've confirmed from the user that any previous tool uses were successful. If not, then DO NOT use this tool.",
+      "name": "AttemptCompletion",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "A CLI command to execute to show a live demo of the result to the user. For example, use `open index.html` to display a created html website, or `open localhost:3000` to display a locally running development server. But DO NOT use commands like `echo` or `cat` that merely print text. This command should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions.",
+            "type": "string"
+          },
+          "result": {
+            "description": "The result of the task. Formulate this result in a way that is final and does not require further input from the user. Don't end your result with questions or offers for further assistance.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Execute lightweight slash commands (e.g., /pwd, /ls, /cat, /todo).",
+      "name": "SlashCommand",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  }
+]

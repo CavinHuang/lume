@@ -6,7 +6,7 @@ import { ArrowLeft, Check, FolderOpen, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { agentSessionsAtom, currentAgentSessionAtom } from "@/atoms";
+import { agentSessionsAtom, currentAgentCapabilityRouteHintAtom, currentAgentSessionAtom } from "@/atoms";
 import { updateAgentSessionTitle } from "@/lib/desktop-api/agent";
 
 interface AgentHeaderProps {
@@ -17,6 +17,7 @@ interface AgentHeaderProps {
 
 export function AgentHeader({ onToggleFileBrowser, fileBrowserOpen, onOpenSession }: AgentHeaderProps): React.ReactElement | null {
   const session = useAtomValue(currentAgentSessionAtom);
+  const routeHint = useAtomValue(currentAgentCapabilityRouteHintAtom);
   const [sessions, setSessions] = useAtom(agentSessionsAtom);
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
@@ -116,6 +117,22 @@ export function AgentHeader({ onToggleFileBrowser, fileBrowserOpen, onOpenSessio
           </Tooltip>
         ) : null}
       </div>
+
+      {routeHint ? (
+        <div className="border-t border-border/40 px-4 py-1.5 text-[11px] text-muted-foreground/75">
+          <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5">
+            route: {routeHint.preferred}
+          </span>
+          {routeHint.softPolicyActive ? (
+            <span className="ml-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-300">
+              soft policy active
+            </span>
+          ) : null}
+          {routeHint.reason ? (
+            <span className="ml-2 truncate">{routeHint.reason}</span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

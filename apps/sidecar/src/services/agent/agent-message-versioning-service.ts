@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@lume/shared";
 import {
   readAgentMessageVersionStore,
-  resetAgentMessageVersionStore,
   type AgentMessageVersionGroupRecord,
   type AgentMessageVersionRecord,
   type AgentMessageVersionStore,
@@ -88,6 +87,70 @@ function getVisibleLatestRecords(store: AgentMessageVersionStore): AgentMessageV
   return store.visibleGroupIds
     .map((groupId) => getLatestGroupMessage(store, groupId))
     .filter((record): record is AgentMessageVersionRecord => !!record);
+}
+
+function reconcileSingleVersionStoreFromTranscript(
+  existing: AgentMessageVersionStore,
+  transcriptMessages: AgentMessage[]
+): AgentMessageVersionStore {
+  const nextStore: AgentMessageVersionStore = {
+    version: 1,
+    sessionId: existing.sessionId,
+    groups: [],
+    messages: [],
+    visibleGroupIds: [],
+    updatedAt: Date.now()
+  };
+  const existingVisibleRecords = getVisibleLatestRecords(existing);
+  let currentTurnId: string | null = null;
+
+  for (let index = 0; index < transcriptMessages.length; index++) {
+    const message = transcriptMessages[index]!;
+    if (message.role !== "user" && message.role !== "assistant") {
+      continue;
+    }
+
+    const previousRecord = existingVisibleRecords[index];
+    const previousGroup = previousRecord ? findGroup(existing, previousRecord.groupId) : undefined;
+
+    if (message.role === "user" || !currentTurnId) {
+      currentTurnId = previousGroup?.turnId ?? createTurnId();
+    }
+
+    const groupId = previousGroup?.groupId ?? randomUUID();
+    const messageId = previousRecord?.messageId ?? randomUUID();
+    const mergedMetadata = {
+      ...(previousRecord?.metadata ?? {}),
+      ...(message.metadata ?? {})
+    };
+
+    nextStore.groups.push({
+      groupId,
+      turnId: currentTurnId,
+      role: message.role,
+      latestMessageId: messageId,
+      messageIds: [messageId],
+      createdAt: message.createdAt,
+      updatedAt: message.createdAt
+    });
+    nextStore.messages.push({
+      messageId,
+      groupId,
+      role: message.role,
+      versionIndex: 1,
+      isLatestVersion: true,
+      createdAt: message.createdAt,
+      content: message.content,
+      reasoning: message.reasoning,
+      model: message.model,
+      metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : undefined,
+      events: message.events
+    });
+    nextStore.visibleGroupIds.push(groupId);
+  }
+
+  writeAgentMessageVersionStore(existing.sessionId, nextStore);
+  return nextStore;
 }
 
 function findVisibleGroupIndex(
@@ -226,8 +289,7 @@ export function syncVersionStoreFromMessages(
   if (hasHistory) {
     return existing;
   }
-  resetAgentMessageVersionStore(sessionId);
-  return initializeVersionStoreFromMessages(sessionId, transcriptMessages);
+  return reconcileSingleVersionStoreFromTranscript(existing, transcriptMessages);
 }
 
 export function getVisibleAgentMessages(sessionId: string): AgentMessage[] {

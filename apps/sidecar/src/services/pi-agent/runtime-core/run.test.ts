@@ -1,12 +1,23 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Model } from "@mariozechner/pi-ai";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreSessionDir } from "./session-store";
+import { getAgentWorkspacePath } from "../../infra/config-paths";
 
 describe("runtime-core run", () => {
+  const prevConfigDir = process.env.LUME_CONFIG_DIR;
+
+  afterEach(() => {
+    if (prevConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = prevConfigDir;
+    }
+  });
+
   test("应创建最小 upstream AgentSession PoC", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-"));
     const agentDir = join(cwd, ".pi-agent-test");
@@ -130,5 +141,52 @@ describe("runtime-core run", () => {
     expect(result.session.model?.id).toBe("custom-runtime-model");
     expect(result.session.model?.baseUrl).toBe("https://example.invalid/v1");
     result.session.dispose();
+  });
+
+  test("应将 Lume prompt builder 的系统提示和动态上下文注入 runtime session", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspaceSlug = "prompt-injection";
+    const workspacePath = getAgentWorkspacePath(workspaceSlug);
+    writeFileSync(join(workspacePath, "AGENTS.md"), "# Workspace Rules\n- Always verify edits before final output.", "utf-8");
+    writeFileSync(join(workspacePath, "SOUL.md"), "# Persona\n- Be sharp, calm, and warm.", "utf-8");
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-prompt-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "prompt-session",
+      cwd,
+      agentDir,
+      userMessage: "help me create an execution plan",
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceName: "Prompt Injection Workspace",
+      workspaceSlug,
+      sessionType: "main",
+      chatType: "direct"
+    });
+
+    const systemPrompt = result.session.agent.state.systemPrompt;
+    expect(systemPrompt).toContain("You are Lume, a persistent counterpart running inside this workspace.");
+    expect(systemPrompt).toContain("## Workspace Files (injected)");
+    expect(systemPrompt).toContain("## Project Context");
+    expect(systemPrompt).toContain("## AGENTS.md");
+    expect(systemPrompt).toContain("Always verify edits before final output.");
+    expect(systemPrompt).toContain("- Skill");
+    expect(systemPrompt).toContain("<session_state>");
+    expect(systemPrompt).toContain("sessionId: prompt-session");
+    expect(systemPrompt).toContain("sessionType: main");
+    expect(systemPrompt).toContain("chatType: direct");
+    expect(systemPrompt).toContain("modelId: claude-sonnet-4-5");
+    expect(systemPrompt).toContain("Preferred capability route: skills");
+    expect(systemPrompt).toContain("<working_directory>");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
   });
 });

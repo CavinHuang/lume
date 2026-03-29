@@ -27,6 +27,7 @@ import type {
   ToolDefinition,
   ContinuationMessage,
 } from './types'
+import type { ThinkingLevel } from '@lume/shared'
 import { normalizeBaseUrl } from './url-utils'
 
 // ===== Google 特有类型 =====
@@ -184,6 +185,24 @@ function appendContinuationMessages(
 export class GoogleAdapter implements ProviderAdapter {
   readonly providerType = 'google' as const
 
+  private resolveThinkingBudget(level: ThinkingLevel | undefined, enabled: boolean | undefined): number | null {
+    const resolvedLevel: ThinkingLevel = level ?? (enabled ? 'medium' : 'off')
+    switch (resolvedLevel) {
+      case 'off':
+        return null
+      case 'low':
+        return 4096
+      case 'medium':
+        return 16384
+      case 'high':
+        return 32768
+      case 'max':
+        return 65536
+      default:
+        return 16384
+    }
+  }
+
   buildStreamRequest(input: StreamRequestInput): ProviderRequest {
     const url = normalizeBaseUrl(input.baseUrl)
     const contents = toGoogleContents(input)
@@ -194,10 +213,11 @@ export class GoogleAdapter implements ProviderAdapter {
     // 思考模式配置：
     // - 启用时：显示思考过程 + 设置 thinkingBudget 控制深度
     // - 关闭时：不传 thinkingConfig，模型使用默认行为
-    if (input.thinkingEnabled) {
+    const thinkingBudget = this.resolveThinkingBudget(input.thinkingLevel, input.thinkingEnabled)
+    if (thinkingBudget) {
       generationConfig.thinkingConfig = {
         includeThoughts: true,
-        thinkingBudget: 16384,
+        thinkingBudget,
       }
     }
 

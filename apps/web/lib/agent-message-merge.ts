@@ -6,6 +6,29 @@ function getPendingClientMessageId(message: AgentMessage): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value ?? null);
+}
+
+function isSameAgentMessage(a: AgentMessage, b: AgentMessage): boolean {
+  return (
+    a.id === b.id
+    && a.role === b.role
+    && a.content === b.content
+    && a.reasoning === b.reasoning
+    && a.createdAt === b.createdAt
+    && a.model === b.model
+    && a.versionGroupId === b.versionGroupId
+    && a.versionIndex === b.versionIndex
+    && a.versionCount === b.versionCount
+    && a.supersedesMessageId === b.supersedesMessageId
+    && a.supersededByMessageId === b.supersededByMessageId
+    && a.isLatestVersion === b.isLatestVersion
+    && stableStringify(a.metadata) === stableStringify(b.metadata)
+    && stableStringify(a.events) === stableStringify(b.events)
+  );
+}
+
 export function replaceVisibleMessage(
   messages: AgentMessage[],
   nextMessage: AgentMessage
@@ -48,6 +71,7 @@ export function mergeServerMessagesWithPending(
   prev: AgentMessage[],
   next: AgentMessage[]
 ): AgentMessage[] {
+  const prevById = new Map(prev.map((message) => [message.id, message] as const));
   const persistedPendingIds = new Set(
     next
       .map((message) => getPendingClientMessageId(message))
@@ -58,15 +82,27 @@ export function mergeServerMessagesWithPending(
       .filter((message) => message.role === "user")
       .map((message) => message.content)
   );
+  const persistedUsers = next.filter((message) => message.role === "user");
   const pendingTempMessages = prev.filter((message) => {
     if (!message.id.startsWith("temp-")) {
       return false;
     }
     const pendingId = getPendingClientMessageId(message);
     if (pendingId) {
-      return !persistedPendingIds.has(pendingId);
+      if (persistedPendingIds.has(pendingId)) {
+        return false;
+      }
+      const matchedByContentAndTime = persistedUsers.some((persisted) => (
+        persisted.content === message.content
+        && persisted.createdAt >= message.createdAt
+      ));
+      return !matchedByContentAndTime;
     }
     return !persistedUserContents.has(message.content);
   });
-  return [...next, ...pendingTempMessages];
+  const stabilizedNext = next.map((message) => {
+    const previous = prevById.get(message.id);
+    return previous && isSameAgentMessage(previous, message) ? previous : message;
+  });
+  return [...stabilizedNext, ...pendingTempMessages];
 }

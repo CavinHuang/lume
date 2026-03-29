@@ -30,6 +30,8 @@ export interface FileAttachment {
   size: number
 }
 
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'max'
+
 /** 保存附件输入 */
 export interface AttachmentSaveInput {
   /** 对话 ID */
@@ -165,6 +167,8 @@ export interface ChatSendInput {
   attachments?: FileAttachment[]
   /** 是否启用思考模式 */
   thinkingEnabled?: boolean
+  /** 思考等级 */
+  thinkingLevel?: ThinkingLevel
   /** 本次请求启用的工具 ID 列表 */
   enabledToolIds?: string[]
 }

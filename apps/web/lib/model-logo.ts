@@ -1,165 +1,102 @@
 import type { ProviderType } from "@lume/shared";
 
-const MODEL = {
-  default: "/models/default.png",
-  claude: "/models/claude.png",
-  openai: "/models/openai.png",
-  gpt4: "/models/gpt_4.png",
-  gpt35: "/models/gpt_3.5.png",
-  gpto1: "/models/gpt_o1.png",
-  gptImage: "/models/gpt_image_1.png",
-  gpt5: "/models/gpt-5.png",
-  gpt5Chat: "/models/gpt-5-chat.png",
-  gpt5Mini: "/models/gpt-5-mini.png",
-  gpt5Nano: "/models/gpt-5-nano.png",
-  gpt5Codex: "/models/gpt-5-codex.png",
-  gpt51: "/models/gpt-5.1.png",
-  gpt51Chat: "/models/gpt-5.1-chat.png",
-  gpt51Codex: "/models/gpt-5.1-codex.png",
-  gpt51CodexMini: "/models/gpt-5.1-codex-mini.png",
-  deepseek: "/models/deepseek.png",
-  gemini: "/models/gemini.png",
-  gemma: "/models/gemma.png",
-  deepgemini: "/models/deepgemini.png",
-  kimigemini: "/models/kimigemini.png",
-  qwengemini: "/models/qwengemini.png",
-  seedgemini: "/models/seedgemini.png",
-  qwen: "/models/qwen.png",
-  grok: "/models/grok.png",
-  moonshot: "/models/moonshot.png",
-  doubao: "/models/doubao.png",
-  zhipu: "/models/zhipu.png",
-  chatglm: "/models/chatglm.png",
-  llama: "/models/llama.png",
-  mixtral: "/models/mixtral.png",
-  codestral: "/models/codestral.png",
-  yi: "/models/yi.png",
-  hunyuan: "/models/hunyuan.png",
-  wenxin: "/models/wenxin.png",
-  sparkdesk: "/models/sparkdesk.png",
-  step: "/models/step.png",
-  minimax: "/models/minimax.png",
-  proma: "/models/proma.png",
-  cohere: "/models/cohere.png",
-  embedding: "/models/embedding.png"
-} as const;
+import anthropicIcon from "@lobehub/icons-static-png/light/anthropic.png";
+import chatglmIcon from "@lobehub/icons-static-png/light/chatglm-color.png";
+import claudeIcon from "@lobehub/icons-static-png/light/claude-color.png";
+import cohereIcon from "@lobehub/icons-static-png/light/cohere-color.png";
+import deepseekIcon from "@lobehub/icons-static-png/light/deepseek-color.png";
+import doubaoIcon from "@lobehub/icons-static-png/light/doubao-color.png";
+import geminiIcon from "@lobehub/icons-static-png/light/gemini-color.png";
+import grokIcon from "@lobehub/icons-static-png/light/grok.png";
+import hunyuanIcon from "@lobehub/icons-static-png/light/hunyuan-color.png";
+import minimaxIcon from "@lobehub/icons-static-png/light/minimax-color.png";
+import moonshotIcon from "@lobehub/icons-static-png/light/moonshot.png";
+import openaiIcon from "@lobehub/icons-static-png/light/openai.png";
+import qwenIcon from "@lobehub/icons-static-png/light/qwen-color.png";
+import sparkIcon from "@lobehub/icons-static-png/light/spark.png";
+import wenxinIcon from "@lobehub/icons-static-png/light/wenxin-color.png";
+import yiIcon from "@lobehub/icons-static-png/light/yi-color.png";
+import zhipuIcon from "@lobehub/icons-static-png/light/zhipu-color.png";
 
-const MODEL_LOGO_MAP: Record<string, string> = {
-  "gpt-image": MODEL.gptImage,
-  "gpt-3": MODEL.gpt35,
-  "gpt-4": MODEL.gpt4,
-  o1: MODEL.gpto1,
-  o3: MODEL.gpto1,
-  o4: MODEL.gpto1,
-  "gpt-5-mini": MODEL.gpt5Mini,
-  "gpt-5-nano": MODEL.gpt5Nano,
-  "gpt-5-chat": MODEL.gpt5Chat,
-  "gpt-5-codex": MODEL.gpt5Codex,
-  "gpt-5\\.1-codex-mini": MODEL.gpt51CodexMini,
-  "gpt-5\\.1-codex": MODEL.gpt51Codex,
-  "gpt-5\\.1-chat": MODEL.gpt51Chat,
-  "gpt-5\\.1": MODEL.gpt51,
-  "gpt-5": MODEL.gpt5,
-  gpts: MODEL.gpt4,
-  "(claude|anthropic-)": MODEL.claude,
-  deepseek: MODEL.deepseek,
-  deepgemini: MODEL.deepgemini,
-  kimigemini: MODEL.kimigemini,
-  qwengemini: MODEL.qwengemini,
-  seedgemini: MODEL.seedgemini,
-  veo: MODEL.gemini,
-  gemma: MODEL.gemma,
-  gemini: MODEL.gemini,
-  "(qwen|qwq|qvq|wan-)": MODEL.qwen,
-  grok: MODEL.grok,
-  moonshot: MODEL.moonshot,
-  kimi: MODEL.moonshot,
-  doubao: MODEL.doubao,
-  "ep-202": MODEL.doubao,
-  zhipu: MODEL.zhipu,
-  cogview: MODEL.zhipu,
-  glm: MODEL.chatglm,
-  llama: MODEL.llama,
-  codestral: MODEL.codestral,
-  mixtral: MODEL.mixtral,
-  mistral: MODEL.mixtral,
-  ministral: MODEL.mixtral,
-  magistral: MODEL.mixtral,
-  "yi-": MODEL.yi,
-  "ernie-": MODEL.wenxin,
-  "tao-": MODEL.wenxin,
-  hunyuan: MODEL.hunyuan,
-  sparkdesk: MODEL.sparkdesk,
-  generalv: MODEL.sparkdesk,
-  step: MODEL.step,
-  minimax: MODEL.minimax,
-  cohere: MODEL.cohere,
-  command: MODEL.cohere,
-  "text-embedding": MODEL.embedding,
-  embedding: MODEL.embedding
-};
+const MODEL_LOGO_MAP: Array<[RegExp, string]> = [
+  [/gpt|o1|o3|o4|dall|codex/i, openaiIcon],
+  [/(claude|anthropic-)/i, claudeIcon],
+  [/deepseek/i, deepseekIcon],
+  [/gemini|veo|gemma/i, geminiIcon],
+  [/(qwen|qwq|qvq|wan-)/i, qwenIcon],
+  [/grok/i, grokIcon],
+  [/moonshot|kimi/i, moonshotIcon],
+  [/doubao|ep-202/i, doubaoIcon],
+  [/zhipu|cogview/i, zhipuIcon],
+  [/glm/i, chatglmIcon],
+  [/llama/i, chatglmIcon],
+  [/yi-/i, yiIcon],
+  [/ernie-|tao-/i, wenxinIcon],
+  [/hunyuan/i, hunyuanIcon],
+  [/sparkdesk|generalv/i, sparkIcon],
+  [/minimax/i, minimaxIcon],
+  [/cohere|command/i, cohereIcon]
+];
 
 const PROVIDER_LOGO_MAP: Record<ProviderType, string> = {
-  anthropic: MODEL.claude,
-  openai: MODEL.openai,
-  openrouter: MODEL.openai,
-  deepseek: MODEL.deepseek,
-  google: MODEL.gemini,
-  zai: MODEL.zhipu,
-  moonshot: MODEL.moonshot,
-  zhipu: MODEL.zhipu,
-  minimax: MODEL.minimax,
-  "minimax-cn": MODEL.minimax,
-  doubao: MODEL.doubao,
-  qwen: MODEL.qwen,
-  "qwen-portal": MODEL.qwen,
-  "kimi-coding": MODEL.moonshot,
-  opencode: MODEL.default,
-  custom: MODEL.default
+  anthropic: anthropicIcon,
+  openai: openaiIcon,
+  openrouter: openaiIcon,
+  deepseek: deepseekIcon,
+  google: geminiIcon,
+  zai: zhipuIcon,
+  moonshot: moonshotIcon,
+  zhipu: zhipuIcon,
+  minimax: minimaxIcon,
+  "minimax-cn": minimaxIcon,
+  doubao: doubaoIcon,
+  qwen: qwenIcon,
+  "qwen-portal": qwenIcon,
+  "kimi-coding": moonshotIcon,
+  opencode: openaiIcon,
+  custom: openaiIcon
 };
 
 const URL_LOGO_MAP: Array<[RegExp, string]> = [
-  [/proma\.cool/i, MODEL.proma],
-  [/moonshot\.cn|kimi/i, MODEL.moonshot],
-  [/bigmodel\.cn|zhipuai/i, MODEL.zhipu],
-  [/minimax/i, MODEL.minimax],
-  [/volces\.com|volcengine/i, MODEL.doubao],
-  [/dashscope|aliyuncs/i, MODEL.qwen],
-  [/deepseek/i, MODEL.deepseek],
-  [/anthropic/i, MODEL.claude],
-  [/openai\.com/i, MODEL.openai],
-  [/googleapis|generativelanguage/i, MODEL.gemini],
-  [/grok|x\.ai/i, MODEL.grok],
-  [/stepfun/i, MODEL.step],
-  [/cohere/i, MODEL.cohere],
-  [/spark-api|xfyun/i, MODEL.sparkdesk],
-  [/hunyuan/i, MODEL.hunyuan],
-  [/ernie|baidu/i, MODEL.wenxin],
-  [/yi\.com|lingyiwanwu/i, MODEL.yi]
+  [/moonshot\.cn|kimi/i, moonshotIcon],
+  [/bigmodel\.cn|zhipuai/i, zhipuIcon],
+  [/minimax/i, minimaxIcon],
+  [/volces\.com|volcengine/i, doubaoIcon],
+  [/dashscope|aliyuncs/i, qwenIcon],
+  [/deepseek/i, deepseekIcon],
+  [/anthropic/i, anthropicIcon],
+  [/openai\.com/i, openaiIcon],
+  [/googleapis|generativelanguage/i, geminiIcon],
+  [/grok|x\.ai/i, grokIcon],
+  [/spark-api|xfyun/i, sparkIcon],
+  [/hunyuan/i, hunyuanIcon],
+  [/ernie|baidu/i, wenxinIcon],
+  [/yi\.com|lingyiwanwu/i, yiIcon]
 ];
+
+const defaultIcon = "/models/default.png";
 
 export function getModelLogoById(modelId: string): string | undefined {
   if (!modelId) return undefined;
-  for (const key in MODEL_LOGO_MAP) {
-    if (new RegExp(key, "i").test(modelId)) return MODEL_LOGO_MAP[key];
+  for (const [pattern, logo] of MODEL_LOGO_MAP) {
+    if (pattern.test(modelId)) return logo;
   }
   return undefined;
 }
 
 export function getModelLogo(modelId: string, provider?: ProviderType): string {
-  return getModelLogoById(modelId) ?? (provider ? PROVIDER_LOGO_MAP[provider] : undefined) ?? MODEL.default;
+  return getModelLogoById(modelId) ?? (provider ? PROVIDER_LOGO_MAP[provider] : undefined) ?? defaultIcon;
 }
 
 export function getProviderLogo(provider: ProviderType): string {
-  return PROVIDER_LOGO_MAP[provider] ?? MODEL.default;
+  return PROVIDER_LOGO_MAP[provider] ?? defaultIcon;
 }
 
 export function getChannelLogo(baseUrl: string): string {
   for (const [regex, logo] of URL_LOGO_MAP) {
     if (regex.test(baseUrl || "")) return logo;
   }
-  return MODEL.default;
+  return defaultIcon;
 }
 
-export const DefaultLogo = MODEL.default;
-export const PromaLogo = MODEL.proma;
+export const DefaultLogo = defaultIcon;

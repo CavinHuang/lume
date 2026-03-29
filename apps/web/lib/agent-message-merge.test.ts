@@ -97,4 +97,135 @@ describe("agent-message-merge", () => {
     expect(merged.length).toBe(1);
     expect(merged[0]?.id).toBe("user-1");
   });
+
+  test("mergeServerMessagesWithPending 应收敛为最新 user/assistant 链", () => {
+    const prev: AgentMessage[] = [
+      {
+        id: "user-old",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 1
+      },
+      {
+        id: "temp-1",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 2,
+        metadata: { pendingClientMessageId: "pending-1" }
+      },
+      {
+        id: "assistant-temp",
+        role: "assistant",
+        content: "你好",
+        createdAt: 3,
+        versionGroupId: "assistant-group"
+      }
+    ];
+    const next: AgentMessage[] = [
+      {
+        id: "user-new",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 4,
+        metadata: { pendingClientMessageId: "pending-1" }
+      },
+      {
+        id: "assistant-new",
+        role: "assistant",
+        content: "你好，我是...",
+        createdAt: 5,
+        versionGroupId: "assistant-group"
+      }
+    ];
+
+    const merged = mergeServerMessagesWithPending(prev, next);
+
+    expect(merged.map((message) => message.id)).toEqual(["user-new", "assistant-new"]);
+  });
+
+  test("mergeServerMessagesWithPending 在服务端丢失 pendingClientMessageId 时应回退到内容和时间匹配", () => {
+    const prev: AgentMessage[] = [
+      {
+        id: "temp-1",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 10,
+        metadata: { pendingClientMessageId: "pending-1" }
+      }
+    ];
+    const next: AgentMessage[] = [
+      {
+        id: "user-new",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 11
+      }
+    ];
+
+    const merged = mergeServerMessagesWithPending(prev, next);
+
+    expect(merged.map((message) => message.id)).toEqual(["user-new"]);
+  });
+
+  test("mergeServerMessagesWithPending 不应把更早的同内容旧消息误判为 temp 的落盘结果", () => {
+    const prev: AgentMessage[] = [
+      {
+        id: "temp-1",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 10,
+        metadata: { pendingClientMessageId: "pending-1" }
+      }
+    ];
+    const next: AgentMessage[] = [
+      {
+        id: "user-old",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 9
+      }
+    ];
+
+    const merged = mergeServerMessagesWithPending(prev, next);
+
+    expect(merged.map((message) => message.id)).toEqual(["user-old", "temp-1"]);
+  });
+
+  test("mergeServerMessagesWithPending 对未变化消息应复用旧对象引用", () => {
+    const prevMessage: AgentMessage = {
+      id: "assistant-1",
+      role: "assistant",
+      content: "稳定内容",
+      createdAt: 1,
+      metadata: { foo: "bar" }
+    };
+
+    const merged = mergeServerMessagesWithPending([prevMessage], [{
+      id: "assistant-1",
+      role: "assistant",
+      content: "稳定内容",
+      createdAt: 1,
+      metadata: { foo: "bar" }
+    }]);
+
+    expect(merged[0]).toBe(prevMessage);
+  });
+
+  test("mergeServerMessagesWithPending 对变化消息不应复用旧对象引用", () => {
+    const prevMessage: AgentMessage = {
+      id: "assistant-1",
+      role: "assistant",
+      content: "旧内容",
+      createdAt: 1
+    };
+
+    const merged = mergeServerMessagesWithPending([prevMessage], [{
+      id: "assistant-1",
+      role: "assistant",
+      content: "新内容",
+      createdAt: 1
+    }]);
+
+    expect(merged[0]).not.toBe(prevMessage);
+  });
 });

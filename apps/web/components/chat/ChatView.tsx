@@ -27,6 +27,7 @@ import {
   selectedModelAtom,
   streamingStatesAtom,
   thinkingEnabledAtom,
+  thinkingLevelAtom,
   userProfileAtom,
   onboardingCompletedAtom,
   onboardingDismissedAtom
@@ -58,7 +59,8 @@ export function ChatView(): React.ReactElement {
   const [streamingStates, setStreamingStates] = useAtom(streamingStatesAtom);
   const [contextLength] = useAtom(contextLengthAtom);
   const [contextDividers, setContextDividers] = useAtom(contextDividersAtom);
-  const [thinkingEnabled] = useAtom(thinkingEnabledAtom);
+  const [thinkingEnabled, setThinkingEnabled] = useAtom(thinkingEnabledAtom);
+  const [thinkingLevel, setThinkingLevel] = useAtom(thinkingLevelAtom);
   const [promptConfig, setPromptConfig] = useAtom(promptConfigAtom);
   const [, setChatTools] = useAtom(chatToolsAtom);
   const [conversationPromptMap, setConversationPromptMap] = useAtom(conversationPromptIdAtom);
@@ -175,7 +177,7 @@ export function ChatView(): React.ReactElement {
     conversationPromptMap,
     selectedPromptId,
     userName: userProfile.userName,
-    thinkingEnabled,
+    thinkingLevel,
     activeToolIds,
     pendingAttachments,
     setPendingAttachments,
@@ -191,6 +193,13 @@ export function ChatView(): React.ReactElement {
     resolveSystemMessage: (promptId, config, userNameValue) =>
       resolveSystemMessage(promptId ?? undefined, config, userNameValue ?? "")
   });
+
+  useEffect(() => {
+    const nextEnabled = thinkingLevel !== "off";
+    if (thinkingEnabled !== nextEnabled) {
+      setThinkingEnabled(nextEnabled);
+    }
+  }, [thinkingEnabled, thinkingLevel, setThinkingEnabled]);
 
   const handleReconnect = async (): Promise<void> => {
     if (isReconnecting) return;

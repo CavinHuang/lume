@@ -1,4 +1,5 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
+import type { ThinkingLevel } from "@lume/shared";
 
 function normalizeBaseUrl(baseUrl?: string): string {
   return (baseUrl ?? "").trim().toLowerCase();
@@ -22,9 +23,26 @@ export function adaptModelCapabilities<TApi extends Api>(model: Model<TApi>, bas
   };
 }
 
-export function resolveAgentThinkingLevel(model: Model<Api>, baseUrl?: string): "medium" | undefined {
+export function resolveAgentThinkingLevel(
+  model: Model<Api>,
+  baseUrl?: string,
+  requestedLevel?: ThinkingLevel
+): "off" | "low" | "medium" | "high" | "xhigh" | undefined {
   if (model.provider === "anthropic" && !supportsAnthropicThinking(baseUrl)) {
     return undefined;
   }
-  return "medium";
+  switch (requestedLevel) {
+    case "off":
+      return "off";
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    case "max":
+      return "xhigh";
+    default:
+      return "medium";
+  }
 }

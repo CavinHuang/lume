@@ -37,6 +37,7 @@ export const chatSendInputSchema = z.object({
   contextDividers: z.array(z.string()).optional(),
   attachments: z.array(fileAttachmentSchema).optional(),
   thinkingEnabled: z.boolean().optional(),
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   enabledToolIds: z.array(z.string()).optional()
 });
 
@@ -158,6 +159,7 @@ export const agentSendInputSchema = z.object({
   chatType: z.enum(["direct", "group", "channel"]).optional(),
   sessionType: z.enum(["main", "subagent", "group", "channel"]).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).optional(),
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
   resendFromMessageId: z.string().optional(),
   editFromMessageId: z.string().optional()

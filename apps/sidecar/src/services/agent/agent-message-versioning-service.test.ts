@@ -180,4 +180,29 @@ describe("agent-message-versioning-service", () => {
     expect(visible[0]?.content).toBe("问题1 重发");
     expect(versions.length).toBe(2);
   });
+
+  test("syncVersionStoreFromMessages 在单版本对齐时应保留已有 metadata", () => {
+    initializeVersionStoreFromMessages("session-g", [
+      {
+        id: "runtime-1",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 1,
+        metadata: { pendingClientMessageId: "pending-1" }
+      }
+    ]);
+
+    syncVersionStoreFromMessages("session-g", [
+      {
+        id: "runtime-2",
+        role: "user",
+        content: "你是谁？",
+        createdAt: 99
+      }
+    ]);
+
+    const visible = getVisibleAgentMessages("session-g");
+
+    expect((visible[0]?.metadata as Record<string, unknown> | undefined)?.pendingClientMessageId).toBe("pending-1");
+  });
 });

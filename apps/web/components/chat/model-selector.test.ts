@@ -3,8 +3,9 @@ import type { Channel } from "@lume/shared";
 import {
   buildModelOptions,
   filterGroupedModelOptions,
-  groupModelOptionsByChannel
-} from "./ModelSelector";
+  groupModelOptionsByChannel,
+  resolveModelHighlightIndex
+} from "./model-selector.helpers";
 
 const channels: Channel[] = [
   {
@@ -57,5 +58,13 @@ describe("model-selector", () => {
     expect(filterGroupedModelOptions(grouped, "glm").get("channel-a")?.length).toBe(2);
     expect(filterGroupedModelOptions(grouped, "openai").get("channel-b")?.length).toBe(1);
     expect(filterGroupedModelOptions(grouped, "missing").size).toBe(0);
+  });
+
+  test("resolveModelHighlightIndex 应优先命中当前选中模型", () => {
+    const options = buildModelOptions(channels);
+
+    expect(resolveModelHighlightIndex(options, { channelId: "channel-b", modelId: "gpt-5" })).toBe(2);
+    expect(resolveModelHighlightIndex(options, { channelId: "missing", modelId: "missing" })).toBe(0);
+    expect(resolveModelHighlightIndex([], null)).toBe(-1);
   });
 });

@@ -13,6 +13,7 @@
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
+    "@lobehub/icons-static-png": "^1.75.0",
     "@lume/shared": "workspace:*",
     "@lume/ui": "workspace:*",
     "@radix-ui/react-alert-dialog": "^1.1.15",

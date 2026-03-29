@@ -8,6 +8,7 @@ import type {
   ChatSendInput,
   ConversationMeta,
   FileAttachment,
+  ThinkingLevel,
   SystemPromptConfig
 } from "@lume/shared";
 import type { ConversationStreamState, PendingAttachment } from "@/atoms/chat-atoms";
@@ -49,7 +50,7 @@ interface UseChatComposerParams {
   conversationPromptMap: Map<string, string>;
   selectedPromptId: string | null;
   userName?: string;
-  thinkingEnabled: boolean;
+  thinkingLevel: ThinkingLevel;
   activeToolIds: string[];
   pendingAttachments: PendingAttachment[];
   setPendingAttachments: Dispatch<SetStateAction<PendingAttachment[]>>;
@@ -84,7 +85,7 @@ export function useChatComposer({
   conversationPromptMap,
   selectedPromptId,
   userName,
-  thinkingEnabled,
+  thinkingLevel,
   activeToolIds,
   pendingAttachments,
   setPendingAttachments,
@@ -187,7 +188,8 @@ export function useChatComposer({
       contextLength,
       contextDividers: options?.contextDividersOverride ?? contextDividers,
       attachments: savedAttachments.length > 0 ? savedAttachments : undefined,
-      thinkingEnabled,
+      thinkingEnabled: thinkingLevel !== "off",
+      thinkingLevel,
       enabledToolIds: activeToolIds
     };
 
@@ -229,7 +231,7 @@ export function useChatComposer({
     userName,
     contextLength,
     contextDividers,
-    thinkingEnabled,
+    thinkingLevel,
     activeToolIds,
     onboardingCompleted,
     setOnboardingCompleted,

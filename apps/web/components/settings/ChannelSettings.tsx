@@ -176,7 +176,7 @@ function ChannelRow({
   return (
     <SettingsRow
       label={channel.name}
-      icon={<img src={getChannelLogo(channel.baseUrl)} alt="" className="h-8 w-8 rounded" />}
+      icon={<img src={getChannelLogo(channel.baseUrl)} alt="" className="h-8 w-8 rounded-lg object-cover" />}
       description={description}
       className="group"
     >

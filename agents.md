@@ -78,6 +78,10 @@ If rules conflict, follow the higher-priority item.
 2. Keep state in atoms/store, not scattered local state for shared flows.
 3. Streaming UI must not block input or navigation.
 4. Renderer cannot call native APIs directly; use desktop bridge wrapper.
+5. Agent 消息列表在 streaming -> final 提交时必须保持布局稳定：
+   - 不允许因为流结束默认整表 reload 导致消息列表抖动
+   - 不允许因为 temp message / version 切换 / actions 显隐造成整段跳变
+   - 优先局部提交最终消息，只有校验失败时才允许 fallback reload
 
 ## 12. Testing and Quality Gates
 1. New core logic must include at least one automated test or a documented reason.

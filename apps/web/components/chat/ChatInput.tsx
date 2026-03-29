@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { CornerDownLeft, Lightbulb, Paperclip, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
@@ -11,6 +12,7 @@ import {
   selectedModelAtom,
   streamingAtom,
   thinkingEnabledAtom,
+  thinkingLevelAtom,
   type PendingAttachment
 } from "@/atoms/chat-atoms";
 import { openChatFileDialog } from "@/lib/desktop-api/chat";
@@ -18,6 +20,11 @@ import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { SpeechButton } from "@/components/ai-elements/speech-button";
 import { AttachmentPreviewItem } from "./AttachmentPreviewItem";
 import { ModelSelector } from "./ModelSelector";
+import { ThinkingLevelPopoverContent } from "./ThinkingLevelPopoverContent";
+import {
+  THINKING_LEVEL_OPTIONS,
+  normalizeThinkingLevel
+} from "./thinking-level";
 import { ContextSettingsPopover } from "./ContextSettingsPopover";
 import { ClearContextButton } from "./ClearContextButton";
 import { ToolSelectorPopover } from "./ToolSelectorPopover";
@@ -46,8 +53,11 @@ export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInpu
   const [selectedModel] = useAtom(selectedModelAtom);
   const [streaming] = useAtom(streamingAtom);
   const [thinkingEnabled, setThinkingEnabled] = useAtom(thinkingEnabledAtom);
+  const [thinkingLevel, setThinkingLevel] = useAtom(thinkingLevelAtom);
   const [pendingAttachments, setPendingAttachments] = useAtom(pendingAttachmentsAtom);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [thinkingOpen, setThinkingOpen] = useState(false);
+  const normalizedThinkingLevel = normalizeThinkingLevel(thinkingLevel, thinkingEnabled);
 
   const canSend =
     !disabled &&
@@ -216,25 +226,47 @@ export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInpu
             <ModelSelector />
             <ToolSelectorPopover />
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "size-[30px] rounded-full",
-                    thinkingEnabled ? "text-green-500" : "text-foreground/60 hover:text-foreground"
-                  )}
-                  onClick={() => setThinkingEnabled(!thinkingEnabled)}
-                >
-                  <Lightbulb className="size-5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                <p>{thinkingEnabled ? "关闭思考模式" : "开启思考模式"}</p>
-              </TooltipContent>
-            </Tooltip>
+            <Popover open={thinkingOpen} onOpenChange={setThinkingOpen}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "size-[30px] rounded-full",
+                        normalizedThinkingLevel !== "off"
+                          ? "text-sky-500"
+                          : "text-foreground/60 hover:text-foreground"
+                      )}
+                    >
+                      <Lightbulb className="size-5" />
+                    </Button>
+                  </PopoverTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>思考等级</p>
+                </TooltipContent>
+              </Tooltip>
+
+              <PopoverContent
+                align="start"
+                side="top"
+                sideOffset={12}
+                className="w-auto border-none bg-transparent p-0 shadow-none"
+              >
+                <ThinkingLevelPopoverContent
+                  value={normalizedThinkingLevel}
+                  options={THINKING_LEVEL_OPTIONS}
+                  onSelect={(value) => {
+                    setThinkingLevel(value);
+                    setThinkingEnabled(value !== "off");
+                    setThinkingOpen(false);
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
 
             <SpeechButton onTranscript={handleSpeechTranscript} />
             <ContextSettingsPopover />

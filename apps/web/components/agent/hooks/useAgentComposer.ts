@@ -6,7 +6,8 @@ import type {
   AgentMessage,
   AgentPendingFile,
   AgentSavedFile,
-  AgentSendInput
+  AgentSendInput,
+  ThinkingLevel
 } from "@lume/shared";
 import type { AgentStreamState } from "@/atoms/agent-atoms";
 import {
@@ -24,6 +25,7 @@ import {
   shouldDispatchPendingPrompt,
   shouldQueueAgentTitleGeneration
 } from "../agent-composer";
+import { trimMessagesFromTarget } from "../agent-message-trim";
 
 function createPendingClientMessageId(): string {
   return `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -54,6 +56,7 @@ interface UseAgentComposerParams {
   agentChannelId: string | null;
   outgoingModelId: string | undefined;
   agentPermissionMode: NonNullable<AgentSendInput["permissionMode"]>;
+  agentThinkingLevel: ThinkingLevel;
   planStreamCaptureRef: MutableRefObject<boolean>;
   pendingTitleRef: MutableRefObject<Map<string, { userMessage: string; channelId: string; modelId: string }>>;
 }
@@ -103,6 +106,7 @@ export function useAgentComposer({
   agentChannelId,
   outgoingModelId,
   agentPermissionMode,
+  agentThinkingLevel,
   planStreamCaptureRef,
   pendingTitleRef
 }: UseAgentComposerParams): UseAgentComposerResult {
@@ -149,6 +153,7 @@ export function useAgentComposer({
         messageMetadata: {
           pendingClientMessageId
         },
+        thinkingLevel: agentThinkingLevel,
         channelId: agentChannelId ?? undefined,
         modelId: outgoingModelId,
         workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
@@ -355,7 +360,8 @@ export function useAgentComposer({
       workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
       sessionType: "main",
       chatType: "direct",
-      permissionMode: agentPermissionMode
+      permissionMode: agentPermissionMode,
+      thinkingLevel: agentThinkingLevel
     }).catch((error) => {
       console.error("[AgentView] resend failed", error);
       const message = error instanceof Error ? error.message : String(error);
@@ -384,7 +390,8 @@ export function useAgentComposer({
     setMessages,
     agentChannelId,
     currentWorkspaceId,
-    workspaceId
+    workspaceId,
+    agentThinkingLevel
   ]);
 
   const truncateFromMessage = useCallback(async (messageId: string): Promise<void> => {
@@ -395,10 +402,11 @@ export function useAgentComposer({
 
   const handleResendMessage = useCallback(async (message: AgentMessage): Promise<void> => {
     if (isAgentBusy || !sessionId) return;
+    setMessages((prev) => trimMessagesFromTarget(prev, message.id));
     sendFromMessageContent(message.content ?? "", undefined, {
       resendFromMessageId: message.id
     });
-  }, [isAgentBusy, sessionId, sendFromMessageContent]);
+  }, [isAgentBusy, sessionId, sendFromMessageContent, setMessages]);
 
   const handleDeleteMessage = useCallback(async (message: AgentMessage): Promise<void> => {
     if (isAgentBusy || !sessionId) return;
@@ -413,11 +421,12 @@ export function useAgentComposer({
       ? `${(message.content.match(/<attached_files>[\s\S]*?<\/attached_files>\n*/)?.[0] ?? "")}${text}`.trim()
       : text;
     if (!nextContent) return;
+    setMessages((prev) => trimMessagesFromTarget(prev, message.id));
     sendFromMessageContent(nextContent, undefined, {
       editFromMessageId: message.id
     });
     setInlineEditingMessageId(null);
-  }, [isAgentBusy, sessionId, sendFromMessageContent, setInlineEditingMessageId]);
+  }, [isAgentBusy, sessionId, sendFromMessageContent, setInlineEditingMessageId, setMessages]);
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputContent.trim();
@@ -513,6 +522,7 @@ export function useAgentComposer({
       sessionId,
       userMessage: finalMessage,
       messageMetadata: tempMessage.metadata,
+      thinkingLevel: agentThinkingLevel,
       channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
@@ -557,6 +567,8 @@ export function useAgentComposer({
     setInputContent,
     currentWorkspaceId,
     workspaceId
+    ,
+    agentThinkingLevel
   ]);
 
   return {

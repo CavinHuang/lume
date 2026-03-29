@@ -474,6 +474,8 @@ export interface AgentSendInput {
   sessionType?: 'main' | 'subagent' | 'group' | 'channel'
   /** Agent 权限模式（plan 为只读规划模式） */
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+  /** Agent 思考等级 */
+  thinkingLevel?: ThinkingLevel
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */
@@ -845,3 +847,4 @@ export const AGENT_IPC_CHANNELS = {
   /** 获取日志目录路径 */
   GET_LOGS_DIR: 'agent:get-logs-dir',
 } as const
+import type { ThinkingLevel } from "./chat"

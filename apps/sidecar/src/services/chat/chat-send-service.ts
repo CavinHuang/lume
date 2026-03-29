@@ -140,6 +140,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     contextDividers,
     attachments,
     thinkingEnabled,
+    thinkingLevel,
     enabledToolIds
   } = input;
 
@@ -281,6 +282,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
           attachments,
           readImageAttachments: getImageAttachmentData,
           thinkingEnabled,
+          thinkingLevel,
           tools: toolDefinitions,
           continuationMessages: continuationMessages.length > 0 ? continuationMessages : undefined
         });
@@ -335,7 +337,8 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
         systemMessage: effectiveSystemMessage,
         attachments,
         readImageAttachments: getImageAttachmentData,
-        thinkingEnabled
+        thinkingEnabled,
+        thinkingLevel
       });
 
       const { content, reasoning } = await streamSSE({

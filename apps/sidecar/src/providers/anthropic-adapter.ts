@@ -26,6 +26,7 @@ import type {
   ToolDefinition,
   ContinuationMessage,
 } from './types'
+import type { ThinkingLevel } from '@lume/shared'
 import { normalizeAnthropicBaseUrl } from './url-utils'
 
 // ===== Anthropic 特有类型 =====
@@ -193,13 +194,31 @@ function appendContinuationMessages(
 export class AnthropicAdapter implements ProviderAdapter {
   readonly providerType = 'anthropic' as const
 
+  private resolveThinkingBudget(level: ThinkingLevel | undefined, enabled: boolean | undefined): number | null {
+    const resolvedLevel: ThinkingLevel = level ?? (enabled ? 'medium' : 'off')
+    switch (resolvedLevel) {
+      case 'off':
+        return null
+      case 'low':
+        return 4096
+      case 'medium':
+        return 16384
+      case 'high':
+        return 32768
+      case 'max':
+        return 65536
+      default:
+        return 16384
+    }
+  }
+
   buildStreamRequest(input: StreamRequestInput): ProviderRequest {
     const url = normalizeAnthropicBaseUrl(input.baseUrl)
     const messages = toAnthropicMessages(input)
 
     // 启用思考时需要更大的 max_tokens（budget_tokens 必须 < max_tokens）
-    const thinkingBudget = 16384
-    const maxTokens = input.thinkingEnabled ? thinkingBudget + 16384 : 8192
+    const thinkingBudget = this.resolveThinkingBudget(input.thinkingLevel, input.thinkingEnabled)
+    const maxTokens = thinkingBudget ? thinkingBudget + 16384 : 8192
 
     const body: Record<string, unknown> = {
       model: input.modelId,
@@ -210,7 +229,7 @@ export class AnthropicAdapter implements ProviderAdapter {
 
     // 启用 extended thinking：设置 thinking 参数
     // 约束：启用时不能设置 temperature/top_k，budget_tokens 最小 1024
-    if (input.thinkingEnabled) {
+    if (thinkingBudget) {
       body.thinking = {
         type: 'enabled',
         budget_tokens: thinkingBudget,

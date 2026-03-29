@@ -1,6 +1,6 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import type { ChatMessage, ChatToolActivity, ConversationMeta, FileAttachment } from "@lume/shared";
+import type { ChatMessage, ChatToolActivity, ConversationMeta, FileAttachment, ThinkingLevel } from "@lume/shared";
 
 interface SelectedModel {
   channelId: string;
@@ -51,6 +51,7 @@ export const currentConversationAtom = atom<ConversationMeta | null>((get) => {
 export const contextLengthAtom = atomWithStorage<ContextLengthValue>("lume-context-length", 20);
 export const contextDividersAtom = atom<string[]>([]);
 export const thinkingEnabledAtom = atomWithStorage<boolean>("lume-thinking-enabled", false);
+export const thinkingLevelAtom = atomWithStorage<ThinkingLevel>("lume-thinking-level", "off");
 
 export interface PendingAttachment extends FileAttachment {
   previewUrl?: string;
