@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentMessage, AgentSessionMeta, Channel } from "@lume/shared";
-import {
-  recoverPlanFromMessages,
-  resolvePreferredAgentSelection
-} from "./agent-session-lifecycle";
+import type { AgentSessionMeta, Channel } from "@lume/shared";
+import { resolvePreferredAgentSelection } from "./agent-session-lifecycle";
 
 describe("agent-session-lifecycle", () => {
   test("resolvePreferredAgentSelection 应优先使用当前会话绑定且启用的 channel/model", () => {
@@ -99,34 +96,6 @@ describe("agent-session-lifecycle", () => {
     })).toEqual({
       channelId: "channel-a",
       modelId: "a-default"
-    });
-  });
-
-  test("recoverPlanFromMessages 应恢复 ExitPlanMode 写入的计划路径和草稿内容", () => {
-    const messages: AgentMessage[] = [
-      {
-        id: "m1",
-        role: "assistant",
-        content: "这是规划草稿",
-        createdAt: 100,
-        events: [
-          {
-            type: "tool_result",
-            toolUseId: "tool-1",
-            toolName: "ExitPlanMode",
-            isError: false,
-            result: JSON.stringify({
-              planPath: "docs/plans/phase-b.md",
-              slug: "phase-b"
-            })
-          }
-        ]
-      }
-    ];
-
-    expect(recoverPlanFromMessages(messages)).toEqual({
-      planPath: "docs/plans/phase-b.md",
-      draft: "这是规划草稿"
     });
   });
 });

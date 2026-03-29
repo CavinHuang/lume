@@ -211,22 +211,6 @@ registerToolMetadata({
   description: "向用户提问"
 });
 
-registerToolMetadata({
-  name: "EnterPlanMode",
-  category: "control",
-  riskLevel: "low",
-  description: "进入计划模式",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "ExitPlanMode",
-  category: "control",
-  riskLevel: "low",
-  description: "退出计划模式",
-  allowedInPlanMode: true
-});
-
 // 记忆工具
 registerToolMetadata({
   name: "memory_search",
@@ -348,7 +332,7 @@ registerToolMetadata({
 
 // 自动化定时工具
 registerToolMetadata({
-  name: "automation_timer_read",
+  name: "cron_read",
   category: "read",
   riskLevel: "low",
   description: "读取定时任务配置",
@@ -356,7 +340,7 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "automation_timer_set",
+  name: "cron_set",
   category: "write",
   riskLevel: "medium",
   description: "设置定时任务（创建/更新/删除/启停）",
@@ -364,7 +348,7 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "automation_timer_query",
+  name: "cron_query",
   category: "read",
   riskLevel: "low",
   description: "查询定时任务运行记录",

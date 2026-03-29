@@ -170,9 +170,12 @@ export function appendAgentTranscriptMessage(
     }
     if (message.role === "assistant") {
       const { provider, model } = resolveTranscriptAppendModel(message.model);
-      const contentBlocks: Array<Record<string, unknown>> = [];
+      const contentBlocks: Array<
+        { type: "thinking"; thinking: string } |
+        { type: "text"; text: string }
+      > = [];
       if (message.reasoning?.trim()) {
-        contentBlocks.push({ type: "reasoning", reasoning: message.reasoning });
+        contentBlocks.push({ type: "thinking", thinking: message.reasoning });
       }
       if (message.content.trim()) {
         contentBlocks.push({ type: "text", text: message.content });
@@ -474,11 +477,14 @@ function rebuildRuntimeCoreTranscript(sessionId: string, messages: AgentMessage[
       });
       continue;
     }
-    if (message.role === "assistant") {
+      if (message.role === "assistant") {
       const { provider, model } = resolveTranscriptAppendModel(message.model);
-      const contentBlocks: Array<Record<string, unknown>> = [];
+      const contentBlocks: Array<
+        { type: "thinking"; thinking: string } |
+        { type: "text"; text: string }
+      > = [];
       if (message.reasoning?.trim()) {
-        contentBlocks.push({ type: "reasoning", reasoning: message.reasoning });
+        contentBlocks.push({ type: "thinking", thinking: message.reasoning });
       }
       if (message.content.trim()) {
         contentBlocks.push({ type: "text", text: message.content });

@@ -6,8 +6,8 @@ import {
   deleteAutomationJob,
   listAutomationJobs,
   updateAutomationJob
-} from "../../automation/automation-manager";
-import { listAutomationRuns, runAutomationJobNow } from "../../automation/automation-runner-service";
+} from "../../../automation/automation-manager";
+import { listAutomationRuns, runAutomationJobNow } from "../../../automation/automation-runner-service";
 
 interface CreateAutomationToolsInput {
   workspaceId?: string;
@@ -108,11 +108,11 @@ const QuerySchema = Type.Object({
   limit: Type.Optional(Type.Number())
 });
 
-export function createAutomationTools(input: CreateAutomationToolsInput): AgentTool[] {
+export function createCronTools(input: CreateAutomationToolsInput): AgentTool[] {
   return [
     {
-      name: "automation_timer_read",
-      label: "AutomationTimerRead",
+      name: "cron_read",
+      label: "CronRead",
       description: "读取定时任务配置（读取）",
       parameters: ReadSchema,
       async execute(_toolCallId, args) {
@@ -148,8 +148,8 @@ export function createAutomationTools(input: CreateAutomationToolsInput): AgentT
       }
     },
     {
-      name: "automation_timer_set",
-      label: "AutomationTimerSet",
+      name: "cron_set",
+      label: "CronSet",
       description: "设置定时任务（创建/更新/删除/启停/立即执行）",
       parameters: SetSchema,
       async execute(_toolCallId, args) {
@@ -193,13 +193,13 @@ export function createAutomationTools(input: CreateAutomationToolsInput): AgentT
 
           if (action === "run_now") {
             void runAutomationJobNow({ id: target.id }).catch((error) => {
-              console.error("[automation_timer_set] run_now 触发失败:", error);
+              console.error("[cron_set] run_now 触发失败:", error);
             });
             return toResult({
               ok: true,
               action,
               accepted: true,
-              message: "任务已触发（异步执行），请使用 automation_timer_query 查询结果。"
+              message: "任务已触发（异步执行），请使用 cron_query 查询结果。"
             });
           }
 
@@ -225,8 +225,8 @@ export function createAutomationTools(input: CreateAutomationToolsInput): AgentT
       }
     },
     {
-      name: "automation_timer_query",
-      label: "AutomationTimerQuery",
+      name: "cron_query",
+      label: "CronQuery",
       description: "查询定时任务运行记录（查询）",
       parameters: QuerySchema,
       async execute(_toolCallId, args) {
@@ -259,3 +259,5 @@ export function createAutomationTools(input: CreateAutomationToolsInput): AgentT
     }
   ];
 }
+
+export const createAutomationTools = createCronTools;

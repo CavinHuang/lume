@@ -1,6 +1,6 @@
 /**
  * Migrated from:
- * /Users/cavinhuang/workspace/projects/test/openclaw/src/memory/manager-search.ts
+ * earlier memory search implementation
  * Adaptation:
  * - Keep Bun sqlite API style used in Lume sidecar.
  */

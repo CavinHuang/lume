@@ -2,7 +2,7 @@
  * Heartbeat Types
  *
  * 复用自 OpenClaw 的 heartbeat 设计
- * 参考: openclaw/src/auto-reply/heartbeat.ts
+ * 参考来源: 早期 heartbeat 设计
  */
 
 // ===== 常量 =====

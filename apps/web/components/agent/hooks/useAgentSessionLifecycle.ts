@@ -17,7 +17,7 @@ import {
   currentAgentSessionIdAtom,
   currentAgentWorkspaceIdAtom
 } from "@/atoms";
-import { planStateAtom, resetPlanStateAtom } from "@/atoms/plan-atoms";
+import { resetPlanStateAtom } from "@/atoms/plan-atoms";
 import {
   getAgentRuntimeStatus,
   getAgentSessionMessages,
@@ -25,10 +25,7 @@ import {
 } from "@/lib/desktop-api/agent";
 import { listChannels } from "@/lib/desktop-api/system";
 import { resolveAgentSessionWorkspace } from "../workspace-selection";
-import {
-  recoverPlanFromMessages,
-  resolvePreferredAgentSelection
-} from "../agent-session-lifecycle";
+import { resolvePreferredAgentSelection } from "../agent-session-lifecycle";
 
 interface UseAgentSessionLifecycleParams {
   setPendingFolderRefs: React.Dispatch<React.SetStateAction<AgentSavedFile[]>>;
@@ -59,7 +56,6 @@ export function useAgentSessionLifecycle({
   const setPendingFiles = useSetAtom(agentPendingFilesAtom);
   const setStreamErrors = useSetAtom(agentStreamErrorsAtom);
   const setRuntimeStatuses = useSetAtom(agentRuntimeStatusesAtom);
-  const [, setPlanState] = useAtom(planStateAtom);
   const resetPlan = useSetAtom(resetPlanStateAtom);
 
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -127,28 +123,6 @@ export function useAgentSessionLifecycle({
         if (cancelled) return;
         startTransition(() => {
           setMessages(next);
-          const recovered = recoverPlanFromMessages(next);
-          if (recovered.planPath || recovered.draft) {
-            setPlanState((prev) => ({
-              ...prev,
-              phase: "review",
-              sessionActive: false,
-              reviewOpen: false,
-              file: recovered.planPath
-                ? {
-                  ...prev.file,
-                  path: recovered.planPath,
-                  savedAt: prev.file.savedAt ?? Date.now()
-                }
-                : prev.file,
-              draft: recovered.draft
-                ? {
-                  content: recovered.draft,
-                  updatedAt: Date.now()
-                }
-                : prev.draft
-            }));
-          }
           setSessionSwitching(false);
         });
       })
@@ -175,7 +149,6 @@ export function useAgentSessionLifecycle({
     setMessages,
     setPendingFiles,
     setPendingFolderRefs,
-    setPlanState,
     setMessageVersionsByGroup,
     setStreamErrors,
     setSelectedVersionIndexByGroup

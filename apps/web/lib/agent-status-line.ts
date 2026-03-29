@@ -17,8 +17,6 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   bash: "正在执行命令",
   // 控制工具
   askuserquestion: "正在向你提问",
-  enterplanmode: "正在进入计划模式",
-  exitplanmode: "正在退出计划模式",
   todowrite: "正在更新任务",
   // 子任务 / Agent
   task: "正在启动子任务",
@@ -31,9 +29,9 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   web_search: "正在搜索网页",
   web_fetch: "正在获取网页",
   // 自动化定时
-  automation_timer_read: "正在读取定时任务",
-  automation_timer_set: "正在设置定时任务",
-  automation_timer_query: "正在查询定时记录",
+  cron_read: "正在读取定时任务",
+  cron_set: "正在设置定时任务",
+  cron_query: "正在查询定时记录",
   // LSP / MCP
   lsp: "正在分析代码",
   mcpsearch: "正在搜索 MCP 工具",

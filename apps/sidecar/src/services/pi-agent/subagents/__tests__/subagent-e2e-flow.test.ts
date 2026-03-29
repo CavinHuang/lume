@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 async function loadCreateOpenClawAlignedTools() {
-  const mod = await import("../../tools/create-openclaw-aligned-tools");
+  const mod = await import("../../tools/session/create-session-tools");
   return mod.createOpenClawAlignedTools;
 }
 

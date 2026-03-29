@@ -5,12 +5,12 @@ import {
   getWorkspaceMemoryFile,
   saveWorkspaceMemory,
   searchWorkspaceMemory
-} from "../../memory/memory-service";
+} from "../../../memory/memory-service";
 import {
   MEMORY_GET_TOOL_NAME,
   MEMORY_SAVE_TOOL_NAME,
   MEMORY_SEARCH_TOOL_NAME
-} from "../../memory/memory-mcp-service";
+} from "../../../memory/memory-mcp-service";
 
 function formatCitation(path: string, startLine: number, endLine: number): string {
   return startLine === endLine ? `${path}#L${startLine}` : `${path}#L${startLine}-L${endLine}`;

@@ -1,6 +1,6 @@
 /**
  * Migrated style from OpenClaw manager embedding ops:
- * /Users/cavinhuang/workspace/projects/test/openclaw/src/memory/manager-embedding-ops.ts
+ * earlier memory embedding ops implementation
  * Adaptation:
  * - Keep Bun sqlite API used by Lume sidecar.
  */

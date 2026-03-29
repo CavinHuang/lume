@@ -10,6 +10,7 @@ import type {
   AgentEvent,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
+  AgentToolPolicy,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
   AgentGenerateTitleInput
@@ -31,14 +32,15 @@ import {
 } from "./agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
+import { resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
 import { createLogger } from "../infra/logger";
 import {
   getSessionStateManager,
   startSessionHeartbeat,
   stopSessionHeartbeat,
 } from "../runtime/session-state-manager";
-import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/ask-user-question-bridge";
-import { submitToolPermissionDecision } from "../pi-agent/tools/tool-permission-bridge";
+import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/bridges/ask-user-question-bridge";
+import { submitToolPermissionDecision } from "../pi-agent/tools/bridges/tool-permission-bridge";
 import { resolveAgentEventTotalTokens } from "../pi-agent/usage";
 import {
   resolveChannelModelSelection,
@@ -52,6 +54,7 @@ import {
   sanitizeGeneratedTitle,
   shouldAutoGenerateSessionTitle
 } from "./session-title-summarizer";
+import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 
 type AgentEventEmitter = {
   onEvent: (event: AgentEvent) => void;
@@ -74,6 +77,43 @@ export function consumeMemoryFlushPrompt(sessionId: string): string | undefined 
 const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 
 const log = createLogger("agent-service");
+const ROUTING_HEURISTIC_TOOLS = [
+  "read",
+  "write",
+  "edit",
+  "bash",
+  "find",
+  "grep",
+  "ls",
+  "browser",
+  "web_search",
+  "web_fetch",
+  "memory_search",
+  "memory_get",
+  "memory_save"
+];
+
+function mergeToolPolicies(
+  base: AgentToolPolicy | undefined,
+  overlay: AgentToolPolicy | undefined
+): AgentToolPolicy | undefined {
+  if (!base && !overlay) {
+    return undefined;
+  }
+  const baseAllow = Array.isArray(base?.allow) ? base.allow.filter((v): v is string => typeof v === "string") : [];
+  const baseDeny = Array.isArray(base?.deny) ? base.deny.filter((v): v is string => typeof v === "string") : [];
+  const overlayAllow = Array.isArray(overlay?.allow) ? overlay.allow.filter((v): v is string => typeof v === "string") : [];
+  const overlayDeny = Array.isArray(overlay?.deny) ? overlay.deny.filter((v): v is string => typeof v === "string") : [];
+  const allow = Array.from(new Set([...baseAllow, ...overlayAllow]));
+  const deny = Array.from(new Set([...baseDeny, ...overlayDeny]));
+  if (allow.length === 0 && deny.length === 0) {
+    return undefined;
+  }
+  return {
+    ...(allow.length > 0 ? { allow } : {}),
+    ...(deny.length > 0 ? { deny } : {})
+  };
+}
 
 function handleRuntimeSessionStateEvent(
   sessionId: string,
@@ -168,26 +208,44 @@ export async function sendAgentMessage(
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
 
+  let stateWorkspaceSlug: string | undefined;
+  if (workspaceId) {
+    const workspace = getAgentWorkspace(workspaceId);
+    if (workspace) {
+      stateWorkspaceSlug = workspace.slug;
+    }
+  }
+
+  const routingTrace = resolveAgentRuntimeRoutingTrace({
+    workspaceSlug: stateWorkspaceSlug,
+    userMessage,
+    availableTools: ROUTING_HEURISTIC_TOOLS
+  });
+  const routingToolPolicy = resolveSoftToolPolicyForPreferredRoute(routingTrace.preferredCapabilityRoute);
+  const existingToolPolicy =
+    input.messageMetadata?.toolPolicy && typeof input.messageMetadata.toolPolicy === "object"
+      ? (input.messageMetadata.toolPolicy as AgentToolPolicy)
+      : undefined;
+  const effectiveMessageMetadata = {
+    ...(input.messageMetadata ?? {}),
+    capabilityLanes: routingTrace.capabilityLanes,
+    preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
+    capabilityRoutingReason: routingTrace.reason,
+    toolPolicy: mergeToolPolicies(existingToolPolicy, routingToolPolicy)
+  };
+
   if (shouldAppendUserMessage) {
     const sourceMessageId = input.editFromMessageId ?? input.resendFromMessageId;
     const createdUserVersion = createUserMessageVersion({
       sessionId,
       content: userMessage,
       createdAt: Date.now(),
-      metadata: input.messageMetadata,
+      metadata: effectiveMessageMetadata,
       sourceMessageId
     });
     activeTurnId = createdUserVersion.turnId;
     if (sourceMessageId) {
       replaceAgentSessionTranscript(sessionId, getLatestVisibleMessagesForSession(sessionId));
-    }
-  }
-
-  let stateWorkspaceSlug: string | undefined;
-  if (workspaceId) {
-    const workspace = getAgentWorkspace(workspaceId);
-    if (workspace) {
-      stateWorkspaceSlug = workspace.slug;
     }
   }
 
@@ -210,6 +268,7 @@ export async function sendAgentMessage(
   const { runPiAgentMessage } = await import("../pi-agent/run-pi-agent-message");
   const piResult = await runPiAgentMessage({
     ...input,
+    messageMetadata: effectiveMessageMetadata,
     channelId: resolvedChannelId,
     modelId: resolvedModelId
   }, {

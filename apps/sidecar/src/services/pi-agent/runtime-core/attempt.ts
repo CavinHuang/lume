@@ -9,8 +9,8 @@ import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { decryptApiKey, listChannels } from "../../channel/channel-manager";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../infra/logger";
-import { waitForPiAskUserQuestionAnswers } from "../tools/ask-user-question-bridge";
-import { waitForToolPermissionDecision } from "../tools/tool-permission-bridge";
+import { waitForPiAskUserQuestionAnswers } from "../tools/bridges/ask-user-question-bridge";
+import { waitForToolPermissionDecision } from "../tools/bridges/tool-permission-bridge";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { projectRuntimeCoreEventToLumeEvents } from "./subscribe";
@@ -66,11 +66,13 @@ export async function runRuntimeCoreAttempt(
     lumeSessionId: runtime.sessionId,
     cwd: prepared.agentCwd,
     agentDir: prepared.agentDir,
+    userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
     modelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
     apiKey: prepared.apiKey,
     workspaceId: runtime.workspaceId,
+    workspaceName: prepared.workspaceName,
     workspaceSlug: prepared.workspaceSlug,
     channelId: runtime.channelId,
     sessionType: runtime.sessionType,
@@ -115,7 +117,11 @@ export async function runRuntimeCoreAttempt(
 
   try {
     await session.setModel(prepared.modelResolution.model);
-    const thinkingLevel = resolveAgentThinkingLevel(prepared.modelResolution.model, prepared.modelResolution.model.baseUrl);
+    const thinkingLevel = resolveAgentThinkingLevel(
+      prepared.modelResolution.model,
+      prepared.modelResolution.model.baseUrl,
+      input.thinkingLevel
+    );
     if (thinkingLevel) {
       session.setThinkingLevel(thinkingLevel);
     }
@@ -165,11 +171,13 @@ async function runRuntimeCoreMockSuccessAttempt(
     lumeSessionId: runtime.sessionId,
     cwd: prepared.agentCwd,
     agentDir: prepared.agentDir,
+    userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
     modelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
     apiKey: prepared.apiKey,
     workspaceId: runtime.workspaceId,
+    workspaceName: prepared.workspaceName,
     workspaceSlug: prepared.workspaceSlug,
     channelId: runtime.channelId,
     sessionType: runtime.sessionType,
@@ -353,11 +361,13 @@ async function runRuntimeCoreMockCompactionAttempt(
     lumeSessionId: runtime.sessionId,
     cwd: prepared.agentCwd,
     agentDir: prepared.agentDir,
+    userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
     modelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
     apiKey: prepared.apiKey,
     workspaceId: runtime.workspaceId,
+    workspaceName: prepared.workspaceName,
     workspaceSlug: prepared.workspaceSlug,
     channelId: runtime.channelId,
     sessionType: runtime.sessionType,

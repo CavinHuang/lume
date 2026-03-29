@@ -11,8 +11,8 @@ import type {
 } from "@lume/shared";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
 import { createLumePiTools } from "../tools/create-lume-tools";
-import { wrapToolsWithPermissionGate } from "../tools/tool-permission-gate";
-import { applyPiToolPolicies } from "../tools/tool-policy";
+import { wrapToolsWithPermissionGate } from "../tools/permissions/tool-permission-gate";
+import { applyPiToolPolicies } from "../tools/permissions/tool-policy";
 import { adaptAgentToolsToToolDefinitions } from "./pi-tool-definition-adapter";
 
 export interface BuildRuntimeCoreToolsInput {
@@ -50,7 +50,6 @@ export function buildRuntimeCoreTools(
   );
   const automationExecution = isAutomationExecution(input.messageMetadata);
   const lumeTools = createLumePiTools({
-    agentCwd: input.cwd,
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
     channelId: input.channelId,

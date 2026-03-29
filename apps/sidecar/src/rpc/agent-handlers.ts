@@ -80,7 +80,7 @@ import { getSubagentRunRegistry } from "../services/pi-agent/subagents/subagent-
 import {
   getAgentRuntimeToolPolicyConfig,
   saveAgentRuntimeToolPolicyConfig
-} from "../services/pi-agent/tools/tool-policy";
+} from "../services/pi-agent/tools/permissions/tool-policy";
 import {
   getAgentProxyStatus,
   saveAgentProxySettings
@@ -472,17 +472,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             sessionId: input.sessionId,
             event
           });
-          if (event.type !== "tool_result") {
-            return;
-          }
-          if (event.toolName === "EnterPlanMode") {
-            context.notifyPlanStateChange(input.sessionId, "planning");
-            return;
-          }
-          if (event.toolName === "ExitPlanMode" && !event.isError) {
-            const planPath = context.planStateTracker.parsePlanPathFromToolResult(event.result);
-            context.notifyPlanStateChange(input.sessionId, "review", planPath ? { planPath } : undefined);
-          }
         },
         onComplete: () => {
           unsubscribe();

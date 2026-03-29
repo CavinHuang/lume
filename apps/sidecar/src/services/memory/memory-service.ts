@@ -7,7 +7,7 @@ import {
 import { MemoryIndexManager } from "./memory-index-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { resolveMemoryRuntimeConfig } from "./memory-policy";
-import { isMemoryPath, normalizeRelPath } from "../openclaw/memory-path-utils";
+import { isMemoryPath, normalizeRelPath } from "./memory-path-utils";
 import { getEmbeddingCacheStats } from "./embedding-ops";
 import type {
   MemoryGetInput,

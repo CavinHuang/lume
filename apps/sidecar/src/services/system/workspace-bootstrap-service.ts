@@ -2,7 +2,7 @@
  * Workspace Bootstrap Service
  *
  * 复用自 OpenClaw 的 workspace bootstrap 设计
- * 参考: openclaw/src/agents/workspace.ts
+ * 参考来源: 早期工作区 bootstrap 实现
  *
  * 职责：
  * - 读取模板文件
@@ -26,7 +26,7 @@ import type {
 import {
   getAgentWorkspacePath,
 } from "../infra/config-paths";
-import { stripFrontMatter } from "../openclaw/workspace-template-utils";
+import { stripFrontMatter } from "./workspace-template-utils";
 
 // ===== 常量 =====
 

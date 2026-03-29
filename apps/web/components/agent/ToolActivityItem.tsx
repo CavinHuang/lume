@@ -66,8 +66,6 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   bash: Terminal,
   // 控制工具
   askuserquestion: Bot,
-  enterplanmode: ListTodo,
-  exitplanmode: ListTodo,
   todowrite: ListTodo,
   // 子任务 / Agent
   task: GitBranch,
@@ -80,9 +78,9 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   web_search: Globe,
   web_fetch: Globe,
   // 自动化定时
-  automation_timer_read: Timer,
-  automation_timer_set: Timer,
-  automation_timer_query: Timer,
+  cron_read: Timer,
+  cron_set: Timer,
+  cron_query: Timer,
   // LSP / MCP
   lsp: Code2,
   mcpsearch: Search,

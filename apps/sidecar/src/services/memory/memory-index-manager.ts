@@ -30,7 +30,7 @@ import {
   isMarkdownFile,
   isMemoryPath,
   normalizeExtraMemoryPaths
-} from "../openclaw/memory-path-utils";
+} from "./memory-path-utils";
 import type {
   MemoryGetResult,
   MemorySearchResult,

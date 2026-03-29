@@ -1,6 +1,6 @@
 /**
  * Migrated from:
- * /Users/cavinhuang/workspace/projects/test/openclaw/src/memory/manager-sync-ops.ts
+ * earlier memory sync implementation
  * Adaptation:
  * - Keep lightweight sync helpers for Lume's built-in memory manager.
  */
@@ -8,7 +8,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { Database } from "bun:sqlite";
-import { collectMarkdownFiles, isMarkdownFile } from "../openclaw/memory-path-utils";
+import { collectMarkdownFiles, isMarkdownFile } from "./memory-path-utils";
 
 export interface SyncTargetEntry {
   source: "memory" | "session";

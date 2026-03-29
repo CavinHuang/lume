@@ -7,12 +7,12 @@ import {
   createAgentSession,
   getAgentSessionMessages,
   getAgentSessionMeta
-} from "../../agent/agent-session-manager";
-import { createOrResumeRuntimeCoreSessionManager } from "../runtime-core/session-store";
+} from "../../../agent/agent-session-manager";
+import { createOrResumeRuntimeCoreSessionManager } from "../../runtime-core/session-store";
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
-} from "../subagents/subagent-run-registry";
+} from "../../subagents/subagent-run-registry";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 mock.module("undici", () => ({
@@ -53,10 +53,12 @@ afterEach(() => {
   resetSubagentRunRegistryForTest();
 });
 
-async function loadCreateOpenClawAlignedTools() {
-  const mod = await import("./create-openclaw-aligned-tools");
-  return mod.createOpenClawAlignedTools;
+async function loadCreateSessionTools() {
+  const mod = await import("./create-session-tools");
+  return mod.createSessionTools;
 }
+
+const loadCreateOpenClawAlignedTools = loadCreateSessionTools;
 
 function resolveTool(tools: AgentTool[], name: string): AgentTool {
   const tool = tools.find((item) => item.name === name);
@@ -102,7 +104,7 @@ function appendTranscriptTextMessages(
   }
 }
 
-describe("create-openclaw-aligned-tools", () => {
+describe("create-session-tools", () => {
   test("agents_list 应返回可用于 sessions_spawn 的会话 agentId", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));

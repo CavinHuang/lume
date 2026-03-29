@@ -8,6 +8,7 @@
  */
 
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
+import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
 import type { MemoryCitationsMode } from "../memory/memory-policy";
 import {
   readSystemPromptComponents,
@@ -16,28 +17,21 @@ import {
 import { isHeartbeatContentEffectivelyEmpty } from "../runtime/heartbeat-service";
 import type { SessionType } from "@lume/shared";
 
-export const LUME_AGENT_IDENTITY_LINE = "You are a personal assistant running inside Lume.";
+export const LUME_AGENT_IDENTITY_LINE =
+  "You are Lume, a persistent counterpart running inside this workspace.";
 export type SystemPromptMode = "full" | "minimal" | "none";
 
-const CLAUDE_PLAN_MODE_SECTION = `## Plan Mode Protocol (Claude Code Aligned)
+const CLAUDE_PLAN_MODE_SECTION = `## Planning Protocol
 
-Tool intent:
-- EnterPlanMode: transition into read-only planning before implementation.
-- AskUserQuestion: clarify requirements/choices during planning or execution.
-- ExitPlanMode: submit finalized plan for approval and transition to implementation.
+When the task is non-trivial, first explore read-only and produce a clear implementation plan in plain assistant text.
 
 Rules:
-1. For non-trivial implementation tasks, call EnterPlanMode first.
-2. In plan mode, keep actions read-only; do not perform file writes or command execution.
-3. Use AskUserQuestion only for requirement clarification or trade-off choice.
-4. Do NOT use AskUserQuestion to ask whether to execute the plan.
-5. When plan is complete and unambiguous, call ExitPlanMode once.
-6. ExitPlanMode is the approval handoff. After approval, continue execution in non-plan mode.
+1. During planning, keep actions read-only; do not perform file writes or command execution.
+2. Use AskUserQuestion only for requirement clarification or trade-off choice.
+3. Do not ask generic "是否执行计划" questions.
+4. After the plan is complete and unambiguous, hand off to the user for approval in natural text.
 
-When to skip EnterPlanMode:
-- tiny obvious fix
-- single-file/single-step clear change
-- pure Q&A or pure exploration task`;
+Skip explicit planning when the task is a tiny obvious fix, a single-step clear change, or pure Q&A.`;
 
 const AGENTIC_EXECUTION_SECTION = `## Agentic Execution
 
@@ -69,6 +63,25 @@ Choose the lightest execution path that preserves quality.
 - Prefer routing by role when the work clearly benefits from design, product, research, engineering, or operations ownership.
 - Keep simple asks in the main thread. Delegate when it reduces confusion or speeds up delivery.`;
 
+const SKILLS_FIRST_SECTION = `## Skills-First Capability Routing
+
+Prefer stable packaged capabilities before improvising raw tool flows.
+- If an existing Skill clearly covers the task, use the Skill path first.
+- If no loaded Skill covers it but the task obviously belongs to a reusable capability lane, search/discover the right Skill or packaged capability before falling back to raw multi-tool improvisation.
+- Fall back to direct tool composition only when no suitable Skill or packaged capability exists, or when the user explicitly wants low-level control.
+- When using a Skill, follow its documented invocation shape exactly instead of paraphrasing it into a different tool flow.`;
+
+const CAPABILITY_ROUTING_ORDER_SECTION = `## Capability Routing Order
+
+Choose capabilities in this priority order unless a higher-priority user instruction overrides it.
+1. Use a loaded Skill when it clearly matches the request.
+2. Use specialized first-class tools when the task is obviously in their lane:
+   - browser for browser-session continuity and current-page actions
+   - memory_search / memory_get for prior decisions, preferences, or continuity
+   - web_search / web_fetch for public web retrieval when browser context is not required
+3. Compose direct low-level tools only when no packaged capability cleanly fits.
+4. If the user explicitly asks for low-level control or manual tool use, follow that request and skip higher-level routing when safe.`;
+
 const PERSONA_REALITY_GUARDRAILS_SECTION = `## Persona and Reality Guardrails
 
 Lume agents may speak with strong subjecthood and companion tone, but persona never overrides safety or truth in high-risk contexts.
@@ -97,8 +110,6 @@ const PROMPT_TOOL_ORDER = [
   "sessions_spawn",
   "session_status",
   "askuserquestion",
-  "enterplanmode",
-  "exitplanmode",
   "memory_search",
   "memory_get",
   "memory_save"
@@ -299,7 +310,7 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 
   sections.push(`## Lume Agent
 
-你是 Lume Agent，一个集成在 Lume 桌面应用中的通用 AI 助手，由 Pi Agent Runtime 驱动。
+你是 Lume，一个持续存在于此工作区中的 agent counterpart，由 Pi Agent Runtime 驱动。
 
 核心能力:
 - 代码编辑（Read/Edit/Write 等）
@@ -332,14 +343,19 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
   sections.push(`## 交互规范
 
 1. 优先中文回复，保留必要英文技术术语
-2. 破坏性操作前先确认
-3. 输出保持结构化、可执行`);
+2. 像真实 counterpart 一样自然说话，不要落回客服腔或空洞开场
+3. 当用户已经提出具体请求时，直接从请求开始，不要反复追问空问题
+4. 有判断时可以明确表达偏好与理由，不要做 yes-machine
+5. 破坏性操作前先确认
+6. 输出保持结构化、可执行`);
 
   sections.push(
     AGENTIC_EXECUTION_SECTION,
     COMMITMENT_ENFORCEMENT_SECTION,
     PROACTIVE_UPDATES_SECTION,
-    DELEGATION_POLICY_SECTION
+    DELEGATION_POLICY_SECTION,
+    SKILLS_FIRST_SECTION,
+    CAPABILITY_ROUTING_ORDER_SECTION
   );
 
   if (ctx.automationExecution) {
@@ -445,10 +461,20 @@ These user-editable files are loaded by Lume and included below in Project Conte
   return sections.join("\n\n");
 }
 
-interface DynamicContext {
+export interface DynamicContext {
+  sessionId?: string;
+  sessionTitle?: string;
+  sessionType?: SessionType;
+  chatType?: "direct" | "group" | "channel";
+  parentSessionId?: string;
+  workspaceId?: string;
+  channelId?: string;
+  modelId?: string;
   workspaceName?: string;
   workspaceSlug?: string;
   agentCwd?: string;
+  availableTools?: string[];
+  userMessage?: string;
 }
 
 export function buildDynamicContext(ctx: DynamicContext): string {
@@ -465,10 +491,38 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   });
   sections.push(`当前时间: ${timeStr}`);
 
+  const sessionLines: string[] = [];
+  if (ctx.sessionId) sessionLines.push(`sessionId: ${ctx.sessionId}`);
+  if (ctx.sessionTitle) sessionLines.push(`title: ${ctx.sessionTitle}`);
+  if (ctx.sessionType) sessionLines.push(`sessionType: ${ctx.sessionType}`);
+  if (ctx.chatType) sessionLines.push(`chatType: ${ctx.chatType}`);
+  if (ctx.parentSessionId) sessionLines.push(`parentSessionId: ${ctx.parentSessionId}`);
+  if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
+  if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
+  if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
+  if (sessionLines.length > 0) {
+    sections.push(`<session_state>\n${sessionLines.join("\n")}\n</session_state>`);
+  }
+
   if (ctx.workspaceSlug) {
     const lines: string[] = [];
     if (ctx.workspaceName) {
       lines.push(`工作区: ${ctx.workspaceName}`);
+    }
+    const capabilityLanes = inferCapabilityLanes(ctx.availableTools);
+    if (capabilityLanes.length > 0) {
+      lines.push(`Capability lanes: ${capabilityLanes.join(", ")}`);
+    }
+
+    const skills = getWorkspaceSkills(ctx.workspaceSlug);
+    const preferredRoute = resolvePreferredCapabilityRoute({
+      userMessage: ctx.userMessage,
+      availableTools: ctx.availableTools,
+      loadedSkills: skills
+    });
+    if (preferredRoute.preferredLane) {
+      lines.push(`Preferred capability route: ${preferredRoute.preferredLane}`);
+      lines.push(`Capability routing reason: ${preferredRoute.reason}`);
     }
 
     const mcpConfig = getWorkspaceMcpConfig(ctx.workspaceSlug);
@@ -484,10 +538,12 @@ export function buildDynamicContext(ctx: DynamicContext): string {
       }
     }
 
-    const skills = getWorkspaceSkills(ctx.workspaceSlug);
     if (skills.length > 0) {
       const pluginPrefix = `lume-workspace-${ctx.workspaceSlug}`;
-      lines.push(`Skills（需使用完整前缀名，如 ${pluginPrefix}:skill-name）:`);
+      lines.push("Loaded Skills:");
+      lines.push(`- Skill names must use the fully qualified prefix form: ${pluginPrefix}:skill-name`);
+      lines.push("- Prefer a loaded Skill first when it clearly matches the user's request");
+      lines.push("- Only fall back to raw tool composition when no suitable Skill fits");
       for (const skill of skills) {
         const qualifiedName = `${pluginPrefix}:${skill.slug}`;
         const desc = skill.description ? `: ${skill.description}` : "";

@@ -1,6 +1,6 @@
 /**
  * Migrated from:
- * /Users/cavinhuang/workspace/projects/test/openclaw/src/cli/browser-cli-extension.ts
+ * earlier browser extension bootstrap implementation
  * Adaptation:
  * - 迁移为 Lume sidecar service，负责浏览器扩展目录解析/安装。
  * - 统一安装到 `~/.lume/browser/chrome-extension` 稳定目录。

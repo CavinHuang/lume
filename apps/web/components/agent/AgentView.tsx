@@ -2,7 +2,7 @@
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { AlertCircle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, CornerDownLeft, FolderPlus, Loader2, Paperclip, Settings, Square, X } from "lucide-react";
+import { AlertCircle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, CornerDownLeft, FolderPlus, Lightbulb, Loader2, Paperclip, Settings, Square, X } from "lucide-react";
 import type {
   AgentAskUserQuestionRequest,
   AgentToolPermissionRequest,
@@ -16,6 +16,7 @@ import {
   agentSessionsAtom,
   agentChannelIdAtom,
   agentModelIdAtom,
+  agentThinkingLevelAtom,
   agentPendingFilesAtom,
   agentPendingPromptAtom,
   agentPermissionModeAtom,
@@ -63,8 +64,11 @@ import { AskUserQuestionPanel } from "./AskUserQuestionPanel";
 import { ContextUsageBadge } from "./ContextUsageBadge";
 import { AttachmentPreviewItem } from "@/components/chat/AttachmentPreviewItem";
 import { ModelSelector } from "@/components/chat/ModelSelector";
+import { ThinkingLevelPopoverContent } from "@/components/chat/ThinkingLevelPopoverContent";
+import { THINKING_LEVEL_OPTIONS } from "@/components/chat/thinking-level";
 import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentSidePanel, type AgentSidePanelTab } from "./AgentSidePanel";
 import {
@@ -77,10 +81,7 @@ import {
   selectTeamActivities,
   type TeamAgentInfo
 } from "./team-activity";
-import {
-  extractLatestAssistantText,
-  parseExitPlanResult
-} from "./agent-session-lifecycle";
+import { extractLatestAssistantText } from "./agent-session-lifecycle";
 import { fileToBase64 } from "./agent-composer";
 import { useAgentInteractiveRequests } from "./hooks/useAgentInteractiveRequests";
 import { useAgentPlanFlow } from "./hooks/useAgentPlanFlow";
@@ -210,12 +211,14 @@ export function AgentView(): React.ReactElement {
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
   const [agentPermissionMode, setAgentPermissionMode] = useAtom(agentPermissionModeAtom);
+  const [agentThinkingLevel, setAgentThinkingLevel] = useAtom(agentThinkingLevelAtom);
   const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtom);
   const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom);
   const [inputContent, setInputContent] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
   const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
+  const [thinkingOpen, setThinkingOpen] = useState(false);
 
   const [, setPlanState] = useAtom(planStateAtom);
   const {
@@ -395,6 +398,7 @@ export function AgentView(): React.ReactElement {
     agentChannelId,
     outgoingModelId,
     agentPermissionMode,
+    agentThinkingLevel,
     planStreamCaptureRef,
     pendingTitleRef
   });
@@ -739,6 +743,47 @@ export function AgentView(): React.ReactElement {
               externalSelectedModel={externalSelectedModel}
               onModelSelect={handleModelSelect}
             />
+                ) : null}
+
+                {backendReady ? (
+                  <Popover open={thinkingOpen} onOpenChange={setThinkingOpen}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "size-[30px] rounded-full",
+                              agentThinkingLevel !== "off"
+                                ? "text-sky-500"
+                                : "text-foreground/60 hover:text-foreground"
+                            )}
+                          >
+                            <Lightbulb className="size-5" />
+                          </Button>
+                        </PopoverTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent side="top"><p>思考等级</p></TooltipContent>
+                    </Tooltip>
+
+                    <PopoverContent
+                      align="start"
+                      side="top"
+                      sideOffset={12}
+                      className="w-auto border-none bg-transparent p-0 shadow-none"
+                    >
+                      <ThinkingLevelPopoverContent
+                        value={agentThinkingLevel}
+                        options={THINKING_LEVEL_OPTIONS}
+                        onSelect={(value) => {
+                          setAgentThinkingLevel(value);
+                          setThinkingOpen(false);
+                        }}
+                      />
+                    </PopoverContent>
+                  </Popover>
                 ) : null}
 
                 {backendReady ? (

@@ -2,16 +2,17 @@ import type { AgentAskUserQuestionRequest, AgentToolPermissionRequest } from "@l
 import type { AgentSendInput } from "@lume/shared";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { MemoryToolPolicy } from "../../memory/memory-policy";
-import { createPiControlTools } from "./create-control-tools";
-import { createPiMemoryTools } from "./create-memory-tools";
-import { createOpenClawAlignedTools } from "./create-openclaw-aligned-tools";
-import { createBrowserTool } from "./browser-tool";
-import { createAutomationTools } from "./create-automation-tools";
-import { resolveEnabledPiMemoryToolNames } from "./tool-policy";
+import { createPiControlTools } from "./control/create-control-tools";
+import { createPiMemoryTools } from "./memory/create-memory-tools";
+import { createSessionTools } from "./session/create-session-tools";
+import { createWebTools, WEB_TOOL_NAMES } from "./web/create-web-tools";
+import { createBrowserTool } from "./browser/browser-tool";
+import { createCronTools } from "./cron/create-cron-tools";
+import { resolveEnabledPiMemoryToolNames } from "./permissions/tool-policy";
 
 const BASE_PI_TOOL_NAMES = ["read", "write", "edit", "bash", "find", "grep", "ls"];
-const CONTROL_PI_TOOL_NAMES = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"];
-const OPENCLAW_ALIGNED_TOOL_NAMES = [
+const CONTROL_PI_TOOL_NAMES = ["AskUserQuestion"];
+const SESSION_TOOL_NAMES = [
   "agents_list",
   "sessions_list",
   "sessions_history",
@@ -22,18 +23,15 @@ const OPENCLAW_ALIGNED_TOOL_NAMES = [
   "subagents_list",
   "subagents_kill",
   "subagents_send",
-  "subagents_steer",
-  "web_search",
-  "web_fetch"
+  "subagents_steer"
 ];
 const AUTOMATION_TOOL_NAMES = [
-  "automation_timer_read",
-  "automation_timer_set",
-  "automation_timer_query"
+  "cron_read",
+  "cron_set",
+  "cron_query"
 ];
 
 export interface CreateLumePiToolsInput {
-  agentCwd: string;
   sessionId: string;
   workspaceId?: string;
   channelId?: string;
@@ -68,11 +66,10 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     : [];
   const controlTools = createPiControlTools({
     sessionId: input.sessionId,
-    agentCwd: input.agentCwd,
     emitAskUserQuestion: input.emitAskUserQuestion,
     includeAskUserQuestion: input.automationExecution !== true
   });
-  const openClawAlignedTools = createOpenClawAlignedTools({
+  const sessionTools = createSessionTools({
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
     channelId: input.channelId,
@@ -82,25 +79,25 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitToolPermissionRequest: input.emitToolPermissionRequest
   });
+  const webTools = createWebTools();
 
   // 不再在这里过滤，由 tool-permission-gate.ts 基于 tool-metadata.ts 处理
   const browserTool = createBrowserTool();
-  const automationTools = createAutomationTools({
+  const cronTools = createCronTools({
     workspaceId: input.workspaceId,
     sessionId: input.sessionId
   });
-  const customTools = [...memoryTools, ...controlTools, ...openClawAlignedTools, browserTool, ...automationTools];
+  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...webTools, browserTool, ...cronTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {
     customTools,
     availableToolNames: [
       ...BASE_PI_TOOL_NAMES,
-      ...OPENCLAW_ALIGNED_TOOL_NAMES,
+      ...SESSION_TOOL_NAMES,
+      ...WEB_TOOL_NAMES,
       ...AUTOMATION_TOOL_NAMES,
-      ...(input.automationExecution === true
-        ? CONTROL_PI_TOOL_NAMES.filter((name) => name !== "AskUserQuestion")
-        : CONTROL_PI_TOOL_NAMES),
+      ...(input.automationExecution === true ? [] : CONTROL_PI_TOOL_NAMES),
       ...customToolNames
     ]
   };

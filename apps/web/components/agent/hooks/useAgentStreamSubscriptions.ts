@@ -31,7 +31,7 @@ import {
   updateAgentSessionTitle
 } from "@/lib/desktop-api/agent";
 import { mergeServerMessagesWithPending, replaceVisibleMessage } from "@/lib/agent-message-merge";
-import { extractLatestAssistantText, parseExitPlanResult } from "../agent-session-lifecycle";
+import { extractLatestAssistantText } from "../agent-session-lifecycle";
 import { shouldAutoOpenTeamPanel } from "../agent-stream-subscriptions";
 
 function isAgentDebugEnabled(): boolean {
@@ -121,7 +121,8 @@ function enrichAssistantMessage(
     metadata: {
       ...message.metadata,
       ...(thinkingDuration !== undefined ? { thinkingDuration } : {}),
-      ...(toolActivities && toolActivities.length > 0 ? { toolActivitiesSnapshot: toolActivities } : {})
+      ...(toolActivities && toolActivities.length > 0 ? { toolActivitiesSnapshot: toolActivities } : {}),
+      ...(message.reasoning ? { reasoningExpanded: true } : {})
     }
   };
 }
@@ -270,19 +271,7 @@ export function useAgentStreamSubscriptions({
 
       if (payload.sessionId === currentSessionIdRef.current) {
         const event = payload.event;
-        if (event.type === "tool_result" && !event.isError && event.toolName === "ExitPlanMode") {
-          planStreamCaptureRef.current = false;
-          const parsed = parseExitPlanResult(event.result);
-          if (parsed.planPath || parsed.slug || parsed.metadata) {
-            exitPlan({
-              ...(parsed.planPath ? { planPath: parsed.planPath } : {}),
-              ...(parsed.slug ? { slug: parsed.slug } : {}),
-              ...(parsed.metadata ? { metadata: parsed.metadata } : {})
-            });
-          }
-        } else if (event.type === "tool_start" && event.toolName === "EnterPlanMode") {
-          planStreamCaptureRef.current = true;
-        } else if ((event.type === "text_delta" || event.type === "text_complete") && !planStreamCaptureRef.current) {
+        if ((event.type === "text_delta" || event.type === "text_complete") && !planStreamCaptureRef.current) {
           if (currentPermissionModeRef.current === "plan") {
             planStreamCaptureRef.current = true;
           }
@@ -449,9 +438,7 @@ export function useAgentStreamSubscriptions({
                 ));
               }
             }
-            setMessages((prev) => {
-              return replaceVisibleMessage(prev, enrichedMessage);
-            });
+            setMessages((prev) => replaceVisibleMessage(prev, enrichedMessage));
             pendingAssistantMessagesRef.current.delete(payload.sessionId);
             finalize();
           });

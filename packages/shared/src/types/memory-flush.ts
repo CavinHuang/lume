@@ -2,7 +2,7 @@
  * Memory Flush Types
  *
  * 复用自 OpenClaw 的 memory-flush 设计
- * 参考: openclaw/src/auto-reply/reply/memory-flush.ts
+ * 参考来源: 早期 memory flush 设计
  */
 
 // ===== 常量 =====

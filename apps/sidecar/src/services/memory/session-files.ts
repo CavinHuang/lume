@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { getAgentSessionMessages, listAgentSessions } from "../agent/agent-session-manager";
-import { normalizeSessionText } from "../openclaw/session-memory-utils";
+import { normalizeSessionText } from "./session-memory-utils";
 import { getRuntimeCoreSessionDirPath } from "../pi-agent/runtime-core/session-store";
 import type { AgentMessage } from "@lume/shared";
 

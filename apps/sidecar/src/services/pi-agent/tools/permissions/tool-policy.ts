@@ -1,13 +1,13 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createLogger } from "../../infra/logger";
-import { getAgentRuntimeConfigPath } from "../../infra/config-paths";
-import { applyMemoryToolPolicy } from "../../memory/memory-policy";
-import type { MemoryToolPolicy } from "../../memory/memory-policy";
+import { createLogger } from "../../../infra/logger";
+import { getAgentRuntimeConfigPath } from "../../../infra/config-paths";
+import { applyMemoryToolPolicy } from "../../../memory/memory-policy";
+import type { MemoryToolPolicy } from "../../../memory/memory-policy";
 import {
   MEMORY_GET_TOOL_NAME,
   MEMORY_SAVE_TOOL_NAME,
   MEMORY_SEARCH_TOOL_NAME
-} from "../../memory/memory-mcp-service";
+} from "../../../memory/memory-mcp-service";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentSendInput } from "@lume/shared";
 import type { ProviderType } from "@lume/shared";
@@ -50,7 +50,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
     "subagents_send",
     "subagents_steer"
   ],
-  "group:planning": ["askuserquestion", "enterplanmode", "exitplanmode"]
+  "group:planning": ["askuserquestion"]
 };
 
 const DEFAULT_SUBAGENT_POLICY: ToolPolicy = {

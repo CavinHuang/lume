@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildDynamicContext,
   buildSystemPromptAppend,
   LUME_AGENT_IDENTITY_LINE,
   resolveSystemPromptMode,
@@ -69,6 +70,54 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Persona and Reality Guardrails");
     expect(prompt).toContain("Do not fabricate legal identity");
     expect(prompt).toContain("Do not use companion persona to override safety");
+  });
+
+  test("buildSystemPromptAppend 应注入 skills-first capability routing", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-skills-first",
+      workspaceSlug: "demo-workspace",
+      availableTools: ["read", "write", "task"]
+    });
+    expect(prompt).toContain("## Skills-First Capability Routing");
+    expect(prompt).toContain("If an existing Skill clearly covers the task, use the Skill path first.");
+    expect(prompt).toContain("search/discover the right Skill");
+    expect(prompt).toContain("Fall back to direct tool composition only when no suitable Skill");
+  });
+
+  test("buildSystemPromptAppend 应注入 capability routing order", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-capability-order",
+      availableTools: ["browser", "memory_search", "memory_get", "web_search", "web_fetch", "read", "write"]
+    });
+    expect(prompt).toContain("## Capability Routing Order");
+    expect(prompt).toContain("1. Use a loaded Skill when it clearly matches the request.");
+    expect(prompt).toContain("browser for browser-session continuity and current-page actions");
+    expect(prompt).toContain("memory_search / memory_get for prior decisions");
+    expect(prompt).toContain("web_search / web_fetch for public web retrieval");
+    expect(prompt).toContain("Compose direct low-level tools only when no packaged capability cleanly fits.");
+  });
+
+  test("buildSystemPromptAppend 应注入新的 counterpart 身份主句与自然交互规范", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-persona-style",
+      availableTools: ["read", "write"]
+    });
+    expect(prompt).toContain("You are Lume, a persistent counterpart running inside this workspace.");
+    expect(prompt).toContain("像真实 counterpart 一样自然说话");
+    expect(prompt).toContain("不要落回客服腔或空洞开场");
+    expect(prompt).toContain("直接从请求开始");
+    expect(prompt).toContain("不要做 yes-machine");
+  });
+
+  test("minimal 模式仍应保留新的 counterpart 身份主句", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-minimal-identity",
+      availableTools: ["read"],
+      promptMode: "minimal"
+    });
+    expect(prompt.startsWith(LUME_AGENT_IDENTITY_LINE)).toBeTrue();
+    expect(prompt).toContain("## Tooling");
+    expect(prompt).not.toContain("不要做 yes-machine");
   });
 
   test("buildSystemPromptAppend 在 citations=off 时应输出关闭提示", () => {
@@ -199,5 +248,60 @@ describe("agent-prompt-builder", () => {
 
     expect(prompt).toContain("## memory.md");
     expect(prompt).not.toContain("## MEMORY.md");
+  });
+
+  test("buildDynamicContext 应把已加载 skills 组织成可路由的 capability 提示", () => {
+    const workspaceSlug = `prompt-dynamic-skill-${Date.now()}`;
+    const workspacePath = getAgentWorkspacePath(workspaceSlug);
+    const skillDir = join(workspacePath, "skills", "planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        'name: "Planner"',
+        'description: "Breaks work into clear execution plans"',
+        "---",
+        "",
+        "# Planner",
+        ""
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const dynamic = buildDynamicContext({
+      sessionId: "agent-session-1",
+      sessionTitle: "Execution Planning",
+      sessionType: "main",
+      chatType: "direct",
+      parentSessionId: "root-session",
+      workspaceId: "workspace-1",
+      channelId: "channel-1",
+      modelId: "claude-sonnet-4-5",
+      workspaceName: "Dynamic Skill Workspace",
+      workspaceSlug,
+      agentCwd: "D:/workspace/projects/ai-projects/lume",
+      availableTools: ["Skill", "browser", "memory_search", "web_search", "read", "write"],
+      userMessage: "help me create an execution plan"
+    });
+
+    expect(dynamic).toContain("<session_state>");
+    expect(dynamic).toContain("sessionId: agent-session-1");
+    expect(dynamic).toContain("title: Execution Planning");
+    expect(dynamic).toContain("sessionType: main");
+    expect(dynamic).toContain("chatType: direct");
+    expect(dynamic).toContain("parentSessionId: root-session");
+    expect(dynamic).toContain("workspaceId: workspace-1");
+    expect(dynamic).toContain("channelId: channel-1");
+    expect(dynamic).toContain("modelId: claude-sonnet-4-5");
+    expect(dynamic).toContain("<workspace_state>");
+    expect(dynamic).toContain("Capability lanes: skills, browser, memory, web, raw-tools");
+    expect(dynamic).toContain("Preferred capability route: skills");
+    expect(dynamic).toContain("Capability routing reason:");
+    expect(dynamic).toContain("Loaded Skills:");
+    expect(dynamic).toContain("Prefer a loaded Skill first when it clearly matches the user's request");
+    expect(dynamic).toContain("Only fall back to raw tool composition when no suitable Skill fits");
+    expect(dynamic).toContain(`lume-workspace-${workspaceSlug}:planner`);
+    expect(dynamic).toContain("<working_directory>D:/workspace/projects/ai-projects/lume</working_directory>");
   });
 });

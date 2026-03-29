@@ -55,6 +55,7 @@ import {
 import { extractToolActivitiesFromMessages } from "@/lib/agent-tool-activity";
 import { getAgentMessageVersions } from "@/lib/desktop-api/agent";
 import { getModelLogo } from "@/lib/model-logo";
+import { cn } from "@/lib/utils";
 import { AgentStatusLine } from "./AgentStatusLine";
 import { EventTimeline } from "./EventTimeline";
 import { SubagentLiveCards } from "./SubagentLiveCard";
@@ -106,6 +107,14 @@ function parseAnnounceContent(content: string): AnnounceInfo {
   }
 
   return { label, status, outputText, errorText };
+}
+
+function isAgentRenderDebugEnabled(): boolean {
+  try {
+    return window.localStorage.getItem("lume.debug.agent") === "1";
+  } catch {
+    return false;
+  }
 }
 
 function ThinkingTimeIndicator({ seconds }: { seconds: number }): React.ReactElement {
@@ -373,7 +382,6 @@ function InlineEditForm({
 const AgentMessageItem = React.memo(function AgentMessageItem({
   message,
   displayedMessage,
-  actionsDisabled,
   isInlineEditing,
   versionLabel,
   canGoPrevVersion,
@@ -391,7 +399,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
 }: {
   message: AgentMessage;
   displayedMessage: AgentMessage;
-  actionsDisabled: boolean;
   isInlineEditing: boolean;
   versionLabel?: string | null;
   canGoPrevVersion: boolean;
@@ -410,6 +417,40 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const userProfile = useAtomValue(userProfileAtom);
+  const debugEnabled = isAgentRenderDebugEnabled();
+  const previousDebugRef = React.useRef<{
+    messageId: string;
+    displayedMessageId: string;
+    versionLabel?: string | null;
+    isInlineEditing: boolean;
+    versionLoading: boolean;
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (!debugEnabled) return;
+    const previous = previousDebugRef.current;
+    const nextState = {
+      messageId: message.id,
+      displayedMessageId: displayedMessage.id,
+      versionLabel,
+      isInlineEditing,
+      versionLoading
+    };
+    if (previous) {
+      const changedKeys = Object.entries(nextState)
+        .filter(([key, value]) => previous[key as keyof typeof nextState] !== value)
+        .map(([key]) => key);
+      if (changedKeys.length > 0) {
+        console.info("[AgentRenderDebug] message item rerender", {
+          messageId: message.id,
+          changedKeys,
+          previous,
+          next: nextState
+        });
+      }
+    }
+    previousDebugRef.current = nextState;
+  }, [debugEnabled, displayedMessage.id, isInlineEditing, message.id, versionLabel, versionLoading]);
 
   const timelineEvents = React.useMemo(
     () => displayedMessage.role === "assistant" ? extractTimelineEvents(displayedMessage) : [],
@@ -435,6 +476,29 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     return { attachedFiles: files, messageText: text };
   }, [displayedMessage.role, displayedMessage.content]);
 
+  const userRoutingHint = React.useMemo(() => {
+    if (displayedMessage.role !== "user") return null;
+    const metadata = displayedMessage.metadata as Record<string, unknown> | undefined;
+    const preferred = typeof metadata?.preferredCapabilityRoute === "string"
+      ? metadata.preferredCapabilityRoute
+      : undefined;
+    const reason = typeof metadata?.capabilityRoutingReason === "string"
+      ? metadata.capabilityRoutingReason
+      : undefined;
+    const toolPolicy = metadata?.toolPolicy;
+    const allow = Array.isArray((toolPolicy as Record<string, unknown> | undefined)?.allow)
+      ? ((toolPolicy as Record<string, unknown>).allow as unknown[])
+      : [];
+    const deny = Array.isArray((toolPolicy as Record<string, unknown> | undefined)?.deny)
+      ? ((toolPolicy as Record<string, unknown>).deny as unknown[])
+      : [];
+    const softPolicyActive = !!toolPolicy
+      && typeof toolPolicy === "object"
+      && (allow.length > 0 || deny.length > 0);
+    if (!preferred) return null;
+    return { preferred, reason, softPolicyActive };
+  }, [displayedMessage]);
+
   if (displayedMessage.role === "user") {
 
     return (
@@ -448,6 +512,21 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
         </div>
 
         <MessageContent>
+          {userRoutingHint ? (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground/75">
+              <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5">
+                route: {userRoutingHint.preferred}
+              </span>
+              {userRoutingHint.softPolicyActive ? (
+                <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-300">
+                  soft policy active
+                </span>
+              ) : null}
+              {userRoutingHint.reason ? (
+                <span className="truncate">{userRoutingHint.reason}</span>
+              ) : null}
+            </div>
+          ) : null}
           {attachedFiles.length > 0 ? (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {attachedFiles.map((file) => (
@@ -469,16 +548,18 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
           ) : null}
         </MessageContent>
 
-        {!isInlineEditing && !actionsDisabled ? (
-          <MessageActions className="mt-0.5 pl-[46px]">
+        {!isInlineEditing ? (
+          <MessageActions
+            className="mt-0.5 pl-[46px] transition-none group-data-[actions-disabled=true]/agentlist:pointer-events-none group-data-[actions-disabled=true]/agentlist:opacity-0"
+          >
             <CopyButton content={messageText || displayedMessage.content} />
             {onResendMessage ? (
-              <MessageAction tooltip="重新发送" onClick={() => void onResendMessage(displayedMessage)}>
+              <MessageAction tooltip="重新发送" onClick={() => void onResendMessage(message)}>
                 <RotateCcw className="size-3.5" />
               </MessageAction>
             ) : null}
             {onStartInlineEdit ? (
-              <MessageAction tooltip="编辑后重发" onClick={() => onStartInlineEdit(displayedMessage)}>
+              <MessageAction tooltip="编辑后重发" onClick={() => onStartInlineEdit(message)}>
                 <Pencil className="size-3.5" />
               </MessageAction>
             ) : null}
@@ -536,7 +617,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
         <MessageContent>
           {displayedMessage.reasoning ? (
             <Reasoning
-              defaultOpen={false}
+              defaultOpen={Boolean((displayedMessage.metadata as Record<string, unknown>)?.reasoningExpanded)}
               duration={typeof (displayedMessage.metadata as Record<string, unknown>)?.thinkingDuration === "number"
                 ? ((displayedMessage.metadata as Record<string, unknown>).thinkingDuration as number)
                 : undefined}
@@ -555,8 +636,10 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             <MessageResponse>{displayedMessage.content}</MessageResponse>
           ) : null}
         </MessageContent>
-        {!actionsDisabled && (displayedMessage.content ?? "").trim().length > 0 ? (
-          <MessageActions className="mt-0.5 pl-[46px]">
+        {(displayedMessage.content ?? "").trim().length > 0 ? (
+          <MessageActions
+            className="mt-0.5 pl-[46px] transition-none group-data-[actions-disabled=true]/agentlist:pointer-events-none group-data-[actions-disabled=true]/agentlist:opacity-0"
+          >
             <CopyButton content={displayedMessage.content} />
             {onSaveAsTask ? (
               <MessageAction tooltip="保存为任务" onClick={() => void onSaveAsTask(displayedMessage)}>
@@ -585,7 +668,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
 }, (prev, next) =>
   prev.message === next.message &&
   prev.displayedMessage === next.displayedMessage &&
-  prev.actionsDisabled === next.actionsDisabled &&
   prev.isInlineEditing === next.isInlineEditing &&
   prev.versionLabel === next.versionLabel &&
   prev.canGoPrevVersion === next.canGoPrevVersion &&
@@ -627,7 +709,7 @@ export function AgentMessages({
   });
 
   const actionsDisabled = isStreaming || streaming;
-  const shouldShowStreamingMessage = streaming || Boolean(smoothContent);
+  const shouldShowStreamingMessage = streaming;
 
   // 当 streaming timeline 中已有文本段时，文字由 EventTimeline 渲染，不需要 smoothContent 单独展示
   const hasTextInStreamingTimeline = streamingTimelineEvents.some((e) => e.type === "text");
@@ -639,6 +721,60 @@ export function AgentMessages({
   // 等待第一个 token 时显示状态行（reasoning/子Agent卡片已有内容时不显示）
   const showLoadingDots = streaming && !smoothContent && !streamingReasoning && streamingTimelineEvents.length === 0 && teammateStates.length === 0;
   const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
+
+  const renderedMessages = React.useMemo(() => {
+    return messages.map((message) => {
+      const displayedMessage = getDisplayedAgentMessage(
+        message,
+        messageVersionsByGroup,
+        selectedVersionIndexByGroup
+      );
+      return {
+        message,
+        displayedMessage,
+        versionLabel: getVersionLabel(message, displayedMessage, messageVersionsByGroup),
+        canGoPrevVersion: canMoveToPreviousVersion(message, displayedMessage, messageVersionsByGroup),
+        canGoNextVersion: canMoveToNextVersion(message, displayedMessage, messageVersionsByGroup),
+        versionLoading: Boolean(message.versionGroupId && loadingGroupIds[message.versionGroupId])
+      };
+    });
+  }, [messages, messageVersionsByGroup, selectedVersionIndexByGroup, loadingGroupIds]);
+
+  const streamingMessage = React.useMemo<AgentMessage | null>(() => {
+    if (!shouldShowStreamingMessage) {
+      return null;
+    }
+    return {
+      id: "streaming-assistant",
+      role: "assistant",
+      content: showSmoothContent ? smoothContent : "",
+      reasoning: streamingReasoning || undefined,
+      createdAt: Date.now(),
+      model: agentModelId ?? undefined,
+      metadata: {
+        ...(streamingToolActivities.length > 0 ? { toolActivitiesSnapshot: streamingToolActivities } : {}),
+        ...(streamingReasoning ? { reasoningExpanded: true } : {})
+      },
+      events: streamingTimelineEvents.flatMap((event) => {
+        if (event.type === "text") {
+          return [{
+            type: "text_complete" as const,
+            text: event.content,
+            isIntermediate: false
+          }];
+        }
+        return [];
+      })
+    };
+  }, [
+    agentModelId,
+    shouldShowStreamingMessage,
+    showSmoothContent,
+    smoothContent,
+    streamingReasoning,
+    streamingTimelineEvents,
+    streamingToolActivities
+  ]);
 
   const ensureVersionsLoaded = React.useCallback(async (message: AgentMessage): Promise<AgentMessage[] | null> => {
     const groupId = message.versionGroupId;
@@ -688,8 +824,8 @@ export function AgentMessages({
   }, [ensureVersionsLoaded, messageVersionsByGroup, selectedVersionIndexByGroup, setSelectedVersionIndexByGroup]);
 
   return (
-    <Conversation className={!streaming ? "cv-ready" : undefined} key={sessionId ?? ""}>
-      <ConversationContent>
+    <Conversation initial={false} resize="instant" key={sessionId ?? ""}>
+      <ConversationContent className="group/agentlist" data-actions-disabled={actionsDisabled}>
         {isSwitching ? (
           <div className="flex h-full items-center justify-center">
             <div className="flex flex-col items-center gap-3 text-muted-foreground">
@@ -700,27 +836,19 @@ export function AgentMessages({
           <EmptyState />
         ) : (
           <>
-            {messages.map((message) => {
-              const displayedMessage = getDisplayedAgentMessage(
-                message,
-                messageVersionsByGroup,
-                selectedVersionIndexByGroup
-              );
-              const versionLabel = getVersionLabel(message, displayedMessage, messageVersionsByGroup);
-
+            {renderedMessages.map((item) => {
               return (
-                <div key={message.id} data-message-id={message.id}>
+                <div key={item.message.id} data-message-id={item.message.id}>
                   <AgentMessageItem
-                    message={message}
-                    displayedMessage={displayedMessage}
-                    actionsDisabled={actionsDisabled}
-                    isInlineEditing={inlineEditingMessageId === message.id || inlineEditingMessageId === displayedMessage.id}
-                    versionLabel={versionLabel}
-                    canGoPrevVersion={canMoveToPreviousVersion(message, displayedMessage, messageVersionsByGroup)}
-                    canGoNextVersion={canMoveToNextVersion(message, displayedMessage, messageVersionsByGroup)}
-                    onPrevVersion={() => { void moveVersion(message, -1); }}
-                    onNextVersion={() => { void moveVersion(message, 1); }}
-                    versionLoading={Boolean(message.versionGroupId && loadingGroupIds[message.versionGroupId])}
+                    message={item.message}
+                    displayedMessage={item.displayedMessage}
+                    isInlineEditing={inlineEditingMessageId === item.message.id || inlineEditingMessageId === item.displayedMessage.id}
+                    versionLabel={item.versionLabel}
+                    canGoPrevVersion={item.canGoPrevVersion}
+                    canGoNextVersion={item.canGoNextVersion}
+                    onPrevVersion={() => { void moveVersion(item.message, -1); }}
+                    onNextVersion={() => { void moveVersion(item.message, 1); }}
+                    versionLoading={item.versionLoading}
                     onDeleteMessage={onDeleteMessage}
                     onResendMessage={onResendMessage}
                     onSaveAsTask={onSaveAsTask}
@@ -732,56 +860,48 @@ export function AgentMessages({
                 </div>
               );
             })}
-            {shouldShowStreamingMessage ? (
-              <Message from="assistant">
-                <MessageHeader
-                  model={agentModelId ?? undefined}
-                  time={formatMessageTime(Date.now())}
-                  logo={<AssistantLogo model={agentModelId ?? undefined} />}
+            {streamingMessage ? (
+              <div data-message-id="streaming-assistant">
+                <AgentMessageItem
+                  message={streamingMessage}
+                  displayedMessage={streamingMessage}
+                  isInlineEditing={false}
+                  versionLabel={null}
+                  canGoPrevVersion={false}
+                  canGoNextVersion={false}
+                  versionLoading={false}
                 />
-                <MessageContent>
-                  {streamingReasoning ? (
-                    <Reasoning isStreaming={reasoningStillActive} defaultOpen>
-                      <ReasoningTrigger />
-                      <ReasoningContent>{streamingReasoning}</ReasoningContent>
-                    </Reasoning>
-                  ) : null}
-                  {streamingTimelineEvents.length > 0 ? (
-                    <div className="mb-2">
-                      <EventTimeline
-                        events={streamingTimelineEvents}
-                        activities={streamingToolActivities}
-                        isStreaming={streaming}
-                      />
-                    </div>
-                  ) : null}
-
-                  {isCompacting ? (
+                {isCompacting ? (
+                  <div className="pl-[46px]">
                     <div className="mb-2 flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground/60">
                       <Loader2 className="size-3 animate-spin shrink-0" />
                       上下文压缩中...
                     </div>
-                  ) : null}
-
-                  {teammateStates.length > 0 ? (
+                  </div>
+                ) : null}
+                {teammateStates.length > 0 ? (
+                  <div className="pl-[46px]">
                     <div className="mb-2">
                       <SubagentLiveCards teammates={teammateStates} />
                     </div>
-                  ) : null}
-
-                  {showSmoothContent ? (
-                    <>
-                      <MessageResponse>{smoothContent}</MessageResponse>
-                      {streaming ? <StreamingIndicator /> : null}
-                    </>
-                  ) : showLoadingDots ? (
+                  </div>
+                ) : null}
+                {!showSmoothContent && showLoadingDots ? (
+                  <div className="pl-[46px]">
                     <AgentStatusLine text={statusLine ?? "正在处理..."} />
-                  ) : streaming && streamingTimelineEvents.length > 0 && statusLine ? (
-                    // 工具执行中或等待工具后的文字 token → 状态行描述
+                  </div>
+                ) : null}
+                {!showSmoothContent && streaming && streamingTimelineEvents.length > 0 && statusLine ? (
+                  <div className="pl-[46px]">
                     <AgentStatusLine text={statusLine} />
-                  ) : null}
-                </MessageContent>
-              </Message>
+                  </div>
+                ) : null}
+                {showSmoothContent && streaming ? (
+                  <div className="pl-[46px]">
+                    <StreamingIndicator />
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </>
         )}

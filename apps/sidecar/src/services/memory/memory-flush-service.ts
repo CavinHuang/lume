@@ -1,8 +1,7 @@
 /**
  * Memory Flush Service
  *
- * 复用自 OpenClaw 的 memory-flush 设计
- * 参考: openclaw/src/auto-reply/reply/memory-flush.ts
+ * 复用自早期 memory-flush 设计
  *
  * 职责：
  * - 判断是否需要执行 Memory Flush

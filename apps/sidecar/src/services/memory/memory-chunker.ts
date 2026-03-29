@@ -121,7 +121,7 @@ export function chunkMarkdown(content: string, path: string, input?: Partial<Chu
  * source file positions using a lineMap.
  *
  * Migrated from:
- * /Users/cavinhuang/workspace/projects/test/openclaw/src/memory/internal.ts
+ * earlier memory internal chunking implementation
  */
 export function remapChunkLines(
   chunks: Array<{ startLine: number; endLine: number }>,

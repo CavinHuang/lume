@@ -9,7 +9,7 @@ import {
 } from "./model-selection";
 
 describe("model-selection", () => {
-  test("normalizeProviderId 应兼容 openclaw 常见别名", () => {
+  test("normalizeProviderId 应兼容历史 provider 别名", () => {
     expect(normalizeProviderId("z.ai")).toBe("zai");
     expect(normalizeProviderId("z-ai")).toBe("zai");
     expect(normalizeProviderId("qwen")).toBe("qwen-portal");

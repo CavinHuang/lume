@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { createAutomationTools } from "./create-automation-tools";
+import { createAutomationTools } from "./create-cron-tools";
 
 function resolveTool(tools: AgentTool[], name: string): AgentTool {
   const tool = tools.find((item) => item.name === name);
@@ -13,7 +13,7 @@ function resolveTool(tools: AgentTool[], name: string): AgentTool {
   return tool;
 }
 
-describe("create-automation-tools", () => {
+describe("create-cron-tools", () => {
   let tempConfigDir = "";
   const oldConfigDir = process.env.LUME_CONFIG_DIR;
 
@@ -33,8 +33,8 @@ describe("create-automation-tools", () => {
 
   test("应支持任务创建、读取、更新、删除", async () => {
     const tools = createAutomationTools({ workspaceId: "ws-1", sessionId: "session-main-1" }) as unknown as AgentTool[];
-    const setTool = resolveTool(tools, "automation_timer_set");
-    const readTool = resolveTool(tools, "automation_timer_read");
+    const setTool = resolveTool(tools, "cron_set");
+    const readTool = resolveTool(tools, "cron_read");
 
     const createResult = await setTool.execute("tool-call-create", {
       action: "create",
@@ -73,7 +73,7 @@ describe("create-automation-tools", () => {
 
   test("query 应返回运行记录结构", async () => {
     const tools = createAutomationTools({ workspaceId: "ws-1" }) as unknown as AgentTool[];
-    const queryTool = resolveTool(tools, "automation_timer_query");
+    const queryTool = resolveTool(tools, "cron_query");
     const result = await queryTool.execute("tool-call-query", { limit: 5 }, new AbortController().signal);
     const details = result.details as { ok?: boolean; runs?: unknown[] };
     expect(details.ok).toBeTrue();
@@ -82,7 +82,7 @@ describe("create-automation-tools", () => {
 
   test("run_now 应异步触发并立即返回 accepted", async () => {
     const tools = createAutomationTools({ workspaceId: "ws-1", sessionId: "session-main-1" }) as unknown as AgentTool[];
-    const setTool = resolveTool(tools, "automation_timer_set");
+    const setTool = resolveTool(tools, "cron_set");
 
     const createResult = await setTool.execute("tool-call-create-run-now", {
       action: "create",

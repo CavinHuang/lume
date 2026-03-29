@@ -86,7 +86,7 @@ Examples:
     async execute(_toolCallId, args) {
       const params = args as Record<string, unknown>;
       const action = params.action as string;
-      const browserApi = await import("../../browser/browser-service");
+      const browserApi = await import("../../../browser/browser-service");
 
       try {
         switch (action) {

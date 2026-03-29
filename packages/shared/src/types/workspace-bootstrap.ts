@@ -2,7 +2,7 @@
  * Workspace Bootstrap Types
  *
  * 复用自 OpenClaw 的 workspace bootstrap 设计
- * 参考: openclaw/src/agents/workspace.ts
+ * 参考来源: 早期工作区 bootstrap 设计
  */
 
 // ===== Bootstrap 文件类型 =====

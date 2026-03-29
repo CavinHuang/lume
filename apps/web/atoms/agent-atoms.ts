@@ -9,7 +9,8 @@ import type {
   AgentSessionMeta,
   AgentToolPermissionRequest,
   AgentWorkspace,
-  AgentSendInput
+  AgentSendInput,
+  ThinkingLevel
 } from "@lume/shared";
 import {
   isAgentRuntimePhaseActive,
@@ -43,6 +44,7 @@ export const agentPermissionModeAtom = atomWithStorage<NonNullable<AgentSendInpu
   "lume-agent-permission-mode",
   "bypassPermissions"
 );
+export const agentThinkingLevelAtom = atomWithStorage<ThinkingLevel>("lume-agent-thinking-level", "medium");
 export const agentPendingPromptAtom = atom<{ sessionId: string; message: string } | null>(null);
 export const agentPendingFilesAtom = atom<AgentPendingFile[]>([]);
 export const workspaceCapabilitiesVersionAtom = atom<number>(0);
@@ -160,6 +162,38 @@ export const currentAgentSessionAtom = atom<AgentSessionMeta | null>((get) => {
   const currentId = get(currentAgentSessionIdAtom);
   if (!currentId) return null;
   return sessions.find((item) => item.id === currentId) ?? null;
+});
+
+export const currentAgentCapabilityRouteHintAtom = atom<{
+  preferred: string;
+  reason?: string;
+  softPolicyActive?: boolean;
+} | null>((get) => {
+  const messages = get(currentAgentMessagesAtom);
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || message.role !== "user") continue;
+    const metadata = message.metadata as Record<string, unknown> | undefined;
+    const preferred = typeof metadata?.preferredCapabilityRoute === "string"
+      ? metadata.preferredCapabilityRoute
+      : undefined;
+    if (!preferred) continue;
+    const reason = typeof metadata?.capabilityRoutingReason === "string"
+      ? metadata.capabilityRoutingReason
+      : undefined;
+    const toolPolicy = metadata?.toolPolicy;
+    const allow = Array.isArray((toolPolicy as Record<string, unknown> | undefined)?.allow)
+      ? ((toolPolicy as Record<string, unknown>).allow as unknown[])
+      : [];
+    const deny = Array.isArray((toolPolicy as Record<string, unknown> | undefined)?.deny)
+      ? ((toolPolicy as Record<string, unknown>).deny as unknown[])
+      : [];
+    const softPolicyActive = !!toolPolicy
+      && typeof toolPolicy === "object"
+      && (allow.length > 0 || deny.length > 0);
+    return { preferred, reason, softPolicyActive };
+  }
+  return null;
 });
 
 export const agentRunningSessionIdsAtom = atom<Set<string>>((get) => {

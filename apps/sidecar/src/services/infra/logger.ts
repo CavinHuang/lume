@@ -1,12 +1,11 @@
 /**
- * 日志服务 - 基于 pino 实现
- * - 自动写入本地文件（按日期分割）
- * - 支持控制台美化输出
- * - 支持会话关联
+ * 日志服务
+ * - 优先使用 pino
+ * - pino 不可用时回退到 console，避免运行时因日志依赖阻塞主流程或测试
  */
 
-import pino from "pino";
 import { mkdirSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getConfigDir } from "./config-paths";
@@ -50,9 +49,57 @@ type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 const MIN_LEVEL: LogLevel = (process.env.LUME_LOG_LEVEL as LogLevel) || "info";
 const CONSOLE_ENABLED = process.env.LUME_LOG_CONSOLE !== "false";
 
-let baseLogger: pino.Logger | null = null;
+interface LoggerBackend {
+  child(bindings: { context?: string; sessionId?: string }): LoggerBackend;
+  trace(data: Record<string, unknown>, msg: string): void;
+  debug(data: Record<string, unknown>, msg: string): void;
+  info(data: Record<string, unknown>, msg: string): void;
+  warn(data: Record<string, unknown>, msg: string): void;
+  error(data: Record<string, unknown>, msg: string): void;
+  fatal(data: Record<string, unknown>, msg: string): void;
+}
 
-function getBaseLogger(): pino.Logger {
+const require = createRequire(import.meta.url);
+let baseLogger: LoggerBackend | null = null;
+let didWarnPinoUnavailable = false;
+
+function createConsoleBackend(bindings: { context?: string; sessionId?: string } = {}): LoggerBackend {
+  const withBindings = (data: Record<string, unknown>, msg: string) => ({
+    ...bindings,
+    ...data,
+    msg,
+    time: new Date().toISOString()
+  });
+
+  return {
+    child(nextBindings) {
+      return createConsoleBackend({
+        ...bindings,
+        ...nextBindings
+      });
+    },
+    trace(data, msg) {
+      console.debug(withBindings(data, msg));
+    },
+    debug(data, msg) {
+      console.debug(withBindings(data, msg));
+    },
+    info(data, msg) {
+      console.info(withBindings(data, msg));
+    },
+    warn(data, msg) {
+      console.warn(withBindings(data, msg));
+    },
+    error(data, msg) {
+      console.error(withBindings(data, msg));
+    },
+    fatal(data, msg) {
+      console.error(withBindings(data, msg));
+    }
+  };
+}
+
+function getBaseLogger(): LoggerBackend {
   if (baseLogger) {
     return baseLogger;
   }
@@ -78,13 +125,31 @@ function getBaseLogger(): pino.Logger {
     });
   }
 
-  baseLogger = pino(
-    {
-      level: MIN_LEVEL,
-      timestamp: pino.stdTimeFunctions.isoTime
-    },
-    pino.transport({ targets: transports })
-  );
+  try {
+    const pinoModule = require("pino") as {
+      default: ((options: Record<string, unknown>, destination: unknown) => LoggerBackend) & {
+        transport: (options: Record<string, unknown>) => unknown;
+        stdTimeFunctions: { isoTime: () => string };
+      };
+    };
+    const pino = pinoModule.default;
+    baseLogger = pino(
+      {
+        level: MIN_LEVEL,
+        timestamp: pino.stdTimeFunctions.isoTime
+      },
+      pino.transport({ targets: transports })
+    );
+    return baseLogger;
+  } catch (error) {
+    if (!didWarnPinoUnavailable) {
+      didWarnPinoUnavailable = true;
+      console.warn("[logger] pino unavailable, falling back to console logger", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+    baseLogger = createConsoleBackend();
+  }
   return baseLogger;
 }
 
