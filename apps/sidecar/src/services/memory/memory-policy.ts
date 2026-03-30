@@ -1,5 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { getMemoryConfigPath } from "../infra/config-paths";
+import {
+  compilePatterns as compilePatterns_shared,
+  matchesAny,
+  type CompiledPattern
+} from "../infra/pattern-utils";
 
 export type MemoryCitationsMode = "on" | "off" | "auto";
 export type MemoryChatType = "direct" | "group" | "channel";
@@ -57,42 +62,8 @@ function expandToolEntries(entries?: string[]): string[] {
   return Array.from(new Set(expanded));
 }
 
-type CompiledPattern =
-  | { kind: "all" }
-  | { kind: "exact"; value: string }
-  | { kind: "regex"; value: RegExp };
-
-function compilePattern(pattern: string): CompiledPattern {
-  const normalized = normalizeEntry(pattern);
-  if (!normalized) {
-    return { kind: "exact", value: "" };
-  }
-  if (normalized === "*") {
-    return { kind: "all" };
-  }
-  if (!normalized.includes("*")) {
-    return { kind: "exact", value: normalized };
-  }
-  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return {
-    kind: "regex",
-    value: new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`)
-  };
-}
-
 function compilePatterns(entries?: string[]): CompiledPattern[] {
-  return expandToolEntries(entries)
-    .map((entry) => compilePattern(entry))
-    .filter((entry) => entry.kind !== "exact" || entry.value);
-}
-
-function matchesAny(name: string, patterns: CompiledPattern[]): boolean {
-  for (const pattern of patterns) {
-    if (pattern.kind === "all") return true;
-    if (pattern.kind === "exact" && pattern.value === name) return true;
-    if (pattern.kind === "regex" && pattern.value.test(name)) return true;
-  }
-  return false;
+  return compilePatterns_shared(expandToolEntries(entries), normalizeEntry);
 }
 
 export function deriveChatTypeFromSessionKey(sessionKey?: string): MemoryChatType {

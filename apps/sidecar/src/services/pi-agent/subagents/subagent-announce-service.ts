@@ -1,15 +1,47 @@
 import { randomUUID } from "node:crypto";
-import type { AgentMessage } from "@lume/shared";
+import type { AgentMessage, SubagentRunStatus } from "@lume/shared";
 import {
   appendAgentTranscriptMessage,
   getAgentSessionMeta,
   updateAgentSessionMeta
 } from "../../agent/agent-session-manager";
 import { createLogger } from "../../infra/logger";
-import { subagentLogFields } from "./subagent-observability";
+import { subagentLogFields } from "./subagent-run-registry";
 import type { SubagentRun } from "./subagent-run.types";
-import { emitSubagentAnnounceEvent } from "./subagent-announce-bus";
 import { releaseSubagentThreadBinding } from "./subagent-thread-binding";
+
+// ─── Announce event bus (migrated from subagent-announce-bus.ts) ───
+
+export interface SubagentAnnounceBusEvent {
+  sessionId: string;
+  runId: string;
+  childSessionId: string;
+  status: SubagentRunStatus;
+  message: AgentMessage;
+}
+
+type AnnounceBusListener = (event: SubagentAnnounceBusEvent) => void;
+
+const announceBusListeners = new Set<AnnounceBusListener>();
+
+export function emitSubagentAnnounceEvent(event: SubagentAnnounceBusEvent): void {
+  for (const listener of announceBusListeners) {
+    try {
+      listener(event);
+    } catch {
+      // no-op, bus listener failures must not break runtime path
+    }
+  }
+}
+
+export function subscribeSubagentAnnounceEvent(listener: AnnounceBusListener): () => void {
+  announceBusListeners.add(listener);
+  return () => {
+    announceBusListeners.delete(listener);
+  };
+}
+
+// ─── Announce service ───
 
 const ANNOUNCE_MAX_RETRIES = 3;
 const ANNOUNCE_RETRY_DELAYS_MS = [40, 120, 320] as const;

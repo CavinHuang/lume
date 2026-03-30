@@ -6,7 +6,6 @@ import { createPiControlTools } from "./control/create-control-tools";
 import { createPiMemoryTools } from "./memory/create-memory-tools";
 import { createSessionTools } from "./session/create-session-tools";
 import { createWebTools, WEB_TOOL_NAMES } from "./web/create-web-tools";
-import { createBrowserTool } from "./browser/browser-tool";
 import { createCronTools } from "./cron/create-cron-tools";
 import { resolveEnabledPiMemoryToolNames } from "./permissions/tool-policy";
 
@@ -82,12 +81,11 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
   const webTools = createWebTools();
 
   // 不再在这里过滤，由 tool-permission-gate.ts 基于 tool-metadata.ts 处理
-  const browserTool = createBrowserTool();
   const cronTools = createCronTools({
     workspaceId: input.workspaceId,
     sessionId: input.sessionId
   });
-  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...webTools, browserTool, ...cronTools];
+  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...webTools, ...cronTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {

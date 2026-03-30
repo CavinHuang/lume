@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLiteEmbedding } from "./embeddings-lite";
+import { createLiteEmbedding } from "./embedding";
 
 describe("embeddings-lite", () => {
   test("应稳定输出固定维度向量", () => {

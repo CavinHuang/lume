@@ -2,7 +2,7 @@
 
 import { useAtom, useAtomValue } from "jotai";
 import type { ReactNode } from "react";
-import { BookOpen, Clock, GraduationCap, Info, MessageCircle, Plug, Radio, Settings, Sparkles, User, Wrench } from "lucide-react";
+import { BookOpen, Clock, GraduationCap, Info, Plug, Radio, Settings, Sparkles, User, Wrench } from "lucide-react";
 import { appModeAtom, hasUpdateAtom, settingsTabAtom, type SettingsTab } from "@/atoms";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -12,7 +12,6 @@ import { AutomationSettings } from "./AutomationSettings";
 import { ChannelSettings } from "./ChannelSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { IdentitySettings } from "./IdentitySettings";
-import { IMChannelSettings } from "./IMChannelSettings";
 import { PromptSettings } from "./PromptSettings";
 import { SkillsSettings } from "./SkillsSettings";
 import { ToolSettings } from "./ToolSettings";
@@ -36,7 +35,6 @@ const AGENT_TAB: TabItem = { id: "agent", label: "配置", icon: <Plug size={16}
 const AUTOMATION_TAB: TabItem = { id: "automation", label: "自动化", icon: <Clock size={16} /> };
 const IDENTITY_TAB: TabItem = { id: "identity", label: "身份", icon: <User size={16} /> };
 const SKILLS_TAB: TabItem = { id: "skills", label: "Skills", icon: <Sparkles size={16} /> };
-const IM_CHANNEL_TAB: TabItem = { id: "im-channel", label: "IM渠道", icon: <MessageCircle size={16} /> };
 
 const TAIL_TABS: TabItem[] = [
   { id: "about", label: "关于", icon: <Info size={16} /> }
@@ -62,8 +60,6 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <ToolSettings />;
     case "tutorial":
       return <TutorialSettings />;
-    case "im-channel":
-      return <IMChannelSettings />;
     case "about":
       return <AboutSettings />;
   }
@@ -75,7 +71,7 @@ export function SettingsPanel(): React.ReactElement {
   const hasUpdate = useAtomValue(hasUpdateAtom);
 
   const tabs = appMode === "agent"
-    ? [...BASE_TABS, AGENT_TAB, AUTOMATION_TAB, IDENTITY_TAB, SKILLS_TAB, IM_CHANNEL_TAB, ...TAIL_TABS]
+    ? [...BASE_TABS, AGENT_TAB, AUTOMATION_TAB, IDENTITY_TAB, SKILLS_TAB, ...TAIL_TABS]
     : [...BASE_TABS, ...TAIL_TABS];
 
   return (

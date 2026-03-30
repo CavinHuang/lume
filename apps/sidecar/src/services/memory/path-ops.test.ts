@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ensureInsideRoot, ensurePathAllowed } from "./path-ops";
+import { ensureInsideRoot, ensurePathAllowed } from "./memory-path-utils";
 
 describe("path-ops", () => {
   test("ensureInsideRoot 允许工作区内路径并拒绝越界", () => {

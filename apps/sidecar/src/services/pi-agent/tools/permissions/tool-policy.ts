@@ -1,5 +1,10 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createLogger } from "../../../infra/logger";
+import {
+  compilePatterns as compilePatterns_shared,
+  makeMatcher as makeMatcher_shared,
+  type CompiledPattern
+} from "../../../infra/pattern-utils";
 import { getAgentRuntimeConfigPath } from "../../../infra/config-paths";
 import { applyMemoryToolPolicy } from "../../../memory/memory-policy";
 import type { MemoryToolPolicy } from "../../../memory/memory-policy";
@@ -84,11 +89,6 @@ const DEFAULT_AGENT_TOOL_POLICY_CONFIG: AgentRuntimeToolPolicyConfig = {
   }
 };
 
-type CompiledPattern =
-  | { kind: "all" }
-  | { kind: "exact"; value: string }
-  | { kind: "regex"; value: RegExp };
-
 export type ToolPolicy = AgentToolPolicy;
 
 export interface ResolveEffectiveToolPolicyInput {
@@ -139,48 +139,14 @@ function expandEntries(entries?: string[]): string[] {
   return Array.from(new Set(expanded));
 }
 
-function compilePattern(rawPattern: string): CompiledPattern {
-  const pattern = normalizeToolName(rawPattern);
-  if (!pattern) {
-    return { kind: "exact", value: "" };
-  }
-  if (pattern === "*") {
-    return { kind: "all" };
-  }
-  if (!pattern.includes("*")) {
-    return { kind: "exact", value: pattern };
-  }
-  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return {
-    kind: "regex",
-    value: new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`)
-  };
-}
-
 function compilePatterns(entries?: string[]): CompiledPattern[] {
-  return expandEntries(entries)
-    .map(compilePattern)
-    .filter((entry) => entry.kind !== "exact" || entry.value.length > 0);
-}
-
-function matchesAny(name: string, patterns: CompiledPattern[]): boolean {
-  for (const pattern of patterns) {
-    if (pattern.kind === "all") return true;
-    if (pattern.kind === "exact" && pattern.value === name) return true;
-    if (pattern.kind === "regex" && pattern.value.test(name)) return true;
-  }
-  return false;
+  return compilePatterns_shared(expandEntries(entries), normalizeToolName);
 }
 
 function makeMatcher(policy: ToolPolicy): (toolName: string) => boolean {
   const deny = compilePatterns(policy.deny);
   const allow = compilePatterns(policy.allow);
-  return (toolName) => {
-    const normalized = normalizeToolName(toolName);
-    if (matchesAny(normalized, deny)) return false;
-    if (allow.length === 0) return true;
-    return matchesAny(normalized, allow);
-  };
+  return makeMatcher_shared(allow, deny, normalizeToolName);
 }
 
 function filterToolsByPolicy(tools: AgentTool[], policy?: ToolPolicy): AgentTool[] {

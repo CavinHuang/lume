@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { embedTextsWithProvider, resolveEmbeddingProvider } from "./embedding-provider";
+import { embedTextsWithProvider, resolveEmbeddingProvider } from "./embedding";
 
 describe("embedding-provider", () => {
   test("无 key 时 auto 应回退 lite", () => {

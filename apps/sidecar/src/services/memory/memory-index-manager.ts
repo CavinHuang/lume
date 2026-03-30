@@ -12,10 +12,16 @@ import {
 } from "./constants";
 import { chunkMarkdown, remapChunkLines } from "./memory-chunker";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid-search";
-import { createLiteEmbedding } from "./embeddings-lite";
-import { embedTextWithProvider, embedTextsWithProvider, resolveEmbeddingProvider, type ResolvedEmbeddingProvider } from "./embedding-provider";
-import { embedTextWithCache, embedTextsWithCache } from "./embedding-ops";
-import { ensureInsideRoot, ensurePathAllowed } from "./path-ops";
+import {
+  createLiteEmbedding,
+  embedTextWithProvider,
+  embedTextsWithProvider,
+  resolveEmbeddingProvider,
+  type ResolvedEmbeddingProvider,
+  embedTextWithCache,
+  embedTextsWithCache
+} from "./embedding";
+import { ensureInsideRoot, ensurePathAllowed } from "./memory-path-utils";
 import { searchDenseFallbackRows, searchKeywordRows, searchVectorRows } from "./search-ops";
 import {
   countChunksBySource,
@@ -25,7 +31,7 @@ import {
 } from "./status-ops";
 import { collectWorkspaceMemoryEntries, pruneStaleIndexedRows, type SyncTargetEntry } from "./sync-ops";
 import type { HybridSearchResult } from "./types";
-import { listSessionEntriesForWorkspace } from "./session-files";
+import { listSessionEntriesForWorkspace } from "../session/session-files";
 import {
   isMarkdownFile,
   isMemoryPath,

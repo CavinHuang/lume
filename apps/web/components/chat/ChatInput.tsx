@@ -114,12 +114,15 @@ export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInpu
           mediaType: fileInfo.mediaType,
           localPath: "",
           size: fileInfo.size,
+          sourcePath: fileInfo.sourcePath,
           previewUrl
         };
-        if (!window.__pendingAttachmentData) {
-          window.__pendingAttachmentData = new Map<string, string>();
+        if (fileInfo.data) {
+          if (!window.__pendingAttachmentData) {
+            window.__pendingAttachmentData = new Map<string, string>();
+          }
+          window.__pendingAttachmentData.set(attachment.id, fileInfo.data);
         }
-        window.__pendingAttachmentData.set(attachment.id, fileInfo.data);
         setPendingAttachments((prev) => [...prev, attachment]);
       }
     } catch (error) {

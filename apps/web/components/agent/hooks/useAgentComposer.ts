@@ -231,9 +231,12 @@ export function useAgentComposer({
           filename: fileInfo.filename,
           mediaType: fileInfo.mediaType,
           size: fileInfo.size,
+          sourcePath: fileInfo.sourcePath,
           previewUrl
         });
-        window.__pendingAgentFileData.set(id, fileInfo.data);
+        if (fileInfo.data) {
+          window.__pendingAgentFileData.set(id, fileInfo.data);
+        }
       }
       setPendingFiles((prev) => [...prev, ...next]);
     } catch (error) {
@@ -446,7 +449,8 @@ export function useAgentComposer({
       try {
         const files = pendingFiles.map((file) => ({
           filename: file.filename,
-          data: window.__pendingAgentFileData?.get(file.id) || ""
+          ...(window.__pendingAgentFileData?.get(file.id) ? { data: window.__pendingAgentFileData?.get(file.id) || "" } : {}),
+          ...(file.sourcePath ? { sourcePath: file.sourcePath } : {})
         }));
         const saved = await saveFilesToAgentSession({
           workspaceSlug: currentWorkspaceSlug,

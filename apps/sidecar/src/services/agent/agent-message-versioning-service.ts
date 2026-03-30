@@ -1,3 +1,4 @@
+// TODO: 评估简化版本管理复杂度（当前 20+ 函数），与 UX 需求对齐
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@lume/shared";
 import {

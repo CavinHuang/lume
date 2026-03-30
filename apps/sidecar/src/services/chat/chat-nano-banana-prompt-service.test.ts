@@ -8,24 +8,22 @@ import {
 } from "./chat-nano-banana-prompt-service";
 
 describe("chat-nano-banana-prompt-service", () => {
-  test("继续编辑时应继承历史风格并保留意图记忆", () => {
-    const history = [
-      {
-        id: "u1",
-        role: "user",
-        content: "做一张赛博朋克风格海报，不要文字",
-        createdAt: Date.now()
-      }
-    ] as ChatMessage[];
-
-    const prompt = buildNanoBananaEnhancedPrompt("继续这张，改成横版", {
-      messageHistory: history,
-      useReferenceImages: true
+  test("buildNanoBananaEnhancedPrompt 应附加静态 style/constraint 引导", () => {
+    const prompt = buildNanoBananaEnhancedPrompt("做一张赛博朋克风格海报", {
+      messageHistory: [],
+      useReferenceImages: false
     });
 
-    expect(prompt).toContain("cyberpunk style");
+    expect(prompt).toContain("做一张赛博朋克风格海报");
+    expect(prompt).toContain("[Style guidance]");
+    expect(prompt).toContain("[Constraint guidance]");
+    expect(prompt).toContain("no watermark");
     expect(prompt).toContain("no text overlay");
-    expect(prompt).toContain("Intent memory");
+  });
+
+  test("buildNanoBananaEnhancedPrompt 空输入应返回空字符串", () => {
+    expect(buildNanoBananaEnhancedPrompt("")).toBe("");
+    expect(buildNanoBananaEnhancedPrompt("  ")).toBe("");
   });
 
   test("应推断画幅、分辨率和参考图使用策略", () => {

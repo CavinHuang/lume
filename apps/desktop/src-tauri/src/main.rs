@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
-use base64::Engine as _;
 use log::{error, info, warn};
 use tauri::Emitter;
 use tauri::Manager;
@@ -179,8 +178,6 @@ fn open_file_dialog() -> Result<serde_json::Value, String> {
 
     let mut out = Vec::<serde_json::Value>::new();
     for file_path in files {
-        let bytes = std::fs::read(&file_path)
-            .map_err(|e| format!("read selected file failed ({}): {e}", file_path.display()))?;
         let filename = file_path
             .file_name()
             .and_then(|n| n.to_str())
@@ -214,13 +211,14 @@ fn open_file_dialog() -> Result<serde_json::Value, String> {
             "ods" => "application/vnd.oasis.opendocument.spreadsheet",
             _ => "application/octet-stream",
         };
-        let size = bytes.len();
-        let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let size = std::fs::metadata(&file_path)
+            .map_err(|e| format!("stat selected file failed ({}): {e}", file_path.display()))?
+            .len() as usize;
         out.push(serde_json::json!({
             "filename": filename,
             "mediaType": media_type,
-            "data": data,
-            "size": size
+            "size": size,
+            "sourcePath": file_path.to_string_lossy().to_string()
         }));
     }
 
@@ -476,12 +474,18 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
         return None;
     }
 
-    let mut process = Command::new("node");
     let bun_bin = resolve_bun_binary();
+    let dist_entry = sidecar_dir.join("dist/index.js");
+    let src_entry = sidecar_dir.join("src/index.ts");
+    let sidecar_entry = if dist_entry.exists() {
+        dist_entry
+    } else {
+        src_entry
+    };
+    let mut process = Command::new(&bun_bin);
     let default_skills_dir = resolve_default_skills_dir(app, &sidecar_dir);
     process
-        .arg("scripts/stdin-bridge.mjs")
-        .env("LUME_BUN_BIN", bun_bin.clone())
+        .arg(sidecar_entry.to_string_lossy().to_string())
         .current_dir(&sidecar_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -493,8 +497,9 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
     match process.spawn() {
         Ok(child) => {
             info!(
-                "[desktop] sidecar process booted from default path: {} (runtime=node-bridge, bun={}, default-skills={})",
+                "[desktop] sidecar process booted from default path: {} (runtime=bun-direct, entry={}, bun={}, default-skills={})",
                 sidecar_dir.display(),
+                sidecar_entry.display(),
                 bun_bin,
                 default_skills_dir.as_deref().unwrap_or("not-found")
             );

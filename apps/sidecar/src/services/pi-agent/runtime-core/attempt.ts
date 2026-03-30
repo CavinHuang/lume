@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { updateAgentSessionMeta } from "../../agent/agent-session-manager";
 import {
   appendAgentEvents,
@@ -9,15 +8,12 @@ import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { decryptApiKey, listChannels } from "../../channel/channel-manager";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../infra/logger";
-import { waitForPiAskUserQuestionAnswers } from "../tools/bridges/ask-user-question-bridge";
-import { waitForToolPermissionDecision } from "../tools/bridges/tool-permission-bridge";
-import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
-import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { projectRuntimeCoreEventToLumeEvents } from "./subscribe";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreAgentDir } from "./session-store";
 import { applyRuntimeCoreStreamWrappers, createRuntimeCoreStreamWrapperState } from "./stream-wrappers";
 import { resolveRuntimeCoreChannelModel } from "./model";
+import { resolveMockAttempt } from "./mock-attempt";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
 import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
 
@@ -43,23 +39,19 @@ export async function runRuntimeCoreAttempt(
   options: RunRuntimeCoreAttemptOptions
 ): Promise<PiAgentRunResult> {
   const { input, runtime } = params;
-  if (process.env.LUME_PI_AGENT_MOCK_ERROR === "1") {
-    return runRuntimeCoreMockErrorAttempt(emit);
-  }
+
+  // Mock 分支委托到 mock-attempt.ts，生产路径无 mock 分支
+  const mockHandler = resolveMockAttempt(input);
+
   const prepared = prepareRuntimeCoreAttempt(params);
+  if (mockHandler) {
+    if ("status" in prepared) {
+      return prepared;
+    }
+    return mockHandler(params, emit, options, prepared);
+  }
   if ("status" in prepared) {
     return prepared;
-  }
-
-  const mockDelayMs = resolveMockDelayMs();
-  if (mockDelayMs > 0) {
-    return runRuntimeCoreMockDelayedAttempt(params, emit, options, mockDelayMs, prepared);
-  }
-  if (process.env.LUME_PI_AGENT_MOCK_SUCCESS === "1") {
-    if (shouldRunMockCompaction(input.userMessage)) {
-      return runRuntimeCoreMockCompactionAttempt(params, emit, prepared);
-    }
-    return runRuntimeCoreMockSuccessAttempt(params, emit, prepared);
   }
 
   const upstream = await createRuntimeCoreSession({
@@ -160,389 +152,6 @@ export async function runRuntimeCoreAttempt(
   }
 }
 
-async function runRuntimeCoreMockSuccessAttempt(
-  params: PiAgentRunParams,
-  emit: PiAgentRuntimeEmitter,
-  prepared: PreparedRuntimeCoreAttempt
-): Promise<PiAgentRunResult> {
-  const { input, runtime } = params;
-  const mockText = (process.env.LUME_PI_AGENT_MOCK_TEXT || "Lume runtime-core mock success").trim();
-  const upstream = await createRuntimeCoreSession({
-    lumeSessionId: runtime.sessionId,
-    cwd: prepared.agentCwd,
-    agentDir: prepared.agentDir,
-    userMessage: input.userMessage,
-    provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
-    resolvedModel: prepared.modelResolution.model,
-    apiKey: prepared.apiKey,
-    workspaceId: runtime.workspaceId,
-    workspaceName: prepared.workspaceName,
-    workspaceSlug: prepared.workspaceSlug,
-    channelId: runtime.channelId,
-    sessionType: runtime.sessionType,
-    chatType: input.chatType,
-    permissionMode: input.permissionMode,
-    messageMetadata: input.messageMetadata,
-    emitAskUserQuestion: emit.onAskUserQuestion,
-    emitToolPermissionRequest: emit.onToolPermissionRequest
-  });
-  const { session, sessionManager } = upstream;
-  logMockSessionPersistence("mock_success", runtime.sessionId, sessionManager);
-  const accumulator = createAgentStreamAccumulatorState();
-  const textEvent = { type: "text_delta" as const, text: mockText };
-  appendAgentEvents(accumulator, [textEvent]);
-  sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
-  sessionManager.appendThinkingLevelChange("medium");
-  sessionManager.appendMessage({
-    role: "user",
-    content: [{ type: "text", text: input.userMessage }],
-    timestamp: Date.now()
-  });
-  sessionManager.appendMessage({
-    role: "assistant",
-    provider: prepared.modelResolution.provider,
-    model: prepared.modelResolution.resolvedModelId,
-    api: "anthropic-messages",
-    stopReason: "stop",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-    },
-    content: [{ type: "text", text: mockText }],
-    timestamp: Date.now()
-  });
-  const interactiveResult = await runMockInteractiveBridges(runtime.sessionId, emit);
-  if (interactiveResult.status !== "ok") {
-    session.dispose();
-    return {
-      status: "errored",
-      errorMessage: interactiveResult.error
-    };
-  }
-  await maybeEmitMockSubagentAnnounce(runtime.sessionId);
-  emit.onEvent(textEvent);
-  emit.onEvent({
-    type: "complete",
-    stopReason: "completed",
-    usage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      costUsd: 0
-    }
-  });
-  updateAgentSessionMeta(runtime.sessionId, {
-    piSessionId: session.sessionId
-  });
-  session.dispose();
-  emit.onComplete();
-  return { status: "completed" };
-}
-
-async function runMockInteractiveBridges(
-  sessionId: string,
-  emit: PiAgentRuntimeEmitter
-): Promise<{ status: "ok" } | { status: "errored"; error: string }> {
-  if (process.env.LUME_PI_AGENT_MOCK_TOOL_PERMISSION === "1") {
-    const controller = new AbortController();
-    const decision = await waitForToolPermissionDecision(
-      {
-        sessionId,
-        requestId: `mock-permission:${sessionId}`,
-        toolUseId: `mock-tool-use:${sessionId}`,
-        toolName: "write",
-        risk: "high",
-        reason: "mock permission request",
-        input: { path: "mock-permission.txt" }
-      },
-      controller.signal,
-      emit.onToolPermissionRequest
-    );
-    if (decision !== "allow_once" && decision !== "allow_always") {
-      return {
-        status: "errored",
-        error: "mock tool permission denied"
-      };
-    }
-  }
-
-  if (process.env.LUME_PI_AGENT_MOCK_ASK_USER_QUESTION === "1") {
-    const controller = new AbortController();
-    const answerResult = await waitForPiAskUserQuestionAnswers(
-      sessionId,
-      `mock-ask:${sessionId}`,
-      [
-        {
-          header: "范围",
-          question: "是否继续执行 smoke bridge？",
-          options: [
-            { label: "继续", description: "继续后续步骤" }
-          ],
-          multiSelect: false
-        }
-      ],
-      controller.signal,
-      emit.onAskUserQuestion
-    );
-    if (answerResult.status !== "answered") {
-      return {
-        status: "errored",
-        error: `mock ask user question not answered: ${answerResult.status}`
-      };
-    }
-  }
-
-  return { status: "ok" };
-}
-
-async function maybeEmitMockSubagentAnnounce(sessionId: string): Promise<void> {
-  if (process.env.LUME_PI_AGENT_MOCK_SUBAGENT_ANNOUNCE !== "1") {
-    return;
-  }
-  const runId = `mock-subagent-run:${sessionId}`;
-  const registry = getSubagentRunRegistry();
-  if (!registry.get(runId)) {
-    registry.create({
-      runId,
-      parentSessionId: sessionId,
-      rootSessionId: sessionId,
-      childSessionId: `mock-child-session:${sessionId}`,
-      label: "Mock Subagent",
-      task: "mock subagent completion",
-      cleanup: "keep",
-      status: "completed",
-      announceStatus: "pending"
-    });
-  }
-
-  const result = await announceSubagentCompletion({
-    run: {
-      runId,
-      parentSessionId: sessionId,
-      rootSessionId: sessionId,
-      depth: 1,
-      childSessionId: `mock-child-session:${sessionId}`,
-      label: "Mock Subagent",
-      task: "mock subagent completion",
-      status: "completed",
-      cleanup: "keep",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      startedAt: Date.now() - 10,
-      endedAt: Date.now(),
-      outcome: {
-        output: "mock subagent announce output",
-        usageEvents: 1
-      }
-    }
-  });
-
-  registry.update(runId, {
-    announceStatus: result.delivered ? "delivered" : "failed",
-    announceAttempts: result.attempts,
-    announceLastError: result.error,
-    announceDeliveredAt: result.delivered ? Date.now() : undefined
-  });
-}
-
-async function runRuntimeCoreMockCompactionAttempt(
-  params: PiAgentRunParams,
-  emit: PiAgentRuntimeEmitter,
-  prepared: PreparedRuntimeCoreAttempt
-): Promise<PiAgentRunResult> {
-  const { input, runtime } = params;
-  const summary = (process.env.LUME_PI_AGENT_MOCK_COMPACTION_SUMMARY || "mock compaction summary").trim();
-  const upstream = await createRuntimeCoreSession({
-    lumeSessionId: runtime.sessionId,
-    cwd: prepared.agentCwd,
-    agentDir: prepared.agentDir,
-    userMessage: input.userMessage,
-    provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
-    resolvedModel: prepared.modelResolution.model,
-    apiKey: prepared.apiKey,
-    workspaceId: runtime.workspaceId,
-    workspaceName: prepared.workspaceName,
-    workspaceSlug: prepared.workspaceSlug,
-    channelId: runtime.channelId,
-    sessionType: runtime.sessionType,
-    chatType: input.chatType,
-    permissionMode: input.permissionMode,
-    messageMetadata: input.messageMetadata,
-    emitAskUserQuestion: emit.onAskUserQuestion,
-    emitToolPermissionRequest: emit.onToolPermissionRequest
-  });
-  const { session, sessionManager } = upstream;
-  logMockSessionPersistence("mock_compaction", runtime.sessionId, sessionManager);
-  sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
-  sessionManager.appendThinkingLevelChange("medium");
-  const currentLeafId = sessionManager.appendMessage({
-    role: "user",
-    content: [{ type: "text", text: input.userMessage }],
-    timestamp: Date.now()
-  });
-  emit.onEvent({ type: "compacting" });
-  sessionManager.appendCompaction(summary, currentLeafId, 0, {
-    source: "mock-runtime-core"
-  });
-  emit.onEvent({ type: "compact_complete" });
-  emit.onEvent({
-    type: "complete",
-    stopReason: "completed",
-    usage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      costUsd: 0
-    }
-  });
-  updateAgentSessionMeta(runtime.sessionId, {
-    piSessionId: session.sessionId
-  });
-  session.dispose();
-  emit.onComplete();
-  return { status: "completed" };
-}
-
-function runRuntimeCoreMockErrorAttempt(
-  emit: PiAgentRuntimeEmitter
-): PiAgentRunResult {
-  const errorMessage = (process.env.LUME_PI_AGENT_MOCK_ERROR_TEXT || "runtime-core mock error").trim();
-  emit.onError(errorMessage);
-  return {
-    status: "errored",
-    errorMessage
-  };
-}
-
-async function runRuntimeCoreMockDelayedAttempt(
-  params: PiAgentRunParams,
-  emit: PiAgentRuntimeEmitter,
-  options: RunRuntimeCoreAttemptOptions,
-  delayMs: number,
-  prepared: PreparedRuntimeCoreAttempt
-): Promise<PiAgentRunResult> {
-  const { input, runtime } = params;
-  const mockText = (process.env.LUME_PI_AGENT_MOCK_TEXT || "Lume runtime-core delayed mock").trim();
-  const upstream = await createRuntimeCoreSession({
-    lumeSessionId: runtime.sessionId,
-    cwd: prepared.agentCwd,
-    agentDir: prepared.agentDir,
-    provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
-    resolvedModel: prepared.modelResolution.model,
-    apiKey: prepared.apiKey,
-    workspaceId: runtime.workspaceId,
-    workspaceSlug: prepared.workspaceSlug,
-    channelId: runtime.channelId,
-    sessionType: runtime.sessionType,
-    chatType: input.chatType,
-    permissionMode: input.permissionMode,
-    messageMetadata: input.messageMetadata,
-    emitAskUserQuestion: emit.onAskUserQuestion,
-    emitToolPermissionRequest: emit.onToolPermissionRequest
-  });
-  const { session, sessionManager } = upstream;
-  logMockSessionPersistence("mock_delayed", runtime.sessionId, sessionManager);
-  sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
-  sessionManager.appendThinkingLevelChange("medium");
-  sessionManager.appendMessage({
-    role: "user",
-    content: [{ type: "text", text: input.userMessage }],
-    timestamp: Date.now()
-  });
-  const accumulator = createAgentStreamAccumulatorState();
-  const textEvent = { type: "text_delta" as const, text: mockText };
-  appendAgentEvents(accumulator, [textEvent]);
-  emit.onEvent(textEvent);
-
-  let aborted = false;
-  let resolveWait: (() => void) | undefined;
-  const waitForAbortOrTimeout = new Promise<void>((resolve) => {
-    resolveWait = resolve;
-    const timer = setTimeout(() => {
-      resolve();
-    }, delayMs);
-    if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
-      timer.unref();
-    }
-  });
-
-  options.registerAbort(runtime.sessionId, async () => {
-    aborted = true;
-    resolveWait?.();
-  });
-
-  try {
-    await waitForAbortOrTimeout;
-    if (aborted) {
-      sessionManager.appendMessage({
-        role: "assistant",
-        provider: prepared.modelResolution.provider,
-        model: prepared.modelResolution.resolvedModelId,
-        api: "anthropic-messages",
-        stopReason: "aborted",
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-        },
-        content: [{ type: "text", text: mockText }],
-        timestamp: Date.now()
-      });
-      updateAgentSessionMeta(runtime.sessionId, {
-        piSessionId: session.sessionId
-      });
-      emit.onComplete();
-      return { status: "aborted" };
-    }
-
-    emit.onEvent({
-      type: "complete",
-      stopReason: "completed",
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        costUsd: 0
-      }
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      provider: prepared.modelResolution.provider,
-      model: prepared.modelResolution.resolvedModelId,
-      api: "anthropic-messages",
-      stopReason: "stop",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-      },
-      content: [{ type: "text", text: mockText }],
-      timestamp: Date.now()
-    });
-    updateAgentSessionMeta(runtime.sessionId, {
-      piSessionId: session.sessionId
-    });
-    emit.onComplete();
-    return { status: "completed" };
-  } finally {
-    session.dispose();
-    options.unregisterAbort(runtime.sessionId);
-  }
-}
-
 function prepareRuntimeCoreAttempt(
   params: PiAgentRunParams
 ): PreparedRuntimeCoreAttempt | PiAgentRunResult {
@@ -595,37 +204,6 @@ function prepareRuntimeCoreAttempt(
   };
 }
 
-function resolveMockDelayMs(): number {
-  const raw = process.env.LUME_PI_AGENT_MOCK_DELAY_MS?.trim();
-  const parsed = raw ? Number(raw) : 0;
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0;
-  }
-  return Math.floor(parsed);
-}
-
-function shouldRunMockCompaction(userMessage: string): boolean {
-  if (process.env.LUME_PI_AGENT_MOCK_COMPACTION !== "1") {
-    return false;
-  }
-  return userMessage.trim() === "/compact";
-}
-
-function logMockSessionPersistence(kind: string, sessionId: string, sessionManager: {
-  getSessionDir(): string;
-  getSessionFile(): string | undefined;
-}): void {
-  if (process.env.LUME_PI_AGENT_MOCK_TRACE_SESSION !== "1") {
-    return;
-  }
-  log.info("runtime-core mock session persistence", {
-    kind,
-    sessionId: sessionId.slice(0, 8),
-    sessionDir: sessionManager.getSessionDir(),
-    sessionFile: sessionManager.getSessionFile()
-  });
-}
-
 function resolveStopReason(messages: Array<{ role: string; stopReason?: string }>): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
@@ -666,4 +244,108 @@ function buildCompleteUsage(
     };
   }
   return undefined;
+}
+
+// ─── Pi Agent runner (migrated from runner/run.ts) ───
+
+const activePiSessions = new Map<string, { abort: () => Promise<void> }>();
+const DEFAULT_MAX_ATTEMPTS = 1;
+const RETRY_DELAY_MS = 700;
+
+export async function runPiAgent(
+  params: PiAgentRunParams,
+  emit: PiAgentRuntimeEmitter
+): Promise<PiAgentRunResult> {
+  const maxAttempts = resolveMaxAttempts();
+  let attempt = 0;
+  let lastResult: PiAgentRunResult = { status: "errored", errorMessage: "Pi Agent 未执行" };
+
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    const result = await runRuntimeCoreAttempt(params, emit, {
+      registerAbort: (sessionId, abort) => {
+        activePiSessions.set(sessionId, { abort });
+      },
+      unregisterAbort: (sessionId) => {
+        activePiSessions.delete(sessionId);
+      }
+    });
+    lastResult = result;
+    if (result.status !== "errored") {
+      return result;
+    }
+    const retryable = shouldRetryError(result.errorMessage);
+    if (!retryable || attempt >= maxAttempts) {
+      const message = result.errorMessage ?? "未知错误";
+      emit.onError(`Pi Agent runtime 执行失败: ${message}`);
+      return result;
+    }
+
+    log.warn("Pi Agent attempt 失败，准备重试", {
+      sessionId: params.runtime.sessionId.slice(0, 8),
+      attempt,
+      maxAttempts,
+      errorMessage: result.errorMessage
+    });
+    await sleep(RETRY_DELAY_MS);
+  }
+
+  const fallbackMessage = lastResult.errorMessage ?? "未知错误";
+  emit.onError(`Pi Agent runtime 执行失败: ${fallbackMessage}`);
+  return lastResult;
+}
+
+function resolveMaxAttempts(): number {
+  const raw = process.env.LUME_PI_AGENT_MAX_ATTEMPTS?.trim();
+  const parsed = raw ? Number(raw) : DEFAULT_MAX_ATTEMPTS;
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_MAX_ATTEMPTS;
+  }
+  return Math.max(1, Math.min(3, Math.floor(parsed)));
+}
+
+function shouldRetryError(errorMessage?: string): boolean {
+  if (!errorMessage) return false;
+  const value = errorMessage.toLowerCase();
+  return (
+    value.includes("timeout") ||
+    value.includes("timed out") ||
+    value.includes("rate limit") ||
+    value.includes("429") ||
+    value.includes("temporar") ||
+    value.includes("econnreset") ||
+    value.includes("enotfound") ||
+    value.includes("network")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+      timer.unref();
+    }
+  });
+}
+
+export async function stopPiAgent(sessionId: string): Promise<boolean> {
+  const active = activePiSessions.get(sessionId);
+  if (!active) {
+    return false;
+  }
+  await active.abort();
+  activePiSessions.delete(sessionId);
+  return true;
+}
+
+export function isPiAgentSessionActive(sessionId: string): boolean {
+  return activePiSessions.has(sessionId);
+}
+
+export async function stopAllPiAgents(): Promise<void> {
+  const all = Array.from(activePiSessions.entries());
+  for (const [sessionId, active] of all) {
+    await active.abort();
+    activePiSessions.delete(sessionId);
+  }
 }

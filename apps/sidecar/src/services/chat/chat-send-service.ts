@@ -42,9 +42,9 @@ import {
   completeAbortedAssistantResponse,
   completeAssistantResponse,
   completeEmptyAbort,
-  completeMockResponse,
   emitChatSendError
 } from "./chat-history-service";
+import { resolveMockSend } from "./mock-chat-send";
 import { getDefaultToolDefinitions } from "./chat-tool-definition-service";
 import {
   executeToolCallForChat,
@@ -144,6 +144,12 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
     enabledToolIds
   } = input;
 
+  const mockSend = resolveMockSend();
+  if (mockSend) {
+    await mockSend({ conversationId, userMessage, modelId, attachments, enabledToolIds, emit });
+    return;
+  }
+
   const accumulatedToolActivities: ChatToolActivity[] = [];
   const accumulatedGeneratedAttachments: FileAttachment[] = [];
   const emitToolActivity = (activity: ChatToolActivity): void => {
@@ -153,36 +159,6 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
   const fullHistory = getConversationMessages(conversationId);
   const previousUserAttachments = getLatestAttachmentsByRole(fullHistory, "user");
   const previousAssistantAttachments = getLatestAttachmentsByRole(fullHistory, "assistant");
-
-  if (process.env.LUME_CHAT_MOCK_SUCCESS === "1") {
-    const toolResult = await runEnabledToolsForChat({
-      conversationId,
-      userMessage,
-      messageHistory: fullHistory,
-      attachments,
-      previousUserAttachments,
-      previousAssistantAttachments,
-      enabledToolIds,
-      emitToolActivity
-    });
-    if (toolResult.generatedAttachments.length > 0) {
-      accumulatedGeneratedAttachments.push(...toolResult.generatedAttachments);
-    }
-
-    const mockDelta = (process.env.LUME_CHAT_MOCK_TEXT || "chat-mock-success").trim();
-    emit.onChunk({ conversationId, delta: mockDelta });
-    completeMockResponse({
-      conversationId,
-      userMessage,
-      userAttachments: attachments,
-      assistantContent: mockDelta,
-      assistantModel: modelId,
-      assistantAttachments: accumulatedGeneratedAttachments,
-      toolActivities: accumulatedToolActivities,
-      emit
-    });
-    return;
-  }
 
   const channels = listChannels();
   const channel = channels.find((c) => c.id === channelId);

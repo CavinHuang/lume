@@ -55,6 +55,7 @@ export const thinkingLevelAtom = atomWithStorage<ThinkingLevel>("lume-thinking-l
 
 export interface PendingAttachment extends FileAttachment {
   previewUrl?: string;
+  sourcePath?: string;
 }
 
 export const pendingAttachmentsAtom = atom<PendingAttachment[]>([]);

@@ -13,5 +13,4 @@ export * from "./workspace-bootstrap";
 export * from "./memory-flush";
 export * from "./heartbeat";
 export * from "./automation";
-export * from "./channel-gateway";
 export * from "./github-release";

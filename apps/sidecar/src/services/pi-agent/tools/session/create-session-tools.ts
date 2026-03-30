@@ -19,8 +19,7 @@ import {
 import type { AgentMessage } from "@lume/shared";
 import { decryptApiKey, listChannels } from "../../../channel/channel-manager";
 import { resolveRequestedModelIdForChannel } from "../../../channel/model-selection";
-import { runPiAgentMessage } from "../../run-pi-agent-message";
-import { stopPiAgent } from "../../runner/run";
+import { runPiAgent, stopPiAgent } from "../../runtime-core/attempt";
 import { getSubagentRunRegistry } from "../../subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../subagents/subagent-announce-service";
 import { resolveSubagentSpawnPolicy } from "../../subagents/subagent-policy";
@@ -415,7 +414,16 @@ async function executeAgentTurn(params: {
     }, 3000);
   }
 
-  const execution = runPiAgentMessage(input, {
+  const execution = runPiAgent({
+    input,
+    runtime: {
+      sessionId: input.sessionId,
+      channelId: input.channelId ?? "",
+      modelId: input.modelId ?? "",
+      workspaceId: input.workspaceId,
+      sessionType: input.sessionType
+    }
+  }, {
     onEvent(event) {
       if (event.type === 'tool_start') {
         lastToolName = event.toolName;

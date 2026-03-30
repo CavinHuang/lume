@@ -1,3 +1,4 @@
+// TODO: 评估去掉此转发层，让调用方直接使用 getManager()
 import { existsSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import {
@@ -8,7 +9,7 @@ import { MemoryIndexManager } from "./memory-index-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { resolveMemoryRuntimeConfig } from "./memory-policy";
 import { isMemoryPath, normalizeRelPath } from "./memory-path-utils";
-import { getEmbeddingCacheStats } from "./embedding-ops";
+import { getEmbeddingCacheStats } from "./embedding";
 import type {
   MemoryGetInput,
   MemoryGetResult,

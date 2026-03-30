@@ -1,5 +1,6 @@
 import {
   cpSync,
+  copyFileSync,
   existsSync,
   type Dirent,
   renameSync,
@@ -546,8 +547,18 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
       throw new Error(`文件路径越界: ${file.filename}`);
     }
     mkdirSync(dirname(targetPath), { recursive: true });
-    const buffer = Buffer.from(file.data, "base64");
-    writeFileSync(targetPath, buffer);
+    if (file.sourcePath && file.sourcePath.trim()) {
+      const resolvedSourcePath = resolve(file.sourcePath);
+      if (!existsSync(resolvedSourcePath) || !statSync(resolvedSourcePath).isFile()) {
+        throw new Error(`源文件不存在: ${file.filename}`);
+      }
+      copyFileSync(resolvedSourcePath, targetPath);
+    } else if (file.data) {
+      const buffer = Buffer.from(file.data, "base64");
+      writeFileSync(targetPath, buffer);
+    } else {
+      throw new Error(`缺少文件内容: ${file.filename}`);
+    }
     results.push({ filename: file.filename, targetPath });
   }
 

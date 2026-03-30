@@ -1,12 +1,6 @@
 import { GITHUB_RELEASE_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
 import type { GitHubReleaseListOptions } from "@lume/shared";
 import {
-  getBrowserExtensionInfo,
-  getBrowserRelayStatus,
-  installBrowserExtension,
-  startBrowser
-} from "../services/browser/browser-service";
-import {
   getGitHubReleaseByTag,
   getLatestGitHubRelease,
   listGitHubReleases
@@ -38,10 +32,6 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
         GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG
       );
       return getGitHubReleaseByTag(input.tag);
-    },
-    "browser:get-extension-info": async () => getBrowserExtensionInfo(),
-    "browser:install-extension": async () => installBrowserExtension(),
-    "browser:get-relay-status": async () => getBrowserRelayStatus(),
-    "browser:start-relay": async () => startBrowser("relay")
+    }
   };
 }

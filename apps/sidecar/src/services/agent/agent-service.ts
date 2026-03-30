@@ -265,12 +265,27 @@ export async function sendAgentMessage(
   runtimeStatusManager.markStreaming(sessionId);
   let runtimeCompleted = false;
 
-  const { runPiAgentMessage } = await import("../pi-agent/run-pi-agent-message");
-  const piResult = await runPiAgentMessage({
-    ...input,
-    messageMetadata: effectiveMessageMetadata,
-    channelId: resolvedChannelId,
-    modelId: resolvedModelId
+  if (!resolvedChannelId || !resolvedModelId) {
+    const msg = "Pi Agent runtime 缺少 channelId/modelId。";
+    runtimeStatusManager.markErrored(sessionId, msg);
+    emit.onError(msg);
+    return;
+  }
+  const { runPiAgent } = await import("../pi-agent/runtime-core/attempt");
+  const piResult = await runPiAgent({
+    input: {
+      ...input,
+      messageMetadata: effectiveMessageMetadata,
+      channelId: resolvedChannelId,
+      modelId: resolvedModelId
+    },
+    runtime: {
+      sessionId,
+      channelId: resolvedChannelId,
+      modelId: resolvedModelId,
+      workspaceId: input.workspaceId,
+      sessionType: input.sessionType
+    }
   }, {
     onEvent: (event) => {
       handleRuntimeSessionStateEvent(sessionId, event, sessionStateManager);
@@ -333,7 +348,7 @@ export function stopAgent(sessionId: string): void {
   }
   sessionStateManager.delete(sessionId);
   getAgentRuntimeStatusManager().markIdle(sessionId);
-  void import("../pi-agent/runner/run")
+  void import("../pi-agent/runtime-core/attempt")
     .then((module) => module.stopPiAgent(sessionId))
     .catch(() => undefined);
 }
@@ -343,7 +358,7 @@ export function stopAllAgents(): void {
   const { getHeartbeatService } = require("../runtime/heartbeat-service");
   const heartbeatService = getHeartbeatService();
   heartbeatService.stopAllTimers();
-  void import("../pi-agent/runner/run")
+  void import("../pi-agent/runtime-core/attempt")
     .then((module) => module.stopAllPiAgents())
     .catch(() => undefined);
 }

@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createAgentSession, getAgentSessionMessages } from "../../agent/agent-session-manager";
 import { announceSubagentCompletion } from "./subagent-announce-service";
 import type { SubagentRun } from "./subagent-run.types";
-import { subscribeSubagentAnnounceEvent } from "./subagent-announce-bus";
+import { subscribeSubagentAnnounceEvent } from "./subagent-announce-service";
 
 let previousConfigDir: string | undefined;
 

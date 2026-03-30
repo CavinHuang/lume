@@ -20,13 +20,13 @@ mock.module("undici", () => ({
   setGlobalDispatcher: () => undefined
 }));
 
-mock.module("../run-pi-agent-message", () => ({
-  runPiAgentMessage: async (
-    input: unknown,
+mock.module("../../runtime-core/attempt", () => ({
+  runPiAgent: async (
+    params: { input: { userMessage?: string } },
     emit: { onEvent: (event: unknown) => void; onComplete: () => void; onError?: (error: string) => void }
   ) => {
-    const message = typeof (input as { userMessage?: unknown })?.userMessage === "string"
-      ? ((input as { userMessage: string }).userMessage)
+    const message = typeof params.input?.userMessage === "string"
+      ? params.input.userMessage
       : "";
     if (message.includes("[mock-slow]")) {
       await new Promise((resolve) => setTimeout(resolve, 40));
@@ -42,10 +42,7 @@ mock.module("../run-pi-agent-message", () => ({
     });
     emit.onComplete();
     return { status: "completed" as const };
-  }
-}));
-
-mock.module("../runner/run", () => ({
+  },
   stopPiAgent: () => undefined
 }));
 

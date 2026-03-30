@@ -135,13 +135,15 @@ export function useChatComposer({
       savedAttachments = [];
       for (const att of currentPending) {
         const data = window.__pendingAttachmentData?.get(att.id);
-        if (!data) continue;
+        if (!data && !att.sourcePath) continue;
         try {
+          const payloadData = data;
           const input: AttachmentSaveInput = {
             conversationId: currentConversationId,
             filename: att.filename,
             mediaType: att.mediaType,
-            data
+            ...(payloadData ? { data: payloadData } : {}),
+            ...(att.sourcePath ? { sourcePath: att.sourcePath } : {})
           };
           const result = await saveChatAttachment(input);
           savedAttachments.push(result.attachment);
@@ -337,7 +339,7 @@ export function useChatComposer({
     payload: {
       content: string;
       keepExistingAttachments: FileAttachment[];
-      newAttachments: Array<{ filename: string; mediaType: string; data: string }>;
+      newAttachments: Array<{ filename: string; mediaType: string; data?: string; sourcePath?: string }>;
     }
   ): Promise<void> => {
     if (!currentConversationId || !selectedModel || isStreaming) return;
@@ -357,7 +359,8 @@ export function useChatComposer({
         conversationId: currentConversationId,
         filename: item.filename,
         mediaType: item.mediaType,
-        data: item.data
+        ...(item.data ? { data: item.data } : {}),
+        ...("sourcePath" in item && item.sourcePath ? { sourcePath: item.sourcePath } : {})
       });
       newSaved.push(result.attachment);
     }

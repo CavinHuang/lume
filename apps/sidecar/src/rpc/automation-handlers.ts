@@ -15,6 +15,7 @@ import {
 import {
   listAutomationRuns,
   refreshAutomationRunnerJobs,
+  startAutomationRunner,
   runAutomationJobNow
 } from "../services/automation/automation-runner-service";
 import {
@@ -31,6 +32,7 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
   return {
     [AUTOMATION_IPC_CHANNELS.LIST_JOBS]: async () => listAutomationJobs(),
     [AUTOMATION_IPC_CHANNELS.CREATE_JOB]: async (params) => {
+      await startAutomationRunner();
       const created = createAutomationJob(
         validateInput(
           automationCreateInputSchema,
@@ -42,6 +44,7 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
       return created;
     },
     [AUTOMATION_IPC_CHANNELS.UPDATE_JOB]: async (params) => {
+      await startAutomationRunner();
       const updated = updateAutomationJob(
         validateInput(
           automationUpdateInputSchema,
@@ -53,6 +56,7 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
       return updated;
     },
     [AUTOMATION_IPC_CHANNELS.DELETE_JOB]: async (params) => {
+      await startAutomationRunner();
       const result = deleteAutomationJob(
         validateInput(
           automationDeleteInputSchema,
@@ -71,13 +75,15 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
           AUTOMATION_IPC_CHANNELS.LIST_RUNS
         ) as AutomationListRunsInput
       ),
-    [AUTOMATION_IPC_CHANNELS.RUN_NOW]: async (params) =>
-      runAutomationJobNow(
+    [AUTOMATION_IPC_CHANNELS.RUN_NOW]: async (params) => {
+      await startAutomationRunner();
+      return runAutomationJobNow(
         validateInput(
           automationRunNowInputSchema,
           params,
           AUTOMATION_IPC_CHANNELS.RUN_NOW
         ) as AutomationRunNowInput
-      )
+      );
+    }
   };
 }

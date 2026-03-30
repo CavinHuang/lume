@@ -4,7 +4,6 @@ import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-st
 import { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { createAgentHandlers } from "./agent-handlers";
 import { createAutomationHandlers } from "./automation-handlers";
-import { createChannelGatewayHandlers } from "./channel-gateway-handlers";
 import { createChannelHandlers } from "./channel-handlers";
 import { createChatHandlers } from "./chat-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
@@ -43,7 +42,6 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     createChatHandlers(context.writeNotification),
     createMemoryHandlers(),
     createAutomationHandlers(),
-    createChannelGatewayHandlers(),
     createAgentHandlers({
       writeNotification: context.writeNotification,
       planStateTracker,

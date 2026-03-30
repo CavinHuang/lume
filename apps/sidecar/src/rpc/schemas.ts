@@ -81,6 +81,16 @@ export const chatRecentMessagesInputSchema = z.object({
   limit: z.number().int().min(1)
 });
 
+export const attachmentSaveInputSchema = z.object({
+  conversationId: z.string().min(1),
+  filename: z.string().min(1),
+  mediaType: z.string().min(1),
+  data: z.string().optional(),
+  sourcePath: z.string().min(1).optional()
+}).refine((input) => !!input.data || !!input.sourcePath, {
+  message: "附件必须提供 data 或 sourcePath"
+});
+
 export const systemPromptCreateInputSchema = z.object({
   name: z.string().min(1).max(50),
   content: z.string()
@@ -364,7 +374,10 @@ export const saveFilesToSessionInputSchema = z.object({
   sessionId: idSchema,
   files: z.array(z.object({
     filename: z.string().min(1),
-    data: z.string()
+    data: z.string().optional(),
+    sourcePath: z.string().min(1).optional()
+  }).refine((file) => !!file.data || !!file.sourcePath, {
+    message: "文件必须提供 data 或 sourcePath"
   }))
 });
 
@@ -473,50 +486,6 @@ export const automationListRunsInputSchema = z.object({
 
 export const automationRunNowInputSchema = z.object({
   id: idSchema
-});
-
-const channelProviderSchema = z.enum(["telegram", "discord", "whatsapp", "slack", "feishu"]);
-
-const channelInboundEventSchema = z.object({
-  id: idSchema,
-  provider: channelProviderSchema,
-  externalChatId: idSchema,
-  externalUserId: z.string().optional(),
-  externalMessageId: idSchema,
-  text: z.string().min(1),
-  receivedAt: z.number(),
-  workspaceId: z.string().optional(),
-  sessionId: z.string().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional()
-});
-
-export const channelGatewayIngressInputSchema = z.object({
-  event: channelInboundEventSchema
-});
-
-export const channelGatewayUpsertBindingInputSchema = z.object({
-  provider: channelProviderSchema,
-  externalChatId: idSchema,
-  externalUserId: z.string().optional(),
-  workspaceId: z.string().optional(),
-  sessionId: idSchema
-});
-
-export const channelGatewayListDeliveriesInputSchema = z.object({
-  provider: channelProviderSchema.optional(),
-  limit: z.number().int().min(1).max(500).optional()
-});
-
-export const feishuGatewaySaveInputSchema = z.object({
-  enabled: z.boolean(),
-  connectionMode: z.enum(["websocket", "webhook"]).optional(),
-  appId: z.string().default(""),
-  appSecret: z.string().optional(),
-  verificationToken: z.string().optional(),
-  encryptKey: z.string().optional(),
-  domain: z.enum(["feishu", "lark"]).optional(),
-  defaultWorkspaceId: z.string().optional(),
-  webhookPath: z.string().optional()
 });
 
 export const githubReleaseByTagInputSchema = z.object({

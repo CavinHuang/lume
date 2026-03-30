@@ -1,3 +1,4 @@
+// TODO: 长期考虑统一 Chat/Agent tool 体系到 Pi SDK tool 抽象
 /**
  * Extracted from chat-send-service.ts to keep tool execution boundaries isolated.
  * Covers both preflight tool runs and model tool-call execution.

@@ -651,6 +651,7 @@ export interface AgentPendingFile {
   filename: string
   size: number
   mediaType: string
+  sourcePath?: string
   /** 图片预览 URL（blob/data URL） */
   previewUrl?: string
 }
@@ -659,7 +660,7 @@ export interface AgentPendingFile {
 export interface AgentSaveFilesInput {
   workspaceSlug: string
   sessionId: string
-  files: Array<{ filename: string; data: string }>
+  files: Array<{ filename: string; data?: string; sourcePath?: string }>
 }
 
 /** Agent 已保存文件信息 */

@@ -26,13 +26,6 @@ import {
   listAgentSessions,
   saveAgentWorkspaceMcpConfig
 } from "@/lib/desktop-api/agent";
-import { openExternalUrl } from "@/lib/desktop-api/core";
-import {
-  getBrowserExtensionInfo,
-  getBrowserRelayStatus,
-  installBrowserExtension,
-  startBrowserRelay
-} from "@/lib/desktop-api/system";
 import { McpServerForm } from "./McpServerForm";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
 
@@ -71,10 +64,6 @@ export function AgentSettings(): React.ReactElement {
   const [editingServer, setEditingServer] = useState<EditingServer | null>(null);
   const [mcpConfig, setMcpConfig] = useState<WorkspaceMcpConfig>({ servers: {} });
   const [loading, setLoading] = useState(true);
-  const [browserInfo, setBrowserInfo] = useState<Awaited<ReturnType<typeof getBrowserExtensionInfo>> | null>(null);
-  const [relayStatus, setRelayStatus] = useState<Awaited<ReturnType<typeof getBrowserRelayStatus>> | null>(null);
-  const [browserBusy, setBrowserBusy] = useState(false);
-  const [browserMessage, setBrowserMessage] = useState("");
 
   const loadData = async (): Promise<void> => {
     if (!workspaceSlug) {
@@ -91,26 +80,9 @@ export function AgentSettings(): React.ReactElement {
     }
   };
 
-  const refreshBrowserBridge = async (): Promise<void> => {
-    try {
-      const [info, relay] = await Promise.all([
-        getBrowserExtensionInfo(),
-        getBrowserRelayStatus()
-      ]);
-      setBrowserInfo(info);
-      setRelayStatus(relay);
-    } catch (error) {
-      console.error("[AgentSettings] load browser bridge failed", error);
-    }
-  };
-
   useEffect(() => {
     void loadData();
   }, [workspaceSlug, capabilitiesVersion]);
-
-  useEffect(() => {
-    void refreshBrowserBridge();
-  }, []);
 
   const buildMcpPrompt = (): string => {
     const configPath = `~/.lume/agent-workspaces/${workspaceSlug}/mcp.json`;
@@ -196,33 +168,7 @@ mcp.json 格式如下：
     bumpCapabilitiesVersion((v) => v + 1);
   };
 
-  const handleInstallBrowserExtension = async (): Promise<void> => {
-    setBrowserBusy(true);
-    setBrowserMessage("");
-    try {
-      const result = await installBrowserExtension();
-      setBrowserMessage(`扩展已安装: ${result.path}`);
-      await refreshBrowserBridge();
-    } catch (error) {
-      setBrowserMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBrowserBusy(false);
-    }
-  };
 
-  const handleStartRelay = async (): Promise<void> => {
-    setBrowserBusy(true);
-    setBrowserMessage("");
-    try {
-      await startBrowserRelay();
-      setBrowserMessage("Relay 已启动");
-      await refreshBrowserBridge();
-    } catch (error) {
-      setBrowserMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBrowserBusy(false);
-    }
-  };
 
   if (!workspace) {
     return (
@@ -320,58 +266,7 @@ mcp.json 格式如下：
         <span>跟 Lume Agent 对话完成配置</span>
       </Button>
 
-      <SettingsSection title="Chrome Extension 模式" description="对齐 OpenClaw：先启动 relay，再在 Chrome 扩展里附加标签页">
-        <SettingsCard divided={false}>
-          <div className="space-y-3 p-3 text-sm">
-            <div className="rounded-md border bg-muted/20 p-3">
-              <p className="font-medium">Relay 状态</p>
-              <p className="mt-1 text-muted-foreground">
-                运行: {relayStatus?.running ? "是" : "否"} · 扩展连接: {relayStatus?.connected ? "已连接" : "未连接"} · 连接数: {relayStatus?.connectionCount ?? 0} · 已附加标签页: {relayStatus?.tabs.length ?? 0}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                端口: {relayStatus?.port ?? browserInfo?.relay.port ?? "-"} · URL: {browserInfo?.relay.httpUrl ?? "http://127.0.0.1:18792/"}
-              </p>
-              {(relayStatus?.diagnostics?.lastRejectReason || relayStatus?.diagnostics?.lastCloseReason) ? (
-                <p className="mt-1 text-xs text-amber-700">
-                  诊断: {relayStatus?.diagnostics?.lastRejectReason || "无拒绝"} · {relayStatus?.diagnostics?.lastCloseReason || "无断开"}
-                </p>
-              ) : null}
-              {(relayStatus?.tokenRequired || browserInfo?.relay.tokenRequired) ? (
-                <p className="mt-1 text-xs text-amber-600">
-                  当前 Relay 已启用 token 鉴权，请在扩展 Options 中填写与 `LUME_BROWSER_RELAY_TOKEN` 相同的值。
-                </p>
-              ) : null}
-            </div>
-            <div className="rounded-md border bg-muted/20 p-3">
-              <p className="font-medium">扩展安装</p>
-              <p className="mt-1 text-muted-foreground">
-                已安装: {browserInfo?.installed ? "是" : "否"}
-              </p>
-              <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-                路径: {browserInfo?.installedPath ?? "~/.lume/browser/chrome-extension"}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" type="button" disabled={browserBusy} onClick={() => { void handleInstallBrowserExtension(); }}>
-                安装扩展到稳定目录
-              </Button>
-              <Button size="sm" type="button" variant="secondary" disabled={browserBusy} onClick={() => { void handleStartRelay(); }}>
-                启动 Relay
-              </Button>
-              <Button size="sm" type="button" variant="outline" onClick={() => { void openExternalUrl("chrome://extensions/"); }}>
-                打开 chrome://extensions
-              </Button>
-              <Button size="sm" type="button" variant="ghost" onClick={() => { void refreshBrowserBridge(); }}>
-                刷新状态
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              操作顺序: 1) 安装扩展 2) 启动 Relay 3) Chrome 开启 Developer mode 并 Load unpacked 指向上方路径 4) 点击扩展图标附加当前标签页。
-            </p>
-            {browserMessage ? <p className="text-xs text-foreground">{browserMessage}</p> : null}
-          </div>
-        </SettingsCard>
-      </SettingsSection>
+
 
     </div>
   );

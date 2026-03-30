@@ -1,33 +1,16 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import type { ChannelGatewayIngressStatus } from "@lume/shared";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory/memory-sync-watcher";
 import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat/chat-tools-watcher";
 import { seedDefaultSkills } from "./services/system/default-skills-seeder";
-import { startRelayServer, stopRelayServer } from "./services/browser/extension-relay";
 import { initProxySettings } from "./services/system/proxy-settings-manager";
 import {
   startAutomationRunner,
   stopAutomationRunner
 } from "./services/automation/automation-runner-service";
-import {
-  getFeishuGatewayConfig,
-} from "./services/channel-gateway/feishu-config-manager";
-import {
-  startFeishuIngressServer,
-  stopFeishuIngressServer
-} from "./services/channel-gateway/feishu-ingress-service";
-import {
-  startFeishuWsIngressServer,
-  stopFeishuWsIngressServer
-} from "./services/channel-gateway/feishu-ws-ingress-service";
-import {
-  startFeishuRetryWorker,
-  stopFeishuRetryWorker
-} from "./services/channel-gateway/feishu-retry-worker";
-import { subscribeSubagentAnnounceEvent } from "./services/pi-agent/subagents/subagent-announce-bus";
+import { subscribeSubagentAnnounceEvent } from "./services/pi-agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { closeMemoryManagers } from "./rpc/memory-handlers";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
@@ -45,6 +28,15 @@ function writeNotification(method: string, params: unknown): void {
   stdout.write(`${JSON.stringify({ method, params })}\n`);
 }
 const handlers = createRpcHandlers({ writeNotification });
+
+function envAutostartEnabled(key: string, defaultEnabled: boolean): boolean {
+  const value = process.env[key];
+  if (typeof value !== "string" || value.trim() === "") {
+    return defaultEnabled;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized !== "0" && normalized !== "false";
+}
 
 async function handleRpcLine(line: string): Promise<void> {
   let payload: JsonRpcRequest;
@@ -100,42 +92,21 @@ async function handleRpcLine(line: string): Promise<void> {
 
 function boot(): void {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
-  const relayAutostart = process.env.LUME_BROWSER_RELAY_AUTOSTART?.toLowerCase() !== "0";
-  void initProxySettings().catch((error) => {
-    console.error(`[代理配置] 启动初始化失败: ${error instanceof Error ? error.message : String(error)}`);
-  });
-  if (relayAutostart) {
-    void startRelayServer().then(({ port }) => {
-      console.error(`[浏览器 Relay] 已启动: http://127.0.0.1:${port}/`);
-    }).catch((error) => {
-      console.error(`[浏览器 Relay] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
+    void startAutomationRunner().catch((error) => {
+      console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
-  const channelIngressAutostart = process.env.LUME_CHANNEL_GATEWAY_AUTOSTART?.toLowerCase() !== "0";
-  if (channelIngressAutostart) {
-    const channelConfig = getFeishuGatewayConfig();
-    if (channelConfig.connectionMode === "websocket") {
-      void startFeishuWsIngressServer().then((status: ChannelGatewayIngressStatus) => {
-        console.error(`[渠道网关] 飞书 WebSocket 已启动: connected=${status.wsConnected}`);
-      }).catch((error: unknown) => {
-        console.error(`[渠道网关] 飞书 WebSocket 启动失败: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    } else {
-      void startFeishuIngressServer().then((status: ChannelGatewayIngressStatus) => {
-        console.error(`[渠道网关] 飞书 webhook 已启动: ${status.webhookUrl ?? "unknown"}`);
-      }).catch((error: unknown) => {
-        console.error(`[渠道网关] 飞书 webhook 启动失败: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    }
+  if (envAutostartEnabled("LUME_DEFAULT_SKILLS_AUTOSTART", false)) {
+    seedDefaultSkills();
   }
-  startFeishuRetryWorker();
-  void startAutomationRunner().catch((error) => {
-    console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
-  });
-  seedDefaultSkills();
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
-  startMemorySyncWatcher();
-  startChatToolsWatcher((method, params) => writeNotification(method, params));
+  if (envAutostartEnabled("LUME_MEMORY_SYNC_WATCHER_AUTOSTART", false)) {
+    startMemorySyncWatcher();
+  }
+  if (envAutostartEnabled("LUME_CHAT_TOOLS_WATCHER_AUTOSTART", false)) {
+    startChatToolsWatcher((method, params) => writeNotification(method, params));
+  }
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
   });
@@ -146,10 +117,6 @@ function boot(): void {
     stopChatToolsWatcher();
     closeMemoryManagers();
     void stopAutomationRunner().catch(() => {});
-    void stopRelayServer().catch(() => {});
-    void stopFeishuIngressServer().catch(() => {});
-    void stopFeishuWsIngressServer().catch(() => {});
-    stopFeishuRetryWorker();
   };
   process.once("exit", stopWatcher);
   process.once("SIGINT", () => {

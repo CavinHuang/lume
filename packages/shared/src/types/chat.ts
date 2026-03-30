@@ -41,7 +41,9 @@ export interface AttachmentSaveInput {
   /** MIME 类型 */
   mediaType: string
   /** base64 编码的文件数据 */
-  data: string
+  data?: string
+  /** 原生文件选择后返回的绝对路径 */
+  sourcePath?: string
 }
 
 /** 保存附件结果 */
@@ -56,7 +58,8 @@ export interface FileDialogResult {
   files: Array<{
     filename: string
     mediaType: string
-    data: string
+    data?: string
+    sourcePath?: string
     size: number
   }>
 }

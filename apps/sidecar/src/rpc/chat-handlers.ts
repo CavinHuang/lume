@@ -44,7 +44,9 @@ import {
   saveAttachment
 } from "../services/chat/attachment-service";
 import { extractTextFromAttachment } from "../services/chat/document-parser";
+import { startChatToolsWatcher } from "../services/chat/chat-tools-watcher";
 import {
+  attachmentSaveInputSchema,
   chatContextDividersInputSchema,
   chatConversationIdInputSchema,
   chatLocalPathInputSchema,
@@ -128,7 +130,8 @@ export function createChatHandlers(writeNotification: NotificationWriter): Recor
       return updateConversationMeta(input.conversationId, { pinned: !target.pinned });
     },
     [CHAT_IPC_CHANNELS.GENERATE_TITLE]: async (params) => generateTitle(params as GenerateTitleInput),
-    [CHAT_IPC_CHANNELS.SAVE_ATTACHMENT]: async (params) => saveAttachment(params as AttachmentSaveInput),
+    [CHAT_IPC_CHANNELS.SAVE_ATTACHMENT]: async (params) =>
+      saveAttachment(validateInput(attachmentSaveInputSchema, params, CHAT_IPC_CHANNELS.SAVE_ATTACHMENT) as AttachmentSaveInput),
     [CHAT_IPC_CHANNELS.READ_ATTACHMENT]: async (params) => {
       const input = validateInput(chatLocalPathInputSchema, params, CHAT_IPC_CHANNELS.READ_ATTACHMENT);
       return readAttachmentAsBase64(input.localPath);
@@ -164,12 +167,16 @@ export function createChatHandlers(writeNotification: NotificationWriter): Recor
       });
       return { ok: true };
     },
-    [CHAT_TOOL_IPC_CHANNELS.GET_ALL_TOOLS]: async () => getAllChatToolInfos(),
+    [CHAT_TOOL_IPC_CHANNELS.GET_ALL_TOOLS]: async () => {
+      startChatToolsWatcher((method, params) => writeNotification(method, params));
+      return getAllChatToolInfos();
+    },
     [CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS]: async (params) => {
       const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS);
       return getChatToolCredentials(input.toolId);
     },
     [CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_STATE]: async (params) => {
+      startChatToolsWatcher((method, params) => writeNotification(method, params));
       const input = validateInput(chatToolStateUpdateInputSchema, params, CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_STATE);
       updateChatToolState(input.toolId, input.state);
       writeNotification(CHAT_TOOL_IPC_CHANNELS.CUSTOM_TOOL_CHANGED, {
@@ -179,6 +186,7 @@ export function createChatHandlers(writeNotification: NotificationWriter): Recor
       return { ok: true };
     },
     [CHAT_TOOL_IPC_CHANNELS.UPDATE_TOOL_CREDENTIALS]: async (params) => {
+      startChatToolsWatcher((method, params) => writeNotification(method, params));
       const input = validateInput(
         chatToolCredentialsUpdateInputSchema,
         params,
@@ -192,10 +200,12 @@ export function createChatHandlers(writeNotification: NotificationWriter): Recor
       return { ok: true };
     },
     [CHAT_TOOL_IPC_CHANNELS.TEST_TOOL]: async (params) => {
+      startChatToolsWatcher((method, params) => writeNotification(method, params));
       const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.TEST_TOOL);
       return testChatTool(input.toolId);
     },
     [CHAT_TOOL_IPC_CHANNELS.CREATE_CUSTOM_TOOL]: async (params) => {
+      startChatToolsWatcher((method, params) => writeNotification(method, params));
       const input = validateInput(
         chatToolCreateCustomInputSchema,
         params,
@@ -209,6 +219,7 @@ export function createChatHandlers(writeNotification: NotificationWriter): Recor
       return { ok: true };
     },
     [CHAT_TOOL_IPC_CHANNELS.DELETE_CUSTOM_TOOL]: async (params) => {
+      startChatToolsWatcher((method, params) => writeNotification(method, params));
       const input = validateInput(chatToolIdInputSchema, params, CHAT_TOOL_IPC_CHANNELS.DELETE_CUSTOM_TOOL);
       deleteCustomChatTool(input.toolId);
       writeNotification(CHAT_TOOL_IPC_CHANNELS.CUSTOM_TOOL_CHANGED, {

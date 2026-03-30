@@ -201,26 +201,4 @@ export function getAutomationRunsPath(): string {
   return join(getAutomationRunsDir(), "all.jsonl");
 }
 
-export function getChannelGatewayConfigDir(): string {
-  return ensureDir(join(getConfigDir(), "channel-gateway"), "渠道网关配置目录");
-}
 
-export function getChannelGatewayBindingsPath(): string {
-  return join(getChannelGatewayConfigDir(), "bindings.json");
-}
-
-export function getChannelGatewayDedupPath(): string {
-  return join(getChannelGatewayConfigDir(), "dedup.jsonl");
-}
-
-export function getChannelGatewayDeliveryPath(): string {
-  return join(getChannelGatewayConfigDir(), "delivery.jsonl");
-}
-
-export function getChannelGatewayRetryQueuePath(): string {
-  return join(getChannelGatewayConfigDir(), "retry-queue.json");
-}
-
-export function getChannelGatewayFeishuConfigPath(): string {
-  return join(getChannelGatewayConfigDir(), "feishu.json");
-}

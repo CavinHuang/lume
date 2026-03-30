@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { embedTextWithCache, embedTextsWithCache } from "./embedding-ops";
+import { embedTextWithCache, embedTextsWithCache } from "./embedding";
 
 function setupDb(): Database {
   const db = new Database(":memory:");

@@ -24,7 +24,8 @@ interface NewInlineAttachment {
   filename: string;
   mediaType: string;
   size: number;
-  data: string;
+  data?: string;
+  sourcePath?: string;
 }
 
 export interface InlineEditSubmitPayload {
@@ -109,10 +110,11 @@ export function InlineEditForm({ message, onSubmit, onCancel }: InlineEditFormPr
           filename: item.filename,
           mediaType: item.mediaType,
           localPath: "",
-          size: item.size
+          size: item.size,
+          ...(item.sourcePath ? { sourcePath: item.sourcePath } : {})
         },
-        base64: item.data,
-        previewUrl: item.mediaType.startsWith("image/") ? `data:${item.mediaType};base64,${item.data}` : undefined
+        base64: item.data ?? "",
+        previewUrl: item.data && item.mediaType.startsWith("image/") ? `data:${item.mediaType};base64,${item.data}` : undefined
       };
     });
     setEditableAttachments((prev) => [...prev, ...next]);
@@ -126,7 +128,8 @@ export function InlineEditForm({ message, onSubmit, onCancel }: InlineEditFormPr
           filename: file.filename,
           mediaType: file.mediaType,
           size: file.size,
-          data: file.data
+          data: file.data,
+          sourcePath: file.sourcePath
         }))
       );
     } catch (error) {
@@ -173,7 +176,10 @@ export function InlineEditForm({ message, onSubmit, onCancel }: InlineEditFormPr
           filename: item.attachment.filename,
           mediaType: item.attachment.mediaType,
           size: item.attachment.size,
-          data: item.base64
+          ...(item.base64 ? { data: item.base64 } : {}),
+          ...("sourcePath" in item.attachment && (item.attachment as FileAttachment & { sourcePath?: string }).sourcePath
+            ? { sourcePath: (item.attachment as FileAttachment & { sourcePath?: string }).sourcePath }
+            : {})
         }))
     }),
     [editingContent, editableAttachments]

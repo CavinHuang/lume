@@ -6,13 +6,13 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { copyFileSync, existsSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { extname, join, resolve } from "node:path";
 import type { AttachmentSaveInput, AttachmentSaveResult } from "@lume/shared";
 import { getConversationAttachmentsDir, resolveAttachmentPath } from "../infra/config-paths";
 
 export function saveAttachment(input: AttachmentSaveInput): AttachmentSaveResult {
-  const { conversationId, filename, mediaType, data } = input;
+  const { conversationId, filename, mediaType, data, sourcePath } = input;
   const dir = getConversationAttachmentsDir(conversationId);
 
   const ext = extname(filename) || ".bin";
@@ -21,8 +21,22 @@ export function saveAttachment(input: AttachmentSaveInput): AttachmentSaveResult
   const localPath = `${conversationId}/${storedFilename}`;
   const fullPath = join(dir, storedFilename);
 
-  const buffer = Buffer.from(data, "base64");
-  writeFileSync(fullPath, buffer);
+  let size = 0;
+  if (sourcePath && sourcePath.trim()) {
+    const resolvedSourcePath = resolve(sourcePath);
+    const stat = statSync(resolvedSourcePath);
+    if (!stat.isFile()) {
+      throw new Error(`附件源文件不存在或不可读: ${filename}`);
+    }
+    copyFileSync(resolvedSourcePath, fullPath);
+    size = stat.size;
+  } else if (data) {
+    const buffer = Buffer.from(data, "base64");
+    writeFileSync(fullPath, buffer);
+    size = buffer.length;
+  } else {
+    throw new Error("附件必须提供 data 或 sourcePath");
+  }
 
   return {
     attachment: {
@@ -30,7 +44,7 @@ export function saveAttachment(input: AttachmentSaveInput): AttachmentSaveResult
       filename,
       mediaType,
       localPath,
-      size: buffer.length
+      size
     }
   };
 }
