@@ -1,5 +1,3 @@
-"use client";
-
 import { startTransition, useEffect, useMemo, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import type { AgentSavedFile, Channel } from "@lume/shared";

@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { Streamdown } from "streamdown";
 import { ChevronDown, ChevronUp, Paperclip } from "lucide-react";

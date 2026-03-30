@@ -1,5 +1,3 @@
-"use client";
-
 import { Paperclip, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 

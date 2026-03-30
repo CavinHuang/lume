@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Brain, Globe, ImagePlus, Settings, Sparkles, Wrench } from "lucide-react";

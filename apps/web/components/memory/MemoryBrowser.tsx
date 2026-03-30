@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useCallback } from "react";
 import { Search, Loader2 } from "lucide-react";
 import type { MemorySearchResult } from "@lume/shared";

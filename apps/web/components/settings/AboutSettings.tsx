@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { AlertCircle, CheckCircle2, Download, Loader2, RefreshCw } from "lucide-react";

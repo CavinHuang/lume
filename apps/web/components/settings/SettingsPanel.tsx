@@ -1,5 +1,3 @@
-"use client";
-
 import { useAtom, useAtomValue } from "jotai";
 import type { ReactNode } from "react";
 import { BookOpen, Clock, GraduationCap, Info, Plug, Radio, Settings, Sparkles, User, Wrench } from "lucide-react";

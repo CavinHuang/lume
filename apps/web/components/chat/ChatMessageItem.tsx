@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
 import { Bot, Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";

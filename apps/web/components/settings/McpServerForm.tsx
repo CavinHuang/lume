@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import type { McpServerEntry, McpTransportType, WorkspaceMcpConfig } from "@lume/shared";

@@ -1,12 +1,10 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
 import { useAtom } from "jotai";
 import { Camera, ImagePlus } from "lucide-react";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 import type { AgentProxySettings, AgentProxyStatus } from "@lume/shared";
-import { userProfileAtom, persistUserProfile, themeModeAtom, persistThemeMode, type ThemeMode } from "@/atoms";
+import { userProfileAtom, themeModeAtom, type ThemeMode } from "@/atoms";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -51,7 +49,6 @@ export function GeneralSettings(): React.ReactElement {
 
   const commitProfile = (next: typeof userProfile): void => {
     setUserProfile(next);
-    persistUserProfile(next);
   };
 
   const handleAvatarChange = (avatar: string): void => {
@@ -211,7 +208,6 @@ export function GeneralSettings(): React.ReactElement {
             onValueChange={(value) => {
               const next = value as ThemeMode;
               setThemeMode(next);
-              persistThemeMode(next);
             }}
             options={THEME_OPTIONS}
           />

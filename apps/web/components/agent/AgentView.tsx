@@ -1,5 +1,3 @@
-"use client";
-
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AlertCircle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, CornerDownLeft, FolderPlus, Lightbulb, Loader2, Paperclip, Settings, Square, X } from "lucide-react";
@@ -91,6 +89,7 @@ import { useAgentSidePanelState } from "./hooks/useAgentSidePanelState";
 import { useAgentStreamSubscriptions } from "./hooks/useAgentStreamSubscriptions";
 import { useAgentTeamActivity } from "./hooks/useAgentTeamActivity";
 import { useAgentSessionLifecycle } from "./hooks/useAgentSessionLifecycle";
+import { SaveAsTaskDialog, type SaveAsTaskDialogData } from "./SaveAsTaskDialog";
 
 function readDirectoryRecursive(
   dirEntry: FileSystemDirectoryEntry,
@@ -219,6 +218,7 @@ export function AgentView(): React.ReactElement {
   const [pendingFolderRefs, setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
   const [inlineEditingMessageId, setInlineEditingMessageId] = useState<string | null>(null);
   const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [saveTaskDialogData, setSaveTaskDialogData] = useState<SaveAsTaskDialogData | null>(null);
 
   const [, setPlanState] = useAtom(planStateAtom);
   const {
@@ -412,18 +412,15 @@ export function AgentView(): React.ReactElement {
     setInlineEditingMessageId(null);
   }, []);
 
-  const handleSaveAsTask = useCallback(async (message: AgentMessage): Promise<void> => {
+  const handleSaveAsTask = useCallback((message: AgentMessage): void => {
     const prompt = (message.content ?? "").trim();
-    if (!prompt) {
-      window.alert("消息内容为空，无法保存为任务");
-      return;
-    }
+    if (!prompt) return;
     const defaultName = `Agent任务-${new Date().toLocaleDateString()}`;
-    const name = window.prompt("请输入任务名称", defaultName)?.trim();
-    if (!name) return;
-    const cronExpr = window.prompt("请输入 Cron 表达式", "30 8 * * 1-5")?.trim();
-    if (!cronExpr) return;
+    setSaveTaskDialogData({ prompt, defaultName });
+  }, []);
 
+  const handleSaveTaskConfirm = useCallback(async (name: string, cronExpr: string): Promise<void> => {
+    if (!saveTaskDialogData) return;
     await createAutomationJob({
       name,
       workspaceId: currentWorkspace?.id ?? session?.workspaceId,
@@ -431,10 +428,10 @@ export function AgentView(): React.ReactElement {
         type: "cron",
         cronExpr
       },
-      prompt
+      prompt: saveTaskDialogData.prompt
     });
-    window.alert("已保存为自动化任务，可在设置页查看");
-  }, [currentWorkspace?.id, session?.workspaceId]);
+    setSaveTaskDialogData(null);
+  }, [saveTaskDialogData, currentWorkspace?.id, session?.workspaceId]);
 
   const handleModelSelect = useCallback((option: ModelOption): void => {
     setAgentChannelId(option.channelId);
@@ -913,6 +910,12 @@ export function AgentView(): React.ReactElement {
           </div>
         </div>
       ) : null}
+
+      <SaveAsTaskDialog
+        data={saveTaskDialogData}
+        onClose={() => setSaveTaskDialogData(null)}
+        onConfirm={handleSaveTaskConfirm}
+      />
     </div>
   );
 }

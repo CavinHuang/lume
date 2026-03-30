@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo } from "react";
 import { useAtomValue } from "jotai";
 import { Brain, CheckCircle2, ChevronRight, Globe, ImagePlus, Loader2, Sparkles, Wrench, XCircle } from "lucide-react";

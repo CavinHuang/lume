@@ -1,5 +1,3 @@
-"use client";
-
 import type * as React from "react";
 import { Plug, Settings, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";

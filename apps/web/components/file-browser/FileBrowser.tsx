@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import type { FileEntry } from "@lume/shared";
 import { useAtomValue } from "jotai";

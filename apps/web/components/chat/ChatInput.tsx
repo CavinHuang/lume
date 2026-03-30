@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { CornerDownLeft, Lightbulb, Paperclip, Square } from "lucide-react";

@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import type { AgentWorkspace } from "@lume/shared";
 import { FolderOpen, Plus, Check, ChevronDown, Pencil, Trash2 } from "lucide-react";

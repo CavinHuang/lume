@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { AgentWorkspace } from "@lume/shared";

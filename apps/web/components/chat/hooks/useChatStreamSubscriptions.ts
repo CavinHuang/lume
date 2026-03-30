@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { ChatMessage, ConversationMeta } from "@lume/shared";

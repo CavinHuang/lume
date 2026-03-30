@@ -1,5 +1,3 @@
-"use client";
-
 import type * as React from "react";
 import { ArrowRightLeft, ChevronDown, ChevronRight, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import type { AgentSessionMeta, AgentWorkspace } from "@lume/shared";

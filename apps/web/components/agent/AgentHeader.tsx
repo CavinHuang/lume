@@ -1,5 +1,3 @@
-"use client";
-
 import { useRef, useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { ArrowLeft, Check, FolderOpen, Pencil, X } from "lucide-react";

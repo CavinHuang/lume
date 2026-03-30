@@ -1,5 +1,3 @@
-"use client";
-
 import { useAtom } from "jotai";
 import { appModeAtom, type AppMode } from "@/atoms";
 import { cn } from "@/lib/utils";

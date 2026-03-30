@@ -1,5 +1,3 @@
-"use client";
-
 import { useAtomValue } from "jotai";
 import { activeViewAtom, appModeAtom } from "@/atoms";
 import { ChatView } from "@/components/chat";

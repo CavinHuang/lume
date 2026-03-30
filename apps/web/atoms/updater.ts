@@ -21,19 +21,29 @@ export const hasUpdateAtom = atom((get) => {
   return status === "available" || status === "downloaded";
 });
 
+/**
+ * @deprecated 自动更新功能尚未接入，此 atom 始终返回 false。
+ * 接入更新通道后请移除此标记。
+ */
 export const updaterAvailableAtom = atom<boolean>(() => {
-  // Lume 当前未接入 Proma 的 updater 通道，保持不可用状态。
   return false;
 });
 
+/**
+ * @deprecated 自动更新功能尚未接入，始终返回 error 状态。
+ * 接入更新通道后请替换为真实实现。
+ */
 export async function checkForUpdates(): Promise<UpdateStatus> {
-  // Lume(Tauri) 尚未接入自动更新通道，先返回可感知状态，避免无反馈。
   return {
     status: "error",
     error: "当前版本暂未接入自动更新服务"
   };
 }
 
+/**
+ * @deprecated 自动更新功能尚未接入，始终返回 error 状态。
+ * 接入更新通道后请替换为真实实现。
+ */
 export async function installUpdate(): Promise<UpdateStatus> {
   return {
     status: "error",

@@ -1,5 +1,3 @@
-"use client";
-
 import {
   AUTOMATION_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,

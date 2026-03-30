@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import type { GitHubRelease } from "@lume/shared";
 import { ExternalLink } from "lucide-react";

@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MicIcon, AlertCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";

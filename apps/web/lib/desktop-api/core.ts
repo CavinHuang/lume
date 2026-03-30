@@ -1,5 +1,3 @@
-"use client";
-
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { HealthcheckResult } from "@lume/shared";
@@ -29,10 +27,11 @@ export async function desktopHealthcheck(): Promise<HealthcheckResult> {
   try {
     const result = await invoke<HealthcheckResult>("healthcheck");
     return result;
-  } catch {
+  } catch (error) {
     return {
-      ok: true,
-      source: "web"
+      ok: false,
+      source: "web",
+      error: error instanceof Error ? error.message : String(error)
     };
   }
 }
@@ -45,10 +44,11 @@ export async function sidecarHealthcheck(): Promise<HealthcheckResult> {
   try {
     const result = await invoke<HealthcheckResult>("sidecar_healthcheck");
     return result;
-  } catch {
+  } catch (error) {
     return {
-      ok: true,
-      source: "web"
+      ok: false,
+      source: "web",
+      error: error instanceof Error ? error.message : String(error)
     };
   }
 }

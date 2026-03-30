@@ -1,5 +1,3 @@
-"use client";
-
 import { Fragment, useMemo } from "react";
 import type { ChatMessage } from "@lume/shared";
 import { ChatMessageItem } from "./ChatMessageItem";

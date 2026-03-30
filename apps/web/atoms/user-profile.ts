@@ -1,32 +1,10 @@
-import { atom } from "jotai";
+import { atomWithStorage } from "jotai/utils";
 
 export type UserProfile = {
   userName: string;
   avatar: string;
 };
 
-const STORAGE_KEY = "lume-user-profile";
+const defaultUserProfile: UserProfile = { userName: "You", avatar: "🙂" };
 
-function loadUserProfile(): UserProfile {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { userName: "You", avatar: "🙂" };
-    const parsed = JSON.parse(raw) as Partial<UserProfile>;
-    return {
-      userName: parsed.userName?.trim() || "You",
-      avatar: parsed.avatar?.trim() || "🙂"
-    };
-  } catch {
-    return { userName: "You", avatar: "🙂" };
-  }
-}
-
-export const userProfileAtom = atom<UserProfile>(loadUserProfile());
-
-export function persistUserProfile(profile: UserProfile): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
-  } catch {
-    // ignore
-  }
-}
+export const userProfileAtom = atomWithStorage<UserProfile>("lume-user-profile", defaultUserProfile);

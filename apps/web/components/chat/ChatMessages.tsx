@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { useAtomValue } from "jotai";
 import { Loader2, MessageSquare } from "lucide-react";

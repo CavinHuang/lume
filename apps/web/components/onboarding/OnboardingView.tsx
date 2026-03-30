@@ -1,5 +1,3 @@
-"use client";
-
 import { CheckCircle2, CircleDashed, Compass, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 

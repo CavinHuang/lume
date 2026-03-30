@@ -1,11 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\renderer\atoms\system-prompt-atoms.ts
- * Adaptation:
- * - 保留 Chat 提示词配置与解析逻辑。
- * - 兼容 Lume 的按对话独立提示词选择（conversationPromptIdAtom）。
- */
-
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import {

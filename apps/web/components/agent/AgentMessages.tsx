@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
@@ -70,7 +68,7 @@ interface AgentMessagesProps {
   inlineEditingMessageId?: string | null;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
-  onSaveAsTask?: (message: AgentMessage) => Promise<void>;
+  onSaveAsTask?: (message: AgentMessage) => void;
   onStartInlineEdit?: (message: AgentMessage) => void;
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
@@ -408,7 +406,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   versionLoading: boolean;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
-  onSaveAsTask?: (message: AgentMessage) => Promise<void>;
+  onSaveAsTask?: (message: AgentMessage) => void;
   onStartInlineEdit?: (message: AgentMessage) => void;
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;

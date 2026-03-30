@@ -1,13 +1,3 @@
-/**
- * Migrated from:
- * /Users/cavinhuang/workspace/projects/ai-projects/Proma/apps/electron/src/renderer/components/agent/SidePanel.tsx
- * Adaptation:
- * - Lume 使用简化双 Tab 侧面板（Team + Files），复用现有 FileBrowser。
- * - Team 面板数据来自消息事件重建 + subagent run IPC 轮询合并。
- */
-
-"use client";
-
 import * as React from "react";
 import { FolderOpen, PanelRight, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";

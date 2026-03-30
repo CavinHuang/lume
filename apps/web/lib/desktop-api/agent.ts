@@ -1,5 +1,3 @@
-"use client";
-
 import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
 import type {
   AgentAskUserQuestionRequest,

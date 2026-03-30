@@ -1,7 +1,5 @@
-"use client";
-
 import { useAtom } from "jotai";
-import { themeModeAtom, persistThemeMode, type ThemeMode } from "@/atoms";
+import { themeModeAtom, type ThemeMode } from "@/atoms";
 import { SettingsCard, SettingsRow, SettingsSection, SettingsSegmentedControl } from "./primitives";
 
 const OPTIONS: Array<{ value: string; label: string }> = [
@@ -27,7 +25,6 @@ export function AppearanceSettings(): React.ReactElement {
           onValueChange={(value) => {
             const next = value as ThemeMode;
             setMode(next);
-            persistThemeMode(next);
           }}
           options={OPTIONS}
         />

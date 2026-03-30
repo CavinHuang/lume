@@ -1,5 +1,3 @@
-"use client";
-
 import { startTransition, useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { AgentMessage } from "@lume/shared";

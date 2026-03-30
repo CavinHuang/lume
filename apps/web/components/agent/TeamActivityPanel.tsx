@@ -1,13 +1,3 @@
-/**
- * Migrated from:
- * /Users/cavinhuang/workspace/projects/ai-projects/Proma/apps/electron/src/renderer/components/agent/TeamActivityPanel.tsx
- * Adaptation:
- * - 基于工具事件 + run registry 聚合，提供 Team 头部、Task Board、Agent 卡片。
- * - 增加 run 级 telemetry 显示（runId/usage/errorCode/announce）。
- */
-
-"use client";
-
 import * as React from "react";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { Bell, Bot, CheckCircle2, ChevronRight, Circle, Clock, ExternalLink, ListChecks, Loader2, Users, XCircle } from "lucide-react";

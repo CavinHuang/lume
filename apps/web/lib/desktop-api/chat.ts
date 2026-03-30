@@ -1,5 +1,3 @@
-"use client";
-
 import {
   CHAT_IPC_CHANNELS,
   CHAT_TOOL_IPC_CHANNELS,

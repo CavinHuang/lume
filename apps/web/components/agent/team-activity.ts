@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * /Users/cavinhuang/workspace/projects/ai-projects/Proma/apps/electron/src/renderer/atoms/agent-atoms.ts
- * Adaptation:
- * - 保持 Lume Web 侧轻量提取层，支持消息事件与 run registry 轮询数据合并。
- */
-
 import type { AgentMessage } from "@lume/shared";
 import type { SubagentRunRecord } from "@lume/shared";
 import type { ToolActivity } from "@/atoms/agent-atoms";

@@ -1,5 +1,3 @@
-"use client";
-
 import { startTransition, useEffect, useRef } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {

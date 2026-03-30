@@ -1,5 +1,3 @@
-"use client";
-
 import { Loader2, Sparkles } from "lucide-react";
 import type { AgentModeRecommendation } from "./agent-mode-recommendation";
 import { useMigrateChatToAgent } from "./use-migrate-chat-to-agent";

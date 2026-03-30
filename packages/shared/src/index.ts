@@ -9,9 +9,10 @@ export * from "./agent";
 export type AppMode = "chat" | "agent";
 
 export interface HealthcheckResult {
-  ok: true;
+  ok: boolean;
   source: "desktop" | "web" | "sidecar";
   version?: number;
+  error?: string;
 }
 
 /** 当前 IPC 协议版本，前后端必须一致 */

@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { Brain, ChevronDown } from "lucide-react";
 import { Streamdown } from "streamdown";

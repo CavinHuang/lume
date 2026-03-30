@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentMessage } from "@lume/shared";
 import type { ToolActivity } from "@/atoms/agent-atoms";

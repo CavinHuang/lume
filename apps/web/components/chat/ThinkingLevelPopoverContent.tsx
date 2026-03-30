@@ -1,5 +1,3 @@
-"use client";
-
 import { Check, CircleOff, Lightbulb, WandSparkles } from "lucide-react";
 import type { ThinkingLevel } from "@lume/shared";
 import { Badge } from "@/components/ui/badge";

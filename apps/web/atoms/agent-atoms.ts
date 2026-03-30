@@ -164,6 +164,20 @@ export const currentAgentSessionAtom = atom<AgentSessionMeta | null>((get) => {
   return sessions.find((item) => item.id === currentId) ?? null;
 });
 
+interface ToolPolicyRecord {
+  allow?: unknown[];
+  deny?: unknown[];
+}
+
+function isToolPolicyRecord(value: unknown): value is ToolPolicyRecord {
+  return typeof value === "object" && value !== null;
+}
+
+function getStringField(obj: Record<string, unknown> | undefined, key: string): string | undefined {
+  const v = obj?.[key];
+  return typeof v === "string" ? v : undefined;
+}
+
 export const currentAgentCapabilityRouteHintAtom = atom<{
   preferred: string;
   reason?: string;
@@ -173,24 +187,17 @@ export const currentAgentCapabilityRouteHintAtom = atom<{
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (!message || message.role !== "user") continue;
-    const metadata = message.metadata as Record<string, unknown> | undefined;
-    const preferred = typeof metadata?.preferredCapabilityRoute === "string"
-      ? metadata.preferredCapabilityRoute
-      : undefined;
+    const metadata = message.metadata;
+    const preferred = getStringField(metadata, "preferredCapabilityRoute");
     if (!preferred) continue;
-    const reason = typeof metadata?.capabilityRoutingReason === "string"
-      ? metadata.capabilityRoutingReason
-      : undefined;
+    const reason = getStringField(metadata, "capabilityRoutingReason");
     const toolPolicy = metadata?.toolPolicy;
-    const allow = Array.isArray((toolPolicy as Record<string, unknown> | undefined)?.allow)
-      ? ((toolPolicy as Record<string, unknown>).allow as unknown[])
-      : [];
-    const deny = Array.isArray((toolPolicy as Record<string, unknown> | undefined)?.deny)
-      ? ((toolPolicy as Record<string, unknown>).deny as unknown[])
-      : [];
-    const softPolicyActive = !!toolPolicy
-      && typeof toolPolicy === "object"
-      && (allow.length > 0 || deny.length > 0);
+    let softPolicyActive = false;
+    if (isToolPolicyRecord(toolPolicy)) {
+      const allow = Array.isArray(toolPolicy.allow) ? toolPolicy.allow : [];
+      const deny = Array.isArray(toolPolicy.deny) ? toolPolicy.deny : [];
+      softPolicyActive = allow.length > 0 || deny.length > 0;
+    }
     return { preferred, reason, softPolicyActive };
   }
   return null;

@@ -1,12 +1,9 @@
-"use client";
-
 import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { IPC_PROTOCOL_VERSION } from "@lume/shared";
 import { themeModeAtom, type ThemeMode, workspaceCapabilitiesVersionAtom, workspaceFilesVersionAtom } from "./atoms";
 import { AppShell } from "./components/app-shell/AppShell";
 import { TooltipProvider } from "./components/ui/tooltip";
-import type { AppShellContextType } from "./contexts/AppShellContext";
 import { onAgentCapabilitiesChanged, onAgentWorkspaceFilesChanged } from "./lib/desktop-api/agent";
 import { sidecarCall } from "./lib/desktop-api/core";
 
@@ -30,8 +27,6 @@ export default function App(): React.ReactElement {
   const mode = useAtomValue(themeModeAtom);
   const bumpCapabilitiesVersion = useSetAtom(workspaceCapabilitiesVersionAtom);
   const bumpFilesVersion = useSetAtom(workspaceFilesVersionAtom);
-  const contextValue: AppShellContextType = {};
-
   useEffect(() => {
     void sidecarCall<{ version?: number }>("healthcheck").then((result) => {
       if (result.version !== IPC_PROTOCOL_VERSION) {
@@ -108,7 +103,7 @@ export default function App(): React.ReactElement {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <AppShell contextValue={contextValue} />
+      <AppShell />
     </TooltipProvider>
   );
 }

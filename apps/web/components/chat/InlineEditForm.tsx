@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { Paperclip, SendHorizontal, X } from "lucide-react";
 import type { ChatMessage, FileAttachment } from "@lume/shared";
