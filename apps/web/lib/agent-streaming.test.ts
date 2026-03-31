@@ -7,8 +7,7 @@ function createState(): AgentStreamState {
     running: true,
     content: "",
     reasoning: "",
-    toolActivities: [],
-    teammates: []
+    toolActivities: []
   };
 }
 

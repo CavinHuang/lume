@@ -18,6 +18,14 @@ export function projectLifecycleRuntimeCoreEventToLumeEvents(
   if (event.type === "auto_retry_start" || event.type === "auto_retry_end") {
     return [];
   }
+  // Turn 边界事件由 Pi Agent Core 产生，透传为 Lume AgentEvent
+  // turnId / turnIndex 由 stream-wrappers 在有状态层填充
+  if (event.type === "turn_start") {
+    return [{ type: "turn_start", turnId: "", turnIndex: -1 }];
+  }
+  if (event.type === "turn_end") {
+    return [{ type: "turn_end", turnId: "", turnIndex: -1 }];
+  }
   return null;
 }
 

@@ -11,8 +11,7 @@ import type {
 } from "@lume/shared";
 import type { PlanState } from "@/atoms/plan-atoms";
 import { applyAgentEvent } from "@/atoms";
-import type { AgentStreamState, TeammateState } from "@/atoms/agent-atoms";
-import type { AgentSidePanelTab } from "../AgentSidePanel";
+import type { AgentStreamState } from "@/atoms/agent-atoms";
 import {
   generateAgentSessionTitle,
   getAgentSessionMessages,
@@ -30,7 +29,6 @@ import {
 } from "@/lib/desktop-api/agent";
 import { mergeServerMessagesWithPending, replaceVisibleMessage } from "@/lib/agent-message-merge";
 import { extractLatestAssistantText } from "../agent-session-lifecycle";
-import { shouldAutoOpenTeamPanel } from "../agent-stream-subscriptions";
 
 function isAgentDebugEnabled(): boolean {
   try {
@@ -149,9 +147,6 @@ interface UseAgentStreamSubscriptionsParams {
     totalTokens: number;
     contextWindow?: number;
   }>>>;
-  setCachedTeammates: Dispatch<SetStateAction<Map<string, TeammateState[]>>>;
-  setSidePanelOpenMap: Dispatch<SetStateAction<Map<string, boolean>>>;
-  setSidePanelTabMap: Dispatch<SetStateAction<Map<string, AgentSidePanelTab>>>;
   setAgentPermissionMode: Dispatch<SetStateAction<NonNullable<AgentSendInput["permissionMode"]>>>;
   setAskUserError: Dispatch<SetStateAction<string | null>>;
   setToolPermissionError: Dispatch<SetStateAction<string | null>>;
@@ -191,9 +186,6 @@ export function useAgentStreamSubscriptions({
   setStreamingStates,
   setToolPermissionRequests,
   setContextCache,
-  setCachedTeammates,
-  setSidePanelOpenMap,
-  setSidePanelTabMap,
   setAgentPermissionMode,
   setAskUserError,
   setToolPermissionError,
@@ -307,7 +299,6 @@ export function useAgentStreamSubscriptions({
           running: true,
           content: "",
           toolActivities: [],
-          teammates: [],
           events: []
         };
         map.set(payload.sessionId, applyAgentEvent(current, payload.event));
@@ -331,18 +322,6 @@ export function useAgentStreamSubscriptions({
         });
       }
 
-      if (payload.sessionId === currentSessionIdRef.current && shouldAutoOpenTeamPanel(payload.event)) {
-        setSidePanelOpenMap((prev) => {
-          const map = new Map(prev);
-          map.set(payload.sessionId, true);
-          return map;
-        });
-        setSidePanelTabMap((prev) => {
-          const map = new Map(prev);
-          map.set(payload.sessionId, "team");
-          return map;
-        });
-      }
     }));
 
     trackUnlisten(onAgentStreamComplete((payload) => {
@@ -352,14 +331,6 @@ export function useAgentStreamSubscriptions({
       }
       markStreamCompleted(payload.sessionId);
       const finalize = (): void => {
-        const streamState = streamingStatesRef.current.get(payload.sessionId);
-        if (streamState?.teammates && streamState.teammates.length > 0) {
-          setCachedTeammates((prev) => {
-            const map = new Map(prev);
-            map.set(payload.sessionId, streamState.teammates);
-            return map;
-          });
-        }
         if (payload.sessionId === currentSessionIdRef.current) {
           setAskUserQuestionRequests((prev) => {
             const map = new Map(prev);
@@ -657,14 +628,11 @@ export function useAgentStreamSubscriptions({
     setAgentPermissionMode,
     setAskUserError,
     setAskUserQuestionRequests,
-    setCachedTeammates,
     setContextCache,
     setMessages,
     setPlanState,
     setRuntimeStatuses,
     setSessions,
-    setSidePanelOpenMap,
-    setSidePanelTabMap,
     setStreamErrors,
     setStreamingStates,
     setToolPermissionError,

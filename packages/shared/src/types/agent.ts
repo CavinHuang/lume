@@ -46,6 +46,9 @@ export interface AgentEventUsage {
  * 从 SDK 消息转换而来的扁平事件流，用于驱动 UI 渲染。
  */
 export type AgentEvent =
+  // Turn 边界
+  | { type: 'turn_start'; turnId: string; turnIndex: number }
+  | { type: 'turn_end'; turnId: string; turnIndex: number }
   // 文本流式输出
   | { type: 'text_delta'; text: string; turnId?: string; parentToolUseId?: string }
   | { type: 'text_complete'; text: string; isIntermediate: boolean; turnId?: string; parentToolUseId?: string }
@@ -678,6 +681,20 @@ export interface AgentCopyFolderInput {
 
 // ===== IPC 通道常量 =====
 
+/** 分叉会话的输入参数 */
+export interface ForkSessionInput {
+  /** 源会话 ID */
+  sessionId: string;
+  /** 从此消息 ID（含）截断，后续消息不复制 */
+  upToMessageId: string;
+}
+
+/** 分叉会话的返回结果 */
+export interface ForkSessionResult {
+  /** 新创建的会话 ID */
+  newSessionId: string;
+}
+
 /**
  * Agent 相关 IPC 通道常量
  */
@@ -842,10 +859,18 @@ export const AGENT_IPC_CHANNELS = {
   /** Plan 状态变化通知（主进程 → 渲染进程推送） */
   PLAN_STATE_CHANGED: 'agent:plan-state-changed',
 
+  // 工作区路径
+  /** 获取工作区根路径 */
+  GET_WORKSPACE_ROOT_PATH: 'agent:get-workspace-root-path',
+
   // 日志
   /** 写入日志（前端 -> sidecar） */
   WRITE_LOG: 'agent:write-log',
   /** 获取日志目录路径 */
   GET_LOGS_DIR: 'agent:get-logs-dir',
+
+  // 分叉
+  /** 从指定消息处分叉会话 */
+  FORK_SESSION: 'agent:fork-session',
 } as const
 import type { ThinkingLevel } from "./chat"

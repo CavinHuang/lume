@@ -19,6 +19,7 @@ import {
   migrateChatToAgentSession,
   moveAgentSessionToWorkspace,
   toggleAgentSessionPin,
+  forkAgentSession,
   truncateAgentMessagesFrom,
   updateAgentSessionMeta
 } from "../services/agent/agent-session-manager";
@@ -72,6 +73,7 @@ import {
   importGlobalSkillToWorkspace,
   installGlobalPlugin
 } from "../services/system/global-discovery-service";
+import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { getSessionEventBus } from "../services/pi-agent/session-event-bus";
@@ -247,6 +249,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM]: async (params) => {
       const input = validateInput(agentTruncateInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM);
       return truncateAgentMessagesFrom(input.sessionId, input.messageId);
+    },
+    [AGENT_IPC_CHANNELS.FORK_SESSION]: async (params) => {
+      const input = params as { sessionId: string; upToMessageId: string };
+      if (!input.sessionId || !input.upToMessageId) {
+        throw new Error("FORK_SESSION requires sessionId and upToMessageId");
+      }
+      return forkAgentSession(input.sessionId, input.upToMessageId);
     },
     [AGENT_IPC_CHANNELS.LIST_WORKSPACES]: async () => listAgentWorkspaces(),
     [AGENT_IPC_CHANNELS.CREATE_WORKSPACE]: async (params) => {
@@ -539,6 +548,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
       return { ok: true };
     },
-    [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: getLogsDir() })
+    [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: getLogsDir() }),
+    [AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH]: async (params) => {
+      const input = validateInput(workspaceSlugInputSchema, params, AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH);
+      return getAgentWorkspacePath(input.workspaceSlug);
+    }
   };
 }

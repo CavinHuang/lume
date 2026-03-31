@@ -125,7 +125,7 @@ export function useAgentComposer({
     const timer = setTimeout(() => {
       setStreamingStates((prev) => {
         const map = new Map(prev);
-        map.set(sessionId as string, { running: true, content: "", toolActivities: [], teammates: [], events: [] });
+        map.set(sessionId as string, { running: true, content: "", toolActivities: [], events: [] });
         return map;
       });
 
@@ -277,7 +277,7 @@ export function useAgentComposer({
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
-      map.set(sessionId, { running: true, content: "", toolActivities: [], teammates: [], events: [] });
+      map.set(sessionId, { running: true, content: "", toolActivities: [], events: [] });
       return map;
     });
 
@@ -329,7 +329,6 @@ export function useAgentComposer({
         running: true,
         content: "",
         toolActivities: [],
-        teammates: [],
         events: [],
         model: outgoingModelId
       });
@@ -501,7 +500,6 @@ export function useAgentComposer({
         running: true,
         content: "",
         toolActivities: [],
-        teammates: [],
         events: [],
         model: outgoingModelId
       });

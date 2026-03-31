@@ -207,11 +207,14 @@ export function extractTimelineEvents(message: AgentMessage): TimelineEvent[] {
         toolResultIndexMap.set(event.toolUseId, timelineEvents.length - 1);
         break;
       }
+      case "turn_start":
+      case "turn_end":
       case "task_backgrounded":
       case "task_progress":
       case "task_started":
       case "task_notification":
       case "shell_backgrounded":
+      case "shell_killed":
       case "usage_update":
       case "compacting":
       case "compact_complete":
@@ -251,4 +254,45 @@ export function extractTimelineEvents(message: AgentMessage): TimelineEvent[] {
   }
 
   return timelineEvents;
+}
+
+// ─── Turn 分组 ───
+
+export interface TurnGroup {
+  turnId: string;
+  events: TimelineEvent[];
+}
+
+/**
+ * 将 TimelineEvent[] 按 turnId 分组，无 turnId 的事件归入最近的 turn 或独立组
+ */
+export function groupTimelineEventsByTurn(events: TimelineEvent[]): TurnGroup[] {
+  if (events.length === 0) return [];
+
+  const groups: TurnGroup[] = [];
+  let currentTurnId: string | null = null;
+  let currentGroup: TimelineEvent[] = [];
+
+  const flush = (): void => {
+    if (currentGroup.length === 0) return;
+    groups.push({
+      turnId: currentTurnId ?? `ungrouped-${groups.length}`,
+      events: currentGroup,
+    });
+    currentGroup = [];
+  };
+
+  for (const event of events) {
+    const turnId = "turnId" in event ? (event as { turnId?: string }).turnId : undefined;
+
+    if (turnId && turnId !== currentTurnId) {
+      flush();
+      currentTurnId = turnId;
+    }
+
+    currentGroup.push(event);
+  }
+
+  flush();
+  return groups;
 }

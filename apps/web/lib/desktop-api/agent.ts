@@ -25,6 +25,8 @@ import type {
   AgentWorkspace,
   FileEntry,
   FileSearchResult,
+  ForkSessionInput,
+  ForkSessionResult,
   GlobalDiscoverySnapshot,
   GlobalImportResult,
   GlobalPluginMarketplaceDetail,
@@ -458,6 +460,10 @@ export async function moveAttachedFile(path: string, targetDir: string): Promise
   });
 }
 
+export async function getAgentWorkspaceRootPath(workspaceSlug: string): Promise<string> {
+  return sidecarCall<string>(AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH, { workspaceSlug });
+}
+
 export async function searchAgentWorkspaceFiles(
   workspaceSlug: string,
   sessionId: string,
@@ -581,3 +587,9 @@ export const log = {
   error: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
     writeLog({ level: "error", message, data, sessionId })
 };
+
+// ─── 分叉 ───
+
+export async function forkAgentSession(input: ForkSessionInput): Promise<ForkSessionResult> {
+  return sidecarCall<ForkSessionResult>(AGENT_IPC_CHANNELS.FORK_SESSION, input);
+}

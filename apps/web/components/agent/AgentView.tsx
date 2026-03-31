@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AlertCircle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, CornerDownLeft, FolderPlus, Lightbulb, Loader2, Paperclip, Settings, Square, X } from "lucide-react";
 import type {
@@ -26,7 +26,6 @@ import {
   agentToolActivitiesAtom,
   agentStreamingStatesAtom,
   agentSessionContextCacheAtom,
-  cachedTeammateStatesAtom,
   agentWorkspacesAtom,
   applyAgentEvent,
   currentAgentErrorAtom,
@@ -43,7 +42,6 @@ import {
 } from "@/atoms/plan-atoms";
 import {
   getAgentSessionMessages,
-  listSubagentRuns,
   saveFilesToAgentSession,
   sendAgentMessage,
   updateAgentSessionModelSelection,
@@ -60,6 +58,7 @@ import { AgentHeader } from "./AgentHeader";
 import { AgentMessages } from "./AgentMessages";
 import { AskUserQuestionPanel } from "./AskUserQuestionPanel";
 import { ContextUsageBadge } from "./ContextUsageBadge";
+import { PermissionModePopover } from "./PermissionModePopover";
 import { AttachmentPreviewItem } from "@/components/chat/AttachmentPreviewItem";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { ThinkingLevelPopoverContent } from "@/components/chat/ThinkingLevelPopoverContent";
@@ -68,26 +67,16 @@ import { RichTextInput } from "@/components/ai-elements/rich-text-input";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AgentSidePanel, type AgentSidePanelTab } from "./AgentSidePanel";
-import {
-  buildTeamActivitiesFromRuns,
-  buildTeamActivitiesFromSession,
-  extractTeamInboxFromMessages,
-  extractTeamOverview,
-  extractToolActivitiesFromMessages,
-  mergeToolActivities,
-  selectTeamActivities,
-  type TeamAgentInfo
-} from "./team-activity";
+import { AgentSidePanel } from "./AgentSidePanel";
 import { extractLatestAssistantText } from "./agent-session-lifecycle";
 import { fileToBase64 } from "./agent-composer";
+import { findLatestTodoItems, resolveTodoPanelExpanded, type TodoItem } from "./agent-team-activity";
 import { useAgentInteractiveRequests } from "./hooks/useAgentInteractiveRequests";
 import { useAgentPlanFlow } from "./hooks/useAgentPlanFlow";
 import { useAgentComposer } from "./hooks/useAgentComposer";
 import { useAgentRuntimeGuard } from "./hooks/useAgentRuntimeGuard";
 import { useAgentSidePanelState } from "./hooks/useAgentSidePanelState";
 import { useAgentStreamSubscriptions } from "./hooks/useAgentStreamSubscriptions";
-import { useAgentTeamActivity } from "./hooks/useAgentTeamActivity";
 import { useAgentSessionLifecycle } from "./hooks/useAgentSessionLifecycle";
 import { SaveAsTaskDialog, type SaveAsTaskDialogData } from "./SaveAsTaskDialog";
 
@@ -143,46 +132,6 @@ function isAgentDebugEnabled(): boolean {
   }
 }
 
-function TeamActivityBar({
-  agents,
-  onOpenTeamPanel,
-}: {
-  agents: TeamAgentInfo[];
-  onOpenTeamPanel: () => void;
-}): React.ReactElement {
-  const activeTools = agents
-    .filter((a) => a.currentToolName)
-    .map((a) => a.currentToolName as string)
-    .slice(0, 3);
-
-  return (
-    <button
-      type="button"
-      onClick={onOpenTeamPanel}
-      className="mx-4 mb-2 flex w-[calc(100%-2rem)] items-center gap-2.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-left transition-colors hover:bg-muted/60 animate-slide-in-down"
-    >
-      <span className="relative flex size-2 shrink-0">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/60 opacity-75" />
-        <span className="relative inline-flex size-2 rounded-full bg-primary" />
-      </span>
-      <span className="text-[11px] font-medium text-foreground/80 shrink-0">
-        {agents.length} 个 Agent 运行中
-      </span>
-      {activeTools.length > 0 ? (
-        <>
-          <span className="text-[11px] text-muted-foreground/50">·</span>
-          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/70">
-            {activeTools.join("、")}
-          </span>
-        </>
-      ) : (
-        <span className="flex-1" />
-      )}
-      <span className="shrink-0 text-[10px] text-muted-foreground/50">查看详情 →</span>
-    </button>
-  );
-}
-
 export function AgentView(): React.ReactElement {
   const [sessionId, setCurrentSessionId] = useAtom(currentAgentSessionIdAtom);
   const session = useAtomValue(currentAgentSessionAtom);
@@ -195,7 +144,6 @@ export function AgentView(): React.ReactElement {
   const setToolPermissionRequests = useSetAtom(agentToolPermissionRequestsAtom);
   const streamingStates = useAtomValue(agentStreamingStatesAtom);
   const setContextCache = useSetAtom(agentSessionContextCacheAtom);
-  const setCachedTeammates = useSetAtom(cachedTeammateStatesAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const toolActivities = useAtomValue(agentToolActivitiesAtom);
   const contextStatus = useAtomValue(agentContextStatusAtom);
@@ -256,36 +204,38 @@ export function AgentView(): React.ReactElement {
   }, [askUserQuestionRequest, currentRuntimeStatus, toolPermissionRequest]);
 
   const {
-    latestTodoItems,
-    todoPanelExpanded,
-    setTodoPanelExpanded,
-    todoProgressText,
-    teamInboxItems,
-    teamActivities,
-    runningTeamAgents
-  } = useAgentTeamActivity(sessionId, messages, toolActivities);
-  const {
-    setSidePanelOpenMap,
-    setSidePanelTabMap,
     currentSidePanelOpen,
-    currentSidePanelTab,
     fileBrowserOpen,
     setCurrentSidePanelOpen,
-    setCurrentSidePanelTab,
-    handleToggleFileBrowser,
-    openTeamPanel
+    handleToggleFileBrowser
   } = useAgentSidePanelState(sessionId);
+
+  // --- Todo 面板逻辑 ---
+  const [todoPanelExpanded, setTodoPanelExpanded] = useState(true);
+  const prevTodoItemsRef = useRef<TodoItem[] | null>(null);
+  const latestTodoItems = useMemo(
+    () => findLatestTodoItems(toolActivities, messages),
+    [messages, toolActivities]
+  );
+  const todoProgressText = useMemo(() => {
+    if (!latestTodoItems || latestTodoItems.length === 0) return null;
+    const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
+    return `${completed}/${latestTodoItems.length}`;
+  }, [latestTodoItems]);
+  useEffect(() => {
+    if (!latestTodoItems || latestTodoItems.length === 0) return;
+    const nextExpanded = resolveTodoPanelExpanded(prevTodoItemsRef.current, latestTodoItems);
+    if (typeof nextExpanded === "boolean") {
+      setTodoPanelExpanded(nextExpanded);
+    }
+    prevTodoItemsRef.current = latestTodoItems;
+  }, [latestTodoItems]);
 
   const handleOpenSession = useCallback((targetSessionId: string): void => {
     startTransition(() => {
       setCurrentSessionId(targetSessionId);
     });
   }, [setCurrentSessionId]);
-
-  const handleLoadChildSession = useCallback(async (childSessionId: string) => {
-    const messages = await getAgentSessionMessages(childSessionId);
-    return selectTeamActivities(extractToolActivitiesFromMessages(messages));
-  }, []);
 
   const backendReady = agentChannelId !== null;
   const outgoingModelId = useMemo(() => {
@@ -337,9 +287,6 @@ export function AgentView(): React.ReactElement {
     setStreamingStates,
     setToolPermissionRequests,
     setContextCache,
-    setCachedTeammates,
-    setSidePanelOpenMap,
-    setSidePanelTabMap,
     setAgentPermissionMode,
     setAskUserError,
     setToolPermissionError,
@@ -495,14 +442,6 @@ export function AgentView(): React.ReactElement {
             onCancelInlineEdit={handleCancelInlineEdit}
             onOpenSession={handleOpenSession}
           />
-
-          {/* Agent Team 运行状态条 */}
-          {runningTeamAgents.length > 0 ? (
-            <TeamActivityBar
-              agents={runningTeamAgents}
-              onOpenTeamPanel={openTeamPanel}
-            />
-          ) : null}
 
           {latestTodoItems && latestTodoItems.length > 0 ? (
             <div className="mb-2 ml-[72px] mr-4 inline-flex max-w-[calc(100%-5.5rem)] flex-col rounded-md border border-border/60 bg-muted/20 px-3 py-2">
@@ -743,6 +682,10 @@ export function AgentView(): React.ReactElement {
                 ) : null}
 
                 {backendReady ? (
+                  <PermissionModePopover />
+                ) : null}
+
+                {backendReady ? (
                   <Popover open={thinkingOpen} onOpenChange={setThinkingOpen}>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -830,14 +773,8 @@ export function AgentView(): React.ReactElement {
             sessionId={sessionId}
             sessionPath={sessionRootPath}
             workspaceSlug={currentWorkspace?.slug ?? null}
-            teamActivities={teamActivities}
-            inboxItems={teamInboxItems}
             open={currentSidePanelOpen}
-            activeTab={currentSidePanelTab}
             onOpenChange={setCurrentSidePanelOpen}
-            onTabChange={setCurrentSidePanelTab}
-            onOpenSession={handleOpenSession}
-            onLoadChildSession={handleLoadChildSession}
           />
         </div>
       {askUserQuestionRequest ? (

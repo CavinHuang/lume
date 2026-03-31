@@ -18,7 +18,6 @@ import {
 } from "@/lib/agent-runtime-status";
 import type {
   AgentStreamState,
-  TeammateState,
   ToolActivity
 } from "@/lib/agent-streaming";
 import {
@@ -28,13 +27,14 @@ import type {
   TimelineEvent
 } from "@/lib/agent-timeline";
 import {
-  extractTimelineEvents
+  extractTimelineEvents,
+  groupTimelineEventsByTurn
 } from "@/lib/agent-timeline";
 import { formatToolStatusLine } from "@/lib/agent-status-line";
 
-export type { AgentStreamState, TeammateState, ToolActivity } from "@/lib/agent-streaming";
-export type { TimelineEvent, TimelineTextEvent, TimelineToolResultEvent, TimelineToolStartEvent } from "@/lib/agent-timeline";
-export { applyAgentEvent, extractTimelineEvents };
+export type { AgentStreamState, ToolActivity } from "@/lib/agent-streaming";
+export type { TimelineEvent, TimelineTextEvent, TimelineToolResultEvent, TimelineToolStartEvent, TurnGroup } from "@/lib/agent-timeline";
+export { applyAgentEvent, extractTimelineEvents, groupTimelineEventsByTurn };
 
 export const agentSessionsAtom = atom<AgentSessionMeta[]>([]);
 export const agentWorkspacesAtom = atom<AgentWorkspace[]>([]);
@@ -49,6 +49,12 @@ export const agentPendingPromptAtom = atom<{ sessionId: string; message: string 
 export const agentPendingFilesAtom = atom<AgentPendingFile[]>([]);
 export const workspaceCapabilitiesVersionAtom = atom<number>(0);
 export const workspaceFilesVersionAtom = atom<number>(0);
+
+/** session 级附加目录：sessionId -> string[] */
+export const agentAttachedDirectoriesMapAtom = atom<Map<string, string[]>>(new Map());
+/** 工作区级附加目录：workspaceSlug -> string[] */
+export const workspaceAttachedDirectoriesMapAtom = atom<Map<string, string[]>>(new Map());
+
 export const currentAgentWorkspaceIdAtom = atom<string | null>(null);
 export const currentAgentSessionIdAtom = atom<string | null>(null);
 export const currentAgentMessagesAtom = atom<AgentMessage[]>([]);
@@ -67,7 +73,6 @@ export const agentSessionContextCacheAtom = atom<Map<string, {
   contextWindow?: number;
 }>>(new Map());
 
-export const cachedTeammateStatesAtom = atom<Map<string, TeammateState[]>>(new Map());
 
 export const currentAgentStreamStateAtom = atom<AgentStreamState | null>((get) => {
   const currentId = get(currentAgentSessionIdAtom);
@@ -104,11 +109,11 @@ export const agentStreamingReasoningAtom = atom<string>((get) => get(currentAgen
 
 export const agentToolActivitiesAtom = atom<ToolActivity[]>((get) => get(currentAgentStreamStateAtom)?.toolActivities ?? []);
 
-export const teammateStatesAtom = atom<TeammateState[]>((get) => get(currentAgentStreamStateAtom)?.teammates ?? []);
 
-export const hasTeammatesAtom = atom<boolean>((get) => get(teammateStatesAtom).length > 0);
-
-export const runningTeammateCountAtom = atom<number>((get) => get(teammateStatesAtom).filter(t => t.status === 'running').length);
+/** 当前流式回合的 turnId */
+export const agentCurrentTurnIdAtom = atom<string | undefined>((get) => get(currentAgentStreamStateAtom)?.currentTurnId);
+/** 已完成的 turn 数量 */
+export const agentTurnCountAtom = atom<number>((get) => get(currentAgentStreamStateAtom)?.turnCount ?? 0);
 
 export const agentStreamingTimelineEventsAtom = atom<TimelineEvent[]>((get) => {
   const streamState = get(currentAgentStreamStateAtom);
@@ -265,20 +270,12 @@ export const agentStatusLineAtom = atom<string | null>((get) => {
     return desc.endsWith("...") ? desc : `${desc}...`;
   }
 
-  // 4. 子 Agent 正在运行
-  const teammates = get(teammateStatesAtom);
-  const runningTeammate = teammates.find((t) => t.status === "running");
-  if (runningTeammate) {
-    const desc = runningTeammate.description;
-    return desc.endsWith("...") ? desc : `${desc}...`;
-  }
-
-  // 5. 正在推理
+  // 4. 正在推理
   const reasoning = get(agentStreamingReasoningAtom);
   if (reasoning) return "正在思考...";
   const thinkingSeconds = get(agentThinkingSecondsAtom);
   if (thinkingSeconds !== null) return "正在思考...";
 
-  // 6. 默认
+  // 5. 默认
   return "正在处理...";
 });

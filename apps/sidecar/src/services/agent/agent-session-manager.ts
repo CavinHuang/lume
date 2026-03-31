@@ -448,6 +448,39 @@ export function truncateAgentMessagesFrom(sessionId: string, messageId: string):
   return kept;
 }
 
+/**
+ * 从指定消息处分叉会话：创建新 session，复制截断后的消息
+ */
+export function forkAgentSession(
+  sourceSessionId: string,
+  upToMessageId: string
+): { newSessionId: string } {
+  const messages = getAgentSessionMessages(sourceSessionId);
+  const targetIndex = messages.findIndex((msg) => msg.id === upToMessageId);
+  if (targetIndex === -1) {
+    throw new Error(`消息 ${upToMessageId} 在会话 ${sourceSessionId} 中未找到`);
+  }
+
+  // 截取到目标消息（含）
+  const forkedMessages = messages.slice(0, targetIndex + 1);
+
+  // 获取源 session meta 以复制工作区等信息
+  const sourceMeta = getAgentSessionMeta(sourceSessionId);
+  const newSession = createAgentSession(
+    sourceMeta?.title ? `${sourceMeta.title} (分叉)` : "分叉会话",
+    sourceMeta?.channelId,
+    sourceMeta?.workspaceId,
+    sourceSessionId,
+    sourceMeta?.modelId
+  );
+
+  // 为新 session 重建 transcript
+  rebuildRuntimeCoreTranscript(newSession.id, forkedMessages);
+
+  console.log(`[Agent 会话] 已从 ${sourceSessionId.slice(0, 8)} 分叉到 ${newSession.id.slice(0, 8)}，包含 ${forkedMessages.length} 条消息`);
+  return { newSessionId: newSession.id };
+}
+
 export function replaceAgentSessionTranscript(sessionId: string, messages: AgentMessage[]): void {
   const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(sessionId);
   if (existsSync(runtimeCoreSessionDir)) {

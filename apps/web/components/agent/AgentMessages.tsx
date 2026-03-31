@@ -15,11 +15,10 @@ import {
   agentStreamingReasoningAtom,
   agentStreamingTimelineEventsAtom,
   agentThinkingSecondsAtom,
-  cachedTeammateStatesAtom,
   currentAgentMessagesAtom,
   currentAgentSessionIdAtom,
+  currentAgentStreamStateAtom,
   extractTimelineEvents,
-  teammateStatesAtom,
   userProfileAtom
 } from "@/atoms";
 import {
@@ -36,7 +35,6 @@ import {
   Reasoning,
   ReasoningContent,
   ReasoningTrigger,
-  StreamingIndicator,
   UserMessageContent,
 } from "@/components/ai-elements";
 import { formatMessageTime } from "@/components/chat/ChatMessageItem";
@@ -54,9 +52,10 @@ import { extractToolActivitiesFromMessages } from "@/lib/agent-tool-activity";
 import { getAgentMessageVersions } from "@/lib/desktop-api/agent";
 import { getModelLogo } from "@/lib/model-logo";
 import { cn } from "@/lib/utils";
+import { AgentRunningIndicator } from "./AgentRunningIndicator";
 import { AgentStatusLine } from "./AgentStatusLine";
 import { EventTimeline } from "./EventTimeline";
-import { SubagentLiveCards } from "./SubagentLiveCard";
+
 
 export interface AgentInlineEditSubmitPayload {
   content: string;
@@ -194,17 +193,8 @@ function SubagentAnnounceMessage({
 
   // 尝试从 metadata 获取工具计数
   const toolUses = typeof metadata?.toolUses === "number" ? metadata.toolUses : undefined;
-  // 如果没有，尝试从 cachedTeammateStates 查找
-  const currentSessionId = useAtomValue(currentAgentSessionIdAtom);
-  const cachedTeammates = useAtomValue(cachedTeammateStatesAtom);
-  const cachedToolUses = React.useMemo(() => {
-    if (toolUses !== undefined || !currentSessionId || !childSessionId) return undefined;
-    const teammates = cachedTeammates.get(currentSessionId);
-    const teammate = teammates?.find(t => t.taskId === childSessionId);
-    return teammate?.usage?.toolUses ?? teammate?.toolHistory.length;
-  }, [toolUses, currentSessionId, childSessionId, cachedTeammates]);
 
-  const finalToolUses = toolUses ?? cachedToolUses;
+  const finalToolUses = toolUses;
   const taskId = childSessionId?.slice(0, 8) ?? "unknown";
 
   return (
@@ -696,10 +686,11 @@ export function AgentMessages({
   const streamingTimelineEvents = useAtomValue(agentStreamingTimelineEventsAtom);
   const streamingToolActivities = useAtomValue(agentToolActivitiesAtom);
   const agentModelId = useAtomValue(agentModelIdAtom);
-  const teammateStates = useAtomValue(teammateStatesAtom);
   const isCompacting = useAtomValue(agentIsCompactingAtom);
   const thinkingSeconds = useAtomValue(agentThinkingSecondsAtom);
   const statusLine = useAtomValue(agentStatusLineAtom);
+  const streamState = useAtomValue(currentAgentStreamStateAtom);
+  const streamStartedAt = streamState?.streamStartedAt;
 
   const { displayedContent: smoothContent } = useSmoothStream({
     content: streamingContent,
@@ -717,7 +708,7 @@ export function AgentMessages({
   // 当有正式内容输出或工具调用开始时，reasoning 阶段视为结束
   const reasoningStillActive = streaming && !streamingContent && streamingTimelineEvents.length === 0;
   // 等待第一个 token 时显示状态行（reasoning/子Agent卡片已有内容时不显示）
-  const showLoadingDots = streaming && !smoothContent && !streamingReasoning && streamingTimelineEvents.length === 0 && teammateStates.length === 0;
+  const showLoadingDots = streaming && !smoothContent && !streamingReasoning && streamingTimelineEvents.length === 0;
   const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
 
   const renderedMessages = React.useMemo(() => {
@@ -753,16 +744,8 @@ export function AgentMessages({
         ...(streamingToolActivities.length > 0 ? { toolActivitiesSnapshot: streamingToolActivities } : {}),
         ...(streamingReasoning ? { reasoningExpanded: true } : {})
       },
-      events: streamingTimelineEvents.flatMap((event) => {
-        if (event.type === "text") {
-          return [{
-            type: "text_complete" as const,
-            text: event.content,
-            isIntermediate: false
-          }];
-        }
-        return [];
-      })
+      // 传入完整流式事件，让 EventTimeline 按事件顺序统一渲染文本和工具
+      events: streamState?.events
     };
   }, [
     agentModelId,
@@ -770,7 +753,7 @@ export function AgentMessages({
     showSmoothContent,
     smoothContent,
     streamingReasoning,
-    streamingTimelineEvents,
+    streamState?.events,
     streamingToolActivities
   ]);
 
@@ -877,26 +860,25 @@ export function AgentMessages({
                     </div>
                   </div>
                 ) : null}
-                {teammateStates.length > 0 ? (
-                  <div className="pl-[46px]">
-                    <div className="mb-2">
-                      <SubagentLiveCards teammates={teammateStates} />
-                    </div>
-                  </div>
-                ) : null}
                 {!showSmoothContent && showLoadingDots ? (
                   <div className="pl-[46px]">
                     <AgentStatusLine text={statusLine ?? "正在处理..."} />
                   </div>
                 ) : null}
-                {!showSmoothContent && streaming && streamingTimelineEvents.length > 0 && statusLine ? (
+                {!showSmoothContent && !showLoadingDots && streaming && statusLine ? (
                   <div className="pl-[46px]">
                     <AgentStatusLine text={statusLine} />
                   </div>
                 ) : null}
                 {showSmoothContent && streaming ? (
                   <div className="pl-[46px]">
-                    <StreamingIndicator />
+                    <AgentRunningIndicator startedAt={streamStartedAt} />
+                  </div>
+                ) : null}
+                {/* 兜底：流式进行中但没有其他指示器时，始终显示运行指示 */}
+                {streaming && !showSmoothContent && !showLoadingDots && !statusLine ? (
+                  <div className="pl-[46px]">
+                    <AgentRunningIndicator startedAt={streamStartedAt} />
                   </div>
                 ) : null}
               </div>

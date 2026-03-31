@@ -53,6 +53,10 @@ type FileBrowserProps = {
   sessionId: string;
   rootPath: string;
   onClose?: () => void;
+  /** 隐藏顶部路径栏和搜索栏 */
+  hideToolbar?: boolean;
+  /** 嵌入模式：去除背景色，更紧凑 */
+  embedded?: boolean;
 };
 
 function trimTrailingSeparators(path: string): string {
@@ -83,7 +87,9 @@ export function FileBrowser({
   workspaceSlug,
   sessionId,
   rootPath,
-  onClose
+  onClose,
+  hideToolbar = false,
+  embedded = false
 }: FileBrowserProps): React.ReactElement {
   const filesVersion = useAtomValue(workspaceFilesVersionAtom);
   const [entries, setEntries] = React.useState<FileEntry[]>([]);
@@ -252,62 +258,66 @@ export function FileBrowser({
   }, [rootPath]);
 
   return (
-    <div className="flex h-full flex-col bg-background">
-      <div className="flex h-[48px] flex-shrink-0 items-center gap-1 border-b px-3">
-        <span className="flex-1 truncate text-xs text-muted-foreground" title={rootPath}>
-          {breadcrumb}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 flex-shrink-0"
-          onClick={() => {
-            void openAgentFile(workspaceSlug, sessionId, rootPath);
-          }}
-          title="打开目录"
-        >
-          <FolderOpen className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 flex-shrink-0"
-          onClick={() => {
-            void loadRoot();
-          }}
-          disabled={loading}
-        >
-          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-        </Button>
-        {onClose ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 flex-shrink-0"
-            onClick={onClose}
-          >
-            <X className="size-3.5" />
-          </Button>
-        ) : null}
-      </div>
+    <div className={cn("flex h-full flex-col", embedded ? "" : "bg-background")}>
+      {!hideToolbar ? (
+        <>
+          <div className="flex h-[48px] flex-shrink-0 items-center gap-1 border-b px-3">
+            <span className="flex-1 truncate text-xs text-muted-foreground" title={rootPath}>
+              {breadcrumb}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 flex-shrink-0"
+              onClick={() => {
+                void openAgentFile(workspaceSlug, sessionId, rootPath);
+              }}
+              title="打开目录"
+            >
+              <FolderOpen className="size-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 flex-shrink-0"
+              onClick={() => {
+                void loadRoot();
+              }}
+              disabled={loading}
+            >
+              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            </Button>
+            {onClose ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 flex-shrink-0"
+                onClick={onClose}
+              >
+                <X className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
 
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <Search className={cn("size-3.5 text-muted-foreground", searching && "animate-pulse")} />
-        <input
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="搜索文件（名称/路径）"
-          className="h-7 w-full rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-        />
-        {searchQuery.trim() ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground">
-            {searching ? "搜索中..." : `${searchEntries.length}/${searchTotal}`}
-          </span>
-        ) : null}
-      </div>
+          <div className="flex items-center gap-2 border-b px-3 py-2">
+            <Search className={cn("size-3.5 text-muted-foreground", searching && "animate-pulse")} />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索文件（名称/路径）"
+              className="h-7 w-full rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            />
+            {searchQuery.trim() ? (
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {searching ? "搜索中..." : `${searchEntries.length}/${searchTotal}`}
+              </span>
+            ) : null}
+          </div>
+        </>
+      ) : null}
 
       <ScrollArea className="flex-1">
         <div className="py-1">

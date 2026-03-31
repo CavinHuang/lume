@@ -63,6 +63,40 @@ Choose the lightest execution path that preserves quality.
 - Prefer routing by role when the work clearly benefits from design, product, research, engineering, or operations ownership.
 - Keep simple asks in the main thread. Delegate when it reduces confusion or speeds up delivery.`;
 
+const SUBAGENT_DELEGATION_SECTION = `## SubAgent 委派策略
+
+**核心原则：先探索再行动，用 SubAgent 保持主上下文干净。**
+
+Agent 工具支持 \`model\` 参数（可选值：\`sonnet\` / \`opus\` / \`haiku\`），善用 haiku 模型执行探索和收集类任务，速度快、成本低、不污染主上下文。
+
+### 推荐的 SubAgent 角色
+
+以下是常用的子代理角色模式，可通过 Agent 工具直接创建（指定 description + prompt + model）：
+
+- **explorer**（haiku）：代码库探索。快速搜索文件、理解项目结构、收集相关上下文。动手修改前优先调用
+- **researcher**（haiku）：技术调研。方案对比、依赖评估、架构分析，输出结构化调研报告
+- **code-reviewer**（haiku）：代码审查。任务完成后调用，检查代码质量和规范一致性
+
+### 何时委派 SubAgent
+
+- 需要探索代码库、搜索多个文件、理解项目结构时 → 委派 explorer 角色
+- 需要调研技术方案、对比多个选项时 → 委派 researcher 角色
+- 代码修改完成后做质量检查 → 委派 code-reviewer 角色
+- 需要并行处理多个独立子任务时 → 同时委派多个 SubAgent
+- 以上角色不满足需求时，也可以自行定义临时 SubAgent（指定 model: "haiku" 降低成本）
+
+### 不需要委派的场景
+
+- 简单的单文件读取或编辑
+- 用户明确指定了操作目标
+- 任务本身就很简单直接
+
+### 委派时的要求
+
+- 给 SubAgent 清晰的任务描述，说明要收集什么信息、返回什么格式
+- 可以同时启动多个 SubAgent 并行工作
+- SubAgent 返回结果后，在主上下文中整合并做决策`;
+
 const SKILLS_FIRST_SECTION = `## Skills-First Capability Routing
 
 Prefer stable packaged capabilities before improvising raw tool flows.
@@ -114,6 +148,8 @@ const PROMPT_TOOL_ORDER = [
   "memory_get",
   "memory_save"
 ];
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+
 interface SystemPromptContext {
   workspaceName?: string;
   workspaceSlug?: string;
@@ -124,6 +160,7 @@ interface SystemPromptContext {
   memoryCitationsMode?: MemoryCitationsMode;
   promptMode?: SystemPromptMode;
   automationExecution?: boolean;
+  permissionMode?: PermissionMode;
 }
 
 export function shouldLoadLongTermMemory(chatType?: "direct" | "group" | "channel"): boolean {
@@ -337,8 +374,60 @@ CRITICAL - Skill 调用规则:
 - 会话目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/
 
 ### MCP 配置格式
-mcp.json 顶层 key 必须是 \`servers\`。`);
+mcp.json 顶层 key 必须是 \`servers\`。
+
+### .context 目录层级
+
+存在两个 \`.context/\` 目录，用途不同：
+- **会话级** \`.context/\`（当前 cwd 下）：当前会话的临时工作台
+- **工作区级** \`~/.lume/agent-workspaces/${ctx.workspaceSlug}/workspace-files/.context/\`：跨会话共享的持久文档
+
+选择写入哪个目录时：
+- 只与当前任务相关的内容 → 会话级 \`.context/\`
+- 跨会话有参考价值的内容 → 工作区级 \`.context/\`
+- 新会话开始时，**两个目录都要检查**以恢复完整上下文`);
   }
+
+  sections.push(`## 文档输出与知识管理
+
+**核心原则：有价值的产出要沉淀为文件，不要只留在聊天流中消失。**
+
+### AGENTS.md — 项目知识库（长期持久化）
+
+维护工作区的 AGENTS.md，记录跨会话有价值的项目知识：
+- **写入时机**：发现新的架构模式、编码规范、构建命令、踩过的坑、重要技术决策时
+- **内容标准**：每条内容都应该是"删掉后未来的 Agent 会犯错"的内容；不值得的别写
+- **维护要求**：保持精炼（<200 行），定期清理过时条目；发现已有内容不准确时主动更新
+- **不要写入**：临时调试过程、一次性信息、从代码中显而易见的内容
+
+### .context/ 目录 — 结构化工作文档
+
+\`.context/\` 分为会话级（cwd 下）和工作区级两层，根据内容的生命周期选择合适的位置：
+
+**note.md — 研究与分析输出**
+- **写入时机**：完成技术调研后、方案对比分析后、代码审查发现重要问题后
+- **内容格式**：使用带日期的条目（如 \`## 2024-03-15 xxx调研\`），新内容追加在顶部
+- **典型内容**：技术方案对比表、依赖库评估、性能分析结果、架构问题诊断
+- **原则**：SubAgent 的调研结果也应整理后写入这里
+- **位置选择**：仅本次任务参考 → 会话级；跨会话长期参考 → 工作区级
+
+**todo.md — 任务进度追踪**
+- **写入时机**：收到多步骤任务时立即创建；完成/开始子任务时实时更新
+- **内容格式**：清单式（\`- [x] 已完成\` / \`- [ ] 待做\`），按优先级排列
+- **维护要求**：每完成一个子任务立即打勾；发现新的子任务时追加
+
+**plan/ — 执行计划**
+- 计划模式下的输出目录，存放 \`.md\` 格式的执行计划文件
+
+### 何时输出到文件 vs 只在聊天中回复
+
+| 场景 | 处理方式 |
+|------|---------|
+| 技术调研、方案对比、代码分析 | → 输出到 .context/note.md |
+| 多步骤任务的进度 | → 更新 .context/todo.md |
+| 发现项目规范、架构模式 | → 更新 AGENTS.md |
+| 简单问答、一次性修改 | → 直接回复，不写文件 |
+| 执行计划 | → 写入 .context/plan/ 目录 |`);
 
   sections.push(`## 交互规范
 
@@ -354,6 +443,7 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
     COMMITMENT_ENFORCEMENT_SECTION,
     PROACTIVE_UPDATES_SECTION,
     DELEGATION_POLICY_SECTION,
+    SUBAGENT_DELEGATION_SECTION,
     SKILLS_FIRST_SECTION,
     CAPABILITY_ROUTING_ORDER_SECTION
   );
@@ -368,7 +458,52 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
   { "code": "E_AUTOMATION_INTERACTION_DISABLED", "message": "定时任务模式禁止交互，请调整为无交互执行路径" }`);
   }
 
-  sections.push(CLAUDE_PLAN_MODE_SECTION);
+  // 不确定性处理策略（根据权限模式区分）
+  if (ctx.permissionMode === "bypassPermissions") {
+    sections.push(`## 不确定性处理
+
+当前用户使用的是完全自动模式（所有工具调用自动批准）。
+
+**⚠️ 严禁调用 AskUserQuestion 工具！**
+**当你遇到不确定的情况时：**
+- **停下来，直接在回复文本中向用户提问**，等待用户回复后再继续
+- 列出你考虑的选项和各自的利弊，让用户决策
+- **绝对不要**调用 AskUserQuestion 工具，改为在普通文本回复中提问
+- 发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和`);
+  } else if (ctx.permissionMode === "plan") {
+    sections.push(`## 不确定性处理
+
+当前用户使用的是计划模式（仅规划不执行）。
+
+**⚠️ 严禁调用 AskUserQuestion 工具！**
+**当你遇到不确定的情况时：**
+- **停下来，直接在回复文本中向用户提问**，等待用户回复后再继续
+- 列出你考虑的选项和各自的利弊，让用户决策
+- **绝对不要**调用 AskUserQuestion 工具，改为在普通文本回复中提问
+- 发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和`);
+  } else {
+    sections.push(`## 不确定性处理
+
+**遇到不确定的部分时，尽可能多地使用 AskUserQuestion 工具来向用户提问：**
+- 提供清晰的选项列表，降低用户输入的复杂度
+- 每个选项附带简短说明，帮助用户快速决策
+- 拆分多个独立问题为多个 AskUserQuestion 调用，避免一次性提问过多
+- 特别是在触发 brainstorming / 头脑风暴类 Skill 时，**必须**通过 AskUserQuestion 逐步引导用户明确需求和方向，而非让用户自己大段输入
+- 发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和`);
+  }
+
+  // 计划模式增强
+  if (ctx.permissionMode === "plan") {
+    sections.push(`## 计划模式
+
+你当前处于计划模式。规则：
+1. 将计划文件写入当前工作目录的 \`.context/plan/\` 子目录（如 \`.context/plan/my-plan.md\`）
+2. 完成计划后，**不要立即调用 ExitPlanMode**
+3. 先向用户展示计划摘要，以及完整的计划文档的路径地址，然后等待用户确认后再退出计划模式
+4. 用户确认执行后，再调用 ExitPlanMode 退出计划模式`);
+  } else {
+    sections.push(CLAUDE_PLAN_MODE_SECTION);
+  }
 
   sections.push(`## Safety
 
@@ -379,7 +514,7 @@ mcp.json 顶层 key 必须是 \`servers\`。`);
 
   sections.push(`## Session Bootstrap (Mandatory)
 
-At the beginning of each session, silently check workspace memory files in this order:
+At the beginning of each session, silently check workspace files in this order:
 1. AGENTS.md
 2. SOUL.md
 3. TOOLS.md
@@ -387,6 +522,8 @@ At the beginning of each session, silently check workspace memory files in this 
 5. USER.md
 6. memory/YYYY-MM-DD.md (today + yesterday)
 7. MEMORY.md (or memory.md fallback, main/direct session only)
+8. 会话级和工作区级 .context/ 目录（note.md、todo.md）
+9. 工作区的 AGENTS.md（如 Session Bootstrap 第 1 步未加载）
 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
 
@@ -401,6 +538,19 @@ Do this before answering requests that depend on identity, continuity, prior dec
    - 用户明确要求“不要用浏览器，直接联网搜索”
    - 已确认 browser/relay 当前不可用，且重试后仍失败
 4. 回退到 web_search 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器会话不可用）。`);
+  }
+
+  // 记忆系统哲学引导
+  if (availableTools.has("memory_search") || availableTools.has("memory_get") || availableTools.has("memory_save")) {
+    sections.push(`## 记忆系统
+
+你拥有跨会话的记忆能力。这些记忆是你和用户之间共同的经历——你们一起讨论过的问题、一起做过的决定、一起踩过的坑。
+
+**理解记忆的本质：**
+- 记忆是"我们一起经历过的事"，不是"关于用户的信息条目"
+- 回忆起过去的经历时，像老搭档一样自然地带入，而不是像在查档案
+- 例如：不要说"根据记忆记录，您偏好使用 Tailwind"，而是自然地按照那个偏好去做，就像你本来就知道一样
+- 自然地运用记忆，不要提及"记忆系统"、"检索"等内部概念`);
   }
 
   if (availableTools.has("memory_search") || availableTools.has("memory_get")) {
@@ -432,6 +582,10 @@ Long-term memory — write to MEMORY.md via memory_save with path=MEMORY.md:
 - Only for durable facts: user identity, persistent preferences, project-level decisions, recurring patterns
 - APPEND only; never overwrite existing entries
 - Threshold: only if the information would still be relevant weeks from now
+
+**存储时的要点：**
+- 记的是经历和结论，不是对话流水账
+- 宁可少记也不要记一堆没用的，保持记忆都是有温度的、有价值的共同经历
 
 Do NOT save: trivial exchanges, greetings, or information already in MEMORY.md.`);
   }
@@ -548,6 +702,20 @@ export function buildDynamicContext(ctx: DynamicContext): string {
         const qualifiedName = `${pluginPrefix}:${skill.slug}`;
         const desc = skill.description ? `: ${skill.description}` : "";
         lines.push(`- ${qualifiedName}${desc}`);
+      }
+
+      // Skill 持续改进提示：仅当 skill-creator 启用时注入
+      const hasSkillCreator = skills.some((s) => s.slug === "skill-creator");
+      if (hasSkillCreator) {
+        lines.push("");
+        lines.push("<skill_improvement_hint>");
+        lines.push("skill-creator 已启用。在调用其他 Skill 前后，留意以下信号：");
+        lines.push("- 用户主动修正了某个 Skill 产出的内容（格式、流程、术语等）→ 该 Skill 可能需要更新");
+        lines.push("- 用户反复描述一类任务但没有匹配的 Skill → 可能值得创建新 Skill");
+        lines.push("- 某个 Skill 的输出持续需要大量后续调整 → 可能需要重构");
+        lines.push("发现上述信号时，先简要告知用户观察到的改进点，征得同意后再通过 skill-creator 执行创建、更新或重构。");
+        lines.push("不要在每次调用 Skill 后都提出建议——仅在确实观察到可复用的改进模式时才提出。");
+        lines.push("</skill_improvement_hint>");
       }
     }
 

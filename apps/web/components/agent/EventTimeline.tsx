@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import type { TimelineEvent, ToolActivity } from "@/atoms/agent-atoms";
 import { MessageResponse } from "@/components/ai-elements";
 import { ToolActivityList } from "./ToolActivityItem";
+import { ToolUseBlock } from "./ContentBlock";
 
 interface TimelineTextEventProps {
   event: TimelineEvent & { type: "text" };
@@ -59,6 +60,8 @@ interface EventTimelineProps {
   events: TimelineEvent[];
   activities?: ToolActivity[];
   isStreaming?: boolean;
+  /** 紧凑模式：使用 ContentBlock 语义化短语代替完整 ToolActivityList */
+  compact?: boolean;
 }
 
 type TimelineText = Extract<TimelineEvent, { type: "text" }>;
@@ -116,6 +119,7 @@ export const EventTimeline = React.memo(function EventTimeline({
   events,
   activities,
   isStreaming = false,
+  compact = false,
 }: EventTimelineProps): React.ReactElement | null {
   const segments = React.useMemo(() => buildSegments(events, activities), [activities, events]);
 
@@ -142,6 +146,21 @@ export const EventTimeline = React.memo(function EventTimeline({
 
         const firstTool = segment.data[0];
         const key = firstTool ? `${firstTool.toolUseId}-${index}` : `tools-${index}`;
+
+        if (compact) {
+          return (
+            <div key={key} className="my-1">
+              {segment.data.map((activity, actIdx) => (
+                <ToolUseBlock
+                  key={activity.toolUseId}
+                  activity={activity}
+                  animate={isStreaming}
+                  index={actIdx}
+                />
+              ))}
+            </div>
+          );
+        }
 
         return (
           <div key={key} className="my-1.5">

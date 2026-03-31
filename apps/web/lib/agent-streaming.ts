@@ -19,29 +19,11 @@ export interface ToolActivity {
   done: boolean;
 }
 
-export interface TeammateState {
-  taskId: string;
-  toolUseId?: string;
-  description: string;
-  agentName?: string;
-  index: number;
-  status: "running" | "completed" | "failed" | "stopped";
-  progressDescription?: string;
-  currentToolName?: string;
-  currentToolElapsedSeconds?: number;
-  toolHistory: string[];
-  summary?: string;
-  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
-  startedAt: number;
-  endedAt?: number;
-}
-
 export interface AgentStreamState {
   running: boolean;
   content: string;
   reasoning?: string;
   toolActivities: ToolActivity[];
-  teammates: TeammateState[];
   events?: AgentEvent[];
   model?: string;
   inputTokens?: number;
@@ -50,6 +32,10 @@ export interface AgentStreamState {
   isCompacting?: boolean;
   streamStartedAt?: number;
   firstOutputAt?: number;
+  /** 当前活跃的 turnId */
+  currentTurnId?: string;
+  /** 已完成的 turn 数量 */
+  turnCount?: number;
 }
 
 export function mergeStreamingText(current: string, next: string): string {
@@ -164,8 +150,8 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
             : item
         )
       };
-    case "task_progress": {
-      let nextState = {
+    case "task_progress":
+      return {
         ...base,
         events: nextEvents,
         toolActivities: base.toolActivities.map((item) =>
@@ -179,62 +165,10 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
             : item
         )
       };
-      if (event.taskId) {
-        nextState = {
-          ...nextState,
-          teammates: nextState.teammates.map((t) =>
-            t.taskId === event.taskId
-              ? {
-                  ...t,
-                  progressDescription: event.description ?? t.progressDescription,
-                  currentToolName: event.lastToolName ?? t.currentToolName,
-                  currentToolElapsedSeconds: event.elapsedSeconds ?? t.currentToolElapsedSeconds,
-                  toolHistory: event.lastToolName && !t.toolHistory.includes(event.lastToolName)
-                    ? [...t.toolHistory, event.lastToolName]
-                    : t.toolHistory,
-                  usage: event.usage ?? t.usage
-                }
-              : t
-          )
-        };
-      }
-      return nextState;
-    }
-    case "task_started": {
-      const existing = base.teammates.find((t) => t.taskId === event.taskId);
-      if (existing) return { ...base, events: nextEvents };
-      const newTeammate: TeammateState = {
-        taskId: event.taskId,
-        toolUseId: event.toolUseId,
-        description: event.description,
-        agentName: event.agentName,
-        index: base.teammates.length,
-        status: "running",
-        toolHistory: [],
-        startedAt: Date.now()
-      };
-      return {
-        ...base,
-        events: nextEvents,
-        teammates: [...base.teammates, newTeammate]
-      };
-    }
+    case "task_started":
+      return { ...base, events: nextEvents };
     case "task_notification":
-      return {
-        ...base,
-        events: nextEvents,
-        teammates: base.teammates.map((t) =>
-          t.taskId === event.taskId
-            ? {
-                ...t,
-                status: event.status === "completed" ? "completed" : event.status === "failed" ? "failed" : "stopped",
-                summary: event.summary,
-                usage: event.usage ?? t.usage,
-                endedAt: Date.now()
-              }
-            : t
-        )
-      };
+      return { ...base, events: nextEvents };
     case "usage_update":
       return {
         ...base,
@@ -254,6 +188,19 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
         ...base,
         events: nextEvents,
         isCompacting: false
+      };
+    case "turn_start":
+      return {
+        ...base,
+        events: nextEvents,
+        currentTurnId: event.turnId
+      };
+    case "turn_end":
+      return {
+        ...base,
+        events: nextEvents,
+        currentTurnId: undefined,
+        turnCount: (base.turnCount ?? 0) + 1
       };
     case "shell_backgrounded":
       return {
@@ -276,9 +223,6 @@ export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): Agen
         contextWindow: event.usage?.contextWindow ?? base.contextWindow,
         toolActivities: base.toolActivities.map((item) =>
           item.done ? item : { ...item, done: true }
-        ),
-        teammates: base.teammates.map((t) =>
-          t.status === "running" ? { ...t, status: "stopped" as const, endedAt: Date.now() } : t
         )
       };
     case "error":

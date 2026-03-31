@@ -85,6 +85,7 @@ export async function createRuntimeCoreResourceLoader(input: {
   workspaceSlug?: string;
   sessionType?: AgentSendInput["sessionType"];
   chatType?: AgentSendInput["chatType"];
+  permissionMode?: AgentSendInput["permissionMode"];
   availableTools: string[];
   messageMetadata?: Record<string, unknown>;
 }): Promise<DefaultResourceLoader> {
@@ -99,7 +100,8 @@ export async function createRuntimeCoreResourceLoader(input: {
     chatType: input.chatType,
     availableTools: input.availableTools,
     memoryCitationsMode: memoryRuntimeConfig.citationsMode,
-    automationExecution
+    automationExecution,
+    permissionMode: input.permissionMode
   }).trim();
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: input.workspaceSlug,
@@ -183,6 +185,7 @@ export async function createRuntimeCoreSession(
     workspaceSlug: input.workspaceSlug,
     sessionType: input.sessionType,
     chatType: input.chatType,
+    permissionMode: input.permissionMode,
     availableTools: collectAvailableToolNames(toolset, {
       workspaceSlug: input.workspaceSlug
     }),
