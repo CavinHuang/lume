@@ -49,8 +49,9 @@ check("P0-2: todo.md 说明", standardPrompt, "todo.md — 任务进度追踪");
 check("P0-2: 决策表", standardPrompt, "何时输出到文件 vs 只在聊天中回复");
 check("P0-2: .context 目录层级", standardPrompt, ".context 目录层级");
 check("P0-2: 会话级 .context", standardPrompt, "会话级");
-check("P0-2: 工作区级 .context", standardPrompt, "workspace-files/.context/");
-check("P0-2: Session Bootstrap 包含 .context", standardPrompt, "会话级和工作区级 .context/ 目录");
+check("P0-2: 工作区级 .context", standardPrompt, "工作区级");
+check("P0-2: 工作区级 .context 根目录说明", standardPrompt, "/.context/");
+check("P0-2: Session Bootstrap 包含 .context", standardPrompt, "工作区根目录下的 .context/ 目录");
 check("P0-2: Session Bootstrap 包含 AGENTS.md", standardPrompt, "工作区的 AGENTS.md");
 
 // P0-3: 标准模式不确定性处理

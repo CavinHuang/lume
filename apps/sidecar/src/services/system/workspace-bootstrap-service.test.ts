@@ -39,7 +39,7 @@ describe("workspace-bootstrap-service", () => {
     expect(content).toContain("# SOUL.md");
   });
 
-  test("核心 persona 模板应包含 Prompt V2 companion 结构", () => {
+  test("核心 persona 模板应包含默认克制的人格引导结构", () => {
     const soul = readTemplateContent("SOUL");
     const identity = readTemplateContent("IDENTITY");
     const agents = readTemplateContent("AGENTS");
@@ -51,7 +51,8 @@ describe("workspace-bootstrap-service", () => {
     expect(identity).toContain("## Appearance");
     expect(identity).toContain("## Self-Recognition");
     expect(agents).toContain("## Persona Guardrails");
-    expect(bootstrap).toContain("## Persona Setup");
+    expect(bootstrap).toContain("## Default Stance");
+    expect(bootstrap).toContain("## Optional Style Tuning");
   });
 
   test("ensureBootstrapFiles 默认仅创建核心文件与 BOOTSTRAP（不自动创建 HEARTBEAT/MEMORY）", () => {

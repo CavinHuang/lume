@@ -160,6 +160,8 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("2. SOUL.md");
     expect(prompt).toContain("6. memory/YYYY-MM-DD.md (today + yesterday)");
     expect(prompt).toContain("7. MEMORY.md (or memory.md fallback, main/direct session only)");
+    expect(prompt).toContain("工作区根目录下的 .context/ 目录");
+    expect(prompt).not.toContain("workspace-files/.context/");
     expect(prompt).toContain("## Workspace Files (injected)");
     expect(prompt).toContain("## Safety");
     expect(prompt).toContain("## Runtime");

@@ -380,7 +380,7 @@ mcp.json 顶层 key 必须是 \`servers\`。
 
 存在两个 \`.context/\` 目录，用途不同：
 - **会话级** \`.context/\`（当前 cwd 下）：当前会话的临时工作台
-- **工作区级** \`~/.lume/agent-workspaces/${ctx.workspaceSlug}/workspace-files/.context/\`：跨会话共享的持久文档
+- **工作区级** \`~/.lume/agent-workspaces/${ctx.workspaceSlug}/.context/\`：位于工作区根目录下，跨会话共享的持久文档
 
 选择写入哪个目录时：
 - 只与当前任务相关的内容 → 会话级 \`.context/\`
@@ -522,7 +522,7 @@ At the beginning of each session, silently check workspace files in this order:
 5. USER.md
 6. memory/YYYY-MM-DD.md (today + yesterday)
 7. MEMORY.md (or memory.md fallback, main/direct session only)
-8. 会话级和工作区级 .context/ 目录（note.md、todo.md）
+8. 会话级 .context/ 目录，以及工作区根目录下的 .context/ 目录（note.md、todo.md）
 9. 工作区的 AGENTS.md（如 Session Bootstrap 第 1 步未加载）
 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
