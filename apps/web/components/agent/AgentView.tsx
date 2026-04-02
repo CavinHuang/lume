@@ -56,6 +56,10 @@ import {
 } from "@/lib/agent-runtime-status";
 import { AgentHeader } from "./AgentHeader";
 import { AgentMessages } from "./AgentMessages";
+import {
+  getAgentMinimapRightPx
+} from "./AgentSidePanel";
+import { ScrollMinimap } from "./ScrollMinimap";
 import { AskUserQuestionPanel } from "./AskUserQuestionPanel";
 import { ContextUsageBadge } from "./ContextUsageBadge";
 import { PermissionModePopover } from "./PermissionModePopover";
@@ -138,6 +142,7 @@ export function AgentView(): React.ReactElement {
   const [workspaceId] = useAtom(currentAgentWorkspaceIdAtom);
   const [workspaces] = useAtom(agentWorkspacesAtom);
   const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
+  const [agentScrollElement, setAgentScrollElement] = useState<HTMLElement | null>(null);
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
   const setRuntimeStatuses = useSetAtom(agentRuntimeStatusesAtom);
   const setAskUserQuestionRequests = useSetAtom(agentAskUserQuestionRequestsAtom);
@@ -205,10 +210,9 @@ export function AgentView(): React.ReactElement {
 
   const {
     currentSidePanelOpen,
-    fileBrowserOpen,
     setCurrentSidePanelOpen,
-    handleToggleFileBrowser
   } = useAgentSidePanelState(sessionId);
+  const minimapRightPx = getAgentMinimapRightPx(currentSidePanelOpen);
 
   // --- Todo 面板逻辑 ---
   const [todoPanelExpanded, setTodoPanelExpanded] = useState(true);
@@ -425,8 +429,6 @@ export function AgentView(): React.ReactElement {
       <div className="flex h-full overflow-hidden">
         <div className="mx-auto flex h-full min-w-0 max-w-[min(72rem,100%)] flex-1 flex-col">
           <AgentHeader
-            onToggleFileBrowser={handleToggleFileBrowser}
-            fileBrowserOpen={fileBrowserOpen}
             onOpenSession={handleOpenSession}
           />
 
@@ -441,6 +443,7 @@ export function AgentView(): React.ReactElement {
             onSubmitInlineEdit={handleSubmitInlineEdit}
             onCancelInlineEdit={handleCancelInlineEdit}
             onOpenSession={handleOpenSession}
+            onScrollElementChange={setAgentScrollElement}
           />
 
           {latestTodoItems && latestTodoItems.length > 0 ? (
@@ -767,7 +770,14 @@ export function AgentView(): React.ReactElement {
             </div>
           </div>
         </div>
-      </div>
+        </div>
+        <ScrollMinimap
+          messages={messages}
+          scrollElement={agentScrollElement}
+          style={{
+            right: `${minimapRightPx}px`
+          }}
+        />
 
           <AgentSidePanel
             sessionId={sessionId}

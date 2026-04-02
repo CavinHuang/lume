@@ -1,19 +1,14 @@
 import { useRef, useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
-import { ArrowLeft, Check, FolderOpen, Pencil, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { ArrowLeft, Check, Pencil, X } from "lucide-react";
 import { agentSessionsAtom, currentAgentCapabilityRouteHintAtom, currentAgentSessionAtom } from "@/atoms";
 import { updateAgentSessionTitle } from "@/lib/desktop-api/agent";
 
 interface AgentHeaderProps {
-  onToggleFileBrowser?: () => void;
-  fileBrowserOpen?: boolean;
   onOpenSession?: (sessionId: string) => void;
 }
 
-export function AgentHeader({ onToggleFileBrowser, fileBrowserOpen, onOpenSession }: AgentHeaderProps): React.ReactElement | null {
+export function AgentHeader({ onOpenSession }: AgentHeaderProps): React.ReactElement | null {
   const session = useAtomValue(currentAgentSessionAtom);
   const routeHint = useAtomValue(currentAgentCapabilityRouteHintAtom);
   const [sessions, setSessions] = useAtom(agentSessionsAtom);
@@ -96,24 +91,6 @@ export function AgentHeader({ onToggleFileBrowser, fileBrowserOpen, onOpenSessio
           </button>
         )}
 
-        {onToggleFileBrowser ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={cn("h-8 w-8 shrink-0", fileBrowserOpen && "bg-accent text-accent-foreground")}
-                onClick={onToggleFileBrowser}
-              >
-                <FolderOpen className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              <p>{fileBrowserOpen ? "关闭文件浏览器" : "打开文件浏览器"}</p>
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
       </div>
 
       {routeHint ? (

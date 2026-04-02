@@ -25,6 +25,7 @@ import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
+  useConversationContext,
   Message,
   MessageAction,
   MessageActions,
@@ -72,6 +73,7 @@ interface AgentMessagesProps {
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
   onOpenSession?: (sessionId: string) => void;
+  onScrollElementChange?: (element: HTMLElement | null) => void;
 }
 
 interface AnnounceInfo {
@@ -79,6 +81,11 @@ interface AnnounceInfo {
   status: string;
   outputText?: string;
   errorText?: string;
+}
+
+interface AgentMessagesBodyProps {
+  onScrollElementChange?: (element: HTMLElement | null) => void;
+  children: React.ReactNode;
 }
 
 function parseAnnounceContent(content: string): AnnounceInfo {
@@ -674,7 +681,8 @@ export function AgentMessages({
   onStartInlineEdit,
   onSubmitInlineEdit,
   onCancelInlineEdit,
-  onOpenSession
+  onOpenSession,
+  onScrollElementChange
 }: AgentMessagesProps): React.ReactElement {
   const messages = useAtomValue(currentAgentMessagesAtom);
   const sessionId = useAtomValue(currentAgentSessionIdAtom);
@@ -806,7 +814,8 @@ export function AgentMessages({
 
   return (
     <Conversation initial={false} resize="instant" key={sessionId ?? ""}>
-      <ConversationContent className="group/agentlist" data-actions-disabled={actionsDisabled}>
+      <AgentMessagesBody onScrollElementChange={onScrollElementChange}>
+      <ConversationContent className="group/agentlist relative" data-actions-disabled={actionsDisabled}>
         {isSwitching ? (
           <div className="flex h-full items-center justify-center">
             <div className="flex flex-col items-center gap-3 text-muted-foreground">
@@ -886,8 +895,20 @@ export function AgentMessages({
           </>
         )}
       </ConversationContent>
+      </AgentMessagesBody>
 
       <ConversationScrollButton />
     </Conversation>
   );
+}
+
+function AgentMessagesBody({ onScrollElementChange, children }: AgentMessagesBodyProps): React.ReactElement {
+  const { scrollRef } = useConversationContext();
+
+  React.useEffect(() => {
+    onScrollElementChange?.(scrollRef.current as HTMLElement | null);
+    return () => onScrollElementChange?.(null);
+  }, [onScrollElementChange, scrollRef]);
+
+  return <>{children}</>;
 }

@@ -2,14 +2,11 @@ import { useCallback, useState } from "react";
 
 export function useAgentSidePanelState(sessionId: string | null): {
   currentSidePanelOpen: boolean;
-  fileBrowserOpen: boolean;
   setCurrentSidePanelOpen: (open: boolean) => void;
-  handleToggleFileBrowser: () => void;
 } {
   const [sidePanelOpenMap, setSidePanelOpenMap] = useState<Map<string, boolean>>(new Map());
 
   const currentSidePanelOpen = sessionId ? sidePanelOpenMap.get(sessionId) ?? true : true;
-  const fileBrowserOpen = currentSidePanelOpen;
 
   const setCurrentSidePanelOpen = useCallback((open: boolean): void => {
     if (!sessionId) return;
@@ -20,15 +17,8 @@ export function useAgentSidePanelState(sessionId: string | null): {
     });
   }, [sessionId]);
 
-  const handleToggleFileBrowser = useCallback((): void => {
-    if (!sessionId) return;
-    setCurrentSidePanelOpen(!currentSidePanelOpen);
-  }, [currentSidePanelOpen, sessionId, setCurrentSidePanelOpen]);
-
   return {
     currentSidePanelOpen,
-    fileBrowserOpen,
-    setCurrentSidePanelOpen,
-    handleToggleFileBrowser
+    setCurrentSidePanelOpen
   };
 }

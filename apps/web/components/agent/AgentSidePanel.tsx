@@ -41,6 +41,14 @@ import {
 } from "@/lib/desktop-api/agent";
 import { openFolderDialog } from "@/lib/desktop-api/system";
 
+export const AGENT_SIDE_PANEL_WIDTH_PX = 320;
+export const AGENT_SIDE_PANEL_COLLAPSED_WIDTH_PX = 40;
+export const AGENT_MINIMAP_RIGHT_GAP_PX = 12;
+
+export function getAgentMinimapRightPx(open: boolean): number {
+  return (open ? AGENT_SIDE_PANEL_WIDTH_PX : AGENT_SIDE_PANEL_COLLAPSED_WIDTH_PX) + AGENT_MINIMAP_RIGHT_GAP_PX;
+}
+
 interface AgentSidePanelProps {
   sessionId: string;
   sessionPath: string | null;
@@ -193,8 +201,11 @@ export function AgentSidePanel({
       className={cn(
         "relative flex-shrink-0 overflow-hidden",
         animateRef.current && "transition-[width] duration-300 ease-in-out",
-        open ? "w-[320px] border-l" : hasContent ? "w-10" : "w-0"
+        open ? "border-l" : ""
       )}
+      style={{
+        width: open ? `${AGENT_SIDE_PANEL_WIDTH_PX}px` : hasContent ? `${AGENT_SIDE_PANEL_COLLAPSED_WIDTH_PX}px` : "0px"
+      }}
     >
       {/* ===== 切换按钮 — 固定在右上角，带 Tooltip ===== */}
       {hasContent && (
@@ -239,10 +250,11 @@ export function AgentSidePanel({
       {hasContent && (
         <div
           className={cn(
-            "w-[320px] h-full flex flex-col",
+            "h-full flex flex-col",
             animateRef.current && "transition-opacity duration-300",
             open ? "opacity-100" : "opacity-0 pointer-events-none"
           )}
+          style={{ width: `${AGENT_SIDE_PANEL_WIDTH_PX}px` }}
         >
           {/* ===== 顶部标题栏 ===== */}
           <div className="flex items-center gap-1 px-3 pr-10 h-[48px] border-b flex-shrink-0">
