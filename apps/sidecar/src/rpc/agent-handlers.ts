@@ -77,7 +77,7 @@ import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attempt";
-import { getSubagentRunRegistry } from "../services/pi-agent/subagents/subagent-run-registry";
+import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
 import {
   getAgentRuntimeToolPolicyConfig,
   saveAgentRuntimeToolPolicyConfig
@@ -142,6 +142,7 @@ interface AgentHandlersContext {
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
   const handlers: Record<string, RpcHandler> = {
     [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),
+    [AGENT_IPC_CHANNELS.LIST_SESSIONS]: async () => listAgentThreads(),
     [AGENT_IPC_CHANNELS.CREATE_THREAD]: async (params) => {
       const input = validateInput(agentCreateThreadInputSchema, params, AGENT_IPC_CHANNELS.CREATE_THREAD);
       return createAgentThread(
@@ -152,8 +153,38 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         input.modelId
       );
     },
+    [AGENT_IPC_CHANNELS.CREATE_SESSION]: async (params) => {
+      const record = (params ?? {}) as Record<string, unknown>;
+      const input = validateInput(
+        agentCreateThreadInputSchema,
+        {
+          title: record.title,
+          channelId: record.channelId,
+          modelId: record.modelId,
+          workspaceId: record.workspaceId,
+          parentThreadId: record.parentSessionId
+        },
+        AGENT_IPC_CHANNELS.CREATE_SESSION
+      );
+      return createAgentThread(
+        input.title,
+        input.channelId,
+        input.workspaceId,
+        input.parentThreadId,
+        input.modelId
+      );
+    },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES);
+      return getAgentThreadMessages(input.threadId);
+    },
+    [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {
+      const record = (params ?? {}) as Record<string, unknown>;
+      const input = validateInput(
+        agentThreadIdInputSchema,
+        { threadId: record.sessionId },
+        AGENT_IPC_CHANNELS.GET_MESSAGES
+      );
       return getAgentThreadMessages(input.threadId);
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS]: async (params) => {
@@ -426,6 +457,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
       return { ok: true };
     },
+    [AGENT_IPC_CHANNELS.STOP_AGENT]: async (params) => {
+      const record = (params ?? {}) as Record<string, unknown>;
+      const input = validateInput(
+        agentThreadIdInputSchema,
+        { threadId: record.sessionId },
+        AGENT_IPC_CHANNELS.STOP_AGENT
+      );
+      stopAgent(input.threadId);
+      if (context.planStateTracker.getPhase(input.threadId) === "executing") {
+        const steps = context.planStateTracker.markCurrentStepFailed(input.threadId, "用户已停止当前执行");
+        context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
+      }
+      return { ok: true };
+    },
     [AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION]: async (params) => {
       const input = validateInput(
         submitAskUserQuestionInputSchema,
@@ -475,9 +520,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           });
         },
         onComplete: () => {
-          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
-            threadId: input.threadId
-          });
           if (context.planStateTracker.getPhase(input.threadId) === "executing") {
             const steps = context.planStateTracker.markCurrentStepCompleted(input.threadId);
             context.notifyPlanStateChange(input.threadId, "executed", steps ? { steps } : undefined);
@@ -504,6 +546,91 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request)
       }).catch((error) => {
         context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
+          threadId: input.threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        if (context.planStateTracker.getPhase(input.threadId) === "executing") {
+          const steps = context.planStateTracker.markCurrentStepFailed(
+            input.threadId,
+            error instanceof Error ? error.message : String(error)
+          );
+          context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
+        }
+      });
+      return { ok: true };
+    },
+    [AGENT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
+      const record = (params ?? {}) as Record<string, unknown>;
+      const input = validateInput(
+        agentSendInputSchema,
+        {
+          threadId: record.sessionId,
+          userMessage: record.userMessage,
+          channelId: record.channelId,
+          modelId: record.modelId,
+          workspaceId: record.workspaceId,
+          chatType: record.chatType,
+          threadType: record.sessionType,
+          permissionMode: record.permissionMode,
+          thinkingLevel: record.thinkingLevel,
+          messageMetadata: record.messageMetadata,
+          resendFromMessageId: record.resendFromMessageId,
+          editFromMessageId: record.editFromMessageId
+        },
+        AGENT_IPC_CHANNELS.SEND_MESSAGE
+      );
+      if (context.planStateTracker.isLikelyExecutionRequest(input)) {
+        const steps = context.planStateTracker.syncExecutionFromUserMessage(input.threadId, input.userMessage);
+        context.notifyPlanStateChange(input.threadId, "executing", steps ? { steps } : undefined);
+      }
+      void sendAgentMessage(input, {
+        onSdkMessage: (message) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
+            sessionId: input.threadId,
+            threadId: input.threadId,
+            message
+          });
+        },
+        onComplete: () => {
+          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
+            sessionId: input.threadId,
+            threadId: input.threadId
+          });
+          if (context.planStateTracker.getPhase(input.threadId) === "executing") {
+            const steps = context.planStateTracker.markCurrentStepCompleted(input.threadId);
+            context.notifyPlanStateChange(input.threadId, "executed", steps ? { steps } : undefined);
+          }
+        },
+        onError: (error) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
+            sessionId: input.threadId,
+            threadId: input.threadId,
+            error
+          });
+          if (context.planStateTracker.getPhase(input.threadId) === "executing") {
+            const steps = context.planStateTracker.markCurrentStepFailed(input.threadId, error);
+            context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
+          }
+        },
+        onTitleUpdated: (title) =>
+          context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
+            sessionId: input.threadId,
+            threadId: input.threadId,
+            title
+          }),
+        onAskUserQuestion: (request) =>
+          context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, {
+            ...request,
+            sessionId: request.threadId
+          }),
+        onToolPermissionRequest: (request) =>
+          context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, {
+            ...request,
+            sessionId: request.threadId
+          })
+      }).catch((error) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
+          sessionId: input.threadId,
           threadId: input.threadId,
           error: error instanceof Error ? error.message : String(error)
         });

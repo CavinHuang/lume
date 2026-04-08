@@ -43,7 +43,6 @@ import {
 import {
   getAgentThreadMessages,
   saveFilesToAgentThread,
-  sendAgentMessage,
   updateAgentThreadModelSelection,
 } from "@/lib/desktop-api/agent";
 import { createAutomationJob } from "@/lib/desktop-api/system";

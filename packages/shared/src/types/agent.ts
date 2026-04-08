@@ -564,20 +564,9 @@ export interface AgentStreamEvent {
   message: SDKMessage
 }
 
-/** Agent 线程消息追加通知（sidecar -> web） */
-export interface AgentMessageAppendedEvent {
-  threadId: string
-  message: AgentMessage
-}
-
 export interface AgentRuntimeStatusChangedEvent {
   status: AgentRuntimeStatus
 }
-
-export type AgentThreadRuntimeStatus = AgentRuntimeStatus
-export type AgentThreadStreamEvent = AgentStreamEvent
-export type AgentThreadMessageAppendedEvent = AgentMessageAppendedEvent
-export type AgentThreadRuntimeStatusChangedEvent = AgentRuntimeStatusChangedEvent
 
 // ===== 文件浏览器 =====
 
@@ -688,6 +677,22 @@ export const AGENT_IPC_CHANNELS = {
   DELETE_THREAD: 'agent:delete-thread',
   /** 从指定消息开始截断线程（包含该消息） */
   TRUNCATE_THREAD_MESSAGES_FROM: 'agent:truncate-thread-messages-from',
+  // 兼容旧会话命名
+  LIST_SESSIONS: 'agent:list-sessions',
+  CREATE_SESSION: 'agent:create-session',
+  GET_MESSAGES: 'agent:get-messages',
+  GET_MESSAGE_VERSIONS: 'agent:get-message-versions',
+  GET_RECENT_MESSAGES: 'agent:get-recent-messages',
+  UPDATE_TITLE: 'agent:update-title',
+  UPDATE_MODEL_SELECTION: 'agent:update-model-selection',
+  TOGGLE_PIN_SESSION: 'agent:toggle-pin-session',
+  MOVE_SESSION: 'agent:move-session',
+  DELETE_SESSION: 'agent:delete-session',
+  TRUNCATE_MESSAGES_FROM: 'agent:truncate-messages-from',
+  GET_SESSION_PATH: 'agent:get-session-path',
+  SAVE_FILES_TO_SESSION: 'agent:save-files-to-session',
+  COPY_FOLDER_TO_SESSION: 'agent:copy-folder-to-session',
+  FORK_SESSION: 'agent:fork-session',
 
   // 工作区管理
   /** 获取工作区列表 */
@@ -706,9 +711,11 @@ export const AGENT_IPC_CHANNELS = {
   // 消息发送
   /** 发送线程消息（触发 Agent 流式响应） */
   SEND_THREAD_MESSAGE: 'agent:send-thread-message',
-  STOP_AGENT: 'agent:stop',
   /** 中止 Agent 线程执行 */
   STOP_THREAD: 'agent:stop-thread',
+  // 兼容旧会话命名
+  SEND_MESSAGE: 'agent:send-message',
+  STOP_AGENT: 'agent:stop',
 
   // 工作区能力（MCP + Skill）
   /** 获取工作区能力摘要 */
@@ -749,8 +756,6 @@ export const AGENT_IPC_CHANNELS = {
   STREAM_COMPLETE: 'agent:stream:complete',
   /** Agent 流式错误 */
   STREAM_ERROR: 'agent:stream:error',
-  /** 会话有新消息追加（非当前流式回合） */
-  MESSAGE_APPENDED: 'agent:message-appended',
   /** 查询 subagent run 状态（调试/观测） */
   LIST_SUBAGENT_RUNS: 'agent:list-subagent-runs',
   /** 获取当前会话 runtime status */

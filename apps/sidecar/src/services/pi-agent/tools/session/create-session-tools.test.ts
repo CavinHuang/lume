@@ -12,7 +12,7 @@ import { createOrResumeRuntimeCoreSessionManager } from "../../runtime-core/sess
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
-} from "../../subagents/subagent-run-registry";
+} from "../../../agent/subagents/subagent-run-registry";
 import type { ToolDefinition } from "@lume/agent-sdk";
 
 mock.module("undici", () => ({
@@ -69,7 +69,11 @@ function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
 
 async function callTool(tool: ToolDefinition, input: Record<string, unknown>) {
   const result = await tool.call(input, { cwd: process.cwd(), abortSignal: new AbortController().signal });
-  return JSON.parse(String(result.content)) as Record<string, unknown>;
+  const payload = (result as { data?: unknown; content?: unknown }).data ?? (result as { content?: unknown }).content;
+  if (typeof payload === "string") {
+    return JSON.parse(payload) as Record<string, unknown>;
+  }
+  return (payload ?? {}) as Record<string, unknown>;
 }
 
 function appendTranscriptTextMessages(
