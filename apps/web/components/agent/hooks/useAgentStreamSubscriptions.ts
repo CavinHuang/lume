@@ -233,22 +233,6 @@ export function useAgentStreamSubscriptions({
       });
     };
 
-    const markStreamCompleted = (targetSessionId: string): void => {
-      setStreamingStates((prev) => {
-        const current = prev.get(targetSessionId);
-        if (!current) return prev;
-        const map = new Map(prev);
-        // 防御：stream 结束后，将所有仍 done:false 的工具标记为完成
-        // 避免后端 tool_result 事件缺失导致工具永远显示 loading
-        const hasStuckTools = current.toolActivities.some((t) => !t.done);
-        const toolActivities = hasStuckTools
-          ? current.toolActivities.map((t) => t.done ? t : { ...t, done: true })
-          : current.toolActivities;
-        map.set(targetSessionId, { ...current, running: false, toolActivities });
-        return map;
-      });
-    };
-
     trackUnlisten(onAgentStreamEvent((payload) => {
       lastAgentEventAtRef.current.set(payload.sessionId, Date.now());
       if (isAgentDebugEnabled()) {
@@ -329,7 +313,11 @@ export function useAgentStreamSubscriptions({
       if (isAgentDebugEnabled()) {
         console.info("[AgentDebug] stream:complete", { sessionId: payload.sessionId });
       }
-      markStreamCompleted(payload.sessionId);
+      // NOTE: 不再提前调用 markStreamCompleted —— 避免 streaming=false 先于
+      // setMessages 到达，导致流式消息块瞬间消失而持久化消息尚未到位（列表抖动）。
+      // 改为在 finalize 中通过 removeState 一步到位清除，并确保 finalize 始终
+      // 在 setMessages 所在的同一个 startTransition 内执行，实现原子化批更新。
+
       const finalize = (): void => {
         if (payload.sessionId === currentSessionIdRef.current) {
           setAskUserQuestionRequests((prev) => {
@@ -448,12 +436,15 @@ export function useAgentStreamSubscriptions({
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
-            setStreamErrors((prev) => {
-              const map = new Map(prev);
-              map.set(payload.sessionId, `流结束后读取消息失败: ${message}`);
-              return map;
+            // catch 路径也需要在 transition 内一起清除，避免抖动
+            startTransition(() => {
+              setStreamErrors((prev) => {
+                const map = new Map(prev);
+                map.set(payload.sessionId, `流结束后读取消息失败: ${message}`);
+                return map;
+              });
+              finalize();
             });
-            finalize();
           });
       } else {
         pendingAssistantMessagesRef.current.delete(payload.sessionId);
@@ -498,12 +489,15 @@ export function useAgentStreamSubscriptions({
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
-            setStreamErrors((prev) => {
-              const map = new Map(prev);
-              map.set(payload.sessionId, `流错误后读取消息失败: ${message}`);
-              return map;
+            // catch 路径也需要在 transition 内一起清除，避免抖动
+            startTransition(() => {
+              setStreamErrors((prev) => {
+                const map = new Map(prev);
+                map.set(payload.sessionId, `流错误后读取消息失败: ${message}`);
+                return map;
+              });
+              finalize();
             });
-            finalize();
           });
       } else {
         finalize();
@@ -516,7 +510,13 @@ export function useAgentStreamSubscriptions({
         return;
       }
       const currentStreamState = streamingStatesRef.current.get(payload.sessionId);
-      if (payload.message.role === "assistant" && currentStreamState?.running) {
+      // 只要该 session 的 streamState 存在（而非仅看 running），就将 assistant 消息
+      // 缓存到 pending，由 onAgentStreamComplete 统一处理。
+      // 原因：stream:event(complete) 会将 running 设为 false，但此时 streamingMessage
+      // 仍然显示（因为 agentStreamingAtom 还看 runtimeStatus）。若此时 message:appended
+      // 到达并直接渲染，会导致持久化消息与流式消息同时出现（列表中两条重复 AI 消息）。
+      // streamState 只有在 finalize → removeState 中才会被删除，与 setMessages 同批执行。
+      if (payload.message.role === "assistant" && currentStreamState) {
         pendingAssistantMessagesRef.current.set(payload.sessionId, payload.message);
         return;
       }

@@ -711,6 +711,46 @@ export function AgentMessages({
   const showLoadingDots = streaming && !smoothContent && !streamingReasoning && streamingTimelineEvents.length === 0;
   const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
 
+  // --- 流式 → 持久化切换的高度锁定，防止列表抖动 ---
+  // 流式消息结束时，DOM 子树整体替换（不同 key → unmount/remount），
+  // 新旧子树高度可能短暂不同，触发 StickToBottom 的 ResizeObserver → 滚动跳变。
+  // 解决方案：持续追踪流式消息块高度，当 streaming 从 true → false 时，
+  // 将末尾过渡占位元素的 min-height 设为最后已知高度，在下一帧释放。
+  const streamingBlockRef = React.useRef<HTMLDivElement>(null);
+  const lastStreamingHeightRef = React.useRef(0);
+  const transitionAnchorRef = React.useRef<HTMLDivElement>(null);
+  const prevStreamingRef = React.useRef(streaming);
+
+  // 流式进行中：每帧追踪高度（useLayoutEffect 在 DOM 更新后同步执行）
+  React.useLayoutEffect(() => {
+    if (streaming && streamingBlockRef.current) {
+      lastStreamingHeightRef.current = streamingBlockRef.current.offsetHeight;
+    }
+  });
+
+  // 检测 streaming true → false：锁定高度 → 下一帧释放
+  React.useLayoutEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = streaming;
+
+    if (wasStreaming && !streaming && transitionAnchorRef.current && lastStreamingHeightRef.current > 0) {
+      const anchor = transitionAnchorRef.current;
+      anchor.style.minHeight = `${lastStreamingHeightRef.current}px`;
+
+      // 两帧后释放：第一帧让持久化消息完成首次布局，第二帧确认高度稳定
+      const id = requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          anchor.style.minHeight = "";
+          lastStreamingHeightRef.current = 0;
+        });
+      });
+      return () => {
+        cancelAnimationFrame(id);
+        anchor.style.minHeight = "";
+      };
+    }
+  });
+
   const renderedMessages = React.useMemo(() => {
     return messages.map((message) => {
       const displayedMessage = getDisplayedAgentMessage(
@@ -842,7 +882,7 @@ export function AgentMessages({
               );
             })}
             {streamingMessage ? (
-              <div data-message-id="streaming-assistant">
+              <div data-message-id="streaming-assistant" ref={streamingBlockRef}>
                 <AgentMessageItem
                   message={streamingMessage}
                   displayedMessage={streamingMessage}
@@ -883,6 +923,9 @@ export function AgentMessages({
                 ) : null}
               </div>
             ) : null}
+            {/* 过渡锚点：流式结束瞬间，通过 min-height 补偿流式消息块被移除导致的高度缩减，
+                防止 StickToBottom 的 ResizeObserver 检测到负向 resize 而引起滚动跳变 */}
+            <div ref={transitionAnchorRef} aria-hidden />
           </>
         )}
       </ConversationContent>
