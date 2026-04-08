@@ -5,17 +5,17 @@ import type {
   AgentMessage,
   AgentRuntimeStatus,
   AgentSendInput,
-  AgentSessionMeta,
+  AgentThreadMeta,
   AgentToolPermissionRequest,
   PlanStateChangedEvent
 } from "@lume/shared";
 import type { PlanState } from "@/atoms/plan-atoms";
-import { applyAgentEvent } from "@/atoms";
 import type { AgentStreamState } from "@/atoms/agent-atoms";
+import { applySdkMessage } from "@/lib/agent-streaming";
 import {
-  generateAgentSessionTitle,
-  getAgentSessionMessages,
-  listAgentSessions,
+  generateAgentThreadTitle,
+  getAgentThreadMessages,
+  listAgentThreads,
   onAgentAskUserQuestion,
   onAgentMessageAppended,
   onAgentPlanStateChanged,
@@ -25,7 +25,7 @@ import {
   onAgentStreamEvent,
   onAgentTitleUpdated,
   onAgentToolPermissionRequest,
-  updateAgentSessionTitle
+  updateAgentThreadTitle
 } from "@/lib/desktop-api/agent";
 import { mergeServerMessagesWithPending, replaceVisibleMessage } from "@/lib/agent-message-merge";
 import { extractLatestAssistantText } from "../agent-session-lifecycle";
@@ -124,7 +124,7 @@ function enrichAssistantMessage(
 }
 
 interface UseAgentStreamSubscriptionsParams {
-  sessionId: string | null;
+  threadId: string | null;
   agentPermissionMode: NonNullable<AgentSendInput["permissionMode"]>;
   planSessionActive: boolean;
   streamingStates: Map<string, AgentStreamState>;
@@ -137,7 +137,7 @@ interface UseAgentStreamSubscriptionsParams {
   setMessages: Dispatch<SetStateAction<AgentMessage[]>>;
   setAskUserQuestionRequests: Dispatch<SetStateAction<Map<string, AgentAskUserQuestionRequest>>>;
   setRuntimeStatuses: Dispatch<SetStateAction<Map<string, AgentRuntimeStatus>>>;
-  setSessions: Dispatch<SetStateAction<AgentSessionMeta[]>>;
+  setSessions: Dispatch<SetStateAction<AgentThreadMeta[]>>;
   setPlanState: Dispatch<SetStateAction<PlanState>>;
   setStreamErrors: Dispatch<SetStateAction<Map<string, string>>>;
   setStreamingStates: Dispatch<SetStateAction<Map<string, AgentStreamState>>>;
@@ -167,7 +167,7 @@ interface UseAgentStreamSubscriptionsParams {
 }
 
 export function useAgentStreamSubscriptions({
-  sessionId,
+  threadId,
   agentPermissionMode,
   planSessionActive,
   streamingStates,
@@ -234,73 +234,78 @@ export function useAgentStreamSubscriptions({
     };
 
     trackUnlisten(onAgentStreamEvent((payload) => {
-      lastAgentEventAtRef.current.set(payload.sessionId, Date.now());
+      lastAgentEventAtRef.current.set(payload.threadId, Date.now());
       if (isAgentDebugEnabled()) {
         console.info("[AgentDebug] stream:event", {
-          sessionId: payload.sessionId,
-          type: payload.event.type,
-          event: payload.event
+          threadId: payload.threadId,
+          type: payload.message.type,
+          message: payload.message
         });
       }
 
-      if (payload.sessionId === currentSessionIdRef.current) {
-        const event = payload.event;
-        if ((event.type === "text_delta" || event.type === "text_complete") && !planStreamCaptureRef.current) {
-          if (currentPermissionModeRef.current === "plan") {
+      if (payload.threadId === currentSessionIdRef.current) {
+        const streamEvent = payload.message.type === "stream_event"
+          ? payload.message.event as { type?: string; delta?: { type?: string; text?: string } }
+          : null;
+        if (streamEvent?.type === "content_block_delta" && streamEvent.delta?.type === "text_delta") {
+          if (!planStreamCaptureRef.current && currentPermissionModeRef.current === "plan") {
             planStreamCaptureRef.current = true;
           }
-        }
-        if (event.type === "text_delta" && planStreamCaptureRef.current) {
-          setPlanState((prev) => (
-            prev.phase === "planning" && prev.sessionActive
-              ? prev
-              : {
-                ...prev,
-                phase: "planning",
-                sessionActive: true,
-                reviewOpen: false
-              }
-          ));
-          appendPlanDraft(event.text);
-        } else if (event.type === "text_complete" && planStreamCaptureRef.current) {
-          setPlanState((prev) => (
-            prev.phase === "planning" && prev.sessionActive
-              ? prev
-              : {
-                ...prev,
-                phase: "planning",
-                sessionActive: true,
-                reviewOpen: false
-              }
-          ));
-          updatePlanDraft(event.text);
+          if (planStreamCaptureRef.current && typeof streamEvent.delta.text === "string") {
+            setPlanState((prev) => (
+              prev.phase === "planning" && prev.sessionActive
+                ? prev
+                : {
+                  ...prev,
+                  phase: "planning",
+                  sessionActive: true,
+                  reviewOpen: false
+                }
+            ));
+            appendPlanDraft(streamEvent.delta.text);
+          }
+        } else if (payload.message.type === "assistant" && planStreamCaptureRef.current) {
+          const finalText = (payload.message.message?.content ?? [])
+            .filter((block) => !!block && typeof block === "object" && (block as { type?: string }).type === "text")
+            .map((block) => (block as { text?: string }).text ?? "")
+            .join("");
+          if (finalText) {
+            setPlanState((prev) => (
+              prev.phase === "planning" && prev.sessionActive
+                ? prev
+                : {
+                  ...prev,
+                  phase: "planning",
+                  sessionActive: true,
+                  reviewOpen: false
+                }
+            ));
+            updatePlanDraft(finalText);
+          }
         }
       }
 
       setStreamingStates((prev) => {
         const map = new Map(prev);
-        const current = map.get(payload.sessionId) ?? {
+        const current = map.get(payload.threadId) ?? {
           running: true,
+          sdkMessages: [],
           content: "",
           toolActivities: [],
-          events: []
         };
-        map.set(payload.sessionId, applyAgentEvent(current, payload.event));
+        map.set(payload.threadId, applySdkMessage(current, payload.message));
         return map;
       });
 
-      const usageEvent = payload.event.type === "usage_update"
-        ? payload.event.usage
-        : payload.event.type === "complete"
-          ? payload.event.usage
-          : undefined;
-      if (usageEvent) {
+      if (payload.message.type === "result" && payload.message.usage) {
+        const usage = payload.message.usage;
+        const modelUsage = payload.message.modelUsage;
         setContextCache((prev) => {
           const map = new Map(prev);
-          map.set(payload.sessionId, {
-            inputTokens: usageEvent.inputTokens,
-            totalTokens: usageEvent.totalTokens ?? prev.get(payload.sessionId)?.totalTokens ?? usageEvent.inputTokens,
-            contextWindow: usageEvent.contextWindow ?? prev.get(payload.sessionId)?.contextWindow
+          map.set(payload.threadId, {
+            inputTokens: (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
+            totalTokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
+            contextWindow: modelUsage ? Object.values(modelUsage)[0]?.contextWindow : prev.get(payload.threadId)?.contextWindow
           });
           return map;
         });
@@ -309,9 +314,9 @@ export function useAgentStreamSubscriptions({
     }));
 
     trackUnlisten(onAgentStreamComplete((payload) => {
-      lastAgentEventAtRef.current.set(payload.sessionId, Date.now());
+      lastAgentEventAtRef.current.set(payload.threadId, Date.now());
       if (isAgentDebugEnabled()) {
-        console.info("[AgentDebug] stream:complete", { sessionId: payload.sessionId });
+        console.info("[AgentDebug] stream:complete", { threadId: payload.threadId });
       }
       // NOTE: 不再提前调用 markStreamCompleted —— 避免 streaming=false 先于
       // setMessages 到达，导致流式消息块瞬间消失而持久化消息尚未到位（列表抖动）。
@@ -319,28 +324,28 @@ export function useAgentStreamSubscriptions({
       // 在 setMessages 所在的同一个 startTransition 内执行，实现原子化批更新。
 
       const finalize = (): void => {
-        if (payload.sessionId === currentSessionIdRef.current) {
+        if (payload.threadId === currentSessionIdRef.current) {
           setAskUserQuestionRequests((prev) => {
             const map = new Map(prev);
-            map.delete(payload.sessionId);
+            map.delete(payload.threadId);
             return map;
           });
           setToolPermissionRequests((prev) => {
             const map = new Map(prev);
-            map.delete(payload.sessionId);
+            map.delete(payload.threadId);
             return map;
           });
         }
-        removeState(payload.sessionId);
-        void listAgentSessions().then(setSessions);
+        removeState(payload.threadId);
+        void listAgentThreads().then(setSessions);
 
-        const titleInput = pendingTitleRef.current.get(payload.sessionId);
-        pendingTitleRef.current.delete(payload.sessionId);
+        const titleInput = pendingTitleRef.current.get(payload.threadId);
+        pendingTitleRef.current.delete(payload.threadId);
         if (titleInput) {
-          void generateAgentSessionTitle(titleInput).then((title) => {
+          void generateAgentThreadTitle(titleInput).then((title) => {
             const nextTitle = title?.trim() || titleInput.userMessage.trim().slice(0, 20);
             if (!nextTitle) return;
-            void updateAgentSessionTitle(payload.sessionId, nextTitle)
+            void updateAgentThreadTitle(payload.threadId, nextTitle)
               .then((updated) => {
                 setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
               })
@@ -350,7 +355,7 @@ export function useAgentStreamSubscriptions({
           }).catch(() => {
             const fallback = titleInput.userMessage.trim().slice(0, 20);
             if (fallback) {
-              void updateAgentSessionTitle(payload.sessionId, fallback)
+              void updateAgentThreadTitle(payload.threadId, fallback)
                 .then((updated) => {
                   setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
                 })
@@ -361,7 +366,7 @@ export function useAgentStreamSubscriptions({
       };
 
       // 在流结束后计算本轮思考耗时，后续注入到最后一条 assistant 消息
-      const streamStateForDuration = streamingStatesRef.current.get(payload.sessionId);
+      const streamStateForDuration = streamingStatesRef.current.get(payload.threadId);
       let thinkingDuration: number | undefined;
       if (streamStateForDuration?.streamStartedAt && streamStateForDuration.firstOutputAt) {
         const sec = (streamStateForDuration.firstOutputAt - streamStateForDuration.streamStartedAt) / 1000;
@@ -370,8 +375,8 @@ export function useAgentStreamSubscriptions({
         }
       }
 
-      if (payload.sessionId === currentSessionIdRef.current) {
-        const pendingAssistantMessage = pendingAssistantMessagesRef.current.get(payload.sessionId);
+      if (payload.threadId === currentSessionIdRef.current) {
+        const pendingAssistantMessage = pendingAssistantMessagesRef.current.get(payload.threadId);
         if (pendingAssistantMessage) {
           startTransition(() => {
             const enrichedMessage = enrichAssistantMessage(
@@ -396,12 +401,12 @@ export function useAgentStreamSubscriptions({
               }
             }
             setMessages((prev) => replaceVisibleMessage(prev, enrichedMessage));
-            pendingAssistantMessagesRef.current.delete(payload.sessionId);
+            pendingAssistantMessagesRef.current.delete(payload.threadId);
             finalize();
           });
           return;
         }
-        void getAgentSessionMessages(payload.sessionId)
+        void getAgentThreadMessages(payload.threadId)
           .then((next) => {
             startTransition(() => {
               if (planStreamCaptureRef.current) {
@@ -440,47 +445,47 @@ export function useAgentStreamSubscriptions({
             startTransition(() => {
               setStreamErrors((prev) => {
                 const map = new Map(prev);
-                map.set(payload.sessionId, `流结束后读取消息失败: ${message}`);
+                map.set(payload.threadId, `流结束后读取消息失败: ${message}`);
                 return map;
               });
               finalize();
             });
           });
       } else {
-        pendingAssistantMessagesRef.current.delete(payload.sessionId);
+        pendingAssistantMessagesRef.current.delete(payload.threadId);
         finalize();
       }
     }));
 
     trackUnlisten(onAgentStreamError((payload) => {
-      lastAgentEventAtRef.current.set(payload.sessionId, Date.now());
+      lastAgentEventAtRef.current.set(payload.threadId, Date.now());
       if (isAgentDebugEnabled()) {
         console.info("[AgentDebug] stream:error", payload);
       }
       setStreamErrors((prev) => {
         const map = new Map(prev);
-        map.set(payload.sessionId, payload.error);
+        map.set(payload.threadId, payload.error);
         return map;
       });
       const finalize = (): void => {
-        if (payload.sessionId === currentSessionIdRef.current) {
+        if (payload.threadId === currentSessionIdRef.current) {
           setAskUserQuestionRequests((prev) => {
             const map = new Map(prev);
-            map.delete(payload.sessionId);
+            map.delete(payload.threadId);
             return map;
           });
           setToolPermissionRequests((prev) => {
             const map = new Map(prev);
-            map.delete(payload.sessionId);
+            map.delete(payload.threadId);
             return map;
           });
         }
-        removeState(payload.sessionId);
-        pendingAssistantMessagesRef.current.delete(payload.sessionId);
+        removeState(payload.threadId);
+        pendingAssistantMessagesRef.current.delete(payload.threadId);
       };
 
-      if (payload.sessionId === currentSessionIdRef.current) {
-        void getAgentSessionMessages(payload.sessionId)
+      if (payload.threadId === currentSessionIdRef.current) {
+        void getAgentThreadMessages(payload.threadId)
           .then((next) => {
             startTransition(() => {
               setMessages((prev) => mergeServerMessagesWithPending(prev, next));
@@ -493,7 +498,7 @@ export function useAgentStreamSubscriptions({
             startTransition(() => {
               setStreamErrors((prev) => {
                 const map = new Map(prev);
-                map.set(payload.sessionId, `流错误后读取消息失败: ${message}`);
+                map.set(payload.threadId, `流错误后读取消息失败: ${message}`);
                 return map;
               });
               finalize();
@@ -505,11 +510,11 @@ export function useAgentStreamSubscriptions({
     }));
 
     trackUnlisten(onAgentMessageAppended((payload) => {
-      void listAgentSessions().then(setSessions);
-      if (payload.sessionId !== currentSessionIdRef.current) {
+      void listAgentThreads().then(setSessions);
+      if (payload.threadId !== currentSessionIdRef.current) {
         return;
       }
-      const currentStreamState = streamingStatesRef.current.get(payload.sessionId);
+      const currentStreamState = streamingStatesRef.current.get(payload.threadId);
       // 只要该 session 的 streamState 存在（而非仅看 running），就将 assistant 消息
       // 缓存到 pending，由 onAgentStreamComplete 统一处理。
       // 原因：stream:event(complete) 会将 running 设为 false，但此时 streamingMessage
@@ -517,7 +522,7 @@ export function useAgentStreamSubscriptions({
       // 到达并直接渲染，会导致持久化消息与流式消息同时出现（列表中两条重复 AI 消息）。
       // streamState 只有在 finalize → removeState 中才会被删除，与 setMessages 同批执行。
       if (payload.message.role === "assistant" && currentStreamState) {
-        pendingAssistantMessagesRef.current.set(payload.sessionId, payload.message);
+        pendingAssistantMessagesRef.current.set(payload.threadId, payload.message);
         return;
       }
       startTransition(() => {
@@ -530,24 +535,24 @@ export function useAgentStreamSubscriptions({
     trackUnlisten(onAgentRuntimeStatusChanged((payload) => {
       setRuntimeStatuses((prev) => {
         const map = new Map(prev);
-        map.set(payload.status.sessionId, payload.status);
+        map.set(payload.status.threadId, payload.status);
         return map;
       });
     }));
 
     trackUnlisten(onAgentTitleUpdated((payload) => {
       setSessions((prev) => prev.map((item) => (
-        item.id === payload.sessionId
+        item.id === payload.threadId
           ? { ...item, title: payload.title, updatedAt: Date.now() }
           : item
       )));
-      void listAgentSessions().then(setSessions).catch((error) => {
+      void listAgentThreads().then(setSessions).catch((error) => {
         console.warn("[AgentView] 刷新会话标题失败", error);
       });
     }));
 
     trackUnlisten(onAgentPlanStateChanged((payload) => {
-      if (payload.sessionId !== currentSessionIdRef.current) return;
+      if (payload.threadId !== currentSessionIdRef.current) return;
       if (payload.phase === "planning") {
         planStreamCaptureRef.current = true;
         enterPlan();
@@ -585,25 +590,25 @@ export function useAgentStreamSubscriptions({
     }));
 
     trackUnlisten(onAgentAskUserQuestion((payload) => {
-      if (payload.sessionId !== currentSessionIdRef.current) {
+      if (payload.threadId !== currentSessionIdRef.current) {
         return;
       }
       setAskUserError(null);
       setAskUserQuestionRequests((prev) => {
         const map = new Map(prev);
-        map.set(payload.sessionId, payload);
+        map.set(payload.threadId, payload);
         return map;
       });
     }));
 
     trackUnlisten(onAgentToolPermissionRequest((payload) => {
-      if (payload.sessionId !== currentSessionIdRef.current) {
+      if (payload.threadId !== currentSessionIdRef.current) {
         return;
       }
       setToolPermissionError(null);
       setToolPermissionRequests((prev) => {
         const map = new Map(prev);
-        map.set(payload.sessionId, payload);
+        map.set(payload.threadId, payload);
         return map;
       });
     }));
@@ -641,3 +646,4 @@ export function useAgentStreamSubscriptions({
     updatePlanDraft
   ]);
 }
+

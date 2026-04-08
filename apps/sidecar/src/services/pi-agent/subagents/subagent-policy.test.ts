@@ -45,16 +45,16 @@ describe("subagent-policy", () => {
     const registry = getSubagentRunRegistry();
     registry.create({
       runId: randomUUID(),
-      parentSessionId: "session-root",
-      childSessionId: "session-child",
-      rootSessionId: "session-root",
+      parentThreadId: "session-root",
+      childThreadId: "session-child",
+      rootThreadId: "session-root",
       depth: 1,
       task: "parent task",
       cleanup: "keep",
       status: "running"
     });
     const decision = resolveSubagentSpawnPolicy({
-      parentSessionId: "session-child"
+      parentThreadId: "session-child"
     });
     expect(decision.ok).toBe(false);
     expect(decision.error).toContain("深度超限");
@@ -65,14 +65,14 @@ describe("subagent-policy", () => {
     const registry = getSubagentRunRegistry();
     registry.create({
       runId: randomUUID(),
-      parentSessionId: "session-main",
-      childSessionId: "session-child-1",
+      parentThreadId: "session-main",
+      childThreadId: "session-child-1",
       task: "active child",
       cleanup: "keep",
       status: "running"
     });
     const decision = resolveSubagentSpawnPolicy({
-      parentSessionId: "session-main"
+      parentThreadId: "session-main"
     });
     expect(decision.ok).toBe(false);
     expect(decision.error).toContain("扇出超限");
@@ -80,7 +80,7 @@ describe("subagent-policy", () => {
 
   test("sandbox=require 时应继承父会话 permission mode", () => {
     const decision = resolveSubagentSpawnPolicy({
-      parentSessionId: "session-main",
+      parentThreadId: "session-main",
       parentPermissionMode: "plan",
       requestedSandbox: "require"
     });
@@ -88,3 +88,4 @@ describe("subagent-policy", () => {
     expect(decision.childPermissionMode).toBe("plan");
   });
 });
+

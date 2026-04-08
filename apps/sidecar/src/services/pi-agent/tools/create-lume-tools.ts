@@ -1,12 +1,12 @@
+import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
 import type { AgentAskUserQuestionRequest, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { MemoryToolPolicy } from "../../memory/memory-policy";
-import { createPiControlTools } from "./control/create-control-tools";
-import { createPiMemoryTools } from "./memory/create-memory-tools";
-import { createSessionTools } from "./session/create-session-tools";
-import { createWebTools, WEB_TOOL_NAMES } from "./web/create-web-tools";
-import { createCronTools } from "./cron/create-cron-tools";
+import { createSdkControlTools } from "./control/create-control-tools";
+import { createSdkMemoryTools } from "./memory/create-memory-tools";
+import { createSdkSessionTools } from "./session/create-session-tools";
+import { createSdkCronTools } from "./cron/create-cron-tools";
+import { createSdkWebTools } from "./web/create-web-tools";
 import { resolveEnabledPiMemoryToolNames } from "./permissions/tool-policy";
 
 const BASE_PI_TOOL_NAMES = ["read", "write", "edit", "bash", "find", "grep", "ls"];
@@ -22,7 +22,9 @@ const SESSION_TOOL_NAMES = [
   "subagents_list",
   "subagents_kill",
   "subagents_send",
-  "subagents_steer"
+  "subagents_steer",
+  "web_search",
+  "web_fetch"
 ];
 const AUTOMATION_TOOL_NAMES = [
   "cron_read",
@@ -31,22 +33,23 @@ const AUTOMATION_TOOL_NAMES = [
 ];
 
 export interface CreateLumePiToolsInput {
-  sessionId: string;
+  threadId: string;
   workspaceId?: string;
   channelId?: string;
-  sessionType?: AgentSendInput["sessionType"];
+  threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   workspaceSlug?: string;
   permissionMode?: AgentSendInput["permissionMode"];
   memoryToolPolicy?: MemoryToolPolicy;
   includeCitations: boolean;
   automationExecution?: boolean;
+  emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 }
 
 export interface CreateLumePiToolsOutput {
-  customTools: AgentTool[];
+  customTools: ToolDefinition[];
   availableToolNames: string[];
 }
 
@@ -57,35 +60,36 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
   const enabledMemoryToolNames = resolveEnabledPiMemoryToolNames(input.memoryToolPolicy);
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
   const memoryTools = input.workspaceSlug
-    ? createPiMemoryTools({
+    ? createSdkMemoryTools({
       workspaceSlug: input.workspaceSlug,
       enabledTools: enabledMemoryTools,
       includeCitations: input.includeCitations
     })
     : [];
-  const controlTools = createPiControlTools({
-    sessionId: input.sessionId,
+  const controlTools = createSdkControlTools({
+    sessionId: input.threadId,
     emitAskUserQuestion: input.emitAskUserQuestion,
     includeAskUserQuestion: input.automationExecution !== true
   });
-  const sessionTools = createSessionTools({
-    sessionId: input.sessionId,
+  const sessionTools = createSdkSessionTools({
+    threadId: input.threadId,
     workspaceId: input.workspaceId,
     channelId: input.channelId,
-    sessionType: input.sessionType,
+    threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
+    emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion,
-    emitToolPermissionRequest: input.emitToolPermissionRequest
+    emitToolPermissionRequest: input.emitToolPermissionRequest,
+    includeWebTools: false
   });
-  const webTools = createWebTools();
-
   // 不再在这里过滤，由 tool-permission-gate.ts 基于 tool-metadata.ts 处理
-  const cronTools = createCronTools({
+  const cronTools = createSdkCronTools({
     workspaceId: input.workspaceId,
-    sessionId: input.sessionId
+    sessionId: input.threadId
   });
-  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...webTools, ...cronTools];
+  const webTools = createSdkWebTools();
+  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...cronTools, ...webTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {
@@ -93,10 +97,11 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     availableToolNames: [
       ...BASE_PI_TOOL_NAMES,
       ...SESSION_TOOL_NAMES,
-      ...WEB_TOOL_NAMES,
       ...AUTOMATION_TOOL_NAMES,
       ...(input.automationExecution === true ? [] : CONTROL_PI_TOOL_NAMES),
       ...customToolNames
     ]
   };
 }
+
+

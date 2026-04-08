@@ -6,7 +6,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { join } from "node:path";
-import type { AgentEvent } from "@lume/shared";
+import type { SDKMessage } from "@lume/shared";
 import { getAgentSessionDataDir } from "../infra/config-paths";
 
 export interface AgentMessageVersionGroupRecord {
@@ -32,7 +32,7 @@ export interface AgentMessageVersionRecord {
   reasoning?: string;
   model?: string;
   metadata?: Record<string, unknown>;
-  events?: AgentEvent[];
+  sdkMessages?: SDKMessage[];
 }
 
 export interface AgentMessageVersionStore {

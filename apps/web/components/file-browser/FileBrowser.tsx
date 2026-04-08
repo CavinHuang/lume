@@ -50,7 +50,7 @@ interface ContextMenuState {
 
 type FileBrowserProps = {
   workspaceSlug: string;
-  sessionId: string;
+  threadId: string;
   rootPath: string;
   onClose?: () => void;
   /** 隐藏顶部路径栏和搜索栏 */
@@ -85,7 +85,7 @@ function resolveTargetDir(rootPath: string, rawInput: string): string | null {
 
 export function FileBrowser({
   workspaceSlug,
-  sessionId,
+  threadId,
   rootPath,
   onClose,
   hideToolbar = false,
@@ -103,11 +103,11 @@ export function FileBrowser({
   const [searchEntries, setSearchEntries] = React.useState<FileEntry[]>([]);
 
   const loadRoot = React.useCallback(async (): Promise<void> => {
-    if (!rootPath || !workspaceSlug || !sessionId) return;
+    if (!rootPath || !workspaceSlug || !threadId) return;
     setLoading(true);
     setError(null);
     try {
-      const items = await listAgentDirectory(workspaceSlug, sessionId, rootPath);
+      const items = await listAgentDirectory(workspaceSlug, threadId, rootPath);
       setEntries(items);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
@@ -115,7 +115,7 @@ export function FileBrowser({
     } finally {
       setLoading(false);
     }
-  }, [rootPath, workspaceSlug, sessionId]);
+  }, [rootPath, workspaceSlug, threadId]);
 
   React.useEffect(() => {
     void loadRoot();
@@ -131,7 +131,7 @@ export function FileBrowser({
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setSearching(true);
-      void searchAgentWorkspaceFiles(workspaceSlug, sessionId, trimmed, 100, rootPath)
+      void searchAgentWorkspaceFiles(workspaceSlug, threadId, trimmed, 100, rootPath)
         .then((result) => {
           if (cancelled) return;
           setSearchTotal(result.total);
@@ -159,7 +159,7 @@ export function FileBrowser({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [rootPath, searchQuery, sessionId, workspaceSlug]);
+  }, [rootPath, searchQuery, threadId, workspaceSlug]);
 
   React.useEffect(() => {
     if (!contextMenu) return;
@@ -184,20 +184,20 @@ export function FileBrowser({
 
   const handleMenuOpen = (): void => {
     if (!contextMenu) return;
-    void openAgentFile(workspaceSlug, sessionId, contextMenu.entry.path);
+    void openAgentFile(workspaceSlug, threadId, contextMenu.entry.path);
     setContextMenu(null);
   };
 
   const handleMenuPreview = (): void => {
     if (!contextMenu) return;
     if (contextMenu.entry.isDirectory) return;
-    void previewAgentFile(workspaceSlug, sessionId, contextMenu.entry.path);
+    void previewAgentFile(workspaceSlug, threadId, contextMenu.entry.path);
     setContextMenu(null);
   };
 
   const handleMenuShowInFolder = (): void => {
     if (!contextMenu) return;
-    void showAgentFileInFolder(workspaceSlug, sessionId, contextMenu.entry.path);
+    void showAgentFileInFolder(workspaceSlug, threadId, contextMenu.entry.path);
     setContextMenu(null);
   };
 
@@ -215,7 +215,7 @@ export function FileBrowser({
     setContextMenu(null);
     if (!nextName || nextName === defaultName) return;
     try {
-      await renameAgentFile(workspaceSlug, sessionId, target.path, nextName);
+      await renameAgentFile(workspaceSlug, threadId, target.path, nextName);
       await loadRoot();
     } catch (err) {
       console.error("[FileBrowser] rename failed", err);
@@ -232,7 +232,7 @@ export function FileBrowser({
     const targetDir = resolveTargetDir(rootPath, rawTarget);
     if (!targetDir) return;
     try {
-      await moveAgentFile(workspaceSlug, sessionId, target.path, targetDir);
+      await moveAgentFile(workspaceSlug, threadId, target.path, targetDir);
       await loadRoot();
     } catch (err) {
       console.error("[FileBrowser] move failed", err);
@@ -243,7 +243,7 @@ export function FileBrowser({
   const handleDelete = async (): Promise<void> => {
     if (!deleteTarget) return;
     try {
-      await deleteAgentFile(workspaceSlug, sessionId, deleteTarget.path);
+      await deleteAgentFile(workspaceSlug, threadId, deleteTarget.path);
       await loadRoot();
     } catch (err) {
       console.error("[FileBrowser] delete failed", err);
@@ -271,7 +271,7 @@ export function FileBrowser({
               size="icon"
               className="h-7 w-7 flex-shrink-0"
               onClick={() => {
-                void openAgentFile(workspaceSlug, sessionId, rootPath);
+                void openAgentFile(workspaceSlug, threadId, rootPath);
               }}
               title="打开目录"
             >
@@ -334,7 +334,7 @@ export function FileBrowser({
               entry={entry}
               depth={searchQuery.trim() ? -1 : 0}
               workspaceSlug={workspaceSlug}
-              sessionId={sessionId}
+              threadId={threadId}
               onContextMenu={handleContextMenu}
               onRefresh={loadRoot}
             />
@@ -442,7 +442,7 @@ interface FileTreeItemProps {
   entry: FileEntry;
   depth: number;
   workspaceSlug: string;
-  sessionId: string;
+  threadId: string;
   onContextMenu: (event: React.MouseEvent, entry: FileEntry) => void;
   onRefresh: () => Promise<void>;
 }
@@ -451,7 +451,7 @@ function FileTreeItem({
   entry,
   depth,
   workspaceSlug,
-  sessionId,
+  threadId,
   onContextMenu,
   onRefresh
 }: FileTreeItemProps): React.ReactElement {
@@ -464,7 +464,7 @@ function FileTreeItem({
     if (!entry.isDirectory) return;
     if (!expanded && !childrenLoaded) {
       try {
-        const items = await listAgentDirectory(workspaceSlug, sessionId, entry.path);
+        const items = await listAgentDirectory(workspaceSlug, threadId, entry.path);
         setChildren(items);
         setChildrenLoaded(true);
       } catch (err) {
@@ -476,20 +476,20 @@ function FileTreeItem({
 
   const handleClick = (): void => {
     if (isSearchResult) {
-      void openAgentFile(workspaceSlug, sessionId, entry.path);
+      void openAgentFile(workspaceSlug, threadId, entry.path);
       return;
     }
     if (entry.isDirectory) {
       void toggleDir();
     } else {
-      void openAgentFile(workspaceSlug, sessionId, entry.path);
+      void openAgentFile(workspaceSlug, threadId, entry.path);
     }
   };
 
   const handleRefreshAfterDelete = async (): Promise<void> => {
     if (childrenLoaded) {
       try {
-        const items = await listAgentDirectory(workspaceSlug, sessionId, entry.path);
+        const items = await listAgentDirectory(workspaceSlug, threadId, entry.path);
         setChildren(items);
         return;
       } catch {
@@ -538,7 +538,7 @@ function FileTreeItem({
               entry={child}
               depth={depth + 1}
               workspaceSlug={workspaceSlug}
-              sessionId={sessionId}
+              threadId={threadId}
               onContextMenu={onContextMenu}
               onRefresh={handleRefreshAfterDelete}
             />
@@ -547,3 +547,4 @@ function FileTreeItem({
     </>
   );
 }
+

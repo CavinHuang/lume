@@ -25,7 +25,7 @@ describe("ask-user-question-bridge", () => {
       () => {}
     );
     const handled = submitPiAskUserQuestionAnswers({
-      sessionId: "session-1",
+      threadId: "session-1",
       toolUseId,
       answers: { "问题1": "A" }
     });
@@ -94,7 +94,7 @@ describe("ask-user-question-bridge", () => {
     );
     setAskUserQuestionApprovalSession(toolUseId, "parent-session");
     const handled = submitPiAskUserQuestionAnswers({
-      sessionId: "parent-session",
+      threadId: "parent-session",
       toolUseId,
       answers: { "问题1": "B" }
     });
@@ -104,3 +104,4 @@ describe("ask-user-question-bridge", () => {
     expect(result.answers).toEqual({ "问题1": "B" });
   });
 });
+

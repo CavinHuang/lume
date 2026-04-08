@@ -12,7 +12,7 @@ import {
 import { buildAskUserQuestionAnswers } from "../agent-interactive-requests";
 
 interface UseAgentInteractiveRequestsParams {
-  sessionId: string | null;
+  threadId: string | null;
   currentRuntimeStatus: AgentRuntimeStatus | null;
   askUserQuestionRequest: AgentAskUserQuestionRequest | null;
   toolPermissionRequest: AgentToolPermissionRequest | null;
@@ -21,7 +21,7 @@ interface UseAgentInteractiveRequestsParams {
 }
 
 export function useAgentInteractiveRequests({
-  sessionId,
+  threadId,
   currentRuntimeStatus,
   askUserQuestionRequest,
   toolPermissionRequest,
@@ -49,8 +49,8 @@ export function useAgentInteractiveRequests({
     if (currentRuntimeStatus && currentRuntimeStatus.phase !== "awaiting_user_answer") {
       setAskUserQuestionRequests((prev) => {
         const map = new Map(prev);
-        if (sessionId) {
-          map.delete(sessionId);
+        if (threadId) {
+          map.delete(threadId);
         }
         return map;
       });
@@ -58,13 +58,13 @@ export function useAgentInteractiveRequests({
     if (currentRuntimeStatus && currentRuntimeStatus.phase !== "awaiting_permission") {
       setToolPermissionRequests((prev) => {
         const map = new Map(prev);
-        if (sessionId) {
-          map.delete(sessionId);
+        if (threadId) {
+          map.delete(threadId);
         }
         return map;
       });
     }
-  }, [currentRuntimeStatus, sessionId, setAskUserQuestionRequests, setToolPermissionRequests]);
+  }, [currentRuntimeStatus, threadId, setAskUserQuestionRequests, setToolPermissionRequests]);
 
   const updateAskAnswerOption = useCallback((header: string, label: string, checked: boolean, multiSelect: boolean): void => {
     setAskUserAnswers((prev) => {
@@ -113,13 +113,13 @@ export function useAgentInteractiveRequests({
     setAskUserError(null);
     try {
       await submitAgentAskUserQuestionAnswers({
-        sessionId: askUserQuestionRequest.sessionId,
+        threadId: askUserQuestionRequest.threadId,
         toolUseId: askUserQuestionRequest.toolUseId,
         answers: result.answers
       });
       setAskUserQuestionRequests((prev) => {
         const map = new Map(prev);
-        map.delete(askUserQuestionRequest.sessionId);
+        map.delete(askUserQuestionRequest.threadId);
         return map;
       });
       setAskUserAnswers({});
@@ -136,13 +136,13 @@ export function useAgentInteractiveRequests({
     setAskUserError(null);
     try {
       await submitAgentAskUserQuestionAnswers({
-        sessionId: askUserQuestionRequest.sessionId,
+        threadId: askUserQuestionRequest.threadId,
         toolUseId: askUserQuestionRequest.toolUseId,
         canceled: true
       });
       setAskUserQuestionRequests((prev) => {
         const map = new Map(prev);
-        map.delete(askUserQuestionRequest.sessionId);
+        map.delete(askUserQuestionRequest.threadId);
         return map;
       });
       setAskUserAnswers({});
@@ -159,13 +159,13 @@ export function useAgentInteractiveRequests({
     setToolPermissionError(null);
     try {
       await submitAgentToolPermission({
-        sessionId: toolPermissionRequest.sessionId,
+        threadId: toolPermissionRequest.threadId,
         requestId: toolPermissionRequest.requestId,
         decision
       });
       setToolPermissionRequests((prev) => {
         const map = new Map(prev);
-        map.delete(toolPermissionRequest.sessionId);
+        map.delete(toolPermissionRequest.threadId);
         return map;
       });
     } catch (error) {
@@ -190,3 +190,4 @@ export function useAgentInteractiveRequests({
     setToolPermissionError
   };
 }
+

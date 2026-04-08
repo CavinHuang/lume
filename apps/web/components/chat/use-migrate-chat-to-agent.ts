@@ -4,14 +4,14 @@ import {
   activeViewAtom,
   agentChannelIdAtom,
   agentPendingPromptAtom,
-  agentSessionsAtom,
+  agentThreadsAtom,
   appModeAtom,
   currentConversationIdAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadIdAtom,
   currentAgentWorkspaceIdAtom,
   settingsTabAtom
 } from "@/atoms";
-import { createAgentSession, listAgentSessions, migrateChatToAgentSession } from "@/lib/desktop-api/agent";
+import { createAgentThread, listAgentThreads, migrateChatToAgentThread } from "@/lib/desktop-api/agent";
 
 interface MigrateOptions {
   suggestedPrompt?: string;
@@ -26,8 +26,8 @@ export function useMigrateChatToAgent(): {
   const agentChannelId = useAtomValue(agentChannelIdAtom);
   const conversationId = useAtomValue(currentConversationIdAtom);
   const workspaceId = useAtomValue(currentAgentWorkspaceIdAtom);
-  const setAgentSessions = useSetAtom(agentSessionsAtom);
-  const setCurrentSessionId = useSetAtom(currentAgentSessionIdAtom);
+  const setAgentSessions = useSetAtom(agentThreadsAtom);
+  const setCurrentSessionId = useSetAtom(currentAgentThreadIdAtom);
   const setPendingPrompt = useSetAtom(agentPendingPromptAtom);
   const setAppMode = useSetAtom(appModeAtom);
   const setActiveView = useSetAtom(activeViewAtom);
@@ -54,24 +54,24 @@ export function useMigrateChatToAgent(): {
 
     setBusy(true);
     try {
-      const session = await createAgentSession({
+      const thread = await createAgentThread({
         channelId: agentChannelId,
         workspaceId: workspaceId ?? undefined
       });
-      await migrateChatToAgentSession(conversationId, session.id);
-      const sessions = await listAgentSessions();
+      await migrateChatToAgentThread(conversationId, thread.id);
+      const sessions = await listAgentThreads();
       setAgentSessions(sessions);
-      setCurrentSessionId(session.id);
+      setCurrentSessionId(thread.id);
       const prompt = options?.suggestedPrompt?.trim();
       if (prompt) {
-        setPendingPrompt({ sessionId: session.id, message: prompt });
+        setPendingPrompt({ threadId: thread.id, message: prompt });
       }
       setAppMode("agent");
       setActiveView("conversations");
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(`创建 Agent 会话失败：${message}`);
+      setError(`创建 Agent 线程失败：${message}`);
       return false;
     } finally {
       setBusy(false);

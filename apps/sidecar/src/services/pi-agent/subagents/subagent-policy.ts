@@ -13,7 +13,7 @@ function resolveEnvInt(name: string, fallback: number, min = 1, max = 100): numb
 }
 
 export interface SubagentSpawnPolicyInput {
-  parentSessionId: string;
+  parentThreadId: string;
   parentPermissionMode?: AgentSendInput["permissionMode"];
   requestedSandbox?: "inherit" | "require";
 }
@@ -22,17 +22,17 @@ export interface SubagentSpawnPolicyDecision {
   ok: boolean;
   error?: string;
   depth: number;
-  rootSessionId: string;
+  rootThreadId: string;
   parentRunId?: string;
   childPermissionMode?: AgentSendInput["permissionMode"];
 }
 
 export function resolveSubagentSpawnPolicy(input: SubagentSpawnPolicyInput): SubagentSpawnPolicyDecision {
   const runRegistry = getSubagentRunRegistry();
-  const parentRun = runRegistry.getLatestByChildSession(input.parentSessionId);
+  const parentRun = runRegistry.getLatestByChildThread(input.parentThreadId);
   const parentDepth = parentRun?.depth ?? 0;
   const depth = parentDepth + 1;
-  const rootSessionId = parentRun?.rootSessionId ?? input.parentSessionId;
+  const rootThreadId = parentRun?.rootThreadId ?? input.parentThreadId;
   const parentRunId = parentRun?.runId;
   const maxDepth = resolveEnvInt("LUME_SUBAGENT_MAX_DEPTH", DEFAULT_SUBAGENT_MAX_DEPTH, 1, 12);
   if (depth > maxDepth) {
@@ -40,18 +40,18 @@ export function resolveSubagentSpawnPolicy(input: SubagentSpawnPolicyInput): Sub
       ok: false,
       error: `子任务深度超限: depth=${depth}, maxDepth=${maxDepth}`,
       depth,
-      rootSessionId,
+      rootThreadId,
       parentRunId
     };
   }
   const maxFanout = resolveEnvInt("LUME_SUBAGENT_MAX_FANOUT", DEFAULT_SUBAGENT_MAX_FANOUT, 1, 64);
-  const activeFanout = runRegistry.countActiveByParentSession(input.parentSessionId);
+  const activeFanout = runRegistry.countActiveByParentSession(input.parentThreadId);
   if (activeFanout >= maxFanout) {
     return {
       ok: false,
       error: `子任务并发扇出超限: active=${activeFanout}, maxFanout=${maxFanout}`,
       depth,
-      rootSessionId,
+      rootThreadId,
       parentRunId
     };
   }
@@ -63,8 +63,9 @@ export function resolveSubagentSpawnPolicy(input: SubagentSpawnPolicyInput): Sub
   return {
     ok: true,
     depth,
-    rootSessionId,
+    rootThreadId,
     parentRunId,
     childPermissionMode
   };
 }
+

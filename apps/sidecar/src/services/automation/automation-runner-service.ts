@@ -152,7 +152,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     let runtimeError: string | null = null;
     await sendAgentMessage(
       {
-        sessionId,
+        threadId: sessionId,
         userMessage: job.prompt,
         workspaceId: job.workspaceId,
         channelId,
@@ -164,7 +164,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
         }
       },
       {
-        onEvent: () => {},
+        onSdkMessage: () => {},
         onComplete: () => {},
         onError: (error) => {
           runtimeError = error;
@@ -313,3 +313,4 @@ export function listAutomationRuns(input: AutomationListRunsInput = {}): Automat
   }
   return runs.sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
 }
+

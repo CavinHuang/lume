@@ -12,7 +12,7 @@ describe("agent-runtime-status-manager", () => {
       requestId: "req-1",
       toolUseId: "tool-1",
       toolName: "write",
-      originSessionId: "origin-1",
+      originThreadId: "origin-1",
       subagentRunId: "run-1"
     });
 
@@ -20,7 +20,7 @@ describe("agent-runtime-status-manager", () => {
     expect(manager.get("s1")?.interactiveKind).toBe("tool_permission");
     expect(manager.get("s1")?.requestId).toBe("req-1");
     expect(manager.get("s1")?.toolName).toBe("write");
-    expect(manager.get("s1")?.originSessionId).toBe("origin-1");
+    expect(manager.get("s1")?.originThreadId).toBe("origin-1");
     expect(manager.get("s1")?.subagentRunId).toBe("run-1");
   });
 
@@ -28,14 +28,14 @@ describe("agent-runtime-status-manager", () => {
     const manager = new AgentRuntimeStatusManager();
     manager.markAwaitingUserAnswer("s1", {
       toolUseId: "ask-1",
-      originSessionId: "origin-2",
+      originThreadId: "origin-2",
       subagentRunId: "run-2"
     });
 
     expect(manager.get("s1")?.phase).toBe("awaiting_user_answer");
     expect(manager.get("s1")?.interactiveKind).toBe("ask_user_question");
     expect(manager.get("s1")?.toolUseId).toBe("ask-1");
-    expect(manager.get("s1")?.originSessionId).toBe("origin-2");
+    expect(manager.get("s1")?.originThreadId).toBe("origin-2");
     expect(manager.get("s1")?.subagentRunId).toBe("run-2");
   });
 
@@ -61,3 +61,4 @@ describe("agent-runtime-status-manager", () => {
     expect(first).toBe(second);
   });
 });
+

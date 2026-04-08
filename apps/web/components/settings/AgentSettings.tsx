@@ -9,19 +9,19 @@ import {
   activeViewAtom,
   agentChannelIdAtom,
   agentPendingPromptAtom,
-  agentSessionsAtom,
+  agentThreadsAtom,
   agentWorkspacesAtom,
   appModeAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadIdAtom,
   currentAgentWorkspaceIdAtom,
   workspaceCapabilitiesVersionAtom
 } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
-  createAgentSession,
+  createAgentThread,
   getAgentWorkspaceMcpConfig,
-  listAgentSessions,
+  listAgentThreads,
   saveAgentWorkspaceMcpConfig
 } from "@/lib/desktop-api/agent";
 import { McpServerForm } from "./McpServerForm";
@@ -49,8 +49,8 @@ export function AgentSettings(): React.ReactElement {
     [workspaces, currentWorkspaceId]
   );
 
-  const setAgentSessions = useSetAtom(agentSessionsAtom);
-  const setCurrentSessionId = useSetAtom(currentAgentSessionIdAtom);
+  const setAgentSessions = useSetAtom(agentThreadsAtom);
+  const setCurrentSessionId = useSetAtom(currentAgentThreadIdAtom);
   const setPendingPrompt = useSetAtom(agentPendingPromptAtom);
   const setActiveView = useSetAtom(activeViewAtom);
   const setAppMode = useSetAtom(appModeAtom);
@@ -126,15 +126,15 @@ mcp.json 格式如下：
     }
 
     try {
-      const session = await createAgentSession({
+      const thread = await createAgentThread({
         channelId: agentChannelId ?? undefined,
         workspaceId: currentWorkspaceId ?? undefined
       });
 
-      const sessions = await listAgentSessions();
+      const sessions = await listAgentThreads();
       setAgentSessions(sessions);
-      setCurrentSessionId(session.id);
-      setPendingPrompt({ sessionId: session.id, message: promptMessage });
+      setCurrentSessionId(thread.id);
+      setPendingPrompt({ threadId: thread.id, message: promptMessage });
       setAppMode("agent");
       setActiveView("conversations");
     } catch (error) {

@@ -8,28 +8,38 @@ import {
 } from "./agent-tool-activity";
 
 describe("agent-tool-activity", () => {
-  test("extractToolActivitiesFromMessages 应从 assistant events 重建 tool activity", () => {
+  test("extractToolActivitiesFromMessages 应从 assistant sdkMessages 重建 tool activity", () => {
     const messages: AgentMessage[] = [
       {
         id: "m1",
         role: "assistant",
         content: "",
         createdAt: 1,
-        events: [
+        sdkMessages: [
           {
-            type: "tool_start",
-            toolUseId: "tool-1",
-            toolName: "Read",
-            input: { path: "README.md" }
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{
+                type: "tool_use",
+                id: "tool-1",
+                name: "Read",
+                input: { path: "README.md" }
+              }]
+            }
           },
           {
-            type: "tool_result",
-            toolUseId: "tool-1",
-            toolName: "Read",
-            result: "ok",
-            isError: false
+            type: "user",
+            message: {
+              role: "user",
+              content: [{
+                type: "tool_result",
+                tool_use_id: "tool-1",
+                content: "ok"
+              }]
+            }
           }
-        ]
+        ] as AgentMessage["sdkMessages"]
       }
     ];
 
@@ -95,27 +105,46 @@ describe("agent-tool-activity", () => {
         role: "assistant",
         content: "",
         createdAt: 1,
-        events: [
+        sdkMessages: [
           {
-            type: "tool_start",
-            toolUseId: "tool-2",
-            toolName: "Bash",
-            input: { command: "ls -la" }
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{
+                type: "tool_use",
+                id: "tool-2",
+                name: "Bash",
+                input: { command: "ls -la" }
+              }]
+            }
           },
           {
-            type: "task_progress",
-            toolUseId: "tool-2",
-            elapsedSeconds: 1,
-            usage: { durationMs: 975 }
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-2",
+            tool_use_id: "tool-2",
+            description: "执行 Bash"
           },
           {
-            type: "tool_result",
-            toolUseId: "tool-2",
-            toolName: "Bash",
-            result: "ok",
-            isError: false
+            type: "system",
+            subtype: "task_progress",
+            task_id: "task-2",
+            tool_use_id: "tool-2",
+            description: "执行中",
+            usage: { total_tokens: 0, tool_uses: 1, duration_ms: 975 }
+          },
+          {
+            type: "user",
+            message: {
+              role: "user",
+              content: [{
+                type: "tool_result",
+                tool_use_id: "tool-2",
+                content: "ok"
+              }]
+            }
           }
-        ]
+        ] as AgentMessage["sdkMessages"]
       }
     ];
 
@@ -123,11 +152,14 @@ describe("agent-tool-activity", () => {
       toolUseId: "tool-2",
       toolName: "Bash",
       input: { command: "ls -la" },
-      intent: undefined,
+      intent: "执行 Bash",
       displayName: undefined,
       parentToolUseId: undefined,
-      elapsedSeconds: 1,
+      taskId: "task-2",
+      startedAt: expect.any(Number),
+      elapsedSeconds: 0,
       elapsedMs: 975,
+      progressDescription: "执行中",
       result: "ok",
       isError: false,
       done: true

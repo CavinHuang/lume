@@ -10,7 +10,7 @@ import { File, FolderPlus, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { saveFilesToAgentSession } from "@/lib/desktop-api/agent";
+import { saveFilesToAgentThread } from "@/lib/desktop-api/agent";
 import { openFolderDialog } from "@/lib/desktop-api/system";
 import { fileToBase64 } from "@/components/agent/agent-composer";
 
@@ -20,7 +20,7 @@ interface FileDropZoneProps {
   /** 当前工作区 slug（用于 IPC 调用） */
   workspaceSlug: string;
   /** 当前会话 ID（session 模式必传） */
-  sessionId?: string;
+  threadId?: string;
   /** 上传目标：session（会话目录）或 workspace（工作区文件目录） */
   target?: FileDropZoneTarget;
   /** 上传成功后的回调（触发文件浏览器刷新） */
@@ -31,7 +31,7 @@ interface FileDropZoneProps {
 
 export function FileDropZone({
   workspaceSlug,
-  sessionId,
+  threadId,
   target = "session",
   onFilesUploaded,
   onAttachFolder
@@ -54,9 +54,9 @@ export function FileDropZone({
         fileEntries.push({ filename: file.name, data: base64 });
       }
 
-      await saveFilesToAgentSession({
+      await saveFilesToAgentThread({
         workspaceSlug,
-        sessionId: sessionId ?? "",
+        threadId: threadId ?? "",
         files: fileEntries
       });
 
@@ -66,7 +66,7 @@ export function FileDropZone({
     } finally {
       setIsUploading(false);
     }
-  }, [workspaceSlug, sessionId, onFilesUploaded]);
+  }, [workspaceSlug, threadId, onFilesUploaded]);
 
   // ===== 拖拽处理 =====
 
@@ -215,3 +215,4 @@ export function FileDropZone({
     </div>
   );
 }
+

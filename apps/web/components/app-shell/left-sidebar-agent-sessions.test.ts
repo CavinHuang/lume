@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentSessionMeta } from "@lume/shared";
+import type { AgentThreadMeta } from "@lume/shared";
 import {
-  buildChildSessionMap,
+  buildChildThreadMap,
   deriveAgentGroups,
-  derivePinnedAgentSessions,
-  filterRootAgentSessions
+  derivePinnedAgentThreads,
+  filterRootAgentThreads
 } from "./left-sidebar-agent-sessions";
 
-const sessions: AgentSessionMeta[] = [
+const threads: AgentThreadMeta[] = [
   {
     id: "parent-a",
     title: "Parent A",
@@ -18,7 +18,7 @@ const sessions: AgentSessionMeta[] = [
   {
     id: "child-a1",
     title: "Child A1",
-    parentSessionId: "parent-a",
+    parentThreadId: "parent-a",
     workspaceId: "ws-a",
     createdAt: 2,
     updatedAt: 10
@@ -26,7 +26,7 @@ const sessions: AgentSessionMeta[] = [
   {
     id: "child-a2",
     title: "Child A2",
-    parentSessionId: "parent-a",
+    parentThreadId: "parent-a",
     workspaceId: "ws-a",
     createdAt: 3,
     updatedAt: 11
@@ -39,23 +39,23 @@ const sessions: AgentSessionMeta[] = [
     createdAt: 4,
     updatedAt: 30
   }
-] as AgentSessionMeta[];
+];
 
 describe("left-sidebar-agent-sessions", () => {
-  test("buildChildSessionMap 应按 parentSessionId 聚合并按 createdAt 正序排序", () => {
-    const map = buildChildSessionMap(sessions, "ws-a");
-    expect(map.get("parent-a")?.map((item) => item.id)).toEqual(["child-a1", "child-a2"]);
+  test("buildChildThreadMap 应按 parentThreadId 聚合并按 createdAt 正序排序", () => {
+    const map = buildChildThreadMap(threads, "ws-a");
+    expect(map.get("parent-a")?.map((item: AgentThreadMeta) => item.id)).toEqual(["child-a1", "child-a2"]);
     expect(map.has("parent-b")).toBe(false);
   });
 
-  test("filterRootAgentSessions 应过滤子会话并按 updatedAt 倒序排序", () => {
-    expect(filterRootAgentSessions(sessions, null).map((item) => item.id)).toEqual(["parent-b", "parent-a"]);
-    expect(filterRootAgentSessions(sessions, "ws-a").map((item) => item.id)).toEqual(["parent-a"]);
+  test("filterRootAgentThreads 应过滤子线程并按 updatedAt 倒序排序", () => {
+    expect(filterRootAgentThreads(threads, null).map((item: AgentThreadMeta) => item.id)).toEqual(["parent-b", "parent-a"]);
+    expect(filterRootAgentThreads(threads, "ws-a").map((item: AgentThreadMeta) => item.id)).toEqual(["parent-a"]);
   });
 
-  test("derivePinnedAgentSessions 与 deriveAgentGroups 应基于根会话结果工作", () => {
-    const roots = filterRootAgentSessions(sessions, null);
-    expect(derivePinnedAgentSessions(roots).map((item) => item.id)).toEqual(["parent-b"]);
-    expect(deriveAgentGroups(roots).flatMap((group) => group.items.map((item) => item.id))).toEqual(["parent-b", "parent-a"]);
+  test("derivePinnedAgentThreads 与 deriveAgentGroups 应基于根线程结果工作", () => {
+    const roots = filterRootAgentThreads(threads, null);
+    expect(derivePinnedAgentThreads(roots).map((item: AgentThreadMeta) => item.id)).toEqual(["parent-b"]);
+    expect(deriveAgentGroups(roots).flatMap((group) => group.items.map((item: AgentThreadMeta) => item.id))).toEqual(["parent-b", "parent-a"]);
   });
 });

@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { AgentSessionMeta } from "@lume/shared";
+import type { AgentThreadMeta } from "@lume/shared";
 import type { ActiveView } from "@/atoms/active-view";
 import {
-  createAgentSession,
-  deleteAgentSessionById,
-  listAgentSessions,
-  moveAgentSessionToWorkspace,
-  togglePinAgentSession,
-  updateAgentSessionTitle
+  createAgentThread,
+  deleteAgentThreadById,
+  listAgentThreads,
+  moveAgentThreadToWorkspace,
+  togglePinAgentThread,
+  updateAgentThreadTitle
 } from "@/lib/desktop-api/agent";
 import {
-  buildChildSessionMap,
+  buildChildThreadMap,
   deriveAgentGroups,
-  derivePinnedAgentSessions,
-  filterRootAgentSessions
+  derivePinnedAgentThreads,
+  filterRootAgentThreads
 } from "../left-sidebar-agent-sessions";
 
 interface EditingTarget {
@@ -23,19 +23,19 @@ interface EditingTarget {
   draft: string;
 }
 
-interface UseAgentSessionListControllerParams {
+interface UseAgentThreadListControllerParams {
   agentChannelId: string | null;
   agentModelId: string | null;
   currentWorkspaceId: string | null;
   setCurrentWorkspaceId: Dispatch<SetStateAction<string | null>>;
-  setAgentSessions: Dispatch<SetStateAction<AgentSessionMeta[]>>;
-  setCurrentAgentSessionId: Dispatch<SetStateAction<string | null>>;
+  setAgentSessions: Dispatch<SetStateAction<AgentThreadMeta[]>>;
+  setCurrentAgentThreadId: Dispatch<SetStateAction<string | null>>;
   setActiveView: Dispatch<SetStateAction<ActiveView>>;
   setInitError: Dispatch<SetStateAction<string | null>>;
-  currentAgentSessionId: string | null;
+  currentAgentThreadId: string | null;
   editing: EditingTarget | null;
   setEditing: Dispatch<SetStateAction<EditingTarget | null>>;
-  agentSessions: AgentSessionMeta[];
+  agentThreads: AgentThreadMeta[];
 }
 
 export function useAgentSessionListController({
@@ -44,23 +44,23 @@ export function useAgentSessionListController({
   currentWorkspaceId,
   setCurrentWorkspaceId,
   setAgentSessions,
-  setCurrentAgentSessionId,
+  setCurrentAgentThreadId,
   setActiveView,
   setInitError,
-  currentAgentSessionId,
+  currentAgentThreadId,
   editing,
   setEditing,
-  agentSessions
-}: UseAgentSessionListControllerParams) {
-  const [isRefreshingSessions, setIsRefreshingSessions] = useState(false);
+  agentThreads
+}: UseAgentThreadListControllerParams) {
+  const [isRefreshingThreads, setIsRefreshingThreads] = useState(false);
   const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(new Set());
 
-  const refreshAgentSessions = useCallback(async (): Promise<void> => {
+  const refreshAgentThreads = useCallback(async (): Promise<void> => {
     try {
-      setIsRefreshingSessions(true);
-      const items = await listAgentSessions();
+      setIsRefreshingThreads(true);
+      const items = await listAgentThreads();
       setAgentSessions(items);
-      setCurrentAgentSessionId((prev) => {
+      setCurrentAgentThreadId((prev) => {
         if (prev && items.some((item) => item.id === prev)) return prev;
         return items[0]?.id ?? null;
       });
@@ -68,41 +68,41 @@ export function useAgentSessionListController({
       console.error("[LeftSidebar] 刷新 Agent 会话失败:", error);
       setInitError(`刷新 Agent 会话失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      setIsRefreshingSessions(false);
+      setIsRefreshingThreads(false);
     }
-  }, [setAgentSessions, setCurrentAgentSessionId, setInitError]);
+  }, [setAgentSessions, setCurrentAgentThreadId, setInitError]);
 
-  const childSessionMap = useMemo(
-    () => buildChildSessionMap(agentSessions, currentWorkspaceId),
-    [agentSessions, currentWorkspaceId]
+  const childThreadMap = useMemo(
+    () => buildChildThreadMap(agentThreads, currentWorkspaceId),
+    [agentThreads, currentWorkspaceId]
   );
-  const filteredAgentSessions = useMemo(
-    () => filterRootAgentSessions(agentSessions, currentWorkspaceId),
-    [agentSessions, currentWorkspaceId]
+  const filteredAgentThreads = useMemo(
+    () => filterRootAgentThreads(agentThreads, currentWorkspaceId),
+    [agentThreads, currentWorkspaceId]
   );
-  const pinnedAgentSessions = useMemo(
-    () => derivePinnedAgentSessions(filteredAgentSessions),
-    [filteredAgentSessions]
+  const pinnedAgentThreads = useMemo(
+    () => derivePinnedAgentThreads(filteredAgentThreads),
+    [filteredAgentThreads]
   );
   const agentGroups = useMemo(
-    () => deriveAgentGroups(filteredAgentSessions),
-    [filteredAgentSessions]
+    () => deriveAgentGroups(filteredAgentThreads),
+    [filteredAgentThreads]
   );
 
   useEffect(() => {
-    if (!currentAgentSessionId) return;
-    const current = agentSessions.find((session) => session.id === currentAgentSessionId);
-    if (current?.parentSessionId) {
+    if (!currentAgentThreadId) return;
+    const current = agentThreads.find((thread) => thread.id === currentAgentThreadId);
+    if (current?.parentThreadId) {
       setExpandedParentIds((prev) => {
-        if (prev.has(current.parentSessionId!)) return prev;
+        if (prev.has(current.parentThreadId!)) return prev;
         const next = new Set(prev);
-        next.add(current.parentSessionId!);
+        next.add(current.parentThreadId!);
         return next;
       });
     }
-  }, [currentAgentSessionId, agentSessions]);
+  }, [currentAgentThreadId, agentThreads]);
 
-  const beginEditAgent = useCallback((item: AgentSessionMeta): void => {
+  const beginEditAgent = useCallback((item: AgentThreadMeta): void => {
     setEditing({ id: item.id, type: "agent", draft: item.title });
   }, [setEditing]);
 
@@ -113,25 +113,25 @@ export function useAgentSessionListController({
       setEditing(null);
       return;
     }
-    const current = agentSessions.find((item) => item.id === editing.id);
+    const current = agentThreads.find((item) => item.id === editing.id);
     if (!current || next === current.title) {
       setEditing(null);
       return;
     }
-    const updated = await updateAgentSessionTitle(editing.id, next);
+    const updated = await updateAgentThreadTitle(editing.id, next);
     setAgentSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
     setEditing(null);
-  }, [agentSessions, editing, setAgentSessions, setEditing]);
+  }, [agentThreads, editing, setAgentSessions, setEditing]);
 
-  const createNewAgentSession = useCallback(async (): Promise<void> => {
-    const created = await createAgentSession({
-      title: "新 Agent 会话",
+  const createNewAgentThread = useCallback(async (): Promise<void> => {
+    const created = await createAgentThread({
+      title: "新 Agent 线程",
       channelId: agentChannelId ?? undefined,
       modelId: agentModelId ?? undefined,
       workspaceId: currentWorkspaceId ?? undefined
     });
     setAgentSessions((prev) => [created, ...prev]);
-    setCurrentAgentSessionId(created.id);
+    setCurrentAgentThreadId(created.id);
     setActiveView("conversations");
   }, [
     agentChannelId,
@@ -139,44 +139,44 @@ export function useAgentSessionListController({
     currentWorkspaceId,
     setActiveView,
     setAgentSessions,
-    setCurrentAgentSessionId
+    setCurrentAgentThreadId
   ]);
 
   const toggleAgentPin = useCallback(async (sessionId: string): Promise<void> => {
-    const updated = await togglePinAgentSession(sessionId);
+    const updated = await togglePinAgentThread(sessionId);
     setAgentSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
   }, [setAgentSessions]);
 
-  const moveAgentSession = useCallback(async (sessionId: string, workspaceId: string): Promise<void> => {
-    const updated = await moveAgentSessionToWorkspace(sessionId, workspaceId);
+  const moveAgentThread = useCallback(async (threadId: string, workspaceId: string): Promise<void> => {
+    const updated = await moveAgentThreadToWorkspace(threadId, workspaceId);
     setAgentSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
-    if (currentAgentSessionId === sessionId) {
+    if (currentAgentThreadId === threadId) {
       setCurrentWorkspaceId(workspaceId);
     }
-  }, [currentAgentSessionId, setAgentSessions, setCurrentWorkspaceId]);
+  }, [currentAgentThreadId, setAgentSessions, setCurrentWorkspaceId]);
 
-  const confirmDeleteAgentSession = useCallback(async (sessionId: string): Promise<void> => {
-    await deleteAgentSessionById(sessionId);
-    const next = await listAgentSessions();
+  const confirmDeleteAgentThread = useCallback(async (threadId: string): Promise<void> => {
+    await deleteAgentThreadById(threadId);
+    const next = await listAgentThreads();
     setAgentSessions(next);
-    if (currentAgentSessionId === sessionId) {
-      setCurrentAgentSessionId(next[0]?.id ?? null);
+    if (currentAgentThreadId === threadId) {
+      setCurrentAgentThreadId(next[0]?.id ?? null);
     }
-  }, [currentAgentSessionId, setAgentSessions, setCurrentAgentSessionId]);
+  }, [currentAgentThreadId, setAgentSessions, setCurrentAgentThreadId]);
 
   return {
-    isRefreshingSessions,
-    refreshAgentSessions,
-    childSessionMap,
-    pinnedAgentSessions,
+    isRefreshingThreads,
+    refreshAgentThreads,
+    childThreadMap,
+    pinnedAgentThreads,
     agentGroups,
     expandedParentIds,
     setExpandedParentIds,
     beginEditAgent,
     saveAgentEdit,
-    createNewAgentSession,
+    createNewAgentThread,
     toggleAgentPin,
-    moveAgentSession,
-    confirmDeleteAgentSession
+    moveAgentThread,
+    confirmDeleteAgentThread
   };
 }

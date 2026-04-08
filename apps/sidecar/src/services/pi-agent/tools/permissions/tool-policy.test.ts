@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import {
   applyPiToolPolicies,
   getAgentRuntimeToolPolicyConfig,
@@ -20,9 +19,9 @@ describe("tool-policy", () => {
         { name: "sessions_list" },
         { name: "sessions_spawn" },
         { name: "web_fetch" }
-      ] as unknown as AgentTool[];
+      ];
       const filtered = applyPiToolPolicies(tools, {
-        sessionType: "subagent"
+        threadType: "subagent"
       });
       expect(filtered.map((tool) => tool.name)).toEqual(["read", "web_fetch"]);
     } finally {
@@ -42,9 +41,9 @@ describe("tool-policy", () => {
         { name: "read" },
         { name: "write" },
         { name: "web_fetch" }
-      ] as unknown as AgentTool[];
+      ];
       const filtered = applyPiToolPolicies(tools, {
-        sessionType: "main",
+        threadType: "main",
         messageMetadata: {
           toolPolicy: {
             allow: ["group:fs", "web_fetch"],
@@ -114,3 +113,5 @@ describe("tool-policy", () => {
     }
   });
 });
+
+

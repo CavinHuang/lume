@@ -13,7 +13,6 @@ import {
   MEMORY_SAVE_TOOL_NAME,
   MEMORY_SEARCH_TOOL_NAME
 } from "../../../memory/memory-mcp-service";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentSendInput } from "@lume/shared";
 import type { ProviderType } from "@lume/shared";
 import type { AgentRuntimeToolPolicyConfig, AgentToolPolicy } from "@lume/shared";
@@ -93,7 +92,7 @@ export type ToolPolicy = AgentToolPolicy;
 
 export interface ResolveEffectiveToolPolicyInput {
   provider?: ProviderType | string;
-  sessionType?: AgentSendInput["sessionType"];
+  threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
 }
@@ -149,7 +148,7 @@ function makeMatcher(policy: ToolPolicy): (toolName: string) => boolean {
   return makeMatcher_shared(allow, deny, normalizeToolName);
 }
 
-function filterToolsByPolicy(tools: AgentTool[], policy?: ToolPolicy): AgentTool[] {
+function filterToolsByPolicy<T extends { name: string }>(tools: T[], policy?: ToolPolicy): T[] {
   if (!policy) return tools;
   const matcher = makeMatcher(policy);
   return tools.filter((tool) => matcher(tool.name));
@@ -309,8 +308,8 @@ export function resolveEffectiveToolPolicies(input: ResolveEffectiveToolPolicyIn
     policies.push(providerPolicy);
   }
 
-  if (input.sessionType && cfgTools.bySessionType?.[input.sessionType]) {
-    const policy = normalizePolicy(cfgTools.bySessionType[input.sessionType]);
+  if (input.threadType && cfgTools.bySessionType?.[input.threadType]) {
+    const policy = normalizePolicy(cfgTools.bySessionType[input.threadType]);
     if (policy) {
       policies.push(policy);
     }
@@ -323,7 +322,7 @@ export function resolveEffectiveToolPolicies(input: ResolveEffectiveToolPolicyIn
     }
   }
 
-  if (input.sessionType === "subagent") {
+  if (input.threadType === "subagent") {
     policies.push(normalizePolicy(cfgTools.subagent) ?? DEFAULT_SUBAGENT_POLICY);
   }
 
@@ -335,10 +334,10 @@ export function resolveEffectiveToolPolicies(input: ResolveEffectiveToolPolicyIn
   return policies;
 }
 
-export function applyPiToolPolicies(
-  tools: AgentTool[],
+export function applyPiToolPolicies<T extends { name: string }>(
+  tools: T[],
   input: ResolveEffectiveToolPolicyInput
-): AgentTool[] {
+): T[] {
   const policies = resolveEffectiveToolPolicies(input);
   let filtered = tools;
   for (const policy of policies) {
@@ -353,3 +352,5 @@ export function resolveEnabledPiMemoryToolNames(policy?: MemoryToolPolicy): stri
     policy
   });
 }
+
+

@@ -4,8 +4,8 @@ import { ArrowLeft, Check, FolderOpen, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { agentSessionsAtom, currentAgentCapabilityRouteHintAtom, currentAgentSessionAtom } from "@/atoms";
-import { updateAgentSessionTitle } from "@/lib/desktop-api/agent";
+import { agentThreadsAtom, currentAgentCapabilityRouteHintAtom, currentAgentThreadAtom } from "@/atoms";
+import { updateAgentThreadTitle } from "@/lib/desktop-api/agent";
 
 interface AgentHeaderProps {
   onToggleFileBrowser?: () => void;
@@ -14,17 +14,17 @@ interface AgentHeaderProps {
 }
 
 export function AgentHeader({ onToggleFileBrowser, fileBrowserOpen, onOpenSession }: AgentHeaderProps): React.ReactElement | null {
-  const session = useAtomValue(currentAgentSessionAtom);
+  const session = useAtomValue(currentAgentThreadAtom);
   const routeHint = useAtomValue(currentAgentCapabilityRouteHintAtom);
-  const [sessions, setSessions] = useAtom(agentSessionsAtom);
+  const [threads, setThreads] = useAtom(agentThreadsAtom);
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   if (!session) return null;
 
-  const parentSession = session.parentSessionId
-    ? sessions.find((s) => s.id === session.parentSessionId)
+  const parentSession = session.parentThreadId
+    ? threads.find((s) => s.id === session.parentThreadId)
     : null;
 
   const startEdit = (): void => {
@@ -39,8 +39,8 @@ export function AgentHeader({ onToggleFileBrowser, fileBrowserOpen, onOpenSessio
       setEditing(false);
       return;
     }
-    const updated = await updateAgentSessionTitle(session.id, trimmed);
-    setSessions(sessions.map((item) => (item.id === updated.id ? updated : item)));
+    const updated = await updateAgentThreadTitle(session.id, trimmed);
+    setThreads(threads.map((item) => (item.id === updated.id ? updated : item)));
     setEditing(false);
   };
 

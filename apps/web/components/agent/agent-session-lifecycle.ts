@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentSessionMeta, Channel } from "@lume/shared";
+import type { AgentMessage, AgentThreadMeta, Channel } from "@lume/shared";
 
 export function extractLatestAssistantText(messages: AgentMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -21,7 +21,7 @@ export function pickDefaultEnabledModelId(channel: Channel | undefined): string 
 
 export function resolvePreferredAgentSelection(input: {
   channels: Channel[];
-  session: Pick<AgentSessionMeta, "channelId" | "modelId"> | null;
+  thread: Pick<AgentThreadMeta, "channelId" | "modelId"> | null;
   currentChannelId: string | null;
   currentModelId: string | null;
 }): {
@@ -30,7 +30,7 @@ export function resolvePreferredAgentSelection(input: {
 } {
   const enabledChannels = input.channels.filter((item) => item.enabled);
   const preferredChannel =
-    (input.session?.channelId ? enabledChannels.find((item) => item.id === input.session?.channelId) : undefined)
+    (input.thread?.channelId ? enabledChannels.find((item) => item.id === input.thread?.channelId) : undefined)
     ?? (input.currentChannelId ? enabledChannels.find((item) => item.id === input.currentChannelId) : undefined)
     ?? enabledChannels[0];
 
@@ -42,8 +42,8 @@ export function resolvePreferredAgentSelection(input: {
   }
 
   const preferredModelId =
-    (input.session?.modelId && preferredChannel.models.some((model) => model.enabled && model.id === input.session?.modelId)
-      ? input.session.modelId
+    (input.thread?.modelId && preferredChannel.models.some((model) => model.enabled && model.id === input.thread?.modelId)
+      ? input.thread.modelId
       : null)
     ?? (input.currentModelId && preferredChannel.models.some((model) => model.enabled && model.id === input.currentModelId)
       ? input.currentModelId

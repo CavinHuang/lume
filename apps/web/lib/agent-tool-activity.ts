@@ -1,4 +1,4 @@
-import type { AgentMessage, SubagentRunRecord } from "@lume/shared";
+import type { SDKMessage, AgentMessage, SubagentRunRecord } from "@lume/shared";
 import type { ToolActivity } from "./agent-streaming";
 
 export type ToolActivityStatus = "running" | "completed" | "error" | "backgrounded";
@@ -10,6 +10,23 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function stringifyToolResultContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((item): item is { type: string; text?: string } => !!item && typeof item === "object")
+      .filter((item) => item.type === "text" && typeof item.text === "string")
+      .map((item) => item.text ?? "")
+      .join("\n");
+  }
+  if (content === undefined || content === null) return "";
+  try {
+    return JSON.stringify(content, null, 2);
+  } catch {
+    return String(content);
+  }
+}
+
 export function getToolActivityStatus(activity: ToolActivity): ToolActivityStatus {
   if (activity.isBackground) return "backgrounded";
   if (!activity.done) return "running";
@@ -17,18 +34,19 @@ export function getToolActivityStatus(activity: ToolActivity): ToolActivityStatu
   return "completed";
 }
 
-export function extractToolActivitiesFromMessages(messages: AgentMessage[]): ToolActivity[] {
+function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[] {
   const order: string[] = [];
   const map = new Map<string, ToolActivity>();
+  const taskActivityById = new Map<string, string>();
 
-  const ensureEntry = (toolUseId: string): ToolActivity => {
+  const ensureActivity = (toolUseId: string, fallbackToolName = "Unknown"): ToolActivity => {
     const existing = map.get(toolUseId);
     if (existing) return existing;
     const created: ToolActivity = {
       toolUseId,
-      toolName: "Unknown",
+      toolName: fallbackToolName,
       input: {},
-      done: false
+      done: false,
     };
     map.set(toolUseId, created);
     order.push(toolUseId);
@@ -36,67 +54,105 @@ export function extractToolActivitiesFromMessages(messages: AgentMessage[]): Too
   };
 
   for (const message of messages) {
-    if (!message || message.role !== "assistant" || !Array.isArray(message.events)) continue;
-    for (const event of message.events) {
-      switch (event.type) {
-        case "tool_start": {
-          const current = ensureEntry(event.toolUseId);
-          map.set(event.toolUseId, {
-            ...current,
-            toolName: event.toolName,
-            input: asRecord(event.input),
-            intent: event.intent ?? current.intent,
-            displayName: event.displayName ?? current.displayName,
-            parentToolUseId: event.parentToolUseId ?? current.parentToolUseId,
-            done: false
-          });
-          break;
-        }
-        case "tool_result": {
-          const current = ensureEntry(event.toolUseId);
-          map.set(event.toolUseId, {
-            ...current,
-            toolName: event.toolName ?? current.toolName,
-            result: event.result,
-            isError: event.isError,
-            done: true
-          });
-          break;
-        }
-        case "task_backgrounded": {
-          const current = ensureEntry(event.toolUseId);
-          map.set(event.toolUseId, {
-            ...current,
-            isBackground: true,
-            taskId: event.taskId
-          });
-          break;
-        }
-        case "task_progress": {
-          const current = ensureEntry(event.toolUseId);
-          map.set(event.toolUseId, {
-            ...current,
-            elapsedSeconds: event.elapsedSeconds,
-            elapsedMs: event.usage?.durationMs ?? current.elapsedMs
-          });
-          break;
-        }
-        case "shell_backgrounded": {
-          const current = ensureEntry(event.toolUseId);
-          map.set(event.toolUseId, {
-            ...current,
-            isBackground: true,
-            shellId: event.shellId
-          });
-          break;
-        }
-        default:
-          break;
+    if (message.type === "assistant") {
+      for (const block of message.message?.content ?? []) {
+        if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
+        const toolBlock = block as {
+          id: string;
+          name: string;
+          input?: Record<string, unknown>;
+        };
+        const current = ensureActivity(toolBlock.id, toolBlock.name);
+        map.set(toolBlock.id, {
+          ...current,
+          toolName: toolBlock.name,
+          input: asRecord(toolBlock.input),
+          intent: typeof toolBlock.input?._intent === "string" ? toolBlock.input._intent : current.intent,
+          displayName: typeof toolBlock.input?._displayName === "string" ? toolBlock.input._displayName : current.displayName,
+          parentToolUseId: message.parent_tool_use_id ?? current.parentToolUseId,
+          done: false,
+        });
       }
+      continue;
+    }
+
+    if (message.type === "user") {
+      for (const block of message.message?.content ?? []) {
+        if (!block || typeof block !== "object" || block.type !== "tool_result") continue;
+        const resultBlock = block as {
+          tool_use_id: string;
+          content?: unknown;
+          is_error?: boolean;
+        };
+        const current = ensureActivity(resultBlock.tool_use_id);
+        map.set(resultBlock.tool_use_id, {
+          ...current,
+          result: stringifyToolResultContent(resultBlock.content),
+          isError: resultBlock.is_error === true,
+          done: true,
+        });
+      }
+      continue;
+    }
+
+    if (message.type !== "system") {
+      continue;
+    }
+
+    if (message.subtype === "task_started") {
+      const toolUseId = message.tool_use_id ?? message.task_id;
+      taskActivityById.set(message.task_id, toolUseId);
+      const current = ensureActivity(toolUseId, "Task");
+      map.set(toolUseId, {
+        ...current,
+        toolName: current.toolName === "Unknown" ? "Task" : current.toolName,
+        taskId: message.task_id,
+        intent: message.description ?? current.intent,
+        displayName: message.workflow_name ?? current.displayName,
+        startedAt: current.startedAt ?? Date.now(),
+        done: false,
+      });
+      continue;
+    }
+
+    if (message.subtype === "task_progress") {
+      const toolUseId = taskActivityById.get(message.task_id) ?? message.tool_use_id ?? message.task_id;
+      const current = ensureActivity(toolUseId, "Task");
+      map.set(toolUseId, {
+        ...current,
+        taskId: message.task_id,
+        elapsedMs: message.usage?.duration_ms ?? current.elapsedMs,
+        elapsedSeconds: message.usage?.duration_ms ? Math.floor(message.usage.duration_ms / 1000) : current.elapsedSeconds,
+        progressDescription: message.description ?? current.progressDescription,
+        done: false,
+      });
+      continue;
+    }
+
+    if (message.subtype === "task_notification") {
+      const toolUseId = taskActivityById.get(message.task_id) ?? message.tool_use_id ?? message.task_id;
+      const current = ensureActivity(toolUseId, "Task");
+      map.set(toolUseId, {
+        ...current,
+        taskId: message.task_id,
+        result: message.summary ?? message.message ?? current.result,
+        isError: message.status !== "completed",
+        elapsedMs: message.usage?.duration_ms ?? current.elapsedMs,
+        done: true,
+      });
     }
   }
 
   return order.map((id) => map.get(id)).filter((item): item is ToolActivity => !!item);
+}
+
+export function extractToolActivitiesFromMessages(messages: AgentMessage[]): ToolActivity[] {
+  const collected: ToolActivity[] = [];
+  for (const message of messages) {
+    if (!Array.isArray(message.sdkMessages) || message.sdkMessages.length === 0) continue;
+    collected.push(...collectActivitiesFromSdkMessages(message.sdkMessages));
+  }
+  return collected;
 }
 
 function upsertActivity(
@@ -173,7 +229,7 @@ export function buildTeamActivitiesFromRuns(runs: SubagentRunRecord[]): ToolActi
         description: run.task,
         subagent_type: "runtime_subagent",
         run_id: run.runId,
-        child_session_key: run.childSessionId,
+        child_session_key: run.childThreadId,
         announce_status: run.announceStatus,
         usage_events: run.outcome?.usageEvents,
         error_code: run.outcome?.errorCode

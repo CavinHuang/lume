@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { AgentEvent, AgentMessage, AgentRecentMessagesResult, AgentSessionMeta } from "@lume/shared";
+import type { AgentMessage, AgentRecentMessagesResult, AgentThreadMeta, SDKMessage } from "@lume/shared";
 import {
   getAgentSessionDataDir,
   getAgentWorkspacesDir,
@@ -41,7 +41,7 @@ import {
 
 interface AgentSessionsIndex {
   version: number;
-  sessions: AgentSessionMeta[];
+  sessions: AgentThreadMeta[];
 }
 
 const INDEX_VERSION = 1;
@@ -96,13 +96,17 @@ function writeIndex(index: AgentSessionsIndex): void {
   }
 }
 
-export function listAgentSessions(): AgentSessionMeta[] {
+export function listAgentSessions(): AgentThreadMeta[] {
   return readIndex().sessions.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export function getAgentSessionMeta(id: string): AgentSessionMeta | undefined {
+export const listAgentThreads = listAgentSessions;
+
+export function getAgentSessionMeta(id: string): AgentThreadMeta | undefined {
   return readIndex().sessions.find((session) => session.id === id);
 }
+
+export const getAgentThreadMeta = getAgentSessionMeta;
 
 export function createAgentSession(
   title?: string,
@@ -110,17 +114,17 @@ export function createAgentSession(
   workspaceId?: string,
   parentSessionId?: string,
   modelId?: string
-): AgentSessionMeta {
+): AgentThreadMeta {
   const index = readIndex();
   const now = Date.now();
 
-  const meta: AgentSessionMeta = {
+  const meta: AgentThreadMeta = {
     id: randomUUID(),
     title: title || "新 Agent 会话",
     channelId,
     modelId,
     workspaceId,
-    parentSessionId,
+    parentThreadId: parentSessionId,
     pinned: false,
     createdAt: now,
     updatedAt: now
@@ -141,15 +145,21 @@ export function createAgentSession(
   return meta;
 }
 
+export const createAgentThread = createAgentSession;
+
 export function getAgentSessionMessages(id: string): AgentMessage[] {
   const transcriptMessages = readRuntimeCoreTranscriptMessages(id);
   syncVersionStoreFromMessages(id, transcriptMessages);
   return getVisibleAgentMessages(id);
 }
 
+export const getAgentThreadMessages = getAgentSessionMessages;
+
 export function getRecentAgentMessages(id: string, limit: number): AgentRecentMessagesResult {
   return sliceRecentAgentMessages(readRuntimeCoreTranscriptMessages(id), limit);
 }
+
+export const getRecentAgentThreadMessages = getRecentAgentMessages;
 
 export function appendAgentTranscriptMessage(
   id: string,
@@ -210,19 +220,19 @@ export function updateAgentSessionMeta(
   id: string,
   updates: Partial<
     Pick<
-      AgentSessionMeta,
-      "title" | "channelId" | "modelId" | "sdkSessionId" | "piSessionId" | "workspaceId" | "pinned"
+      AgentThreadMeta,
+      "title" | "channelId" | "modelId" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "pinned" | "parentThreadId"
     >
   >
-): AgentSessionMeta {
+): AgentThreadMeta {
   const index = readIndex();
   const idx = index.sessions.findIndex((session) => session.id === id);
   if (idx === -1) {
     throw new Error(`Agent 会话不存在: ${id}`);
   }
 
-  const existing = index.sessions[idx] as AgentSessionMeta;
-  const updated: AgentSessionMeta = {
+  const existing = index.sessions[idx] as AgentThreadMeta;
+  const updated: AgentThreadMeta = {
     ...existing,
     ...updates,
     updatedAt: Date.now()
@@ -235,7 +245,7 @@ export function updateAgentSessionMeta(
   return updated;
 }
 
-export function toggleAgentSessionPin(id: string): AgentSessionMeta {
+export function toggleAgentSessionPin(id: string): AgentThreadMeta {
   const meta = getAgentSessionMeta(id);
   if (!meta) {
     throw new Error(`Agent 会话不存在: ${id}`);
@@ -282,7 +292,7 @@ function resolveExistingSessionDir(sessionId: string, preferredWorkspaceSlug?: s
   return null;
 }
 
-export function moveAgentSessionToWorkspace(id: string, workspaceId: string): AgentSessionMeta {
+export function moveAgentSessionToWorkspace(id: string, workspaceId: string): AgentThreadMeta {
   const targetWorkspace = getAgentWorkspace(workspaceId);
   if (!targetWorkspace) {
     throw new Error(`目标工作区不存在: ${workspaceId}`);
@@ -307,10 +317,15 @@ export function moveAgentSessionToWorkspace(id: string, workspaceId: string): Ag
 
   return updateAgentSessionMeta(id, {
     workspaceId: workspaceId,
-    sdkSessionId: undefined,
-    piSessionId: undefined
+    sdkThreadId: undefined,
+    runtimeThreadId: undefined
   });
 }
+
+export const updateAgentThreadMeta = updateAgentSessionMeta;
+export const toggleAgentThreadPin = toggleAgentSessionPin;
+
+export const moveAgentThreadToWorkspace = moveAgentSessionToWorkspace;
 
 /**
  * 迁移 Chat 对话消息到指定 Agent 会话。
@@ -386,7 +401,7 @@ export function deleteAgentSession(id: string): void {
     throw new Error(`Agent 会话不存在: ${id}`);
   }
 
-  const removed = index.sessions.splice(idx, 1)[0] as AgentSessionMeta;
+  const removed = index.sessions.splice(idx, 1)[0] as AgentThreadMeta;
   writeIndex(index);
 
   try {
@@ -426,6 +441,10 @@ export function deleteAgentSession(id: string): void {
   console.log(`[Agent 会话] 已删除会话: ${removed.title} (${removed.id})`);
 }
 
+export const migrateChatToAgentThread = migrateChatToAgentSession;
+
+export const deleteAgentThread = deleteAgentSession;
+
 export function truncateAgentMessagesFrom(sessionId: string, messageId: string): AgentMessage[] {
   const messages = getAgentSessionMessages(sessionId);
   const targetIndex = messages.findIndex((msg) => msg.id === messageId);
@@ -442,11 +461,13 @@ export function truncateAgentMessagesFrom(sessionId: string, messageId: string):
 
   // 截断会话后重置 transcript / SDK 会话衔接，避免 resume 命中旧上下文。
   updateAgentSessionMeta(sessionId, {
-    sdkSessionId: undefined,
-    piSessionId: undefined
+    sdkThreadId: undefined,
+    runtimeThreadId: undefined
   });
   return kept;
 }
+
+export const truncateAgentThreadMessagesFrom = truncateAgentMessagesFrom;
 
 /**
  * 从指定消息处分叉会话：创建新 session，复制截断后的消息
@@ -454,7 +475,7 @@ export function truncateAgentMessagesFrom(sessionId: string, messageId: string):
 export function forkAgentSession(
   sourceSessionId: string,
   upToMessageId: string
-): { newSessionId: string } {
+): { newThreadId: string } {
   const messages = getAgentSessionMessages(sourceSessionId);
   const targetIndex = messages.findIndex((msg) => msg.id === upToMessageId);
   if (targetIndex === -1) {
@@ -478,8 +499,10 @@ export function forkAgentSession(
   rebuildRuntimeCoreTranscript(newSession.id, forkedMessages);
 
   console.log(`[Agent 会话] 已从 ${sourceSessionId.slice(0, 8)} 分叉到 ${newSession.id.slice(0, 8)}，包含 ${forkedMessages.length} 条消息`);
-  return { newSessionId: newSession.id };
+  return { newThreadId: newSession.id };
 }
+
+export const forkAgentThread = forkAgentSession;
 
 export function replaceAgentSessionTranscript(sessionId: string, messages: AgentMessage[]): void {
   const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(sessionId);
@@ -488,8 +511,8 @@ export function replaceAgentSessionTranscript(sessionId: string, messages: Agent
   }
   rebuildRuntimeCoreTranscript(sessionId, messages);
   updateAgentSessionMeta(sessionId, {
-    sdkSessionId: undefined,
-    piSessionId: undefined
+    sdkThreadId: undefined,
+    runtimeThreadId: undefined
   });
 }
 
@@ -568,11 +591,7 @@ export function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessa
   const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentSessionCwd(sessionId), sessionId);
   const messages = sessionManager.buildSessionContext().messages as RuntimeCoreContextMessage[];
 
-  // 两遍扫描：
-  // 第一遍：投影 user/assistant 消息，同时从 assistant content 中提取 toolCall events
-  // 第二遍：将 toolResult 消息关联到最近的 assistant 消息的 events 中
   const projectedMessages: AgentMessage[] = [];
-  // 跟踪 toolCallId → 最近拥有该 toolCall 的 assistant 消息在 projectedMessages 中的索引
   const toolCallOwnerMap = new Map<string, number>();
 
   for (let index = 0; index < messages.length; index++) {
@@ -584,17 +603,16 @@ export function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessa
       const turnId = `runtime-core:${sessionId}:${index}`;
 
       if (!content && !reasoning) {
-        // assistant 消息可能只有 toolCall 没有文本，也需要提取工具事件
         if (message.role === "assistant") {
-          const contentEvents = extractContentEventsInOrder(message.content, turnId);
-          if (contentEvents.length > 0) {
+          const sdkAssistantMessage = toSdkAssistantMessage(message, turnId);
+          if ((sdkAssistantMessage.message.content ?? []).length > 0) {
             const projected: AgentMessage = {
               id: turnId,
               role: "assistant",
               content: "",
               createdAt: resolveRuntimeCoreMessageTimestamp(message, index),
               model: resolveRuntimeCoreMessageModel(message),
-              events: contentEvents
+              sdkMessages: [sdkAssistantMessage]
             };
             projectedMessages.push(projected);
             const pIdx = projectedMessages.length - 1;
@@ -607,12 +625,6 @@ export function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessa
       }
 
       const decorations = message.role === "assistant" ? deriveRuntimeCoreAssistantDecorations(content, message) : {};
-      const existingEvents = decorations.events ?? [];
-      // 从 content 按原始顺序提取文本和工具调用事件
-      const contentEvents = message.role === "assistant"
-        ? extractContentEventsInOrder(message.content, turnId)
-        : [];
-      const allEvents = [...existingEvents, ...contentEvents];
 
       const projected: AgentMessage = {
         id: turnId,
@@ -621,8 +633,8 @@ export function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessa
         ...(reasoning ? { reasoning } : {}),
         createdAt: resolveRuntimeCoreMessageTimestamp(message, index),
         model: message.role === "assistant" ? resolveRuntimeCoreMessageModel(message) : undefined,
-        ...decorations,
-        ...(allEvents.length > 0 ? { events: allEvents } : {})
+        sdkMessages: [message.role === "assistant" ? toSdkAssistantMessage(message, turnId) : toSdkUserMessage(message, turnId)],
+        ...decorations
       };
       projectedMessages.push(projected);
 
@@ -645,19 +657,8 @@ export function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessa
       const ownerIdx = toolCallOwnerMap.get(toolCallId);
       if (ownerIdx === undefined) continue;
 
-      const resultText = extractRenderableAssistantText(toolResult.content).trim();
-      const toolResultEvent: AgentEvent = {
-        type: "tool_result",
-        toolUseId: toolCallId,
-        toolName: typeof toolResult.toolName === "string" ? toolResult.toolName : undefined,
-        result: resultText.length > 20_000
-          ? resultText.slice(0, 20_000) + "\n...(输出过长已截断)"
-          : resultText,
-        isError: !!toolResult.isError
-      };
-
       const owner = projectedMessages[ownerIdx]!;
-      owner.events = [...(owner.events ?? []), toolResultEvent];
+      owner.sdkMessages = [...(owner.sdkMessages ?? []), toSdkToolResultMessage(toolResult)];
     }
   }
 
@@ -676,7 +677,6 @@ export function readRuntimeCoreTranscriptMessages(sessionId: string): AgentMessa
  * - reasoning：取第一条有 reasoning 的值（通常只有第一个回合有）
  * - content：拼接所有回合的 content（用换行分隔）
  * - createdAt：保留最早的时间戳
- * - events：合并所有回合的 events
  * - model / metadata：保留最后一条的值
  */
 function mergeAdjacentAssistantMessages(messages: AgentMessage[]): AgentMessage[] {
@@ -695,7 +695,7 @@ function mergeAdjacentAssistantMessages(messages: AgentMessage[]): AgentMessage[
         content: mergedContent,
         reasoning: prev.reasoning || msg.reasoning,
         createdAt: prev.createdAt,
-        events: mergeOptionalEvents(prev.events, msg.events),
+        sdkMessages: mergeOptionalSdkMessages(prev.sdkMessages, msg.sdkMessages),
       };
     } else {
       result.push(msg);
@@ -704,10 +704,10 @@ function mergeAdjacentAssistantMessages(messages: AgentMessage[]): AgentMessage[
   return result;
 }
 
-function mergeOptionalEvents(
-  a: AgentMessage["events"],
-  b: AgentMessage["events"],
-): AgentMessage["events"] {
+function mergeOptionalSdkMessages(
+  a: AgentMessage["sdkMessages"],
+  b: AgentMessage["sdkMessages"],
+): AgentMessage["sdkMessages"] {
   if (!a && !b) return undefined;
   return [...(a ?? []), ...(b ?? [])];
 }
@@ -716,6 +716,91 @@ interface ExtractedToolCall {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+}
+
+type AssistantSdkMessage = Extract<SDKMessage, { type: "assistant" }>;
+type UserSdkMessage = Extract<SDKMessage, { type: "user" }>;
+
+function toSdkAssistantMessage(message: RuntimeCoreContextMessage, turnId: string): AssistantSdkMessage {
+  return {
+    type: "assistant",
+    uuid: turnId,
+    session_id: turnId,
+    parent_tool_use_id: null,
+    message: {
+      role: "assistant",
+      content: normalizeSdkAssistantContent(message.content)
+    }
+  };
+}
+
+function toSdkUserMessage(message: RuntimeCoreContextMessage, turnId: string): UserSdkMessage {
+  return {
+    type: "user",
+    uuid: turnId,
+    session_id: turnId,
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [{
+        type: "text",
+        text: extractRenderableAssistantText(message.content)
+      }]
+    }
+  };
+}
+
+function toSdkToolResultMessage(toolResult: RuntimeCoreContextMessage & {
+  toolCallId?: string;
+  isError?: boolean;
+}): UserSdkMessage {
+  return {
+    type: "user",
+    parent_tool_use_id: toolResult.toolCallId ?? null,
+    message: {
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: toolResult.toolCallId ?? "unknown",
+        content: extractRenderableAssistantText(toolResult.content),
+        ...(toolResult.isError ? { is_error: true } : {})
+      }]
+    }
+  };
+}
+
+type LocalSdkContentBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+
+function normalizeSdkAssistantContent(content: unknown): LocalSdkContentBlock[] {
+  if (!Array.isArray(content)) return [];
+  const blocks: LocalSdkContentBlock[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const block = item as Record<string, unknown>;
+    const type = typeof block.type === "string" ? block.type : "";
+    if (type === "text" && typeof block.text === "string") {
+      blocks.push({ type: "text", text: block.text });
+      continue;
+    }
+    if ((type === "thinking" || type === "reasoning") && typeof block.thinking === "string") {
+      blocks.push({ type: "thinking", thinking: block.thinking });
+      continue;
+    }
+    if ((type === "toolCall" || type === "tool_use") && typeof block.id === "string" && typeof block.name === "string") {
+      blocks.push({
+        type: "tool_use",
+        id: block.id,
+        name: block.name,
+        input: block.arguments && typeof block.arguments === "object" && !Array.isArray(block.arguments)
+          ? (block.arguments as Record<string, unknown>)
+          : {}
+      });
+    }
+  }
+  return blocks;
 }
 
 /**
@@ -742,75 +827,10 @@ function extractToolCallsFromContent(content: unknown): ExtractedToolCall[] {
   return toolCalls;
 }
 
-/**
- * 从 assistant message 的 content 数组中按原始顺序提取事件。
- *
- * 按照 content block 的出现顺序生成 text_complete 和 tool_start 事件，
- * 使前端 EventTimeline 能按正确的时间顺序交替展示文本和工具调用。
- * thinking/reasoning 块不在此提取（已由 extractAssistantReasoningText 处理）。
- */
-function extractContentEventsInOrder(content: unknown, turnId: string): AgentEvent[] {
-  if (!Array.isArray(content)) return [];
-  const events: AgentEvent[] = [];
-  let textAccum = "";
-
-  function flushText(): void {
-    const text = textAccum.trim();
-    if (text) {
-      events.push({
-        type: "text_complete" as const,
-        text,
-        isIntermediate: false,
-        turnId
-      });
-    }
-    textAccum = "";
-  }
-
-  for (const item of content) {
-    if (!item || typeof item !== "object") continue;
-    const block = item as { type?: string; id?: string; name?: string; arguments?: unknown; text?: string; thinking?: string };
-    const blockType = typeof block.type === "string" ? block.type : "";
-
-    if (blockType === "thinking" || blockType === "reasoning") {
-      // reasoning 由 extractAssistantReasoningText 单独处理，这里跳过
-      continue;
-    }
-
-    if (blockType === "toolCall" || blockType === "tool_use") {
-      flushText();
-      const id = typeof block.id === "string" ? block.id : "";
-      const name = typeof block.name === "string" ? block.name : "";
-      if (id && name) {
-        const args = block.arguments && typeof block.arguments === "object" && !Array.isArray(block.arguments)
-          ? (block.arguments as Record<string, unknown>)
-          : {};
-        events.push({
-          type: "tool_start" as const,
-          toolName: name,
-          toolUseId: id,
-          input: args,
-          turnId
-        });
-      }
-      continue;
-    }
-
-    // text / output_text / outputText / 无类型 → 文本块
-    if (blockType === "text" || blockType === "output_text" || blockType === "outputText" || !blockType) {
-      const text = typeof block.text === "string" ? block.text : "";
-      if (text) textAccum += text;
-    }
-  }
-
-  flushText();
-  return events;
-}
-
 function deriveRuntimeCoreAssistantDecorations(
   content: string,
   message: RuntimeCoreContextMessage
-): Pick<AgentMessage, "metadata" | "events"> {
+): Pick<AgentMessage, "metadata"> {
   if (resolveRuntimeCoreMessageModel(message) !== "subagent/announce") {
     return {};
   }
@@ -820,30 +840,10 @@ function deriveRuntimeCoreAssistantDecorations(
   const status = typeof metadata.status === "string" ? metadata.status : "completed";
   const toolUseId = `subagent-announce:${runId}`;
   return {
-    metadata,
-    events: [
-      {
-        type: "tool_start",
-        toolName: "Agent",
-        toolUseId,
-        input: {
-          subagent_type: "completion_announce",
-          run_id: runId,
-          child_session_key: childSessionId
-        }
-      },
-      {
-        type: "tool_result",
-        toolUseId,
-        toolName: "Agent",
-        result: JSON.stringify({
-          runId,
-          status,
-          childSessionKey: childSessionId
-        }, null, 2),
-        isError: status !== "completed"
-      }
-    ]
+    metadata: {
+      ...metadata,
+      toolUseId
+    }
   };
 }
 

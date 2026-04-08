@@ -11,6 +11,9 @@
  * 包含 Agent SDK 集成所需的事件类型、会话管理、消息持久化和 IPC 通道常量。
  */
 
+import type { SDKMessage } from "@lume/agent-sdk"
+export type { SDKMessage } from "@lume/agent-sdk"
+
 // ===== Agent 工作区 =====
 
 /** Agent 工作区 */
@@ -27,52 +30,6 @@ export interface AgentWorkspace {
   updatedAt: number
 }
 
-// ===== Agent 事件类型 =====
-
-/** Agent 事件 Usage 信息 */
-export interface AgentEventUsage {
-  inputTokens: number
-  outputTokens?: number
-  cacheReadTokens?: number
-  cacheCreationTokens?: number
-  totalTokens?: number
-  costUsd?: number
-  contextWindow?: number
-}
-
-/**
- * Agent 事件类型
- *
- * 从 SDK 消息转换而来的扁平事件流，用于驱动 UI 渲染。
- */
-export type AgentEvent =
-  // Turn 边界
-  | { type: 'turn_start'; turnId: string; turnIndex: number }
-  | { type: 'turn_end'; turnId: string; turnIndex: number }
-  // 文本流式输出
-  | { type: 'text_delta'; text: string; turnId?: string; parentToolUseId?: string }
-  | { type: 'text_complete'; text: string; isIntermediate: boolean; turnId?: string; parentToolUseId?: string }
-  | { type: 'reasoning_delta'; text: string; turnId?: string; parentToolUseId?: string }
-  | { type: 'reasoning_complete'; text: string; isIntermediate: boolean; turnId?: string; parentToolUseId?: string }
-  // 工具执行
-  | { type: 'tool_start'; toolName: string; toolUseId: string; input: Record<string, unknown>; intent?: string; displayName?: string; turnId?: string; parentToolUseId?: string }
-  | { type: 'tool_result'; toolUseId: string; toolName?: string; result: string; isError: boolean; input?: Record<string, unknown>; turnId?: string; parentToolUseId?: string }
-  // 后台任务
-  | { type: 'task_backgrounded'; toolUseId: string; taskId: string; intent?: string; turnId?: string }
-  | { type: 'task_progress'; toolUseId: string; elapsedSeconds: number; turnId?: string; taskId?: string; description?: string; lastToolName?: string; usage?: { totalTokens?: number; toolUses?: number; durationMs?: number } }
-  | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; agentName?: string; turnId?: string }
-  | { type: 'task_notification'; taskId: string; toolUseId?: string; status: 'completed' | 'failed' | 'stopped'; summary: string; usage?: { totalTokens?: number; toolUses?: number; durationMs?: number }; turnId?: string }
-  | { type: 'shell_backgrounded'; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
-  | { type: 'shell_killed'; shellId: string; turnId?: string }
-  // 控制流
-  | { type: 'complete'; stopReason?: string; usage?: AgentEventUsage }
-  | { type: 'error'; message: string }
-  // Usage 更新
-  | { type: 'usage_update'; usage: AgentEventUsage }
-  // 上下文压缩
-  | { type: 'compacting' }
-  | { type: 'compact_complete' }
-
 export type AgentRuntimePhase =
   | 'idle'
   | 'streaming'
@@ -83,13 +40,13 @@ export type AgentRuntimePhase =
   | 'errored'
 
 export interface AgentRuntimeStatus {
-  sessionId: string
+  threadId: string
   phase: AgentRuntimePhase
   interactiveKind?: 'tool_permission' | 'ask_user_question'
   requestId?: string
   toolUseId?: string
   toolName?: string
-  originSessionId?: string
+  originThreadId?: string
   subagentRunId?: string
   error?: string
   updatedAt: number
@@ -103,23 +60,23 @@ export interface AgentRuntimeStatus {
  * 存储在 ~/.proma/agent-sessions.json 中，
  * 类似 ConversationMeta，独立存储。
  */
-export interface AgentSessionMeta {
-  /** 会话唯一标识 */
+export interface AgentThreadMeta {
+  /** 线程唯一标识 */
   id: string
-  /** 会话标题 */
+  /** 线程标题 */
   title: string
   /** 使用的渠道 ID */
   channelId?: string
   /** 最近一次运行使用的模型 ID */
   modelId?: string
-  /** SDK 内部会话 ID（用于 resume 衔接上下文） */
-  sdkSessionId?: string
-  /** Pi Agent 会话 ID（用于显式恢复） */
-  piSessionId?: string
+  /** SDK 内部线程 ID（用于 resume 衔接上下文） */
+  sdkThreadId?: string
+  /** Runtime 线程 ID（用于显式恢复） */
+  runtimeThreadId?: string
   /** 所属工作区 ID */
   workspaceId?: string
-  /** 父会话 ID（子任务会话归属） */
-  parentSessionId?: string
+  /** 父线程 ID（子任务线程归属） */
+  parentThreadId?: string
   /** 是否置顶 */
   pinned?: boolean
   /** 创建时间戳 */
@@ -133,7 +90,7 @@ export interface AgentSessionMeta {
  *
  * 存储在 ~/.proma/agent-sessions/{id}.jsonl 中。
  */
-export interface AgentMessage {
+export interface AgentThreadMessage {
   /** 消息唯一标识 */
   id: string
   /** 角色 */
@@ -148,8 +105,8 @@ export interface AgentMessage {
   model?: string
   /** 消息扩展元数据（用于 UI/流程标记） */
   metadata?: Record<string, unknown>
-  /** 工具活动数据（agent 事件列表，用于回放工具调用） */
-  events?: AgentEvent[]
+  /** 原始 SDK 消息片段（优先用于原生渲染） */
+  sdkMessages?: SDKMessage[]
   /** 同一逻辑消息链的版本组 ID */
   versionGroupId?: string
   /** 当前消息在版本组中的 1-based 版本序号 */
@@ -164,19 +121,23 @@ export interface AgentMessage {
   isLatestVersion?: boolean
 }
 
+export type AgentMessage = AgentThreadMessage
+
 /**
  * Agent 消息分页加载结果
  *
  * 用于分页加载：首次仅加载尾部 N 条消息，减少传输开销。
  */
-export interface AgentRecentMessagesResult {
+export interface AgentRecentThreadMessagesResult {
   /** 本次返回的消息列表（按时间正序） */
   messages: AgentMessage[]
-  /** 会话中的总消息数 */
+  /** 线程中的总消息数 */
   total: number
   /** 是否还有更早的历史消息 */
   hasMore: boolean
 }
+
+export type AgentRecentMessagesResult = AgentRecentThreadMessagesResult
 
 // ===== Agent 标题生成输入 =====
 
@@ -275,12 +236,12 @@ export interface SubagentRunOutcome {
 
 export interface SubagentRunRecord {
   runId: string
-  parentSessionId: string
+  parentThreadId: string
   parentRunId?: string
-  rootSessionId: string
+  rootThreadId: string
   depth: number
-  childSessionId: string
-  deliverySessionId?: string
+  childThreadId: string
+  deliveryThreadId?: string
   threadRequested?: boolean
   threadBound?: boolean
   label?: string
@@ -310,7 +271,7 @@ export interface SubagentControlCommand {
 }
 
 export interface AgentListSubagentRunsInput {
-  ownerSessionId?: string
+  ownerThreadId?: string
   runId?: string
   status?: SubagentRunStatus
   limit?: number
@@ -461,8 +422,7 @@ export interface GlobalImportResult {
  * Agent 发送消息的输入参数
  */
 export interface AgentSendInput {
-  /** 会话 ID */
-  sessionId: string
+  threadId: string
   /** 用户消息内容 */
   userMessage: string
   /** 渠道 ID（用于解析 provider/baseUrl/api key） */
@@ -471,10 +431,10 @@ export interface AgentSendInput {
   modelId?: string
   /** 工作区 ID（用于确定 cwd） */
   workspaceId?: string
-  /** 会话类型（用于记忆 citations auto 行为） */
+  /** 对话类型（用于记忆 citations auto 行为） */
   chatType?: 'direct' | 'group' | 'channel'
-  /** Bootstrap 会话类型（用于系统提示词文件注入策略） */
-  sessionType?: 'main' | 'subagent' | 'group' | 'channel'
+  /** Bootstrap 线程类型（用于系统提示词文件注入策略） */
+  threadType?: 'main' | 'subagent' | 'group' | 'channel'
   /** Agent 权限模式（plan 为只读规划模式） */
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
   /** Agent 思考等级 */
@@ -488,12 +448,12 @@ export interface AgentSendInput {
 }
 
 export interface AgentGetMessageVersionsInput {
-  sessionId: string
+  threadId: string
   versionGroupId: string
 }
 
 export interface AgentMessageVersionsResult {
-  sessionId: string
+  threadId: string
   versionGroupId: string
   messages: AgentMessage[]
 }
@@ -511,9 +471,9 @@ export interface AgentAskUserQuestionQuestion {
 }
 
 export interface AgentAskUserQuestionRequest {
-  sessionId: string
-  /** 原始触发会话（用于子任务代理路由） */
-  originSessionId?: string
+  threadId: string
+  /** 原始触发线程（用于子任务代理路由） */
+  originThreadId?: string
   /** 子任务 runId（用于 Team 面板定位） */
   subagentRunId?: string
   toolUseId: string
@@ -521,7 +481,7 @@ export interface AgentAskUserQuestionRequest {
 }
 
 export interface AgentAskUserQuestionResponseInput {
-  sessionId: string
+  threadId: string
   toolUseId: string
   answers?: Record<string, string>
   canceled?: boolean
@@ -532,9 +492,9 @@ export type AgentToolPermissionRiskLevel = 'low' | 'medium' | 'high'
 export type AgentToolPermissionDecision = 'allow_once' | 'allow_always' | 'deny'
 
 export interface AgentToolPermissionRequest {
-  sessionId: string
-  /** 原始触发会话（用于子任务代理路由） */
-  originSessionId?: string
+  threadId: string
+  /** 原始触发线程（用于子任务代理路由） */
+  originThreadId?: string
   /** 子任务 runId（用于 Team 面板定位） */
   subagentRunId?: string
   requestId: string
@@ -546,7 +506,7 @@ export interface AgentToolPermissionRequest {
 }
 
 export interface AgentToolPermissionResponseInput {
-  sessionId: string
+  threadId: string
   requestId: string
   decision: AgentToolPermissionDecision
 }
@@ -584,8 +544,7 @@ export interface PlanFileMeta {
 
 /** Plan 状态变化事件 */
 export interface PlanStateChangedEvent {
-  /** 会话 ID */
-  sessionId: string
+  threadId: string
   /** 当前阶段 */
   phase: PlanPhase
   /** Plan 文件路径 */
@@ -600,21 +559,25 @@ export interface PlanStateChangedEvent {
  * Agent 流式事件（主进程 → 渲染进程推送）
  */
 export interface AgentStreamEvent {
-  /** 会话 ID */
-  sessionId: string
-  /** 事件数据 */
-  event: AgentEvent
+  threadId: string
+  /** SDK 原始流消息 */
+  message: SDKMessage
 }
 
-/** Agent 会话消息追加通知（sidecar -> web） */
+/** Agent 线程消息追加通知（sidecar -> web） */
 export interface AgentMessageAppendedEvent {
-  sessionId: string
+  threadId: string
   message: AgentMessage
 }
 
 export interface AgentRuntimeStatusChangedEvent {
   status: AgentRuntimeStatus
 }
+
+export type AgentThreadRuntimeStatus = AgentRuntimeStatus
+export type AgentThreadStreamEvent = AgentStreamEvent
+export type AgentThreadMessageAppendedEvent = AgentMessageAppendedEvent
+export type AgentThreadRuntimeStatusChangedEvent = AgentRuntimeStatusChangedEvent
 
 // ===== 文件浏览器 =====
 
@@ -659,10 +622,10 @@ export interface AgentPendingFile {
   previewUrl?: string
 }
 
-/** Agent 文件保存到 session 的输入 */
+/** Agent 文件保存到 thread 的输入 */
 export interface AgentSaveFilesInput {
   workspaceSlug: string
-  sessionId: string
+  threadId: string
   files: Array<{ filename: string; data?: string; sourcePath?: string }>
 }
 
@@ -672,58 +635,59 @@ export interface AgentSavedFile {
   targetPath: string
 }
 
-/** Agent 复制文件夹到 session 的输入 */
+/** Agent 复制文件夹到 thread 的输入 */
 export interface AgentCopyFolderInput {
   sourcePath: string
   workspaceSlug: string
-  sessionId: string
+  threadId: string
 }
 
 // ===== IPC 通道常量 =====
 
-/** 分叉会话的输入参数 */
-export interface ForkSessionInput {
-  /** 源会话 ID */
-  sessionId: string;
+/** 分叉线程的输入参数 */
+export interface ForkThreadInput {
+  /** 源线程 ID */
+  threadId: string;
   /** 从此消息 ID（含）截断，后续消息不复制 */
   upToMessageId: string;
 }
 
-/** 分叉会话的返回结果 */
-export interface ForkSessionResult {
-  /** 新创建的会话 ID */
-  newSessionId: string;
+/** 分叉线程的返回结果 */
+export interface ForkThreadResult {
+  /** 新创建的线程 ID */
+  newThreadId: string;
 }
 
 /**
  * Agent 相关 IPC 通道常量
  */
 export const AGENT_IPC_CHANNELS = {
-  // 会话管理
-  /** 获取会话列表 */
-  LIST_SESSIONS: 'agent:list-sessions',
-  /** 创建会话 */
-  CREATE_SESSION: 'agent:create-session',
-  /** 获取会话消息 */
-  GET_MESSAGES: 'agent:get-messages',
-  /** 获取单个消息版本组 */
-  GET_MESSAGE_VERSIONS: 'agent:get-message-versions',
-  /** 获取最近 N 条会话消息（分页） */
-  GET_RECENT_MESSAGES: 'agent:get-recent-messages',
-  /** 更新会话标题 */
-  UPDATE_TITLE: 'agent:update-title',
-  /** 更新会话模型/渠道选择 */
-  UPDATE_MODEL_SELECTION: 'agent:update-model-selection',
-  /** 迁移 Chat 对话消息到 Agent 会话 */
+  // 线程管理
+  /** 获取线程列表 */
+  LIST_THREADS: 'agent:list-threads',
+  /** 创建线程 */
+  CREATE_THREAD: 'agent:create-thread',
+  /** 获取线程消息 */
+  GET_THREAD_MESSAGES: 'agent:get-thread-messages',
+  /** 获取线程单个消息版本组 */
+  GET_THREAD_MESSAGE_VERSIONS: 'agent:get-thread-message-versions',
+  /** 获取最近 N 条线程消息（分页） */
+  GET_RECENT_THREAD_MESSAGES: 'agent:get-recent-thread-messages',
+  /** 更新线程标题 */
+  UPDATE_THREAD_TITLE: 'agent:update-thread-title',
+  /** 更新线程模型/渠道选择 */
+  UPDATE_THREAD_MODEL_SELECTION: 'agent:update-thread-model-selection',
   MIGRATE_CHAT_TO_AGENT: 'agent:migrate-chat-to-agent',
-  /** 置顶/取消置顶会话 */
-  TOGGLE_PIN_SESSION: 'agent:toggle-pin-session',
-  /** 移动会话到目标工作区 */
-  MOVE_SESSION: 'agent:move-session',
-  /** 删除会话 */
-  DELETE_SESSION: 'agent:delete-session',
-  /** 从指定消息开始截断会话（包含该消息） */
-  TRUNCATE_MESSAGES_FROM: 'agent:truncate-messages-from',
+  /** 迁移 Chat 对话消息到 Agent 线程 */
+  MIGRATE_CHAT_TO_THREAD: 'agent:migrate-chat-to-thread',
+  /** 置顶/取消置顶线程 */
+  TOGGLE_PIN_THREAD: 'agent:toggle-pin-thread',
+  /** 移动线程到目标工作区 */
+  MOVE_THREAD: 'agent:move-thread',
+  /** 删除线程 */
+  DELETE_THREAD: 'agent:delete-thread',
+  /** 从指定消息开始截断线程（包含该消息） */
+  TRUNCATE_THREAD_MESSAGES_FROM: 'agent:truncate-thread-messages-from',
 
   // 工作区管理
   /** 获取工作区列表 */
@@ -740,10 +704,11 @@ export const AGENT_IPC_CHANNELS = {
   GENERATE_TITLE: 'agent:generate-title',
 
   // 消息发送
-  /** 发送消息（触发 Agent 流式响应） */
-  SEND_MESSAGE: 'agent:send-message',
-  /** 中止 Agent 执行 */
+  /** 发送线程消息（触发 Agent 流式响应） */
+  SEND_THREAD_MESSAGE: 'agent:send-thread-message',
   STOP_AGENT: 'agent:stop',
+  /** 中止 Agent 线程执行 */
+  STOP_THREAD: 'agent:stop-thread',
 
   // 工作区能力（MCP + Skill）
   /** 获取工作区能力摘要 */
@@ -802,16 +767,16 @@ export const AGENT_IPC_CHANNELS = {
   RUNTIME_STATUS_CHANGED: 'agent:runtime-status-changed',
 
   // 附件
-  /** 保存文件到 Agent session 工作目录 */
-  SAVE_FILES_TO_SESSION: 'agent:save-files-to-session',
+  /** 保存文件到 Agent thread 工作目录 */
+  SAVE_FILES_TO_THREAD: 'agent:save-files-to-thread',
   /** 打开文件夹选择对话框 */
   OPEN_FOLDER_DIALOG: 'agent:open-folder-dialog',
-  /** 复制文件夹到 session 工作目录 */
-  COPY_FOLDER_TO_SESSION: 'agent:copy-folder-to-session',
+  /** 复制文件夹到 thread 工作目录 */
+  COPY_FOLDER_TO_THREAD: 'agent:copy-folder-to-thread',
 
   // 文件系统操作
-  /** 获取 session 工作路径 */
-  GET_SESSION_PATH: 'agent:get-session-path',
+  /** 获取 thread 工作路径 */
+  GET_THREAD_PATH: 'agent:get-thread-path',
   /** 列出目录内容 */
   LIST_DIRECTORY: 'agent:list-directory',
   /** 删除文件/空目录 */
@@ -846,7 +811,7 @@ export const AGENT_IPC_CHANNELS = {
   // 工作区配置变化通知（主进程 → 渲染进程推送）
   /** 工作区能力变化（MCP/Skills 文件监听触发） */
   CAPABILITIES_CHANGED: 'agent:capabilities-changed',
-  /** 工作区文件变化（session 目录文件监听触发，用于文件浏览器刷新） */
+  /** 工作区文件变化（thread 目录文件监听触发，用于文件浏览器刷新） */
   WORKSPACE_FILES_CHANGED: 'agent:workspace-files-changed',
 
   // Plan 模式
@@ -870,7 +835,7 @@ export const AGENT_IPC_CHANNELS = {
   GET_LOGS_DIR: 'agent:get-logs-dir',
 
   // 分叉
-  /** 从指定消息处分叉会话 */
-  FORK_SESSION: 'agent:fork-session',
+  /** 从指定消息处分叉线程 */
+  FORK_THREAD: 'agent:fork-thread',
 } as const
 import type { ThinkingLevel } from "./chat"

@@ -13,20 +13,22 @@ import type {
   AgentProxyStatus,
   AgentRecentMessagesResult,
   AgentRuntimeStatus,
+  AgentThreadMeta,
+  AgentThreadRuntimeStatus,
   AgentRuntimeStatusChangedEvent,
   AgentRuntimeToolPolicyConfig,
   AgentSaveFilesInput,
   AgentSavedFile,
   AgentSendInput,
-  AgentSessionMeta,
   AgentStreamEvent,
+  AgentThreadStreamEvent,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
   AgentWorkspace,
   FileEntry,
   FileSearchResult,
-  ForkSessionInput,
-  ForkSessionResult,
+  ForkThreadInput,
+  ForkThreadResult,
   GlobalDiscoverySnapshot,
   GlobalImportResult,
   GlobalPluginMarketplaceDetail,
@@ -44,8 +46,8 @@ import type {
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { onSidecarMethodEvent, sidecarCall } from "./core";
 
-export async function listAgentSessions(): Promise<AgentSessionMeta[]> {
-  return sidecarCall<AgentSessionMeta[]>(AGENT_IPC_CHANNELS.LIST_SESSIONS);
+export async function listAgentThreads(): Promise<AgentThreadMeta[]> {
+  return sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS);
 }
 
 export async function listSubagentRuns(
@@ -54,86 +56,95 @@ export async function listSubagentRuns(
   return sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, input ?? {});
 }
 
-export async function getAgentRuntimeStatus(sessionId: string): Promise<AgentRuntimeStatus> {
-  return sidecarCall<AgentRuntimeStatus>(AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS, { sessionId });
+export async function getAgentThreadRuntimeStatus(threadId: string): Promise<AgentThreadRuntimeStatus> {
+  return sidecarCall<AgentThreadRuntimeStatus>(AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS, { threadId: threadId });
 }
 
-export async function createAgentSession(params?: {
+export async function createAgentThread(params?: {
   title?: string;
   channelId?: string;
   modelId?: string;
   workspaceId?: string;
-  parentSessionId?: string;
-}): Promise<AgentSessionMeta> {
-  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.CREATE_SESSION, params ?? {});
+  parentThreadId?: string;
+}): Promise<AgentThreadMeta> {
+  return sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.CREATE_THREAD, {
+    ...(params ?? {}),
+    ...(params?.parentThreadId ? { parentThreadId: params.parentThreadId } : {})
+  });
 }
 
-export async function getAgentSessionMessages(sessionId: string): Promise<AgentMessage[]> {
-  return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.GET_MESSAGES, { sessionId });
+export async function getAgentThreadMessages(threadId: string): Promise<AgentMessage[]> {
+  return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES, { threadId: threadId });
 }
 
-export async function getAgentMessageVersions(
-  sessionId: string,
+export async function getAgentThreadMessageVersions(
+  threadId: string,
   versionGroupId: string
 ): Promise<AgentMessage[]> {
-  const result = await sidecarCall<AgentMessageVersionsResult>(AGENT_IPC_CHANNELS.GET_MESSAGE_VERSIONS, {
-    sessionId,
+  const result = await sidecarCall<AgentMessageVersionsResult>(AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS, {
+    threadId: threadId,
     versionGroupId
   });
   return result.messages;
 }
 
-export async function getRecentAgentSessionMessages(sessionId: string, limit: number): Promise<AgentRecentMessagesResult> {
-  return sidecarCall<AgentRecentMessagesResult>(AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES, { sessionId, limit });
+export async function getRecentAgentThreadMessages(threadId: string, limit: number): Promise<AgentRecentMessagesResult> {
+  return sidecarCall<AgentRecentMessagesResult>(AGENT_IPC_CHANNELS.GET_RECENT_THREAD_MESSAGES, { threadId: threadId, limit });
 }
 
-export async function updateAgentSessionTitle(sessionId: string, title: string): Promise<AgentSessionMeta> {
-  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.UPDATE_TITLE, { sessionId, title });
+export async function updateAgentThreadTitle(threadId: string, title: string): Promise<AgentThreadMeta> {
+  return sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.UPDATE_THREAD_TITLE, { threadId: threadId, title });
 }
 
-export async function updateAgentSessionModelSelection(
-  sessionId: string,
+
+export async function updateAgentThreadModelSelection(
+  threadId: string,
   modelId?: string,
   channelId?: string
-): Promise<AgentSessionMeta> {
-  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION, {
-    sessionId,
+): Promise<AgentThreadMeta> {
+  return sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION, {
+    threadId: threadId,
     modelId,
     channelId
   });
 }
 
-export async function migrateChatToAgentSession(
+
+export async function migrateChatToAgentThread(
   conversationId: string,
-  sessionId: string
+  threadId: string
 ): Promise<{ ok: true; migrated: number }> {
-  return sidecarCall<{ ok: true; migrated: number }>(AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT, {
+  return sidecarCall<{ ok: true; migrated: number }>(AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_THREAD, {
     conversationId,
-    sessionId
+    threadId: threadId
   });
 }
 
-export async function togglePinAgentSession(sessionId: string): Promise<AgentSessionMeta> {
-  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.TOGGLE_PIN_SESSION, { sessionId });
+
+export async function togglePinAgentThread(threadId: string): Promise<AgentThreadMeta> {
+  return sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.TOGGLE_PIN_THREAD, { threadId: threadId });
 }
 
-export async function moveAgentSessionToWorkspace(
-  sessionId: string,
+
+export async function moveAgentThreadToWorkspace(
+  threadId: string,
   workspaceId: string
-): Promise<AgentSessionMeta> {
-  return sidecarCall<AgentSessionMeta>(AGENT_IPC_CHANNELS.MOVE_SESSION, { sessionId, workspaceId });
+): Promise<AgentThreadMeta> {
+  return sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.MOVE_THREAD, { threadId: threadId, workspaceId });
 }
 
-export async function deleteAgentSessionById(sessionId: string): Promise<{ ok: true }> {
-  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_SESSION, { sessionId });
+
+export async function deleteAgentThreadById(threadId: string): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_THREAD, { threadId: threadId });
 }
 
-export async function truncateAgentMessagesFrom(
-  sessionId: string,
+
+export async function truncateAgentThreadMessagesFrom(
+  threadId: string,
   messageId: string
 ): Promise<AgentMessage[]> {
-  return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM, {
-    sessionId,
+  return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM, {
+    threadId: threadId,
     messageId
   });
 }
@@ -242,14 +253,23 @@ export async function importGlobalSkillToWorkspace(
 }
 
 export async function sendAgentMessage(input: AgentSendInput): Promise<{ ok: true }> {
-  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SEND_MESSAGE, input);
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE, input);
 }
 
-export async function stopAgentRun(sessionId: string): Promise<{ ok: true }> {
-  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.STOP_AGENT, { sessionId });
+export async function sendAgentThreadMessage(
+  input: AgentSendInput & { threadId: string }
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE, {
+    ...input,
+    threadId: input.threadId
+  });
 }
 
-export async function generateAgentSessionTitle(input: AgentGenerateTitleInput): Promise<string | null> {
+export async function stopAgentThreadRun(threadId: string): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId: threadId });
+}
+
+export async function generateAgentThreadTitle(input: AgentGenerateTitleInput): Promise<string | null> {
   return sidecarCall<string | null>(AGENT_IPC_CHANNELS.GENERATE_TITLE, input);
 }
 
@@ -259,19 +279,25 @@ export async function onAgentStreamEvent(handler: (event: AgentStreamEvent) => v
   });
 }
 
+export async function onAgentThreadStreamEvent(
+  handler: (event: AgentThreadStreamEvent) => void
+): Promise<UnlistenFn> {
+  return onAgentStreamEvent((event) => handler(event as AgentThreadStreamEvent));
+}
+
 export async function onAgentStreamComplete(
-  handler: (event: { sessionId: string }) => void
+  handler: (event: { threadId: string }) => void
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.STREAM_COMPLETE, (params) => {
-    handler(params as { sessionId: string });
+    handler(params as { threadId: string });
   });
 }
 
 export async function onAgentStreamError(
-  handler: (event: { sessionId: string; error: string }) => void
+  handler: (event: { threadId: string; error: string }) => void
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.STREAM_ERROR, (params) => {
-    handler(params as { sessionId: string; error: string });
+    handler(params as { threadId: string; error: string });
   });
 }
 
@@ -320,10 +346,10 @@ export async function submitAgentToolPermission(
 }
 
 export async function onAgentTitleUpdated(
-  handler: (event: { sessionId: string; title: string }) => void
+  handler: (event: { threadId: string; title: string }) => void
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.TITLE_UPDATED, (params) => {
-    handler(params as { sessionId: string; title: string });
+    handler(params as { threadId: string; title: string });
   });
 }
 
@@ -339,82 +365,82 @@ export async function onAgentWorkspaceFilesChanged(handler: () => void): Promise
   });
 }
 
-export async function getAgentSessionPath(
+export async function getAgentThreadPath(
   workspaceSlug: string,
-  sessionId: string
+  threadId: string
 ): Promise<string> {
-  return sidecarCall<string>(AGENT_IPC_CHANNELS.GET_SESSION_PATH, { workspaceSlug, sessionId });
+  return sidecarCall<string>(AGENT_IPC_CHANNELS.GET_THREAD_PATH, { workspaceSlug, threadId: threadId });
 }
 
 export async function listAgentDirectory(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   path?: string
 ): Promise<FileEntry[]> {
   return sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_DIRECTORY, {
     workspaceSlug,
-    sessionId,
+    threadId,
     path
   });
 }
 
 export async function deleteAgentFile(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   path: string
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_FILE, {
     workspaceSlug,
-    sessionId,
+    threadId,
     path
   });
 }
 
 export async function openAgentFile(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   path: string
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.OPEN_FILE, {
     workspaceSlug,
-    sessionId,
+    threadId,
     path
   });
 }
 
 export async function showAgentFileInFolder(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   path: string
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SHOW_IN_FOLDER, {
     workspaceSlug,
-    sessionId,
+    threadId,
     path
   });
 }
 
 export async function previewAgentFile(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   path: string
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.PREVIEW_FILE, {
     workspaceSlug,
-    sessionId,
+    threadId,
     path
   });
 }
 
 export async function renameAgentFile(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   path: string,
   newName: string
 ): Promise<{ ok: true; path: string }> {
   return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.RENAME_FILE, {
     workspaceSlug,
-    sessionId,
+    threadId,
     path,
     newName
   });
@@ -422,13 +448,13 @@ export async function renameAgentFile(
 
 export async function moveAgentFile(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   path: string,
   targetDir: string
 ): Promise<{ ok: true; path: string }> {
   return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.MOVE_FILE, {
     workspaceSlug,
-    sessionId,
+    threadId,
     path,
     targetDir
   });
@@ -466,58 +492,68 @@ export async function getAgentWorkspaceRootPath(workspaceSlug: string): Promise<
 
 export async function searchAgentWorkspaceFiles(
   workspaceSlug: string,
-  sessionId: string,
+  threadId: string,
   query: string,
   limit = 20,
   rootPath?: string
 ): Promise<FileSearchResult> {
   return sidecarCall<FileSearchResult>(AGENT_IPC_CHANNELS.SEARCH_WORKSPACE_FILES, {
     workspaceSlug,
-    sessionId,
+    threadId,
     query,
     limit,
     rootPath
   });
 }
 
-export async function saveFilesToAgentSession(input: AgentSaveFilesInput): Promise<AgentSavedFile[]> {
-  return sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_SESSION, input);
+export async function saveFilesToAgentThread(
+  input: AgentSaveFilesInput & { threadId: string }
+): Promise<AgentSavedFile[]> {
+  return sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
+    ...input,
+    threadId: input.threadId
+  });
 }
 
-export async function copyFolderToAgentSession(input: AgentCopyFolderInput): Promise<AgentSavedFile[]> {
-  return sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.COPY_FOLDER_TO_SESSION, input);
+export async function copyFolderToAgentThread(
+  input: AgentCopyFolderInput & { threadId: string }
+): Promise<AgentSavedFile[]> {
+  return sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD, {
+    ...input,
+    threadId: input.threadId
+  });
 }
 
 export async function listAgentPlans(
   workspaceSlug: string | undefined,
-  sessionId: string
+  threadId: string
 ): Promise<PlanFileMeta[]> {
   return sidecarCall<PlanFileMeta[]>(AGENT_IPC_CHANNELS.LIST_PLANS, {
     ...(workspaceSlug ? { workspaceSlug } : {}),
-    sessionId
+    threadId
   });
 }
 
 export async function readAgentPlan(
   workspaceSlug: string | undefined,
-  sessionId: string,
+  threadId: string,
   planPath: string
 ): Promise<{ path: string; content: string }> {
   return sidecarCall<{ path: string; content: string }>(AGENT_IPC_CHANNELS.READ_PLAN, {
     ...(workspaceSlug ? { workspaceSlug } : {}),
-    sessionId,
+    threadId,
     planPath
   });
 }
 
 export async function deleteAgentPlan(
   workspaceSlug: string | undefined,
-  sessionId: string,
+  threadId: string,
   planPath: string
 ): Promise<{ ok: true }> {
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_PLAN, {
     ...(workspaceSlug ? { workspaceSlug } : {}),
-    sessionId,
+    threadId,
     planPath
   });
 }
@@ -551,7 +587,7 @@ export interface WriteLogInput {
   level?: LogLevel;
   context?: string;
   message: string;
-  sessionId?: string;
+  threadId?: string;
   data?: Record<string, unknown>;
 }
 
@@ -578,18 +614,24 @@ export async function getWorkspaceMemoryStats(
 }
 
 export const log = {
-  debug: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
-    writeLog({ level: "debug", message, data, sessionId }),
-  info: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
-    writeLog({ level: "info", message, data, sessionId }),
-  warn: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
-    writeLog({ level: "warn", message, data, sessionId }),
-  error: (message: string, data?: Record<string, unknown>, sessionId?: string) =>
-    writeLog({ level: "error", message, data, sessionId })
+  debug: (message: string, data?: Record<string, unknown>, threadId?: string) =>
+    writeLog({ level: "debug", message, data, threadId }),
+  info: (message: string, data?: Record<string, unknown>, threadId?: string) =>
+    writeLog({ level: "info", message, data, threadId }),
+  warn: (message: string, data?: Record<string, unknown>, threadId?: string) =>
+    writeLog({ level: "warn", message, data, threadId }),
+  error: (message: string, data?: Record<string, unknown>, threadId?: string) =>
+    writeLog({ level: "error", message, data, threadId })
 };
 
 // ─── 分叉 ───
 
-export async function forkAgentSession(input: ForkSessionInput): Promise<ForkSessionResult> {
-  return sidecarCall<ForkSessionResult>(AGENT_IPC_CHANNELS.FORK_SESSION, input);
+export async function forkAgentThread(
+  input: ForkThreadInput & { threadId: string }
+): Promise<ForkThreadResult> {
+  return sidecarCall<ForkThreadResult>(AGENT_IPC_CHANNELS.FORK_THREAD, {
+    ...input,
+    threadId: input.threadId
+  });
 }
+

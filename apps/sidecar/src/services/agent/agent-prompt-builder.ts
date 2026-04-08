@@ -646,16 +646,16 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   sections.push(`当前时间: ${timeStr}`);
 
   const sessionLines: string[] = [];
-  if (ctx.sessionId) sessionLines.push(`sessionId: ${ctx.sessionId}`);
+  if (ctx.sessionId) sessionLines.push(`threadId: ${ctx.sessionId}`);
   if (ctx.sessionTitle) sessionLines.push(`title: ${ctx.sessionTitle}`);
-  if (ctx.sessionType) sessionLines.push(`sessionType: ${ctx.sessionType}`);
+  if (ctx.sessionType) sessionLines.push(`threadType: ${ctx.sessionType}`);
   if (ctx.chatType) sessionLines.push(`chatType: ${ctx.chatType}`);
-  if (ctx.parentSessionId) sessionLines.push(`parentSessionId: ${ctx.parentSessionId}`);
+  if (ctx.parentSessionId) sessionLines.push(`parentThreadId: ${ctx.parentSessionId}`);
   if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
   if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
   if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
   if (sessionLines.length > 0) {
-    sections.push(`<session_state>\n${sessionLines.join("\n")}\n</session_state>`);
+    sections.push(`<thread_state>\n${sessionLines.join("\n")}\n</thread_state>`);
   }
 
   if (ctx.workspaceSlug) {

@@ -6,12 +6,13 @@ import { inferCapabilityLanes, resolvePreferredCapabilityRoute, type CapabilityL
 
 interface ResolveAgentDynamicContextInput {
   sessionId: string;
+  threadId?: string;
   userMessage?: string;
   workspaceName?: string;
   workspaceSlug?: string;
   agentCwd?: string;
   availableTools?: string[];
-  sessionType?: AgentSendInput["sessionType"];
+  threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   fallbackModelId?: string;
 }
@@ -27,11 +28,11 @@ export function resolveAgentDynamicContextInput(
 ): DynamicContext {
   const sessionMeta = getAgentSessionMeta(input.sessionId);
   return {
-    sessionId: input.sessionId,
+    sessionId: input.threadId ?? input.sessionId,
     sessionTitle: sessionMeta?.title,
-    sessionType: input.sessionType,
+    sessionType: input.threadType,
     chatType: input.chatType,
-    parentSessionId: sessionMeta?.parentSessionId,
+    parentSessionId: sessionMeta?.parentThreadId,
     workspaceId: sessionMeta?.workspaceId,
     channelId: sessionMeta?.channelId,
     modelId: sessionMeta?.modelId ?? input.fallbackModelId,
@@ -64,3 +65,4 @@ export function resolveAgentRuntimeRoutingTrace(input: {
     reason: decision.reason
   };
 }
+

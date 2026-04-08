@@ -1,5 +1,5 @@
 import type { ProviderType } from "@lume/shared";
-import type { KnownProvider } from "@mariozechner/pi-ai";
+import type { KnownProvider } from "./model-types";
 
 const PROVIDER_ALIAS: Record<string, KnownProvider | null> = {
   anthropic: "anthropic",

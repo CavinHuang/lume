@@ -32,8 +32,8 @@ describe("subagent-run-registry", () => {
 
     const created = registry.create({
       runId,
-      parentSessionId: "session-main",
-      childSessionId: "session-child",
+      parentThreadId: "session-main",
+      childThreadId: "session-child",
       task: "scan repository",
       cleanup: "keep",
       requestedAgentId: "agent-alpha",
@@ -77,8 +77,8 @@ describe("subagent-run-registry", () => {
       const registry = getSubagentRunRegistry();
       registry.create({
         runId,
-        parentSessionId: "session-main",
-        childSessionId: "session-child",
+        parentThreadId: "session-main",
+        childThreadId: "session-child",
         task: "persist me",
         cleanup: "delete",
         status: "running"
@@ -110,35 +110,35 @@ describe("subagent-run-registry", () => {
 
     registry.create({
       runId: randomUUID(),
-      parentSessionId: owner,
-      rootSessionId: owner,
-      childSessionId: childA,
+      parentThreadId: owner,
+      rootThreadId: owner,
+      childThreadId: childA,
       task: "task-a",
       cleanup: "keep",
       status: "running"
     });
     registry.create({
       runId: randomUUID(),
-      parentSessionId: "session-mid",
-      rootSessionId: owner,
-      childSessionId: childB,
+      parentThreadId: "session-mid",
+      rootThreadId: owner,
+      childThreadId: childB,
       task: "task-b",
       cleanup: "keep",
       status: "completed"
     });
     registry.create({
       runId: randomUUID(),
-      parentSessionId: "session-other",
-      rootSessionId: "session-other",
-      childSessionId: childC,
+      parentThreadId: "session-other",
+      rootThreadId: "session-other",
+      childThreadId: childC,
       task: "task-c",
       cleanup: "keep",
       status: "errored"
     });
 
-    const controlled = registry.listControlledBySession(owner);
+    const controlled = registry.listControlledByThread(owner);
     expect(controlled).toHaveLength(2);
-    expect(controlled.every((item) => item.rootSessionId === owner || item.parentSessionId === owner)).toBe(true);
+    expect(controlled.every((item) => item.rootThreadId === owner || item.parentThreadId === owner)).toBe(true);
 
     const summary = registry.summarizeStatuses(controlled);
     expect(summary.running).toBe(1);
@@ -146,3 +146,4 @@ describe("subagent-run-registry", () => {
     expect(summary.errored).toBe(0);
   });
 });
+

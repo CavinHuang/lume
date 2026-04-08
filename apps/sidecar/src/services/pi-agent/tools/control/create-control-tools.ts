@@ -1,10 +1,16 @@
 import { Type } from "@sinclair/typebox";
+import {
+  AskUserQuestionTool,
+  clearQuestionHandler,
+  setQuestionHandler,
+  type ToolDefinition
+} from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionQuestion,
   AgentAskUserQuestionRequest
 } from "@lume/shared";
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { waitForPiAskUserQuestionAnswers } from "../bridges/ask-user-question-bridge";
+import { createSdkJsonResultTool } from "../sdk-tool-result";
 const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 const MAX_ASK_QUESTIONS = 4;
 const MAX_ASK_OPTIONS = 4;
@@ -46,18 +52,6 @@ interface NormalizedAskQuestion {
   question: string;
   options: NormalizedAskOption[];
   multiSelect: boolean;
-}
-
-function toTextResult<TDetails>(details: TDetails): AgentToolResult<TDetails> {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(details, null, 2)
-      }
-    ],
-    details
-  };
 }
 
 function toReadableString(value: unknown): string {
@@ -249,71 +243,124 @@ function normalizeAskUserQuestions(input: Record<string, unknown>): AgentAskUser
   return normalized;
 }
 
-export function createPiControlTools(params: {
+async function executeAskUserQuestionSdk(
+  params: {
+    sessionId: string;
+    emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
+  },
+  toolUseId: string,
+  rawInput: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<Record<string, unknown>> {
+  const sanitizedInput = sanitizeAskUserQuestionInput(rawInput);
+  const questions = normalizeAskUserQuestions(sanitizedInput);
+  if (questions.length === 0) {
+    throw new Error("AskUserQuestion 缺少有效问题，已拒绝执行");
+  }
+  setQuestionHandler(async () => {
+    const askResult = await waitForPiAskUserQuestionAnswers(
+      params.sessionId,
+      toolUseId,
+      questions,
+      signal ?? new AbortController().signal,
+      params.emitAskUserQuestion
+    );
+    if (askResult.status !== "answered" || !askResult.answers) {
+      if (askResult.status === "timeout") {
+        throw new Error("AskUserQuestion 等待用户回答超时");
+      }
+      if (askResult.status === "aborted") {
+        throw new Error("AskUserQuestion 被线程中止");
+      }
+      throw new Error("用户取消了 AskUserQuestion");
+    }
+    return {
+      questions,
+      answers: askResult.answers
+    };
+  });
+  try {
+    const result = await AskUserQuestionTool.call(
+      { questions },
+      {
+        cwd: process.cwd(),
+        sessionId: params.sessionId
+      }
+    );
+    return {
+      ...sanitizedInput,
+      sdkContent: result.content,
+      answers: extractAnswersFromSdkContent(result.content)
+    };
+  } finally {
+    clearQuestionHandler();
+  }
+}
+
+export function createSdkControlTools(params: {
   sessionId: string;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   includeAskUserQuestion?: boolean;
-}): AgentTool[] {
-  const includeAskUserQuestion = params.includeAskUserQuestion !== false;
-  const tools: AgentTool[] = [];
-
-  if (includeAskUserQuestion) {
-    tools.push({
-      name: ASK_USER_QUESTION_TOOL_NAME,
-      label: ASK_USER_QUESTION_TOOL_NAME,
-      description: ASK_USER_QUESTION_PROMPT,
-      parameters: Type.Object({
-        questions: Type.Array(
-          Type.Object({
-            header: Type.String({ maxLength: 12, description: "Short label for the question" }),
-            question: Type.String({ description: "The question text to display" }),
-            options: Type.Array(
-              Type.Object({
-                label: Type.String({ description: "Option label, add (推荐) suffix for recommended" }),
-                description: Type.String({ description: "Brief explanation of this option" })
-              }),
-              { minItems: 2, maxItems: 4, description: "2-4 meaningful choices" }
-            ),
-            multiSelect: Type.Optional(Type.Boolean({ description: "Allow multiple selections" }))
-          }),
-          { minItems: 1, maxItems: 4 }
-        )
-      }),
-      async execute(toolCallId, args, signal) {
-        const rawInput = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-        const sanitizedInput = sanitizeAskUserQuestionInput(rawInput);
-        const questions = normalizeAskUserQuestions(sanitizedInput);
-        if (questions.length === 0) {
-          throw new Error("AskUserQuestion 缺少有效问题，已拒绝执行");
-        }
-        const askResult = await waitForPiAskUserQuestionAnswers(
-          params.sessionId,
-          toolCallId,
-          questions,
-          signal ?? new AbortController().signal,
-          params.emitAskUserQuestion
-        );
-        if (askResult.status !== "answered" || !askResult.answers) {
-          if (askResult.status === "timeout") {
-            throw new Error("AskUserQuestion 等待用户回答超时");
-          }
-          if (askResult.status === "aborted") {
-            throw new Error("AskUserQuestion 被会话中止");
-          }
-          throw new Error("用户取消了 AskUserQuestion");
-        }
-        return toTextResult({
-          ...sanitizedInput,
-          answers: askResult.answers
-        });
-      }
-    });
+}): ToolDefinition[] {
+  if (params.includeAskUserQuestion === false) {
+    return [];
   }
-
-  return tools;
+  return [
+    createSdkJsonResultTool({
+      name: ASK_USER_QUESTION_TOOL_NAME,
+      description: ASK_USER_QUESTION_PROMPT,
+      inputSchema: {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                header: { type: "string", maxLength: 12 },
+                question: { type: "string" },
+                options: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      label: { type: "string" },
+                      description: { type: "string" }
+                    },
+                    required: ["label", "description"]
+                  }
+                },
+                multiSelect: { type: "boolean" }
+              },
+              required: ["header", "question", "options"]
+            }
+          }
+        },
+        required: ["questions"]
+      },
+      call: (input) => executeAskUserQuestionSdk(params, `sdk-ask-${Date.now()}`, input)
+    })
+  ];
 }
 
 export const __testing = {
   sanitizeAskUserQuestionInput,
   normalizeAskUserQuestions
 };
+
+function extractAnswersFromSdkContent(content: string | unknown[]): Record<string, string> {
+  const normalized = typeof content === "string"
+    ? content
+    : JSON.stringify(content ?? []);
+  const matches = Array.from(normalized.matchAll(/"([^"]+)"="([^"]*)"/g));
+  const answers: Record<string, string> = {};
+  for (const match of matches) {
+    const question = match[1];
+    const answer = match[2];
+    if (question) {
+      answers[question] = answer ?? "";
+    }
+  }
+  return answers;
+}
+

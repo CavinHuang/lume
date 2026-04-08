@@ -56,24 +56,26 @@ describe("agent-composer", () => {
 
   test("shouldDispatchPendingPrompt 仅在会话匹配且运行条件满足时返回 true", () => {
     expect(shouldDispatchPendingPrompt({
-      pendingPromptSessionId: "session-1",
-      sessionId: "session-1",
+      pendingPromptThreadId: "session-1",
+      threadId: "session-1",
       backendReady: true,
       isAgentBusy: false
     })).toBe(true);
 
     expect(shouldDispatchPendingPrompt({
-      pendingPromptSessionId: "session-2",
-      sessionId: "session-1",
+      pendingPromptThreadId: "session-2",
+      threadId: "session-1",
       backendReady: true,
       isAgentBusy: false
     })).toBe(false);
 
     expect(shouldDispatchPendingPrompt({
-      pendingPromptSessionId: "session-1",
-      sessionId: "session-1",
+      pendingPromptThreadId: "session-1",
+      threadId: "session-1",
       backendReady: false,
       isAgentBusy: false
     })).toBe(false);
   });
 });
+
+

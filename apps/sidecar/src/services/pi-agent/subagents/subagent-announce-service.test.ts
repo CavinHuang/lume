@@ -23,13 +23,13 @@ afterEach(() => {
   }
 });
 
-function buildRun(parentSessionId: string): SubagentRun {
+function buildRun(parentThreadId: string): SubagentRun {
   return {
     runId: randomUUID(),
-    parentSessionId,
-    rootSessionId: parentSessionId,
+    parentThreadId,
+    rootThreadId: parentThreadId,
     depth: 1,
-    childSessionId: randomUUID(),
+    childThreadId: randomUUID(),
     label: "测试子任务",
     task: "run test task",
     status: "completed",
@@ -64,7 +64,7 @@ describe("subagent-announce-service", () => {
       expect(last?.content).toContain("子任务完成通知");
       expect(last?.metadata?.subagentAnnounce).toBe(true);
       expect(last?.metadata?.runId).toBe(run.runId);
-      expect(last?.metadata?.childSessionId).toBe(run.childSessionId);
+      expect(last?.metadata?.childThreadId).toBe(run.childThreadId);
       expect(events).toHaveLength(1);
       expect(events[0]?.sessionId).toBe(parent.id);
       expect(events[0]?.runId).toBe(run.runId);
@@ -80,12 +80,12 @@ describe("subagent-announce-service", () => {
     expect(result.error).toContain("目标会话不存在");
   });
 
-  test("设置 deliverySessionId 时应投递到指定会话", async () => {
+  test("设置 deliveryThreadId 时应投递到指定会话", async () => {
     const parent = createAgentSession("父会话", "channel-x");
     const inbox = createAgentSession("收件会话", "channel-x");
     const run = {
       ...buildRun(parent.id),
-      deliverySessionId: inbox.id
+      deliveryThreadId: inbox.id
     };
     const result = await announceSubagentCompletion({ run });
     expect(result.delivered).toBe(true);
@@ -95,3 +95,4 @@ describe("subagent-announce-service", () => {
     expect(parentMessages.some((item) => item.metadata?.subagentAnnounce === true)).toBe(false);
   });
 });
+

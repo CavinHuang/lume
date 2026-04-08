@@ -1,4 +1,4 @@
-import type { KnownProvider } from "@mariozechner/pi-ai";
+import type { KnownProvider } from "./model-types";
 
 export function isBigmodelAnthropicCompatBaseUrl(baseUrl?: string): boolean {
   const normalized = (baseUrl ?? "").trim().toLowerCase();

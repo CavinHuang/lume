@@ -13,14 +13,14 @@ describe("subagent-thread-binding", () => {
       const parent = createAgentSession("父会话");
       const inbox = createAgentSession("收件会话");
       const resolved = resolveSubagentThreadBinding({
-        parentSessionId: parent.id,
-        childSessionId: "child-x",
+        parentThreadId: parent.id,
+        childThreadId: "child-x",
         threadRequested: true,
         requestedDeliverySessionId: inbox.id
       });
       expect(resolved.threadRequested).toBe(true);
       expect(resolved.threadBound).toBe(true);
-      expect(resolved.deliverySessionId).toBe(inbox.id);
+      expect(resolved.deliveryThreadId).toBe(inbox.id);
     } finally {
       if (prev === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -32,12 +32,13 @@ describe("subagent-thread-binding", () => {
 
   test("delivery session 不存在时应回退到 parent session", () => {
     const resolved = resolveSubagentThreadBinding({
-      parentSessionId: "parent-a",
-      childSessionId: "child-a",
+      parentThreadId: "parent-a",
+      childThreadId: "child-a",
       threadRequested: false,
       requestedDeliverySessionId: "missing-session"
     });
-    expect(resolved.deliverySessionId).toBe("parent-a");
+    expect(resolved.deliveryThreadId).toBe("parent-a");
     expect(resolved.threadBound).toBe(false);
   });
 });
+

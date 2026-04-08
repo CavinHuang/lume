@@ -11,17 +11,17 @@ import type {
   WorkspaceMcpConfig
 } from "@lume/shared";
 import {
-  createAgentSession,
-  deleteAgentSession,
-  getAgentSessionMessages,
-  getRecentAgentMessages,
-  listAgentSessions,
-  migrateChatToAgentSession,
-  moveAgentSessionToWorkspace,
-  toggleAgentSessionPin,
-  forkAgentSession,
+  createAgentThread,
+  deleteAgentThread,
+  getAgentThreadMessages,
+  getRecentAgentThreadMessages,
+  listAgentThreads,
+  migrateChatToAgentThread,
+  moveAgentThreadToWorkspace,
+  toggleAgentThreadPin,
+  forkAgentThread,
   truncateAgentMessagesFrom,
-  updateAgentSessionMeta
+  updateAgentThreadMeta
 } from "../services/agent/agent-session-manager";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
@@ -36,7 +36,7 @@ import {
   copyFolderToSession,
   deleteAgentFile,
   deleteAgentPlan,
-  getAgentSessionPath,
+  getAgentThreadPath,
   listAgentDirectory,
   listAttachedDirectory,
   listAgentPlans,
@@ -48,8 +48,8 @@ import {
   readAgentPlan,
   renameAgentFile,
   renameAttachedPath,
-  resolveWorkspaceSlugBySessionId,
-  saveFilesToAgentSession,
+  resolveWorkspaceSlugByThreadId,
+  saveFilesToAgentThread,
   searchAgentWorkspaceFiles,
   showAgentPathInFolder,
   showAttachedPathInFolder
@@ -76,7 +76,6 @@ import {
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
-import { getSessionEventBus } from "../services/pi-agent/session-event-bus";
 import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attempt";
 import { getSubagentRunRegistry } from "../services/pi-agent/subagents/subagent-run-registry";
 import {
@@ -89,19 +88,19 @@ import {
 } from "../services/system/proxy-settings-manager";
 import { readBootstrapFile, writeBootstrapFile } from "../services/system/workspace-bootstrap-service";
 import {
-  agentCreateSessionInputSchema,
-  agentGetMessageVersionsInputSchema,
+  agentCreateThreadInputSchema,
+  agentGetThreadMessageVersionsInputSchema,
   agentListSubagentRunsInputSchema,
   agentMigrateChatInputSchema,
-  agentMoveSessionInputSchema,
-  agentRecentMessagesInputSchema,
+  agentMoveThreadInputSchema,
+  agentRecentThreadMessagesInputSchema,
   agentSendInputSchema,
-  agentSessionIdInputSchema,
-  agentTruncateInputSchema,
-  agentUpdateTitleInputSchema,
-  agentUpdateModelSelectionInputSchema,
+  agentThreadIdInputSchema,
+  agentTruncateThreadInputSchema,
+  agentUpdateThreadTitleInputSchema,
+  agentUpdateThreadModelSelectionInputSchema,
   attachedPathInputSchema,
-  copyFolderToSessionInputSchema,
+  copyFolderToThreadInputSchema,
   deleteSkillInputSchema,
   listDirectoryInputSchema,
   marketplaceDetailInputSchema,
@@ -114,10 +113,10 @@ import {
   readBootstrapFileInputSchema,
   renameAttachedFileInputSchema,
   renameFileInputSchema,
-  saveFilesToSessionInputSchema,
+  saveFilesToThreadInputSchema,
   saveToolPolicyInputSchema,
   searchWorkspaceFilesInputSchema,
-  sessionPathInputSchema,
+  threadPathInputSchema,
   submitAskUserQuestionInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
@@ -134,44 +133,44 @@ interface AgentHandlersContext {
   writeNotification: NotificationWriter;
   planStateTracker: PlanStateTracker;
   notifyPlanStateChange: (
-    sessionId: string,
+    threadId: string,
     phase: "idle" | "planning" | "review" | "executing" | "executed",
     extras?: { planPath?: string; steps?: PlanStep[] }
   ) => void;
 }
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
-  return {
-    [AGENT_IPC_CHANNELS.LIST_SESSIONS]: async () => listAgentSessions(),
-    [AGENT_IPC_CHANNELS.CREATE_SESSION]: async (params) => {
-      const input = validateInput(agentCreateSessionInputSchema, params, AGENT_IPC_CHANNELS.CREATE_SESSION);
-      return createAgentSession(
+  const handlers: Record<string, RpcHandler> = {
+    [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),
+    [AGENT_IPC_CHANNELS.CREATE_THREAD]: async (params) => {
+      const input = validateInput(agentCreateThreadInputSchema, params, AGENT_IPC_CHANNELS.CREATE_THREAD);
+      return createAgentThread(
         input.title,
         input.channelId,
         input.workspaceId,
-        input.parentSessionId,
+        input.parentThreadId,
         input.modelId
       );
     },
-    [AGENT_IPC_CHANNELS.GET_MESSAGES]: async (params) => {
-      const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.GET_MESSAGES);
-      return getAgentSessionMessages(input.sessionId);
+    [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES);
+      return getAgentThreadMessages(input.threadId);
     },
-    [AGENT_IPC_CHANNELS.GET_MESSAGE_VERSIONS]: async (params) => {
+    [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS]: async (params) => {
       const input = validateInput(
-        agentGetMessageVersionsInputSchema,
+        agentGetThreadMessageVersionsInputSchema,
         params,
-        AGENT_IPC_CHANNELS.GET_MESSAGE_VERSIONS
+        AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS
       );
       return {
-        sessionId: input.sessionId,
+        threadId: input.threadId,
         versionGroupId: input.versionGroupId,
-        messages: getAgentMessageVersions(input.sessionId, input.versionGroupId)
+        messages: getAgentMessageVersions(input.threadId, input.versionGroupId)
       };
     },
-    [AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES]: async (params) => {
-      const input = validateInput(agentRecentMessagesInputSchema, params, AGENT_IPC_CHANNELS.GET_RECENT_MESSAGES);
-      return getRecentAgentMessages(input.sessionId, input.limit);
+    [AGENT_IPC_CHANNELS.GET_RECENT_THREAD_MESSAGES]: async (params) => {
+      const input = validateInput(agentRecentThreadMessagesInputSchema, params, AGENT_IPC_CHANNELS.GET_RECENT_THREAD_MESSAGES);
+      return getRecentAgentThreadMessages(input.threadId, input.limit);
     },
     [AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS]: async (params) => {
       const input = validateInput(
@@ -181,8 +180,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       ) as AgentListSubagentRunsInput;
       const runRegistry = getSubagentRunRegistry();
       const limit = typeof input.limit === "number" ? input.limit : 50;
-      let runs = input.ownerSessionId
-        ? runRegistry.listControlledBySession(input.ownerSessionId)
+      let runs = input.ownerThreadId
+        ? runRegistry.listControlledByThread(input.ownerThreadId)
         : runRegistry.listAll(500).sort((a, b) => a.createdAt - b.createdAt);
       if (input.runId) {
         runs = runs.filter((run) => run.runId === input.runId);
@@ -197,65 +196,65 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         statusSummary: runRegistry.summarizeStatuses(sliced)
       };
     },
-    [AGENT_IPC_CHANNELS.UPDATE_TITLE]: async (params) => {
-      const input = validateInput(agentUpdateTitleInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_TITLE);
-      return updateAgentSessionMeta(input.sessionId, { title: input.title });
+    [AGENT_IPC_CHANNELS.UPDATE_THREAD_TITLE]: async (params) => {
+      const input = validateInput(agentUpdateThreadTitleInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_THREAD_TITLE);
+      return updateAgentThreadMeta(input.threadId, { title: input.title });
     },
-    [AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION]: async (params) => {
+    [AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION]: async (params) => {
       const input = validateInput(
-        agentUpdateModelSelectionInputSchema,
+        agentUpdateThreadModelSelectionInputSchema,
         params,
-        AGENT_IPC_CHANNELS.UPDATE_MODEL_SELECTION
+        AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION
       );
-      return updateAgentSessionMeta(input.sessionId, {
+      return updateAgentThreadMeta(input.threadId, {
         channelId: input.channelId,
         modelId: input.modelId
       });
     },
     [AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT]: async (params) => {
       const input = validateInput(agentMigrateChatInputSchema, params, AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT);
-      const migrated = migrateChatToAgentSession(input.conversationId, input.sessionId);
+      const migrated = migrateChatToAgentThread(input.conversationId, input.threadId);
       return { ok: true, migrated };
     },
-    [AGENT_IPC_CHANNELS.TOGGLE_PIN_SESSION]: async (params) => {
-      const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.TOGGLE_PIN_SESSION);
-      return toggleAgentSessionPin(input.sessionId);
+    [AGENT_IPC_CHANNELS.TOGGLE_PIN_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.TOGGLE_PIN_THREAD);
+      return toggleAgentThreadPin(input.threadId);
     },
-    [AGENT_IPC_CHANNELS.MOVE_SESSION]: async (params) => {
-      const input = validateInput(agentMoveSessionInputSchema, params, AGENT_IPC_CHANNELS.MOVE_SESSION);
-      if (isPiAgentSessionActive(input.sessionId)) {
+    [AGENT_IPC_CHANNELS.MOVE_THREAD]: async (params) => {
+      const input = validateInput(agentMoveThreadInputSchema, params, AGENT_IPC_CHANNELS.MOVE_THREAD);
+      if (isPiAgentSessionActive(input.threadId)) {
         await new Promise((resolve) => setTimeout(resolve, 500));
-        if (isPiAgentSessionActive(input.sessionId)) {
+        if (isPiAgentSessionActive(input.threadId)) {
           throw new Error("会话正在运行中，请停止后再移动。");
         }
       }
-      return moveAgentSessionToWorkspace(input.sessionId, input.workspaceId);
+      return moveAgentThreadToWorkspace(input.threadId, input.workspaceId);
     },
-    [AGENT_IPC_CHANNELS.DELETE_SESSION]: async (params) => {
-      const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.DELETE_SESSION);
-      deleteAgentSession(input.sessionId);
-      getAgentRuntimeStatusManager().clearSession(input.sessionId);
-      context.planStateTracker.clearSession(input.sessionId);
+    [AGENT_IPC_CHANNELS.DELETE_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.DELETE_THREAD);
+      deleteAgentThread(input.threadId);
+      getAgentRuntimeStatusManager().clearSession(input.threadId);
+      context.planStateTracker.clearSession(input.threadId);
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS]: async (params) => {
-      const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS);
-      return getAgentRuntimeStatusManager().get(input.sessionId) ?? {
-        sessionId: input.sessionId,
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS);
+      return getAgentRuntimeStatusManager().get(input.threadId) ?? {
+        threadId: input.threadId,
         phase: "idle",
         updatedAt: Date.now()
       };
     },
-    [AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM]: async (params) => {
-      const input = validateInput(agentTruncateInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_MESSAGES_FROM);
-      return truncateAgentMessagesFrom(input.sessionId, input.messageId);
+    [AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM]: async (params) => {
+      const input = validateInput(agentTruncateThreadInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM);
+      return truncateAgentMessagesFrom(input.threadId, input.messageId);
     },
-    [AGENT_IPC_CHANNELS.FORK_SESSION]: async (params) => {
-      const input = params as { sessionId: string; upToMessageId: string };
-      if (!input.sessionId || !input.upToMessageId) {
-        throw new Error("FORK_SESSION requires sessionId and upToMessageId");
+    [AGENT_IPC_CHANNELS.FORK_THREAD]: async (params) => {
+      const input = params as { threadId: string; upToMessageId: string };
+      if (!input.threadId || !input.upToMessageId) {
+        throw new Error("FORK_THREAD requires threadId and upToMessageId");
       }
-      return forkAgentSession(input.sessionId, input.upToMessageId);
+      return forkAgentThread(input.threadId, input.upToMessageId);
     },
     [AGENT_IPC_CHANNELS.LIST_WORKSPACES]: async () => listAgentWorkspaces(),
     [AGENT_IPC_CHANNELS.CREATE_WORKSPACE]: async (params) => {
@@ -315,37 +314,37 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       importGlobalMcpToWorkspace(params as ImportGlobalMcpToWorkspaceInput),
     [AGENT_IPC_CHANNELS.IMPORT_GLOBAL_SKILL_TO_WORKSPACE]: async (params) =>
       importGlobalSkillToWorkspace(params as ImportGlobalSkillToWorkspaceInput),
-    [AGENT_IPC_CHANNELS.GET_SESSION_PATH]: async (params) => {
-      const input = validateInput(sessionPathInputSchema, params, AGENT_IPC_CHANNELS.GET_SESSION_PATH);
-      return getAgentSessionPath(input.workspaceSlug, input.sessionId);
+    [AGENT_IPC_CHANNELS.GET_THREAD_PATH]: async (params) => {
+      const input = validateInput(threadPathInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_PATH);
+      return getAgentThreadPath(input.workspaceSlug, input.threadId);
     },
     [AGENT_IPC_CHANNELS.LIST_DIRECTORY]: async (params) => {
       const input = validateInput(listDirectoryInputSchema, params, AGENT_IPC_CHANNELS.LIST_DIRECTORY);
-      return listAgentDirectory(input.workspaceSlug, input.sessionId, input.path);
+      return listAgentDirectory(input.workspaceSlug, input.threadId, input.path);
     },
     [AGENT_IPC_CHANNELS.DELETE_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.DELETE_FILE);
-      return deleteAgentFile(input.workspaceSlug, input.sessionId, input.path);
+      return deleteAgentFile(input.workspaceSlug, input.threadId, input.path);
     },
     [AGENT_IPC_CHANNELS.OPEN_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.OPEN_FILE);
-      return openAgentPath(input.workspaceSlug, input.sessionId, input.path);
+      return openAgentPath(input.workspaceSlug, input.threadId, input.path);
     },
     [AGENT_IPC_CHANNELS.SHOW_IN_FOLDER]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.SHOW_IN_FOLDER);
-      return showAgentPathInFolder(input.workspaceSlug, input.sessionId, input.path);
+      return showAgentPathInFolder(input.workspaceSlug, input.threadId, input.path);
     },
     [AGENT_IPC_CHANNELS.PREVIEW_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.PREVIEW_FILE);
-      return previewAgentPath(input.workspaceSlug, input.sessionId, input.path);
+      return previewAgentPath(input.workspaceSlug, input.threadId, input.path);
     },
     [AGENT_IPC_CHANNELS.RENAME_FILE]: async (params) => {
       const input = validateInput(renameFileInputSchema, params, AGENT_IPC_CHANNELS.RENAME_FILE);
-      return renameAgentFile(input.workspaceSlug, input.sessionId, input.path, input.newName);
+      return renameAgentFile(input.workspaceSlug, input.threadId, input.path, input.newName);
     },
     [AGENT_IPC_CHANNELS.MOVE_FILE]: async (params) => {
       const input = validateInput(moveFileInputSchema, params, AGENT_IPC_CHANNELS.MOVE_FILE);
-      return moveAgentFile(input.workspaceSlug, input.sessionId, input.path, input.targetDir);
+      return moveAgentFile(input.workspaceSlug, input.threadId, input.path, input.targetDir);
     },
     [AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY]: async (params) => {
       const input = validateInput(attachedPathInputSchema, params, AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY);
@@ -379,7 +378,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       return searchAgentWorkspaceFiles(
         input.workspaceSlug,
-        input.sessionId,
+        input.threadId,
         input.query,
         input.limit ?? 20,
         input.rootPath
@@ -387,43 +386,43 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.LIST_PLANS]: async (params) => {
       const input = validateInput(plansListInputSchema, params, AGENT_IPC_CHANNELS.LIST_PLANS);
-      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugBySessionId(input.sessionId);
+      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
       if (!resolvedWorkspaceSlug) {
         throw new Error("未找到会话对应的 workspace");
       }
-      return listAgentPlans(resolvedWorkspaceSlug, input.sessionId);
+      return listAgentPlans(resolvedWorkspaceSlug, input.threadId);
     },
     [AGENT_IPC_CHANNELS.READ_PLAN]: async (params) => {
       const input = validateInput(plansReadDeleteInputSchema, params, AGENT_IPC_CHANNELS.READ_PLAN);
-      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugBySessionId(input.sessionId);
+      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
       if (!resolvedWorkspaceSlug) {
         throw new Error("未找到会话对应的 workspace");
       }
-      return readAgentPlan(resolvedWorkspaceSlug, input.sessionId, input.planPath);
+      return readAgentPlan(resolvedWorkspaceSlug, input.threadId, input.planPath);
     },
     [AGENT_IPC_CHANNELS.DELETE_PLAN]: async (params) => {
       const input = validateInput(plansReadDeleteInputSchema, params, AGENT_IPC_CHANNELS.DELETE_PLAN);
-      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugBySessionId(input.sessionId);
+      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
       if (!resolvedWorkspaceSlug) {
         throw new Error("未找到会话对应的 workspace");
       }
-      return deleteAgentPlan(resolvedWorkspaceSlug, input.sessionId, input.planPath);
+      return deleteAgentPlan(resolvedWorkspaceSlug, input.threadId, input.planPath);
     },
-    [AGENT_IPC_CHANNELS.SAVE_FILES_TO_SESSION]: async (params) =>
-      saveFilesToAgentSession(
-        validateInput(saveFilesToSessionInputSchema, params, AGENT_IPC_CHANNELS.SAVE_FILES_TO_SESSION)
+    [AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]: async (params) =>
+      saveFilesToAgentThread(
+        validateInput(saveFilesToThreadInputSchema, params, AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD)
       ),
-    [AGENT_IPC_CHANNELS.COPY_FOLDER_TO_SESSION]: async (params) =>
+    [AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD]: async (params) =>
       copyFolderToSession(
-        validateInput(copyFolderToSessionInputSchema, params, AGENT_IPC_CHANNELS.COPY_FOLDER_TO_SESSION)
+        validateInput(copyFolderToThreadInputSchema, params, AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD)
       ),
     [AGENT_IPC_CHANNELS.GENERATE_TITLE]: async (params) => generateAgentTitle(params as AgentGenerateTitleInput),
-    [AGENT_IPC_CHANNELS.STOP_AGENT]: async (params) => {
-      const input = validateInput(agentSessionIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_AGENT);
-      stopAgent(input.sessionId);
-      if (context.planStateTracker.getPhase(input.sessionId) === "executing") {
-        const steps = context.planStateTracker.markCurrentStepFailed(input.sessionId, "用户已停止当前执行");
-        context.notifyPlanStateChange(input.sessionId, "review", steps ? { steps } : undefined);
+    [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_THREAD);
+      stopAgent(input.threadId);
+      if (context.planStateTracker.getPhase(input.threadId) === "executing") {
+        const steps = context.planStateTracker.markCurrentStepFailed(input.threadId, "用户已停止当前执行");
+        context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
       }
       return { ok: true };
     },
@@ -434,7 +433,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION
       );
       return submitAskUserQuestionAnswers({
-        sessionId: input.sessionId,
+        threadId: input.threadId,
         toolUseId: input.toolUseId,
         canceled: input.canceled === true,
         answers: input.answers
@@ -447,7 +446,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION
       );
       return submitAgentToolPermission({
-        sessionId: input.sessionId,
+        threadId: input.threadId,
         requestId: input.requestId,
         decision: input.decision
       });
@@ -462,50 +461,41 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       writeBootstrapFile(input.workspaceSlug, input.fileType as BootstrapFileType, input.content);
       return { ok: true };
     },
-    [AGENT_IPC_CHANNELS.SEND_MESSAGE]: async (params) => {
-      const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_MESSAGE);
+    [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
+      const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
       if (context.planStateTracker.isLikelyExecutionRequest(input)) {
-        const steps = context.planStateTracker.syncExecutionFromUserMessage(input.sessionId, input.userMessage);
-        context.notifyPlanStateChange(input.sessionId, "executing", steps ? { steps } : undefined);
+        const steps = context.planStateTracker.syncExecutionFromUserMessage(input.threadId, input.userMessage);
+        context.notifyPlanStateChange(input.threadId, "executing", steps ? { steps } : undefined);
       }
-      const bus = getSessionEventBus();
-      const unsubscribe = bus.subscribe(input.sessionId, (event) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
-          sessionId: input.sessionId,
-          event
-        });
-      });
       void sendAgentMessage(input, {
-        onEvent: (event) => {
+        onSdkMessage: (message) => {
           context.writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
-            sessionId: input.sessionId,
-            event
+            threadId: input.threadId,
+            message
           });
         },
         onComplete: () => {
-          unsubscribe();
           context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
-            sessionId: input.sessionId
+            threadId: input.threadId
           });
-          if (context.planStateTracker.getPhase(input.sessionId) === "executing") {
-            const steps = context.planStateTracker.markCurrentStepCompleted(input.sessionId);
-            context.notifyPlanStateChange(input.sessionId, "executed", steps ? { steps } : undefined);
+          if (context.planStateTracker.getPhase(input.threadId) === "executing") {
+            const steps = context.planStateTracker.markCurrentStepCompleted(input.threadId);
+            context.notifyPlanStateChange(input.threadId, "executed", steps ? { steps } : undefined);
           }
         },
         onError: (error) => {
-          unsubscribe();
           context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
-            sessionId: input.sessionId,
+            threadId: input.threadId,
             error
           });
-          if (context.planStateTracker.getPhase(input.sessionId) === "executing") {
-            const steps = context.planStateTracker.markCurrentStepFailed(input.sessionId, error);
-            context.notifyPlanStateChange(input.sessionId, "review", steps ? { steps } : undefined);
+          if (context.planStateTracker.getPhase(input.threadId) === "executing") {
+            const steps = context.planStateTracker.markCurrentStepFailed(input.threadId, error);
+            context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
           }
         },
         onTitleUpdated: (title) =>
           context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-            sessionId: input.sessionId,
+            threadId: input.threadId,
             title
           }),
         onAskUserQuestion: (request) =>
@@ -514,15 +504,15 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request)
       }).catch((error) => {
         context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
-          sessionId: input.sessionId,
+          threadId: input.threadId,
           error: error instanceof Error ? error.message : String(error)
         });
-        if (context.planStateTracker.getPhase(input.sessionId) === "executing") {
+        if (context.planStateTracker.getPhase(input.threadId) === "executing") {
           const steps = context.planStateTracker.markCurrentStepFailed(
-            input.sessionId,
+            input.threadId,
             error instanceof Error ? error.message : String(error)
           );
-          context.notifyPlanStateChange(input.sessionId, "review", steps ? { steps } : undefined);
+          context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
         }
       });
       return { ok: true };
@@ -532,14 +522,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const level = asString(payload.level) || "info";
       const contextName = asString(payload.context) || "web";
       const message = asString(payload.message);
-      const sessionId = asString(payload.sessionId);
+      const threadId = asString(payload.threadId);
       const data = payload.data as Record<string, unknown> | undefined;
 
       if (!message) {
         return { ok: false };
       }
 
-      const log = createLogger(contextName, sessionId);
+      const log = createLogger(contextName, threadId);
       const logMethod = level as "trace" | "debug" | "info" | "warn" | "error" | "fatal";
       if (typeof log[logMethod] === "function") {
         log[logMethod](message, data);
@@ -554,4 +544,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return getAgentWorkspacePath(input.workspaceSlug);
     }
   };
+
+  return handlers;
 }
+

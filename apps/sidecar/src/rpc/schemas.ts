@@ -161,13 +161,13 @@ export const chatToolCreateCustomInputSchema = z.object({
 });
 
 export const agentSendInputSchema = z.object({
-  sessionId: z.string().min(1),
+  threadId: z.string().min(1),
   userMessage: z.string(),
   channelId: z.string().optional(),
   modelId: z.string().optional(),
   workspaceId: z.string().optional(),
   chatType: z.enum(["direct", "group", "channel"]).optional(),
-  sessionType: z.enum(["main", "subagent", "group", "channel"]).optional(),
+  threadType: z.enum(["main", "subagent", "group", "channel"]).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).optional(),
   thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
@@ -207,56 +207,56 @@ export const memorySaveInputSchema = z.object({
   date: z.string().optional()
 });
 
-export const agentCreateSessionInputSchema = z.object({
+export const agentCreateThreadInputSchema = z.object({
   title: z.string().optional(),
   channelId: z.string().optional(),
   modelId: z.string().optional(),
   workspaceId: z.string().optional(),
-  parentSessionId: z.string().optional()
+  parentThreadId: z.string().optional()
 });
 
-export const agentSessionIdInputSchema = z.object({
-  sessionId: idSchema
+export const agentThreadIdInputSchema = z.object({
+  threadId: idSchema
 });
 
-export const agentRecentMessagesInputSchema = z.object({
-  sessionId: idSchema,
+export const agentRecentThreadMessagesInputSchema = z.object({
+  threadId: idSchema,
   limit: z.number().int().min(1).max(2000)
 });
 
-export const agentGetMessageVersionsInputSchema = z.object({
-  sessionId: idSchema,
+export const agentGetThreadMessageVersionsInputSchema = z.object({
+  threadId: idSchema,
   versionGroupId: idSchema
 });
 
-export const agentUpdateTitleInputSchema = z.object({
-  sessionId: idSchema,
+export const agentUpdateThreadTitleInputSchema = z.object({
+  threadId: idSchema,
   title: z.string().min(1)
 });
 
-export const agentUpdateModelSelectionInputSchema = z.object({
-  sessionId: idSchema,
+export const agentUpdateThreadModelSelectionInputSchema = z.object({
+  threadId: idSchema,
   channelId: z.string().optional(),
   modelId: z.string().optional()
 });
 
 export const agentMigrateChatInputSchema = z.object({
   conversationId: idSchema,
-  sessionId: idSchema
+  threadId: idSchema
 });
 
-export const agentMoveSessionInputSchema = z.object({
-  sessionId: idSchema,
+export const agentMoveThreadInputSchema = z.object({
+  threadId: idSchema,
   workspaceId: idSchema
 });
 
-export const agentTruncateInputSchema = z.object({
-  sessionId: idSchema,
+export const agentTruncateThreadInputSchema = z.object({
+  threadId: idSchema,
   messageId: idSchema
 });
 
 export const agentListSubagentRunsInputSchema = z.object({
-  ownerSessionId: z.string().min(1).optional(),
+  ownerThreadId: z.string().min(1).optional(),
   runId: z.string().min(1).optional(),
   status: z.enum(["accepted", "running", "completed", "errored", "aborted", "timed_out", "canceled"]).optional(),
   limit: z.number().int().min(1).max(500).optional()
@@ -305,33 +305,33 @@ export const marketplaceDetailInputSchema = z.object({
   marketplaceId: idSchema
 });
 
-export const sessionPathInputSchema = z.object({
+export const threadPathInputSchema = z.object({
   workspaceSlug: idSchema,
-  sessionId: idSchema
+  threadId: idSchema
 });
 
 export const listDirectoryInputSchema = z.object({
   workspaceSlug: idSchema,
-  sessionId: idSchema,
+  threadId: idSchema,
   path: z.string().optional()
 });
 
 export const pathFileInputSchema = z.object({
   workspaceSlug: idSchema,
-  sessionId: idSchema,
+  threadId: idSchema,
   path: idSchema
 });
 
 export const renameFileInputSchema = z.object({
   workspaceSlug: idSchema,
-  sessionId: idSchema,
+  threadId: idSchema,
   path: idSchema,
   newName: z.string().min(1)
 });
 
 export const moveFileInputSchema = z.object({
   workspaceSlug: idSchema,
-  sessionId: idSchema,
+  threadId: idSchema,
   path: idSchema,
   targetDir: idSchema
 });
@@ -352,7 +352,7 @@ export const moveAttachedFileInputSchema = z.object({
 
 export const searchWorkspaceFilesInputSchema = z.object({
   workspaceSlug: idSchema,
-  sessionId: idSchema,
+  threadId: idSchema,
   query: z.string().default(""),
   limit: z.number().int().min(1).max(200).optional(),
   rootPath: z.string().optional()
@@ -360,18 +360,18 @@ export const searchWorkspaceFilesInputSchema = z.object({
 
 export const plansReadDeleteInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
-  sessionId: idSchema,
+  threadId: idSchema,
   planPath: idSchema
 });
 
 export const plansListInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
-  sessionId: idSchema
+  threadId: idSchema
 });
 
-export const saveFilesToSessionInputSchema = z.object({
+export const saveFilesToThreadInputSchema = z.object({
   workspaceSlug: idSchema,
-  sessionId: idSchema,
+  threadId: idSchema,
   files: z.array(z.object({
     filename: z.string().min(1),
     data: z.string().optional(),
@@ -381,21 +381,21 @@ export const saveFilesToSessionInputSchema = z.object({
   }))
 });
 
-export const copyFolderToSessionInputSchema = z.object({
+export const copyFolderToThreadInputSchema = z.object({
   sourcePath: idSchema,
   workspaceSlug: idSchema,
-  sessionId: idSchema
+  threadId: idSchema
 });
 
 export const submitAskUserQuestionInputSchema = z.object({
-  sessionId: idSchema,
+  threadId: idSchema,
   toolUseId: idSchema,
   canceled: z.boolean().optional(),
   answers: z.record(z.string(), z.string()).optional()
 });
 
 export const submitToolPermissionInputSchema = z.object({
-  sessionId: idSchema,
+  threadId: idSchema,
   requestId: idSchema,
   decision: z.enum(["allow_once", "allow_always", "deny"])
 });

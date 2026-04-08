@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentSessionMeta, Channel } from "@lume/shared";
+import type { AgentThreadMeta, Channel } from "@lume/shared";
 import { resolvePreferredAgentSelection } from "./agent-session-lifecycle";
 
 describe("agent-session-lifecycle", () => {
@@ -31,7 +31,7 @@ describe("agent-session-lifecycle", () => {
       }
     ] as Channel[];
 
-    const session: AgentSessionMeta = {
+    const thread: AgentThreadMeta = {
       id: "session-1",
       title: "Session",
       channelId: "channel-b",
@@ -42,7 +42,7 @@ describe("agent-session-lifecycle", () => {
 
     expect(resolvePreferredAgentSelection({
       channels,
-      session,
+      thread,
       currentChannelId: "channel-a",
       currentModelId: "a-model"
     })).toEqual({
@@ -69,7 +69,7 @@ describe("agent-session-lifecycle", () => {
       }
     ] as Channel[];
 
-    const session: AgentSessionMeta = {
+    const thread: AgentThreadMeta = {
       id: "session-1",
       title: "Session",
       channelId: "channel-a",
@@ -80,7 +80,7 @@ describe("agent-session-lifecycle", () => {
 
     expect(resolvePreferredAgentSelection({
       channels,
-      session,
+      thread,
       currentChannelId: "channel-a",
       currentModelId: "a-current"
     })).toEqual({
@@ -90,7 +90,7 @@ describe("agent-session-lifecycle", () => {
 
     expect(resolvePreferredAgentSelection({
       channels,
-      session,
+      thread,
       currentChannelId: "channel-a",
       currentModelId: "missing"
     })).toEqual({

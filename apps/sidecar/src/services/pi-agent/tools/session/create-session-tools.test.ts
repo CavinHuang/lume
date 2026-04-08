@@ -13,7 +13,7 @@ import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
 } from "../../subagents/subagent-run-registry";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { ToolDefinition } from "@lume/agent-sdk";
 
 mock.module("undici", () => ({
   EnvHttpProxyAgent: class {},
@@ -23,7 +23,7 @@ mock.module("undici", () => ({
 mock.module("../../runtime-core/attempt", () => ({
   runPiAgent: async (
     params: { input: { userMessage?: string } },
-    emit: { onEvent: (event: unknown) => void; onComplete: () => void; onError?: (error: string) => void }
+    emit: { onSdkMessage: (message: unknown) => void; onComplete: () => void; onError?: (error: string) => void }
   ) => {
     const message = typeof params.input?.userMessage === "string"
       ? params.input.userMessage
@@ -35,10 +35,12 @@ mock.module("../../runtime-core/attempt", () => ({
       emit.onError?.("mock runtime error");
       return { status: "errored" as const };
     }
-    emit.onEvent({
-      type: "text_complete",
-      text: "mock output",
-      isIntermediate: false
+    emit.onSdkMessage({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "mock output" }]
+      }
     });
     emit.onComplete();
     return { status: "completed" as const };
@@ -52,12 +54,12 @@ afterEach(() => {
 
 async function loadCreateSessionTools() {
   const mod = await import("./create-session-tools");
-  return mod.createSessionTools;
+  return mod.createSdkSessionTools;
 }
 
-const loadCreateOpenClawAlignedTools = loadCreateSessionTools;
+const loadCreateSdkSessionTools = loadCreateSessionTools;
 
-function resolveTool(tools: AgentTool[], name: string): AgentTool {
+function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
   const tool = tools.find((item) => item.name === name);
   if (!tool) {
     throw new Error(`tool not found: ${name}`);
@@ -65,11 +67,16 @@ function resolveTool(tools: AgentTool[], name: string): AgentTool {
   return tool;
 }
 
+async function callTool(tool: ToolDefinition, input: Record<string, unknown>) {
+  const result = await tool.call(input, { cwd: process.cwd(), abortSignal: new AbortController().signal });
+  return JSON.parse(String(result.content)) as Record<string, unknown>;
+}
+
 function appendTranscriptTextMessages(
-  sessionId: string,
+  threadId: string,
   messages: Array<{ role: "user" | "assistant"; content: string; model?: string; timestamp?: number }>
 ): void {
-  const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), sessionId);
+  const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), threadId);
   for (const message of messages) {
     if (message.role === "user") {
       sessionManager.appendMessage({
@@ -108,13 +115,13 @@ describe("create-session-tools", () => {
     try {
       const current = createAgentSession("当前会话", "channel-current");
       const target = createAgentSession("目标 Agent", "channel-target");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const agentsListTool = resolveTool(tools as unknown as AgentTool[], "agents_list");
-      const result = await agentsListTool.execute("tool-call-agents-list", {});
-      const details = result.details as {
+      const agentsListTool = resolveTool(tools, "agents_list");
+      const result = await callTool(agentsListTool, {});
+      const details = result as {
         agents?: Array<{ id?: string }>;
       };
       const ids = (details.agents ?? []).map((item) => item.id);
@@ -142,17 +149,17 @@ describe("create-session-tools", () => {
         model: "model-target"
       }]);
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
-      const result = await spawnTool.execute("tool-call-spawn-route", {
+      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const result = await callTool(spawnTool, {
         task: "do routed work",
         agentId: target.id,
         runTimeoutSeconds: 3
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         runId?: string;
         model?: string;
@@ -188,15 +195,15 @@ describe("create-session-tools", () => {
     process.env.ENABLE_SUBAGENT_TEAM_V2 = "false";
     try {
       const current = createAgentSession("当前会话", "channel-current");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
-      const result = await spawnTool.execute("tool-call-spawn-disabled", {
+      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const result = await callTool(spawnTool, {
         task: "should be blocked"
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         error?: string;
       };
@@ -225,20 +232,20 @@ describe("create-session-tools", () => {
       const registry = getSubagentRunRegistry();
       const run = registry.create({
         runId: randomUUID(),
-        parentSessionId: current.id,
-        childSessionId: child.id,
+        parentThreadId: current.id,
+        childThreadId: child.id,
         task: "list me",
         cleanup: "keep",
         status: "running"
       });
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const listTool = resolveTool(tools as unknown as AgentTool[], "subagents_list");
-      const result = await listTool.execute("tool-call-subagents-list", {});
-      const details = result.details as {
+      const listTool = resolveTool(tools, "subagents_list");
+      const result = await callTool(listTool, {});
+      const details = result as {
         status?: string;
         count?: number;
         runs?: Array<{ runId?: string }>;
@@ -265,22 +272,22 @@ describe("create-session-tools", () => {
       const runId = randomUUID();
       registry.create({
         runId,
-        parentSessionId: current.id,
-        childSessionId: child.id,
+        parentThreadId: current.id,
+        childThreadId: child.id,
         task: "kill me",
         cleanup: "keep",
         status: "running"
       });
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const killTool = resolveTool(tools as unknown as AgentTool[], "subagents_kill");
-      const result = await killTool.execute("tool-call-subagents-kill", {
+      const killTool = resolveTool(tools, "subagents_kill");
+      const result = await callTool(killTool, {
         runId
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         killed?: boolean;
       };
@@ -307,8 +314,8 @@ describe("create-session-tools", () => {
       const runId = randomUUID();
       registry.create({
         runId,
-        parentSessionId: current.id,
-        childSessionId: child.id,
+        parentThreadId: current.id,
+        childThreadId: child.id,
         task: "send me",
         cleanup: "keep",
         status: "running",
@@ -316,17 +323,17 @@ describe("create-session-tools", () => {
         modelId: "model-send"
       });
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const sendTool = resolveTool(tools as unknown as AgentTool[], "subagents_send");
-      const result = await sendTool.execute("tool-call-subagents-send", {
+      const sendTool = resolveTool(tools, "subagents_send");
+      const result = await callTool(sendTool, {
         runId,
         message: "follow up",
         timeoutSeconds: 3
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         runId?: string;
       };
@@ -352,8 +359,8 @@ describe("create-session-tools", () => {
       const oldRunId = randomUUID();
       registry.create({
         runId: oldRunId,
-        parentSessionId: current.id,
-        childSessionId: child.id,
+        parentThreadId: current.id,
+        childThreadId: child.id,
         task: "old task",
         cleanup: "keep",
         status: "running",
@@ -361,17 +368,17 @@ describe("create-session-tools", () => {
         modelId: "model-steer"
       });
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const steerTool = resolveTool(tools as unknown as AgentTool[], "subagents_steer");
-      const result = await steerTool.execute("tool-call-subagents-steer", {
+      const steerTool = resolveTool(tools, "subagents_steer");
+      const result = await callTool(steerTool, {
         runId: oldRunId,
         message: "new direction",
         timeoutSeconds: 0
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         runId?: string;
         replacedRunId?: string;
@@ -404,22 +411,22 @@ describe("create-session-tools", () => {
       const child = createAgentSession("子会话", "channel-current");
       getSubagentRunRegistry().create({
         runId: randomUUID(),
-        parentSessionId: current.id,
-        childSessionId: child.id,
+        parentThreadId: current.id,
+        childThreadId: child.id,
         task: "already running",
         cleanup: "keep",
         status: "running"
       });
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
-      const result = await spawnTool.execute("tool-call-spawn-fanout-limit", {
+      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const result = await callTool(spawnTool, {
         task: "another child"
       });
-      const details = result.details as { status?: string; error?: string };
+      const details = result as { status?: string; error?: string };
       expect(details.status).toBe("forbidden");
       expect(details.error).toContain("扇出超限");
     } finally {
@@ -446,24 +453,24 @@ describe("create-session-tools", () => {
       const current = createAgentSession("当前会话", "channel-current");
       getSubagentRunRegistry().create({
         runId: randomUUID(),
-        parentSessionId: root.id,
-        rootSessionId: root.id,
+        parentThreadId: root.id,
+        rootThreadId: root.id,
         depth: 1,
-        childSessionId: current.id,
+        childThreadId: current.id,
         task: "depth parent",
         cleanup: "keep",
         status: "running"
       });
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
-      const result = await spawnTool.execute("tool-call-spawn-depth-limit", {
+      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const result = await callTool(spawnTool, {
         task: "too deep"
       });
-      const details = result.details as { status?: string; error?: string };
+      const details = result as { status?: string; error?: string };
       expect(details.status).toBe("forbidden");
       expect(details.error).toContain("深度超限");
     } finally {
@@ -486,19 +493,19 @@ describe("create-session-tools", () => {
     try {
       const parent = createAgentSession("父会话", "channel-current");
       const inbox = createAgentSession("收件会话", "channel-current");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: parent.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: parent.id
       });
-      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
-      const result = await spawnTool.execute("tool-call-spawn-delivery", {
+      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const result = await callTool(spawnTool, {
         task: "async task",
         runTimeoutSeconds: 0,
         model: "model-delivery",
         deliverySessionKey: inbox.id,
         thread: true
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         runId?: string;
         deliverySessionKey?: string;
@@ -513,7 +520,7 @@ describe("create-session-tools", () => {
 
       const run = getSubagentRunRegistry().get(runId);
       expect(run?.announceStatus).toBe("delivered");
-      expect(run?.deliverySessionId).toBe(inbox.id);
+      expect(run?.deliveryThreadId).toBe(inbox.id);
 
       const inboxMessages = getAgentSessionMessages(inbox.id);
       const parentMessages = getAgentSessionMessages(parent.id);
@@ -532,13 +539,13 @@ describe("create-session-tools", () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: "agent:main:subagent:test"
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: "agent:main:subagent:test"
       });
-      const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
-      const result = await spawnTool.execute("tool-call-1", { task: "do work" });
-      const details = result.details as { status?: string; error?: string };
+      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const result = await callTool(spawnTool, { task: "do work" });
+      const details = result as { status?: string; error?: string };
       expect(details.status).toBe("error");
       expect(details.error).toContain("not allowed from sub-agent sessions");
     } finally {
@@ -554,30 +561,30 @@ describe("create-session-tools", () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: "agent:main:subagent:test"
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: "agent:main:subagent:test"
       });
-      const sendTool = resolveTool(tools as unknown as AgentTool[], "sessions_send");
-      const sendResult = await sendTool.execute("tool-call-send", {
+      const sendTool = resolveTool(tools, "sessions_send");
+      const sendResult = await callTool(sendTool, {
         sessionKey: "main",
         message: "hello"
       });
-      const sendDetails = sendResult.details as { status?: string; error?: string };
+      const sendDetails = sendResult as { status?: string; error?: string };
       expect(sendDetails.status).toBe("error");
       expect(sendDetails.error).toContain("sessions_send is not allowed from sub-agent sessions");
 
-      const agentsListTool = resolveTool(tools as unknown as AgentTool[], "agents_list");
-      const listResult = await agentsListTool.execute("tool-call-list", {});
-      const listDetails = listResult.details as { status?: string; error?: string };
+      const agentsListTool = resolveTool(tools, "agents_list");
+      const listResult = await callTool(agentsListTool, {});
+      const listDetails = listResult as { status?: string; error?: string };
       expect(listDetails.status).toBe("error");
       expect(listDetails.error).toContain("agents_list is not allowed from sub-agent sessions");
 
-      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
-      const deleteResult = await deleteTool.execute("tool-call-delete", {
+      const deleteTool = resolveTool(tools, "sessions_delete");
+      const deleteResult = await callTool(deleteTool, {
         sessionKey: "main"
       });
-      const deleteDetails = deleteResult.details as { status?: string; error?: string };
+      const deleteDetails = deleteResult as { status?: string; error?: string };
       expect(deleteDetails.status).toBe("error");
       expect(deleteDetails.error).toContain("sessions_delete is not allowed from sub-agent sessions");
     } finally {
@@ -594,13 +601,13 @@ describe("create-session-tools", () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
       const current = createAgentSession("当前会话");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const historyTool = resolveTool(tools as unknown as AgentTool[], "sessions_history");
-      const result = await historyTool.execute("tool-call-2", {});
-      const details = result.details as { status?: string; error?: string };
+      const historyTool = resolveTool(tools, "sessions_history");
+      const result = await callTool(historyTool, {});
+      const details = result as { status?: string; error?: string };
       expect(details.status).toBe("error");
       expect(details.error).toContain("Either sessionKey or label is required");
     } finally {
@@ -632,16 +639,16 @@ describe("create-session-tools", () => {
         }
       ]);
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const historyTool = resolveTool(tools as unknown as AgentTool[], "sessions_history");
-      const result = await historyTool.execute("tool-call-3", {
+      const historyTool = resolveTool(tools, "sessions_history");
+      const result = await callTool(historyTool, {
         label: "目标会话",
         limit: 10
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         sessionKey?: string;
         count?: number;
@@ -673,15 +680,15 @@ describe("create-session-tools", () => {
         timestamp: Date.now()
       }]);
 
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
-      const result = await deleteTool.execute("tool-call-4", {
+      const deleteTool = resolveTool(tools, "sessions_delete");
+      const result = await callTool(deleteTool, {
         label: "目标会话"
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         deleted?: boolean;
         sessionKey?: string;
@@ -704,15 +711,15 @@ describe("create-session-tools", () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
       const current = createAgentSession("当前会话");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
-      const result = await deleteTool.execute("tool-call-5", {
+      const deleteTool = resolveTool(tools, "sessions_delete");
+      const result = await callTool(deleteTool, {
         sessionKey: current.id
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         error?: string;
       };
@@ -735,15 +742,15 @@ describe("create-session-tools", () => {
       const current = createAgentSession("当前会话");
       const targetA = createAgentSession("目标会话-A");
       const targetB = createAgentSession("目标会话-B");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
-      const result = await deleteTool.execute("tool-call-6", {
+      const deleteTool = resolveTool(tools, "sessions_delete");
+      const result = await callTool(deleteTool, {
         sessionKeys: [targetA.id, targetB.id]
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         deleted?: boolean;
         deletedCount?: number;
@@ -771,15 +778,15 @@ describe("create-session-tools", () => {
       const current = createAgentSession("当前会话");
       const targetA = createAgentSession("同名会话");
       const targetB = createAgentSession("同名会话");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
-      const result = await deleteTool.execute("tool-call-7", {
+      const deleteTool = resolveTool(tools, "sessions_delete");
+      const result = await callTool(deleteTool, {
         label: "同名会话"
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         deleted?: boolean;
         deletedCount?: number;
@@ -807,15 +814,15 @@ describe("create-session-tools", () => {
     try {
       const current = createAgentSession("当前会话");
       const target = createAgentSession("目标会话");
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({
-        sessionId: current.id
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({
+        threadId: current.id
       });
-      const deleteTool = resolveTool(tools as unknown as AgentTool[], "sessions_delete");
-      const result = await deleteTool.execute("tool-call-8", {
+      const deleteTool = resolveTool(tools, "sessions_delete");
+      const result = await callTool(deleteTool, {
         sessionKeys: [target.id, current.id]
       });
-      const details = result.details as {
+      const details = result as {
         status?: string;
         error?: string;
       };
@@ -832,28 +839,28 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("web_search 应解析 duckduckgo HTML 结果", async () => {
+  test("web_search 应通过 SDK 工具解析 duckduckgo HTML 结果", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     const originalFetch = globalThis.fetch;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     globalThis.fetch = mock(async () =>
       new Response(
         `
-        <a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpath%3Fa%3D1&amp;rut=abc">Example Title</a>
-        <a class="result__snippet">This is a description</a>
-      `,
+          <a rel="nofollow" class="result__a" href="https://example.com/path?a=1">Example Title</a>
+          <a class="result__snippet">This is a description</a>
+        `,
         { status: 200, headers: { "content-type": "text/html" } }
       )
     ) as unknown as typeof fetch;
 
     try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({ sessionId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools as unknown as AgentTool[], "web_search");
-      const result = await webSearchTool.execute("tool-call-web", {
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({ threadId: "agent:main:test" });
+      const webSearchTool = resolveTool(tools, "web_search");
+      const result = await callTool(webSearchTool, {
         query: "example"
       });
-      const details = result.details as {
+      const details = result as {
         provider?: string;
         count?: number;
         results?: Array<{ title?: string; url?: string; snippet?: string }>;
@@ -873,27 +880,21 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("web_search brave 缺少 key 时应返回明确错误", async () => {
+  test("web_search 非 duckduckgo provider 应返回兼容层错误", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
-    const previousBraveKey = process.env.BRAVE_SEARCH_API_KEY;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
-    delete process.env.BRAVE_SEARCH_API_KEY;
     try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({ sessionId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools as unknown as AgentTool[], "web_search");
-      const result = await webSearchTool.execute("tool-call-web-brave", {
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({ threadId: "agent:main:test" });
+      const webSearchTool = resolveTool(tools, "web_search");
+      const result = await callTool(webSearchTool, {
         query: "example",
         provider: "brave"
       });
-      const details = result.details as { error?: string };
-      expect(details.error).toContain("braveApiKey");
+      const details = result as { error?: string; provider?: string };
+      expect(details.provider).toBe("brave");
+      expect(details.error).toContain("仅支持 duckduckgo");
     } finally {
-      if (previousBraveKey === undefined) {
-        delete process.env.BRAVE_SEARCH_API_KEY;
-      } else {
-        process.env.BRAVE_SEARCH_API_KEY = previousBraveKey;
-      }
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
       } else {
@@ -902,200 +903,26 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("web_search tavily 缺少 key 时应返回明确错误", async () => {
+  test("web_search SDK 错误应返回结构化 details", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
-    const previousTavilyKey = process.env.TAVILY_API_KEY;
-    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
-    delete process.env.TAVILY_API_KEY;
-    try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({ sessionId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools as unknown as AgentTool[], "web_search");
-      const result = await webSearchTool.execute("tool-call-web-tavily", {
-        query: "example",
-        provider: "tavily"
-      });
-      const details = result.details as { error?: string };
-      expect(details.error).toContain("tavilyApiKey");
-    } finally {
-      if (previousTavilyKey === undefined) {
-        delete process.env.TAVILY_API_KEY;
-      } else {
-        process.env.TAVILY_API_KEY = previousTavilyKey;
-      }
-      if (previousConfigDir === undefined) {
-        delete process.env.LUME_CONFIG_DIR;
-      } else {
-        process.env.LUME_CONFIG_DIR = previousConfigDir;
-      }
-    }
-  });
-
-  test("web_search duckduckgo 超时应返回结构化错误码", async () => {
-    const previousConfigDir = process.env.LUME_CONFIG_DIR;
-    const previousBraveKey = process.env.BRAVE_SEARCH_API_KEY;
-    const previousTavilyKey = process.env.TAVILY_API_KEY;
     const originalFetch = globalThis.fetch;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
-    delete process.env.BRAVE_SEARCH_API_KEY;
-    delete process.env.TAVILY_API_KEY;
     globalThis.fetch = mock(async () => {
       throw new DOMException("The operation was aborted.", "AbortError");
     }) as unknown as typeof fetch;
-
     try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({ sessionId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools as unknown as AgentTool[], "web_search");
-      const result = await webSearchTool.execute("tool-call-web-timeout", {
+      const createSdkSessionTools = await loadCreateSdkSessionTools();
+      const tools = createSdkSessionTools({ threadId: "agent:main:test" });
+      const webSearchTool = resolveTool(tools, "web_search");
+      const result = await callTool(webSearchTool, {
         query: "timeout case"
       });
-      const details = result.details as { code?: string; error?: string; provider?: string };
-      expect(details.code).toBe("WEB_SEARCH_TIMEOUT");
+      const details = result as { error?: string; provider?: string; results?: unknown[] };
       expect(details.provider).toBe("duckduckgo");
-      expect(details.error).toContain("请求超时");
+      expect(Array.isArray(details.results)).toBe(true);
+      expect(details.error).toContain("Search error");
     } finally {
       globalThis.fetch = originalFetch;
-      if (previousBraveKey === undefined) {
-        delete process.env.BRAVE_SEARCH_API_KEY;
-      } else {
-        process.env.BRAVE_SEARCH_API_KEY = previousBraveKey;
-      }
-      if (previousTavilyKey === undefined) {
-        delete process.env.TAVILY_API_KEY;
-      } else {
-        process.env.TAVILY_API_KEY = previousTavilyKey;
-      }
-      if (previousConfigDir === undefined) {
-        delete process.env.LUME_CONFIG_DIR;
-      } else {
-        process.env.LUME_CONFIG_DIR = previousConfigDir;
-      }
-    }
-  });
-
-  test("web_search duckduckgo 失败时应自动降级到 brave", async () => {
-    const previousConfigDir = process.env.LUME_CONFIG_DIR;
-    const previousBraveKey = process.env.BRAVE_SEARCH_API_KEY;
-    const originalFetch = globalThis.fetch;
-    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
-    process.env.BRAVE_SEARCH_API_KEY = "test-key";
-
-    let callCount = 0;
-    globalThis.fetch = mock(async () => {
-      callCount += 1;
-      if (callCount <= 4) {
-        throw new DOMException("The operation was aborted.", "AbortError");
-      }
-      return new Response(
-        JSON.stringify({
-          web: {
-            results: [
-              {
-                title: "Brave Result",
-                url: "https://example.org",
-                description: "fallback result"
-              }
-            ]
-          }
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
-    }) as unknown as typeof fetch;
-
-    try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({ sessionId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools as unknown as AgentTool[], "web_search");
-      const result = await webSearchTool.execute("tool-call-web-fallback", {
-        query: "fallback case"
-      });
-      const details = result.details as {
-        provider?: string;
-        fallbackFrom?: string;
-        count?: number;
-        results?: Array<{ title?: string }>;
-      };
-      expect(details.provider).toBe("brave");
-      expect(details.fallbackFrom).toBe("duckduckgo");
-      expect(details.count).toBe(1);
-      expect(details.results?.[0]?.title).toBe("Brave Result");
-      expect(callCount).toBe(5);
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (previousBraveKey === undefined) {
-        delete process.env.BRAVE_SEARCH_API_KEY;
-      } else {
-        process.env.BRAVE_SEARCH_API_KEY = previousBraveKey;
-      }
-      if (previousConfigDir === undefined) {
-        delete process.env.LUME_CONFIG_DIR;
-      } else {
-        process.env.LUME_CONFIG_DIR = previousConfigDir;
-      }
-    }
-  });
-
-  test("web_search duckduckgo 失败且 brave 不可用时应降级到 tavily", async () => {
-    const previousConfigDir = process.env.LUME_CONFIG_DIR;
-    const previousBraveKey = process.env.BRAVE_SEARCH_API_KEY;
-    const previousTavilyKey = process.env.TAVILY_API_KEY;
-    const originalFetch = globalThis.fetch;
-    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
-    delete process.env.BRAVE_SEARCH_API_KEY;
-    process.env.TAVILY_API_KEY = "test-tavily";
-
-    let callCount = 0;
-    globalThis.fetch = mock(async () => {
-      callCount += 1;
-      if (callCount <= 4) {
-        throw new DOMException("The operation was aborted.", "AbortError");
-      }
-      return new Response(
-        JSON.stringify({
-          results: [
-            {
-              title: "Tavily Result",
-              url: "https://example.net",
-              content: "fallback from tavily"
-            }
-          ]
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
-    }) as unknown as typeof fetch;
-
-    try {
-      const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-      const tools = createOpenClawAlignedTools({ sessionId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools as unknown as AgentTool[], "web_search");
-      const result = await webSearchTool.execute("tool-call-web-tavily-fallback", {
-        query: "fallback tavily case",
-        braveApiKey: ""
-      });
-      const details = result.details as {
-        provider?: string;
-        fallbackFrom?: string;
-        count?: number;
-        results?: Array<{ title?: string }>;
-      };
-      expect(details.provider).toBe("tavily");
-      expect(details.fallbackFrom).toBe("duckduckgo");
-      expect(details.count).toBe(1);
-      expect(details.results?.[0]?.title).toBe("Tavily Result");
-      expect(callCount).toBe(5);
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (previousBraveKey === undefined) {
-        delete process.env.BRAVE_SEARCH_API_KEY;
-      } else {
-        process.env.BRAVE_SEARCH_API_KEY = previousBraveKey;
-      }
-      if (previousTavilyKey === undefined) {
-        delete process.env.TAVILY_API_KEY;
-      } else {
-        process.env.TAVILY_API_KEY = previousTavilyKey;
-      }
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
       } else {
@@ -1104,3 +931,11 @@ describe("create-session-tools", () => {
     }
   });
 });
+
+
+
+
+
+
+
+

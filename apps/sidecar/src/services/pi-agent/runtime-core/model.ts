@@ -1,4 +1,4 @@
-import { getModel, type KnownProvider, type Model, type Api } from "@mariozechner/pi-ai";
+import type { Api, KnownProvider, Model } from "../runner/model-types";
 import { resolveModelCandidatesForChannel } from "../../channel/model-selection";
 import { adaptModelCapabilities, resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "../runner/provider-routing";
@@ -18,7 +18,7 @@ export interface ResolvedPiChannelModel {
 export function resolveRuntimeCoreModel(
   input: ResolveRuntimeCoreModelInput
 ): Model<Api> | undefined {
-  return getModel(input.provider, input.modelId as never);
+  return createFallbackModel(input.provider, input.modelId);
 }
 
 export function resolvePiChannelModel(params: {
@@ -39,17 +39,15 @@ export function resolvePiChannelModel(params: {
       baseUrl: params.baseUrl
     });
     for (const provider of prioritizeProvidersForBaseUrl(candidates, params.baseUrl)) {
-      const catalogModel = getModel(provider, modelId as never);
-      if (catalogModel) {
-        return {
+      return {
+        provider,
+        resolvedModelId: modelId,
+        model: createFallbackModel(
           provider,
-          resolvedModelId: modelId,
-          model: applyChannelBaseUrl(
-            catalogModel,
-            shouldApplyChannelBaseUrl(provider, params.baseUrl) ? params.baseUrl : undefined
-          )
-        };
-      }
+          modelId,
+          shouldApplyChannelBaseUrl(provider, params.baseUrl) ? params.baseUrl : undefined
+        )
+      };
     }
   }
 

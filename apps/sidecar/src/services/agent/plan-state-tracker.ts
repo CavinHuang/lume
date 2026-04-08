@@ -150,7 +150,7 @@ export class PlanStateTracker {
       return null;
     }
     return {
-      sessionId,
+      threadId: sessionId,
       phase,
       ...(nextPath ? { planPath: nextPath } : {}),
       ...(extras?.steps ? { steps: extras.steps } : {})
@@ -173,3 +173,4 @@ export class PlanStateTracker {
     return null;
   }
 }
+

@@ -1,4 +1,4 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "./model-types";
 import type { ThinkingLevel } from "@lume/shared";
 
 function normalizeBaseUrl(baseUrl?: string): string {

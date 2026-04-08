@@ -153,10 +153,10 @@ export function AskUserQuestionPanel({
                   {activeIndex + 1} / {totalQuestions}
                 </span>
               </div>
-              {request.originSessionId || request.subagentRunId ? (
+              {request.originThreadId || request.subagentRunId ? (
                 <div className="text-[11px] text-muted-foreground">
-                  {request.originSessionId ? `来源会话: ${request.originSessionId}` : ""}
-                  {request.originSessionId && request.subagentRunId ? " · " : ""}
+                  {request.originThreadId ? `来源线程: ${request.originThreadId}` : ""}
+                  {request.originThreadId && request.subagentRunId ? " · " : ""}
                   {request.subagentRunId ? `Run: ${request.subagentRunId}` : ""}
                 </div>
               ) : null}
@@ -329,3 +329,5 @@ export function AskUserQuestionPanel({
     </div>
   );
 }
+
+

@@ -34,7 +34,7 @@ function toAgentMessage(
     createdAt: record.createdAt,
     model: record.model,
     metadata: record.metadata,
-    events: record.events,
+    sdkMessages: record.sdkMessages,
     versionGroupId: record.groupId,
     versionIndex: record.versionIndex,
     versionCount,
@@ -145,7 +145,7 @@ function reconcileSingleVersionStoreFromTranscript(
       reasoning: message.reasoning,
       model: message.model,
       metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : undefined,
-      events: message.events
+      sdkMessages: message.sdkMessages
     });
     nextStore.visibleGroupIds.push(groupId);
   }
@@ -233,7 +233,7 @@ export function initializeVersionStoreFromMessages(
       reasoning: message.reasoning,
       model: message.model,
       metadata: message.metadata,
-      events: message.events
+      sdkMessages: message.sdkMessages
     });
     visibleGroupIds.push(groupId);
   }
@@ -428,7 +428,7 @@ export function createAssistantMessageVersion(params: {
       reasoning: params.message.reasoning,
       model: params.message.model,
       metadata: params.message.metadata,
-      events: params.message.events
+      sdkMessages: params.message.sdkMessages
     };
     const userGroupIndex = store.visibleGroupIds.findIndex((groupIdItem) => {
       const visibleGroup = findGroup(store, groupIdItem);
@@ -459,7 +459,7 @@ export function createAssistantMessageVersion(params: {
     reasoning: params.message.reasoning,
     model: params.message.model,
     metadata: params.message.metadata,
-    events: params.message.events
+    sdkMessages: params.message.sdkMessages
   };
   store.messages.push(nextRecord);
   group.latestMessageId = messageId;

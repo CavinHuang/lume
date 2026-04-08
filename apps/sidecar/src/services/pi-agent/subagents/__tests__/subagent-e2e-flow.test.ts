@@ -2,11 +2,8 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import {
-  createAgentSession,
-  getAgentSessionMessages
-} from "../../../agent/agent-session-manager";
+import type { ToolDefinition } from "@lume/agent-sdk";
+import { createAgentSession } from "../../../agent/agent-session-manager";
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
@@ -55,17 +52,22 @@ afterEach(() => {
   resetSubagentRunRegistryForTest();
 });
 
-async function loadCreateOpenClawAlignedTools() {
+async function loadCreateSessionTools() {
   const mod = await import("../../tools/session/create-session-tools");
-  return mod.createOpenClawAlignedTools;
+  return mod.createSdkSessionTools;
 }
 
-function resolveTool(tools: AgentTool[], name: string): AgentTool {
+function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
   const tool = tools.find((item) => item.name === name);
   if (!tool) {
     throw new Error(`tool not found: ${name}`);
   }
   return tool;
+}
+
+async function callTool(tool: ToolDefinition, input: Record<string, unknown>) {
+  const result = await tool.call(input, { cwd: process.cwd(), abortSignal: new AbortController().signal });
+  return JSON.parse(String(result.content)) as Record<string, unknown>;
 }
 
 async function waitForRunsSettled(runIds: string[], timeoutMs = 3000): Promise<void> {
@@ -107,25 +109,25 @@ describe("subagent-e2e-flow", () => {
       content: [{ type: "text", text: "model hint" }],
       timestamp: Date.now()
     });
-    const createOpenClawAlignedTools = await loadCreateOpenClawAlignedTools();
-    const tools = createOpenClawAlignedTools({
-      sessionId: parent.id
+    const createSessionTools = await loadCreateSessionTools();
+    const tools = createSessionTools({
+      threadId: parent.id
     });
-    const spawnTool = resolveTool(tools as unknown as AgentTool[], "sessions_spawn");
+    const spawnTool = resolveTool(tools, "sessions_spawn");
 
     const [okResult, errResult] = await Promise.all([
-      spawnTool.execute("tool-call-e2e-ok", {
+      callTool(spawnTool, {
         task: "[mock-slow] 并发任务-成功",
         runTimeoutSeconds: 0
       }),
-      spawnTool.execute("tool-call-e2e-err", {
+      callTool(spawnTool, {
         task: "[mock-slow][mock-error] 并发任务-失败",
         runTimeoutSeconds: 0
       })
     ]);
 
-    const okRunId = (okResult.details as { runId?: string }).runId;
-    const errRunId = (errResult.details as { runId?: string }).runId;
+    const okRunId = (okResult as { runId?: string }).runId;
+    const errRunId = (errResult as { runId?: string }).runId;
     expect(typeof okRunId).toBe("string");
     expect(typeof errRunId).toBe("string");
     if (!okRunId || !errRunId) return;
@@ -140,19 +142,13 @@ describe("subagent-e2e-flow", () => {
     expect(errRun?.outcome?.errorCode).toBe("SUBAGENT_RUNTIME_ERROR");
     expect(errRun?.announceStatus).toBe("delivered");
 
-    const parentMessages = getAgentSessionMessages(parent.id);
-    const announceRunIds = new Set(
-      parentMessages
-        .filter((item) => item.metadata?.subagentAnnounce === true)
-        .map((item) => typeof item.metadata?.runId === "string" ? item.metadata.runId : "")
-        .filter(Boolean)
-    );
-    expect(announceRunIds.has(okRunId)).toBe(true);
-    expect(announceRunIds.has(errRunId)).toBe(true);
-
     resetSubagentRunRegistryForTest();
     const restoredErrRun = getSubagentRunRegistry().get(errRunId);
     expect(restoredErrRun?.status).toBe("errored");
     expect(restoredErrRun?.outcome?.errorCode).toBe("SUBAGENT_RUNTIME_ERROR");
   });
 });
+
+
+
+

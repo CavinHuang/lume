@@ -1,17 +1,17 @@
-import type { AgentSessionMeta } from "@lume/shared";
+import type { AgentThreadMeta } from "@lume/shared";
 import { groupConversationsByDate } from "./left-sidebar-conversations";
 
-export function buildChildSessionMap(
-  sessions: AgentSessionMeta[],
+export function buildChildThreadMap(
+  sessions: AgentThreadMeta[],
   currentWorkspaceId: string | null
-): Map<string, AgentSessionMeta[]> {
-  const map = new Map<string, AgentSessionMeta[]>();
+): Map<string, AgentThreadMeta[]> {
+  const map = new Map<string, AgentThreadMeta[]>();
   for (const session of sessions) {
-    if (!session.parentSessionId) continue;
+    if (!session.parentThreadId) continue;
     if (currentWorkspaceId && session.workspaceId !== currentWorkspaceId) continue;
-    const items = map.get(session.parentSessionId) ?? [];
+    const items = map.get(session.parentThreadId) ?? [];
     items.push(session);
-    map.set(session.parentSessionId, items);
+    map.set(session.parentThreadId, items);
   }
   for (const items of map.values()) {
     items.sort((a, b) => a.createdAt - b.createdAt);
@@ -19,19 +19,19 @@ export function buildChildSessionMap(
   return map;
 }
 
-export function filterRootAgentSessions(
-  sessions: AgentSessionMeta[],
+export function filterRootAgentThreads(
+  sessions: AgentThreadMeta[],
   currentWorkspaceId: string | null
-): AgentSessionMeta[] {
+): AgentThreadMeta[] {
   return [...sessions]
-    .filter((item) => !item.parentSessionId && (!currentWorkspaceId || item.workspaceId === currentWorkspaceId))
+    .filter((item) => !item.parentThreadId && (!currentWorkspaceId || item.workspaceId === currentWorkspaceId))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export function derivePinnedAgentSessions(sessions: AgentSessionMeta[]): AgentSessionMeta[] {
+export function derivePinnedAgentThreads(sessions: AgentThreadMeta[]): AgentThreadMeta[] {
   return sessions.filter((item) => item.pinned);
 }
 
-export function deriveAgentGroups(sessions: AgentSessionMeta[]) {
+export function deriveAgentGroups(sessions: AgentThreadMeta[]) {
   return groupConversationsByDate(sessions);
 }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model } from "../runner/model-types";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentWorkspacePath } from "../../infra/config-paths";
@@ -33,7 +33,7 @@ describe("runtime-core run", () => {
       permissionMode: "plan"
     });
 
-    expect(result.session.sessionId).toBe(result.sessionManager.getSessionId());
+    expect(result.session.threadId).toBe(result.sessionManager.getSessionId());
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
     expect(result.session.getActiveToolNames()).toContain("sessions_list");
@@ -65,7 +65,7 @@ describe("runtime-core run", () => {
       apiKey: "test-key",
       permissionMode: "plan"
     });
-    const firstUpstreamSessionId = first.session.sessionId;
+    const firstUpstreamSessionId = first.session.threadId;
     first.sessionManager.appendMessage({
       role: "user",
       content: [{ type: "text", text: "restore me" }],
@@ -105,7 +105,7 @@ describe("runtime-core run", () => {
 
     expect(second.sessionManager.buildSessionContext().messages.some((message) => message.role === "user")).toBeTrue();
     expect(second.session.messages.some((message) => message.role === "user")).toBeTrue();
-    expect(second.session.sessionId).toBe(firstUpstreamSessionId);
+    expect(second.session.threadId).toBe(firstUpstreamSessionId);
     second.session.dispose();
   });
 
@@ -167,7 +167,7 @@ describe("runtime-core run", () => {
       permissionMode: "plan",
       workspaceName: "Prompt Injection Workspace",
       workspaceSlug,
-      sessionType: "main",
+      threadType: "main",
       chatType: "direct"
     });
 
@@ -178,9 +178,9 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
     expect(systemPrompt).toContain("- Skill");
-    expect(systemPrompt).toContain("<session_state>");
-    expect(systemPrompt).toContain("sessionId: prompt-session");
-    expect(systemPrompt).toContain("sessionType: main");
+    expect(systemPrompt).toContain("<thread_state>");
+    expect(systemPrompt).toContain("threadId: prompt-session");
+    expect(systemPrompt).toContain("threadType: main");
     expect(systemPrompt).toContain("chatType: direct");
     expect(systemPrompt).toContain("modelId: claude-sonnet-4-5");
     expect(systemPrompt).toContain("Preferred capability route: skills");
@@ -190,3 +190,5 @@ describe("runtime-core run", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 });
+
+

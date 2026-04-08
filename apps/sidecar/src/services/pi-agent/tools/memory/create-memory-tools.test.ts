@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createPiMemoryTools } from "./create-memory-tools";
+import { createSdkMemoryTools } from "./create-memory-tools";
 
 describe("create-pi-memory-tools", () => {
   test("应按启用集合生成对应工具", () => {
-    const tools = createPiMemoryTools({
+    const tools = createSdkMemoryTools({
       workspaceSlug: "demo",
       enabledTools: new Set(["memory_search", "memory_get"]),
       includeCitations: true
@@ -12,4 +12,3 @@ describe("create-pi-memory-tools", () => {
     expect(names).toEqual(["memory_search", "memory_get"]);
   });
 });
-

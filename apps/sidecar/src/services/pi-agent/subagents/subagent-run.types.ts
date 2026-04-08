@@ -18,12 +18,12 @@ export interface SubagentRunOutcome {
 
 export interface SubagentRun {
   runId: string;
-  parentSessionId: string;
+  parentThreadId: string;
   parentRunId?: string;
-  rootSessionId: string;
+  rootThreadId: string;
   depth: number;
-  childSessionId: string;
-  deliverySessionId?: string;
+  childThreadId: string;
+  deliveryThreadId?: string;
   threadRequested?: boolean;
   threadBound?: boolean;
   label?: string;
@@ -53,12 +53,12 @@ export interface SubagentRunStoreSchema {
 
 export interface CreateSubagentRunInput {
   runId: string;
-  parentSessionId: string;
+  parentThreadId: string;
   parentRunId?: string;
-  rootSessionId?: string;
+  rootThreadId?: string;
   depth?: number;
-  childSessionId: string;
-  deliverySessionId?: string;
+  childThreadId: string;
+  deliveryThreadId?: string;
   threadRequested?: boolean;
   threadBound?: boolean;
   label?: string;
@@ -82,7 +82,7 @@ export interface UpdateSubagentRunInput {
   cleanup?: "keep" | "delete";
   channelId?: string;
   modelId?: string;
-  deliverySessionId?: string;
+  deliveryThreadId?: string;
   threadRequested?: boolean;
   threadBound?: boolean;
   requestedAgentId?: string;
@@ -96,3 +96,4 @@ export interface UpdateSubagentRunInput {
   endedAt?: number;
   outcome?: SubagentRunOutcome;
 }
+

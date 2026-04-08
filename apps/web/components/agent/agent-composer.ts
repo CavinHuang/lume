@@ -37,14 +37,15 @@ export function shouldQueueAgentTitleGeneration(input: {
 }
 
 export function shouldDispatchPendingPrompt(input: {
-  pendingPromptSessionId: string | null;
-  sessionId: string | null;
+  pendingPromptThreadId: string | null;
+  threadId: string | null;
   backendReady: boolean;
   isAgentBusy: boolean;
 }): boolean {
-  return !!input.pendingPromptSessionId
-    && !!input.sessionId
-    && input.pendingPromptSessionId === input.sessionId
+  return !!input.pendingPromptThreadId
+    && !!input.threadId
+    && input.pendingPromptThreadId === input.threadId
     && input.backendReady
     && !input.isAgentBusy;
 }
+

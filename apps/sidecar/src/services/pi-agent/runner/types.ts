@@ -1,10 +1,10 @@
+import type { SDKMessage } from "@lume/agent-sdk";
 import type { AgentSendInput } from "@lume/shared";
-import type { AgentEvent } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
 import type { AgentToolPermissionRequest } from "@lume/shared";
 
 export interface PiAgentRuntimeEmitter {
-  onEvent: (event: AgentEvent) => void;
+  onSdkMessage: (message: SDKMessage) => void;
   onComplete: () => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
@@ -25,6 +25,7 @@ export interface PiAgentRunParams {
     channelId: string;
     modelId: string;
     workspaceId?: string;
-    sessionType?: AgentSendInput["sessionType"];
+    threadType?: AgentSendInput["threadType"];
   };
 }
+

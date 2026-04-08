@@ -3,16 +3,16 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Plus, RefreshCw } from "lucide-react";
 import {
   activeViewAtom,
-  agentRunningSessionIdsAtom,
+  agentRunningThreadIdsAtom,
   agentChannelIdAtom,
   agentModelIdAtom,
-  agentSessionsAtom,
+  agentThreadsAtom,
   agentWorkspacesAtom,
   appModeAtom,
   conversationsAtom,
   conversationPromptIdAtom,
   currentAgentWorkspaceIdAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadIdAtom,
   currentConversationIdAtom,
   hasUpdateAtom,
   promptConfigAtom,
@@ -29,7 +29,7 @@ import { WorkspaceSelector } from "@/components/agent";
 import { AgentSidebarSection } from "./AgentSidebarSection";
 import { ConversationSidebarSection } from "./ConversationSidebarSection";
 import { SidebarSettingsEntry } from "./SidebarSettingsEntry";
-import { useAgentSessionListController } from "./hooks/useAgentSessionListController";
+import { useAgentThreadListController } from "./hooks/useAgentThreadListController";
 import { useConversationListController } from "./hooks/useConversationListController";
 import { useWorkspaceSidebarState } from "./hooks/useWorkspaceSidebarState";
 import {
@@ -56,7 +56,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [activeView, setActiveView] = useAtom(activeViewAtom);
   const hasUpdate = useAtomValue(hasUpdateAtom);
   const streamingIds = useAtomValue(streamingConversationIdsAtom);
-  const runningIds = useAtomValue(agentRunningSessionIdsAtom);
+  const runningIds = useAtomValue(agentRunningThreadIdsAtom);
   const agentChannelId = useAtomValue(agentChannelIdAtom);
   const agentModelId = useAtomValue(agentModelIdAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
@@ -67,8 +67,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [currentConversationId, setCurrentConversationId] = useAtom(currentConversationIdAtom);
   const setConversationPromptMap = useSetAtom(conversationPromptIdAtom);
   const setSelectedPromptId = useSetAtom(selectedPromptIdAtom);
-  const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom);
-  const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom);
+  const [agentThreads, setAgentThreads] = useAtom(agentThreadsAtom);
+  const [currentAgentThreadId, setCurrentAgentThreadId] = useAtom(currentAgentThreadIdAtom);
   const [agentWorkspaces, setAgentWorkspaces] = useAtom(agentWorkspacesAtom);
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentAgentWorkspaceIdAtom);
 
@@ -110,32 +110,32 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     conversations
   });
   const {
-    isRefreshingSessions,
-    refreshAgentSessions,
-    childSessionMap,
-    pinnedAgentSessions,
+    isRefreshingThreads,
+    refreshAgentThreads,
+    childThreadMap,
+    pinnedAgentThreads,
     agentGroups,
     expandedParentIds,
     setExpandedParentIds,
     beginEditAgent,
     saveAgentEdit,
-    createNewAgentSession,
+    createNewAgentThread,
     toggleAgentPin,
-    moveAgentSession,
-    confirmDeleteAgentSession
-  } = useAgentSessionListController({
+    moveAgentThread,
+    confirmDeleteAgentThread
+  } = useAgentThreadListController({
     agentChannelId,
     agentModelId,
     currentWorkspaceId,
     setCurrentWorkspaceId,
-    setAgentSessions,
-    setCurrentAgentSessionId,
+    setAgentSessions: setAgentThreads,
+    setCurrentAgentThreadId,
     setActiveView,
     setInitError,
-    currentAgentSessionId,
+    currentAgentThreadId,
     editing,
     setEditing,
-    agentSessions
+    agentThreads
   });
   const {
     capabilities,
@@ -150,8 +150,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   });
 
   useEffect(() => {
-    void refreshAgentSessions();
-  }, [refreshAgentSessions]);
+    void refreshAgentThreads();
+  }, [refreshAgentThreads]);
 
   useEffect(() => {
     setInitError(workspaceInitError);
@@ -171,7 +171,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       await createNewConversation();
       return;
     }
-    await createNewAgentSession();
+    await createNewAgentThread();
   };
 
   const confirmDelete = async (): Promise<void> => {
@@ -179,7 +179,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     if (pendingDelete.type === "conversation") {
       await confirmDeleteConversation(pendingDelete.id);
     } else {
-      await confirmDeleteAgentSession(pendingDelete.id);
+      await confirmDeleteAgentThread(pendingDelete.id);
     }
     setPendingDelete(null);
   };
@@ -233,18 +233,18 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
             className="titlebar-no-drag flex w-full items-center gap-2 rounded-[10px] border border-dashed border-foreground/10 bg-foreground/[0.04] px-3 py-2 text-[13px] font-medium text-foreground/70 transition-colors hover:border-foreground/20 hover:bg-foreground/[0.08]"
           >
             <Plus size={14} />
-            <span>{mode === "chat" ? "新对话" : "新会话"}</span>
+            <span>{mode === "chat" ? "新对话" : "新线程"}</span>
           </button>
           {mode === "agent" ? (
             <button
               type="button"
-              title="刷新会话列表"
-              aria-label="刷新会话列表"
-              disabled={isRefreshingSessions}
-              onClick={() => { void refreshAgentSessions(); }}
+              title="刷新线程列表"
+              aria-label="刷新线程列表"
+              disabled={isRefreshingThreads}
+              onClick={() => { void refreshAgentThreads(); }}
               className="titlebar-no-drag inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] border border-foreground/10 bg-foreground/[0.04] text-foreground/60 transition-colors hover:border-foreground/20 hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <RefreshCw size={14} className={cn(isRefreshingSessions ? "animate-spin" : "")} />
+              <RefreshCw size={14} className={cn(isRefreshingThreads ? "animate-spin" : "")} />
             </button>
           ) : null}
         </div>
@@ -278,9 +278,9 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         <AgentSidebarSection
           agentPinnedExpanded={agentPinnedExpanded}
           onTogglePinnedExpanded={() => setAgentPinnedExpanded((prev) => !prev)}
-          pinnedAgentSessions={pinnedAgentSessions}
+          pinnedAgentSessions={pinnedAgentThreads}
           agentGroups={agentGroups}
-          childSessionMap={childSessionMap}
+          childThreadMap={childThreadMap}
           expandedParentIds={expandedParentIds}
           onToggleParentExpanded={(parentId) => {
             setExpandedParentIds((prev) => {
@@ -290,7 +290,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
               return next;
             });
           }}
-          currentAgentSessionId={currentAgentSessionId}
+          currentAgentThreadId={currentAgentThreadId}
           runningIds={runningIds}
           agentWorkspaces={agentWorkspaces}
           editing={editing}
@@ -300,14 +300,14 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
           onEditingDraftChange={(draft) => setEditing((prev) => (prev ? { ...prev, draft } : prev))}
           onSaveEdit={saveEdit}
           onCancelEdit={() => setEditing(null)}
-          onOpenAgentSession={(sessionId) => {
-            setCurrentAgentSessionId(sessionId);
+          onOpenAgentThread={(threadId) => {
+            setCurrentAgentThreadId(threadId);
             setActiveView("conversations");
           }}
           onBeginEditAgent={beginEditAgent}
           onRequestDeleteAgent={(sessionId) => setPendingDelete({ id: sessionId, type: "agent" })}
           onToggleAgentPin={toggleAgentPin}
-          onMoveAgentSession={moveAgentSession}
+          onMoveAgentThread={moveAgentThread}
           rowClass={rowClass}
         />
       )}
@@ -323,7 +323,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{pendingDelete?.type === "agent" ? "确认删除会话" : "确认删除对话"}</AlertDialogTitle>
+            <AlertDialogTitle>{pendingDelete?.type === "agent" ? "确认删除线程" : "确认删除对话"}</AlertDialogTitle>
             <AlertDialogDescription>
               删除后将无法恢复，确定要删除这个对话吗？
             </AlertDialogDescription>
@@ -342,3 +342,4 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     </div>
   );
 }
+

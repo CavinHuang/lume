@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentMessage, SubagentRunStatus } from "@lume/shared";
+import type { AgentMessage, SDKMessage, SubagentRunStatus } from "@lume/shared";
 import {
   appendAgentTranscriptMessage,
   getAgentSessionMeta,
@@ -15,7 +15,7 @@ import { releaseSubagentThreadBinding } from "./subagent-thread-binding";
 export interface SubagentAnnounceBusEvent {
   sessionId: string;
   runId: string;
-  childSessionId: string;
+  childThreadId: string;
   status: SubagentRunStatus;
   message: AgentMessage;
 }
@@ -87,7 +87,7 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
   const bodyLines = [
     headline,
     `runId: ${run.runId}`,
-    `childSessionKey: ${run.childSessionId}`
+    `childSessionKey: ${run.childThreadId}`
   ];
   if (output) {
     bodyLines.push("", "输出摘要:", truncateText(output, 1200));
@@ -97,6 +97,45 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
   }
   const messageText = bodyLines.join("\n");
   const toolUseId = `subagent-announce:${run.runId}`;
+  const sdkMessages: SDKMessage[] = [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "tool_use",
+          id: toolUseId,
+          name: "Agent",
+          input: {
+            name: label,
+            description: run.task,
+            subagent_type: "completion_announce",
+            run_id: run.runId,
+            child_session_key: run.childThreadId
+          }
+        }]
+      }
+    } as SDKMessage,
+    {
+      type: "user",
+      parent_tool_use_id: toolUseId,
+      message: {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          content: JSON.stringify({
+            runId: run.runId,
+            status,
+            childSessionKey: run.childThreadId,
+            output: output ? truncateText(output, 1200) : undefined,
+            error: error || undefined
+          }, null, 2),
+          is_error: run.status !== "completed"
+        }]
+      }
+    } as SDKMessage
+  ];
   return {
     id: randomUUID(),
     role: "assistant",
@@ -106,36 +145,10 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
     metadata: {
       subagentAnnounce: true,
       runId: run.runId,
-      childSessionId: run.childSessionId,
+      childThreadId: run.childThreadId,
       status
     },
-    events: [
-      {
-        type: "tool_start",
-        toolName: "Agent",
-        toolUseId,
-        input: {
-          name: label,
-          description: run.task,
-          subagent_type: "completion_announce",
-          run_id: run.runId,
-          child_session_key: run.childSessionId
-        }
-      },
-      {
-        type: "tool_result",
-        toolUseId,
-        toolName: "Agent",
-        result: JSON.stringify({
-          runId: run.runId,
-          status,
-          childSessionKey: run.childSessionId,
-          output: output ? truncateText(output, 1200) : undefined,
-          error: error || undefined
-        }, null, 2),
-        isError: run.status !== "completed"
-      }
-    ]
+    sdkMessages
   };
 }
 
@@ -154,12 +167,12 @@ export async function announceSubagentCompletion(params: {
   run: SubagentRun;
 }): Promise<SubagentAnnounceResult> {
   const run = params.run;
-  const targetSessionId = run.deliverySessionId ?? run.parentSessionId;
+  const targetSessionId = run.deliveryThreadId ?? run.parentThreadId;
   const targetMeta = getAgentSessionMeta(targetSessionId);
   if (!targetMeta) {
     log.warn("announce skipped: target session not found", subagentLogFields(run, {
       event: "announce_skipped",
-      deliverySessionId: targetSessionId
+      deliveryThreadId: targetSessionId
     }));
     return {
       delivered: false,
@@ -176,19 +189,19 @@ export async function announceSubagentCompletion(params: {
       emitSubagentAnnounceEvent({
         sessionId: targetSessionId,
         runId: run.runId,
-        childSessionId: run.childSessionId,
+        childThreadId: run.childThreadId,
         status: run.status,
         message: announceMessage
       });
       log.info("announce delivered", subagentLogFields(run, {
         event: "announce_delivered",
-        deliverySessionId: targetSessionId,
+        deliveryThreadId: targetSessionId,
         announceAttempts: attempt
       }));
       releaseSubagentThreadBinding({
         runId: run.runId,
-        childSessionId: run.childSessionId,
-        deliverySessionId: targetSessionId,
+        childThreadId: run.childThreadId,
+        deliveryThreadId: targetSessionId,
         threadBound: run.threadBound
       });
       return {
@@ -200,7 +213,7 @@ export async function announceSubagentCompletion(params: {
       lastError = error instanceof Error ? error.message : String(error);
       log.warn("announce attempt failed", subagentLogFields(run, {
         event: "announce_retry",
-        deliverySessionId: targetSessionId,
+        deliveryThreadId: targetSessionId,
         announceAttempts: attempt,
         error: lastError
       }));
@@ -211,7 +224,7 @@ export async function announceSubagentCompletion(params: {
   }
   log.error("announce failed", subagentLogFields(run, {
     event: "announce_failed",
-    deliverySessionId: targetSessionId,
+    deliveryThreadId: targetSessionId,
     error: lastError || "unknown error"
   }));
   return {
@@ -220,3 +233,4 @@ export async function announceSubagentCompletion(params: {
     error: lastError || "unknown error"
   };
 }
+

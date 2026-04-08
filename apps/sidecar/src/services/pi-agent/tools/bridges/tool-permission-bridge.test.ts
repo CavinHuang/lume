@@ -11,7 +11,7 @@ describe("tool-permission-bridge", () => {
   test("wait + submit 应返回用户决策", async () => {
     const waitPromise = waitForToolPermissionDecision(
       {
-        sessionId: "s1",
+        threadId: "s1",
         requestId: "req-1",
         toolUseId: "tool-1",
         toolName: "Bash",
@@ -23,7 +23,7 @@ describe("tool-permission-bridge", () => {
       () => {}
     );
     const handled = submitToolPermissionDecision({
-      sessionId: "s1",
+      threadId: "s1",
       requestId: "req-1",
       decision: "allow_once"
     });
@@ -41,7 +41,7 @@ describe("tool-permission-bridge", () => {
   test("应支持由父会话提交子会话权限决策", async () => {
     const waitPromise = waitForToolPermissionDecision(
       {
-        sessionId: "child-session",
+        threadId: "child-session",
         requestId: "req-proxy",
         toolUseId: "tool-proxy",
         toolName: "Bash",
@@ -54,7 +54,7 @@ describe("tool-permission-bridge", () => {
     );
     setToolPermissionApprovalSession("req-proxy", "parent-session");
     const handled = submitToolPermissionDecision({
-      sessionId: "parent-session",
+      threadId: "parent-session",
       requestId: "req-proxy",
       decision: "allow_once"
     });
@@ -63,3 +63,4 @@ describe("tool-permission-bridge", () => {
     expect(decision).toBe("allow_once");
   });
 });
+

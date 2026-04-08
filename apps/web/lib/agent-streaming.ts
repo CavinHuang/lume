@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@lume/shared";
+import type { SDKMessage } from "@lume/shared";
 
 export interface ToolActivity {
   toolUseId: string;
@@ -21,10 +21,10 @@ export interface ToolActivity {
 
 export interface AgentStreamState {
   running: boolean;
+  sdkMessages?: SDKMessage[];
   content: string;
   reasoning?: string;
   toolActivities: ToolActivity[];
-  events?: AgentEvent[];
   model?: string;
   inputTokens?: number;
   totalTokens?: number;
@@ -36,6 +36,174 @@ export interface AgentStreamState {
   currentTurnId?: string;
   /** 已完成的 turn 数量 */
   turnCount?: number;
+}
+
+function extractTextFromAssistantMessage(message: Extract<SDKMessage, { type: "assistant" }>): string {
+  return (message.message?.content ?? [])
+    .filter((block) => !!block && typeof block === "object" && (block as { type?: string }).type === "text")
+    .map((block) => (block as { text?: string }).text ?? "")
+    .join("");
+}
+
+function extractThinkingFromAssistantMessage(message: Extract<SDKMessage, { type: "assistant" }>): string {
+  return (message.message?.content ?? [])
+    .filter((block) => !!block && typeof block === "object" && (block as { type?: string }).type === "thinking")
+    .map((block) => {
+      const value = block as { thinking?: string; text?: string };
+      return value.thinking ?? value.text ?? "";
+    })
+    .join("");
+}
+
+function upsertToolActivity(prev: ToolActivity[], next: ToolActivity): ToolActivity[] {
+  const idx = prev.findIndex((item) => item.toolUseId === next.toolUseId);
+  if (idx === -1) return [...prev, next];
+  const copy = [...prev];
+  copy[idx] = { ...copy[idx]!, ...next };
+  return copy;
+}
+
+export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): AgentStreamState {
+  const now = Date.now();
+  const streamStartedAt = prev.streamStartedAt ?? now;
+  let next: AgentStreamState = {
+    ...prev,
+    streamStartedAt,
+    sdkMessages: [...(prev.sdkMessages ?? []), message],
+  };
+
+  if (message.type === "stream_event") {
+    const event = message.event as { type?: string; delta?: { type?: string; text?: string; thinking?: string } };
+    if (event.type === "content_block_delta") {
+      if (event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
+        next = {
+          ...next,
+          content: next.content + event.delta.text,
+          firstOutputAt: next.firstOutputAt ?? now,
+        };
+      } else if (event.delta?.type === "thinking_delta") {
+        const text = typeof event.delta.thinking === "string" ? event.delta.thinking : event.delta.text ?? "";
+        if (text) {
+          next = {
+            ...next,
+            reasoning: (next.reasoning ?? "") + text,
+            firstOutputAt: next.firstOutputAt ?? now,
+          };
+        }
+      }
+    }
+    return next;
+  }
+
+  if (message.type === "assistant") {
+    const text = extractTextFromAssistantMessage(message);
+    const reasoning = extractThinkingFromAssistantMessage(message);
+    if (text) {
+      next.content = mergeStreamingText(next.content, text);
+      next.firstOutputAt = next.firstOutputAt ?? now;
+    }
+    if (reasoning) {
+      next.reasoning = mergeStreamingText(next.reasoning ?? "", reasoning);
+      next.firstOutputAt = next.firstOutputAt ?? now;
+    }
+    for (const block of message.message?.content ?? []) {
+      if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
+      const tool = block as { id: string; name: string; input: Record<string, unknown> };
+      next.toolActivities = upsertToolActivity(next.toolActivities, {
+        toolUseId: tool.id,
+        toolName: tool.name,
+        input: tool.input ?? {},
+        parentToolUseId: message.parent_tool_use_id ?? undefined,
+        startedAt: now,
+        done: false,
+      });
+    }
+    return next;
+  }
+
+  if (message.type === "user") {
+    for (const block of message.message?.content ?? []) {
+      if (!block || typeof block !== "object" || block.type !== "tool_result") continue;
+      const result = block as { tool_use_id: string; content?: unknown; is_error?: boolean };
+      const resultText = typeof result.content === "string"
+        ? result.content
+        : Array.isArray(result.content)
+          ? result.content
+              .filter((item): item is { type: string; text?: string } => !!item && typeof item === "object")
+              .filter((item) => item.type === "text" && typeof item.text === "string")
+              .map((item) => item.text ?? "")
+              .join("\n")
+          : "";
+      next.toolActivities = next.toolActivities.map((activity) =>
+        activity.toolUseId === result.tool_use_id
+          ? {
+              ...activity,
+              done: true,
+              isError: result.is_error === true,
+              result: resultText,
+              elapsedMs: activity.startedAt ? Math.max(0, now - activity.startedAt) : activity.elapsedMs,
+            }
+          : activity
+      );
+    }
+    return next;
+  }
+
+  if (message.type === "system") {
+    if (message.subtype === "task_started") {
+      next.toolActivities = upsertToolActivity(next.toolActivities, {
+        toolUseId: message.tool_use_id ?? message.task_id,
+        toolName: "Task",
+        input: {},
+        taskId: message.task_id,
+        startedAt: now,
+        done: false,
+        intent: message.description,
+      });
+    } else if (message.subtype === "task_progress") {
+      next.toolActivities = next.toolActivities.map((activity) =>
+        activity.toolUseId === (message.tool_use_id ?? message.task_id)
+          ? {
+              ...activity,
+              taskId: message.task_id,
+              elapsedMs: message.usage?.duration_ms ?? activity.elapsedMs,
+              elapsedSeconds: message.usage?.duration_ms ? Math.floor(message.usage.duration_ms / 1000) : activity.elapsedSeconds,
+              progressDescription: message.description ?? activity.progressDescription,
+            }
+          : activity
+      );
+    } else if (message.subtype === "task_notification") {
+      next.toolActivities = next.toolActivities.map((activity) =>
+        activity.toolUseId === (message.tool_use_id ?? message.task_id)
+          ? {
+              ...activity,
+              taskId: message.task_id,
+              done: true,
+              isError: message.status !== "completed",
+              result: message.summary ?? message.message ?? activity.result,
+              elapsedMs: message.usage?.duration_ms ?? activity.elapsedMs,
+            }
+          : activity
+      );
+    } else if (message.subtype === "compact_boundary") {
+      next.isCompacting = false;
+    }
+    return next;
+  }
+
+  if (message.type === "result") {
+    const usage = message.usage;
+    next.running = false;
+    next.isCompacting = false;
+    next.inputTokens = usage ? (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) : next.inputTokens;
+    next.totalTokens = usage
+      ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
+      : next.totalTokens;
+    next.contextWindow = message.modelUsage ? Object.values(message.modelUsage)[0]?.contextWindow : next.contextWindow;
+    next.toolActivities = next.toolActivities.map((activity) => (activity.done ? activity : { ...activity, done: true }));
+  }
+
+  return next;
 }
 
 export function mergeStreamingText(current: string, next: string): string {
@@ -52,190 +220,4 @@ export function mergeStreamingText(current: string, next: string): string {
     }
   }
   return current + next;
-}
-
-export function applyAgentEvent(prev: AgentStreamState, event: AgentEvent): AgentStreamState {
-  const nextEvents = [...(prev.events ?? []), event];
-  const now = Date.now();
-  const streamStartedAt = prev.streamStartedAt ?? now;
-  const isOutputEvent = event.type === "text_delta"
-    || event.type === "text_complete"
-    || event.type === "reasoning_delta"
-    || event.type === "reasoning_complete"
-    || event.type === "tool_start";
-  const firstOutputAt = prev.firstOutputAt ?? (isOutputEvent ? now : undefined);
-
-  const base = { ...prev, streamStartedAt, firstOutputAt };
-  switch (event.type) {
-    case "text_delta":
-      return { ...base, content: base.content + event.text, events: nextEvents };
-    case "text_complete":
-      return {
-        ...base,
-        content: mergeStreamingText(base.content, event.text),
-        events: nextEvents
-      };
-    case "reasoning_delta":
-      return {
-        ...base,
-        reasoning: (base.reasoning ?? "") + event.text,
-        events: nextEvents
-      };
-    case "reasoning_complete":
-      return {
-        ...base,
-        reasoning: mergeStreamingText(base.reasoning ?? "", event.text),
-        events: nextEvents
-      };
-    case "tool_start": {
-      const exists = base.toolActivities.find((item) => item.toolUseId === event.toolUseId);
-      if (exists) {
-        return {
-          ...base,
-          events: nextEvents,
-          toolActivities: base.toolActivities.map((item) =>
-            item.toolUseId === event.toolUseId
-              ? {
-                  ...item,
-                  input: event.input,
-                  intent: event.intent ?? item.intent,
-                  displayName: event.displayName ?? item.displayName,
-                  parentToolUseId: event.parentToolUseId ?? item.parentToolUseId
-                }
-              : item
-          )
-        };
-      }
-      return {
-        ...base,
-        events: nextEvents,
-        toolActivities: [
-          ...base.toolActivities,
-          {
-            toolUseId: event.toolUseId,
-            toolName: event.toolName,
-            input: event.input,
-            intent: event.intent,
-            displayName: event.displayName,
-            parentToolUseId: event.parentToolUseId,
-            startedAt: now,
-            done: false
-          }
-        ]
-      };
-    }
-    case "tool_result":
-      return {
-        ...base,
-        events: nextEvents,
-        toolActivities: base.toolActivities.map((item) =>
-          item.toolUseId === event.toolUseId
-            ? {
-                ...item,
-                done: true,
-                isError: event.isError,
-                result: event.result,
-                elapsedMs: item.startedAt ? Math.max(0, now - item.startedAt) : item.elapsedMs
-              }
-            : item
-        )
-      };
-    case "task_backgrounded":
-      return {
-        ...base,
-        events: nextEvents,
-        toolActivities: base.toolActivities.map((item) =>
-          item.toolUseId === event.toolUseId
-            ? { ...item, isBackground: true, taskId: event.taskId }
-            : item
-        )
-      };
-    case "task_progress":
-      return {
-        ...base,
-        events: nextEvents,
-        toolActivities: base.toolActivities.map((item) =>
-          item.toolUseId === event.toolUseId
-            ? {
-                ...item,
-                elapsedSeconds: event.elapsedSeconds || item.elapsedSeconds,
-                elapsedMs: event.usage?.durationMs ?? item.elapsedMs,
-                progressDescription: event.description ?? item.progressDescription
-              }
-            : item
-        )
-      };
-    case "task_started":
-      return { ...base, events: nextEvents };
-    case "task_notification":
-      return { ...base, events: nextEvents };
-    case "usage_update":
-      return {
-        ...base,
-        events: nextEvents,
-        inputTokens: event.usage.inputTokens,
-        totalTokens: event.usage.totalTokens ?? base.totalTokens ?? event.usage.inputTokens,
-        contextWindow: event.usage.contextWindow ?? base.contextWindow
-      };
-    case "compacting":
-      return {
-        ...base,
-        events: nextEvents,
-        isCompacting: true
-      };
-    case "compact_complete":
-      return {
-        ...base,
-        events: nextEvents,
-        isCompacting: false
-      };
-    case "turn_start":
-      return {
-        ...base,
-        events: nextEvents,
-        currentTurnId: event.turnId
-      };
-    case "turn_end":
-      return {
-        ...base,
-        events: nextEvents,
-        currentTurnId: undefined,
-        turnCount: (base.turnCount ?? 0) + 1
-      };
-    case "shell_backgrounded":
-      return {
-        ...base,
-        events: nextEvents,
-        toolActivities: base.toolActivities.map((item) =>
-          item.toolUseId === event.toolUseId
-            ? { ...item, isBackground: true, shellId: event.shellId }
-            : item
-        )
-      };
-    case "complete":
-      return {
-        ...base,
-        running: false,
-        isCompacting: false,
-        events: nextEvents,
-        inputTokens: event.usage?.inputTokens ?? base.inputTokens,
-        totalTokens: event.usage?.totalTokens ?? base.totalTokens,
-        contextWindow: event.usage?.contextWindow ?? base.contextWindow,
-        toolActivities: base.toolActivities.map((item) =>
-          item.done ? item : { ...item, done: true }
-        )
-      };
-    case "error":
-      return {
-        ...base,
-        running: false,
-        isCompacting: false,
-        events: nextEvents,
-        toolActivities: base.toolActivities.map((item) =>
-          item.done ? item : { ...item, done: true, isError: true }
-        )
-      };
-    default:
-      return { ...base, events: nextEvents };
-  }
 }

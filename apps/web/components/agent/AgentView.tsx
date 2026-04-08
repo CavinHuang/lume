@@ -5,13 +5,14 @@ import type {
   AgentAskUserQuestionRequest,
   AgentToolPermissionRequest,
   AgentMessage,
+  AgentThreadMeta,
   AgentSavedFile,
   ModelOption
 } from "@lume/shared";
 import {
   activeViewAtom,
   agentContextStatusAtom,
-  agentSessionsAtom,
+  agentThreadsAtom,
   agentChannelIdAtom,
   agentModelIdAtom,
   agentThinkingLevelAtom,
@@ -25,15 +26,14 @@ import {
   agentToolPermissionRequestsAtom,
   agentToolActivitiesAtom,
   agentStreamingStatesAtom,
-  agentSessionContextCacheAtom,
+  agentThreadContextCacheAtom,
   agentWorkspacesAtom,
-  applyAgentEvent,
   currentAgentErrorAtom,
   currentAgentAskUserQuestionRequestAtom,
-  currentAgentMessagesAtom,
+  currentAgentThreadMessagesAtom,
   currentAgentRuntimeStatusAtom,
-  currentAgentSessionAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadAtom,
+  currentAgentThreadIdAtom,
   currentAgentToolPermissionRequestAtom,
   currentAgentWorkspaceIdAtom
 } from "@/atoms";
@@ -41,10 +41,10 @@ import {
   planStateAtom
 } from "@/atoms/plan-atoms";
 import {
-  getAgentSessionMessages,
-  saveFilesToAgentSession,
+  getAgentThreadMessages,
+  saveFilesToAgentThread,
   sendAgentMessage,
-  updateAgentSessionModelSelection,
+  updateAgentThreadModelSelection,
 } from "@/lib/desktop-api/agent";
 import { createAutomationJob } from "@/lib/desktop-api/system";
 import { cn } from "@/lib/utils";
@@ -133,17 +133,17 @@ function isAgentDebugEnabled(): boolean {
 }
 
 export function AgentView(): React.ReactElement {
-  const [sessionId, setCurrentSessionId] = useAtom(currentAgentSessionIdAtom);
-  const session = useAtomValue(currentAgentSessionAtom);
+  const [threadId, setCurrentSessionId] = useAtom(currentAgentThreadIdAtom);
+  const session = useAtomValue(currentAgentThreadAtom);
   const [workspaceId] = useAtom(currentAgentWorkspaceIdAtom);
   const [workspaces] = useAtom(agentWorkspacesAtom);
-  const [messages, setMessages] = useAtom(currentAgentMessagesAtom);
+  const [messages, setMessages] = useAtom(currentAgentThreadMessagesAtom);
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
   const setRuntimeStatuses = useSetAtom(agentRuntimeStatusesAtom);
   const setAskUserQuestionRequests = useSetAtom(agentAskUserQuestionRequestsAtom);
   const setToolPermissionRequests = useSetAtom(agentToolPermissionRequestsAtom);
   const streamingStates = useAtomValue(agentStreamingStatesAtom);
-  const setContextCache = useSetAtom(agentSessionContextCacheAtom);
+  const setContextCache = useSetAtom(agentThreadContextCacheAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const toolActivities = useAtomValue(agentToolActivitiesAtom);
   const contextStatus = useAtomValue(agentContextStatusAtom);
@@ -152,7 +152,7 @@ export function AgentView(): React.ReactElement {
   const askUserQuestionRequest = useAtomValue(currentAgentAskUserQuestionRequestAtom);
   const toolPermissionRequest = useAtomValue(currentAgentToolPermissionRequestAtom);
   const setActiveView = useSetAtom(activeViewAtom);
-  const setSessions = useSetAtom(agentSessionsAtom);
+  const setSessions = useSetAtom(agentThreadsAtom);
   const setStreamErrors = useSetAtom(agentStreamErrorsAtom);
 
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
@@ -182,7 +182,7 @@ export function AgentView(): React.ReactElement {
     lastNonPlanPermissionModeRef,
     currentPermissionModeRef,
     showModeNotice
-  } = useAgentPlanFlow(sessionId, agentPermissionMode);
+  } = useAgentPlanFlow(threadId, agentPermissionMode);
   const {
     currentWorkspace,
     sessionRootPath,
@@ -208,7 +208,7 @@ export function AgentView(): React.ReactElement {
     fileBrowserOpen,
     setCurrentSidePanelOpen,
     handleToggleFileBrowser
-  } = useAgentSidePanelState(sessionId);
+  } = useAgentSidePanelState(threadId);
 
   // --- Todo 面板逻辑 ---
   const [todoPanelExpanded, setTodoPanelExpanded] = useState(true);
@@ -259,7 +259,7 @@ export function AgentView(): React.ReactElement {
     setAskUserError,
     setToolPermissionError
   } = useAgentInteractiveRequests({
-    sessionId,
+    threadId,
     currentRuntimeStatus,
     askUserQuestionRequest,
     toolPermissionRequest,
@@ -268,7 +268,7 @@ export function AgentView(): React.ReactElement {
   });
 
   useAgentStreamSubscriptions({
-    sessionId,
+    threadId,
     agentPermissionMode,
     planSessionActive,
     streamingStates,
@@ -299,7 +299,7 @@ export function AgentView(): React.ReactElement {
   });
 
   useAgentRuntimeGuard({
-    sessionId,
+    threadId,
     isAgentBusy,
     isAwaitingInteractiveInput,
     toolActivities,
@@ -321,7 +321,7 @@ export function AgentView(): React.ReactElement {
     handleDeleteMessage,
     handleSubmitInlineEdit
   } = useAgentComposer({
-    sessionId,
+    threadId,
     sessionTitle: session?.title ?? "",
     currentWorkspaceSlug: currentWorkspace?.slug ?? null,
     currentWorkspaceId: currentWorkspace?.id ?? null,
@@ -383,16 +383,16 @@ export function AgentView(): React.ReactElement {
   const handleModelSelect = useCallback((option: ModelOption): void => {
     setAgentChannelId(option.channelId);
     setAgentModelId(option.modelId);
-    if (sessionId) {
-      void updateAgentSessionModelSelection(sessionId, option.modelId, option.channelId)
-        .then((updated) => {
-          setSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
-        })
-        .catch((error) => {
-          console.error("[AgentView] update model selection failed", error);
-        });
+    if (threadId) {
+        void updateAgentThreadModelSelection(threadId, option.modelId, option.channelId)
+          .then((updated: AgentThreadMeta) => {
+            setSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+          })
+          .catch((error: unknown) => {
+            console.error("[AgentView] update model selection failed", error);
+          });
     }
-  }, [sessionId, setAgentChannelId, setAgentModelId, setSessions]);
+  }, [threadId, setAgentChannelId, setAgentModelId, setSessions]);
 
   const externalSelectedModel = useMemo(() => {
     if (!agentChannelId) return null;
@@ -406,7 +406,7 @@ export function AgentView(): React.ReactElement {
     && backendReady
     && !isAgentBusy;
 
-  if (!sessionId) {
+  if (!threadId) {
     return (
       <div className="mx-auto flex h-full w-full max-w-[min(72rem,100%)] flex-col items-center justify-center gap-4 text-muted-foreground" style={{ zoom: 1.1 }}>
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
@@ -414,7 +414,7 @@ export function AgentView(): React.ReactElement {
         </div>
         <div className="space-y-2 text-center">
           <h2 className="text-lg font-medium text-foreground">Agent 模式</h2>
-          <p className="max-w-[300px] text-sm">从左侧点击“新会话”按钮创建一个 Agent 会话</p>
+          <p className="max-w-[300px] text-sm">从左侧点击“新线程”按钮创建一个 Agent 线程</p>
         </div>
       </div>
     );
@@ -505,7 +505,7 @@ export function AgentView(): React.ReactElement {
               onClick={() => {
                 setStreamErrors((prev) => {
                   const map = new Map(prev);
-                  map.delete(sessionId);
+                  map.delete(threadId);
                   return map;
                 });
               }}
@@ -554,7 +554,7 @@ export function AgentView(): React.ReactElement {
                 void addFilesAsAttachments(regularFiles);
               }
 
-              if (folderEntries.length > 0 && sessionId && workspaceId) {
+              if (folderEntries.length > 0 && threadId && workspaceId) {
                 const workspace = workspaces.find((item) => item.id === workspaceId);
                 if (!workspace) return;
 
@@ -571,9 +571,9 @@ export function AgentView(): React.ReactElement {
                         }))
                       );
 
-                      const saved = await saveFilesToAgentSession({
+                      const saved = await saveFilesToAgentThread({
                         workspaceSlug: workspace.slug,
-                        sessionId,
+                        threadId,
                         files: payload
                       });
                       setPendingFolderRefs((prev) => [...prev, ...saved]);
@@ -770,7 +770,7 @@ export function AgentView(): React.ReactElement {
       </div>
 
           <AgentSidePanel
-            sessionId={sessionId}
+            sessionId={threadId}
             sessionPath={sessionRootPath}
             workspaceSlug={currentWorkspace?.slug ?? null}
             open={currentSidePanelOpen}
@@ -800,10 +800,10 @@ export function AgentView(): React.ReactElement {
             </div>
             <div className="space-y-2 px-4 py-3">
               <div className="text-xs text-muted-foreground">工具：{toolPermissionRequest.toolName}</div>
-              {toolPermissionRequest.originSessionId || toolPermissionRequest.subagentRunId ? (
+              {toolPermissionRequest.originThreadId || toolPermissionRequest.subagentRunId ? (
                 <div className="text-xs text-muted-foreground">
-                  {toolPermissionRequest.originSessionId ? `来源会话: ${toolPermissionRequest.originSessionId}` : ""}
-                  {toolPermissionRequest.originSessionId && toolPermissionRequest.subagentRunId ? " · " : ""}
+                  {toolPermissionRequest.originThreadId ? `来源线程: ${toolPermissionRequest.originThreadId}` : ""}
+                  {toolPermissionRequest.originThreadId && toolPermissionRequest.subagentRunId ? " · " : ""}
                   {toolPermissionRequest.subagentRunId ? `Run: ${toolPermissionRequest.subagentRunId}` : ""}
                 </div>
               ) : null}
@@ -856,3 +856,5 @@ export function AgentView(): React.ReactElement {
     </div>
   );
 }
+
+

@@ -1,108 +1,150 @@
 import {
-  DefaultResourceLoader,
-  SessionManager,
-  createAgentSession,
-  type AgentSession,
-  type CreateAgentSessionResult
-} from "@mariozechner/pi-coding-agent";
-import type { Api, Model } from "@mariozechner/pi-ai";
+  createAgent,
+  type SDKMessage,
+  type Agent,
+  type AgentOptions,
+  type McpServerConfig,
+  type ToolDefinition
+} from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
   AgentSendInput,
-  AgentToolPermissionRequest
+  AgentToolPermissionRequest,
+  WorkspaceMcpConfig
 } from "@lume/shared";
 import { buildDynamicContext, buildSystemPromptAppend } from "../../agent/agent-prompt-builder";
 import {
   resolveAgentDynamicContextInput,
   resolveAgentRuntimeRoutingTrace
 } from "../../agent/agent-runtime-context";
-import { getWorkspaceSkills } from "../../agent/agent-workspace-manager";
+import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
-import { resolveRuntimeCoreModel } from "./model";
-import { discoverRuntimeCoreModelRegistry } from "./pi-model-discovery";
 import { buildRuntimeCoreTools } from "./pi-tools";
-import type { KnownProvider } from "@mariozechner/pi-ai";
-import { createOrResumeRuntimeCoreSessionManager } from "./session-store";
+import {
+  createOrResumeRuntimeCoreSessionManager,
+  hasRuntimeCoreSessionTranscript,
+  type RuntimeCoreSessionManager
+} from "./session-store";
 
 const log = createLogger("runtime-core-prompt");
+
+interface RuntimeCoreResolvedModel {
+  id: string;
+  provider: string;
+  baseUrl?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+}
 
 export interface CreateRuntimeCoreSessionInput {
   lumeSessionId: string;
   cwd: string;
   agentDir: string;
   userMessage?: string;
-  provider: KnownProvider;
+  provider: string;
   modelId: string;
-  resolvedModel?: Model<Api>;
+  resolvedModel?: RuntimeCoreResolvedModel;
   apiKey: string;
   workspaceId?: string;
   workspaceName?: string;
   workspaceSlug?: string;
   channelId?: string;
-  sessionType?: AgentSendInput["sessionType"];
+  threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   messageMetadata?: Record<string, unknown>;
+  emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  sessionManager?: SessionManager;
+}
+
+export interface RuntimeCoreSessionLike {
+  sessionId: string;
+  threadId?: string;
+  model?: RuntimeCoreResolvedModel;
+  messages: Array<{ role: string }>;
+  agent: {
+    state: {
+      systemPrompt: string;
+    };
+  };
+  getActiveToolNames(): string[];
+  dispose(): Promise<void>;
 }
 
 export interface CreateRuntimeCoreSessionResult {
-  session: AgentSession;
-  upstream: CreateAgentSessionResult;
-  sessionManager: SessionManager;
+  agent: Agent;
+  session: RuntimeCoreSessionLike;
+  sessionManager: RuntimeCoreSessionManager;
+  systemPrompt: string;
+  tools: ToolDefinition[];
 }
 
-function collectAvailableToolNames(toolset: {
-  tools: Array<{ name?: string }>;
-  customTools: Array<{ name?: string }>;
-}, options?: { workspaceSlug?: string }): string[] {
-  const names = [
-    ...toolset.tools.map((tool) => tool.name),
-    ...toolset.customTools.map((tool) => tool.name)
-  ]
-    .filter((name): name is string => typeof name === "string")
-    .map((name) => name.trim())
-    .filter(Boolean);
-  if (options?.workspaceSlug) {
-    const skills = getWorkspaceSkills(options.workspaceSlug);
-    if (skills.length > 0) {
-      names.push("Skill");
+function resolveSdkApiType(provider: string): "anthropic-messages" | "openai-completions" {
+  return provider.trim().toLowerCase() === "anthropic"
+    ? "anthropic-messages"
+    : "openai-completions";
+}
+
+function buildMcpServers(workspaceSlug?: string): Record<string, McpServerConfig> | undefined {
+  if (!workspaceSlug) {
+    return undefined;
+  }
+  const config = getWorkspaceMcpConfig(workspaceSlug);
+  return mapWorkspaceMcpConfig(config);
+}
+
+function mapWorkspaceMcpConfig(config: WorkspaceMcpConfig): Record<string, McpServerConfig> | undefined {
+  const servers: Record<string, McpServerConfig> = {};
+  for (const [name, entry] of Object.entries(config.servers ?? {})) {
+    if (!entry.enabled) continue;
+    if (entry.type === "stdio" && entry.command) {
+      servers[name] = {
+        type: "stdio",
+        command: entry.command,
+        ...(entry.args ? { args: entry.args } : {}),
+        ...(entry.env ? { env: entry.env } : {})
+      };
+      continue;
+    }
+    if ((entry.type === "http" || entry.type === "sse") && entry.url) {
+      servers[name] = {
+        type: entry.type,
+        url: entry.url,
+        ...(entry.headers ? { headers: entry.headers } : {})
+      };
     }
   }
-  return Array.from(new Set(names));
+  return Object.keys(servers).length > 0 ? servers : undefined;
 }
 
-export async function createRuntimeCoreResourceLoader(input: {
-  cwd: string;
-  agentDir: string;
+function buildCombinedSystemPrompt(input: {
   lumeSessionId: string;
+  cwd: string;
   modelId: string;
-  userMessage?: string;
+  workspaceId?: string;
   workspaceName?: string;
   workspaceSlug?: string;
-  sessionType?: AgentSendInput["sessionType"];
+  channelId?: string;
+  threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
+  userMessage?: string;
   availableTools: string[];
-  messageMetadata?: Record<string, unknown>;
-}): Promise<DefaultResourceLoader> {
-  const automationExecution = typeof input.messageMetadata?.automationJobId === "string"
-    || typeof input.messageMetadata?.automationTrigger === "string";
+}): string {
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
   const systemPromptAppend = buildSystemPromptAppend({
     workspaceName: input.workspaceName,
     workspaceSlug: input.workspaceSlug,
     sessionId: input.lumeSessionId,
-    sessionType: input.sessionType,
+    sessionType: input.threadType,
     chatType: input.chatType,
     availableTools: input.availableTools,
     memoryCitationsMode: memoryRuntimeConfig.citationsMode,
-    automationExecution,
     permissionMode: input.permissionMode
-  }).trim();
+  }).trim().replace("\n# Project Context\n", "\n## Project Context\n");
+
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: input.workspaceSlug,
     userMessage: input.userMessage,
@@ -115,6 +157,7 @@ export async function createRuntimeCoreResourceLoader(input: {
     preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
     routingReason: routingTrace.reason
   });
+
   const dynamicContext = buildDynamicContext(
     resolveAgentDynamicContextInput({
       sessionId: input.lumeSessionId,
@@ -123,44 +166,21 @@ export async function createRuntimeCoreResourceLoader(input: {
       workspaceSlug: input.workspaceSlug,
       agentCwd: input.cwd,
       availableTools: input.availableTools,
-      sessionType: input.sessionType,
+      threadType: input.threadType,
       chatType: input.chatType,
       fallbackModelId: input.modelId
     })
   ).trim();
 
-  const loader = new DefaultResourceLoader({
-    cwd: input.cwd,
-    agentDir: input.agentDir,
-    // Lume 已自行注入 AGENTS/SOUL/IDENTITY/USER/MEMORY 等 workspace context，
-    // 这里关闭默认 AGENTS.md 自动发现，避免与 Project Context 重复。
-    agentsFilesOverride: () => ({ agentsFiles: [] }),
-    appendSystemPromptOverride: (base) => [
-      ...base,
-      systemPromptAppend,
-      dynamicContext
-    ].filter((part) => typeof part === "string" && part.trim().length > 0)
-  });
-  await loader.reload();
-  return loader;
+  return [systemPromptAppend, dynamicContext]
+    .filter((part) => typeof part === "string" && part.trim().length > 0)
+    .join("\n\n");
 }
 
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
-  const model = input.resolvedModel ?? resolveRuntimeCoreModel({
-    provider: input.provider,
-    modelId: input.modelId
-  });
-  if (!model) {
-    throw new Error(`runtime-core 未找到模型: ${input.provider}/${input.modelId}`);
-  }
-
-  const sessionManager = input.sessionManager ?? createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
-  const modelRegistry = discoverRuntimeCoreModelRegistry({ agentDir: input.agentDir });
-  modelRegistry.registerProvider(input.provider, {
-    apiKey: input.apiKey
-  });
+  const sessionManager = createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     sessionId: input.lumeSessionId,
@@ -168,43 +188,80 @@ export async function createRuntimeCoreSession(
     workspaceSlug: input.workspaceSlug,
     channelId: input.channelId,
     provider: input.provider,
-    sessionType: input.sessionType,
+    threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
+    emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitToolPermissionRequest: input.emitToolPermissionRequest
   });
-  const resourceLoader = await createRuntimeCoreResourceLoader({
-    cwd: input.cwd,
-    agentDir: input.agentDir,
+
+  const systemPrompt = buildCombinedSystemPrompt({
     lumeSessionId: input.lumeSessionId,
-    modelId: input.modelId,
-    userMessage: input.userMessage,
+    cwd: input.cwd,
+    modelId: input.resolvedModel?.id ?? input.modelId,
+    workspaceId: input.workspaceId,
     workspaceName: input.workspaceName,
     workspaceSlug: input.workspaceSlug,
-    sessionType: input.sessionType,
+    channelId: input.channelId,
+    threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
-    availableTools: collectAvailableToolNames(toolset, {
-      workspaceSlug: input.workspaceSlug
-    }),
-    messageMetadata: input.messageMetadata
-  });
-  const upstream = await createAgentSession({
-    cwd: input.cwd,
-    agentDir: input.agentDir,
-    model,
-    modelRegistry,
-    sessionManager,
-    resourceLoader,
-    tools: toolset.tools,
-    customTools: toolset.customTools
+    userMessage: input.userMessage,
+    availableTools: toolset.availableToolNames
   });
 
+  const agentOptions: AgentOptions = {
+    apiType: resolveSdkApiType(input.provider),
+    apiKey: input.apiKey,
+    ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
+    model: input.resolvedModel?.id ?? input.modelId,
+    cwd: input.cwd,
+    systemPrompt,
+    tools: toolset.tools,
+    sessionId: input.lumeSessionId,
+    ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
+      ? { resume: input.lumeSessionId }
+      : {}),
+    ...(buildMcpServers(input.workspaceSlug) ? { mcpServers: buildMcpServers(input.workspaceSlug) } : {}),
+    permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
+    includePartialMessages: true,
+    additionalDirectories: input.workspaceSlug ? [input.cwd] : undefined,
+    persistSession: true
+  };
+
+  const agent = createAgent(agentOptions);
+  await agent.getInitializationResult();
+
+  const context = sessionManager.buildSessionContext();
+  const session: RuntimeCoreSessionLike = {
+    sessionId: input.lumeSessionId,
+    threadId: input.lumeSessionId,
+    model: input.resolvedModel ?? {
+      id: input.modelId,
+      provider: input.provider
+    },
+    messages: context.messages.map((message) => ({ role: message.role })),
+    agent: {
+      state: {
+        systemPrompt
+      }
+    },
+    getActiveToolNames() {
+      return toolset.tools.map((tool) => tool.name);
+    },
+    async dispose() {
+      await agent.close();
+    }
+  };
+
   return {
-    session: upstream.session,
-    upstream,
-    sessionManager
+    agent,
+    session,
+    sessionManager,
+    systemPrompt,
+    tools: toolset.tools
   };
 }
+

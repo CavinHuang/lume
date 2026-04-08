@@ -8,7 +8,7 @@ interface RuntimeStatusPatch {
   requestId?: string;
   toolUseId?: string;
   toolName?: string;
-  originSessionId?: string;
+  originThreadId?: string;
   subagentRunId?: string;
   error?: string;
 }
@@ -33,35 +33,35 @@ export class AgentRuntimeStatusManager {
   }
 
   markAwaitingPermission(
-    sessionId: string,
+    threadId: string,
     input: {
       requestId: string;
       toolUseId?: string;
       toolName?: string;
-      originSessionId?: string;
+      originThreadId?: string;
       subagentRunId?: string;
     }
   ): AgentRuntimeStatus {
-    return this.update(sessionId, {
+    return this.update(threadId, {
       phase: "awaiting_permission",
       interactiveKind: "tool_permission",
       requestId: input.requestId,
       toolUseId: input.toolUseId,
       toolName: input.toolName,
-      originSessionId: input.originSessionId,
+      originThreadId: input.originThreadId,
       subagentRunId: input.subagentRunId
     });
   }
 
   markAwaitingUserAnswer(
-    sessionId: string,
-    input: { toolUseId: string; originSessionId?: string; subagentRunId?: string }
+    threadId: string,
+    input: { toolUseId: string; originThreadId?: string; subagentRunId?: string }
   ): AgentRuntimeStatus {
-    return this.update(sessionId, {
+    return this.update(threadId, {
       phase: "awaiting_user_answer",
       interactiveKind: "ask_user_question",
       toolUseId: input.toolUseId,
-      originSessionId: input.originSessionId,
+      originThreadId: input.originThreadId,
       subagentRunId: input.subagentRunId
     });
   }
@@ -86,20 +86,20 @@ export class AgentRuntimeStatusManager {
     this.statuses.delete(sessionId);
   }
 
-  private update(sessionId: string, patch: RuntimeStatusPatch): AgentRuntimeStatus {
+  private update(threadId: string, patch: RuntimeStatusPatch): AgentRuntimeStatus {
     const next: AgentRuntimeStatus = {
-      sessionId,
+      threadId,
       phase: patch.phase,
       ...(patch.interactiveKind ? { interactiveKind: patch.interactiveKind } : {}),
       ...(patch.requestId ? { requestId: patch.requestId } : {}),
       ...(patch.toolUseId ? { toolUseId: patch.toolUseId } : {}),
       ...(patch.toolName ? { toolName: patch.toolName } : {}),
-      ...(patch.originSessionId ? { originSessionId: patch.originSessionId } : {}),
+      ...(patch.originThreadId ? { originThreadId: patch.originThreadId } : {}),
       ...(patch.subagentRunId ? { subagentRunId: patch.subagentRunId } : {}),
       ...(patch.error ? { error: patch.error } : {}),
       updatedAt: Date.now()
     };
-    this.statuses.set(sessionId, next);
+    this.statuses.set(threadId, next);
     for (const listener of this.listeners) {
       listener(next);
     }

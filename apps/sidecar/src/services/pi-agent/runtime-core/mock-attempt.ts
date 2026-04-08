@@ -1,6 +1,6 @@
 import { updateAgentSessionMeta } from "../../agent/agent-session-manager";
 import {
-  appendAgentEvents,
+  appendSdkMessage,
   createAgentStreamAccumulatorState
 } from "../../agent/agent-stream-accumulator";
 import { createLogger } from "../../infra/logger";
@@ -13,8 +13,8 @@ import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "
 import type { resolveRuntimeCoreChannelModel } from "./model";
 
 interface RunRuntimeCoreAttemptOptions {
-  registerAbort: (sessionId: string, abort: () => Promise<void>) => void;
-  unregisterAbort: (sessionId: string) => void;
+  registerAbort: (threadId: string, abort: () => Promise<void>) => void;
+  unregisterAbort: (threadId: string) => void;
 }
 
 interface PreparedRuntimeCoreAttempt {
@@ -92,7 +92,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
     workspaceName: prepared.workspaceName,
     workspaceSlug: prepared.workspaceSlug,
     channelId: runtime.channelId,
-    sessionType: runtime.sessionType,
+    threadType: runtime.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
@@ -102,8 +102,13 @@ export async function runRuntimeCoreMockSuccessAttempt(
   const { session, sessionManager } = upstream;
   logMockSessionPersistence("mock_success", runtime.sessionId, sessionManager);
   const accumulator = createAgentStreamAccumulatorState();
-  const textEvent = { type: "text_delta" as const, text: mockText };
-  appendAgentEvents(accumulator, [textEvent]);
+  appendSdkMessage(accumulator, {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: mockText }]
+    }
+  } as any);
   sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
   sessionManager.appendThinkingLevelChange("medium");
   sessionManager.appendMessage({
@@ -137,19 +142,25 @@ export async function runRuntimeCoreMockSuccessAttempt(
     };
   }
   await maybeEmitMockSubagentAnnounce(runtime.sessionId);
-  emit.onEvent(textEvent);
-  emit.onEvent({
-    type: "complete",
-    stopReason: "completed",
-    usage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      costUsd: 0
+  emit.onSdkMessage({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: mockText }]
     }
-  });
+  } as any);
+  emit.onSdkMessage({
+    type: "result",
+    stop_reason: "completed",
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0
+    }
+  } as any);
   updateAgentSessionMeta(runtime.sessionId, {
-    piSessionId: session.sessionId
+    runtimeThreadId: session.threadId ?? session.sessionId
   });
   session.dispose();
   emit.onComplete();
@@ -157,16 +168,16 @@ export async function runRuntimeCoreMockSuccessAttempt(
 }
 
 export async function runMockInteractiveBridges(
-  sessionId: string,
+  threadId: string,
   emit: PiAgentRuntimeEmitter
 ): Promise<{ status: "ok" } | { status: "errored"; error: string }> {
   if (process.env.LUME_PI_AGENT_MOCK_TOOL_PERMISSION === "1") {
     const controller = new AbortController();
     const decision = await waitForToolPermissionDecision(
       {
-        sessionId,
-        requestId: `mock-permission:${sessionId}`,
-        toolUseId: `mock-tool-use:${sessionId}`,
+        threadId,
+        requestId: `mock-permission:${threadId}`,
+        toolUseId: `mock-tool-use:${threadId}`,
         toolName: "write",
         risk: "high",
         reason: "mock permission request",
@@ -186,8 +197,8 @@ export async function runMockInteractiveBridges(
   if (process.env.LUME_PI_AGENT_MOCK_ASK_USER_QUESTION === "1") {
     const controller = new AbortController();
     const answerResult = await waitForPiAskUserQuestionAnswers(
-      sessionId,
-      `mock-ask:${sessionId}`,
+      threadId,
+      `mock-ask:${threadId}`,
       [
         {
           header: "范围",
@@ -212,18 +223,18 @@ export async function runMockInteractiveBridges(
   return { status: "ok" };
 }
 
-export async function maybeEmitMockSubagentAnnounce(sessionId: string): Promise<void> {
+export async function maybeEmitMockSubagentAnnounce(threadId: string): Promise<void> {
   if (process.env.LUME_PI_AGENT_MOCK_SUBAGENT_ANNOUNCE !== "1") {
     return;
   }
-  const runId = `mock-subagent-run:${sessionId}`;
+  const runId = `mock-subagent-run:${threadId}`;
   const registry = getSubagentRunRegistry();
   if (!registry.get(runId)) {
     registry.create({
       runId,
-      parentSessionId: sessionId,
-      rootSessionId: sessionId,
-      childSessionId: `mock-child-session:${sessionId}`,
+      parentThreadId: threadId,
+      rootThreadId: threadId,
+      childThreadId: `mock-child-session:${threadId}`,
       label: "Mock Subagent",
       task: "mock subagent completion",
       cleanup: "keep",
@@ -235,10 +246,10 @@ export async function maybeEmitMockSubagentAnnounce(sessionId: string): Promise<
   const result = await announceSubagentCompletion({
     run: {
       runId,
-      parentSessionId: sessionId,
-      rootSessionId: sessionId,
+      parentThreadId: threadId,
+      rootThreadId: threadId,
       depth: 1,
-      childSessionId: `mock-child-session:${sessionId}`,
+      childThreadId: `mock-child-session:${threadId}`,
       label: "Mock Subagent",
       task: "mock subagent completion",
       status: "completed",
@@ -282,7 +293,7 @@ export async function runRuntimeCoreMockCompactionAttempt(
     workspaceName: prepared.workspaceName,
     workspaceSlug: prepared.workspaceSlug,
     channelId: runtime.channelId,
-    sessionType: runtime.sessionType,
+    threadType: runtime.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
@@ -298,23 +309,22 @@ export async function runRuntimeCoreMockCompactionAttempt(
     content: [{ type: "text", text: input.userMessage }],
     timestamp: Date.now()
   });
-  emit.onEvent({ type: "compacting" });
+  emit.onSdkMessage({ type: "system", subtype: "compact_boundary" } as any);
   sessionManager.appendCompaction(summary, currentLeafId, 0, {
     source: "mock-runtime-core"
   });
-  emit.onEvent({ type: "compact_complete" });
-  emit.onEvent({
-    type: "complete",
-    stopReason: "completed",
+  emit.onSdkMessage({
+    type: "result",
+    stop_reason: "completed",
     usage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      costUsd: 0
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0
     }
-  });
+  } as any);
   updateAgentSessionMeta(runtime.sessionId, {
-    piSessionId: session.sessionId
+    runtimeThreadId: session.threadId ?? session.sessionId
   });
   session.dispose();
   emit.onComplete();
@@ -341,7 +351,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
     workspaceId: runtime.workspaceId,
     workspaceSlug: prepared.workspaceSlug,
     channelId: runtime.channelId,
-    sessionType: runtime.sessionType,
+    threadType: runtime.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
@@ -358,9 +368,20 @@ export async function runRuntimeCoreMockDelayedAttempt(
     timestamp: Date.now()
   });
   const accumulator = createAgentStreamAccumulatorState();
-  const textEvent = { type: "text_delta" as const, text: mockText };
-  appendAgentEvents(accumulator, [textEvent]);
-  emit.onEvent(textEvent);
+  appendSdkMessage(accumulator, {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: mockText }]
+    }
+  } as any);
+  emit.onSdkMessage({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: mockText }]
+    }
+  } as any);
 
   let aborted = false;
   let resolveWait: (() => void) | undefined;
@@ -400,22 +421,22 @@ export async function runRuntimeCoreMockDelayedAttempt(
         timestamp: Date.now()
       });
       updateAgentSessionMeta(runtime.sessionId, {
-        piSessionId: session.sessionId
+        runtimeThreadId: session.threadId ?? session.sessionId
       });
       emit.onComplete();
       return { status: "aborted" };
     }
 
-    emit.onEvent({
-      type: "complete",
-      stopReason: "completed",
+    emit.onSdkMessage({
+      type: "result",
+      stop_reason: "completed",
       usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        costUsd: 0
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0
       }
-    });
+    } as any);
     sessionManager.appendMessage({
       role: "assistant",
       provider: prepared.modelResolution.provider,
@@ -434,7 +455,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
       timestamp: Date.now()
     });
     updateAgentSessionMeta(runtime.sessionId, {
-      piSessionId: session.sessionId
+      runtimeThreadId: session.threadId ?? session.sessionId
     });
     emit.onComplete();
     return { status: "completed" };
@@ -460,7 +481,7 @@ export function shouldRunMockCompaction(userMessage: string): boolean {
   return userMessage.trim() === "/compact";
 }
 
-export function logMockSessionPersistence(kind: string, sessionId: string, sessionManager: {
+export function logMockSessionPersistence(kind: string, threadId: string, sessionManager: {
   getSessionDir(): string;
   getSessionFile(): string | undefined;
 }): void {
@@ -469,8 +490,13 @@ export function logMockSessionPersistence(kind: string, sessionId: string, sessi
   }
   log.info("runtime-core mock session persistence", {
     kind,
-    sessionId: sessionId.slice(0, 8),
+    threadId: threadId.slice(0, 8),
     sessionDir: sessionManager.getSessionDir(),
     sessionFile: sessionManager.getSessionFile()
   });
 }
+
+
+
+
+

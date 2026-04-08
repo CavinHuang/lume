@@ -7,14 +7,14 @@ function normalizeSessionId(value: unknown): string | undefined {
 }
 
 export interface ResolveSubagentThreadBindingInput {
-  parentSessionId: string;
-  childSessionId: string;
+  parentThreadId: string;
+  childThreadId: string;
   threadRequested?: boolean;
   requestedDeliverySessionId?: string;
 }
 
 export interface ResolvedSubagentThreadBinding {
-  deliverySessionId: string;
+  deliveryThreadId: string;
   threadRequested: boolean;
   threadBound: boolean;
 }
@@ -30,12 +30,12 @@ export function resolveSubagentThreadBinding(
   const requestedDelivery = normalizeSessionId(input.requestedDeliverySessionId);
   const resolvedDelivery = requestedDelivery && getAgentSessionMeta(requestedDelivery)
     ? requestedDelivery
-    : input.parentSessionId;
+    : input.parentThreadId;
   const threadRequested = input.threadRequested === true;
   const threadBound = threadRequested;
-  void input.childSessionId;
+  void input.childThreadId;
   return {
-    deliverySessionId: resolvedDelivery,
+    deliveryThreadId: resolvedDelivery,
     threadRequested,
     threadBound
   };
@@ -43,9 +43,10 @@ export function resolveSubagentThreadBinding(
 
 export function releaseSubagentThreadBinding(_input: {
   runId: string;
-  childSessionId: string;
-  deliverySessionId: string;
+  childThreadId: string;
+  deliveryThreadId: string;
   threadBound?: boolean;
 }): void {
   // 当前 sidecar 版本无外部线程资源需要释放，保留接口用于后续渠道实现。
 }
+

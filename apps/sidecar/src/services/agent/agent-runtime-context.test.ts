@@ -38,7 +38,7 @@ describe("agent-runtime-context", () => {
       workspaceSlug: "workspace-slug",
       agentCwd: "D:/workspace/projects/ai-projects/lume",
       availableTools: ["Skill", "read"],
-      sessionType: "main",
+      threadType: "main",
       chatType: "direct",
       fallbackModelId: "fallback-model"
     });
@@ -97,3 +97,4 @@ describe("agent-runtime-context", () => {
     expect(trace.preferredCapabilityRoute).toBe("skills");
   });
 });
+

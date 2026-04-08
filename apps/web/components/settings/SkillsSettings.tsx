@@ -6,18 +6,18 @@ import {
   activeViewAtom,
   agentChannelIdAtom,
   agentPendingPromptAtom,
-  agentSessionsAtom,
+  agentThreadsAtom,
   agentWorkspacesAtom,
   appModeAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadIdAtom,
   currentAgentWorkspaceIdAtom,
   workspaceCapabilitiesVersionAtom
 } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import {
-  createAgentSession,
+  createAgentThread,
   deleteAgentWorkspaceSkill,
-  listAgentSessions,
+  listAgentThreads,
   listAgentWorkspaceSkills
 } from "@/lib/desktop-api/agent";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
@@ -31,8 +31,8 @@ export function SkillsSettings(): React.ReactElement {
     [workspaces, currentWorkspaceId]
   );
 
-  const setAgentSessions = useSetAtom(agentSessionsAtom);
-  const setCurrentSessionId = useSetAtom(currentAgentSessionIdAtom);
+  const setAgentSessions = useSetAtom(agentThreadsAtom);
+  const setCurrentSessionId = useSetAtom(currentAgentThreadIdAtom);
   const setPendingPrompt = useSetAtom(agentPendingPromptAtom);
   const setActiveView = useSetAtom(activeViewAtom);
   const setAppMode = useSetAtom(appModeAtom);
@@ -106,14 +106,14 @@ ${skillList}
 请查看 skills/ 目录了解现有配置，根据我的需求创建或编辑 Skill。`;
 
     try {
-      const session = await createAgentSession({
+      const thread = await createAgentThread({
         channelId: agentChannelId ?? undefined,
         workspaceId: currentWorkspaceId ?? undefined
       });
-      const sessions = await listAgentSessions();
+      const sessions = await listAgentThreads();
       setAgentSessions(sessions);
-      setCurrentSessionId(session.id);
-      setPendingPrompt({ sessionId: session.id, message: promptMessage });
+      setCurrentSessionId(thread.id);
+      setPendingPrompt({ threadId: thread.id, message: promptMessage });
       setAppMode("agent");
       setActiveView("conversations");
     } catch (error) {

@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { ToolDefinition } from "@lume/agent-sdk";
 import type { AutomationSchedule, AutomationJob } from "@lume/shared";
 import {
   createAutomationJob,
@@ -8,22 +8,11 @@ import {
   updateAutomationJob
 } from "../../../automation/automation-manager";
 import { listAutomationRuns, runAutomationJobNow } from "../../../automation/automation-runner-service";
+import { createSdkJsonResultTool } from "../sdk-tool-result";
 
 interface CreateAutomationToolsInput {
   workspaceId?: string;
   sessionId?: string;
-}
-
-function toResult<TDetails>(details: TDetails): AgentToolResult<TDetails> {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(details, null, 2)
-      }
-    ],
-    details
-  };
 }
 
 function asString(value: unknown): string | undefined {
@@ -108,156 +97,140 @@ const QuerySchema = Type.Object({
   limit: Type.Optional(Type.Number())
 });
 
-export function createCronTools(input: CreateAutomationToolsInput): AgentTool[] {
+export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefinition[] {
   return [
-    {
+    createSdkJsonResultTool({
       name: "cron_read",
-      label: "CronRead",
       description: "读取定时任务配置（读取）",
-      parameters: ReadSchema,
-      async execute(_toolCallId, args) {
-        try {
-          const params = (args ?? {}) as Record<string, unknown>;
-          const workspaceId = asString(params.workspaceId) ?? input.workspaceId;
-          const id = asString(params.id);
-          const jobs = listAutomationJobs().filter((job) => isJobAccessible(job, workspaceId));
-          if (!id) {
-            return toResult({
-              ok: true,
-              total: jobs.length,
-              jobs
-            });
-          }
-          const target = jobs.find((job) => job.id === id);
-          if (!target) {
-            return toResult({
-              ok: false,
-              error: `任务不存在或不可访问: ${id}`
-            });
-          }
-          return toResult({
-            ok: true,
-            job: target
-          });
-        } catch (error) {
-          return toResult({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
-          });
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspaceId: { type: "string" },
+          id: { type: "string" }
         }
+      },
+      isReadOnly: true,
+      isConcurrencySafe: true,
+      async call(args) {
+        const workspaceId = asString(args.workspaceId) ?? input.workspaceId;
+        const id = asString(args.id);
+        const jobs = listAutomationJobs().filter((job) => isJobAccessible(job, workspaceId));
+        if (!id) {
+          return { ok: true, total: jobs.length, jobs };
+        }
+        const target = jobs.find((job) => job.id === id);
+        if (!target) {
+          return { ok: false, error: `任务不存在或不可访问: ${id}` };
+        }
+        return { ok: true, job: target };
       }
-    },
-    {
+    }),
+    createSdkJsonResultTool({
       name: "cron_set",
-      label: "CronSet",
       description: "设置定时任务（创建/更新/删除/启停/立即执行）",
-      parameters: SetSchema,
-      async execute(_toolCallId, args) {
-        try {
-          const params = (args ?? {}) as Record<string, unknown>;
-          const action = asString(params.action);
-          const workspaceId = asString(params.workspaceId) ?? input.workspaceId;
-          const sessionId = asString(params.sessionId) ?? input.sessionId;
-          if (!action) throw new Error("action 必填");
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string" },
+          id: { type: "string" },
+          name: { type: "string" },
+          prompt: { type: "string" },
+          enabled: { type: "boolean" },
+          workspaceId: { type: "string" },
+          sessionId: { type: "string" },
+          schedule: { type: "object", properties: {} }
+        },
+        required: ["action"]
+      },
+      async call(args) {
+        const action = asString(args.action);
+        const workspaceId = asString(args.workspaceId) ?? input.workspaceId;
+        const sessionId = asString(args.sessionId) ?? input.sessionId;
+        if (!action) throw new Error("action 必填");
 
-          if (action === "create") {
-            const name = asString(params.name);
-            const prompt = asString(params.prompt);
-            const schedule = parseSchedule(params.schedule);
-            if (!name) throw new Error("创建任务缺少 name");
-            if (!prompt) throw new Error("创建任务缺少 prompt");
-            const created = createAutomationJob({
-              name,
-              prompt,
-              schedule,
-              workspaceId,
-              sessionId,
-              enabled: asBoolean(params.enabled)
-            });
-            return toResult({ ok: true, action, job: created });
-          }
-
-          const id = asString(params.id);
-          if (!id) throw new Error(`${action} 需要 id`);
-          const target = resolveTargetJob(id, workspaceId);
-
-          if (action === "delete") {
-            const result = deleteAutomationJob({ id: target.id });
-            return toResult({ ok: true, action, result });
-          }
-
-          if (action === "enable" || action === "disable") {
-            const updated = updateAutomationJob({ id: target.id, enabled: action === "enable" });
-            return toResult({ ok: true, action, job: updated });
-          }
-
-          if (action === "run_now") {
-            void runAutomationJobNow({ id: target.id }).catch((error) => {
-              console.error("[cron_set] run_now 触发失败:", error);
-            });
-            return toResult({
-              ok: true,
-              action,
-              accepted: true,
-              message: "任务已触发（异步执行），请使用 cron_query 查询结果。"
-            });
-          }
-
-          if (action === "update") {
-            const updated = updateAutomationJob({
-              id: target.id,
-              ...(asString(params.name) ? { name: asString(params.name) } : {}),
-              ...(asString(params.prompt) ? { prompt: asString(params.prompt) } : {}),
-              ...(params.schedule ? { schedule: parseSchedule(params.schedule) } : {}),
-              ...(asString(params.sessionId) ? { sessionId: asString(params.sessionId) } : {}),
-              ...(asBoolean(params.enabled) !== undefined ? { enabled: asBoolean(params.enabled) } : {})
-            });
-            return toResult({ ok: true, action, job: updated });
-          }
-
-          throw new Error(`不支持的 action: ${action}`);
-        } catch (error) {
-          return toResult({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
+        if (action === "create") {
+          const name = asString(args.name);
+          const prompt = asString(args.prompt);
+          const schedule = parseSchedule(args.schedule);
+          if (!name) throw new Error("创建任务缺少 name");
+          if (!prompt) throw new Error("创建任务缺少 prompt");
+          const created = createAutomationJob({
+            name,
+            prompt,
+            schedule,
+            workspaceId,
+            sessionId,
+            enabled: asBoolean(args.enabled)
           });
+          return { ok: true, action, job: created };
         }
-      }
-    },
-    {
-      name: "cron_query",
-      label: "CronQuery",
-      description: "查询定时任务运行记录（查询）",
-      parameters: QuerySchema,
-      async execute(_toolCallId, args) {
-        try {
-          const params = (args ?? {}) as Record<string, unknown>;
-          const workspaceId = asString(params.workspaceId) ?? input.workspaceId;
-          const jobId = asString(params.jobId);
-          const limit = asNumber(params.limit);
-          const jobs = listAutomationJobs().filter((job) => isJobAccessible(job, workspaceId));
-          const allowedJobIds = new Set(jobs.map((job) => job.id));
-          if (jobId && !allowedJobIds.has(jobId)) {
-            throw new Error(`任务不存在或不可访问: ${jobId}`);
-          }
-          const runs = listAutomationRuns({
-            ...(jobId ? { jobId } : {}),
-            ...(limit ? { limit } : {})
-          }).filter((run) => allowedJobIds.has(run.jobId));
-          return toResult({
+
+        const id = asString(args.id);
+        if (!id) throw new Error(`${action} 需要 id`);
+        const target = resolveTargetJob(id, workspaceId);
+
+        if (action === "delete") {
+          const result = deleteAutomationJob({ id: target.id });
+          return { ok: true, action, result };
+        }
+        if (action === "enable" || action === "disable") {
+          const updated = updateAutomationJob({ id: target.id, enabled: action === "enable" });
+          return { ok: true, action, job: updated };
+        }
+        if (action === "run_now") {
+          void runAutomationJobNow({ id: target.id }).catch((error) => {
+            console.error("[cron_set] run_now 触发失败:", error);
+          });
+          return {
             ok: true,
-            total: runs.length,
-            runs
-          });
-        } catch (error) {
-          return toResult({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
-          });
+            action,
+            accepted: true,
+            message: "任务已触发（异步执行），请使用 cron_query 查询结果。"
+          };
         }
+        if (action === "update") {
+          const updated = updateAutomationJob({
+            id: target.id,
+            ...(asString(args.name) ? { name: asString(args.name) } : {}),
+            ...(asString(args.prompt) ? { prompt: asString(args.prompt) } : {}),
+            ...(args.schedule ? { schedule: parseSchedule(args.schedule) } : {}),
+            ...(asString(args.sessionId) ? { sessionId: asString(args.sessionId) } : {}),
+            ...(asBoolean(args.enabled) !== undefined ? { enabled: asBoolean(args.enabled) } : {})
+          });
+          return { ok: true, action, job: updated };
+        }
+        throw new Error(`不支持的 action: ${action}`);
       }
-    }
+    }),
+    createSdkJsonResultTool({
+      name: "cron_query",
+      description: "查询定时任务运行记录（查询）",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspaceId: { type: "string" },
+          jobId: { type: "string" },
+          limit: { type: "number" }
+        }
+      },
+      isReadOnly: true,
+      isConcurrencySafe: true,
+      async call(args) {
+        const workspaceId = asString(args.workspaceId) ?? input.workspaceId;
+        const jobId = asString(args.jobId);
+        const limit = asNumber(args.limit);
+        const jobs = listAutomationJobs().filter((job) => isJobAccessible(job, workspaceId));
+        const allowedJobIds = new Set(jobs.map((job) => job.id));
+        if (jobId && !allowedJobIds.has(jobId)) {
+          throw new Error(`任务不存在或不可访问: ${jobId}`);
+        }
+        const runs = listAutomationRuns({
+          ...(jobId ? { jobId } : {}),
+          ...(limit ? { limit } : {})
+        }).filter((run) => allowedJobIds.has(run.jobId));
+        return { ok: true, total: runs.length, runs };
+      }
+    })
   ];
 }
 
-export const createAutomationTools = createCronTools;

@@ -1,6 +1,7 @@
+import type { CanUseToolFn } from "@lume/agent-sdk";
 import { updateAgentSessionMeta } from "../../agent/agent-session-manager";
 import {
-  appendAgentEvents,
+  appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
@@ -8,18 +9,26 @@ import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { decryptApiKey, listChannels } from "../../channel/channel-manager";
 import { ensurePluginManifest, getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../infra/logger";
-import { projectRuntimeCoreEventToLumeEvents } from "./subscribe";
-import { createRuntimeCoreSession } from "./run";
-import { getRuntimeCoreAgentDir } from "./session-store";
-import { applyRuntimeCoreStreamWrappers, createRuntimeCoreStreamWrapperState } from "./stream-wrappers";
-import { resolveRuntimeCoreChannelModel } from "./model";
 import { resolveMockAttempt } from "./mock-attempt";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
 import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
+import { resolveRuntimeCoreChannelModel } from "./model";
+import { createRuntimeCoreSession } from "./run";
+import { getRuntimeCoreAgentDir } from "./session-store";
+import {
+  isToolAlwaysAllowed,
+  markToolAlwaysAllowed,
+  waitForToolPermissionDecision
+} from "../tools/bridges/tool-permission-bridge";
+import {
+  getToolMetadata,
+  inferToolMetadata,
+  isToolAllowedInPlanMode
+} from "../tools/permissions/tool-metadata";
 
 interface RunRuntimeCoreAttemptOptions {
-  registerAbort: (sessionId: string, abort: () => Promise<void>) => void;
-  unregisterAbort: (sessionId: string) => void;
+  registerAbort: (threadId: string, abort: () => Promise<void>) => void;
+  unregisterAbort: (threadId: string) => void;
 }
 
 interface PreparedRuntimeCoreAttempt {
@@ -33,6 +42,126 @@ interface PreparedRuntimeCoreAttempt {
 
 const log = createLogger("pi-agent-runtime-core-attempt");
 
+const PARAM_DENY_RULES: Array<{ tool: string; param: string; pattern: RegExp; reason: string }> = [
+  { tool: "bash", param: "command", pattern: /rm\s+-rf\s+\/(?:\s|$)/, reason: "禁止删除根目录" },
+  { tool: "bash", param: "command", pattern: /:\s*\(\s*\)\s*\{.*\}\s*;.*:/, reason: "禁止 fork bomb" },
+  { tool: "bash", param: "command", pattern: />\s*\/dev\/sd[a-z]/, reason: "禁止写入块设备" }
+];
+
+function sanitizeToolInput(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== "object") return {};
+  const record = input as Record<string, unknown>;
+  const copied: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === "string" && value.length > 2000) {
+      copied[key] = `${value.slice(0, 2000)}...(truncated)`;
+    } else {
+      copied[key] = value;
+    }
+  }
+  return copied;
+}
+
+function checkParamDenyRules(toolName: string, args: unknown): string | null {
+  const normalized = toolName.trim().toLowerCase();
+  const record = args && typeof args === "object" ? args as Record<string, unknown> : {};
+  for (const rule of PARAM_DENY_RULES) {
+    if (rule.tool !== normalized) continue;
+    const value = record[rule.param];
+    if (typeof value === "string" && rule.pattern.test(value)) {
+      return rule.reason;
+    }
+  }
+  return null;
+}
+
+function shouldRequireConfirmation(permissionMode: PiAgentRunParams["input"]["permissionMode"], toolName: string): boolean {
+  const mode = permissionMode ?? "default";
+  if (mode === "bypassPermissions") {
+    return false;
+  }
+  const metadata = getToolMetadata(toolName) ?? inferToolMetadata(toolName);
+  if (metadata.riskLevel === "low") {
+    return false;
+  }
+  if (mode === "acceptEdits" && metadata.category === "write") {
+    return false;
+  }
+  return true;
+}
+
+function buildPermissionReason(toolName: string): string {
+  const metadata = getToolMetadata(toolName) ?? inferToolMetadata(toolName);
+  if (metadata.riskLevel === "high") {
+    return `${toolName} 可能执行系统命令或高风险操作，需要你确认。`;
+  }
+  if (metadata.category === "write") {
+    return `${toolName} 将修改文件或数据，需要你确认。`;
+  }
+  if (metadata.category === "execute") {
+    return `${toolName} 将执行操作，需要你确认。`;
+  }
+  return `${toolName} 将触发操作，需要你确认。`;
+}
+
+function createCanUseToolHandler(
+  params: PiAgentRunParams,
+  emit: PiAgentRuntimeEmitter
+): CanUseToolFn {
+  return async (tool, input, metadata) => {
+    const toolName = tool.name || "unknown_tool";
+    const mode = params.input.permissionMode ?? "default";
+    if (mode === "plan" && !isToolAllowedInPlanMode(toolName)) {
+      return {
+        behavior: "deny",
+        message: `当前是 plan 模式，只允许规划与只读工具，禁止执行: ${toolName}`
+      };
+    }
+
+    const paramDenyReason = checkParamDenyRules(toolName, input);
+    if (paramDenyReason) {
+      return {
+        behavior: "deny",
+        message: `工具参数被拒绝: ${paramDenyReason}`
+      };
+    }
+
+    if (!shouldRequireConfirmation(params.input.permissionMode, toolName)) {
+      return { behavior: "allow" };
+    }
+
+    if (isToolAlwaysAllowed(params.runtime.sessionId, toolName)) {
+      return { behavior: "allow" };
+    }
+
+    const request = {
+      threadId: params.runtime.sessionId,
+      requestId: metadata?.toolUseId ?? toolName,
+      toolUseId: metadata?.toolUseId ?? toolName,
+      toolName,
+      risk: (getToolMetadata(toolName) ?? inferToolMetadata(toolName)).riskLevel,
+      reason: buildPermissionReason(toolName),
+      input: sanitizeToolInput(input)
+    } as const;
+    const decision = await waitForToolPermissionDecision(
+      request,
+      new AbortController().signal,
+      emit.onToolPermissionRequest
+    );
+    if (decision === "allow_always") {
+      markToolAlwaysAllowed(params.runtime.sessionId, toolName);
+      return { behavior: "allow" };
+    }
+    if (decision === "allow_once") {
+      return { behavior: "allow" };
+    }
+    return {
+      behavior: "deny",
+      message: `用户拒绝执行工具: ${toolName}`
+    };
+  };
+}
+
 export async function runRuntimeCoreAttempt(
   params: PiAgentRunParams,
   emit: PiAgentRuntimeEmitter,
@@ -40,9 +169,7 @@ export async function runRuntimeCoreAttempt(
 ): Promise<PiAgentRunResult> {
   const { input, runtime } = params;
 
-  // Mock 分支委托到 mock-attempt.ts，生产路径无 mock 分支
   const mockHandler = resolveMockAttempt(input);
-
   const prepared = prepareRuntimeCoreAttempt(params);
   if (mockHandler) {
     if ("status" in prepared) {
@@ -54,70 +181,89 @@ export async function runRuntimeCoreAttempt(
     return prepared;
   }
 
-  const upstream = await createRuntimeCoreSession({
+  const runtimeSession = await createRuntimeCoreSession({
     lumeSessionId: runtime.sessionId,
     cwd: prepared.agentCwd,
     agentDir: prepared.agentDir,
     userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
     modelId: prepared.modelResolution.resolvedModelId,
-    resolvedModel: prepared.modelResolution.model,
+    resolvedModel: {
+      id: prepared.modelResolution.model.id,
+      provider: prepared.modelResolution.model.provider,
+      baseUrl: prepared.modelResolution.model.baseUrl,
+      contextWindow: prepared.modelResolution.model.contextWindow,
+      maxTokens: prepared.modelResolution.model.maxTokens
+    },
     apiKey: prepared.apiKey,
     workspaceId: runtime.workspaceId,
     workspaceName: prepared.workspaceName,
     workspaceSlug: prepared.workspaceSlug,
     channelId: runtime.channelId,
-    sessionType: runtime.sessionType,
+    threadType: runtime.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
+    emitSdkMessage: emit.onSdkMessage,
     emitAskUserQuestion: emit.onAskUserQuestion,
     emitToolPermissionRequest: emit.onToolPermissionRequest
   });
 
-  const session = upstream.session;
-  if (prepared.workspaceName) {
-    log.info("runtime-core 已创建 upstream session", {
-      sessionId: runtime.sessionId.slice(0, 8),
-      workspaceName: prepared.workspaceName,
-      provider: prepared.modelResolution.provider,
-      modelId: prepared.modelResolution.resolvedModelId
-    });
-  }
-
+  const { agent, session } = runtimeSession;
   const accumulator = createAgentStreamAccumulatorState();
-  const streamWrapperState = createRuntimeCoreStreamWrapperState();
-  const unsubscribe = session.subscribe((event) => {
-    const mappedEvents = projectRuntimeCoreEventToLumeEvents(event, {
-      contextWindow: session.model?.contextWindow
-    });
-    const wrappedEvents = applyRuntimeCoreStreamWrappers(mappedEvents, streamWrapperState, {
-      provider: session.model?.provider,
-      baseUrl: session.model?.baseUrl
-    });
-    for (const mappedEvent of wrappedEvents) {
-      emit.onEvent(mappedEvent);
-    }
-    if (wrappedEvents.length > 0) {
-      appendAgentEvents(accumulator, wrappedEvents);
-    }
-  });
+  let finalResult: PiAgentRunResult = { status: "completed" };
+  let finalError = "";
 
   options.registerAbort(runtime.sessionId, async () => {
-    await session.abort();
+    await agent.interrupt();
   });
 
   try {
-    await session.setModel(prepared.modelResolution.model);
+    await agent.setModel(prepared.modelResolution.resolvedModelId);
     const thinkingLevel = resolveAgentThinkingLevel(
       prepared.modelResolution.model,
       prepared.modelResolution.model.baseUrl,
       input.thinkingLevel
     );
-    if (thinkingLevel) {
-      session.setThinkingLevel(thinkingLevel);
+    if (thinkingLevel === "high") {
+      await agent.setMaxThinkingTokens(8_192);
+    } else if (thinkingLevel === "medium") {
+      await agent.setMaxThinkingTokens(4_096);
+    } else if (thinkingLevel === "low") {
+      await agent.setMaxThinkingTokens(1_024);
     }
-    await session.prompt(input.userMessage);
+
+    const query = agent.query(input.userMessage, {
+      canUseTool: createCanUseToolHandler(params, emit),
+      permissionMode: input.permissionMode === "bypassPermissions"
+        ? "bypassPermissions"
+        : input.permissionMode === "plan"
+          ? "plan"
+          : input.permissionMode === "acceptEdits"
+            ? "acceptEdits"
+            : "default",
+      includePartialMessages: true
+    });
+
+    for await (const message of query) {
+      emit.onSdkMessage(message);
+      appendSdkMessage(accumulator, message);
+
+      const errorMessage = getLastError(message);
+      if (errorMessage) {
+        finalError = errorMessage;
+      }
+      if (message.type === "result" && message.is_error) {
+        finalResult = {
+          status: "errored",
+          errorMessage: errorMessage || "Agent SDK 执行失败"
+        };
+      }
+    }
+
+    if (finalResult.status === "errored") {
+      return finalResult;
+    }
 
     if (!hasRenderableAssistantOutput(accumulator)) {
       return {
@@ -126,30 +272,51 @@ export async function runRuntimeCoreAttempt(
       };
     }
 
-    emit.onEvent({
-      type: "complete",
-      stopReason: resolveStopReason(session.messages),
-      ...(buildCompleteUsage(session.messages) ? { usage: buildCompleteUsage(session.messages) } : {})
-    });
-
     updateAgentSessionMeta(runtime.sessionId, {
-      piSessionId: session.sessionId
+      sdkThreadId: session.threadId ?? session.sessionId,
+      runtimeThreadId: session.threadId ?? session.sessionId
     });
 
     emit.onComplete();
     return { status: "completed" };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    if (/abort/i.test(errorMessage)) {
+    if (/abort|interrupted/i.test(errorMessage)) {
       emit.onComplete();
       return { status: "aborted" };
     }
-    return { status: "errored", errorMessage };
+    emit.onError(finalError || errorMessage);
+    return {
+      status: "errored",
+      errorMessage: finalError || errorMessage
+    };
   } finally {
-    unsubscribe();
-    session.dispose();
+    await session.dispose();
     options.unregisterAbort(runtime.sessionId);
   }
+}
+
+function getLastError(message: import("@lume/agent-sdk").SDKMessage): string | null {
+  if (message.type === "result" && message.is_error) {
+    const firstError = Array.isArray(message.errors) ? message.errors[0] : undefined;
+    return typeof firstError === "string" && firstError.trim()
+      ? firstError
+      : message.result?.trim() || "Agent SDK 执行失败";
+  }
+  if (message.type === "assistant" && message.error) {
+    const text = (message.message?.content ?? [])
+      .filter((block) => !!block && typeof block === "object")
+      .map((block) => block as { type?: string; text?: string })
+      .filter((block) => block.type === "text" && typeof block.text === "string")
+      .map((block) => block.text ?? "")
+      .join("")
+      .trim();
+    return text || message.error;
+  }
+  if (message.type === "system" && message.subtype === "status" && typeof message.message === "string") {
+    return message.message;
+  }
+  return null;
 }
 
 function prepareRuntimeCoreAttempt(
@@ -204,48 +371,6 @@ function prepareRuntimeCoreAttempt(
   };
 }
 
-function resolveStopReason(messages: Array<{ role: string; stopReason?: string }>): string {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message?.role === "assistant") {
-      return message.stopReason ?? "completed";
-    }
-  }
-  return "completed";
-}
-
-function buildCompleteUsage(
-  messages: Array<{
-    role: string;
-    usage?: {
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheWrite: number;
-      totalTokens?: number;
-      cost?: { total: number };
-    }
-  }>
-) {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message?.role !== "assistant" || !message.usage) {
-      continue;
-    }
-    return {
-      inputTokens: message.usage.input,
-      outputTokens: message.usage.output,
-      cacheReadTokens: message.usage.cacheRead,
-      cacheCreationTokens: message.usage.cacheWrite,
-      totalTokens:
-        message.usage.totalTokens
-        ?? (message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite),
-      costUsd: message.usage.cost?.total
-    };
-  }
-  return undefined;
-}
-
 // ─── Pi Agent runner (migrated from runner/run.ts) ───
 
 const activePiSessions = new Map<string, { abort: () => Promise<void> }>();
@@ -282,7 +407,7 @@ export async function runPiAgent(
     }
 
     log.warn("Pi Agent attempt 失败，准备重试", {
-      sessionId: params.runtime.sessionId.slice(0, 8),
+      threadId: params.runtime.sessionId.slice(0, 8),
       attempt,
       maxAttempts,
       errorMessage: result.errorMessage
@@ -308,14 +433,14 @@ function shouldRetryError(errorMessage?: string): boolean {
   if (!errorMessage) return false;
   const value = errorMessage.toLowerCase();
   return (
-    value.includes("timeout") ||
-    value.includes("timed out") ||
-    value.includes("rate limit") ||
-    value.includes("429") ||
-    value.includes("temporar") ||
-    value.includes("econnreset") ||
-    value.includes("enotfound") ||
-    value.includes("network")
+    value.includes("timeout")
+    || value.includes("timed out")
+    || value.includes("rate limit")
+    || value.includes("429")
+    || value.includes("temporar")
+    || value.includes("econnreset")
+    || value.includes("enotfound")
+    || value.includes("network")
   );
 }
 
@@ -328,18 +453,18 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-export async function stopPiAgent(sessionId: string): Promise<boolean> {
-  const active = activePiSessions.get(sessionId);
+export async function stopPiAgent(threadId: string): Promise<boolean> {
+  const active = activePiSessions.get(threadId);
   if (!active) {
     return false;
   }
   await active.abort();
-  activePiSessions.delete(sessionId);
+  activePiSessions.delete(threadId);
   return true;
 }
 
-export function isPiAgentSessionActive(sessionId: string): boolean {
-  return activePiSessions.has(sessionId);
+export function isPiAgentSessionActive(threadId: string): boolean {
+  return activePiSessions.has(threadId);
 }
 
 export async function stopAllPiAgents(): Promise<void> {
@@ -349,3 +474,6 @@ export async function stopAllPiAgents(): Promise<void> {
     activePiSessions.delete(sessionId);
   }
 }
+
+
+

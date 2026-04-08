@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
+import {
+  type SDKMessage,
+  defineTool,
+  type ToolDefinition
+} from "@lume/agent-sdk";
 import { Type } from "@sinclair/typebox";
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import type {
   AgentAskUserQuestionRequest,
   AgentSendInput,
-  AgentEvent,
   AgentToolPermissionRequest
 } from "@lume/shared";
-import { getSessionEventBus } from "../../session-event-bus";
 import {
   createAgentSession,
   deleteAgentSession,
@@ -26,16 +28,37 @@ import { resolveSubagentSpawnPolicy } from "../../subagents/subagent-policy";
 import { resolveSubagentThreadBinding } from "../../subagents/subagent-thread-binding";
 import { setAskUserQuestionApprovalSession } from "../bridges/ask-user-question-bridge";
 import { setToolPermissionApprovalSession } from "../bridges/tool-permission-bridge";
+import { createSdkWebTools } from "../web/create-web-tools";
+
+interface LegacyToolResult<TDetails = unknown> {
+  content: Array<{ type: "text"; text: string }>;
+  details: TDetails;
+}
+
+interface LegacyTool<TArgs = unknown, TDetails = unknown> {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: unknown;
+  execute: (
+    toolCallId: string,
+    args: TArgs,
+    signal?: AbortSignal,
+    onUpdate?: (result: LegacyToolResult<TDetails>) => void
+  ) => Promise<LegacyToolResult<TDetails>>;
+}
 
 interface CreateOpenClawAlignedToolsInput {
-  sessionId: string;
+  threadId: string;
   workspaceId?: string;
   channelId?: string;
-  sessionType?: AgentSendInput["sessionType"];
+  threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
+  emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+  includeWebTools?: boolean;
 }
 
 interface ResolveSessionTargetInput {
@@ -52,8 +75,8 @@ interface ResolveSpawnRouteInput {
   requestedModel?: string;
 }
 
-function isSubagentSessionId(sessionId: string): boolean {
-  const normalized = sessionId.trim().toLowerCase();
+function isSubagentSessionId(threadId: string): boolean {
+  const normalized = threadId.trim().toLowerCase();
   if (!normalized) return false;
   const tokens = new Set(normalized.split(":").filter(Boolean));
   return tokens.has("subagent") || tokens.has("sub-agent");
@@ -78,7 +101,7 @@ function isSubagentTeamV2Enabled(): boolean {
   return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
 }
 
-function buildSubagentBlockedResult(toolName: string): AgentToolResult<{
+function buildSubagentBlockedResult(toolName: string): LegacyToolResult<{
   status: "error";
   error: string;
 }> {
@@ -88,7 +111,7 @@ function buildSubagentBlockedResult(toolName: string): AgentToolResult<{
   });
 }
 
-function buildSubagentFeatureDisabledResult(toolName: string): AgentToolResult<{
+function buildSubagentFeatureDisabledResult(toolName: string): LegacyToolResult<{
   status: "unavailable";
   error: string;
 }> {
@@ -98,7 +121,7 @@ function buildSubagentFeatureDisabledResult(toolName: string): AgentToolResult<{
   });
 }
 
-function toTextResult<TDetails>(details: TDetails): AgentToolResult<TDetails> {
+function toTextResult<TDetails>(details: TDetails): LegacyToolResult<TDetails> {
   return {
     content: [
       {
@@ -151,7 +174,7 @@ function resolveSessionIdsByLabel(label: string): string[] {
 
 function resolveSessionTarget(input: ResolveSessionTargetInput): {
   ok: true;
-  sessionId: string;
+  threadId: string;
 } | {
   ok: false;
   error: string;
@@ -164,7 +187,7 @@ function resolveSessionTarget(input: ResolveSessionTargetInput): {
     return { ok: false, error: "Provide either sessionKey or label (not both)." };
   }
   if (sessionKey) {
-    return { ok: true, sessionId: pickSessionId(sessionKey, input.currentSessionId) };
+    return { ok: true, threadId: pickSessionId(sessionKey, input.currentSessionId) };
   }
   if (label) {
     if (agentId) {
@@ -177,9 +200,9 @@ function resolveSessionTarget(input: ResolveSessionTargetInput): {
     if (!resolved) {
       return { ok: false, error: `No session found with label: ${label}` };
     }
-    return { ok: true, sessionId: resolved };
+    return { ok: true, threadId: resolved };
   }
-  return { ok: true, sessionId: input.currentSessionId };
+  return { ok: true, threadId: input.currentSessionId };
 }
 
 function pickModelIdForChannel(channelId: string | undefined, requestedModelId?: string): string | null {
@@ -189,8 +212,8 @@ function pickModelIdForChannel(channelId: string | undefined, requestedModelId?:
   return resolveRequestedModelIdForChannel(channel, requestedModelId) ?? null;
 }
 
-function extractLatestModelFromSession(sessionId: string): string | undefined {
-  const messages = getAgentSessionMessages(sessionId);
+function extractLatestModelFromSession(threadId: string): string | undefined {
+  const messages = getAgentSessionMessages(threadId);
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message || message.role !== "assistant" || typeof message.model !== "string") {
@@ -239,7 +262,7 @@ function resolveSubagentErrorCode(params: {
 
 function resolveOwnedSubagentRun(params: {
   runRegistry: ReturnType<typeof getSubagentRunRegistry>;
-  ownerSessionId: string;
+  ownerThreadId: string;
   runId: string;
 }) {
   const matched = params.runRegistry.get(params.runId);
@@ -249,7 +272,7 @@ function resolveOwnedSubagentRun(params: {
       error: `runId not found: ${params.runId}`
     };
   }
-  const owned = matched.parentSessionId === params.ownerSessionId || matched.rootSessionId === params.ownerSessionId;
+  const owned = matched.parentThreadId === params.ownerThreadId || matched.rootThreadId === params.ownerThreadId;
   if (!owned) {
     return {
       ok: false as const,
@@ -266,7 +289,7 @@ async function finalizeSubagentRun(params: {
   runRegistry: ReturnType<typeof getSubagentRunRegistry>;
   runId: string;
   cleanup: "keep" | "delete";
-  childSessionId: string;
+  childThreadId: string;
   result: {
     status: "completed" | "aborted" | "errored" | "timed_out";
     error?: string;
@@ -290,7 +313,7 @@ async function finalizeSubagentRun(params: {
     });
   if (params.cleanup === "delete") {
     try {
-      deleteAgentSession(params.childSessionId);
+      deleteAgentSession(params.childThreadId);
     } catch {
       // ignore cleanup failure to keep status stable
     }
@@ -348,28 +371,50 @@ function resolveSpawnRoute(input: ResolveSpawnRouteInput): {
   };
 }
 
-function collectTextFromEvent(event: AgentEvent): string {
-  if (event.type === "text_delta" || event.type === "text_complete") {
-    return event.text;
+function collectTextFromSdkMessage(message: SDKMessage): string {
+  if (message.type === "stream_event") {
+    const delta = message.event?.type === "content_block_delta"
+      ? message.event.delta as { type?: string; text?: string } | undefined
+      : undefined;
+    if (delta?.type === "text_delta" && typeof delta.text === "string") {
+      return delta.text;
+    }
+  }
+  if (message.type === "assistant") {
+    const content = Array.isArray(message.message?.content) ? message.message.content : [];
+    return content
+      .filter((block) => !!block && typeof block === "object")
+      .map((block) => block as { type?: string; text?: string })
+      .filter((block) => block.type === "text" && typeof block.text === "string")
+      .map((block) => block.text ?? "")
+      .join("");
   }
   return "";
 }
 
+function createTaskSystemMessage(message: Record<string, unknown>): SDKMessage {
+  return {
+    type: "system",
+    ...message
+  } as SDKMessage;
+}
+
 async function executeAgentTurn(params: {
-  sessionId: string;
+  threadId: string;
   userMessage: string;
   workspaceId?: string;
   channelId?: string;
   modelId?: string;
   permissionMode?: AgentSendInput["permissionMode"];
   timeoutSeconds?: number;
-  sessionType?: AgentSendInput["sessionType"];
+  threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
   approvalSessionId?: string;
+  emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  parentSessionId?: string;
+  parentThreadId?: string;
   runId?: string;
   taskDescription?: string;
 }): Promise<{
@@ -384,13 +429,13 @@ async function executeAgentTurn(params: {
   let usageEvents = 0;
   let runtimeError = "";
   const input: AgentSendInput = {
-    sessionId: params.sessionId,
+    threadId: params.threadId,
     userMessage: params.userMessage,
     workspaceId: params.workspaceId,
     channelId: params.channelId,
     modelId: params.modelId,
     permissionMode: params.permissionMode,
-    sessionType: params.sessionType,
+    threadType: params.threadType,
     chatType: params.chatType,
     messageMetadata: params.messageMetadata
   };
@@ -399,41 +444,46 @@ async function executeAgentTurn(params: {
   const startedAt = Date.now();
   let progressInterval: ReturnType<typeof setInterval> | undefined;
 
-  if (params.parentSessionId && params.runId) {
-    const bus = getSessionEventBus();
+  if (params.parentThreadId && params.runId) {
     progressInterval = setInterval(() => {
-      bus.emit(params.parentSessionId!, {
-        type: 'task_progress',
-        toolUseId: params.runId!,
-        elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
-        taskId: params.runId!,
-        description: params.taskDescription,
-        lastToolName,
-        usage: { toolUses: toolUseCount, durationMs: Date.now() - startedAt }
-      });
+      params.emitSdkMessage?.(createTaskSystemMessage({
+        subtype: "task_progress",
+        task_id: params.runId!,
+        tool_use_id: params.runId!,
+        description: params.taskDescription ?? "子任务执行中",
+        last_tool_name: lastToolName || undefined,
+        usage: {
+          total_tokens: 0,
+          tool_uses: toolUseCount,
+          duration_ms: Date.now() - startedAt
+        }
+      }));
     }, 3000);
   }
 
   const execution = runPiAgent({
     input,
     runtime: {
-      sessionId: input.sessionId,
+      sessionId: input.threadId,
       channelId: input.channelId ?? "",
       modelId: input.modelId ?? "",
       workspaceId: input.workspaceId,
-      sessionType: input.sessionType
+      threadType: input.threadType
     }
   }, {
-    onEvent(event) {
-      if (event.type === 'tool_start') {
-        lastToolName = event.toolName;
-        toolUseCount++;
+    onSdkMessage(message) {
+      if (message.type === "assistant") {
+        for (const block of message.message?.content ?? []) {
+          if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
+          lastToolName = typeof block.name === "string" ? block.name : lastToolName;
+          toolUseCount += 1;
+        }
       }
-      const text = collectTextFromEvent(event);
+      const text = collectTextFromSdkMessage(message);
       if (text) {
         collectedChunks.push(text);
       }
-      if (event.type === "usage_update" || event.type === "complete") {
+      if (message.type === "result" && message.usage) {
         usageEvents += 1;
       }
     },
@@ -446,16 +496,16 @@ async function executeAgentTurn(params: {
     onAskUserQuestion(request) {
       if (!params.emitAskUserQuestion) {
         runtimeError = "目标会话在自动执行中触发 AskUserQuestion，但当前未配置交互回调，已中止";
-        void stopPiAgent(params.sessionId);
+        void stopPiAgent(params.threadId);
         return;
       }
       const approvalSessionId = params.approvalSessionId?.trim();
-      if (approvalSessionId && approvalSessionId !== request.sessionId) {
+      if (approvalSessionId && approvalSessionId !== request.threadId) {
         setAskUserQuestionApprovalSession(request.toolUseId, approvalSessionId);
         params.emitAskUserQuestion({
           ...request,
-          sessionId: approvalSessionId,
-          originSessionId: request.sessionId,
+          threadId: approvalSessionId,
+          originThreadId: request.threadId,
           ...(params.runId ? { subagentRunId: params.runId } : {})
         });
         return;
@@ -465,16 +515,16 @@ async function executeAgentTurn(params: {
     onToolPermissionRequest(request) {
       if (!params.emitToolPermissionRequest) {
         runtimeError = `目标会话工具需要用户确认，但当前未配置交互回调，已中止: ${request.toolName}`;
-        void stopPiAgent(params.sessionId);
+        void stopPiAgent(params.threadId);
         return;
       }
       const approvalSessionId = params.approvalSessionId?.trim();
-      if (approvalSessionId && approvalSessionId !== request.sessionId) {
+      if (approvalSessionId && approvalSessionId !== request.threadId) {
         setToolPermissionApprovalSession(request.requestId, approvalSessionId);
         params.emitToolPermissionRequest({
           ...request,
-          sessionId: approvalSessionId,
-          originSessionId: request.sessionId,
+          threadId: approvalSessionId,
+          originThreadId: request.threadId,
           ...(params.runId ? { subagentRunId: params.runId } : {})
         });
         return;
@@ -497,7 +547,7 @@ async function executeAgentTurn(params: {
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    void stopPiAgent(params.sessionId);
+    void stopPiAgent(params.threadId);
   }, timeoutMs);
   try {
     const result = await execution;
@@ -531,15 +581,15 @@ function mapMessagesForTool(messages: AgentMessage[]): Array<Record<string, unkn
   }));
 }
 
-export function createSessionTools(input: CreateOpenClawAlignedToolsInput): AgentTool[] {
-  return [
+function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): LegacyTool[] {
+  const tools: LegacyTool[] = [
     {
       name: "agents_list",
       label: "agents_list",
       description: "List agent ids you can target with sessions_spawn.",
       parameters: Type.Object({}),
       async execute() {
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("agents_list")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("agents_list")) {
           return buildSubagentBlockedResult("agents_list");
         }
         const sessionAgents = listAgentSessions()
@@ -569,7 +619,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         messageLimit: Type.Optional(Type.Number({ minimum: 0 }))
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_list")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_list")) {
           return buildSubagentBlockedResult("sessions_list");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -628,7 +678,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         includeTools: Type.Optional(Type.Boolean())
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_history")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_history")) {
           return buildSubagentBlockedResult("sessions_history");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -641,7 +691,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
         const resolvedTarget = resolveSessionTarget({
-          currentSessionId: input.sessionId,
+          currentSessionId: input.threadId,
           sessionKey: params.sessionKey,
           label: params.label,
           agentId: params.agentId
@@ -652,7 +702,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             error: resolvedTarget.error
           });
         }
-        const sessionId = resolvedTarget.sessionId;
+        const sessionId = resolvedTarget.threadId;
         const limit = clampInt(params.limit, 1, 500, 100);
         const includeTools = params.includeTools === true;
         const meta = getAgentSessionMeta(sessionId);
@@ -684,12 +734,12 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         model: Type.Optional(Type.String())
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("session_status")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("session_status")) {
           return buildSubagentBlockedResult("session_status");
         }
         const params = (args ?? {}) as Record<string, unknown>;
         const resolvedTarget = resolveSessionTarget({
-          currentSessionId: input.sessionId,
+          currentSessionId: input.threadId,
           sessionKey: params.sessionKey
         });
         if (!resolvedTarget.ok) {
@@ -698,7 +748,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             error: resolvedTarget.error
           });
         }
-        const sessionId = resolvedTarget.sessionId;
+        const sessionId = resolvedTarget.threadId;
         const meta = getAgentSessionMeta(sessionId);
         if (!meta) {
           return toTextResult({
@@ -733,7 +783,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 }))
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_send")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_send")) {
           return buildSubagentBlockedResult("sessions_send");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -747,7 +797,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
         const resolvedTarget = resolveSessionTarget({
-          currentSessionId: input.sessionId,
+          currentSessionId: input.threadId,
           sessionKey: params.sessionKey,
           label: params.label,
           agentId: params.agentId
@@ -759,7 +809,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             error: resolvedTarget.error
           });
         }
-        const sessionId = resolvedTarget.sessionId;
+        const sessionId = resolvedTarget.threadId;
         const message = typeof params.message === "string" ? params.message.trim() : "";
         if (!message) {
           return toTextResult({ status: "error", error: "message 不能为空" });
@@ -794,17 +844,18 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         }
 
         const runResult = await executeAgentTurn({
-          sessionId,
+          threadId: sessionId,
           userMessage: message,
           workspaceId: meta.workspaceId,
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: input.permissionMode,
-          approvalSessionId: input.sessionId,
+          approvalSessionId: input.threadId,
+          emitSdkMessage: input.emitSdkMessage,
           emitAskUserQuestion: input.emitAskUserQuestion,
           emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds,
-          sessionType: input.sessionType,
+          threadType: input.threadType,
           chatType: input.chatType
         });
         updateAgentSessionMeta(sessionId, {});
@@ -831,7 +882,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         agentId: Type.Optional(Type.String())
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_delete")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_delete")) {
           return buildSubagentBlockedResult("sessions_delete");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -871,10 +922,10 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         };
 
         if (hasSessionKey) {
-          appendSessionId(pickSessionId(singleSessionKey, input.sessionId));
+          appendSessionId(pickSessionId(singleSessionKey, input.threadId));
         }
         for (const item of sessionKeys) {
-          appendSessionId(pickSessionId(item, input.sessionId));
+          appendSessionId(pickSessionId(item, input.threadId));
         }
 
         const allLabels: string[] = [];
@@ -904,7 +955,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             error: "未解析到可删除的会话"
           });
         }
-        if (resolvedSessionIds.includes(input.sessionId)) {
+        if (resolvedSessionIds.includes(input.threadId)) {
           return toTextResult({
             status: "error",
             error: "不能删除当前会话"
@@ -912,14 +963,14 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         }
 
         const metas = resolvedSessionIds.map((sessionId) => ({
-          sessionId,
+          threadId: sessionId,
           meta: getAgentSessionMeta(sessionId)
         }));
         const missing = metas.find((item) => !item.meta);
         if (missing) {
           return toTextResult({
             status: "not_found",
-            error: `Session not found: ${missing.sessionId}`
+            error: `Session not found: ${missing.threadId}`
           });
         }
 
@@ -927,8 +978,8 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         const deletedTitles: string[] = [];
         try {
           for (const item of metas) {
-            deleteAgentSession(item.sessionId);
-            deletedSessionKeys.push(item.sessionId);
+            deleteAgentSession(item.threadId);
+            deletedSessionKeys.push(item.threadId);
             deletedTitles.push(item.meta?.title ?? "");
           }
         } catch (error) {
@@ -977,7 +1028,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         if (!isSubagentTeamV2Enabled()) {
           return buildSubagentFeatureDisabledResult("sessions_spawn");
         }
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_spawn")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_spawn")) {
           return buildSubagentBlockedResult("sessions_spawn");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -995,7 +1046,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           ? params.deliverySessionKey.trim()
           : "";
         const requestedDeliverySessionId = deliverySessionKeyRaw
-          ? pickSessionId(deliverySessionKeyRaw, input.sessionId)
+          ? pickSessionId(deliverySessionKeyRaw, input.threadId)
           : undefined;
         if (requestedDeliverySessionId && !getAgentSessionMeta(requestedDeliverySessionId)) {
           return toTextResult({
@@ -1004,7 +1055,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
         const policyDecision = resolveSubagentSpawnPolicy({
-          parentSessionId: input.sessionId,
+          parentThreadId: input.threadId,
           parentPermissionMode: input.permissionMode,
           requestedSandbox: sandbox
         });
@@ -1014,13 +1065,13 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             error: policyDecision.error
           });
         }
-        const currentMeta = getAgentSessionMeta(input.sessionId);
+        const currentMeta = getAgentSessionMeta(input.threadId);
         const label = typeof params.label === "string" ? params.label.trim() : "";
         const modelOverride = typeof params.model === "string" ? params.model.trim() : "";
         const spawnAgentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
         const route = resolveSpawnRoute({
           spawnAgentId,
-          currentSessionId: input.sessionId,
+          currentSessionId: input.threadId,
           fallbackChannelId: currentMeta?.channelId ?? input.channelId,
           requestedModel: modelOverride
         });
@@ -1034,9 +1085,9 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           label || "子会话",
           route.channelId ?? currentMeta?.channelId ?? input.channelId,
           currentMeta?.workspaceId ?? input.workspaceId,
-          input.sessionId
+          input.threadId
         );
-        const requestedModel = route.modelHint || extractLatestModelFromSession(input.sessionId);
+        const requestedModel = route.modelHint || extractLatestModelFromSession(input.threadId);
         const thinking = typeof params.thinking === "string" ? params.thinking.trim() : "";
         const resolvedChannelId = created.channelId;
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
@@ -1050,19 +1101,19 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         const runRegistry = getSubagentRunRegistry();
         const runId = randomUUID();
         const threadBinding = resolveSubagentThreadBinding({
-          parentSessionId: input.sessionId,
-          childSessionId: created.id,
+          parentThreadId: input.threadId,
+          childThreadId: created.id,
           threadRequested,
           requestedDeliverySessionId
         });
         runRegistry.create({
           runId,
-          parentSessionId: input.sessionId,
+          parentThreadId: input.threadId,
           parentRunId: policyDecision.parentRunId,
-          rootSessionId: policyDecision.rootSessionId,
+          rootThreadId: policyDecision.rootThreadId,
           depth: policyDecision.depth,
-          childSessionId: created.id,
-          deliverySessionId: threadBinding.deliverySessionId,
+          childThreadId: created.id,
+          deliveryThreadId: threadBinding.deliveryThreadId,
           threadRequested: threadBinding.threadRequested,
           threadBound: threadBinding.threadBound,
           label: label || undefined,
@@ -1084,36 +1135,36 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           0
         );
         if (waitSeconds > 0) {
-          const bus = getSessionEventBus();
-          bus.emit(input.sessionId, {
-            type: 'task_started',
-            taskId: runId,
-            toolUseId: _toolCallId,
+          input.emitSdkMessage?.(createTaskSystemMessage({
+            subtype: "task_started",
+            task_id: runId,
+            tool_use_id: _toolCallId,
             description: task,
-            agentName: label || 'Subagent'
-          });
+            workflow_name: label || "Subagent"
+          }));
           runRegistry.update(runId, {
             status: "running",
             startedAt: Date.now()
           });
           const runResult = await executeAgentTurn({
-            sessionId: created.id,
+            threadId: created.id,
             userMessage: task,
             workspaceId: created.workspaceId,
             channelId: resolvedChannelId,
             modelId: resolvedModelId,
             permissionMode: policyDecision.childPermissionMode,
-            approvalSessionId: input.sessionId,
+            approvalSessionId: input.threadId,
+            emitSdkMessage: input.emitSdkMessage,
             emitAskUserQuestion: input.emitAskUserQuestion,
             emitToolPermissionRequest: input.emitToolPermissionRequest,
             timeoutSeconds: waitSeconds,
-            sessionType: "subagent",
+            threadType: "subagent",
             chatType: input.chatType,
             messageMetadata: {
-              spawnedBy: input.sessionId,
+              spawnedBy: input.threadId,
               spawnDepth: policyDecision.depth
             },
-            parentSessionId: input.sessionId,
+            parentThreadId: input.threadId,
             runId,
             taskDescription: task
           });
@@ -1132,14 +1183,18 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             announceStatus: "delivered",
             announceAttempts: 0
           });
-          bus.emit(input.sessionId, {
-            type: 'task_notification',
-            taskId: runId,
-            toolUseId: _toolCallId,
-            status: runResult.status === 'completed' ? 'completed' : 'failed',
+          input.emitSdkMessage?.(createTaskSystemMessage({
+            subtype: "task_notification",
+            task_id: runId,
+            tool_use_id: _toolCallId,
+            status: runResult.status === "completed" ? "completed" : "failed",
             summary: truncateText(runResult.runText, 200),
-            usage: { toolUses: runResult.usageEvents, durationMs: Date.now() - (runRegistry.get(runId)?.startedAt ?? Date.now()) }
-          });
+            usage: {
+              total_tokens: 0,
+              tool_uses: runResult.usageEvents,
+              duration_ms: Date.now() - (runRegistry.get(runId)?.startedAt ?? Date.now())
+            }
+          }));
           if (cleanup === "delete") {
             try {
               deleteAgentSession(created.id);
@@ -1158,8 +1213,8 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             ...(route.resolvedAgentId ? { resolvedAgentId: route.resolvedAgentId } : {}),
             ...(thinking ? { requestedThinking: thinking } : {}),
             spawnDepth: policyDecision.depth,
-            rootSessionKey: policyDecision.rootSessionId,
-            deliverySessionKey: threadBinding.deliverySessionId,
+            rootSessionKey: policyDecision.rootThreadId,
+            deliverySessionKey: threadBinding.deliveryThreadId,
             thread: threadBinding.threadRequested,
             threadBound: threadBinding.threadBound,
             ...(runResult.error ? { error: runResult.error } : {})
@@ -1170,32 +1225,32 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           status: "running",
           startedAt: Date.now()
         });
-        const bus = getSessionEventBus();
-        bus.emit(input.sessionId, {
-          type: 'task_started',
-          taskId: runId,
-          toolUseId: _toolCallId,
+        input.emitSdkMessage?.(createTaskSystemMessage({
+          subtype: "task_started",
+          task_id: runId,
+          tool_use_id: _toolCallId,
           description: task,
-          agentName: label || 'Subagent'
-        });
+          workflow_name: label || "Subagent"
+        }));
         void executeAgentTurn({
-          sessionId: created.id,
+          threadId: created.id,
           userMessage: task,
           workspaceId: created.workspaceId,
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: policyDecision.childPermissionMode,
-          approvalSessionId: input.sessionId,
+          approvalSessionId: input.threadId,
+          emitSdkMessage: input.emitSdkMessage,
           emitAskUserQuestion: input.emitAskUserQuestion,
           emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds: 0,
-          sessionType: "subagent",
+          threadType: "subagent",
           chatType: input.chatType,
           messageMetadata: {
-            spawnedBy: input.sessionId,
+            spawnedBy: input.threadId,
             spawnDepth: policyDecision.depth
           },
-          parentSessionId: input.sessionId,
+          parentThreadId: input.threadId,
           runId,
           taskDescription: task
         }).then(async (runResult) => {
@@ -1203,26 +1258,27 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             runRegistry,
             runId,
             cleanup,
-            childSessionId: created.id,
+            childThreadId: created.id,
             result: runResult
           });
-          bus.emit(input.sessionId, {
-            type: 'task_notification',
-            taskId: runId,
-            toolUseId: _toolCallId,
-            status: runResult.status === 'completed' ? 'completed' : 'failed',
+          input.emitSdkMessage?.(createTaskSystemMessage({
+            subtype: "task_notification",
+            task_id: runId,
+            tool_use_id: _toolCallId,
+            status: runResult.status === "completed" ? "completed" : "failed",
             summary: truncateText(runResult.runText, 200),
             usage: {
-              toolUses: runResult.usageEvents,
-              durationMs: Date.now() - (runRegistry.get(runId)?.startedAt ?? Date.now())
+              total_tokens: 0,
+              tool_uses: runResult.usageEvents,
+              duration_ms: Date.now() - (runRegistry.get(runId)?.startedAt ?? Date.now())
             }
-          });
+          }));
         }).catch((error) => {
           void finalizeSubagentRun({
             runRegistry,
             runId,
             cleanup,
-            childSessionId: created.id,
+            childThreadId: created.id,
             result: {
               status: "errored",
               error: error instanceof Error ? error.message : String(error),
@@ -1241,8 +1297,8 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           ...(route.resolvedAgentId ? { resolvedAgentId: route.resolvedAgentId } : {}),
           ...(thinking ? { requestedThinking: thinking } : {}),
           spawnDepth: policyDecision.depth,
-          rootSessionKey: policyDecision.rootSessionId,
-          deliverySessionKey: threadBinding.deliverySessionId,
+          rootSessionKey: policyDecision.rootThreadId,
+          deliverySessionKey: threadBinding.deliveryThreadId,
           thread: threadBinding.threadRequested,
           threadBound: threadBinding.threadBound,
           sandbox,
@@ -1264,11 +1320,11 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         if (!isSubagentTeamV2Enabled()) {
           return buildSubagentFeatureDisabledResult("subagents_list");
         }
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_list")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_list")) {
           return buildSubagentBlockedResult("subagents_list");
         }
         const params = (args ?? {}) as Record<string, unknown>;
-        const ownerSessionId = pickSessionId(params.sessionKey, input.sessionId);
+        const ownerThreadId = pickSessionId(params.sessionKey, input.threadId);
         const statusFilter = typeof params.status === "string" ? params.status.trim() : "";
         const runIdFilter = typeof params.runId === "string" ? params.runId.trim() : "";
         const limit = clampInt(params.limit, 1, 200, 50);
@@ -1277,7 +1333,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         if (runIdFilter) {
           const resolved = resolveOwnedSubagentRun({
             runRegistry,
-            ownerSessionId,
+            ownerThreadId,
             runId: runIdFilter
           });
           if (!resolved.ok) {
@@ -1293,7 +1349,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
 
-        let runs = runRegistry.listControlledBySession(ownerSessionId);
+        let runs = runRegistry.listControlledByThread(ownerThreadId);
         if (statusFilter) {
           runs = runs.filter((run) => run.status === statusFilter);
         }
@@ -1317,7 +1373,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         if (!isSubagentTeamV2Enabled()) {
           return buildSubagentFeatureDisabledResult("subagents_kill");
         }
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_kill")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_kill")) {
           return buildSubagentBlockedResult("subagents_kill");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -1331,7 +1387,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         const runRegistry = getSubagentRunRegistry();
         const resolved = resolveOwnedSubagentRun({
           runRegistry,
-          ownerSessionId: input.sessionId,
+          ownerThreadId: input.threadId,
           runId
         });
         if (!resolved.ok) {
@@ -1355,7 +1411,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
         for (const target of runningTargets) {
-          void stopPiAgent(target.childSessionId);
+          void stopPiAgent(target.childThreadId);
           runRegistry.update(target.runId, {
             status: "canceled",
             endedAt: Date.now(),
@@ -1368,7 +1424,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
           if (target.cleanup === "delete") {
             try {
-              deleteAgentSession(target.childSessionId);
+              deleteAgentSession(target.childThreadId);
             } catch {
               // keep result deterministic
             }
@@ -1380,7 +1436,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           runId,
           killedCount: runningTargets.length,
           cascade,
-          childSessionKey: matched.childSessionId,
+          childSessionKey: matched.childThreadId,
           killedRunIds: runningTargets.map((item) => item.runId)
         });
       }
@@ -1398,7 +1454,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         if (!isSubagentTeamV2Enabled()) {
           return buildSubagentFeatureDisabledResult("subagents_send");
         }
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_send")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_send")) {
           return buildSubagentBlockedResult("subagents_send");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -1413,7 +1469,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         const runRegistry = getSubagentRunRegistry();
         const resolved = resolveOwnedSubagentRun({
           runRegistry,
-          ownerSessionId: input.sessionId,
+          ownerThreadId: input.threadId,
           runId
         });
         if (!resolved.ok) {
@@ -1423,15 +1479,15 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
         const matched = resolved.run;
-        const childMeta = getAgentSessionMeta(matched.childSessionId);
+        const childMeta = getAgentSessionMeta(matched.childThreadId);
         if (!childMeta) {
           return toTextResult({
             status: "not_found",
-            error: `child session not found: ${matched.childSessionId}`
+            error: `child session not found: ${matched.childThreadId}`
           });
         }
         const resolvedChannelId = matched.channelId ?? childMeta.channelId ?? input.channelId;
-        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childSessionId);
+        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childThreadId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
           return toTextResult({
@@ -1445,20 +1501,21 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         });
         const timeoutSeconds = clampInt(params.timeoutSeconds, 0, 600, 60);
         const runResult = await executeAgentTurn({
-          sessionId: matched.childSessionId,
+          threadId: matched.childThreadId,
           userMessage: message,
           workspaceId: childMeta.workspaceId,
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: input.permissionMode,
-          approvalSessionId: input.sessionId,
+          approvalSessionId: input.threadId,
+          emitSdkMessage: input.emitSdkMessage,
           emitAskUserQuestion: input.emitAskUserQuestion,
           emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds,
-          sessionType: "subagent",
+          threadType: "subagent",
           chatType: input.chatType,
           messageMetadata: {
-            spawnedBy: matched.parentSessionId,
+            spawnedBy: matched.parentThreadId,
             controlCommand: "send"
           }
         });
@@ -1480,7 +1537,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         return toTextResult({
           status: runResult.status,
           runId: matched.runId,
-          childSessionKey: matched.childSessionId,
+          childSessionKey: matched.childThreadId,
           model: resolvedModelId,
           output: runResult.runText,
           ...(runResult.error ? { error: runResult.error } : {})
@@ -1501,7 +1558,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         if (!isSubagentTeamV2Enabled()) {
           return buildSubagentFeatureDisabledResult("subagents_steer");
         }
-        if (isSubagentSessionId(input.sessionId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_steer")) {
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("subagents_steer")) {
           return buildSubagentBlockedResult("subagents_steer");
         }
         const params = (args ?? {}) as Record<string, unknown>;
@@ -1516,7 +1573,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         const runRegistry = getSubagentRunRegistry();
         const resolved = resolveOwnedSubagentRun({
           runRegistry,
-          ownerSessionId: input.sessionId,
+          ownerThreadId: input.threadId,
           runId
         });
         if (!resolved.ok) {
@@ -1526,15 +1583,15 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
         const matched = resolved.run;
-        const childMeta = getAgentSessionMeta(matched.childSessionId);
+        const childMeta = getAgentSessionMeta(matched.childThreadId);
         if (!childMeta) {
           return toTextResult({
             status: "not_found",
-            error: `child session not found: ${matched.childSessionId}`
+            error: `child session not found: ${matched.childThreadId}`
           });
         }
         if (!isTerminalSubagentStatus(matched.status)) {
-          void stopPiAgent(matched.childSessionId);
+          void stopPiAgent(matched.childThreadId);
           runRegistry.update(matched.runId, {
             status: "canceled",
             endedAt: Date.now(),
@@ -1547,7 +1604,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           });
         }
         const resolvedChannelId = matched.channelId ?? childMeta.channelId ?? input.channelId;
-        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childSessionId);
+        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childThreadId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
           return toTextResult({
@@ -1558,12 +1615,12 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         const nextRunId = randomUUID();
         runRegistry.create({
           runId: nextRunId,
-          parentSessionId: input.sessionId,
+          parentThreadId: input.threadId,
           parentRunId: matched.parentRunId,
-          rootSessionId: matched.rootSessionId || input.sessionId,
+          rootThreadId: matched.rootThreadId || input.threadId,
           depth: matched.depth,
-          childSessionId: matched.childSessionId,
-          deliverySessionId: matched.deliverySessionId,
+          childThreadId: matched.childThreadId,
+          deliveryThreadId: matched.deliveryThreadId,
           threadRequested: matched.threadRequested,
           threadBound: matched.threadBound,
           label: matched.label,
@@ -1585,20 +1642,21 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         });
         if (waitSeconds > 0) {
           const runResult = await executeAgentTurn({
-            sessionId: matched.childSessionId,
+            threadId: matched.childThreadId,
             userMessage: message,
             workspaceId: childMeta.workspaceId,
             channelId: resolvedChannelId,
             modelId: resolvedModelId,
             permissionMode: input.permissionMode,
-            approvalSessionId: input.sessionId,
+            approvalSessionId: input.threadId,
+            emitSdkMessage: input.emitSdkMessage,
             emitAskUserQuestion: input.emitAskUserQuestion,
             emitToolPermissionRequest: input.emitToolPermissionRequest,
             timeoutSeconds: waitSeconds,
-            sessionType: "subagent",
+            threadType: "subagent",
             chatType: input.chatType,
             messageMetadata: {
-              spawnedBy: matched.parentSessionId,
+              spawnedBy: matched.parentThreadId,
               controlCommand: "steer",
               steeredFromRunId: matched.runId
             }
@@ -1622,7 +1680,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             status: runResult.status,
             runId: nextRunId,
             replacedRunId: matched.runId,
-            childSessionKey: matched.childSessionId,
+            childSessionKey: matched.childThreadId,
             model: resolvedModelId,
             output: runResult.runText,
             ...(runResult.error ? { error: runResult.error } : {})
@@ -1630,20 +1688,21 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
         }
 
         void executeAgentTurn({
-          sessionId: matched.childSessionId,
+          threadId: matched.childThreadId,
           userMessage: message,
           workspaceId: childMeta.workspaceId,
           channelId: resolvedChannelId,
           modelId: resolvedModelId,
           permissionMode: input.permissionMode,
-          approvalSessionId: input.sessionId,
+          approvalSessionId: input.threadId,
+          emitSdkMessage: input.emitSdkMessage,
           emitAskUserQuestion: input.emitAskUserQuestion,
           emitToolPermissionRequest: input.emitToolPermissionRequest,
           timeoutSeconds: 0,
-          sessionType: "subagent",
+          threadType: "subagent",
           chatType: input.chatType,
           messageMetadata: {
-            spawnedBy: matched.parentSessionId,
+            spawnedBy: matched.parentThreadId,
             controlCommand: "steer",
             steeredFromRunId: matched.runId
           }
@@ -1652,7 +1711,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             runRegistry,
             runId: nextRunId,
             cleanup: matched.cleanup,
-            childSessionId: matched.childSessionId,
+            childThreadId: matched.childThreadId,
             result: runResult
           });
         }).catch((error) => {
@@ -1660,7 +1719,7 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
             runRegistry,
             runId: nextRunId,
             cleanup: matched.cleanup,
-            childSessionId: matched.childSessionId,
+            childThreadId: matched.childThreadId,
             result: {
               status: "errored",
               error: error instanceof Error ? error.message : String(error),
@@ -1673,15 +1732,72 @@ export function createSessionTools(input: CreateOpenClawAlignedToolsInput): Agen
           status: "accepted",
           runId: nextRunId,
           replacedRunId: matched.runId,
-          childSessionKey: matched.childSessionId,
+          childSessionKey: matched.childThreadId,
           model: resolvedModelId,
           note: "已提交 steer 指令，子会话将在后台继续执行"
         });
       }
-    }
+    },
   ];
+  return tools;
 }
 
-export const createOpenClawAlignedTools = createSessionTools;
+function serializeLegacyResult(result: LegacyToolResult<unknown>): string {
+  if (Array.isArray(result.content)) {
+    const texts = result.content
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const block = item as { type?: string; text?: unknown };
+        return block.type === "text" && typeof block.text === "string" ? block.text : null;
+      })
+      .filter((item): item is string => typeof item === "string");
+    if (texts.length > 0) {
+      return texts.join("\n");
+    }
+  }
+  if (result.details !== undefined) {
+    try {
+      return JSON.stringify(result.details, null, 2);
+    } catch {
+      return String(result.details);
+    }
+  }
+  return "";
+}
+
+const SESSION_READ_ONLY_TOOL_NAMES = new Set([
+  "agents_list",
+  "sessions_list",
+  "sessions_history",
+  "session_status",
+  "subagents_list",
+  "web_search",
+  "web_fetch"
+]);
+
+export function createSdkSessionTools(input: CreateOpenClawAlignedToolsInput): ToolDefinition[] {
+  const tools = createLegacySessionTools(input).map((tool) => defineTool({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.parameters as unknown as ToolDefinition["inputSchema"],
+    isReadOnly: SESSION_READ_ONLY_TOOL_NAMES.has(tool.name),
+    isConcurrencySafe: SESSION_READ_ONLY_TOOL_NAMES.has(tool.name),
+    async call(args, context) {
+      const result = await tool.execute(randomUUID(), args as never, context.abortSignal);
+      return {
+        data: serializeLegacyResult(result),
+        is_error: false
+      };
+    }
+  }));
+  if (input.includeWebTools !== false) {
+    tools.push(...createSdkWebTools());
+  }
+  return tools;
+}
+
+
+
+
 
 

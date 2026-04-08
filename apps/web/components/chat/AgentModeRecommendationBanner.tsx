@@ -9,7 +9,7 @@ export function AgentModeRecommendationBanner({
 }): React.ReactElement {
   const { busy, error, migrate } = useMigrateChatToAgent();
 
-  const handleCreateAgentSession = async (): Promise<void> => {
+  const handleCreateAgentThread = async (): Promise<void> => {
     await migrate({ suggestedPrompt: recommendation.suggestedPrompt });
   };
 
@@ -22,7 +22,7 @@ export function AgentModeRecommendationBanner({
           <p className="mt-1 whitespace-pre-wrap text-xs text-amber-900/90">{recommendation.reason}</p>
           <button
             type="button"
-            onClick={() => { void handleCreateAgentSession(); }}
+            onClick={() => { void handleCreateAgentThread(); }}
             disabled={busy}
             className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-300/90 bg-white px-2 py-1 text-xs text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
           >

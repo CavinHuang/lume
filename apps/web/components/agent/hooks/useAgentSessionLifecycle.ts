@@ -10,16 +10,16 @@ import {
   agentSelectedVersionIndexByGroupAtom,
   agentStreamErrorsAtom,
   agentWorkspacesAtom,
-  currentAgentMessagesAtom,
-  currentAgentSessionAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadMessagesAtom,
+  currentAgentThreadAtom,
+  currentAgentThreadIdAtom,
   currentAgentWorkspaceIdAtom
 } from "@/atoms";
 import { resetPlanStateAtom } from "@/atoms/plan-atoms";
 import {
-  getAgentRuntimeStatus,
-  getAgentSessionMessages,
-  getAgentSessionPath
+  getAgentThreadRuntimeStatus,
+  getAgentThreadMessages,
+  getAgentThreadPath
 } from "@/lib/desktop-api/agent";
 import { listChannels } from "@/lib/desktop-api/system";
 import { resolveAgentSessionWorkspace } from "../workspace-selection";
@@ -42,11 +42,11 @@ export function useAgentSessionLifecycle({
   setInlineEditingMessageId,
   setInputContent
 }: UseAgentSessionLifecycleParams): UseAgentSessionLifecycleResult {
-  const [sessionId] = useAtom(currentAgentSessionIdAtom);
-  const session = useAtomValue(currentAgentSessionAtom);
+  const [sessionId] = useAtom(currentAgentThreadIdAtom);
+  const session = useAtomValue(currentAgentThreadAtom);
   const workspaceId = useAtomValue(currentAgentWorkspaceIdAtom);
   const workspaces = useAtomValue(agentWorkspacesAtom);
-  const [, setMessages] = useAtom(currentAgentMessagesAtom);
+  const [, setMessages] = useAtom(currentAgentThreadMessagesAtom);
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
   const setMessageVersionsByGroup = useSetAtom(agentMessageVersionsByGroupAtom);
@@ -74,7 +74,7 @@ export function useAgentSessionLifecycle({
 
     const preferred = resolvePreferredAgentSelection({
       channels,
-      session,
+      thread: session,
       currentChannelId: agentChannelId,
       currentModelId: agentModelId
     });
@@ -116,7 +116,7 @@ export function useAgentSessionLifecycle({
     resetPlan();
 
     let cancelled = false;
-    void getAgentSessionMessages(sessionId)
+    void getAgentThreadMessages(sessionId)
       .then((next) => {
         if (cancelled) return;
         startTransition(() => {
@@ -161,15 +161,15 @@ export function useAgentSessionLifecycle({
       setSessionRootPath(null);
       return;
     }
-    void getAgentSessionPath(currentWorkspace.slug, sessionId)
+    void getAgentThreadPath(currentWorkspace.slug, sessionId)
       .then(setSessionRootPath)
       .catch(() => setSessionRootPath(null));
   }, [currentWorkspace, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
-    void getAgentRuntimeStatus(sessionId)
-      .then((status) => {
+    void getAgentThreadRuntimeStatus(sessionId)
+      .then((status: Awaited<ReturnType<typeof getAgentThreadRuntimeStatus>>) => {
         setRuntimeStatuses((prev) => {
           const map = new Map(prev);
           map.set(sessionId, status);

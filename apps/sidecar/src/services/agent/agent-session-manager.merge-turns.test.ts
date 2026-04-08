@@ -139,30 +139,20 @@ describe("agent-session-manager multi-turn merge", () => {
     expect(assistant.content).toContain("你好！我是工作空间里的 AI 伙伴");
     expect(assistant.content).toContain("好的，有什么需要帮忙的直接说");
 
-    // events 应包含文本和工具调用信息（按原始顺序）
-    expect(assistant.events).toBeDefined();
-    const toolStartEvents = assistant.events!.filter((e: { type: string }) => e.type === "tool_start");
-    const toolResultEvents = assistant.events!.filter((e: { type: string }) => e.type === "tool_result");
-    const textEvents = assistant.events!.filter((e: { type: string }) => e.type === "text_complete");
-    // 2 个 toolCall (read + AskUserQuestion)
-    expect(toolStartEvents).toHaveLength(2);
-    expect((toolStartEvents[0] as { toolName: string }).toolName).toBe("read");
-    expect((toolStartEvents[1] as { toolName: string }).toolName).toBe("AskUserQuestion");
-    // 2 个 toolResult (对应 read + AskUserQuestion)
-    expect(toolResultEvents).toHaveLength(2);
-    expect((toolResultEvents[0] as { toolUseId: string }).toolUseId).toBe("call_1");
-    expect((toolResultEvents[1] as { toolUseId: string }).toolUseId).toBe("call_2");
-    // 应有文本事件
-    expect(textEvents.length).toBeGreaterThanOrEqual(1);
-
-    // 验证 events 的顺序：文本 → 工具调用 → 工具结果 → ... 交替出现
-    const eventTypes = assistant.events!.map((e: { type: string }) => e.type);
-    // 第一个 turn: text_complete("让我先读取身份文件") → tool_start(read) → tool_result(call_1)
-    // 第二个 turn: text_complete("你好！我是工作空间里的 AI 伙伴") → tool_start(AskUserQuestion) → tool_result(call_2)
-    // 第三个 turn: text_complete("好的，有什么需要帮忙的直接说")
-    const firstToolStartIdx = eventTypes.indexOf("tool_start");
-    const firstTextIdx = eventTypes.indexOf("text_complete");
-    expect(firstTextIdx).toBeLessThan(firstToolStartIdx);
+    expect(assistant.sdkMessages).toBeDefined();
+    const sdkMessages = assistant.sdkMessages ?? [];
+    const toolUses = sdkMessages
+      .filter((message) => message.type === "assistant")
+      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+      .filter((block) => !!block && typeof block === "object" && block.type === "tool_use")
+      .map((block) => (block as { name?: string; id?: string }).name ?? "");
+    const toolResults = sdkMessages
+      .filter((message) => message.type === "user")
+      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+      .filter((block) => !!block && typeof block === "object" && block.type === "tool_result")
+      .map((block) => (block as { tool_use_id?: string }).tool_use_id ?? "");
+    expect(toolUses).toEqual(["read", "AskUserQuestion"]);
+    expect(toolResults).toEqual(["call_1", "call_2"]);
   });
 
   test("reasoning-only + content-only 两个 turn 应合并", () => {
@@ -226,14 +216,18 @@ describe("agent-session-manager multi-turn merge", () => {
     expect(assistant.reasoning).toContain("先搜索一下");
     expect(assistant.content).toContain("搜索完成");
 
-    // events 应包含 grep 工具调用
-    expect(assistant.events).toBeDefined();
-    const toolStarts = assistant.events!.filter((e: { type: string }) => e.type === "tool_start");
-    expect(toolStarts).toHaveLength(1);
-    expect((toolStarts[0] as { toolName: string }).toolName).toBe("grep");
-    const toolResults = assistant.events!.filter((e: { type: string }) => e.type === "tool_result");
+    const toolUses = (assistant.sdkMessages ?? [])
+      .filter((message) => message.type === "assistant")
+      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+      .filter((block) => !!block && typeof block === "object" && block.type === "tool_use");
+    const toolResults = (assistant.sdkMessages ?? [])
+      .filter((message) => message.type === "user")
+      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+      .filter((block) => !!block && typeof block === "object" && block.type === "tool_result");
+    expect(toolUses).toHaveLength(1);
+    expect((toolUses[0] as { name?: string }).name).toBe("grep");
     expect(toolResults).toHaveLength(1);
-    expect((toolResults[0] as { toolUseId: string }).toolUseId).toBe("call_a");
+    expect((toolResults[0] as { tool_use_id?: string }).tool_use_id).toBe("call_a");
   });
 
   test("不同用户消息之间的 assistant 不应合并", () => {

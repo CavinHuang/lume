@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model } from "./model-types";
 import { adaptModelCapabilities, resolveAgentThinkingLevel, supportsAnthropicThinking } from "./model-capabilities";
 
 describe("model-capabilities", () => {
@@ -49,3 +49,4 @@ describe("model-capabilities", () => {
     expect(resolveAgentThinkingLevel(model, "https://api.anthropic.com", "max")).toBe("xhigh");
   });
 });
+

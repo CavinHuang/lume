@@ -75,15 +75,15 @@ describe("agent-session-manager advanced ops", () => {
     const targetSessionDir = join(getAgentWorkspacePath(targetWorkspace.slug), created.id);
     writeFileSync(join(sourceSessionDir, "note.txt"), "hello", "utf-8");
     updateAgentSessionMeta(created.id, {
-      sdkSessionId: "sdk-session",
-      piSessionId: "pi-session"
+      sdkThreadId: "sdk-session",
+      runtimeThreadId: "pi-session"
     });
 
     const moved = moveAgentSessionToWorkspace(created.id, targetWorkspace.id);
 
     expect(moved.workspaceId).toBe(targetWorkspace.id);
-    expect(moved.sdkSessionId).toBeUndefined();
-    expect(moved.piSessionId).toBeUndefined();
+    expect(moved.sdkThreadId).toBeUndefined();
+    expect(moved.runtimeThreadId).toBeUndefined();
     expect(existsSync(sourceSessionDir)).toBeFalse();
     expect(existsSync(targetSessionDir)).toBeTrue();
     expect(readFileSync(join(targetSessionDir, "note.txt"), "utf-8")).toBe("hello");
@@ -361,6 +361,7 @@ describe("agent-session-manager advanced ops", () => {
     expect(messagesAfter.length).toBe(2);
     expect(messagesAfter[0]?.content).toBe("第一条");
     expect(messagesAfter[1]?.content).toBe("第二条");
-    expect(getAgentSessionMeta(session.id)?.piSessionId).toBeUndefined();
+    expect(getAgentSessionMeta(session.id)?.runtimeThreadId).toBeUndefined();
   });
 });
+

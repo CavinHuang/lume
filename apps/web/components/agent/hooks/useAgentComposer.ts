@@ -9,11 +9,11 @@ import type {
 } from "@lume/shared";
 import type { AgentStreamState } from "@/atoms/agent-atoms";
 import {
-  copyFolderToAgentSession,
-  saveFilesToAgentSession,
-  sendAgentMessage,
-  stopAgentRun,
-  truncateAgentMessagesFrom
+  copyFolderToAgentThread,
+  saveFilesToAgentThread,
+  sendAgentThreadMessage,
+  stopAgentThreadRun,
+  truncateAgentThreadMessagesFrom
 } from "@/lib/desktop-api/agent";
 import { openChatFileDialog } from "@/lib/desktop-api/chat";
 import { openFolderDialog } from "@/lib/desktop-api/system";
@@ -30,7 +30,7 @@ function createPendingClientMessageId(): string {
 }
 
 interface UseAgentComposerParams {
-  sessionId: string | null;
+  threadId: string | null;
   sessionTitle: string;
   currentWorkspaceSlug: string | null;
   currentWorkspaceId: string | null;
@@ -38,8 +38,8 @@ interface UseAgentComposerParams {
   workspaces: Array<{ id: string; slug: string }>;
   backendReady: boolean;
   isAgentBusy: boolean;
-  pendingPrompt: { sessionId: string; message: string } | null;
-  setPendingPrompt: Dispatch<SetStateAction<{ sessionId: string; message: string } | null>>;
+  pendingPrompt: { threadId: string; message: string } | null;
+  setPendingPrompt: Dispatch<SetStateAction<{ threadId: string; message: string } | null>>;
   inputContent: string;
   setInputContent: Dispatch<SetStateAction<string>>;
   pendingFiles: AgentPendingFile[];
@@ -80,7 +80,7 @@ interface UseAgentComposerResult {
 }
 
 export function useAgentComposer({
-  sessionId,
+  threadId,
   sessionTitle,
   currentWorkspaceSlug,
   currentWorkspaceId,
@@ -110,8 +110,8 @@ export function useAgentComposer({
 }: UseAgentComposerParams): UseAgentComposerResult {
   useEffect(() => {
     if (!shouldDispatchPendingPrompt({
-      pendingPromptSessionId: pendingPrompt?.sessionId ?? null,
-      sessionId,
+      pendingPromptThreadId: pendingPrompt?.threadId ?? null,
+      threadId,
       backendReady,
       isAgentBusy
     })) {
@@ -125,7 +125,7 @@ export function useAgentComposer({
     const timer = setTimeout(() => {
       setStreamingStates((prev) => {
         const map = new Map(prev);
-        map.set(sessionId as string, { running: true, content: "", toolActivities: [], events: [] });
+        map.set(threadId as string, { running: true, content: "", toolActivities: [] });
         return map;
       });
 
@@ -145,8 +145,8 @@ export function useAgentComposer({
         enterPlan();
       }
 
-      void sendAgentMessage({
-        sessionId: sessionId as string,
+      void sendAgentThreadMessage({
+        threadId: threadId as string,
         userMessage: prompt.message,
         messageMetadata: {
           pendingClientMessageId
@@ -155,14 +155,14 @@ export function useAgentComposer({
         channelId: agentChannelId ?? undefined,
         modelId: outgoingModelId,
         workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
-        sessionType: "main",
+        threadType: "main",
         chatType: "direct",
         permissionMode: agentPermissionMode
       }).catch((error) => {
         console.error("[AgentView] send pending prompt failed", error);
         setStreamingStates((prev) => {
           const map = new Map(prev);
-          map.delete(sessionId as string);
+          map.delete(threadId as string);
           return map;
         });
       });
@@ -171,7 +171,7 @@ export function useAgentComposer({
     return () => clearTimeout(timer);
   }, [
     pendingPrompt,
-    sessionId,
+    threadId,
     backendReady,
     isAgentBusy,
     setPendingPrompt,
@@ -243,23 +243,23 @@ export function useAgentComposer({
   }, [setPendingFiles]);
 
   const handleOpenFolderDialog = useCallback(async (): Promise<void> => {
-    if (!sessionId || !workspaceId) return;
+    if (!threadId || !workspaceId) return;
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (!workspace) return;
 
     try {
       const result = await openFolderDialog();
       if (!result.path) return;
-      const saved = await copyFolderToAgentSession({
+      const saved = await copyFolderToAgentThread({
         sourcePath: result.path,
         workspaceSlug: workspace.slug,
-        sessionId
+        threadId
       });
       setPendingFolderRefs((prev) => [...prev, ...saved]);
     } catch (error) {
       console.error("[AgentView] open native folder dialog failed", error);
     }
-  }, [sessionId, setPendingFolderRefs, workspaceId, workspaces]);
+  }, [threadId, setPendingFolderRefs, workspaceId, workspaces]);
 
   const handleRemoveFile = useCallback((id: string): void => {
     setPendingFiles((prev) => {
@@ -273,46 +273,46 @@ export function useAgentComposer({
   }, [setPendingFiles]);
 
   const handleCompact = useCallback((): void => {
-    if (!sessionId || !agentChannelId || isAgentBusy) return;
+    if (!threadId || !agentChannelId || isAgentBusy) return;
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
-      map.set(sessionId, { running: true, content: "", toolActivities: [], events: [] });
+      map.set(threadId, { running: true, content: "", toolActivities: [] });
       return map;
     });
 
-    void sendAgentMessage({
-      sessionId,
-      userMessage: "/compact",
-      channelId: agentChannelId,
-      modelId: outgoingModelId,
+      void sendAgentThreadMessage({
+        threadId,
+        userMessage: "/compact",
+        channelId: agentChannelId,
+        modelId: outgoingModelId,
       workspaceId: workspaceId ?? undefined,
-      sessionType: "main",
+      threadType: "main",
       chatType: "direct",
       permissionMode: agentPermissionMode
     });
-  }, [sessionId, agentChannelId, isAgentBusy, setStreamingStates, outgoingModelId, workspaceId, agentPermissionMode]);
+  }, [threadId, agentChannelId, isAgentBusy, setStreamingStates, outgoingModelId, workspaceId, agentPermissionMode]);
 
   const handleStop = useCallback((): void => {
-    if (!sessionId) return;
+    if (!threadId) return;
 
     setStreamingStates((prev) => {
-      const current = prev.get(sessionId);
+      const current = prev.get(threadId);
       if (!current) return prev;
       const map = new Map(prev);
-      map.set(sessionId, { ...current, running: false });
+      map.set(threadId, { ...current, running: false });
       return map;
     });
 
-    void stopAgentRun(sessionId);
-  }, [sessionId, setStreamingStates]);
+    void stopAgentThreadRun(threadId);
+  }, [threadId, setStreamingStates]);
 
   const sendFromMessageContent = useCallback((
     content: string,
     messageMetadata?: Record<string, unknown>,
     sendOverrides?: Pick<AgentSendInput, "resendFromMessageId" | "editFromMessageId">
   ): void => {
-    if (!sessionId || !backendReady || isAgentBusy) return;
+    if (!threadId || !backendReady || isAgentBusy) return;
     planStreamCaptureRef.current = agentPermissionMode === "plan";
     if (agentPermissionMode === "plan") {
       enterPlan();
@@ -320,16 +320,15 @@ export function useAgentComposer({
 
     setStreamErrors((prev) => {
       const map = new Map(prev);
-      map.delete(sessionId);
+      map.delete(threadId);
       return map;
     });
     setStreamingStates((prev) => {
       const map = new Map(prev);
-      map.set(sessionId, {
+      map.set(threadId, {
         running: true,
         content: "",
         toolActivities: [],
-        events: [],
         model: outgoingModelId
       });
       return map;
@@ -350,15 +349,15 @@ export function useAgentComposer({
     };
     setMessages((prev) => [...prev, tempMessage]);
 
-    void sendAgentMessage({
-      sessionId,
+    void sendAgentThreadMessage({
+      threadId,
       userMessage: content,
       messageMetadata: finalMessageMetadata,
       ...sendOverrides,
       channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
-      sessionType: "main",
+      threadType: "main",
       chatType: "direct",
       permissionMode: agentPermissionMode,
       thinkingLevel: agentThinkingLevel
@@ -367,18 +366,18 @@ export function useAgentComposer({
       const message = error instanceof Error ? error.message : String(error);
       setStreamErrors((prev) => {
         const map = new Map(prev);
-        map.set(sessionId, `重发失败: ${message}`);
+        map.set(threadId, `重发失败: ${message}`);
         return map;
       });
       setStreamingStates((prev) => {
-        if (!prev.has(sessionId)) return prev;
+        if (!prev.has(threadId)) return prev;
         const map = new Map(prev);
-        map.delete(sessionId);
+        map.delete(threadId);
         return map;
       });
     });
   }, [
-    sessionId,
+    threadId,
     backendReady,
     isAgentBusy,
     planStreamCaptureRef,
@@ -395,27 +394,27 @@ export function useAgentComposer({
   ]);
 
   const truncateFromMessage = useCallback(async (messageId: string): Promise<void> => {
-    if (!sessionId) return;
-    const updated = await truncateAgentMessagesFrom(sessionId, messageId);
+    if (!threadId) return;
+    const updated = await truncateAgentThreadMessagesFrom(threadId, messageId);
     setMessages(updated);
-  }, [sessionId, setMessages]);
+  }, [threadId, setMessages]);
 
   const handleResendMessage = useCallback(async (message: AgentMessage): Promise<void> => {
-    if (isAgentBusy || !sessionId) return;
+    if (isAgentBusy || !threadId) return;
     setMessages((prev) => trimMessagesFromTarget(prev, message.id));
     sendFromMessageContent(message.content ?? "", undefined, {
       resendFromMessageId: message.id
     });
-  }, [isAgentBusy, sessionId, sendFromMessageContent, setMessages]);
+  }, [isAgentBusy, threadId, sendFromMessageContent, setMessages]);
 
   const handleDeleteMessage = useCallback(async (message: AgentMessage): Promise<void> => {
-    if (isAgentBusy || !sessionId) return;
+    if (isAgentBusy || !threadId) return;
     await truncateFromMessage(message.id);
     setInlineEditingMessageId(null);
-  }, [isAgentBusy, sessionId, truncateFromMessage, setInlineEditingMessageId]);
+  }, [isAgentBusy, threadId, truncateFromMessage, setInlineEditingMessageId]);
 
   const handleSubmitInlineEdit = useCallback(async (message: AgentMessage, payload: InlineEditPayload): Promise<void> => {
-    if (isAgentBusy || !sessionId) return;
+    if (isAgentBusy || !threadId) return;
     const text = payload.content.trim();
     const nextContent = payload.preserveAttachedFiles
       ? `${(message.content.match(/<attached_files>[\s\S]*?<\/attached_files>\n*/)?.[0] ?? "")}${text}`.trim()
@@ -426,17 +425,17 @@ export function useAgentComposer({
       editFromMessageId: message.id
     });
     setInlineEditingMessageId(null);
-  }, [isAgentBusy, sessionId, sendFromMessageContent, setInlineEditingMessageId, setMessages]);
+  }, [isAgentBusy, threadId, sendFromMessageContent, setInlineEditingMessageId, setMessages]);
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputContent.trim();
-    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !sessionId || !backendReady || isAgentBusy) {
+    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !threadId || !backendReady || isAgentBusy) {
       return;
     }
 
     setStreamErrors((prev) => {
       const map = new Map(prev);
-      map.delete(sessionId);
+      map.delete(threadId);
       return map;
     });
 
@@ -449,9 +448,9 @@ export function useAgentComposer({
           ...(window.__pendingAgentFileData?.get(file.id) ? { data: window.__pendingAgentFileData?.get(file.id) || "" } : {}),
           ...(file.sourcePath ? { sourcePath: file.sourcePath } : {})
         }));
-        const saved = await saveFilesToAgentSession({
+        const saved = await saveFilesToAgentThread({
           workspaceSlug: currentWorkspaceSlug,
-          sessionId,
+          threadId,
           files
         });
         fileReferences += buildAttachedFilesReferenceBlock(saved);
@@ -480,9 +479,9 @@ export function useAgentComposer({
       userMessage: text,
       channelId: agentChannelId,
       modelId: outgoingModelId,
-      hasPendingTitle: pendingTitleRef.current.has(sessionId)
+      hasPendingTitle: pendingTitleRef.current.has(threadId)
     })) {
-      pendingTitleRef.current.set(sessionId, {
+      pendingTitleRef.current.set(threadId, {
         userMessage: text,
         channelId: agentChannelId as string,
         modelId: outgoingModelId as string
@@ -496,11 +495,10 @@ export function useAgentComposer({
 
     setStreamingStates((prev) => {
       const map = new Map(prev);
-      map.set(sessionId, {
+      map.set(threadId, {
         running: true,
         content: "",
         toolActivities: [],
-        events: [],
         model: outgoingModelId
       });
       return map;
@@ -518,15 +516,15 @@ export function useAgentComposer({
     setMessages((prev) => [...prev, tempMessage]);
     setInputContent("");
 
-    void sendAgentMessage({
-      sessionId,
+    void sendAgentThreadMessage({
+      threadId,
       userMessage: finalMessage,
       messageMetadata: tempMessage.metadata,
       thinkingLevel: agentThinkingLevel,
       channelId: agentChannelId ?? undefined,
       modelId: outgoingModelId,
       workspaceId: currentWorkspaceId ?? workspaceId ?? undefined,
-      sessionType: "main",
+      threadType: "main",
       chatType: "direct",
       permissionMode: agentPermissionMode
     }).catch((error) => {
@@ -534,13 +532,13 @@ export function useAgentComposer({
       const message = error instanceof Error ? error.message : String(error);
       setStreamErrors((prev) => {
         const map = new Map(prev);
-        map.set(sessionId, `发送失败: ${message}`);
+        map.set(threadId, `发送失败: ${message}`);
         return map;
       });
       setStreamingStates((prev) => {
-        if (!prev.has(sessionId)) return prev;
+        if (!prev.has(threadId)) return prev;
         const map = new Map(prev);
-        map.delete(sessionId);
+        map.delete(threadId);
         return map;
       });
     });
@@ -548,7 +546,7 @@ export function useAgentComposer({
     inputContent,
     pendingFiles,
     pendingFolderRefs,
-    sessionId,
+    threadId,
     backendReady,
     isAgentBusy,
     setStreamErrors,
@@ -586,3 +584,7 @@ export function useAgentComposer({
     handleSubmitInlineEdit
   };
 }
+
+
+
+

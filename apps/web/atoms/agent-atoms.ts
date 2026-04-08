@@ -1,12 +1,11 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import type {
-  AgentEvent,
   AgentAskUserQuestionRequest,
   AgentMessage,
   AgentPendingFile,
   AgentRuntimeStatus,
-  AgentSessionMeta,
+  AgentThreadMeta,
   AgentToolPermissionRequest,
   AgentWorkspace,
   AgentSendInput,
@@ -20,23 +19,11 @@ import type {
   AgentStreamState,
   ToolActivity
 } from "@/lib/agent-streaming";
-import {
-  applyAgentEvent
-} from "@/lib/agent-streaming";
-import type {
-  TimelineEvent
-} from "@/lib/agent-timeline";
-import {
-  extractTimelineEvents,
-  groupTimelineEventsByTurn
-} from "@/lib/agent-timeline";
 import { formatToolStatusLine } from "@/lib/agent-status-line";
 
 export type { AgentStreamState, ToolActivity } from "@/lib/agent-streaming";
-export type { TimelineEvent, TimelineTextEvent, TimelineToolResultEvent, TimelineToolStartEvent, TurnGroup } from "@/lib/agent-timeline";
-export { applyAgentEvent, extractTimelineEvents, groupTimelineEventsByTurn };
 
-export const agentSessionsAtom = atom<AgentSessionMeta[]>([]);
+export const agentThreadsAtom = atom<AgentThreadMeta[]>([]);
 export const agentWorkspacesAtom = atom<AgentWorkspace[]>([]);
 export const agentChannelIdAtom = atomWithStorage<string | null>("lume-agent-channel-id", null);
 export const agentModelIdAtom = atomWithStorage<string | null>("lume-agent-model-id", null);
@@ -45,19 +32,19 @@ export const agentPermissionModeAtom = atomWithStorage<NonNullable<AgentSendInpu
   "bypassPermissions"
 );
 export const agentThinkingLevelAtom = atomWithStorage<ThinkingLevel>("lume-agent-thinking-level", "medium");
-export const agentPendingPromptAtom = atom<{ sessionId: string; message: string } | null>(null);
+export const agentPendingPromptAtom = atom<{ threadId: string; message: string } | null>(null);
 export const agentPendingFilesAtom = atom<AgentPendingFile[]>([]);
 export const workspaceCapabilitiesVersionAtom = atom<number>(0);
 export const workspaceFilesVersionAtom = atom<number>(0);
 
-/** session 级附加目录：sessionId -> string[] */
+/** thread 级附加目录：threadId -> string[] */
 export const agentAttachedDirectoriesMapAtom = atom<Map<string, string[]>>(new Map());
 /** 工作区级附加目录：workspaceSlug -> string[] */
 export const workspaceAttachedDirectoriesMapAtom = atom<Map<string, string[]>>(new Map());
 
 export const currentAgentWorkspaceIdAtom = atom<string | null>(null);
-export const currentAgentSessionIdAtom = atom<string | null>(null);
-export const currentAgentMessagesAtom = atom<AgentMessage[]>([]);
+export const currentAgentThreadIdAtom = atom<string | null>(null);
+export const currentAgentThreadMessagesAtom = atom<AgentMessage[]>([]);
 export const agentMessageVersionsByGroupAtom = atom<Record<string, AgentMessage[]>>({});
 export const agentSelectedVersionIndexByGroupAtom = atom<Record<string, number>>({});
 export const agentStreamingStatesAtom = atom<Map<string, AgentStreamState>>(new Map());
@@ -66,8 +53,8 @@ export const agentAskUserQuestionRequestsAtom = atom<Map<string, AgentAskUserQue
 export const agentToolPermissionRequestsAtom = atom<Map<string, AgentToolPermissionRequest>>(new Map());
 export const agentStreamErrorsAtom = atom<Map<string, string>>(new Map());
 
-/** 持久化每个 session 最后一次上下文用量，确保非流式状态下也能显示 */
-export const agentSessionContextCacheAtom = atom<Map<string, {
+/** 持久化每个 thread 最后一次上下文用量，确保非流式状态下也能显示 */
+export const agentThreadContextCacheAtom = atom<Map<string, {
   inputTokens?: number;
   totalTokens: number;
   contextWindow?: number;
@@ -75,25 +62,25 @@ export const agentSessionContextCacheAtom = atom<Map<string, {
 
 
 export const currentAgentStreamStateAtom = atom<AgentStreamState | null>((get) => {
-  const currentId = get(currentAgentSessionIdAtom);
+  const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;
   return get(agentStreamingStatesAtom).get(currentId) ?? null;
 });
 
 export const currentAgentRuntimeStatusAtom = atom<AgentRuntimeStatus | null>((get) => {
-  const currentId = get(currentAgentSessionIdAtom);
+  const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;
   return get(agentRuntimeStatusesAtom).get(currentId) ?? null;
 });
 
 export const currentAgentAskUserQuestionRequestAtom = atom<AgentAskUserQuestionRequest | null>((get) => {
-  const currentId = get(currentAgentSessionIdAtom);
+  const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;
   return get(agentAskUserQuestionRequestsAtom).get(currentId) ?? null;
 });
 
 export const currentAgentToolPermissionRequestAtom = atom<AgentToolPermissionRequest | null>((get) => {
-  const currentId = get(currentAgentSessionIdAtom);
+  const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;
   return get(agentToolPermissionRequestsAtom).get(currentId) ?? null;
 });
@@ -115,21 +102,6 @@ export const agentCurrentTurnIdAtom = atom<string | undefined>((get) => get(curr
 /** 已完成的 turn 数量 */
 export const agentTurnCountAtom = atom<number>((get) => get(currentAgentStreamStateAtom)?.turnCount ?? 0);
 
-export const agentStreamingTimelineEventsAtom = atom<TimelineEvent[]>((get) => {
-  const streamState = get(currentAgentStreamStateAtom);
-  if (!streamState) return [];
-  const events = streamState.events ?? [];
-  if (events.length === 0) return [];
-  const syntheticMessage: AgentMessage = {
-    id: "streaming",
-    role: "assistant",
-    content: streamState.content,
-    createdAt: Date.now(),
-    events
-  };
-  return extractTimelineEvents(syntheticMessage);
-});
-
 export const agentContextStatusAtom = atom<{
   totalTokens?: number;
   inputTokens?: number;
@@ -137,8 +109,8 @@ export const agentContextStatusAtom = atom<{
   isCompacting: boolean;
 }>((get) => {
   const state = get(currentAgentStreamStateAtom);
-  const currentId = get(currentAgentSessionIdAtom);
-  const cache = currentId ? get(agentSessionContextCacheAtom).get(currentId) : undefined;
+  const currentId = get(currentAgentThreadIdAtom);
+  const cache = currentId ? get(agentThreadContextCacheAtom).get(currentId) : undefined;
   return {
     totalTokens: state?.totalTokens ?? cache?.totalTokens,
     inputTokens: state?.inputTokens ?? cache?.inputTokens,
@@ -162,11 +134,11 @@ export const agentThinkingSecondsAtom = atom<number | null>((get) => {
   return seconds >= 1 ? seconds : null;
 });
 
-export const currentAgentSessionAtom = atom<AgentSessionMeta | null>((get) => {
-  const sessions = get(agentSessionsAtom);
-  const currentId = get(currentAgentSessionIdAtom);
+export const currentAgentThreadAtom = atom<AgentThreadMeta | null>((get) => {
+  const threads = get(agentThreadsAtom);
+  const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;
-  return sessions.find((item) => item.id === currentId) ?? null;
+  return threads.find((item) => item.id === currentId) ?? null;
 });
 
 interface ToolPolicyRecord {
@@ -188,7 +160,7 @@ export const currentAgentCapabilityRouteHintAtom = atom<{
   reason?: string;
   softPolicyActive?: boolean;
 } | null>((get) => {
-  const messages = get(currentAgentMessagesAtom);
+  const messages = get(currentAgentThreadMessagesAtom);
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (!message || message.role !== "user") continue;
@@ -208,7 +180,7 @@ export const currentAgentCapabilityRouteHintAtom = atom<{
   return null;
 });
 
-export const agentRunningSessionIdsAtom = atom<Set<string>>((get) => {
+export const agentRunningThreadIdsAtom = atom<Set<string>>((get) => {
   const ids = new Set<string>();
   const runtimeStatuses = get(agentRuntimeStatusesAtom);
   for (const [id, status] of runtimeStatuses) {
@@ -229,7 +201,7 @@ export const agentRunningSessionIdsAtom = atom<Set<string>>((get) => {
 });
 
 export const currentAgentErrorAtom = atom<string | null>((get) => {
-  const currentId = get(currentAgentSessionIdAtom);
+  const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;
   return get(agentStreamErrorsAtom).get(currentId) ?? null;
 });

@@ -25,7 +25,7 @@ function isSameAgentMessage(a: AgentMessage, b: AgentMessage): boolean {
     && a.supersededByMessageId === b.supersededByMessageId
     && a.isLatestVersion === b.isLatestVersion
     && stableStringify(a.metadata) === stableStringify(b.metadata)
-    && stableStringify(a.events) === stableStringify(b.events)
+    && stableStringify(a.sdkMessages) === stableStringify(b.sdkMessages)
   );
 }
 

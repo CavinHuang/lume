@@ -13,12 +13,10 @@ import {
   agentStreamingContentAtom,
   agentToolActivitiesAtom,
   agentStreamingReasoningAtom,
-  agentStreamingTimelineEventsAtom,
   agentThinkingSecondsAtom,
-  currentAgentMessagesAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadMessagesAtom,
+  currentAgentThreadIdAtom,
   currentAgentStreamStateAtom,
-  extractTimelineEvents,
   userProfileAtom
 } from "@/atoms";
 import {
@@ -49,12 +47,12 @@ import {
   getVersionLabel
 } from "@/lib/agent-message-versions";
 import { extractToolActivitiesFromMessages } from "@/lib/agent-tool-activity";
-import { getAgentMessageVersions } from "@/lib/desktop-api/agent";
+import { getAgentThreadMessageVersions } from "@/lib/desktop-api/agent";
 import { getModelLogo } from "@/lib/model-logo";
 import { cn } from "@/lib/utils";
 import { AgentRunningIndicator } from "./AgentRunningIndicator";
 import { AgentStatusLine } from "./AgentStatusLine";
-import { EventTimeline } from "./EventTimeline";
+import { groupIntoTurns, MessageGroupRenderer } from "./SDKMessageRenderer";
 
 
 export interface AgentInlineEditSubmitPayload {
@@ -440,10 +438,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     previousDebugRef.current = nextState;
   }, [debugEnabled, displayedMessage.id, isInlineEditing, message.id, versionLabel, versionLoading]);
 
-  const timelineEvents = React.useMemo(
-    () => displayedMessage.role === "assistant" ? extractTimelineEvents(displayedMessage) : [],
-    [displayedMessage]
-  );
   const messageToolActivities = React.useMemo(
     () => {
       if (displayedMessage.role !== "assistant") return [];
@@ -594,6 +588,22 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
       return <SubagentAnnounceMessage message={displayedMessage} onOpenSession={onOpenSession} />;
     }
 
+    if (Array.isArray(displayedMessage.sdkMessages) && displayedMessage.sdkMessages.length > 0) {
+      const groups = groupIntoTurns(displayedMessage.sdkMessages);
+      return (
+        <>
+          {groups.map((group, index) => (
+            <div key={`${displayedMessage.id}-sdk-${index}`}>
+              <MessageGroupRenderer
+                group={group}
+                allMessages={displayedMessage.sdkMessages ?? []}
+              />
+            </div>
+          ))}
+        </>
+      );
+    }
+
     return (
       <Message from="assistant">
         <MessageHeader
@@ -614,13 +624,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
               <ReasoningContent>{displayedMessage.reasoning}</ReasoningContent>
             </Reasoning>
           ) : null}
-          {timelineEvents.length > 0 ? (
-            <div className="mb-2">
-              <EventTimeline events={timelineEvents} activities={messageToolActivities} />
-            </div>
-          ) : null}
-          {/* 安全网：当 timeline 中没有文本段时，直接展示 message.content */}
-          {displayedMessage.content && !timelineEvents.some((e) => e.type === "text") ? (
+          {displayedMessage.content ? (
             <MessageResponse>{displayedMessage.content}</MessageResponse>
           ) : null}
         </MessageContent>
@@ -676,14 +680,13 @@ export function AgentMessages({
   onCancelInlineEdit,
   onOpenSession
 }: AgentMessagesProps): React.ReactElement {
-  const messages = useAtomValue(currentAgentMessagesAtom);
-  const sessionId = useAtomValue(currentAgentSessionIdAtom);
+  const messages = useAtomValue(currentAgentThreadMessagesAtom);
+  const sessionId = useAtomValue(currentAgentThreadIdAtom);
   const [messageVersionsByGroup, setMessageVersionsByGroup] = useAtom(agentMessageVersionsByGroupAtom);
   const [selectedVersionIndexByGroup, setSelectedVersionIndexByGroup] = useAtom(agentSelectedVersionIndexByGroupAtom);
   const streaming = useAtomValue(agentStreamingAtom);
   const streamingContent = useAtomValue(agentStreamingContentAtom);
   const streamingReasoning = useAtomValue(agentStreamingReasoningAtom);
-  const streamingTimelineEvents = useAtomValue(agentStreamingTimelineEventsAtom);
   const streamingToolActivities = useAtomValue(agentToolActivitiesAtom);
   const agentModelId = useAtomValue(agentModelIdAtom);
   const isCompacting = useAtomValue(agentIsCompactingAtom);
@@ -700,15 +703,9 @@ export function AgentMessages({
   const actionsDisabled = isStreaming || streaming;
   const shouldShowStreamingMessage = streaming;
 
-  // 当 streaming timeline 中已有文本段时，文字由 EventTimeline 渲染，不需要 smoothContent 单独展示
-  const hasTextInStreamingTimeline = streamingTimelineEvents.some((e) => e.type === "text");
-  // 需要独立展示 smoothContent 的条件：有内容 且 timeline 中尚无文本段
-  const showSmoothContent = Boolean(smoothContent) && !hasTextInStreamingTimeline;
-  // reasoning 是否还在活跃输出（用于控制 Reasoning 组件的 streaming 状态和 auto-close）
-  // 当有正式内容输出或工具调用开始时，reasoning 阶段视为结束
-  const reasoningStillActive = streaming && !streamingContent && streamingTimelineEvents.length === 0;
-  // 等待第一个 token 时显示状态行（reasoning/子Agent卡片已有内容时不显示）
-  const showLoadingDots = streaming && !smoothContent && !streamingReasoning && streamingTimelineEvents.length === 0;
+  const hasStreamingSdkMessages = Array.isArray(streamState?.sdkMessages) && streamState.sdkMessages.length > 0;
+  const showSmoothContent = Boolean(smoothContent) && !hasStreamingSdkMessages;
+  const showLoadingDots = streaming && !smoothContent && !streamingReasoning && !hasStreamingSdkMessages;
   const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
 
   // --- 流式 → 持久化切换的高度锁定，防止列表抖动 ---
@@ -780,12 +777,11 @@ export function AgentMessages({
       reasoning: streamingReasoning || undefined,
       createdAt: Date.now(),
       model: agentModelId ?? undefined,
+      sdkMessages: streamState?.sdkMessages,
       metadata: {
         ...(streamingToolActivities.length > 0 ? { toolActivitiesSnapshot: streamingToolActivities } : {}),
         ...(streamingReasoning ? { reasoningExpanded: true } : {})
-      },
-      // 传入完整流式事件，让 EventTimeline 按事件顺序统一渲染文本和工具
-      events: streamState?.events
+      }
     };
   }, [
     agentModelId,
@@ -793,7 +789,7 @@ export function AgentMessages({
     showSmoothContent,
     smoothContent,
     streamingReasoning,
-    streamState?.events,
+    streamState?.sdkMessages,
     streamingToolActivities
   ]);
 
@@ -808,7 +804,7 @@ export function AgentMessages({
     }
     setLoadingGroupIds((prev) => ({ ...prev, [groupId]: true }));
     try {
-      const versions = await getAgentMessageVersions(sessionId, groupId);
+      const versions = await getAgentThreadMessageVersions(sessionId, groupId);
       setMessageVersionsByGroup((prev) => ({ ...prev, [groupId]: versions }));
       setSelectedVersionIndexByGroup((prev) => ({
         ...prev,

@@ -28,13 +28,18 @@ export function findLatestTodoItems(toolActivities: ToolActivity[], messages: Ag
 
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
-    if (!message || message.role !== "assistant" || !message.events) continue;
-    for (let j = message.events.length - 1; j >= 0; j -= 1) {
-      const event = message.events[j];
-      if (!event || event.type !== "tool_start") continue;
-      if (event.toolName !== "TodoWrite" && event.toolName !== "TaskCreate") continue;
-      const todos = parseTodoItemsFromInput(event.input);
-      if (todos) return todos;
+    if (!message || message.role !== "assistant" || !Array.isArray(message.sdkMessages)) continue;
+    for (let j = message.sdkMessages.length - 1; j >= 0; j -= 1) {
+      const sdkMessage = message.sdkMessages[j];
+      if (!sdkMessage || sdkMessage.type !== "assistant") continue;
+      for (let blockIndex = (sdkMessage.message?.content ?? []).length - 1; blockIndex >= 0; blockIndex -= 1) {
+        const block = sdkMessage.message?.content?.[blockIndex];
+        if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
+        const toolBlock = block as { name?: string; input?: Record<string, unknown> };
+        if (toolBlock.name !== "TodoWrite" && toolBlock.name !== "TaskCreate") continue;
+        const todos = parseTodoItemsFromInput(toolBlock.input ?? {});
+        if (todos) return todos;
+      }
     }
   }
 

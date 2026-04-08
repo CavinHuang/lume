@@ -4,13 +4,13 @@ import type { AgentRuntimePhase, AgentRuntimeStatus } from "@lume/shared";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import {
   agentAskUserQuestionRequestsAtom,
-  agentRunningSessionIdsAtom,
+  agentRunningThreadIdsAtom,
   agentRuntimeStatusesAtom,
   agentStreamingAtom,
   agentStreamingStatesAtom,
   agentToolPermissionRequestsAtom,
   currentAgentAskUserQuestionRequestAtom,
-  currentAgentSessionIdAtom,
+  currentAgentThreadIdAtom,
   currentAgentToolPermissionRequestAtom
 } from "./agent-atoms";
 
@@ -18,7 +18,7 @@ describe("agent-runtime-status contract", () => {
   test("agent runtime status 应覆盖关键运行时阶段", () => {
     const phase: AgentRuntimePhase = "awaiting_permission";
     const status: AgentRuntimeStatus = {
-      sessionId: "session-1",
+      threadId: "session-1",
       phase,
       updatedAt: Date.now()
     };
@@ -33,9 +33,9 @@ describe("agent-runtime-status contract", () => {
 
   test("本地 running 为 true 时应始终标记为 streaming，即使残留的 runtime status 为 idle", () => {
     const store = createStore();
-    store.set(currentAgentSessionIdAtom, "session-1");
+    store.set(currentAgentThreadIdAtom, "session-1");
     store.set(agentRuntimeStatusesAtom, new Map([
-      ["session-1", { sessionId: "session-1", phase: "idle", updatedAt: Date.now() }]
+      ["session-1", { threadId: "session-1", phase: "idle", updatedAt: Date.now() }]
     ]));
     store.set(agentStreamingStatesAtom, new Map([
       ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
@@ -48,7 +48,7 @@ describe("agent-runtime-status contract", () => {
 
   test("共享 runtime status 缺失时应允许本地 running 兜底", () => {
     const store = createStore();
-    store.set(currentAgentSessionIdAtom, "session-1");
+    store.set(currentAgentThreadIdAtom, "session-1");
     store.set(agentStreamingStatesAtom, new Map([
       ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
     ]));
@@ -58,12 +58,12 @@ describe("agent-runtime-status contract", () => {
 
   test("应按当前 session 读取共享 ask-user / tool-permission 请求", () => {
     const store = createStore();
-    store.set(currentAgentSessionIdAtom, "session-1");
+    store.set(currentAgentThreadIdAtom, "session-1");
     store.set(agentAskUserQuestionRequestsAtom, new Map([
-      ["session-1", { sessionId: "session-1", toolUseId: "ask-1", questions: [] }]
+      ["session-1", { threadId: "session-1", toolUseId: "ask-1", questions: [] }]
     ]));
     store.set(agentToolPermissionRequestsAtom, new Map([
-      ["session-1", { sessionId: "session-1", requestId: "req-1", toolUseId: "tool-1", toolName: "write", risk: "high", reason: "r", input: {} }]
+      ["session-1", { threadId: "session-1", requestId: "req-1", toolUseId: "tool-1", toolName: "write", risk: "high", reason: "r", input: {} }]
     ]));
 
     expect(store.get(currentAgentAskUserQuestionRequestAtom)?.toolUseId).toBe("ask-1");
@@ -72,16 +72,16 @@ describe("agent-runtime-status contract", () => {
 
   test("共享 runtime status 应保留交互上下文字段", () => {
     const store = createStore();
-    store.set(currentAgentSessionIdAtom, "session-1");
+    store.set(currentAgentThreadIdAtom, "session-1");
     store.set(agentRuntimeStatusesAtom, new Map([
       ["session-1", {
-        sessionId: "session-1",
+        threadId: "session-1",
         phase: "awaiting_permission",
         interactiveKind: "tool_permission",
         requestId: "req-1",
         toolUseId: "tool-1",
         toolName: "write",
-        originSessionId: "origin-1",
+        originThreadId: "origin-1",
         subagentRunId: "run-1",
         updatedAt: Date.now()
       }]
@@ -89,20 +89,20 @@ describe("agent-runtime-status contract", () => {
 
     const status = store.get(agentRuntimeStatusesAtom).get("session-1");
     expect(status?.interactiveKind).toBe("tool_permission");
-    expect(status?.originSessionId).toBe("origin-1");
+    expect(status?.originThreadId).toBe("origin-1");
     expect(status?.subagentRunId).toBe("run-1");
   });
 
   test("running session ids 应优先使用共享 runtime status", () => {
     const store = createStore();
     store.set(agentRuntimeStatusesAtom, new Map([
-      ["session-1", { sessionId: "session-1", phase: "idle", updatedAt: Date.now() }]
+      ["session-1", { threadId: "session-1", phase: "idle", updatedAt: Date.now() }]
     ]));
     store.set(agentStreamingStatesAtom, new Map([
       ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
     ]));
 
-    expect(store.get(agentRunningSessionIdsAtom).has("session-1")).toBe(false);
+    expect(store.get(agentRunningThreadIdsAtom).has("session-1")).toBe(false);
   });
 
   test("running session ids 在共享 runtime status 缺失时应回退到本地 streaming state", () => {
@@ -111,6 +111,8 @@ describe("agent-runtime-status contract", () => {
       ["session-1", { running: true, content: "", toolActivities: [], teammates: [] }]
     ]));
 
-    expect(store.get(agentRunningSessionIdsAtom).has("session-1")).toBe(true);
+    expect(store.get(agentRunningThreadIdsAtom).has("session-1")).toBe(true);
   });
 });
+
+

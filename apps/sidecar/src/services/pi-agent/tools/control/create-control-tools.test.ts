@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { __testing, createPiControlTools } from "./create-control-tools";
+import { __testing, createSdkControlTools } from "./create-control-tools";
 
 describe("create-control-tools AskUserQuestion normalize", () => {
   test("应兼容字符串化 questions 并产出可渲染结构", () => {
@@ -44,7 +44,7 @@ describe("create-control-tools AskUserQuestion normalize", () => {
   });
 
   test("自动化模式下应不注册 AskUserQuestion 工具", () => {
-    const tools = createPiControlTools({
+    const tools = createSdkControlTools({
       sessionId: "s3",
       emitAskUserQuestion: () => {},
       includeAskUserQuestion: false

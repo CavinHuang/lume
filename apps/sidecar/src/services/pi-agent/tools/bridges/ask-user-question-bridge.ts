@@ -7,7 +7,7 @@ import type {
 const pendingPiAskUserQuestionResolvers = new Map<
   string,
   {
-    sessionId: string;
+    threadId: string;
     approvalSessionId: string;
     resolve: (result: AskUserQuestionWaitResult) => void;
     timeout?: ReturnType<typeof setTimeout>;
@@ -39,7 +39,7 @@ function resolveAskTimeoutMs(): number {
 }
 
 export function waitForPiAskUserQuestionAnswers(
-  sessionId: string,
+  threadId: string,
   toolUseId: string,
   questions: AgentAskUserQuestionQuestion[],
   signal: AbortSignal,
@@ -78,14 +78,14 @@ export function waitForPiAskUserQuestionAnswers(
       timeout.unref();
     }
     pendingPiAskUserQuestionResolvers.set(toolUseId, {
-      sessionId,
-      approvalSessionId: sessionId,
+      threadId,
+      approvalSessionId: threadId,
       resolve: done,
       timeout
     });
     signal.addEventListener("abort", onAbort, { once: true });
     emit({
-      sessionId,
+      threadId,
       toolUseId,
       questions
     });
@@ -97,7 +97,7 @@ export function submitPiAskUserQuestionAnswers(input: AgentAskUserQuestionRespon
   if (!pending) {
     return false;
   }
-  if (pending.approvalSessionId !== input.sessionId) {
+  if (pending.approvalSessionId !== input.threadId) {
     throw new Error("AskUserQuestion 会话不匹配");
   }
   if (input.canceled) {
@@ -108,12 +108,14 @@ export function submitPiAskUserQuestionAnswers(input: AgentAskUserQuestionRespon
   return true;
 }
 
-export function cancelPendingPiAskUserQuestionBySession(sessionId: string): void {
+export function cancelPendingPiAskUserQuestionBySession(threadId: string): void {
   for (const [toolUseId, pending] of pendingPiAskUserQuestionResolvers) {
-    if (pending.sessionId !== sessionId && pending.approvalSessionId !== sessionId) {
+    if (pending.threadId !== threadId && pending.approvalSessionId !== threadId) {
       continue;
     }
     pending.resolve({ status: "canceled", answers: null });
     pendingPiAskUserQuestionResolvers.delete(toolUseId);
   }
 }
+
+

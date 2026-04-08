@@ -2,7 +2,7 @@ import { startTransition, useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { AgentMessage } from "@lume/shared";
 import type { AgentStreamState, ToolActivity } from "@/atoms/agent-atoms";
-import { getAgentSessionMessages } from "@/lib/desktop-api/agent";
+import { getAgentThreadMessages } from "@/lib/desktop-api/agent";
 import { mergeServerMessagesWithPending } from "@/lib/agent-message-merge";
 import { resolveAgentWatchdogIdleTimeoutMs } from "../agent-runtime-guard";
 
@@ -15,7 +15,7 @@ function isAgentDebugEnabled(): boolean {
 }
 
 interface UseAgentRuntimeGuardParams {
-  sessionId: string | null;
+  threadId: string | null;
   isAgentBusy: boolean;
   isAwaitingInteractiveInput: boolean;
   toolActivities: ToolActivity[];
@@ -26,7 +26,7 @@ interface UseAgentRuntimeGuardParams {
 }
 
 export function useAgentRuntimeGuard({
-  sessionId,
+  threadId,
   isAgentBusy,
   isAwaitingInteractiveInput,
   toolActivities,
@@ -36,7 +36,7 @@ export function useAgentRuntimeGuard({
   setStreamingStates
 }: UseAgentRuntimeGuardParams): void {
   useEffect(() => {
-    if (!sessionId || !isAgentBusy) return;
+    if (!threadId || !isAgentBusy) return;
 
     let disposed = false;
     let pending = false;
@@ -44,7 +44,7 @@ export function useAgentRuntimeGuard({
 
     const timer = setInterval(() => {
       if (disposed || pending) return;
-      const lastEventAt = lastAgentEventAtRef.current.get(sessionId) ?? 0;
+      const lastEventAt = lastAgentEventAtRef.current.get(threadId) ?? 0;
       const lastActiveAt = lastEventAt > 0 ? lastEventAt : streamStartedAt;
       const activeTools = toolActivities.filter((item) => !item.done);
       const idleTimeoutMs = resolveAgentWatchdogIdleTimeoutMs(activeTools);
@@ -52,13 +52,13 @@ export function useAgentRuntimeGuard({
       if (!isAwaitingInteractiveInput && Date.now() - lastActiveAt > idleTimeoutMs) {
         setStreamErrors((prev) => {
           const map = new Map(prev);
-          map.set(sessionId, "Agent 长时间无响应，已自动停止本次生成，请重试。");
+          map.set(threadId, "Agent 长时间无响应，已自动停止本次生成，请重试。");
           return map;
         });
         setStreamingStates((prev) => {
-          if (!prev.has(sessionId)) return prev;
+          if (!prev.has(threadId)) return prev;
           const map = new Map(prev);
-          map.delete(sessionId);
+          map.delete(threadId);
           return map;
         });
         return;
@@ -67,7 +67,7 @@ export function useAgentRuntimeGuard({
       if (Date.now() - lastEventAt < 6000) return;
       pending = true;
 
-      void getAgentSessionMessages(sessionId)
+      void getAgentThreadMessages(threadId)
         .then((next) => {
           if (disposed) return;
           startTransition(() => {
@@ -83,7 +83,7 @@ export function useAgentRuntimeGuard({
 
           if (isAgentDebugEnabled()) {
             console.info("[AgentDebug] watchdog pull applied", {
-              sessionId,
+              threadId,
               count: next.length
             });
           }
@@ -95,7 +95,7 @@ export function useAgentRuntimeGuard({
           const message = error instanceof Error ? error.message : String(error);
           setStreamErrors((prev) => {
             const map = new Map(prev);
-            map.set(sessionId, `轮询读取消息失败: ${message}`);
+            map.set(threadId, `轮询读取消息失败: ${message}`);
             return map;
           });
         })
@@ -112,10 +112,11 @@ export function useAgentRuntimeGuard({
     isAgentBusy,
     isAwaitingInteractiveInput,
     lastAgentEventAtRef,
-    sessionId,
+    threadId,
     setMessages,
     setStreamErrors,
     setStreamingStates,
     toolActivities
   ]);
 }
+

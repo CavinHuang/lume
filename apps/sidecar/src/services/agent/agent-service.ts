@@ -6,8 +6,8 @@
  * - Keep sidecar event emitter contract (no Electron webContents dependency).
  */
 
+import type { SDKMessage } from "@lume/agent-sdk";
 import type {
-  AgentEvent,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
   AgentToolPolicy,
@@ -41,7 +41,6 @@ import {
 } from "../runtime/session-state-manager";
 import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/bridges/ask-user-question-bridge";
 import { submitToolPermissionDecision } from "../pi-agent/tools/bridges/tool-permission-bridge";
-import { resolveAgentEventTotalTokens } from "../pi-agent/usage";
 import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
@@ -56,8 +55,8 @@ import {
 } from "./session-title-summarizer";
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 
-type AgentEventEmitter = {
-  onEvent: (event: AgentEvent) => void;
+type AgentStreamEmitter = {
+  onSdkMessage: (message: SDKMessage) => void;
   onComplete: () => void;
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
@@ -115,22 +114,22 @@ function mergeToolPolicies(
   };
 }
 
-function handleRuntimeSessionStateEvent(
+function handleRuntimeSessionStateMessage(
   sessionId: string,
-  event: AgentEvent,
+  message: SDKMessage,
   sessionStateManager: ReturnType<typeof getSessionStateManager>
 ): void {
-  const usage = event.type === "usage_update"
-    ? event.usage
-    : event.type === "complete"
-      ? event.usage
-      : undefined;
-
-  if (usage) {
+  if (message.type === "result" && message.usage) {
+    const usage = message.usage;
+    const totalTokens = (usage.input_tokens ?? 0)
+      + (usage.output_tokens ?? 0)
+      + (usage.cache_read_input_tokens ?? 0)
+      + (usage.cache_creation_input_tokens ?? 0);
+    const contextWindow = message.modelUsage ? Object.values(message.modelUsage)[0]?.contextWindow : undefined;
     sessionStateManager.updateTokens(
       sessionId,
-      resolveAgentEventTotalTokens(usage),
-      usage.contextWindow
+      totalTokens,
+      contextWindow
     );
 
     const flushCheck = sessionStateManager.checkMemoryFlush(sessionId);
@@ -144,12 +143,9 @@ function handleRuntimeSessionStateEvent(
     }
   }
 
-  if (event.type === "compacting") {
+  if (message.type === "system" && message.subtype === "compact_boundary") {
     sessionStateManager.incrementCompaction(sessionId);
     log.info("会话开始压缩", { sessionId: sessionId.slice(0, 8) });
-  }
-
-  if (event.type === "compact_complete") {
     log.info("会话压缩完成", { sessionId: sessionId.slice(0, 8) });
   }
 }
@@ -157,7 +153,7 @@ function handleRuntimeSessionStateEvent(
 export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): { ok: true } {
   const handledByPi = submitPiAskUserQuestionAnswers(input);
   if (handledByPi) {
-    getAgentRuntimeStatusManager().markStreaming(input.sessionId);
+    getAgentRuntimeStatusManager().markStreaming(input.threadId);
     return { ok: true };
   }
   throw new Error("未找到待确认的 AskUserQuestion 请求");
@@ -166,7 +162,7 @@ export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponse
 export function submitAgentToolPermission(input: AgentToolPermissionResponseInput): { ok: true } {
   const handled = submitToolPermissionDecision(input);
   if (handled) {
-    getAgentRuntimeStatusManager().markStreaming(input.sessionId);
+    getAgentRuntimeStatusManager().markStreaming(input.threadId);
     return { ok: true };
   }
   throw new Error("未找到待确认的工具权限请求");
@@ -193,10 +189,10 @@ function resolveLatestAssistantTranscriptMessage(sessionId: string) {
 
 export async function sendAgentMessage(
   input: AgentSendInput,
-  emit: AgentEventEmitter,
+  emit: AgentStreamEmitter,
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean } = {}
 ): Promise<void> {
-  const { sessionId, userMessage, workspaceId } = input;
+  const { threadId: sessionId, userMessage, workspaceId } = input;
   const messageHistoryBeforeSend = getAgentSessionMessages(sessionId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const sessionMeta = getAgentSessionMeta(sessionId);
@@ -284,15 +280,15 @@ export async function sendAgentMessage(
       channelId: resolvedChannelId,
       modelId: resolvedModelId,
       workspaceId: input.workspaceId,
-      sessionType: input.sessionType
+      threadType: input.threadType
     }
   }, {
-    onEvent: (event) => {
-      handleRuntimeSessionStateEvent(sessionId, event, sessionStateManager);
-      if (event.type === "compacting") {
+    onSdkMessage: (message) => {
+      handleRuntimeSessionStateMessage(sessionId, message, sessionStateManager);
+      if (message.type === "system" && message.subtype === "compact_boundary") {
         runtimeStatusManager.markCompacting(sessionId);
       }
-      emit.onEvent(event);
+      emit.onSdkMessage(message);
     },
     onComplete: () => {
       runtimeCompleted = true;
@@ -304,7 +300,7 @@ export async function sendAgentMessage(
     onAskUserQuestion: (request) => {
       runtimeStatusManager.markAwaitingUserAnswer(sessionId, {
         toolUseId: request.toolUseId,
-        originSessionId: request.originSessionId,
+        originThreadId: request.originThreadId,
         subagentRunId: request.subagentRunId
       });
       emit.onAskUserQuestion(request);
@@ -314,7 +310,7 @@ export async function sendAgentMessage(
         requestId: request.requestId,
         toolUseId: request.toolUseId,
         toolName: request.toolName,
-        originSessionId: request.originSessionId,
+        originThreadId: request.originThreadId,
         subagentRunId: request.subagentRunId
       });
       emit.onToolPermissionRequest(request);
@@ -421,7 +417,7 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
 function autoGenerateAgentTitle(
   sessionId: string,
   fallbackUserMessage: string,
-  emit: AgentEventEmitter
+  emit: AgentStreamEmitter
 ): void {
   try {
     const meta = getAgentSessionMeta(sessionId);
@@ -457,3 +453,4 @@ function autoGenerateAgentTitle(
     });
   }
 }
+

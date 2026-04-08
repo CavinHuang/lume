@@ -1,68 +1,39 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\agent-service.ts
- * Adaptation:
- * - Isolated stream accumulation logic into sidecar-agnostic helper.
- * - Keeps persistent payload generation independent from UI/event transport.
- */
-
-import type { AgentEvent } from "@lume/shared";
+import type { SDKMessage } from "@lume/shared";
 
 export interface AgentStreamAccumulatorState {
-  text: string;
-  events: AgentEvent[];
+  messages: SDKMessage[];
 }
 
 export function createAgentStreamAccumulatorState(): AgentStreamAccumulatorState {
   return {
-    text: "",
-    events: []
+    messages: []
   };
 }
 
-export function appendAgentEvents(
+export function appendSdkMessage(
   state: AgentStreamAccumulatorState,
-  incomingEvents: AgentEvent[]
+  message: SDKMessage
 ): AgentStreamAccumulatorState {
-  for (const event of incomingEvents) {
-    if (event.type === "text_delta") {
-      state.text += event.text;
-    }
-    if (event.type === "text_complete") {
-      state.text = mergeAccumulatedText(state.text, event.text);
-    }
-    state.events.push(event);
-  }
-
+  state.messages.push(message);
   return state;
 }
 
-function mergeAccumulatedText(current: string, next: string): string {
-  if (!next) return current;
-  if (!current) return next;
-  if (current === next) return current;
-  if (next.startsWith(current)) return next;
-  if (current.startsWith(next)) return current;
-
-  const maxOverlap = Math.min(current.length, next.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-    if (current.endsWith(next.slice(0, overlap))) {
-      return current + next.slice(overlap);
-    }
-  }
-  return current + next;
-}
-
 export function hasRenderableAssistantOutput(state: AgentStreamAccumulatorState): boolean {
-  if (state.text.trim().length > 0) {
-    return true;
-  }
-  return state.events.some((event) =>
-    event.type === "text_delta"
-    || event.type === "text_complete"
-    || event.type === "reasoning_delta"
-    || event.type === "reasoning_complete"
-    || event.type === "tool_start"
-    || event.type === "tool_result"
-  );
+  return state.messages.some((message) => {
+    if (message.type === "assistant") {
+      const content = Array.isArray(message.message?.content) ? message.message.content : [];
+      return content.some((block) => {
+        if (!block || typeof block !== "object") return false;
+        return block.type === "text" || block.type === "thinking" || block.type === "tool_use";
+      });
+    }
+    if (message.type === "user") {
+      const content = Array.isArray(message.message?.content) ? message.message.content : [];
+      return content.some((block) => !!block && typeof block === "object" && block.type === "tool_result");
+    }
+    if (message.type === "system") {
+      return message.subtype === "task_started" || message.subtype === "task_progress" || message.subtype === "task_notification";
+    }
+    return false;
+  });
 }

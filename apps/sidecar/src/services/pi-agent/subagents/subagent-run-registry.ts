@@ -30,11 +30,11 @@ export function subagentLogFields(
   return compactFields({
     runId: run.runId,
     parentRunId: run.parentRunId,
-    rootSessionId: run.rootSessionId,
-    sessionId: run.parentSessionId,
-    parentSessionId: run.parentSessionId,
-    childSessionId: run.childSessionId,
-    deliverySessionId: run.deliverySessionId,
+    rootThreadId: run.rootThreadId,
+    sessionId: run.parentThreadId,
+    parentThreadId: run.parentThreadId,
+    childThreadId: run.childThreadId,
+    deliveryThreadId: run.deliveryThreadId,
     requestedAgentId: run.requestedAgentId,
     resolvedAgentId: run.resolvedAgentId,
     status: run.status,
@@ -109,12 +109,12 @@ class SubagentRunRegistry {
     const now = input.createdAt ?? Date.now();
     const run: SubagentRun = {
       runId: input.runId,
-      parentSessionId: input.parentSessionId,
+      parentThreadId: input.parentThreadId,
       parentRunId: input.parentRunId,
-      rootSessionId: input.rootSessionId ?? input.parentSessionId,
+      rootThreadId: input.rootThreadId ?? input.parentThreadId,
       depth: typeof input.depth === "number" ? Math.max(0, Math.floor(input.depth)) : 1,
-      childSessionId: input.childSessionId,
-      deliverySessionId: input.deliverySessionId,
+      childThreadId: input.childThreadId,
+      deliveryThreadId: input.deliveryThreadId,
       threadRequested: input.threadRequested === true,
       threadBound: input.threadBound === true,
       label: input.label,
@@ -147,45 +147,45 @@ class SubagentRunRegistry {
     return run ? cloneRun(run) : null;
   }
 
-  listByParentSession(parentSessionId: string): SubagentRun[] {
+  listByParentSession(parentThreadId: string): SubagentRun[] {
     this.ensureLoaded();
     return Array.from(this.runs.values())
-      .filter((run) => run.parentSessionId === parentSessionId)
+      .filter((run) => run.parentThreadId === parentThreadId)
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(cloneRun);
   }
 
-  listByRootSession(rootSessionId: string): SubagentRun[] {
+  listByRootSession(rootThreadId: string): SubagentRun[] {
     this.ensureLoaded();
     return Array.from(this.runs.values())
-      .filter((run) => run.rootSessionId === rootSessionId)
+      .filter((run) => run.rootThreadId === rootThreadId)
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(cloneRun);
   }
 
-  listControlledBySession(ownerSessionId: string): SubagentRun[] {
+  listControlledByThread(ownerThreadId: string): SubagentRun[] {
     this.ensureLoaded();
     const merged = new Map<string, SubagentRun>();
     for (const run of this.runs.values()) {
-      if (run.parentSessionId === ownerSessionId || run.rootSessionId === ownerSessionId) {
+      if (run.parentThreadId === ownerThreadId || run.rootThreadId === ownerThreadId) {
         merged.set(run.runId, cloneRun(run));
       }
     }
     return Array.from(merged.values()).sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  getLatestByChildSession(childSessionId: string): SubagentRun | null {
+  getLatestByChildThread(childThreadId: string): SubagentRun | null {
     this.ensureLoaded();
     const matched = Array.from(this.runs.values())
-      .filter((run) => run.childSessionId === childSessionId)
+      .filter((run) => run.childThreadId === childThreadId)
       .sort((a, b) => b.createdAt - a.createdAt)[0];
     return matched ? cloneRun(matched) : null;
   }
 
-  countActiveByParentSession(parentSessionId: string): number {
+  countActiveByParentSession(parentThreadId: string): number {
     this.ensureLoaded();
     return Array.from(this.runs.values()).filter((run) => (
-      run.parentSessionId === parentSessionId && !this.terminalStatuses.has(run.status)
+      run.parentThreadId === parentThreadId && !this.terminalStatuses.has(run.status)
     )).length;
   }
 
@@ -297,22 +297,22 @@ function normalizeRun(raw: unknown): SubagentRun | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
   const runId = typeof record.runId === "string" ? record.runId.trim() : "";
-  const parentSessionId = typeof record.parentSessionId === "string" ? record.parentSessionId.trim() : "";
+  const parentThreadId = typeof record.parentThreadId === "string" ? record.parentThreadId.trim() : "";
   const parentRunId = typeof record.parentRunId === "string" ? record.parentRunId.trim() : undefined;
-  const rootSessionId = typeof record.rootSessionId === "string"
-    ? record.rootSessionId.trim()
-    : parentSessionId;
+  const rootThreadId = typeof record.rootThreadId === "string"
+    ? record.rootThreadId.trim()
+    : parentThreadId;
   const depth = typeof record.depth === "number" && Number.isFinite(record.depth)
     ? Math.max(0, Math.floor(record.depth))
     : 1;
-  const childSessionId = typeof record.childSessionId === "string" ? record.childSessionId.trim() : "";
+  const childThreadId = typeof record.childThreadId === "string" ? record.childThreadId.trim() : "";
   const task = typeof record.task === "string" ? record.task : "";
   const status = typeof record.status === "string" ? record.status : "accepted";
   const cleanup = record.cleanup === "delete" ? "delete" : "keep";
   const createdAt = typeof record.createdAt === "number" ? record.createdAt : Date.now();
   const updatedAt = typeof record.updatedAt === "number" ? record.updatedAt : createdAt;
 
-  if (!runId || !parentSessionId || !childSessionId || !task) return null;
+  if (!runId || !parentThreadId || !childThreadId || !task) return null;
 
   const outcomeRaw = record.outcome;
   const outcome = outcomeRaw && typeof outcomeRaw === "object"
@@ -334,12 +334,12 @@ function normalizeRun(raw: unknown): SubagentRun | null {
 
   return {
     runId,
-    parentSessionId,
+    parentThreadId,
     parentRunId: parentRunId && parentRunId.length > 0 ? parentRunId : undefined,
-    rootSessionId: rootSessionId || parentSessionId,
+    rootThreadId: rootThreadId || parentThreadId,
     depth,
-    childSessionId,
-    deliverySessionId: typeof record.deliverySessionId === "string" ? record.deliverySessionId : undefined,
+    childThreadId,
+    deliveryThreadId: typeof record.deliveryThreadId === "string" ? record.deliveryThreadId : undefined,
     threadRequested: record.threadRequested === true,
     threadBound: record.threadBound === true,
     label: typeof record.label === "string" ? record.label : undefined,
@@ -414,3 +414,4 @@ function writeSubagentRunStore(schema: SubagentRunStoreSchema): void {
   const payload = JSON.stringify(schema, null, 2);
   writeAtomic(path, payload);
 }
+

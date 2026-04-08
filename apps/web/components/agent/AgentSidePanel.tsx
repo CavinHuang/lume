@@ -324,7 +324,7 @@ export function AgentSidePanel({
                 {/* 会话文件浏览器 */}
                 <FileBrowser
                   workspaceSlug={workspaceSlug}
-                  sessionId={sessionId}
+                  threadId={sessionId}
                   rootPath={sessionPath}
                   hideToolbar
                   embedded
@@ -333,7 +333,7 @@ export function AgentSidePanel({
               {/* 会话文件拖拽上传区域（固定在滚动区域外，始终可见） */}
               <FileDropZone
                 workspaceSlug={workspaceSlug}
-                sessionId={sessionId}
+                threadId={sessionId}
                 target="session"
                 onFilesUploaded={handleFilesUploaded}
                 onAttachFolder={handleAttachSessionFolder}
@@ -398,7 +398,7 @@ export function AgentSidePanel({
                   {workspacePath && (
                     <FileBrowser
                       workspaceSlug={workspaceSlug}
-                      sessionId={sessionId}
+                      threadId={sessionId}
                       rootPath={workspacePath}
                       hideToolbar
                       embedded
@@ -469,3 +469,4 @@ function AttachedDirsSection({
     </div>
   );
 }
+

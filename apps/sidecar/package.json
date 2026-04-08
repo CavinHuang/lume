@@ -18,10 +18,8 @@
     "smoke:chat-provider-switch": "bun scripts/smoke-chat-provider-switch.mjs"
   },
   "dependencies": {
+    "@lume/agent-sdk": "workspace:*",
     "@lume/shared": "workspace:*",
-    "@mariozechner/pi-agent-core": "0.61.1",
-    "@mariozechner/pi-ai": "0.61.1",
-    "@mariozechner/pi-coding-agent": "0.61.1",
     "@sinclair/typebox": "^0.34.41",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",

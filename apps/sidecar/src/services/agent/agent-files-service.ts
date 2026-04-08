@@ -59,6 +59,8 @@ export function resolveWorkspaceSlugBySessionId(sessionId: string): string | nul
   return null;
 }
 
+export const resolveWorkspaceSlugByThreadId = resolveWorkspaceSlugBySessionId;
+
 function resolveSafeTarget(workspaceSlug: string, sessionId: string, targetPath?: string): string {
   const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
   if (!targetPath || targetPath.trim().length === 0) return sessionDir;
@@ -152,6 +154,8 @@ function resolveSafePlanPath(
 export function getAgentSessionPath(workspaceSlug: string, sessionId: string): string {
   return resolveSessionDir(workspaceSlug, sessionId);
 }
+
+export const getAgentThreadPath = getAgentSessionPath;
 
 export function listAgentDirectory(
   workspaceSlug: string,
@@ -538,7 +542,7 @@ export function deleteAgentPlan(
 }
 
 export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedFile[] {
-  const sessionDir = resolveSessionDir(input.workspaceSlug, input.sessionId);
+  const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
   const results: AgentSavedFile[] = [];
 
   for (const file of input.files) {
@@ -566,7 +570,7 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
 }
 
 export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile[] {
-  const sessionDir = resolveSessionDir(input.workspaceSlug, input.sessionId);
+  const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
   const sourcePath = resolve(input.sourcePath);
   if (!existsSync(sourcePath)) {
     throw new Error("源目录不存在");
@@ -595,3 +599,6 @@ export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile
   collect(targetDir);
   return results;
 }
+
+export const saveFilesToAgentThread = saveFilesToAgentSession;
+export const copyFolderToThread = copyFolderToSession;

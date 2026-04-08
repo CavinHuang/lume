@@ -7,7 +7,7 @@ import type {
 const pendingToolPermissionResolvers = new Map<
   string,
   {
-    sessionId: string;
+    threadId: string;
     approvalSessionId: string;
     resolve: (decision: AgentToolPermissionDecision | null) => void;
     timeout?: ReturnType<typeof setTimeout>;
@@ -25,26 +25,26 @@ function resolveTimeoutMs(): number {
   return Math.max(15_000, Math.min(60 * 60 * 1000, Math.floor(parsed)));
 }
 
-export function isToolAlwaysAllowed(sessionId: string, toolName: string): boolean {
-  const allowed = sessionAlwaysAllowedTools.get(sessionId);
+export function isToolAlwaysAllowed(threadId: string, toolName: string): boolean {
+  const allowed = sessionAlwaysAllowedTools.get(threadId);
   if (!allowed) return false;
   return allowed.has(toolName.trim());
 }
 
-export function markToolAlwaysAllowed(sessionId: string, toolName: string): void {
+export function markToolAlwaysAllowed(threadId: string, toolName: string): void {
   const normalized = toolName.trim();
   if (!normalized) return;
-  let allowed = sessionAlwaysAllowedTools.get(sessionId);
+  let allowed = sessionAlwaysAllowedTools.get(threadId);
   if (!allowed) {
     allowed = new Set<string>();
-    sessionAlwaysAllowedTools.set(sessionId, allowed);
+    sessionAlwaysAllowedTools.set(threadId, allowed);
   }
   allowed.add(normalized);
 }
 
-export function clearToolPermissionSession(sessionId: string): void {
-  sessionAlwaysAllowedTools.delete(sessionId);
-  cancelPendingToolPermissionBySession(sessionId);
+export function clearToolPermissionSession(threadId: string): void {
+  sessionAlwaysAllowedTools.delete(threadId);
+  cancelPendingToolPermissionBySession(threadId);
 }
 
 export function setToolPermissionApprovalSession(requestId: string, approvalSessionId: string): void {
@@ -88,8 +88,8 @@ export function waitForToolPermissionDecision(
     }
 
     pendingToolPermissionResolvers.set(request.requestId, {
-      sessionId: request.sessionId,
-      approvalSessionId: request.sessionId,
+      threadId: request.threadId,
+      approvalSessionId: request.threadId,
       resolve: done,
       timeout
     });
@@ -103,17 +103,19 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
   if (!pending) {
     return false;
   }
-  if (pending.approvalSessionId !== input.sessionId) {
+  if (pending.approvalSessionId !== input.threadId) {
     throw new Error("工具权限确认会话不匹配");
   }
   pending.resolve(input.decision);
   return true;
 }
 
-export function cancelPendingToolPermissionBySession(sessionId: string): void {
+export function cancelPendingToolPermissionBySession(threadId: string): void {
   for (const [requestId, pending] of pendingToolPermissionResolvers) {
-    if (pending.sessionId !== sessionId && pending.approvalSessionId !== sessionId) continue;
+    if (pending.threadId !== threadId && pending.approvalSessionId !== threadId) continue;
     pending.resolve(null);
     pendingToolPermissionResolvers.delete(requestId);
   }
 }
+
+

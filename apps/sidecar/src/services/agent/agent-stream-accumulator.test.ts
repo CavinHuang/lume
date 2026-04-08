@@ -1,51 +1,60 @@
 import { describe, expect, test } from "bun:test";
+import type { SDKMessage } from "@lume/shared";
 import {
-  appendAgentEvents,
+  appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "./agent-stream-accumulator";
 
 describe("agent-stream-accumulator", () => {
-  test("text_complete 事件应更新累计文本", () => {
+  test("应累计 SDK 消息", () => {
     const state = createAgentStreamAccumulatorState();
-    appendAgentEvents(state, [{ type: "text_complete", text: "hello", isIntermediate: false }]);
-    expect(state.text).toBe("hello");
+    appendSdkMessage(state, {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }]
+      }
+    } as unknown as SDKMessage);
+
+    expect(state.messages).toHaveLength(1);
   });
 
-  test("text_complete 与已有 text_delta 应按重叠合并", () => {
+  test("usage-only result 不应被视为可渲染输出", () => {
     const state = createAgentStreamAccumulatorState();
-    appendAgentEvents(state, [{ type: "text_delta", text: "hello " }]);
-    appendAgentEvents(state, [{ type: "text_complete", text: "hello world", isIntermediate: false }]);
-    expect(state.text).toBe("hello world");
-  });
-
-  test("usage-only 事件不应被视为可渲染输出", () => {
-    const state = createAgentStreamAccumulatorState();
-    appendAgentEvents(state, [{
-      type: "usage_update",
-      usage: { inputTokens: 12 }
-    }]);
+    appendSdkMessage(state, {
+      type: "result",
+      usage: { input_tokens: 12 }
+    } as unknown as SDKMessage);
     expect(hasRenderableAssistantOutput(state)).toBeFalse();
   });
 
-  test("tool 事件应被视为可渲染输出", () => {
+  test("tool_use 应被视为可渲染输出", () => {
     const state = createAgentStreamAccumulatorState();
-    appendAgentEvents(state, [{
-      type: "tool_start",
-      toolUseId: "tool-1",
-      toolName: "Read",
-      input: { path: "README.md" }
-    }]);
+    appendSdkMessage(state, {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "tool_use",
+          id: "tool-1",
+          name: "Read",
+          input: { path: "README.md" }
+        }]
+      }
+    } as unknown as SDKMessage);
     expect(hasRenderableAssistantOutput(state)).toBeTrue();
   });
 
-  test("reasoning-only 事件也应被视为可渲染输出", () => {
+  test("thinking-only assistant 也应被视为可渲染输出", () => {
     const state = createAgentStreamAccumulatorState();
-    appendAgentEvents(state, [{
-      type: "reasoning_complete",
-      text: "先检查配置",
-      isIntermediate: false
-    }]);
+    appendSdkMessage(state, {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "先检查配置" }]
+      }
+    } as unknown as SDKMessage);
     expect(hasRenderableAssistantOutput(state)).toBeTrue();
   });
 });

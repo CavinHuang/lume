@@ -1,6 +1,6 @@
 import type * as React from "react";
 import { ArrowRightLeft, ChevronDown, ChevronRight, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
-import type { AgentSessionMeta, AgentWorkspace } from "@lume/shared";
+import type { AgentThreadMeta, AgentWorkspace } from "@lume/shared";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -23,12 +23,12 @@ interface EditingTarget {
 interface AgentSidebarSectionProps {
   agentPinnedExpanded: boolean;
   onTogglePinnedExpanded: () => void;
-  pinnedAgentSessions: AgentSessionMeta[];
-  agentGroups: Array<{ label: DateGroup; items: AgentSessionMeta[] }>;
-  childSessionMap: Map<string, AgentSessionMeta[]>;
+  pinnedAgentSessions: AgentThreadMeta[];
+  agentGroups: Array<{ label: DateGroup; items: AgentThreadMeta[] }>;
+  childThreadMap: Map<string, AgentThreadMeta[]>;
   expandedParentIds: Set<string>;
   onToggleParentExpanded: (parentId: string) => void;
-  currentAgentSessionId: string | null;
+  currentAgentThreadId: string | null;
   runningIds: Set<string>;
   agentWorkspaces: AgentWorkspace[];
   editing: EditingTarget | null;
@@ -38,11 +38,11 @@ interface AgentSidebarSectionProps {
   onEditingDraftChange: (draft: string) => void;
   onSaveEdit: () => Promise<void>;
   onCancelEdit: () => void;
-  onOpenAgentSession: (sessionId: string) => void;
-  onBeginEditAgent: (item: AgentSessionMeta) => void;
+  onOpenAgentThread: (threadId: string) => void;
+  onBeginEditAgent: (item: AgentThreadMeta) => void;
   onRequestDeleteAgent: (sessionId: string) => void;
   onToggleAgentPin: (sessionId: string) => Promise<void>;
-  onMoveAgentSession: (sessionId: string, workspaceId: string) => Promise<void>;
+  onMoveAgentThread: (threadId: string, workspaceId: string) => Promise<void>;
   rowClass: (active: boolean) => string;
 }
 
@@ -51,10 +51,10 @@ export function AgentSidebarSection({
   onTogglePinnedExpanded,
   pinnedAgentSessions,
   agentGroups,
-  childSessionMap,
+  childThreadMap,
   expandedParentIds,
   onToggleParentExpanded,
-  currentAgentSessionId,
+  currentAgentThreadId,
   runningIds,
   agentWorkspaces,
   editing,
@@ -64,21 +64,21 @@ export function AgentSidebarSection({
   onEditingDraftChange,
   onSaveEdit,
   onCancelEdit,
-  onOpenAgentSession,
+  onOpenAgentThread,
   onBeginEditAgent,
   onRequestDeleteAgent,
   onToggleAgentPin,
-  onMoveAgentSession,
+  onMoveAgentThread,
   rowClass
 }: AgentSidebarSectionProps): React.ReactElement {
-  const renderAgentRow = (item: AgentSessionMeta, hoverKey: string, childCount?: number, expanded?: boolean): React.ReactElement => (
+  const renderAgentRow = (item: AgentThreadMeta, hoverKey: string, childCount?: number, expanded?: boolean): React.ReactElement => (
     <ContextMenu key={hoverKey}>
       <ContextMenuTrigger asChild>
         <div
           role="button"
           tabIndex={0}
-          className={rowClass(currentAgentSessionId === item.id)}
-          onClick={() => onOpenAgentSession(item.id)}
+          className={rowClass(currentAgentThreadId === item.id)}
+          onClick={() => onOpenAgentThread(item.id)}
           onDoubleClick={() => onBeginEditAgent(item)}
           onMouseEnter={() => onHoveredIdChange(hoverKey)}
           onMouseLeave={() => onHoveredIdChange((hoveredId === hoverKey ? null : hoveredId))}
@@ -146,7 +146,7 @@ export function AgentSidebarSection({
       <ContextMenuContent className="w-44">
         <ContextMenuItem className="gap-2 text-[13px]" onSelect={() => { void onToggleAgentPin(item.id); }}>
           {item.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-          {item.pinned ? "取消置顶" : "置顶会话"}
+          {item.pinned ? "取消置顶" : "置顶线程"}
         </ContextMenuItem>
         <ContextMenuSub>
           <ContextMenuSubTrigger className="gap-2 text-[13px]">
@@ -164,7 +164,7 @@ export function AgentSidebarSection({
                   <ContextMenuItem
                     key={`move-agent-${item.id}-${workspace.id}`}
                     className="text-[13px]"
-                    onSelect={() => { void onMoveAgentSession(item.id, workspace.id); }}
+                    onSelect={() => { void onMoveAgentThread(item.id, workspace.id); }}
                   >
                     {workspace.name}
                   </ContextMenuItem>
@@ -191,7 +191,7 @@ export function AgentSidebarSection({
           className="titlebar-no-drag flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-[13px] text-foreground/70 transition-colors hover:bg-foreground/[0.04]"
           onClick={onTogglePinnedExpanded}
         >
-          <span className="inline-flex items-center gap-2"><Pin size={14} />置顶会话</span>
+          <span className="inline-flex items-center gap-2"><Pin size={14} />置顶线程</span>
           {pinnedAgentSessions.length > 0 ? (agentPinnedExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
         </button>
       </div>
@@ -210,7 +210,7 @@ export function AgentSidebarSection({
             <div className="select-none px-3 pt-2 pb-1 text-[11px] font-medium text-foreground/40">{group.label}</div>
             <div className="flex flex-col gap-0.5">
               {group.items.map((item) => {
-                const children = childSessionMap.get(item.id);
+                const children = childThreadMap.get(item.id);
                 const hasChildren = !!children && children.length > 0;
                 const isExpanded = expandedParentIds.has(item.id);
                 return (
@@ -223,8 +223,8 @@ export function AgentSidebarSection({
                             key={child.id}
                             role="button"
                             tabIndex={0}
-                            className={rowClass(currentAgentSessionId === child.id)}
-                            onClick={() => onOpenAgentSession(child.id)}
+                            className={rowClass(currentAgentThreadId === child.id)}
+                            onClick={() => onOpenAgentThread(child.id)}
                             onMouseEnter={() => onHoveredIdChange(child.id)}
                             onMouseLeave={() => onHoveredIdChange((hoveredId === child.id ? null : hoveredId))}
                           >

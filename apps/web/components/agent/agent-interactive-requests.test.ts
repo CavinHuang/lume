@@ -8,7 +8,7 @@ import {
 describe("agent-interactive-requests", () => {
   test("单选问题应返回选中项文本", () => {
     const request: AgentAskUserQuestionRequest = {
-      sessionId: "session-1",
+      threadId: "session-1",
       toolUseId: "tool-1",
       questions: [
         {
@@ -37,7 +37,7 @@ describe("agent-interactive-requests", () => {
 
   test("多选问题应合并 other 文本并用逗号拼接", () => {
     const request: AgentAskUserQuestionRequest = {
-      sessionId: "session-1",
+      threadId: "session-1",
       toolUseId: "tool-1",
       questions: [
         {
@@ -66,7 +66,7 @@ describe("agent-interactive-requests", () => {
 
   test("缺少答案时应返回具体 header 错误", () => {
     const request: AgentAskUserQuestionRequest = {
-      sessionId: "session-1",
+      threadId: "session-1",
       toolUseId: "tool-1",
       questions: [
         {
@@ -88,3 +88,5 @@ describe("agent-interactive-requests", () => {
     });
   });
 });
+
+
