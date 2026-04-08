@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentMessage, SDKMessage, SubagentRunStatus } from "@lume/shared";
+import type { AgentMessage, SDKMessage } from "@lume/shared";
 import {
   appendAgentTranscriptMessage,
   getAgentSessionMeta,
@@ -9,37 +9,6 @@ import { createLogger } from "../../infra/logger";
 import { subagentLogFields } from "./subagent-run-registry";
 import type { SubagentRun } from "./subagent-run.types";
 import { releaseSubagentThreadBinding } from "./subagent-thread-binding";
-
-// ─── Announce event bus (migrated from subagent-announce-bus.ts) ───
-
-export interface SubagentAnnounceBusEvent {
-  sessionId: string;
-  runId: string;
-  childThreadId: string;
-  status: SubagentRunStatus;
-  message: AgentMessage;
-}
-
-type AnnounceBusListener = (event: SubagentAnnounceBusEvent) => void;
-
-const announceBusListeners = new Set<AnnounceBusListener>();
-
-export function emitSubagentAnnounceEvent(event: SubagentAnnounceBusEvent): void {
-  for (const listener of announceBusListeners) {
-    try {
-      listener(event);
-    } catch {
-      // no-op, bus listener failures must not break runtime path
-    }
-  }
-}
-
-export function subscribeSubagentAnnounceEvent(listener: AnnounceBusListener): () => void {
-  announceBusListeners.add(listener);
-  return () => {
-    announceBusListeners.delete(listener);
-  };
-}
 
 // ─── Announce service ───
 
@@ -186,13 +155,6 @@ export async function announceSubagentCompletion(params: {
     try {
       appendAgentTranscriptMessage(targetSessionId, announceMessage);
       updateAgentSessionMeta(targetSessionId, {});
-      emitSubagentAnnounceEvent({
-        sessionId: targetSessionId,
-        runId: run.runId,
-        childThreadId: run.childThreadId,
-        status: run.status,
-        message: announceMessage
-      });
       log.info("announce delivered", subagentLogFields(run, {
         event: "announce_delivered",
         deliveryThreadId: targetSessionId,

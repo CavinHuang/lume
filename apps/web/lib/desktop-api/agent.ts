@@ -7,21 +7,18 @@ import type {
   AgentListSubagentRunsInput,
   AgentListSubagentRunsResult,
   AgentMessage,
-  AgentMessageAppendedEvent,
   AgentMessageVersionsResult,
   AgentProxySettings,
   AgentProxyStatus,
   AgentRecentMessagesResult,
   AgentRuntimeStatus,
   AgentThreadMeta,
-  AgentThreadRuntimeStatus,
   AgentRuntimeStatusChangedEvent,
   AgentRuntimeToolPolicyConfig,
   AgentSaveFilesInput,
   AgentSavedFile,
   AgentSendInput,
   AgentStreamEvent,
-  AgentThreadStreamEvent,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
   AgentWorkspace,
@@ -56,8 +53,8 @@ export async function listSubagentRuns(
   return sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, input ?? {});
 }
 
-export async function getAgentThreadRuntimeStatus(threadId: string): Promise<AgentThreadRuntimeStatus> {
-  return sidecarCall<AgentThreadRuntimeStatus>(AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS, { threadId: threadId });
+export async function getAgentThreadRuntimeStatus(threadId: string): Promise<AgentRuntimeStatus> {
+  return sidecarCall<AgentRuntimeStatus>(AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS, { threadId: threadId });
 }
 
 export async function createAgentThread(params?: {
@@ -252,10 +249,6 @@ export async function importGlobalSkillToWorkspace(
   return sidecarCall<GlobalImportResult>(AGENT_IPC_CHANNELS.IMPORT_GLOBAL_SKILL_TO_WORKSPACE, input);
 }
 
-export async function sendAgentMessage(input: AgentSendInput): Promise<{ ok: true }> {
-  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE, input);
-}
-
 export async function sendAgentThreadMessage(
   input: AgentSendInput & { threadId: string }
 ): Promise<{ ok: true }> {
@@ -279,33 +272,11 @@ export async function onAgentStreamEvent(handler: (event: AgentStreamEvent) => v
   });
 }
 
-export async function onAgentThreadStreamEvent(
-  handler: (event: AgentThreadStreamEvent) => void
-): Promise<UnlistenFn> {
-  return onAgentStreamEvent((event) => handler(event as AgentThreadStreamEvent));
-}
-
-export async function onAgentStreamComplete(
-  handler: (event: { threadId: string }) => void
-): Promise<UnlistenFn> {
-  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.STREAM_COMPLETE, (params) => {
-    handler(params as { threadId: string });
-  });
-}
-
 export async function onAgentStreamError(
   handler: (event: { threadId: string; error: string }) => void
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.STREAM_ERROR, (params) => {
     handler(params as { threadId: string; error: string });
-  });
-}
-
-export async function onAgentMessageAppended(
-  handler: (event: AgentMessageAppendedEvent) => void
-): Promise<UnlistenFn> {
-  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, (params) => {
-    handler(params as AgentMessageAppendedEvent);
   });
 }
 

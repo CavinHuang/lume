@@ -17,10 +17,8 @@ import {
   getAgentThreadMessages,
   listAgentThreads,
   onAgentAskUserQuestion,
-  onAgentMessageAppended,
   onAgentPlanStateChanged,
   onAgentRuntimeStatusChanged,
-  onAgentStreamComplete,
   onAgentStreamError,
   onAgentStreamEvent,
   onAgentTitleUpdated,
@@ -200,7 +198,6 @@ export function useAgentStreamSubscriptions({
   // 否则每次 streaming state 更新都会导致 effect 重新执行（注销+重新注册所有监听器）
   const streamingStatesRef = useRef(streamingStates);
   streamingStatesRef.current = streamingStates;
-  const pendingAssistantMessagesRef = useRef<Map<string, AgentMessage>>(new Map());
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -231,6 +228,106 @@ export function useAgentStreamSubscriptions({
         map.delete(targetSessionId);
         return map;
       });
+    };
+
+    const finalizeCompleted = (targetThreadId: string): void => {
+      const finalize = (): void => {
+        if (targetThreadId === currentSessionIdRef.current) {
+          setAskUserQuestionRequests((prev) => {
+            const map = new Map(prev);
+            map.delete(targetThreadId);
+            return map;
+          });
+          setToolPermissionRequests((prev) => {
+            const map = new Map(prev);
+            map.delete(targetThreadId);
+            return map;
+          });
+        }
+        removeState(targetThreadId);
+        void listAgentThreads().then(setSessions);
+
+        const titleInput = pendingTitleRef.current.get(targetThreadId);
+        pendingTitleRef.current.delete(targetThreadId);
+        if (titleInput) {
+          void generateAgentThreadTitle(titleInput).then((title) => {
+            const nextTitle = title?.trim() || titleInput.userMessage.trim().slice(0, 20);
+            if (!nextTitle) return;
+            void updateAgentThreadTitle(targetThreadId, nextTitle)
+              .then((updated) => {
+                setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+              })
+              .catch((err) => {
+                console.error("[AgentView] 自动更新 Agent 标题失败:", err);
+              });
+          }).catch(() => {
+            const fallback = titleInput.userMessage.trim().slice(0, 20);
+            if (fallback) {
+              void updateAgentThreadTitle(targetThreadId, fallback)
+                .then((updated) => {
+                  setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                })
+                .catch(() => {});
+            }
+          });
+        }
+      };
+
+      const streamStateForDuration = streamingStatesRef.current.get(targetThreadId);
+      let thinkingDuration: number | undefined;
+      if (streamStateForDuration?.streamStartedAt && streamStateForDuration.firstOutputAt) {
+        const sec = (streamStateForDuration.firstOutputAt - streamStateForDuration.streamStartedAt) / 1000;
+        if (sec >= 1) {
+          thinkingDuration = Math.ceil(sec);
+        }
+      }
+
+      if (targetThreadId === currentSessionIdRef.current) {
+        void getAgentThreadMessages(targetThreadId)
+          .then((next) => {
+            startTransition(() => {
+              if (planStreamCaptureRef.current) {
+                const fallbackText = extractLatestAssistantText(next);
+                if (fallbackText) {
+                  setPlanState((prev) => (
+                    prev.draft.content.trim().length > 0
+                      ? prev
+                      : {
+                        ...prev,
+                        draft: {
+                          content: fallbackText,
+                          updatedAt: Date.now()
+                        }
+                      }
+                  ));
+                }
+              }
+              const latestAssistantId = [...next].reverse().find((message) => message.role === "assistant")?.id;
+              const withThinkingDuration = injectThinkingDuration(next, thinkingDuration, latestAssistantId);
+              const enriched = injectToolActivitiesSnapshot(
+                withThinkingDuration,
+                streamStateForDuration?.toolActivities,
+                latestAssistantId
+              );
+              setMessages((prev) => mergeServerMessagesWithPending(prev, enriched));
+              finalize();
+            });
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            startTransition(() => {
+              setStreamErrors((prev) => {
+                const map = new Map(prev);
+                map.set(targetThreadId, `流结束后读取消息失败: ${message}`);
+                return map;
+              });
+              finalize();
+            });
+          });
+        return;
+      }
+
+      finalize();
     };
 
     trackUnlisten(onAgentStreamEvent((payload) => {
@@ -313,150 +410,6 @@ export function useAgentStreamSubscriptions({
 
     }));
 
-    trackUnlisten(onAgentStreamComplete((payload) => {
-      lastAgentEventAtRef.current.set(payload.threadId, Date.now());
-      if (isAgentDebugEnabled()) {
-        console.info("[AgentDebug] stream:complete", { threadId: payload.threadId });
-      }
-      // NOTE: 不再提前调用 markStreamCompleted —— 避免 streaming=false 先于
-      // setMessages 到达，导致流式消息块瞬间消失而持久化消息尚未到位（列表抖动）。
-      // 改为在 finalize 中通过 removeState 一步到位清除，并确保 finalize 始终
-      // 在 setMessages 所在的同一个 startTransition 内执行，实现原子化批更新。
-
-      const finalize = (): void => {
-        if (payload.threadId === currentSessionIdRef.current) {
-          setAskUserQuestionRequests((prev) => {
-            const map = new Map(prev);
-            map.delete(payload.threadId);
-            return map;
-          });
-          setToolPermissionRequests((prev) => {
-            const map = new Map(prev);
-            map.delete(payload.threadId);
-            return map;
-          });
-        }
-        removeState(payload.threadId);
-        void listAgentThreads().then(setSessions);
-
-        const titleInput = pendingTitleRef.current.get(payload.threadId);
-        pendingTitleRef.current.delete(payload.threadId);
-        if (titleInput) {
-          void generateAgentThreadTitle(titleInput).then((title) => {
-            const nextTitle = title?.trim() || titleInput.userMessage.trim().slice(0, 20);
-            if (!nextTitle) return;
-            void updateAgentThreadTitle(payload.threadId, nextTitle)
-              .then((updated) => {
-                setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-              })
-              .catch((err) => {
-                console.error("[AgentView] 自动更新 Agent 标题失败:", err);
-              });
-          }).catch(() => {
-            const fallback = titleInput.userMessage.trim().slice(0, 20);
-            if (fallback) {
-              void updateAgentThreadTitle(payload.threadId, fallback)
-                .then((updated) => {
-                  setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-                })
-                .catch(() => {});
-            }
-          });
-        }
-      };
-
-      // 在流结束后计算本轮思考耗时，后续注入到最后一条 assistant 消息
-      const streamStateForDuration = streamingStatesRef.current.get(payload.threadId);
-      let thinkingDuration: number | undefined;
-      if (streamStateForDuration?.streamStartedAt && streamStateForDuration.firstOutputAt) {
-        const sec = (streamStateForDuration.firstOutputAt - streamStateForDuration.streamStartedAt) / 1000;
-        if (sec >= 1) {
-          thinkingDuration = Math.ceil(sec);
-        }
-      }
-
-      if (payload.threadId === currentSessionIdRef.current) {
-        const pendingAssistantMessage = pendingAssistantMessagesRef.current.get(payload.threadId);
-        if (pendingAssistantMessage) {
-          startTransition(() => {
-            const enrichedMessage = enrichAssistantMessage(
-              pendingAssistantMessage,
-              thinkingDuration,
-              streamStateForDuration?.toolActivities
-            );
-            if (planStreamCaptureRef.current) {
-              const fallbackText = enrichedMessage.content;
-              if (fallbackText) {
-                setPlanState((prev) => (
-                  prev.draft.content.trim().length > 0
-                    ? prev
-                    : {
-                      ...prev,
-                      draft: {
-                        content: fallbackText,
-                        updatedAt: Date.now()
-                      }
-                    }
-                ));
-              }
-            }
-            setMessages((prev) => replaceVisibleMessage(prev, enrichedMessage));
-            pendingAssistantMessagesRef.current.delete(payload.threadId);
-            finalize();
-          });
-          return;
-        }
-        void getAgentThreadMessages(payload.threadId)
-          .then((next) => {
-            startTransition(() => {
-              if (planStreamCaptureRef.current) {
-                const fallbackText = extractLatestAssistantText(next);
-                if (fallbackText) {
-                  setPlanState((prev) => (
-                    prev.draft.content.trim().length > 0
-                      ? prev
-                      : {
-                        ...prev,
-                        draft: {
-                          content: fallbackText,
-                          updatedAt: Date.now()
-                        }
-                      }
-                  ));
-                }
-              }
-              // 将本轮思考耗时注入到最后一条 assistant 消息的 metadata 中
-              const latestAssistantId = [...next].reverse().find((message) => message.role === "assistant")?.id;
-              const withThinkingDuration = injectThinkingDuration(next, thinkingDuration, latestAssistantId);
-              const enriched = injectToolActivitiesSnapshot(
-                withThinkingDuration,
-                streamStateForDuration?.toolActivities,
-                latestAssistantId
-              );
-              setMessages((prev) => {
-                return mergeServerMessagesWithPending(prev, enriched);
-              });
-              finalize();
-            });
-          })
-          .catch((error) => {
-            const message = error instanceof Error ? error.message : String(error);
-            // catch 路径也需要在 transition 内一起清除，避免抖动
-            startTransition(() => {
-              setStreamErrors((prev) => {
-                const map = new Map(prev);
-                map.set(payload.threadId, `流结束后读取消息失败: ${message}`);
-                return map;
-              });
-              finalize();
-            });
-          });
-      } else {
-        pendingAssistantMessagesRef.current.delete(payload.threadId);
-        finalize();
-      }
-    }));
-
     trackUnlisten(onAgentStreamError((payload) => {
       lastAgentEventAtRef.current.set(payload.threadId, Date.now());
       if (isAgentDebugEnabled()) {
@@ -481,7 +434,6 @@ export function useAgentStreamSubscriptions({
           });
         }
         removeState(payload.threadId);
-        pendingAssistantMessagesRef.current.delete(payload.threadId);
       };
 
       if (payload.threadId === currentSessionIdRef.current) {
@@ -509,35 +461,19 @@ export function useAgentStreamSubscriptions({
       }
     }));
 
-    trackUnlisten(onAgentMessageAppended((payload) => {
-      void listAgentThreads().then(setSessions);
-      if (payload.threadId !== currentSessionIdRef.current) {
-        return;
-      }
-      const currentStreamState = streamingStatesRef.current.get(payload.threadId);
-      // 只要该 session 的 streamState 存在（而非仅看 running），就将 assistant 消息
-      // 缓存到 pending，由 onAgentStreamComplete 统一处理。
-      // 原因：stream:event(complete) 会将 running 设为 false，但此时 streamingMessage
-      // 仍然显示（因为 agentStreamingAtom 还看 runtimeStatus）。若此时 message:appended
-      // 到达并直接渲染，会导致持久化消息与流式消息同时出现（列表中两条重复 AI 消息）。
-      // streamState 只有在 finalize → removeState 中才会被删除，与 setMessages 同批执行。
-      if (payload.message.role === "assistant" && currentStreamState) {
-        pendingAssistantMessagesRef.current.set(payload.threadId, payload.message);
-        return;
-      }
-      startTransition(() => {
-        setMessages((prev) => {
-          return replaceVisibleMessage(prev, payload.message);
-        });
-      });
-    }));
-
     trackUnlisten(onAgentRuntimeStatusChanged((payload) => {
       setRuntimeStatuses((prev) => {
         const map = new Map(prev);
         map.set(payload.status.threadId, payload.status);
         return map;
       });
+      if (payload.status.phase === "completed" && streamingStatesRef.current.has(payload.status.threadId)) {
+        lastAgentEventAtRef.current.set(payload.status.threadId, Date.now());
+        if (isAgentDebugEnabled()) {
+          console.info("[AgentDebug] runtime:completed", { threadId: payload.status.threadId });
+        }
+        finalizeCompleted(payload.status.threadId);
+      }
     }));
 
     trackUnlisten(onAgentTitleUpdated((payload) => {

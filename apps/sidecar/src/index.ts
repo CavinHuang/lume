@@ -1,6 +1,5 @@
 import { argv, stdin, stdout } from "node:process";
 import { createInterface } from "node:readline";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory/memory-sync-watcher";
 import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat/chat-tools-watcher";
@@ -10,7 +9,6 @@ import {
   startAutomationRunner,
   stopAutomationRunner
 } from "./services/automation/automation-runner-service";
-import { subscribeSubagentAnnounceEvent } from "./services/pi-agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { closeMemoryManagers } from "./rpc/memory-handlers";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
@@ -107,11 +105,7 @@ function boot(): void {
   if (envAutostartEnabled("LUME_CHAT_TOOLS_WATCHER_AUTOSTART", false)) {
     startChatToolsWatcher((method, params) => writeNotification(method, params));
   }
-  const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
-    writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
-  });
   const stopWatcher = (): void => {
-    unsubscribeSubagentAnnounce();
     stopWorkspaceWatcher();
     stopMemorySyncWatcher();
     stopChatToolsWatcher();

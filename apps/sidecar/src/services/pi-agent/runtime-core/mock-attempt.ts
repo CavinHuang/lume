@@ -6,8 +6,8 @@ import {
 import { createLogger } from "../../infra/logger";
 import { waitForPiAskUserQuestionAnswers } from "../tools/bridges/ask-user-question-bridge";
 import { waitForToolPermissionDecision } from "../tools/bridges/tool-permission-bridge";
-import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
-import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
+import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
+import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
 import { createRuntimeCoreSession } from "./run";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
 import type { resolveRuntimeCoreChannelModel } from "./model";

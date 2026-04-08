@@ -77,7 +77,7 @@ import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attempt";
-import { getSubagentRunRegistry } from "../services/pi-agent/subagents/subagent-run-registry";
+import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
 import {
   getAgentRuntimeToolPolicyConfig,
   saveAgentRuntimeToolPolicyConfig
@@ -475,9 +475,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           });
         },
         onComplete: () => {
-          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
-            threadId: input.threadId
-          });
           if (context.planStateTracker.getPhase(input.threadId) === "executing") {
             const steps = context.planStateTracker.markCurrentStepCompleted(input.threadId);
             context.notifyPlanStateChange(input.threadId, "executed", steps ? { steps } : undefined);

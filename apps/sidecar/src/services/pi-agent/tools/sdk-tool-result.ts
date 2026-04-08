@@ -6,7 +6,10 @@ export function createSdkJsonResultTool(config: {
   inputSchema: ToolInputSchema;
   isReadOnly?: boolean;
   isConcurrencySafe?: boolean;
-  call: (input: Record<string, unknown>) => Promise<unknown>;
+  call: (
+    input: Record<string, unknown>,
+    context: { cwd: string; abortSignal?: AbortSignal }
+  ) => Promise<unknown>;
 }): ToolDefinition {
   return defineTool({
     name: config.name,
@@ -14,8 +17,11 @@ export function createSdkJsonResultTool(config: {
     inputSchema: config.inputSchema,
     isReadOnly: config.isReadOnly,
     isConcurrencySafe: config.isConcurrencySafe,
-    async call(input) {
-      const data = await config.call((input ?? {}) as Record<string, unknown>);
+    async call(input, context) {
+      const data = await config.call((input ?? {}) as Record<string, unknown>, {
+        cwd: context.cwd,
+        abortSignal: context.abortSignal
+      });
       return { data };
     }
   });

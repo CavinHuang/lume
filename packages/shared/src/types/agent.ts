@@ -564,20 +564,9 @@ export interface AgentStreamEvent {
   message: SDKMessage
 }
 
-/** Agent 线程消息追加通知（sidecar -> web） */
-export interface AgentMessageAppendedEvent {
-  threadId: string
-  message: AgentMessage
-}
-
 export interface AgentRuntimeStatusChangedEvent {
   status: AgentRuntimeStatus
 }
-
-export type AgentThreadRuntimeStatus = AgentRuntimeStatus
-export type AgentThreadStreamEvent = AgentStreamEvent
-export type AgentThreadMessageAppendedEvent = AgentMessageAppendedEvent
-export type AgentThreadRuntimeStatusChangedEvent = AgentRuntimeStatusChangedEvent
 
 // ===== 文件浏览器 =====
 
@@ -706,7 +695,6 @@ export const AGENT_IPC_CHANNELS = {
   // 消息发送
   /** 发送线程消息（触发 Agent 流式响应） */
   SEND_THREAD_MESSAGE: 'agent:send-thread-message',
-  STOP_AGENT: 'agent:stop',
   /** 中止 Agent 线程执行 */
   STOP_THREAD: 'agent:stop-thread',
 
@@ -745,12 +733,8 @@ export const AGENT_IPC_CHANNELS = {
   // 流式事件（主进程 → 渲染进程推送）
   /** Agent 流式事件 */
   STREAM_EVENT: 'agent:stream:event',
-  /** Agent 流式完成 */
-  STREAM_COMPLETE: 'agent:stream:complete',
   /** Agent 流式错误 */
   STREAM_ERROR: 'agent:stream:error',
-  /** 会话有新消息追加（非当前流式回合） */
-  MESSAGE_APPENDED: 'agent:message-appended',
   /** 查询 subagent run 状态（调试/观测） */
   LIST_SUBAGENT_RUNS: 'agent:list-subagent-runs',
   /** 获取当前会话 runtime status */

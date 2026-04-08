@@ -8,17 +8,17 @@ import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
 } from "../subagent-run-registry";
-import { createOrResumeRuntimeCoreSessionManager } from "../../runtime-core/session-store";
+import { createOrResumeRuntimeCoreSessionManager } from "../../../pi-agent/runtime-core/session-store";
 
 mock.module("undici", () => ({
   EnvHttpProxyAgent: class {},
   setGlobalDispatcher: () => undefined
 }));
 
-mock.module("../../runtime-core/attempt", () => ({
+mock.module("../../../pi-agent/runtime-core/attempt", () => ({
   runPiAgent: async (
     params: { input: { userMessage?: string } },
-    emit: { onEvent: (event: unknown) => void; onComplete: () => void; onError?: (error: string) => void }
+    emit: { onSdkMessage: (message: unknown) => void; onComplete: () => void; onError?: (error: string) => void }
   ) => {
     const message = typeof params.input?.userMessage === "string"
       ? params.input.userMessage
@@ -30,10 +30,12 @@ mock.module("../../runtime-core/attempt", () => ({
       emit.onError?.("mock runtime error");
       return { status: "errored" as const };
     }
-    emit.onEvent({
-      type: "text_complete",
-      text: "mock output",
-      isIntermediate: false
+    emit.onSdkMessage({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "mock output" }]
+      }
     });
     emit.onComplete();
     return { status: "completed" as const };
@@ -53,7 +55,7 @@ afterEach(() => {
 });
 
 async function loadCreateSessionTools() {
-  const mod = await import("../../tools/session/create-session-tools");
+  const mod = await import("../../../pi-agent/tools/session/create-session-tools");
   return mod.createSdkSessionTools;
 }
 

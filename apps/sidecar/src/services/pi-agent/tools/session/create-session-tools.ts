@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   type SDKMessage,
-  defineTool,
   type ToolDefinition
 } from "@lume/agent-sdk";
 import { Type } from "@sinclair/typebox";
@@ -22,33 +21,16 @@ import type { AgentMessage } from "@lume/shared";
 import { decryptApiKey, listChannels } from "../../../channel/channel-manager";
 import { resolveRequestedModelIdForChannel } from "../../../channel/model-selection";
 import { runPiAgent, stopPiAgent } from "../../runtime-core/attempt";
-import { getSubagentRunRegistry } from "../../subagents/subagent-run-registry";
-import { announceSubagentCompletion } from "../../subagents/subagent-announce-service";
-import { resolveSubagentSpawnPolicy } from "../../subagents/subagent-policy";
-import { resolveSubagentThreadBinding } from "../../subagents/subagent-thread-binding";
+import { getSubagentRunRegistry } from "../../../agent/subagents/subagent-run-registry";
+import { announceSubagentCompletion } from "../../../agent/subagents/subagent-announce-service";
+import { resolveSubagentSpawnPolicy } from "../../../agent/subagents/subagent-policy";
+import { resolveSubagentThreadBinding } from "../../../agent/subagents/subagent-thread-binding";
 import { setAskUserQuestionApprovalSession } from "../bridges/ask-user-question-bridge";
 import { setToolPermissionApprovalSession } from "../bridges/tool-permission-bridge";
+import { createSdkJsonResultTool } from "../sdk-tool-result";
 import { createSdkWebTools } from "../web/create-web-tools";
 
-interface LegacyToolResult<TDetails = unknown> {
-  content: Array<{ type: "text"; text: string }>;
-  details: TDetails;
-}
-
-interface LegacyTool<TArgs = unknown, TDetails = unknown> {
-  name: string;
-  label?: string;
-  description: string;
-  parameters: unknown;
-  execute: (
-    toolCallId: string,
-    args: TArgs,
-    signal?: AbortSignal,
-    onUpdate?: (result: LegacyToolResult<TDetails>) => void
-  ) => Promise<LegacyToolResult<TDetails>>;
-}
-
-interface CreateOpenClawAlignedToolsInput {
+interface CreateSessionToolsInput {
   threadId: string;
   workspaceId?: string;
   channelId?: string;
@@ -101,35 +83,23 @@ function isSubagentTeamV2Enabled(): boolean {
   return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
 }
 
-function buildSubagentBlockedResult(toolName: string): LegacyToolResult<{
+function buildSubagentBlockedResult(toolName: string): {
   status: "error";
   error: string;
-}> {
-  return toTextResult({
+} {
+  return {
     status: "error",
     error: `${toolName} is not allowed from sub-agent sessions`
-  });
+  };
 }
 
-function buildSubagentFeatureDisabledResult(toolName: string): LegacyToolResult<{
+function buildSubagentFeatureDisabledResult(toolName: string): {
   status: "unavailable";
   error: string;
-}> {
-  return toTextResult({
+} {
+  return {
     status: "unavailable",
     error: `${toolName} disabled by ENABLE_SUBAGENT_TEAM_V2=false`
-  });
-}
-
-function toTextResult<TDetails>(details: TDetails): LegacyToolResult<TDetails> {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(details, null, 2)
-      }
-    ],
-    details
   };
 }
 
@@ -581,8 +551,8 @@ function mapMessagesForTool(messages: AgentMessage[]): Array<Record<string, unkn
   }));
 }
 
-function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): LegacyTool[] {
-  const tools: LegacyTool[] = [
+function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
+  const toolSpecs: SessionTool[] = [
     {
       name: "agents_list",
       label: "agents_list",
@@ -601,11 +571,11 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             channelId: session.channelId
           }));
 
-        return toTextResult({
+        return {
           requester: "lume",
           allowAny: false,
           agents: [{ id: "lume", name: "Lume Agent", configured: true }, ...sessionAgents]
-        });
+        };
       }
     },
     {
@@ -660,10 +630,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           };
         });
 
-        return toTextResult({
+        return {
           count: rows.length,
           sessions: rows
-        });
+        };
       }
     },
     {
@@ -685,10 +655,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const hasSessionKey = typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0;
         const hasLabel = typeof params.label === "string" && params.label.trim().length > 0;
         if (!hasSessionKey && !hasLabel) {
-          return toTextResult({
+          return {
             status: "error",
             error: "Either sessionKey or label is required"
-          });
+          };
         }
         const resolvedTarget = resolveSessionTarget({
           currentSessionId: input.threadId,
@@ -697,32 +667,32 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           agentId: params.agentId
         });
         if (!resolvedTarget.ok) {
-          return toTextResult({
+          return {
             status: "error",
             error: resolvedTarget.error
-          });
+          };
         }
         const sessionId = resolvedTarget.threadId;
         const limit = clampInt(params.limit, 1, 500, 100);
         const includeTools = params.includeTools === true;
         const meta = getAgentSessionMeta(sessionId);
         if (!meta) {
-          return toTextResult({
+          return {
             status: "not_found",
             error: `Session not found: ${sessionId}`
-          });
+          };
         }
         let messages = getAgentSessionMessages(sessionId);
         if (!includeTools) {
           messages = messages.filter((message) => message.role === "user" || message.role === "assistant");
         }
         messages = messages.slice(Math.max(0, messages.length - limit));
-        return toTextResult({
+        return {
           status: "ok",
           sessionKey: sessionId,
           count: messages.length,
           messages: mapMessagesForTool(messages)
-        });
+        };
       }
     },
     {
@@ -743,22 +713,22 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           sessionKey: params.sessionKey
         });
         if (!resolvedTarget.ok) {
-          return toTextResult({
+          return {
             status: "error",
             error: resolvedTarget.error
-          });
+          };
         }
         const sessionId = resolvedTarget.threadId;
         const meta = getAgentSessionMeta(sessionId);
         if (!meta) {
-          return toTextResult({
+          return {
             status: "not_found",
             error: `Session not found: ${sessionId}`
-          });
+          };
         }
         const messages = getAgentSessionMessages(sessionId);
         const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
-        return toTextResult({
+        return {
           status: "ok",
           sessionKey: sessionId,
           title: meta.title,
@@ -768,7 +738,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           workspaceId: meta.workspaceId ?? input.workspaceId,
           currentModel: lastAssistant?.model ?? null,
           requestedModel: typeof params.model === "string" ? params.model.trim() || null : null
-        });
+        };
       }
     },
     {
@@ -790,11 +760,11 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const hasSessionKey = typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0;
         const hasLabel = typeof params.label === "string" && params.label.trim().length > 0;
         if (!hasSessionKey && !hasLabel) {
-          return toTextResult({
+          return {
             status: "error",
             runId: randomUUID(),
             error: "Either sessionKey or label is required"
-          });
+          };
         }
         const resolvedTarget = resolveSessionTarget({
           currentSessionId: input.threadId,
@@ -803,44 +773,44 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           agentId: params.agentId
         });
         if (!resolvedTarget.ok) {
-          return toTextResult({
+          return {
             status: "error",
             runId: randomUUID(),
             error: resolvedTarget.error
-          });
+          };
         }
         const sessionId = resolvedTarget.threadId;
         const message = typeof params.message === "string" ? params.message.trim() : "";
         if (!message) {
-          return toTextResult({ status: "error", error: "message 不能为空" });
+          return { status: "error", error: "message 不能为空" };
         }
         const meta = getAgentSessionMeta(sessionId);
         if (!meta) {
-          return toTextResult({ status: "not_found", error: `Session not found: ${sessionId}` });
+          return { status: "not_found", error: `Session not found: ${sessionId}` };
         }
         const resolvedChannelId = meta.channelId ?? input.channelId;
         if (!resolvedChannelId) {
-          return toTextResult({
+          return {
             status: "error",
             error: `目标会话缺少 channelId，无法执行: ${sessionId}`
-          });
+          };
         }
         try {
           decryptApiKey(resolvedChannelId);
         } catch (error) {
-          return toTextResult({
+          return {
             status: "error",
             error: `目标会话渠道不可用: ${error instanceof Error ? error.message : String(error)}`
-          });
+          };
         }
         const timeoutSeconds = clampInt(params.timeoutSeconds, 0, 600, 60);
         const requestedModel = extractLatestModelFromSession(sessionId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedModelId) {
-          return toTextResult({
+          return {
             status: "error",
             error: `目标会话缺少可用模型: ${sessionId}`
-          });
+          };
         }
 
         const runResult = await executeAgentTurn({
@@ -859,7 +829,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           chatType: input.chatType
         });
         updateAgentSessionMeta(sessionId, {});
-        return toTextResult({
+        return {
           status: runResult.status,
           runId: randomUUID(),
           sessionKey: sessionId,
@@ -867,7 +837,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           usageEvents: runResult.usageEvents,
           output: runResult.runText,
           ...(runResult.error ? { error: runResult.error } : {})
-        });
+        };
       }
     },
     {
@@ -905,10 +875,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const hasBatchSessionKeys = sessionKeys.length > 0;
         const hasBatchLabels = labels.length > 0;
         if (!hasSessionKey && !hasLabel && !hasBatchSessionKeys && !hasBatchLabels) {
-          return toTextResult({
+          return {
             status: "error",
             error: "Either sessionKey/label or sessionKeys/labels is required"
-          });
+          };
         }
 
         const resolvedSessionIds: string[] = [];
@@ -933,33 +903,33 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         allLabels.push(...labels);
         for (const targetLabel of allLabels) {
           if (agentId) {
-            return toTextResult({
+            return {
               status: "error",
               error: "当前 Lume 尚未实现 label + agentId 的联合解析，请直接传 sessionKey。"
-            });
+            };
           }
           const matchedIds = resolveSessionIdsByLabel(targetLabel);
           if (matchedIds.length === 0) {
-            return toTextResult({
+            return {
               status: "error",
               error: `No session found with label: ${targetLabel}`
-            });
+            };
           }
           for (const matchedId of matchedIds) {
             appendSessionId(matchedId);
           }
         }
         if (resolvedSessionIds.length === 0) {
-          return toTextResult({
+          return {
             status: "error",
             error: "未解析到可删除的会话"
-          });
+          };
         }
         if (resolvedSessionIds.includes(input.threadId)) {
-          return toTextResult({
+          return {
             status: "error",
             error: "不能删除当前会话"
-          });
+          };
         }
 
         const metas = resolvedSessionIds.map((sessionId) => ({
@@ -968,10 +938,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         }));
         const missing = metas.find((item) => !item.meta);
         if (missing) {
-          return toTextResult({
+          return {
             status: "not_found",
             error: `Session not found: ${missing.threadId}`
-          });
+          };
         }
 
         const deletedSessionKeys: string[] = [];
@@ -983,28 +953,28 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             deletedTitles.push(item.meta?.title ?? "");
           }
         } catch (error) {
-          return toTextResult({
+          return {
             status: "error",
             error: `删除会话失败: ${error instanceof Error ? error.message : String(error)}`,
             deletedCount: deletedSessionKeys.length,
             sessionKeys: deletedSessionKeys
-          });
+          };
         }
         if (deletedSessionKeys.length === 1) {
-          return toTextResult({
+          return {
             status: "ok",
             deleted: true,
             sessionKey: deletedSessionKeys[0],
             title: deletedTitles[0]
-          });
+          };
         }
-        return toTextResult({
+        return {
           status: "ok",
           deleted: true,
           deletedCount: deletedSessionKeys.length,
           sessionKeys: deletedSessionKeys,
           titles: deletedTitles
-        });
+        };
       }
     },
     {
@@ -1034,7 +1004,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const params = (args ?? {}) as Record<string, unknown>;
         const task = typeof params.task === "string" ? params.task.trim() : "";
         if (!task) {
-          return toTextResult({ status: "error", error: "task 不能为空" });
+          return { status: "error", error: "task 不能为空" };
         }
         const cleanup =
           params.cleanup === "delete" || params.cleanup === "keep"
@@ -1049,10 +1019,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           ? pickSessionId(deliverySessionKeyRaw, input.threadId)
           : undefined;
         if (requestedDeliverySessionId && !getAgentSessionMeta(requestedDeliverySessionId)) {
-          return toTextResult({
+          return {
             status: "error",
             error: `deliverySessionKey 不存在: ${requestedDeliverySessionId}`
-          });
+          };
         }
         const policyDecision = resolveSubagentSpawnPolicy({
           parentThreadId: input.threadId,
@@ -1060,10 +1030,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           requestedSandbox: sandbox
         });
         if (!policyDecision.ok) {
-          return toTextResult({
+          return {
             status: "forbidden",
             error: policyDecision.error
-          });
+          };
         }
         const currentMeta = getAgentSessionMeta(input.threadId);
         const label = typeof params.label === "string" ? params.label.trim() : "";
@@ -1076,10 +1046,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           requestedModel: modelOverride
         });
         if (!route.ok) {
-          return toTextResult({
+          return {
             status: "error",
             error: route.error
-          });
+          };
         }
         const created = createAgentSession(
           label || "子会话",
@@ -1092,11 +1062,11 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const resolvedChannelId = created.channelId;
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
-          return toTextResult({
+          return {
             status: "error",
             error: "子会话缺少 channel/model，无法执行",
             childSessionKey: created.id
-          });
+          };
         }
         const runRegistry = getSubagentRunRegistry();
         const runId = randomUUID();
@@ -1202,7 +1172,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
               // ignore cleanup failure to keep tool result stable
             }
           }
-          return toTextResult({
+          return {
             status: runResult.status,
             childSessionKey: created.id,
             runId,
@@ -1218,7 +1188,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             thread: threadBinding.threadRequested,
             threadBound: threadBinding.threadBound,
             ...(runResult.error ? { error: runResult.error } : {})
-          });
+          };
         }
 
         runRegistry.update(runId, {
@@ -1287,7 +1257,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             }
           });
         });
-        return toTextResult({
+        return {
           status: "accepted",
           childSessionKey: created.id,
           runId,
@@ -1303,7 +1273,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           threadBound: threadBinding.threadBound,
           sandbox,
           note: "已启动后台子会话执行（runTimeoutSeconds=0 为异步模式）"
-        });
+        };
       }
     },
     {
@@ -1337,16 +1307,16 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             runId: runIdFilter
           });
           if (!resolved.ok) {
-            return toTextResult({
+            return {
               status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
               error: resolved.error
-            });
+            };
           }
-          return toTextResult({
+          return {
             status: "ok",
             count: 1,
             runs: [resolved.run]
-          });
+          };
         }
 
         let runs = runRegistry.listControlledByThread(ownerThreadId);
@@ -1354,11 +1324,11 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           runs = runs.filter((run) => run.status === statusFilter);
         }
         const sliced = runs.slice(Math.max(0, runs.length - limit));
-        return toTextResult({
+        return {
           status: "ok",
           count: sliced.length,
           runs: sliced
-        });
+        };
       }
     },
     {
@@ -1379,10 +1349,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const params = (args ?? {}) as Record<string, unknown>;
         const runId = typeof params.runId === "string" ? params.runId.trim() : "";
         if (!runId) {
-          return toTextResult({
+          return {
             status: "error",
             error: "runId 不能为空"
-          });
+          };
         }
         const runRegistry = getSubagentRunRegistry();
         const resolved = resolveOwnedSubagentRun({
@@ -1391,10 +1361,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           runId
         });
         if (!resolved.ok) {
-          return toTextResult({
+          return {
             status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
             error: resolved.error
-          });
+          };
         }
         const matched = resolved.run;
         const cascade = params.cascade !== false;
@@ -1402,13 +1372,13 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const targets = [matched, ...descendants];
         const runningTargets = targets.filter((run) => !isTerminalSubagentStatus(run.status));
         if (runningTargets.length === 0) {
-          return toTextResult({
+          return {
             status: "ok",
             killed: false,
             runId,
             reason: `run 已结束: ${matched.status}`,
             cascade
-          });
+          };
         }
         for (const target of runningTargets) {
           void stopPiAgent(target.childThreadId);
@@ -1430,7 +1400,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             }
           }
         }
-        return toTextResult({
+        return {
           status: "ok",
           killed: true,
           runId,
@@ -1438,7 +1408,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           cascade,
           childSessionKey: matched.childThreadId,
           killedRunIds: runningTargets.map((item) => item.runId)
-        });
+        };
       }
     },
     {
@@ -1461,10 +1431,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const runId = typeof params.runId === "string" ? params.runId.trim() : "";
         const message = typeof params.message === "string" ? params.message.trim() : "";
         if (!runId || !message) {
-          return toTextResult({
+          return {
             status: "error",
             error: !runId ? "runId 不能为空" : "message 不能为空"
-          });
+          };
         }
         const runRegistry = getSubagentRunRegistry();
         const resolved = resolveOwnedSubagentRun({
@@ -1473,27 +1443,27 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           runId
         });
         if (!resolved.ok) {
-          return toTextResult({
+          return {
             status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
             error: resolved.error
-          });
+          };
         }
         const matched = resolved.run;
         const childMeta = getAgentSessionMeta(matched.childThreadId);
         if (!childMeta) {
-          return toTextResult({
+          return {
             status: "not_found",
             error: `child session not found: ${matched.childThreadId}`
-          });
+          };
         }
         const resolvedChannelId = matched.channelId ?? childMeta.channelId ?? input.channelId;
         const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childThreadId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
-          return toTextResult({
+          return {
             status: "error",
             error: "目标子会话缺少 channel/model，无法执行"
-          });
+          };
         }
         runRegistry.update(matched.runId, {
           status: "running",
@@ -1534,14 +1504,14 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           announceStatus: "delivered",
           announceAttempts: 0
         });
-        return toTextResult({
+        return {
           status: runResult.status,
           runId: matched.runId,
           childSessionKey: matched.childThreadId,
           model: resolvedModelId,
           output: runResult.runText,
           ...(runResult.error ? { error: runResult.error } : {})
-        });
+        };
       }
     },
     {
@@ -1565,10 +1535,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const runId = typeof params.runId === "string" ? params.runId.trim() : "";
         const message = typeof params.message === "string" ? params.message.trim() : "";
         if (!runId || !message) {
-          return toTextResult({
+          return {
             status: "error",
             error: !runId ? "runId 不能为空" : "message 不能为空"
-          });
+          };
         }
         const runRegistry = getSubagentRunRegistry();
         const resolved = resolveOwnedSubagentRun({
@@ -1577,18 +1547,18 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
           runId
         });
         if (!resolved.ok) {
-          return toTextResult({
+          return {
             status: resolved.error.startsWith("runId not found") ? "not_found" : "forbidden",
             error: resolved.error
-          });
+          };
         }
         const matched = resolved.run;
         const childMeta = getAgentSessionMeta(matched.childThreadId);
         if (!childMeta) {
-          return toTextResult({
+          return {
             status: "not_found",
             error: `child session not found: ${matched.childThreadId}`
-          });
+          };
         }
         if (!isTerminalSubagentStatus(matched.status)) {
           void stopPiAgent(matched.childThreadId);
@@ -1607,10 +1577,10 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
         const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childThreadId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
-          return toTextResult({
+          return {
             status: "error",
             error: "目标子会话缺少 channel/model，无法执行"
-          });
+          };
         }
         const nextRunId = randomUUID();
         runRegistry.create({
@@ -1676,7 +1646,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             announceStatus: "delivered",
             announceAttempts: 0
           });
-          return toTextResult({
+          return {
             status: runResult.status,
             runId: nextRunId,
             replacedRunId: matched.runId,
@@ -1684,7 +1654,7 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             model: resolvedModelId,
             output: runResult.runText,
             ...(runResult.error ? { error: runResult.error } : {})
-          });
+          };
         }
 
         void executeAgentTurn({
@@ -1728,41 +1698,25 @@ function createLegacySessionTools(input: CreateOpenClawAlignedToolsInput): Legac
             }
           });
         });
-        return toTextResult({
+        return {
           status: "accepted",
           runId: nextRunId,
           replacedRunId: matched.runId,
           childSessionKey: matched.childThreadId,
           model: resolvedModelId,
           note: "已提交 steer 指令，子会话将在后台继续执行"
-        });
+        };
       }
     },
   ];
-  return tools;
-}
-
-function serializeLegacyResult(result: LegacyToolResult<unknown>): string {
-  if (Array.isArray(result.content)) {
-    const texts = result.content
-      .map((item) => {
-        if (!item || typeof item !== "object") return null;
-        const block = item as { type?: string; text?: unknown };
-        return block.type === "text" && typeof block.text === "string" ? block.text : null;
-      })
-      .filter((item): item is string => typeof item === "string");
-    if (texts.length > 0) {
-      return texts.join("\n");
-    }
-  }
-  if (result.details !== undefined) {
-    try {
-      return JSON.stringify(result.details, null, 2);
-    } catch {
-      return String(result.details);
-    }
-  }
-  return "";
+  return toolSpecs.map((tool) => createSdkJsonResultTool({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.parameters as Parameters<typeof createSdkJsonResultTool>[0]["inputSchema"],
+    isReadOnly: SESSION_READ_ONLY_TOOL_NAMES.has(tool.name),
+    isConcurrencySafe: SESSION_READ_ONLY_TOOL_NAMES.has(tool.name),
+    call: (args, context) => tool.execute(randomUUID(), args, context.abortSignal)
+  }));
 }
 
 const SESSION_READ_ONLY_TOOL_NAMES = new Set([
@@ -1775,28 +1729,13 @@ const SESSION_READ_ONLY_TOOL_NAMES = new Set([
   "web_fetch"
 ]);
 
-export function createSdkSessionTools(input: CreateOpenClawAlignedToolsInput): ToolDefinition[] {
-  const tools = createLegacySessionTools(input).map((tool) => defineTool({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.parameters as unknown as ToolDefinition["inputSchema"],
-    isReadOnly: SESSION_READ_ONLY_TOOL_NAMES.has(tool.name),
-    isConcurrencySafe: SESSION_READ_ONLY_TOOL_NAMES.has(tool.name),
-    async call(args, context) {
-      const result = await tool.execute(randomUUID(), args as never, context.abortSignal);
-      return {
-        data: serializeLegacyResult(result),
-        is_error: false
-      };
-    }
-  }));
+export function createSdkSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
+  const tools = createSessionTools(input);
   if (input.includeWebTools !== false) {
     tools.push(...createSdkWebTools());
   }
   return tools;
 }
-
-
 
 
 

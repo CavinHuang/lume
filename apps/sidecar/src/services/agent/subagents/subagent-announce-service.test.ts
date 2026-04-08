@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import { createAgentSession, getAgentSessionMessages } from "../../agent/agent-session-manager";
 import { announceSubagentCompletion } from "./subagent-announce-service";
 import type { SubagentRun } from "./subagent-run.types";
-import { subscribeSubagentAnnounceEvent } from "./subagent-announce-service";
 
 let previousConfigDir: string | undefined;
 
@@ -46,31 +45,20 @@ function buildRun(parentThreadId: string): SubagentRun {
 }
 
 describe("subagent-announce-service", () => {
-  test("应向父会话追加 completion 消息并发布事件", async () => {
+  test("应向父会话追加 completion 消息", async () => {
     const parent = createAgentSession("父会话", "channel-x");
     const run = buildRun(parent.id);
-    const events: Array<{ sessionId: string; runId: string }> = [];
-    const unsubscribe = subscribeSubagentAnnounceEvent((event) => {
-      events.push({ sessionId: event.sessionId, runId: event.runId });
-    });
-    try {
-      const result = await announceSubagentCompletion({ run });
-      expect(result.delivered).toBe(true);
-      expect(result.attempts).toBe(1);
+    const result = await announceSubagentCompletion({ run });
+    expect(result.delivered).toBe(true);
+    expect(result.attempts).toBe(1);
 
-      const messages = getAgentSessionMessages(parent.id);
-      const last = messages[messages.length - 1];
-      expect(last?.role).toBe("assistant");
-      expect(last?.content).toContain("子任务完成通知");
-      expect(last?.metadata?.subagentAnnounce).toBe(true);
-      expect(last?.metadata?.runId).toBe(run.runId);
-      expect(last?.metadata?.childThreadId).toBe(run.childThreadId);
-      expect(events).toHaveLength(1);
-      expect(events[0]?.sessionId).toBe(parent.id);
-      expect(events[0]?.runId).toBe(run.runId);
-    } finally {
-      unsubscribe();
-    }
+    const messages = getAgentSessionMessages(parent.id);
+    const last = messages[messages.length - 1];
+    expect(last?.role).toBe("assistant");
+    expect(last?.content).toContain("子任务完成通知");
+    expect(last?.metadata?.subagentAnnounce).toBe(true);
+    expect(last?.metadata?.runId).toBe(run.runId);
+    expect(last?.metadata?.childSessionId).toBe(run.childThreadId);
   });
 
   test("父会话不存在时应返回失败", async () => {
