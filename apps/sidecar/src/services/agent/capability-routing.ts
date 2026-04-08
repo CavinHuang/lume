@@ -1,4 +1,5 @@
 import type { AgentToolPolicy, SkillMeta } from "@lume/shared";
+import { canonicalizeAgentToolName } from "@lume/shared";
 
 export type CapabilityLane = "skills" | "browser" | "memory" | "web" | "raw-tools";
 
@@ -36,7 +37,7 @@ export function resolveSoftToolPolicyForPreferredRoute(
 }
 
 function normalizeToolNames(inputTools?: string[]): Set<string> {
-  return new Set((inputTools ?? []).map((item) => item.trim().toLowerCase()).filter(Boolean));
+  return new Set((inputTools ?? []).map((item) => canonicalizeAgentToolName(item)).filter(Boolean));
 }
 
 export function inferCapabilityLanes(inputTools?: string[]): CapabilityLane[] {

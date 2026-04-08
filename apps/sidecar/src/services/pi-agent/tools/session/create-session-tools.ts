@@ -1733,8 +1733,8 @@ const SESSION_READ_ONLY_TOOL_NAMES = new Set([
   "sessions_history",
   "session_status",
   "subagents_list",
-  "web_search",
-  "web_fetch"
+  "WebSearch",
+  "WebFetch"
 ]);
 
 export function createSdkSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
@@ -1744,5 +1744,4 @@ export function createSdkSessionTools(input: CreateSessionToolsInput): ToolDefin
   }
   return tools;
 }
-
 

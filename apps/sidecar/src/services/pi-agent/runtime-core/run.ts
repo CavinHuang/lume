@@ -17,7 +17,9 @@ import {
   SkillTool,
   TodoWriteTool,
   defineTool,
-  type ToolDefinition
+  type ToolDefinition,
+  WebFetchTool,
+  WebSearchTool
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
@@ -102,14 +104,6 @@ interface RuntimeCoreToolset {
   availableToolNames: string[];
 }
 
-function cloneToolWithName(tool: ToolDefinition, name: string, description?: string): ToolDefinition {
-  return {
-    ...tool,
-    name,
-    ...(description ? { description } : {})
-  };
-}
-
 const ListDirectoryTool = defineTool({
   name: "ls",
   description: "List files and directories in a path.",
@@ -148,10 +142,12 @@ const ListDirectoryTool = defineTool({
 
 function createBaseSdkAlignedTools(permissionMode: AgentSendInput["permissionMode"]): ToolDefinition[] {
   const readOnlyTools: ToolDefinition[] = [
-    cloneToolWithName(FileReadTool, "read"),
-    cloneToolWithName(GlobTool, "find", "Find files by glob pattern."),
-    cloneToolWithName(GrepTool, "grep"),
-    ListDirectoryTool
+    FileReadTool,
+    GlobTool,
+    GrepTool,
+    ListDirectoryTool,
+    WebSearchTool,
+    WebFetchTool
   ];
 
   if (permissionMode === "plan") {
@@ -160,9 +156,9 @@ function createBaseSdkAlignedTools(permissionMode: AgentSendInput["permissionMod
 
   return [
     ...readOnlyTools,
-    cloneToolWithName(FileWriteTool, "write"),
-    cloneToolWithName(FileEditTool, "edit"),
-    cloneToolWithName(BashTool, "bash"),
+    FileWriteTool,
+    FileEditTool,
+    BashTool,
     NotebookEditTool,
     SkillTool,
     TodoWriteTool,

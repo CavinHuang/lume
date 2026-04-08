@@ -41,6 +41,42 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("应优先暴露 SDK 原生基础工具名，而不是小写包装名", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-native-tools-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "native-tool-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits"
+    });
+
+    const toolNames = result.session.getActiveToolNames();
+    expect(toolNames).toContain("Read");
+    expect(toolNames).toContain("Write");
+    expect(toolNames).toContain("Edit");
+    expect(toolNames).toContain("Bash");
+    expect(toolNames).toContain("Glob");
+    expect(toolNames).toContain("Grep");
+    expect(toolNames).toContain("WebSearch");
+    expect(toolNames).toContain("WebFetch");
+    expect(toolNames).not.toContain("read");
+    expect(toolNames).not.toContain("write");
+    expect(toolNames).not.toContain("edit");
+    expect(toolNames).not.toContain("bash");
+    expect(toolNames).not.toContain("find");
+    expect(toolNames).not.toContain("grep");
+    expect(toolNames).not.toContain("web_search");
+    expect(toolNames).not.toContain("web_fetch");
+
+    result.session.dispose();
+  });
+
   test("应为同一个 Lume session 使用稳定 transcript 目录", () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-stable-dir-"));
     const agentDir = join(cwd, ".pi-agent-test");

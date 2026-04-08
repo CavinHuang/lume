@@ -150,7 +150,7 @@ async function run() {
     });
     assert(typeof channel?.id === "string", "channel create failed");
 
-    const session = await sidecar.call("agent:create-session", {
+    const session = await sidecar.call("agent:create-thread", {
       title: "smoke-agent-new-runtime-compact",
       workspaceId: workspace.id,
       channelId: channel.id
@@ -164,8 +164,8 @@ async function run() {
     });
     let completedSeedTurns = 0;
     for (const userMessage of seedMessages) {
-      await sidecar.call("agent:send-message", {
-        sessionId: session.id,
+      await sidecar.call("agent:send-thread-message", {
+        threadId: session.id,
         userMessage,
         workspaceId: workspace.id,
         channelId: channel.id,
@@ -175,7 +175,7 @@ async function run() {
 
       await sidecar.waitForNotification(
         STREAM_COMPLETE_METHOD,
-        (params) => params?.sessionId === session.id,
+        (params) => params?.threadId === session.id,
         12000
       );
       completedSeedTurns += 1;
@@ -183,12 +183,12 @@ async function run() {
 
     const streamComplete = sidecar.waitForNotification(
       STREAM_COMPLETE_METHOD,
-      (params) => params?.sessionId === session.id,
+      (params) => params?.threadId === session.id,
       12000
     );
 
-    await sidecar.call("agent:send-message", {
-      sessionId: session.id,
+    await sidecar.call("agent:send-thread-message", {
+      threadId: session.id,
       userMessage: "/compact",
       workspaceId: workspace.id,
       channelId: channel.id,
@@ -201,14 +201,14 @@ async function run() {
     const compactEvents = sidecar.notifications.filter(
       (item) =>
         item.method === STREAM_EVENT_METHOD
-        && item.params?.sessionId === session.id
+        && item.params?.threadId === session.id
         && (item.params?.event?.type === "compacting" || item.params?.event?.type === "compact_complete")
     );
 
     await sidecar.close();
     sidecar = createSidecarProcess(configHome);
 
-    const restoredMessages = await sidecar.call("agent:get-messages", { sessionId: session.id });
+    const restoredMessages = await sidecar.call("agent:get-thread-messages", { threadId: session.id });
     assert(Array.isArray(restoredMessages), "messages not readable after compact restart");
     const persistedJsonlFiles = collectJsonlFiles(configHome);
     const persistedJsonlContents = persistedJsonlFiles.map((filePath) => readFileSync(filePath, "utf-8"));

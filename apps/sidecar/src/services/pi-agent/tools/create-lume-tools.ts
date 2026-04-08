@@ -6,10 +6,9 @@ import { createSdkControlTools } from "./control/create-control-tools";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
 import { createSdkSessionTools } from "./session/create-session-tools";
 import { createSdkCronTools } from "./cron/create-cron-tools";
-import { createSdkWebTools } from "./web/create-web-tools";
 import { resolveEnabledPiMemoryToolNames } from "./permissions/tool-policy";
 
-const BASE_PI_TOOL_NAMES = ["read", "write", "edit", "bash", "find", "grep", "ls"];
+const BASE_PI_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const CONTROL_PI_TOOL_NAMES = ["AskUserQuestion"];
 const SESSION_TOOL_NAMES = [
   "agents_list",
@@ -22,9 +21,7 @@ const SESSION_TOOL_NAMES = [
   "subagents_list",
   "subagents_kill",
   "subagents_send",
-  "subagents_steer",
-  "web_search",
-  "web_fetch"
+  "subagents_steer"
 ];
 const AUTOMATION_TOOL_NAMES = [
   "cron_read",
@@ -88,8 +85,7 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     workspaceId: input.workspaceId,
     sessionId: input.threadId
   });
-  const webTools = createSdkWebTools();
-  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...cronTools, ...webTools];
+  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...cronTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {

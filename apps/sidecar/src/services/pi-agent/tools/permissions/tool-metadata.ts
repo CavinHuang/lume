@@ -1,4 +1,5 @@
 import type { AgentToolPermissionRiskLevel } from "@lume/shared";
+import { canonicalizeAgentToolName } from "@lume/shared";
 
 /**
  * 工具类别
@@ -35,7 +36,7 @@ const TOOL_METADATA_REGISTRY: Map<string, ToolMetadata> = new Map();
  * 注册工具元数据
  */
 export function registerToolMetadata(metadata: ToolMetadata): void {
-  TOOL_METADATA_REGISTRY.set(metadata.name.toLowerCase(), {
+  TOOL_METADATA_REGISTRY.set(canonicalizeAgentToolName(metadata.name), {
     ...metadata,
     allowedInPlanMode: metadata.allowedInPlanMode ?? isCategoryAllowedInPlanMode(metadata.category)
   });
@@ -45,7 +46,7 @@ export function registerToolMetadata(metadata: ToolMetadata): void {
  * 获取工具元数据
  */
 export function getToolMetadata(toolName: string): ToolMetadata | undefined {
-  return TOOL_METADATA_REGISTRY.get(toolName.toLowerCase());
+  return TOOL_METADATA_REGISTRY.get(canonicalizeAgentToolName(toolName));
 }
 
 /**
@@ -91,7 +92,7 @@ export function inferToolMetadata(toolName: string): ToolMetadata {
   const existing = getToolMetadata(toolName);
   if (existing) return existing;
 
-  const normalized = toolName.toLowerCase();
+  const normalized = canonicalizeAgentToolName(toolName);
 
   // 根据名称推断类别和风险
   let category: ToolCategory = "read";

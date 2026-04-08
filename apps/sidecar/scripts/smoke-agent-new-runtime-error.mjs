@@ -118,15 +118,15 @@ async function run() {
     });
     assert(typeof channel?.id === "string", "channel create failed");
 
-    const session = await sidecar.call("agent:create-session", {
+    const session = await sidecar.call("agent:create-thread", {
       title: "smoke-agent-new-runtime-error",
       workspaceId: workspace.id,
       channelId: channel.id
     });
     assert(typeof session?.id === "string", "agent session create failed");
 
-    await sidecar.call("agent:send-message", {
-      sessionId: session.id,
+    await sidecar.call("agent:send-thread-message", {
+      threadId: session.id,
       userMessage: "smoke new runtime error",
       workspaceId: workspace.id,
       channelId: channel.id,
@@ -136,7 +136,7 @@ async function run() {
 
     const errorEvent = await sidecar.waitForNotification(
       STREAM_ERROR_METHOD,
-      (params) => params?.sessionId === session.id,
+      (params) => params?.threadId === session.id,
       12000
     );
     assert(

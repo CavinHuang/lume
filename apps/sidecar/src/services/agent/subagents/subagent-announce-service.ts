@@ -15,6 +15,7 @@ import { releaseSubagentThreadBinding } from "./subagent-thread-binding";
 const ANNOUNCE_MAX_RETRIES = 3;
 const ANNOUNCE_RETRY_DELAYS_MS = [40, 120, 320] as const;
 const log = createLogger("subagent-announce");
+const listeners = new Set<(event: { threadId: string; message: AgentMessage }) => void>();
 
 export interface SubagentAnnounceResult {
   delivered: boolean;
@@ -160,6 +161,14 @@ export async function announceSubagentCompletion(params: {
         deliveryThreadId: targetSessionId,
         announceAttempts: attempt
       }));
+      const event = { threadId: targetSessionId, message: announceMessage };
+      for (const listener of listeners) {
+        try {
+          listener(event);
+        } catch {
+          // ignore listener failures to keep announce delivery stable
+        }
+      }
       releaseSubagentThreadBinding({
         runId: run.runId,
         childThreadId: run.childThreadId,
@@ -193,6 +202,15 @@ export async function announceSubagentCompletion(params: {
     delivered: false,
     attempts: ANNOUNCE_MAX_RETRIES,
     error: lastError || "unknown error"
+  };
+}
+
+export function subscribeSubagentAnnounceEvent(
+  listener: (event: { threadId: string; message: AgentMessage }) => void
+): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
   };
 }
 

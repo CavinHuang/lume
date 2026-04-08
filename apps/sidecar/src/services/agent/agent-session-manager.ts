@@ -31,6 +31,7 @@ import {
   getVisibleAgentMessages,
   syncVersionStoreFromMessages
 } from "./agent-message-versioning-service";
+import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./agent-message-version-store";
 import { getConversationMessages } from "../chat/conversation-manager";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "../pi-agent/content-extraction";
 import {
@@ -148,6 +149,10 @@ export function createAgentSession(
 export const createAgentThread = createAgentSession;
 
 export function getAgentSessionMessages(id: string): AgentMessage[] {
+  const existingStore = readAgentMessageVersionStore(id);
+  if (existingStore && existingStore.visibleGroupIds.length > 0) {
+    return getVisibleAgentMessages(id);
+  }
   const transcriptMessages = readRuntimeCoreTranscriptMessages(id);
   syncVersionStoreFromMessages(id, transcriptMessages);
   return getVisibleAgentMessages(id);
@@ -156,6 +161,10 @@ export function getAgentSessionMessages(id: string): AgentMessage[] {
 export const getAgentThreadMessages = getAgentSessionMessages;
 
 export function getRecentAgentMessages(id: string, limit: number): AgentRecentMessagesResult {
+  const existingStore = readAgentMessageVersionStore(id);
+  if (existingStore && existingStore.visibleGroupIds.length > 0) {
+    return sliceRecentAgentMessages(getVisibleAgentMessages(id), limit);
+  }
   return sliceRecentAgentMessages(readRuntimeCoreTranscriptMessages(id), limit);
 }
 
@@ -166,50 +175,14 @@ export function appendAgentTranscriptMessage(
   message: AgentMessage
 ): void {
   try {
-    const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentSessionCwd(id), id);
     if (!message.content.trim()) {
       return;
     }
-    if (message.role === "user") {
-      sessionManager.appendMessage({
-        role: "user",
-        content: [{ type: "text", text: message.content }],
-        timestamp: message.createdAt
-      });
-      return;
+    if (message.role !== "user" && message.role !== "assistant") {
+      throw new Error(`暂不支持写入该消息角色: ${message.role}`);
     }
-    if (message.role === "assistant") {
-      const { provider, model } = resolveTranscriptAppendModel(message.model);
-      const contentBlocks: Array<
-        { type: "thinking"; thinking: string } |
-        { type: "text"; text: string }
-      > = [];
-      if (message.reasoning?.trim()) {
-        contentBlocks.push({ type: "thinking", thinking: message.reasoning });
-      }
-      if (message.content.trim()) {
-        contentBlocks.push({ type: "text", text: message.content });
-      }
-      sessionManager.appendMessage({
-        role: "assistant",
-        provider,
-        model,
-        api: "manual-append",
-        stopReason: "stop",
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-        },
-        content: contentBlocks,
-        timestamp: message.createdAt
-      });
-      return;
-    }
-    throw new Error(`暂不支持写入该消息角色: ${message.role}`);
+    const existingMessages = getAgentThreadMessages(id);
+    replaceAgentSessionTranscript(id, [...existingMessages, message]);
   } catch (error) {
     console.error(`[Agent 会话] 追加 transcript 消息失败 (${id}):`, error);
     throw new Error("追加 Agent transcript 消息失败");
@@ -509,6 +482,7 @@ export function replaceAgentSessionTranscript(sessionId: string, messages: Agent
   if (existsSync(runtimeCoreSessionDir)) {
     rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
   }
+  resetAgentMessageVersionStore(sessionId);
   rebuildRuntimeCoreTranscript(sessionId, messages);
   updateAgentSessionMeta(sessionId, {
     sdkThreadId: undefined,

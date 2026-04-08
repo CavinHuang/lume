@@ -16,6 +16,7 @@ import {
 import type { AgentSendInput } from "@lume/shared";
 import type { ProviderType } from "@lume/shared";
 import type { AgentRuntimeToolPolicyConfig, AgentToolPolicy } from "@lume/shared";
+import { canonicalizeAgentToolName } from "@lume/shared";
 
 const log = createLogger("pi-tool-policy");
 
@@ -32,7 +33,9 @@ let _policyConfigCache: PolicyConfigCache | null = null;
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",
   glob: "find",
-  ls: "ls"
+  ls: "ls",
+  websearch: "web_search",
+  webfetch: "web_fetch"
 };
 
 const TOOL_GROUPS: Record<string, string[]> = {
@@ -98,7 +101,7 @@ export interface ResolveEffectiveToolPolicyInput {
 }
 
 function normalizeToolName(value: string): string {
-  const normalized = value.trim().toLowerCase();
+  const normalized = canonicalizeAgentToolName(value);
   return TOOL_NAME_ALIASES[normalized] ?? normalized;
 }
 

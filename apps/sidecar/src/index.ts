@@ -9,6 +9,8 @@ import {
   startAutomationRunner,
   stopAutomationRunner
 } from "./services/automation/automation-runner-service";
+import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { closeMemoryManagers } from "./rpc/memory-handlers";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
@@ -105,7 +107,14 @@ function boot(): void {
   if (envAutostartEnabled("LUME_CHAT_TOOLS_WATCHER_AUTOSTART", false)) {
     startChatToolsWatcher((method, params) => writeNotification(method, params));
   }
+  const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
+    writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, {
+      ...event,
+      ...(typeof event.message.metadata?.runId === "string" ? { runId: event.message.metadata.runId } : {})
+    });
+  });
   const stopWatcher = (): void => {
+    unsubscribeSubagentAnnounce();
     stopWorkspaceWatcher();
     stopMemorySyncWatcher();
     stopChatToolsWatcher();

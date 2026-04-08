@@ -117,15 +117,15 @@ async function run() {
     });
     assert(typeof channel?.id === "string", "channel create failed");
 
-    const session = await sidecar.call("agent:create-session", {
+    const session = await sidecar.call("agent:create-thread", {
       title: "smoke-agent-new-runtime-stop",
       workspaceId: workspace.id,
       channelId: channel.id
     });
     assert(typeof session?.id === "string", "agent session create failed");
 
-    await sidecar.call("agent:send-message", {
-      sessionId: session.id,
+    await sidecar.call("agent:send-thread-message", {
+      threadId: session.id,
       userMessage: "smoke new runtime stop",
       workspaceId: workspace.id,
       channelId: channel.id,
@@ -135,14 +135,14 @@ async function run() {
 
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    const stopResult = await sidecar.call("agent:stop", { sessionId: session.id });
+    const stopResult = await sidecar.call("agent:stop-thread", { threadId: session.id });
     assert(stopResult?.ok === true, "stop agent failed");
 
     await new Promise((resolve) => setTimeout(resolve, 400));
 
-    const messages = await sidecar.call("agent:get-messages", { sessionId: session.id });
+    const messages = await sidecar.call("agent:get-thread-messages", { threadId: session.id });
     assert(Array.isArray(messages), "messages not readable after stop");
-    const sessions = await sidecar.call("agent:list-sessions");
+    const sessions = await sidecar.call("agent:list-threads");
     assert(Array.isArray(sessions) && sessions.some((item) => item.id === session.id), "session missing after stop");
 
     console.log("SMOKE_AGENT_NEW_RUNTIME_STOP_OK");

@@ -67,11 +67,15 @@ function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
   return tool;
 }
 
-async function callTool(tool: ToolDefinition, input: Record<string, unknown>) {
+async function callTool(tool: ToolDefinition, input: Record<string, unknown>): Promise<unknown> {
   const result = await tool.call(input, { cwd: process.cwd(), abortSignal: new AbortController().signal });
   const payload = (result as { data?: unknown; content?: unknown }).data ?? (result as { content?: unknown }).content;
   if (typeof payload === "string") {
-    return JSON.parse(payload) as Record<string, unknown>;
+    try {
+      return JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      return payload;
+    }
   }
   return (payload ?? {}) as Record<string, unknown>;
 }
@@ -843,7 +847,7 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("web_search 应通过 SDK 工具解析 duckduckgo HTML 结果", async () => {
+  test("WebSearch 应直接暴露 SDK 原生搜索结果", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     const originalFetch = globalThis.fetch;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
@@ -860,17 +864,16 @@ describe("create-session-tools", () => {
     try {
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({ threadId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools, "web_search");
+      const webSearchTool = resolveTool(tools, "WebSearch");
       const result = await callTool(webSearchTool, {
         query: "example"
       });
       const details = result as {
-        provider?: string;
-        count?: number;
+        query?: string;
         results?: Array<{ title?: string; url?: string; snippet?: string }>;
       };
-      expect(details.provider).toBe("duckduckgo");
-      expect(details.count).toBe(1);
+      expect(details.query).toBe("example");
+      expect(details.results?.length).toBe(1);
       expect(details.results?.[0]?.title).toBe("Example Title");
       expect(details.results?.[0]?.url).toBe("https://example.com/path?a=1");
       expect(details.results?.[0]?.snippet).toContain("description");
@@ -884,21 +887,33 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("web_search 非 duckduckgo provider 应返回兼容层错误", async () => {
+  test("WebSearch 应忽略旧兼容层 provider 参数并继续使用原生搜索", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    const originalFetch = globalThis.fetch;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
+    globalThis.fetch = mock(async () =>
+      new Response(
+        `
+          <a rel="nofollow" class="result__a" href="https://example.com/provider-ignored">Provider Ignored</a>
+          <a class="result__snippet">Provider should be ignored</a>
+        `,
+        { status: 200, headers: { "content-type": "text/html" } }
+      )
+    ) as unknown as typeof fetch;
     try {
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({ threadId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools, "web_search");
+      const webSearchTool = resolveTool(tools, "WebSearch");
       const result = await callTool(webSearchTool, {
         query: "example",
         provider: "brave"
       });
-      const details = result as { error?: string; provider?: string };
-      expect(details.provider).toBe("brave");
-      expect(details.error).toContain("仅支持 duckduckgo");
+      const details = result as { query?: string; results?: unknown[] };
+      expect(details.query).toBe("example");
+      expect(Array.isArray(details.results)).toBeTrue();
+      expect((details.results as Array<{ title?: string }>)[0]?.title).toBe("Provider Ignored");
     } finally {
+      globalThis.fetch = originalFetch;
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
       } else {
@@ -907,7 +922,7 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("web_search SDK 错误应返回结构化 details", async () => {
+  test("WebSearch SDK 错误应透传原生错误文本", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     const originalFetch = globalThis.fetch;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
@@ -917,14 +932,11 @@ describe("create-session-tools", () => {
     try {
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({ threadId: "agent:main:test" });
-      const webSearchTool = resolveTool(tools, "web_search");
+      const webSearchTool = resolveTool(tools, "WebSearch");
       const result = await callTool(webSearchTool, {
         query: "timeout case"
       });
-      const details = result as { error?: string; provider?: string; results?: unknown[] };
-      expect(details.provider).toBe("duckduckgo");
-      expect(Array.isArray(details.results)).toBe(true);
-      expect(details.error).toContain("Search error");
+      expect(result).toEqual("Search error: The operation was aborted.");
     } finally {
       globalThis.fetch = originalFetch;
       if (previousConfigDir === undefined) {

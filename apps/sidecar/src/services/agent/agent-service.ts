@@ -77,16 +77,16 @@ const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 
 const log = createLogger("agent-service");
 const ROUTING_HEURISTIC_TOOLS = [
-  "read",
-  "write",
-  "edit",
-  "bash",
-  "find",
-  "grep",
+  "Read",
+  "Write",
+  "Edit",
+  "Bash",
+  "Glob",
+  "Grep",
   "ls",
   "browser",
-  "web_search",
-  "web_fetch",
+  "WebSearch",
+  "WebFetch",
   "memory_search",
   "memory_get",
   "memory_save"
@@ -186,6 +186,97 @@ function resolveLatestAssistantTranscriptMessage(sessionId: string) {
   return null;
 }
 
+function ensureSdkMessageCreatedAt(message: SDKMessage): SDKMessage {
+  const record = message as SDKMessage & { _createdAt?: number };
+  if (typeof record._createdAt === "number") {
+    return message;
+  }
+  return ({
+    ...message,
+    _createdAt: Date.now()
+  } as unknown) as SDKMessage;
+}
+
+function shouldPersistAssistantTurnSdkMessage(message: SDKMessage): boolean {
+  if (message.type === "assistant" || message.type === "result") {
+    return true;
+  }
+  if (message.type === "user") {
+    return Array.isArray(message.message?.content)
+      && message.message.content.some((block) => !!block && typeof block === "object" && block.type === "tool_result");
+  }
+  return message.type === "system" && (
+    message.subtype === "compact_boundary"
+    || message.subtype === "task_started"
+    || message.subtype === "task_progress"
+    || message.subtype === "task_notification"
+  );
+}
+
+function extractAssistantTextFromSdkMessages(messages: SDKMessage[]): string {
+  return messages
+    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => message.type === "assistant")
+    .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+    .filter((block): block is { type: "text"; text: string } => !!block && typeof block === "object" && block.type === "text" && typeof (block as { text?: string }).text === "string")
+    .map((block) => block.text)
+    .join("\n\n")
+    .trim();
+}
+
+function extractAssistantReasoningFromSdkMessages(messages: SDKMessage[]): string | undefined {
+  const reasoning = messages
+    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => message.type === "assistant")
+    .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+    .filter((block) => !!block && typeof block === "object" && block.type === "thinking")
+    .map((block) => {
+      const value = block as { thinking?: string; text?: string };
+      return value.thinking ?? value.text ?? "";
+    })
+    .filter((value) => value.trim().length > 0)
+    .join("\n\n")
+    .trim();
+  return reasoning || undefined;
+}
+
+function resolveAssistantCreatedAtFromSdkMessages(messages: SDKMessage[]): number {
+  for (const message of messages) {
+    const createdAt = (message as SDKMessage & { _createdAt?: number })._createdAt;
+    if (typeof createdAt === "number") {
+      return createdAt;
+    }
+  }
+  return Date.now();
+}
+
+function projectAssistantMessageFromSdkMessages(input: {
+  sessionId: string;
+  sdkMessages: SDKMessage[];
+  modelId: string;
+}): {
+  id: string;
+  role: "assistant";
+  content: string;
+  reasoning?: string;
+  createdAt: number;
+  model: string;
+  sdkMessages: SDKMessage[];
+} | null {
+  const assistantMessages = input.sdkMessages.filter((message) => message.type === "assistant");
+  if (assistantMessages.length === 0) {
+    return null;
+  }
+
+  return {
+    id: `sdk-turn:${input.sessionId}:${resolveAssistantCreatedAtFromSdkMessages(input.sdkMessages)}`,
+    role: "assistant",
+    content: extractAssistantTextFromSdkMessages(input.sdkMessages),
+    reasoning: extractAssistantReasoningFromSdkMessages(input.sdkMessages),
+    createdAt: resolveAssistantCreatedAtFromSdkMessages(input.sdkMessages),
+    model: input.modelId,
+    sdkMessages: input.sdkMessages
+  };
+}
+
 
 export async function sendAgentMessage(
   input: AgentSendInput,
@@ -203,6 +294,7 @@ export async function sendAgentMessage(
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
+  const persistedSdkMessages: SDKMessage[] = [];
 
   let stateWorkspaceSlug: string | undefined;
   if (workspaceId) {
@@ -284,11 +376,15 @@ export async function sendAgentMessage(
     }
   }, {
     onSdkMessage: (message) => {
-      handleRuntimeSessionStateMessage(sessionId, message, sessionStateManager);
-      if (message.type === "system" && message.subtype === "compact_boundary") {
+      const stampedMessage = ensureSdkMessageCreatedAt(message);
+      handleRuntimeSessionStateMessage(sessionId, stampedMessage, sessionStateManager);
+      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
         runtimeStatusManager.markCompacting(sessionId);
       }
-      emit.onSdkMessage(message);
+      if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
+        persistedSdkMessages.push(stampedMessage);
+      }
+      emit.onSdkMessage(stampedMessage);
     },
     onComplete: () => {
       runtimeCompleted = true;
@@ -317,7 +413,11 @@ export async function sendAgentMessage(
     }
   });
   if (piResult.status === "completed" && activeTurnId) {
-    const latestAssistantMessage = resolveLatestAssistantTranscriptMessage(sessionId);
+    const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
+      sessionId,
+      sdkMessages: persistedSdkMessages,
+      modelId: resolvedModelId
+    }) ?? resolveLatestAssistantTranscriptMessage(sessionId);
     if (latestAssistantMessage) {
       createAssistantMessageVersion({
         sessionId,

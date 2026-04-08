@@ -29,7 +29,11 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     context.writeNotification(AGENT_IPC_CHANNELS.PLAN_STATE_CHANGED, event);
   };
   runtimeStatusManager.subscribe((status) => {
-    context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, { status });
+    context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, {
+      status: {
+        ...status
+      }
+    });
   });
 
   const handlers: Record<string, RpcHandler> = {};

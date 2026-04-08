@@ -6,6 +6,11 @@ import {
   createAgentSession,
   getAgentSessionMessages
 } from "./agent-session-manager";
+import {
+  createAssistantMessageVersion,
+  createUserMessageVersion,
+  initializeVersionStoreFromMessages
+} from "./agent-message-versioning-service";
 import { createOrResumeRuntimeCoreSessionManager } from "../pi-agent/runtime-core/session-store";
 
 /**
@@ -314,5 +319,75 @@ describe("agent-session-manager multi-turn merge", () => {
     expect(messages).toHaveLength(2);
     expect(messages[1]!.content).toBe("简单回答");
     expect(messages[1]!.reasoning).toBe("简单思考");
+  });
+
+  test("已有版本存储时应优先返回原始 sdkMessages，而不是被空 transcript 覆盖", () => {
+    const session = createAgentSession("canonical sdk history");
+    initializeVersionStoreFromMessages(session.id, []);
+
+    const userVersion = createUserMessageVersion({
+      sessionId: session.id,
+      content: "请帮我搜索",
+      createdAt: 1_000
+    });
+
+    createAssistantMessageVersion({
+      sessionId: session.id,
+      turnId: userVersion.turnId,
+      message: {
+        id: "assistant-msg",
+        role: "assistant",
+        content: "已完成搜索并总结",
+        reasoning: "先搜索再总结",
+        createdAt: 2_000,
+        model: "anthropic/claude-sonnet-4-5",
+        sdkMessages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "先搜索再总结" },
+                { type: "tool_use", id: "tool-1", name: "WebSearch", input: { query: "Lume SDK" } },
+                { type: "text", text: "已完成搜索并总结" }
+              ]
+            }
+          },
+          {
+            type: "user",
+            parent_tool_use_id: "tool-1",
+            message: {
+              role: "user",
+              content: [
+                { type: "tool_result", tool_use_id: "tool-1", content: "search ok" }
+              ]
+            }
+          },
+          {
+            type: "result",
+            subtype: "success",
+            duration_ms: 123,
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0
+            }
+          } as any
+        ] as any
+      }
+    });
+
+    const messages = getAgentSessionMessages(session.id);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]!.content).toBe("请帮我搜索");
+    expect(messages[1]!.content).toBe("已完成搜索并总结");
+    expect(messages[1]!.reasoning).toBe("先搜索再总结");
+    expect(messages[1]!.sdkMessages).toBeDefined();
+    expect(messages[1]!.sdkMessages).toHaveLength(3);
+    expect(messages[1]!.sdkMessages?.[0]?.type).toBe("assistant");
+    expect(messages[1]!.sdkMessages?.[1]?.type).toBe("user");
+    expect(messages[1]!.sdkMessages?.[2]?.type).toBe("result");
   });
 });

@@ -10,6 +10,7 @@
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
 import type { MemoryCitationsMode } from "../memory/memory-policy";
+import { canonicalizeAgentToolName } from "@lume/shared";
 import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
@@ -293,7 +294,7 @@ function buildToolingSection(inputTools?: string[]): string[] {
     if (!name) {
       continue;
     }
-    const normalized = name.toLowerCase();
+    const normalized = canonicalizeAgentToolName(name);
     if (!canonicalByNormalized.has(normalized)) {
       canonicalByNormalized.set(normalized, name);
     }
@@ -527,7 +528,7 @@ At the beginning of each session, silently check workspace files in this order:
 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
 
-  const availableTools = new Set((ctx.availableTools ?? []).map((item) => item.trim().toLowerCase()));
+  const availableTools = new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item)));
   if (availableTools.has("browser") && availableTools.has("web_search")) {
     sections.push(`## Browser-First Tool Policy (Mandatory)
 
