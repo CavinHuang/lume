@@ -17,6 +17,7 @@ export interface ToolActivity {
   result?: string;
   isError?: boolean;
   done: boolean;
+  inputJsonBuffer?: string;
 }
 
 export interface AgentStreamState {
@@ -36,6 +37,8 @@ export interface AgentStreamState {
   currentTurnId?: string;
   /** 已完成的 turn 数量 */
   turnCount?: number;
+  /** Anthropic/OpenAI stream event 的 block index -> toolUseId 映射 */
+  toolBlockIndexMap?: Record<number, string>;
 }
 
 function extractTextFromAssistantMessage(message: Extract<SDKMessage, { type: "assistant" }>): string {
@@ -63,6 +66,26 @@ function upsertToolActivity(prev: ToolActivity[], next: ToolActivity): ToolActiv
   return copy;
 }
 
+function parseToolInputJson(partial: string): Record<string, unknown> | null {
+  if (!partial.trim()) return null;
+  try {
+    const parsed = JSON.parse(partial);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveLatestRunningToolUseId(activities: ToolActivity[]): string | null {
+  for (let i = activities.length - 1; i >= 0; i -= 1) {
+    const activity = activities[i];
+    if (activity && !activity.done) return activity.toolUseId;
+  }
+  return null;
+}
+
 export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): AgentStreamState {
   const now = Date.now();
   const streamStartedAt = prev.streamStartedAt ?? now;
@@ -73,7 +96,34 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
   };
 
   if (message.type === "stream_event") {
-    const event = message.event as { type?: string; delta?: { type?: string; text?: string; thinking?: string } };
+    const event = message.event as {
+      type?: string;
+      index?: number;
+      content_block?: { type?: string; id?: string; name?: string };
+      delta?: { type?: string; text?: string; thinking?: string; partial_json?: string };
+    };
+    if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+      const toolUseId = event.content_block.id ?? "";
+      if (toolUseId) {
+        next = {
+          ...next,
+          toolActivities: upsertToolActivity(next.toolActivities, {
+            toolUseId,
+            toolName: event.content_block.name ?? "Unknown",
+            input: {},
+            parentToolUseId: message.parent_tool_use_id ?? undefined,
+            startedAt: now,
+            done: false,
+          }),
+        };
+        if (typeof event.index === "number") {
+          next.toolBlockIndexMap = {
+            ...(next.toolBlockIndexMap ?? {}),
+            [event.index]: toolUseId,
+          };
+        }
+      }
+    }
     if (event.type === "content_block_delta") {
       if (event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
         next = {
@@ -89,6 +139,25 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
             reasoning: (next.reasoning ?? "") + text,
             firstOutputAt: next.firstOutputAt ?? now,
           };
+        }
+      } else if (event.delta?.type === "input_json_delta" && typeof event.delta.partial_json === "string") {
+        const mappedToolUseId = typeof event.index === "number"
+          ? next.toolBlockIndexMap?.[event.index]
+          : undefined;
+        const fallbackToolUseId = resolveLatestRunningToolUseId(next.toolActivities) ?? undefined;
+        const targetToolUseId = mappedToolUseId ?? fallbackToolUseId;
+
+        if (targetToolUseId) {
+          next.toolActivities = next.toolActivities.map((activity) => {
+            if (activity.toolUseId !== targetToolUseId) return activity;
+            const nextBuffer = `${activity.inputJsonBuffer ?? ""}${event.delta?.partial_json ?? ""}`;
+            const parsedInput = parseToolInputJson(nextBuffer);
+            return {
+              ...activity,
+              inputJsonBuffer: nextBuffer,
+              input: parsedInput ? { ...activity.input, ...parsedInput } : activity.input,
+            };
+          });
         }
       }
     }
@@ -116,7 +185,47 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
         parentToolUseId: message.parent_tool_use_id ?? undefined,
         startedAt: now,
         done: false,
+        inputJsonBuffer: undefined,
       });
+    }
+    return next;
+  }
+
+  if (message.type === "streamlined_text") {
+    if (typeof message.text === "string" && message.text.length > 0) {
+      next.content = mergeStreamingText(next.content, message.text);
+      next.firstOutputAt = next.firstOutputAt ?? now;
+    }
+    return next;
+  }
+
+  if (message.type === "tool_progress") {
+    next.toolActivities = upsertToolActivity(next.toolActivities, {
+      toolUseId: message.tool_use_id,
+      toolName: message.tool_name || "Unknown",
+      input: {},
+      parentToolUseId: message.parent_tool_use_id ?? undefined,
+      taskId: message.task_id,
+      startedAt: now - Math.max(0, Math.floor((message.elapsed_time_seconds ?? 0) * 1000)),
+      elapsedSeconds: message.elapsed_time_seconds,
+      elapsedMs: Math.max(0, Math.floor((message.elapsed_time_seconds ?? 0) * 1000)),
+      done: false,
+    });
+    return next;
+  }
+
+  if (message.type === "tool_use_summary") {
+    const ids = Array.isArray(message.preceding_tool_use_ids) ? message.preceding_tool_use_ids : [];
+    if (ids.length > 0) {
+      next.toolActivities = next.toolActivities.map((activity) =>
+        ids.includes(activity.toolUseId)
+          ? {
+              ...activity,
+              done: true,
+              result: message.summary || activity.result,
+            }
+          : activity
+      );
     }
     return next;
   }

@@ -625,7 +625,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
         />
 
         <MessageContent>
-          {orderedAssistantBlocks.length > 0 ? (
+          {orderedAssistantBlocks.length > 0 && !isStreamingMessage ? (
             <div className="space-y-2">
               {orderedAssistantBlocks.map((block, index) => {
                 const childBlocks = block.type === "tool_use"
