@@ -234,7 +234,7 @@ registerToolMetadata({
   description: "保存记忆内容"
 });
 
-// 会话工具
+// 线程工具
 registerToolMetadata({
   name: "agents_list",
   category: "control",
@@ -246,42 +246,42 @@ registerToolMetadata({
   name: "sessions_list",
   category: "control",
   riskLevel: "low",
-  description: "列出所有会话"
+  description: "列出所有线程"
 });
 
 registerToolMetadata({
   name: "sessions_history",
   category: "read",
   riskLevel: "low",
-  description: "获取会话历史"
+  description: "获取线程历史"
 });
 
 registerToolMetadata({
   name: "sessions_send",
   category: "execute",
   riskLevel: "medium",
-  description: "发送消息到会话"
+  description: "发送消息到线程"
 });
 
 registerToolMetadata({
   name: "sessions_delete",
   category: "write",
   riskLevel: "medium",
-  description: "删除会话及其数据"
+  description: "删除线程及其数据"
 });
 
 registerToolMetadata({
   name: "sessions_spawn",
   category: "execute",
   riskLevel: "medium",
-  description: "创建新会话"
+  description: "创建新线程"
 });
 
 registerToolMetadata({
   name: "session_status",
   category: "control",
   riskLevel: "low",
-  description: "获取会话状态"
+  description: "获取线程状态"
 });
 
 registerToolMetadata({

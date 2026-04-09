@@ -2,18 +2,18 @@ import { describe, expect, test } from "bun:test";
 import {
   isWeakGeneratedTitle,
   sanitizeGeneratedTitle,
-  shouldAutoGenerateSessionTitle
+  shouldAutoGenerateThreadTitle
 } from "./session-title-summarizer";
 
 describe("session-title-summarizer", () => {
-  test("默认会话标题应允许自动生成", () => {
-    expect(shouldAutoGenerateSessionTitle("新 Agent 会话")).toBe(true);
-    expect(shouldAutoGenerateSessionTitle("新会话")).toBe(true);
-    expect(shouldAutoGenerateSessionTitle("new agent session")).toBe(true);
+  test("默认线程标题应允许自动生成", () => {
+    expect(shouldAutoGenerateThreadTitle("新 Agent 线程")).toBe(true);
+    expect(shouldAutoGenerateThreadTitle("新线程")).toBe(true);
+    expect(shouldAutoGenerateThreadTitle("new agent thread")).toBe(true);
   });
 
   test("用户自定义标题不应被自动覆盖", () => {
-    expect(shouldAutoGenerateSessionTitle("供应商对齐方案")).toBe(false);
+    expect(shouldAutoGenerateThreadTitle("供应商对齐方案")).toBe(false);
   });
 
   test("应清洗模型标题格式", () => {

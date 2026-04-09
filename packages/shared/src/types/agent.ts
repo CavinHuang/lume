@@ -564,6 +564,11 @@ export interface AgentStreamEvent {
   message: SDKMessage
 }
 
+export interface AgentThreadSDKMessagesResult {
+  threadId: string
+  messages: SDKMessage[]
+}
+
 export interface AgentMessageAppendedEvent {
   threadId: string
   message: AgentMessage
@@ -663,6 +668,8 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_THREAD: 'agent:create-thread',
   /** 获取线程消息 */
   GET_THREAD_MESSAGES: 'agent:get-thread-messages',
+  /** 获取线程原始 SDK 消息 */
+  GET_THREAD_SDK_MESSAGES: 'agent:get-thread-sdk-messages',
   /** 获取线程单个消息版本组 */
   GET_THREAD_MESSAGE_VERSIONS: 'agent:get-thread-message-versions',
   /** 获取最近 N 条线程消息（分页） */

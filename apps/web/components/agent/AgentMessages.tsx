@@ -16,6 +16,8 @@ import {
   agentThinkingSecondsAtom,
   currentAgentThreadMessagesAtom,
   currentAgentThreadIdAtom,
+  currentAgentLiveSdkMessagesAtom,
+  currentAgentThreadSdkMessagesAtom,
   currentAgentStreamStateAtom,
   userProfileAtom
 } from "@/atoms";
@@ -381,7 +383,8 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onStartInlineEdit,
   onSubmitInlineEdit,
   onCancelInlineEdit,
-  onOpenSession
+  onOpenSession,
+  allSdkMessages
 }: {
   message: AgentMessage;
   displayedMessage: AgentMessage;
@@ -399,6 +402,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
   onOpenSession?: (sessionId: string) => void;
+  allSdkMessages: import("@lume/shared").SDKMessage[];
 }): React.ReactElement | null {
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -596,7 +600,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             <div key={`${displayedMessage.id}-sdk-${index}`}>
               <MessageGroupRenderer
                 group={group}
-                allMessages={displayedMessage.sdkMessages ?? []}
+                allMessages={allSdkMessages.length > 0 ? allSdkMessages : (displayedMessage.sdkMessages ?? [])}
               />
             </div>
           ))}
@@ -681,6 +685,8 @@ export function AgentMessages({
   onOpenSession
 }: AgentMessagesProps): React.ReactElement {
   const messages = useAtomValue(currentAgentThreadMessagesAtom);
+  const liveSdkMessages = useAtomValue(currentAgentLiveSdkMessagesAtom);
+  const persistedSdkMessages = useAtomValue(currentAgentThreadSdkMessagesAtom);
   const sessionId = useAtomValue(currentAgentThreadIdAtom);
   const [messageVersionsByGroup, setMessageVersionsByGroup] = useAtom(agentMessageVersionsByGroupAtom);
   const [selectedVersionIndexByGroup, setSelectedVersionIndexByGroup] = useAtom(agentSelectedVersionIndexByGroupAtom);
@@ -694,6 +700,23 @@ export function AgentMessages({
   const statusLine = useAtomValue(agentStatusLineAtom);
   const streamState = useAtomValue(currentAgentStreamStateAtom);
   const streamStartedAt = streamState?.streamStartedAt;
+  const allSdkMessages = React.useMemo(
+    () => [...persistedSdkMessages, ...liveSdkMessages],
+    [persistedSdkMessages, liveSdkMessages]
+  );
+  const useSDKRenderer = persistedSdkMessages.length > 0;
+  const persistedGroups = React.useMemo(
+    () => useSDKRenderer ? groupIntoTurns(persistedSdkMessages) : [],
+    [persistedSdkMessages, useSDKRenderer]
+  );
+  const liveGroups = React.useMemo(
+    () => liveSdkMessages.length > 0 ? groupIntoTurns(liveSdkMessages) : [],
+    [liveSdkMessages]
+  );
+  const hasLiveAssistantContent = React.useMemo(
+    () => liveGroups.some((group) => group.type === "assistant-turn"),
+    [liveGroups]
+  );
 
   const { displayedContent: smoothContent } = useSmoothStream({
     content: streamingContent,
@@ -703,7 +726,7 @@ export function AgentMessages({
   const actionsDisabled = isStreaming || streaming;
   const shouldShowStreamingMessage = streaming;
 
-  const hasStreamingSdkMessages = Array.isArray(streamState?.sdkMessages) && streamState.sdkMessages.length > 0;
+  const hasStreamingSdkMessages = liveSdkMessages.length > 0;
   const showSmoothContent = Boolean(smoothContent) && !hasStreamingSdkMessages;
   const showLoadingDots = streaming && !smoothContent && !streamingReasoning && !hasStreamingSdkMessages;
   const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
@@ -777,7 +800,7 @@ export function AgentMessages({
       reasoning: streamingReasoning || undefined,
       createdAt: Date.now(),
       model: agentModelId ?? undefined,
-      sdkMessages: streamState?.sdkMessages,
+      sdkMessages: liveSdkMessages,
       metadata: {
         ...(streamingToolActivities.length > 0 ? { toolActivitiesSnapshot: streamingToolActivities } : {}),
         ...(streamingReasoning ? { reasoningExpanded: true } : {})
@@ -789,7 +812,7 @@ export function AgentMessages({
     showSmoothContent,
     smoothContent,
     streamingReasoning,
-    streamState?.sdkMessages,
+    liveSdkMessages,
     streamingToolActivities
   ]);
 
@@ -849,11 +872,20 @@ export function AgentMessages({
               <div className="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
             </div>
           </div>
-        ) : messages.length === 0 && !streaming ? (
+        ) : ((!useSDKRenderer && messages.length === 0) || (useSDKRenderer && persistedGroups.length === 0 && liveGroups.length === 0)) && !streaming ? (
           <EmptyState />
         ) : (
           <>
-            {renderedMessages.map((item) => {
+            {useSDKRenderer ? (
+              persistedGroups.map((group, index) => (
+                <div key={`persisted-sdk-group-${index}`}>
+                  <MessageGroupRenderer
+                    group={group}
+                    allMessages={allSdkMessages}
+                  />
+                </div>
+              ))
+            ) : renderedMessages.map((item) => {
               return (
                 <div key={item.message.id} data-message-id={item.message.id}>
                   <AgentMessageItem
@@ -873,11 +905,21 @@ export function AgentMessages({
                     onSubmitInlineEdit={onSubmitInlineEdit}
                     onCancelInlineEdit={onCancelInlineEdit}
                     onOpenSession={onOpenSession}
+                    allSdkMessages={allSdkMessages}
                   />
                 </div>
               );
             })}
-            {streamingMessage ? (
+            {liveGroups.map((group, index) => (
+              <div key={`live-sdk-group-${index}`} data-message-id={`live-sdk-group-${index}`}>
+                <MessageGroupRenderer
+                  group={group}
+                  allMessages={allSdkMessages}
+                  isStreaming
+                />
+              </div>
+            ))}
+            {!hasLiveAssistantContent && streamingMessage ? (
               <div data-message-id="streaming-assistant" ref={streamingBlockRef}>
                 <AgentMessageItem
                   message={streamingMessage}
@@ -887,6 +929,7 @@ export function AgentMessages({
                   canGoPrevVersion={false}
                   canGoNextVersion={false}
                   versionLoading={false}
+                  allSdkMessages={allSdkMessages}
                 />
                 {isCompacting ? (
                   <div className="pl-[46px]">
@@ -917,6 +960,10 @@ export function AgentMessages({
                     <AgentRunningIndicator startedAt={streamStartedAt} />
                   </div>
                 ) : null}
+              </div>
+            ) : hasLiveAssistantContent && streaming ? (
+              <div className="pl-[46px]">
+                <AgentRunningIndicator startedAt={streamStartedAt} />
               </div>
             ) : null}
             {/* 过渡锚点：流式结束瞬间，通过 min-height 补偿流式消息块被移除导致的高度缩减，

@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { getAgentSessionMessages, listAgentSessions } from "../agent/agent-session-manager";
+import { getAgentThreadMessages, listAgentThreads } from "../agent/agent-thread-manager";
 import { normalizeSessionText } from "./session-memory-utils";
 import { getRuntimeCoreSessionDirPath } from "../pi-agent/runtime-core/session-store";
 import type { AgentMessage } from "@lume/shared";
 
-export interface SessionFileEntry {
+export interface ThreadFileEntry {
   path: string;
   absPath: string;
-  source: "session";
+  source: "thread";
   mtimeMs: number;
   size: number;
   hash: string;
@@ -39,14 +39,14 @@ function flattenSessionMessages(messages: AgentMessage[]): { content: string; li
   };
 }
 
-export function listSessionEntriesForWorkspace(workspaceId: string): SessionFileEntry[] {
-  const sessions = listAgentSessions().filter((item) => item.workspaceId === workspaceId);
-  const entries: SessionFileEntry[] = [];
+export function listThreadEntriesForWorkspace(workspaceId: string): ThreadFileEntry[] {
+  const threads = listAgentThreads().filter((item) => item.workspaceId === workspaceId);
+  const entries: ThreadFileEntry[] = [];
 
-  for (const session of sessions) {
-    const logicalPath = `sessions/${session.id}`;
-    const absPath = getRuntimeCoreSessionDirPath(session.id);
-    const messages = getAgentSessionMessages(session.id);
+  for (const thread of threads) {
+    const logicalPath = `threads/${thread.id}`;
+    const absPath = getRuntimeCoreSessionDirPath(thread.id);
+    const messages = getAgentThreadMessages(thread.id);
     const flattened = flattenSessionMessages(messages);
     if (!flattened.content.trim()) continue;
     const latestMessageTimestamp = messages.reduce((maxTimestamp, message) => {
@@ -56,8 +56,8 @@ export function listSessionEntriesForWorkspace(workspaceId: string): SessionFile
     entries.push({
       path: logicalPath,
       absPath,
-      source: "session",
-      mtimeMs: latestMessageTimestamp || session.updatedAt,
+      source: "thread",
+      mtimeMs: latestMessageTimestamp || thread.updatedAt,
       size: contentSize,
       hash: sha256(`${flattened.content}\n${flattened.lineMap.join(",")}`),
       content: flattened.content,

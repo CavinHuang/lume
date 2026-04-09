@@ -65,8 +65,8 @@ export function useAgentSessionListController({
         return items[0]?.id ?? null;
       });
     } catch (error) {
-      console.error("[LeftSidebar] 刷新 Agent 会话失败:", error);
-      setInitError(`刷新 Agent 会话失败: ${error instanceof Error ? error.message : String(error)}`);
+      console.error("[LeftSidebar] 刷新 Agent 线程失败:", error);
+      setInitError(`刷新 Agent 线程失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsRefreshingThreads(false);
     }

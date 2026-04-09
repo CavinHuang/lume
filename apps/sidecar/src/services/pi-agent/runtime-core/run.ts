@@ -1,4 +1,5 @@
 import {
+  AskUserQuestionTool,
   BashTool,
   createAgent,
   EnterPlanModeTool,
@@ -140,7 +141,10 @@ const ListDirectoryTool = defineTool({
   }
 });
 
-function createBaseSdkAlignedTools(permissionMode: AgentSendInput["permissionMode"]): ToolDefinition[] {
+function createBaseSdkAlignedTools(
+  permissionMode: AgentSendInput["permissionMode"],
+  options: { includeAskUserQuestion: boolean }
+): ToolDefinition[] {
   const readOnlyTools: ToolDefinition[] = [
     FileReadTool,
     GlobTool,
@@ -151,11 +155,18 @@ function createBaseSdkAlignedTools(permissionMode: AgentSendInput["permissionMod
   ];
 
   if (permissionMode === "plan") {
-    return [...readOnlyTools, EnterPlanModeTool, ExitPlanModeTool, SkillTool];
+    return [
+      ...readOnlyTools,
+      ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
+      EnterPlanModeTool,
+      ExitPlanModeTool,
+      SkillTool
+    ];
   }
 
   return [
     ...readOnlyTools,
+    ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
     FileWriteTool,
     FileEditTool,
     BashTool,
@@ -184,14 +195,15 @@ function buildRuntimeCoreTools(input: {
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
-  const baseTools = createBaseSdkAlignedTools(permissionMode);
-
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
   const includeCitations = shouldIncludeCitations(
     memoryRuntimeConfig.citationsMode,
     input.chatType ?? "direct"
   );
   const automationExecution = isAutomationExecution(input.messageMetadata);
+  const baseTools = createBaseSdkAlignedTools(permissionMode, {
+    includeAskUserQuestion: automationExecution !== true
+  });
   const lumeTools = createLumePiTools({
     threadId: input.sessionId,
     workspaceId: input.workspaceId,
@@ -312,7 +324,7 @@ function buildCombinedSystemPrompt(input: {
 
   const dynamicContext = buildDynamicContext(
     resolveAgentDynamicContextInput({
-      sessionId: input.lumeSessionId,
+      threadId: input.lumeSessionId,
       userMessage: input.userMessage,
       workspaceName: input.workspaceName,
       workspaceSlug: input.workspaceSlug,

@@ -64,6 +64,16 @@ interface OpenAIChatResponse {
   }
 }
 
+function normalizeContentBlocks(content: unknown): NormalizedContentBlock[] {
+  if (Array.isArray(content)) {
+    return content as NormalizedContentBlock[]
+  }
+  if (content && typeof content === 'object') {
+    return [content as NormalizedContentBlock]
+  }
+  return []
+}
+
 // --------------------------------------------------------------------------
 // Provider
 // --------------------------------------------------------------------------
@@ -175,7 +185,7 @@ export class OpenAIProvider implements LLMProvider {
     const textParts: string[] = []
     const toolResults: Array<{ tool_use_id: string; content: string }> = []
 
-    for (const block of msg.content) {
+    for (const block of normalizeContentBlocks(msg.content)) {
       if (block.type === 'text') {
         textParts.push(block.text)
       } else if (block.type === 'tool_result') {
@@ -214,7 +224,7 @@ export class OpenAIProvider implements LLMProvider {
     const textParts: string[] = []
     const toolCalls: OpenAIToolCall[] = []
 
-    for (const block of msg.content) {
+    for (const block of normalizeContentBlocks(msg.content)) {
       if (block.type === 'text') {
         textParts.push(block.text)
       } else if (block.type === 'tool_use') {

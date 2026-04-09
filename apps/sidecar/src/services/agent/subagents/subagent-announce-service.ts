@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { AgentMessage, SDKMessage } from "@lume/shared";
 import {
   appendAgentTranscriptMessage,
-  getAgentSessionMeta,
-  updateAgentSessionMeta
-} from "../../agent/agent-session-manager";
+  getAgentThreadMeta,
+  updateAgentThreadMeta
+} from "../../agent/agent-thread-manager";
 import { createLogger } from "../../infra/logger";
 import { subagentLogFields } from "./subagent-run-registry";
 import type { SubagentRun } from "./subagent-run.types";
@@ -138,7 +138,7 @@ export async function announceSubagentCompletion(params: {
 }): Promise<SubagentAnnounceResult> {
   const run = params.run;
   const targetSessionId = run.deliveryThreadId ?? run.parentThreadId;
-  const targetMeta = getAgentSessionMeta(targetSessionId);
+  const targetMeta = getAgentThreadMeta(targetSessionId);
   if (!targetMeta) {
     log.warn("announce skipped: target session not found", subagentLogFields(run, {
       event: "announce_skipped",
@@ -147,7 +147,7 @@ export async function announceSubagentCompletion(params: {
     return {
       delivered: false,
       attempts: 1,
-      error: `目标会话不存在: ${targetSessionId}`
+      error: `目标线程不存在: ${targetSessionId}`
     };
   }
   const announceMessage = buildAnnounceMessage(run);
@@ -155,7 +155,7 @@ export async function announceSubagentCompletion(params: {
   for (let attempt = 1; attempt <= ANNOUNCE_MAX_RETRIES; attempt += 1) {
     try {
       appendAgentTranscriptMessage(targetSessionId, announceMessage);
-      updateAgentSessionMeta(targetSessionId, {});
+      updateAgentThreadMeta(targetSessionId, {});
       log.info("announce delivered", subagentLogFields(run, {
         event: "announce_delivered",
         deliveryThreadId: targetSessionId,
@@ -213,4 +213,3 @@ export function subscribeSubagentAnnounceEvent(
     listeners.delete(listener);
   };
 }
-

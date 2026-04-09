@@ -6,9 +6,9 @@ export {
 } from "./session-memory-utils";
 
 export {
-  type SessionFileEntry,
-  listSessionEntriesForWorkspace,
-} from "./session-files";
+  type ThreadFileEntry,
+  listThreadEntriesForWorkspace,
+} from "./thread-files";
 
 export {
   type MemoryFlushConfigInput,

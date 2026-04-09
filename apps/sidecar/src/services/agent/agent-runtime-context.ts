@@ -1,12 +1,11 @@
 import type { AgentSendInput } from "@lume/shared";
-import { getAgentSessionMeta } from "./agent-session-manager";
+import { getAgentThreadMeta } from "./agent-thread-manager";
 import { getWorkspaceSkills } from "./agent-workspace-manager";
 import type { DynamicContext } from "./agent-prompt-builder";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute, type CapabilityLane } from "./capability-routing";
 
 interface ResolveAgentDynamicContextInput {
-  sessionId: string;
-  threadId?: string;
+  threadId: string;
   userMessage?: string;
   workspaceName?: string;
   workspaceSlug?: string;
@@ -26,16 +25,16 @@ export interface AgentRuntimeRoutingTrace {
 export function resolveAgentDynamicContextInput(
   input: ResolveAgentDynamicContextInput
 ): DynamicContext {
-  const sessionMeta = getAgentSessionMeta(input.sessionId);
+  const threadMeta = getAgentThreadMeta(input.threadId);
   return {
-    sessionId: input.threadId ?? input.sessionId,
-    sessionTitle: sessionMeta?.title,
+    sessionId: input.threadId,
+    sessionTitle: threadMeta?.title,
     sessionType: input.threadType,
     chatType: input.chatType,
-    parentSessionId: sessionMeta?.parentThreadId,
-    workspaceId: sessionMeta?.workspaceId,
-    channelId: sessionMeta?.channelId,
-    modelId: sessionMeta?.modelId ?? input.fallbackModelId,
+    parentSessionId: threadMeta?.parentThreadId,
+    workspaceId: threadMeta?.workspaceId,
+    channelId: threadMeta?.channelId,
+    modelId: threadMeta?.modelId ?? input.fallbackModelId,
     workspaceName: input.workspaceName,
     workspaceSlug: input.workspaceSlug,
     agentCwd: input.agentCwd,
@@ -65,4 +64,3 @@ export function resolveAgentRuntimeRoutingTrace(input: {
     reason: decision.reason
   };
 }
-

@@ -4,17 +4,20 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   appendAgentTranscriptMessage,
+  appendAgentThreadSDKMessages,
   createAgentSession,
   deleteAgentSession,
-  getAgentSessionMeta,
+  forkAgentSession,
+  getAgentThreadMeta,
   getAgentSessionMessages,
+  getAgentThreadSDKMessages,
   getRecentAgentMessages,
   migrateChatToAgentSession,
   moveAgentSessionToWorkspace,
   truncateAgentMessagesFrom,
-  updateAgentSessionMeta,
+  updateAgentThreadMeta,
   toggleAgentSessionPin
-} from "./agent-session-manager";
+} from "./agent-thread-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentWorkspacePath } from "../infra/config-paths";
 import { appendMessage, createConversation } from "../chat/conversation-manager";
@@ -24,13 +27,13 @@ import {
 } from "../pi-agent/runtime-core/session-store";
 import { getAgentMessageVersionStorePath, readAgentMessageVersionStore } from "./agent-message-version-store";
 
-describe("agent-session-manager advanced ops", () => {
+describe("agent-thread-manager advanced ops", () => {
   let previousConfigDir: string | undefined;
   let tempConfigDir = "";
 
   beforeEach(() => {
     previousConfigDir = process.env.LUME_CONFIG_DIR;
-    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-agent-session-manager-"));
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-agent-thread-manager-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
   });
 
@@ -51,11 +54,11 @@ describe("agent-session-manager advanced ops", () => {
     const pinned = toggleAgentSessionPin(created.id);
 
     expect(pinned.pinned).toBeTrue();
-    expect(getAgentSessionMeta(created.id)?.pinned).toBeTrue();
+    expect(getAgentThreadMeta(created.id)?.pinned).toBeTrue();
 
     const unpinned = toggleAgentSessionPin(created.id);
     expect(unpinned.pinned).toBeFalse();
-    expect(getAgentSessionMeta(created.id)?.pinned).toBeFalse();
+    expect(getAgentThreadMeta(created.id)?.pinned).toBeFalse();
   });
 
   test("createAgentSession 应保存 channelId 和 modelId", () => {
@@ -63,7 +66,7 @@ describe("agent-session-manager advanced ops", () => {
 
     expect(created.channelId).toBe("channel-1");
     expect(created.modelId).toBe("provider/model-1");
-    expect(getAgentSessionMeta(created.id)?.modelId).toBe("provider/model-1");
+    expect(getAgentThreadMeta(created.id)?.modelId).toBe("provider/model-1");
   });
 
   test("moveAgentSessionToWorkspace 应迁移 session 工作目录并更新 workspaceId", () => {
@@ -74,7 +77,7 @@ describe("agent-session-manager advanced ops", () => {
     const sourceSessionDir = join(getAgentWorkspacePath(sourceWorkspace.slug), created.id);
     const targetSessionDir = join(getAgentWorkspacePath(targetWorkspace.slug), created.id);
     writeFileSync(join(sourceSessionDir, "note.txt"), "hello", "utf-8");
-    updateAgentSessionMeta(created.id, {
+    updateAgentThreadMeta(created.id, {
       sdkThreadId: "sdk-session",
       runtimeThreadId: "pi-session"
     });
@@ -98,7 +101,7 @@ describe("agent-session-manager advanced ops", () => {
 
     expect(moved.workspaceId).toBe(targetWorkspace.id);
     expect(existsSync(targetSessionDir)).toBeTrue();
-    expect(getAgentSessionMeta(created.id)?.workspaceId).toBe(targetWorkspace.id);
+    expect(getAgentThreadMeta(created.id)?.workspaceId).toBe(targetWorkspace.id);
   });
 
   test("moveAgentSessionToWorkspace 当目标目录已存在时应以源目录覆盖", () => {
@@ -194,6 +197,30 @@ describe("agent-session-manager advanced ops", () => {
     expect(recent.total).toBe(2);
     expect(recent.hasMore).toBeTrue();
     expect(recent.messages[0]?.content).toBe("来自 transcript 的助手消息");
+  });
+
+  test("appendAgentThreadSDKMessages / getAgentThreadSDKMessages 应持久化原始 SDKMessage", () => {
+    const session = createAgentSession("sdk transcript");
+    appendAgentThreadSDKMessages(session.id, [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "assistant raw" }]
+        }
+      } as any,
+      {
+        type: "result",
+        subtype: "success",
+        duration_ms: 12
+      } as any
+    ]);
+
+    const sdkMessages = getAgentThreadSDKMessages(session.id);
+    expect(sdkMessages).toHaveLength(2);
+    expect(sdkMessages[0]?.type).toBe("assistant");
+    expect((sdkMessages[0] as { message?: { content?: Array<{ text?: string }> } }).message?.content?.[0]?.text).toBe("assistant raw");
+    expect(sdkMessages[1]?.type).toBe("result");
   });
 
   test("transcript 回放应分离 reasoning 与正式正文", () => {
@@ -361,7 +388,54 @@ describe("agent-session-manager advanced ops", () => {
     expect(messagesAfter.length).toBe(2);
     expect(messagesAfter[0]?.content).toBe("第一条");
     expect(messagesAfter[1]?.content).toBe("第二条");
-    expect(getAgentSessionMeta(session.id)?.runtimeThreadId).toBeUndefined();
+    expect(getAgentThreadMeta(session.id)?.runtimeThreadId).toBeUndefined();
+  });
+
+  test("forkAgentSession 应同时重建 raw SDK transcript", () => {
+    const session = createAgentSession("fork sdk transcript");
+    appendAgentThreadSDKMessages(session.id, [
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "原始用户消息" }]
+        }
+      } as any,
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "原始助手消息" }]
+        }
+      } as any
+    ]);
+    appendAgentTranscriptMessage(session.id, {
+      id: "u1",
+      role: "user",
+      content: "原始用户消息",
+      createdAt: 1
+    });
+    appendAgentTranscriptMessage(session.id, {
+      id: "a1",
+      role: "assistant",
+      content: "原始助手消息",
+      createdAt: 2,
+      sdkMessages: [{
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "原始助手消息" }]
+        }
+      } as any]
+    });
+
+    const visibleMessages = getAgentSessionMessages(session.id);
+    const assistantMessageId = visibleMessages.find((message) => message.role === "assistant")?.id;
+    expect(typeof assistantMessageId).toBe("string");
+    const result = forkAgentSession(session.id, assistantMessageId as string);
+    const forkedSdkMessages = getAgentThreadSDKMessages(result.newThreadId);
+
+    expect(forkedSdkMessages.length).toBeGreaterThan(0);
+    expect(forkedSdkMessages.some((message) => message.type === "assistant")).toBeTrue();
   });
 });
-

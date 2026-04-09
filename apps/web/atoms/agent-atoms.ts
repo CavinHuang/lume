@@ -9,6 +9,7 @@ import type {
   AgentToolPermissionRequest,
   AgentWorkspace,
   AgentSendInput,
+  SDKMessage,
   ThinkingLevel
 } from "@lume/shared";
 import {
@@ -45,6 +46,8 @@ export const workspaceAttachedDirectoriesMapAtom = atom<Map<string, string[]>>(n
 export const currentAgentWorkspaceIdAtom = atom<string | null>(null);
 export const currentAgentThreadIdAtom = atom<string | null>(null);
 export const currentAgentThreadMessagesAtom = atom<AgentMessage[]>([]);
+export const currentAgentThreadSdkMessagesAtom = atom<SDKMessage[]>([]);
+export const agentLiveSdkMessagesMapAtom = atom<Map<string, SDKMessage[]>>(new Map());
 export const agentMessageVersionsByGroupAtom = atom<Record<string, AgentMessage[]>>({});
 export const agentSelectedVersionIndexByGroupAtom = atom<Record<string, number>>({});
 export const agentStreamingStatesAtom = atom<Map<string, AgentStreamState>>(new Map());
@@ -65,6 +68,12 @@ export const currentAgentStreamStateAtom = atom<AgentStreamState | null>((get) =
   const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;
   return get(agentStreamingStatesAtom).get(currentId) ?? null;
+});
+
+export const currentAgentLiveSdkMessagesAtom = atom<SDKMessage[]>((get) => {
+  const currentId = get(currentAgentThreadIdAtom);
+  if (!currentId) return [];
+  return get(agentLiveSdkMessagesMapAtom).get(currentId) ?? [];
 });
 
 export const currentAgentRuntimeStatusAtom = atom<AgentRuntimeStatus | null>((get) => {

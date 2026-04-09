@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@lume/agent-sdk";
-import { createAgentSession } from "../../../agent/agent-session-manager";
+import { createAgentSession } from "../../../agent/agent-thread-manager";
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest

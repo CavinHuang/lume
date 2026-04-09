@@ -13,10 +13,10 @@ import {
   createAgentSession,
   deleteAgentSession,
   getAgentSessionMessages,
-  getAgentSessionMeta,
+  getAgentThreadMeta,
   listAgentSessions,
-  updateAgentSessionMeta
-} from "../../../agent/agent-session-manager";
+  updateAgentThreadMeta
+} from "../../../agent/agent-thread-manager";
 import type { AgentMessage } from "@lume/shared";
 import { decryptApiKey, listChannels } from "../../../channel/channel-manager";
 import { resolveRequestedModelIdForChannel } from "../../../channel/model-selection";
@@ -319,7 +319,7 @@ function resolveSpawnRoute(input: ResolveSpawnRouteInput): {
   ok: false;
   error: string;
 } {
-  const currentMeta = getAgentSessionMeta(input.currentSessionId);
+  const currentMeta = getAgentThreadMeta(input.currentSessionId);
   const normalizedAgentId = input.spawnAgentId.trim();
 
   if (!normalizedAgentId || normalizedAgentId === "lume") {
@@ -331,7 +331,7 @@ function resolveSpawnRoute(input: ResolveSpawnRouteInput): {
     };
   }
 
-  const targetMeta = getAgentSessionMeta(normalizedAgentId);
+  const targetMeta = getAgentThreadMeta(normalizedAgentId);
   if (!targetMeta) {
     return {
       ok: false,
@@ -683,7 +683,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         const sessionId = resolvedTarget.threadId;
         const limit = clampInt(params.limit, 1, 500, 100);
         const includeTools = params.includeTools === true;
-        const meta = getAgentSessionMeta(sessionId);
+        const meta = getAgentThreadMeta(sessionId);
         if (!meta) {
           return {
             status: "not_found",
@@ -727,7 +727,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           };
         }
         const sessionId = resolvedTarget.threadId;
-        const meta = getAgentSessionMeta(sessionId);
+        const meta = getAgentThreadMeta(sessionId);
         if (!meta) {
           return {
             status: "not_found",
@@ -792,7 +792,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         if (!message) {
           return { status: "error", error: "message 不能为空" };
         }
-        const meta = getAgentSessionMeta(sessionId);
+        const meta = getAgentThreadMeta(sessionId);
         if (!meta) {
           return { status: "not_found", error: `Session not found: ${sessionId}` };
         }
@@ -836,7 +836,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           threadType: input.threadType,
           chatType: input.chatType
         });
-        updateAgentSessionMeta(sessionId, {});
+        updateAgentThreadMeta(sessionId, {});
         return {
           status: runResult.status,
           runId: randomUUID(),
@@ -942,7 +942,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
 
         const metas = resolvedSessionIds.map((sessionId) => ({
           threadId: sessionId,
-          meta: getAgentSessionMeta(sessionId)
+          meta: getAgentThreadMeta(sessionId)
         }));
         const missing = metas.find((item) => !item.meta);
         if (missing) {
@@ -1026,7 +1026,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         const requestedDeliverySessionId = deliverySessionKeyRaw
           ? pickSessionId(deliverySessionKeyRaw, input.threadId)
           : undefined;
-        if (requestedDeliverySessionId && !getAgentSessionMeta(requestedDeliverySessionId)) {
+        if (requestedDeliverySessionId && !getAgentThreadMeta(requestedDeliverySessionId)) {
           return {
             status: "error",
             error: `deliverySessionKey 不存在: ${requestedDeliverySessionId}`
@@ -1043,7 +1043,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
             error: policyDecision.error
           };
         }
-        const currentMeta = getAgentSessionMeta(input.threadId);
+        const currentMeta = getAgentThreadMeta(input.threadId);
         const label = typeof params.label === "string" ? params.label.trim() : "";
         const modelOverride = typeof params.model === "string" ? params.model.trim() : "";
         const spawnAgentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
@@ -1457,7 +1457,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           };
         }
         const matched = resolved.run;
-        const childMeta = getAgentSessionMeta(matched.childThreadId);
+        const childMeta = getAgentThreadMeta(matched.childThreadId);
         if (!childMeta) {
           return {
             status: "not_found",
@@ -1561,7 +1561,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           };
         }
         const matched = resolved.run;
-        const childMeta = getAgentSessionMeta(matched.childThreadId);
+        const childMeta = getAgentThreadMeta(matched.childThreadId);
         if (!childMeta) {
           return {
             status: "not_found",

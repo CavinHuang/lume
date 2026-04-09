@@ -460,7 +460,7 @@ export const automationCreateInputSchema = z.object({
   name: z.string().min(1),
   enabled: z.boolean().optional(),
   workspaceId: z.string().optional(),
-  sessionId: z.string().optional(),
+  threadId: z.string().optional(),
   schedule: automationScheduleSchema,
   prompt: z.string().min(1)
 });
@@ -470,7 +470,7 @@ export const automationUpdateInputSchema = z.object({
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   workspaceId: z.string().optional(),
-  sessionId: z.string().optional(),
+  threadId: z.string().optional(),
   schedule: automationScheduleSchema.optional(),
   prompt: z.string().min(1).optional()
 });

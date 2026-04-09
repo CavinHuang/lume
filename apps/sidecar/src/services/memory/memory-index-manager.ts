@@ -31,7 +31,7 @@ import {
 } from "./status-ops";
 import { collectWorkspaceMemoryEntries, pruneStaleIndexedRows, type SyncTargetEntry } from "./sync-ops";
 import type { HybridSearchResult } from "./types";
-import { listSessionEntriesForWorkspace } from "../session/session-files";
+import { listThreadEntriesForWorkspace } from "../session/thread-files";
 import {
   isMarkdownFile,
   isMemoryPath,
@@ -524,7 +524,7 @@ export class MemoryIndexManager {
     }
 
     if (this.sources.has("sessions") && this.workspaceId) {
-      for (const entry of listSessionEntriesForWorkspace(this.workspaceId)) {
+      for (const entry of listThreadEntriesForWorkspace(this.workspaceId)) {
         targetEntries.push({
           source: "session",
           logicalPath: entry.path,
@@ -748,7 +748,7 @@ export class MemoryIndexManager {
       if (!this.workspaceId) {
         return { path: input.path, from: input.from ?? 1, lines: input.lines ?? 0, text: "" };
       }
-      const session = listSessionEntriesForWorkspace(this.workspaceId).find((item) => item.path === input.path);
+      const session = listThreadEntriesForWorkspace(this.workspaceId).find((item) => item.path === input.path);
       if (!session) {
         return { path: input.path, from: input.from ?? 1, lines: input.lines ?? 0, text: "" };
       }

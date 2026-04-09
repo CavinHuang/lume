@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreSessionDir } from "./session-store";
@@ -75,6 +76,39 @@ describe("runtime-core run", () => {
     expect(toolNames).not.toContain("web_fetch");
 
     result.session.dispose();
+  });
+
+  test("应直接注册 SDK 原生 AskUserQuestionTool，并在自动化执行时移除它", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-ask-user-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const interactive = await createRuntimeCoreSession({
+      lumeSessionId: "ask-user-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits"
+    });
+    expect(interactive.tools.some((tool) => tool === AskUserQuestionTool)).toBeTrue();
+    interactive.session.dispose();
+
+    const automation = await createRuntimeCoreSession({
+      lumeSessionId: "ask-user-automation-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      messageMetadata: {
+        automationJobId: "job-1"
+      }
+    });
+    expect(automation.tools.some((tool) => tool === AskUserQuestionTool)).toBeFalse();
+    automation.session.dispose();
   });
 
   test("应为同一个 Lume session 使用稳定 transcript 目录", () => {
@@ -215,7 +249,6 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("Always verify edits before final output.");
     expect(systemPrompt).toContain("- Skill");
     expect(systemPrompt).toContain("<thread_state>");
-    expect(systemPrompt).toContain("threadId: prompt-session");
     expect(systemPrompt).toContain("threadType: main");
     expect(systemPrompt).toContain("chatType: direct");
     expect(systemPrompt).toContain("modelId: claude-sonnet-4-5");

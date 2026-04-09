@@ -93,7 +93,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("1. Use a loaded Skill when it clearly matches the request.");
     expect(prompt).toContain("browser for browser-session continuity and current-page actions");
     expect(prompt).toContain("memory_search / memory_get for prior decisions");
-    expect(prompt).toContain("web_search / web_fetch for public web retrieval");
+    expect(prompt).toContain("WebSearch / WebFetch for public web retrieval");
     expect(prompt).toContain("Compose direct low-level tools only when no packaged capability cleanly fits.");
   });
 
@@ -136,7 +136,7 @@ describe("agent-prompt-builder", () => {
     });
     expect(prompt).toContain("## Browser-First Tool Policy (Mandatory)");
     expect(prompt).toContain("必须优先使用 browser 工具");
-    expect(prompt).toContain("仅在以下情况才回退 web_search");
+    expect(prompt).toContain("仅在以下情况才回退 WebSearch");
   });
 
   test("automationExecution=true 时应注入无交互模式约束", () => {

@@ -6,9 +6,9 @@ import {
   appendAgentTranscriptMessage,
   createAgentSession,
   getAgentSessionMessages
-} from "./agent-session-manager";
+} from "./agent-thread-manager";
 
-describe("agent-session-manager transcript projection", () => {
+describe("agent-thread-manager transcript projection", () => {
   let previousConfigDir: string | undefined;
   let tempConfigDir = "";
 

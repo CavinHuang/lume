@@ -35,15 +35,15 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   // LSP / MCP
   lsp: "正在分析代码",
   mcpsearch: "正在搜索 MCP 工具",
-  // 子 Agent / Session 工具
+  // 子 Agent / 线程工具
   sessions_spawn: "正在创建子 Agent",
   agents_list: "正在查询 Agent",
-  sessions_list: "正在查询会话",
-  sessions_history: "正在查询会话历史",
+  sessions_list: "正在查询线程",
+  sessions_history: "正在查询线程历史",
   sessions_send: "正在与 Agent 通信",
-  sessions_delete: "正在清理会话",
-  sessions_delete_all: "正在清理会话",
-  session_status: "正在查询会话状态",
+  sessions_delete: "正在清理线程",
+  sessions_delete_all: "正在清理线程",
+  session_status: "正在查询线程状态",
   subagents_list: "正在查询子 Agent",
   subagents_kill: "正在停止子 Agent",
   subagents_send: "正在与子 Agent 通信",

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import {
   createAgentSession,
   getAgentSessionMessages
-} from "./agent-session-manager";
+} from "./agent-thread-manager";
 import {
   createAssistantMessageVersion,
   createUserMessageVersion,
@@ -25,7 +25,7 @@ import { createOrResumeRuntimeCoreSessionManager } from "../pi-agent/runtime-cor
  *
  * getAgentSessionMessages 应将同一次请求中的多个 assistant turn 合并为一条消息。
  */
-describe("agent-session-manager multi-turn merge", () => {
+describe("agent-thread-manager multi-turn merge", () => {
   let previousConfigDir: string | undefined;
   let tempConfigDir = "";
 

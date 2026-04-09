@@ -6,8 +6,8 @@ import { randomUUID } from "node:crypto";
 import {
   createAgentSession,
   getAgentSessionMessages,
-  getAgentSessionMeta
-} from "../../../agent/agent-session-manager";
+  getAgentThreadMeta
+} from "../../../agent/agent-thread-manager";
 import { createOrResumeRuntimeCoreSessionManager } from "../../runtime-core/session-store";
 import {
   getSubagentRunRegistry,
@@ -704,7 +704,7 @@ describe("create-session-tools", () => {
       expect(details.status).toBe("ok");
       expect(details.deleted).toBe(true);
       expect(details.sessionKey).toBe(target.id);
-      expect(getAgentSessionMeta(target.id)).toBeUndefined();
+      expect(getAgentThreadMeta(target.id)).toBeUndefined();
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -733,7 +733,7 @@ describe("create-session-tools", () => {
       };
       expect(details.status).toBe("error");
       expect(details.error).toContain("不能删除当前会话");
-      expect(getAgentSessionMeta(current.id)?.id).toBe(current.id);
+      expect(getAgentThreadMeta(current.id)?.id).toBe(current.id);
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -768,8 +768,8 @@ describe("create-session-tools", () => {
       expect(details.deleted).toBe(true);
       expect(details.deletedCount).toBe(2);
       expect(details.sessionKeys).toEqual([targetA.id, targetB.id]);
-      expect(getAgentSessionMeta(targetA.id)).toBeUndefined();
-      expect(getAgentSessionMeta(targetB.id)).toBeUndefined();
+      expect(getAgentThreadMeta(targetA.id)).toBeUndefined();
+      expect(getAgentThreadMeta(targetB.id)).toBeUndefined();
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -804,9 +804,9 @@ describe("create-session-tools", () => {
       expect(details.deleted).toBe(true);
       expect(details.deletedCount).toBe(2);
       expect([...(details.sessionKeys ?? [])].sort()).toEqual([targetA.id, targetB.id].sort());
-      expect(getAgentSessionMeta(targetA.id)).toBeUndefined();
-      expect(getAgentSessionMeta(targetB.id)).toBeUndefined();
-      expect(getAgentSessionMeta(current.id)?.id).toBe(current.id);
+      expect(getAgentThreadMeta(targetA.id)).toBeUndefined();
+      expect(getAgentThreadMeta(targetB.id)).toBeUndefined();
+      expect(getAgentThreadMeta(current.id)?.id).toBe(current.id);
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -836,8 +836,8 @@ describe("create-session-tools", () => {
       };
       expect(details.status).toBe("error");
       expect(details.error).toContain("不能删除当前会话");
-      expect(getAgentSessionMeta(current.id)?.id).toBe(current.id);
-      expect(getAgentSessionMeta(target.id)?.id).toBe(target.id);
+      expect(getAgentThreadMeta(current.id)?.id).toBe(current.id);
+      expect(getAgentThreadMeta(target.id)?.id).toBe(target.id);
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;

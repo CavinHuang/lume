@@ -1,6 +1,6 @@
 import type { AgentSavedFile } from "@lume/shared";
 
-const DEFAULT_AGENT_TITLES = ["新 Agent 会话", "新会话", "新对话", "new agent session"];
+const DEFAULT_AGENT_TITLES = ["新 Agent 线程", "新线程", "新对话", "new agent thread"];
 
 export async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

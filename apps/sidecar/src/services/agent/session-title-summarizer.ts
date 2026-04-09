@@ -3,10 +3,10 @@ import type { AgentMessage } from "@lume/shared";
 const MAX_TITLE_LENGTH = 20;
 
 const DEFAULT_AGENT_TITLE_CANDIDATES = [
-  "新 Agent 会话",
-  "新会话",
+  "新 Agent 线程",
+  "新线程",
   "新对话",
-  "new agent session"
+  "new agent thread"
 ];
 
 export const AGENT_TITLE_PROMPT_FROM_SUMMARY =
@@ -16,7 +16,7 @@ function normalizeTitleForCompare(title: string): string {
   return title.trim().toLowerCase();
 }
 
-export function shouldAutoGenerateSessionTitle(title?: string): boolean {
+export function shouldAutoGenerateThreadTitle(title?: string): boolean {
   if (!title) return true;
   const normalized = normalizeTitleForCompare(title);
   return DEFAULT_AGENT_TITLE_CANDIDATES
@@ -40,7 +40,7 @@ export function isWeakGeneratedTitle(value: string): boolean {
   if (!normalized) return true;
   const weakWords = [
     "总结",
-    "会话",
+    "线程",
     "对话",
     "任务",
     "已完成",
@@ -78,7 +78,5 @@ export function resolveTitleSourceText(
   return fallbackUserMessage.trim();
 }
 
-// Backward-compatible aliases.
-export const deriveFallbackAgentTitleFromUserMessage = deriveFallbackTitleFromSourceText;
 export const deriveFallbackAgentTitleFromSourceText = deriveFallbackTitleFromSourceText;
 export const resolveAgentTitleSourceText = resolveTitleSourceText;

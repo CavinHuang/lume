@@ -137,7 +137,7 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
           prompt: { type: "string" },
           enabled: { type: "boolean" },
           workspaceId: { type: "string" },
-          sessionId: { type: "string" },
+          threadId: { type: "string" },
           schedule: { type: "object", properties: {} }
         },
         required: ["action"]
@@ -145,7 +145,7 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
       async call(args) {
         const action = asString(args.action);
         const workspaceId = asString(args.workspaceId) ?? input.workspaceId;
-        const sessionId = asString(args.sessionId) ?? input.sessionId;
+        const threadId = asString(args.threadId) ?? input.sessionId;
         if (!action) throw new Error("action 必填");
 
         if (action === "create") {
@@ -159,7 +159,7 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
             prompt,
             schedule,
             workspaceId,
-            sessionId,
+            threadId,
             enabled: asBoolean(args.enabled)
           });
           return { ok: true, action, job: created };

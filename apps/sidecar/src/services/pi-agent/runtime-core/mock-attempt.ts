@@ -1,4 +1,4 @@
-import { updateAgentSessionMeta } from "../../agent/agent-session-manager";
+import { updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState
@@ -159,7 +159,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
       cache_creation_input_tokens: 0
     }
   } as any);
-  updateAgentSessionMeta(runtime.sessionId, {
+  updateAgentThreadMeta(runtime.sessionId, {
     runtimeThreadId: session.threadId ?? session.sessionId
   });
   session.dispose();
@@ -323,7 +323,7 @@ export async function runRuntimeCoreMockCompactionAttempt(
       cache_creation_input_tokens: 0
     }
   } as any);
-  updateAgentSessionMeta(runtime.sessionId, {
+  updateAgentThreadMeta(runtime.sessionId, {
     runtimeThreadId: session.threadId ?? session.sessionId
   });
   session.dispose();
@@ -420,7 +420,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
         content: [{ type: "text", text: mockText }],
         timestamp: Date.now()
       });
-      updateAgentSessionMeta(runtime.sessionId, {
+      updateAgentThreadMeta(runtime.sessionId, {
         runtimeThreadId: session.threadId ?? session.sessionId
       });
       emit.onComplete();
@@ -454,7 +454,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
       content: [{ type: "text", text: mockText }],
       timestamp: Date.now()
     });
-    updateAgentSessionMeta(runtime.sessionId, {
+    updateAgentThreadMeta(runtime.sessionId, {
       runtimeThreadId: session.threadId ?? session.sessionId
     });
     emit.onComplete();

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getAgentSessionMessages, listAgentSessions } from "../agent/agent-session-manager";
+import { getAgentSessionMessages, listAgentSessions } from "../agent/agent-thread-manager";
 import { listAgentWorkspaces } from "../agent/agent-workspace-manager";
 import { getConversationMessages } from "../chat/conversation-manager";
 import {

@@ -2,14 +2,12 @@ import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
 import type { AgentAskUserQuestionRequest, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory/memory-policy";
-import { createSdkControlTools } from "./control/create-control-tools";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
 import { createSdkSessionTools } from "./session/create-session-tools";
 import { createSdkCronTools } from "./cron/create-cron-tools";
 import { resolveEnabledPiMemoryToolNames } from "./permissions/tool-policy";
 
 const BASE_PI_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
-const CONTROL_PI_TOOL_NAMES = ["AskUserQuestion"];
 const SESSION_TOOL_NAMES = [
   "agents_list",
   "sessions_list",
@@ -63,11 +61,6 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
       includeCitations: input.includeCitations
     })
     : [];
-  const controlTools = createSdkControlTools({
-    sessionId: input.threadId,
-    emitAskUserQuestion: input.emitAskUserQuestion,
-    includeAskUserQuestion: input.automationExecution !== true
-  });
   const sessionTools = createSdkSessionTools({
     threadId: input.threadId,
     workspaceId: input.workspaceId,
@@ -85,7 +78,7 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     workspaceId: input.workspaceId,
     sessionId: input.threadId
   });
-  const customTools = [...memoryTools, ...controlTools, ...sessionTools, ...cronTools];
+  const customTools = [...memoryTools, ...sessionTools, ...cronTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {
@@ -94,7 +87,6 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
       ...BASE_PI_TOOL_NAMES,
       ...SESSION_TOOL_NAMES,
       ...AUTOMATION_TOOL_NAMES,
-      ...(input.automationExecution === true ? [] : CONTROL_PI_TOOL_NAMES),
       ...customToolNames
     ]
   };
