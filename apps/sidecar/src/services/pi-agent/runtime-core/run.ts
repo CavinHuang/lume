@@ -30,7 +30,11 @@ import type {
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { buildDynamicContext, buildSystemPromptAppend } from "../../agent/agent-prompt-builder";
+import {
+  buildBuiltinAgents,
+  buildDynamicContext,
+  buildSystemPromptAppend
+} from "../../agent/agent-prompt-builder";
 import {
   resolveAgentDynamicContextInput,
   resolveAgentRuntimeRoutingTrace
@@ -389,6 +393,7 @@ export async function createRuntimeCoreSession(
       ? { resume: input.lumeSessionId }
       : {}),
     ...(buildMcpServers(input.workspaceSlug) ? { mcpServers: buildMcpServers(input.workspaceSlug) } : {}),
+    agents: buildBuiltinAgents(),
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
     additionalDirectories: input.workspaceSlug ? [input.cwd] : undefined,
@@ -428,4 +433,3 @@ export async function createRuntimeCoreSession(
     tools: toolset.tools
   };
 }
-

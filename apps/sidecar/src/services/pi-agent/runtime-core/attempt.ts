@@ -325,6 +325,10 @@ export async function runRuntimeCoreAttempt(
       await agent.setMaxThinkingTokens(4_096);
     } else if (thinkingLevel === "low") {
       await agent.setMaxThinkingTokens(1_024);
+    } else if (thinkingLevel === "xhigh") {
+      await agent.setMaxThinkingTokens(16_384);
+    } else if (thinkingLevel === "off") {
+      await agent.setMaxThinkingTokens(null);
     }
 
     const query = agent.query(input.userMessage, {
@@ -570,6 +574,5 @@ export async function stopAllPiAgents(): Promise<void> {
     activePiSessions.delete(sessionId);
   }
 }
-
 
 

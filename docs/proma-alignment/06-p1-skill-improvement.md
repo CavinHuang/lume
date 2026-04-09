@@ -1,5 +1,11 @@
 # P1-3: Skill 改进提示（skill_improvement_hint）
 
+## 状态
+
+✅ 已完成（代码已存在，2026-04-09 回写状态）
+
+`apps/sidecar/src/services/agent/agent-prompt-builder.ts` 的 `buildDynamicContext()` 已在检测到 `skill-creator` 启用时注入 `<skill_improvement_hint>`，实现了条件触发、信号驱动和先征得用户同意再改进 Skill 的逻辑。
+
 ## 差距分析
 
 ### Proma 的实现

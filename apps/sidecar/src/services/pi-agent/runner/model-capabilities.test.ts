@@ -3,15 +3,15 @@ import type { Model } from "./model-types";
 import { adaptModelCapabilities, resolveAgentThinkingLevel, supportsAnthropicThinking } from "./model-capabilities";
 
 describe("model-capabilities", () => {
-  test("bigmodel anthropic 兼容端点不应启用 anthropic thinking", () => {
-    expect(supportsAnthropicThinking("https://open.bigmodel.cn/api/anthropic")).toBeFalse();
+  test("anthropic 兼容端点应允许 thinking", () => {
+    expect(supportsAnthropicThinking("https://open.bigmodel.cn/api/anthropic")).toBeTrue();
   });
 
   test("官方 anthropic 端点保留 thinking", () => {
     expect(supportsAnthropicThinking("https://api.anthropic.com")).toBeTrue();
   });
 
-  test("非官方 anthropic 兼容端点应关闭 reasoning 与 thinkingLevel", () => {
+  test("anthropic 兼容端点应保留 reasoning 与 thinkingLevel", () => {
     const model: Model<"anthropic-messages"> = {
       id: "glm-5",
       name: "glm-5",
@@ -24,8 +24,8 @@ describe("model-capabilities", () => {
       contextWindow: 200000,
       maxTokens: 32768
     };
-    expect(adaptModelCapabilities(model, "https://open.bigmodel.cn/api/anthropic").reasoning).toBeFalse();
-    expect(resolveAgentThinkingLevel(model, "https://open.bigmodel.cn/api/anthropic")).toBeUndefined();
+    expect(adaptModelCapabilities(model, "https://open.bigmodel.cn/api/anthropic").reasoning).toBeTrue();
+    expect(resolveAgentThinkingLevel(model, "https://open.bigmodel.cn/api/anthropic")).toBe("medium");
   });
 
   test("官方端点应将 Agent 思考等级映射到 runtime thinking level", () => {

@@ -3,13 +3,10 @@ import type { FileEntry } from "@lume/shared";
 import { useAtomValue } from "jotai";
 import {
   ArrowRightLeft,
-  ChevronDown,
   ChevronRight,
   Edit3,
   Eye,
   ExternalLink,
-  FileText,
-  Folder,
   FolderOpen,
   FolderSearch,
   RefreshCw,
@@ -17,6 +14,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -509,24 +507,26 @@ function FileTreeItem({
         onContextMenu={(event) => onContextMenu(event, entry)}
       >
         {!isSearchResult && entry.isDirectory ? (
-          expanded ? (
-            <ChevronDown className="size-3.5 flex-shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 flex-shrink-0 text-muted-foreground" />
-          )
+          <ChevronRight
+            className={cn(
+              "size-3.5 flex-shrink-0 text-muted-foreground transition-transform duration-150",
+              expanded && "rotate-90"
+            )}
+          />
         ) : (
           <span className="w-3.5 flex-shrink-0" />
         )}
 
-        {entry.isDirectory ? (
-          expanded ? (
-            <FolderOpen className="size-4 flex-shrink-0 text-amber-500" />
-          ) : (
-            <Folder className="size-4 flex-shrink-0 text-amber-500" />
-          )
-        ) : (
-          <FileText className="size-4 flex-shrink-0 text-muted-foreground" />
-        )}
+        <FileTypeIcon
+          name={entry.name}
+          isDirectory={entry.isDirectory}
+          isOpen={expanded}
+          size={14}
+          className={cn(
+            "flex-shrink-0",
+            entry.isDirectory ? "text-amber-500" : "text-muted-foreground"
+          )}
+        />
 
         <span className="flex-1 truncate text-xs">{entry.name}</span>
       </div>

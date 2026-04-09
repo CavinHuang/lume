@@ -1,5 +1,4 @@
 import * as React from "react";
-import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,7 +20,11 @@ export function AgentStatusLine({
         className
       )}
     >
-      <Loader2 className="size-3.5 shrink-0 animate-spin text-primary/50" />
+      <span className="flex items-center gap-1.5">
+        <span className="statusline-dot size-1.5 rounded-full bg-primary/60" />
+        <span className="statusline-dot size-1.5 rounded-full bg-primary/45" />
+        <span className="statusline-dot size-1.5 rounded-full bg-primary/35" />
+      </span>
       <span className="truncate">{text}</span>
     </div>
   );

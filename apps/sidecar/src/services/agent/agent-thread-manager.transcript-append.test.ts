@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   appendAgentTranscriptMessage,
-  createAgentSession,
-  getAgentSessionMessages
+  createAgentThread,
+  getAgentThreadMessages
 } from "./agent-thread-manager";
 
 describe("agent-thread-manager transcript projection", () => {
@@ -31,27 +31,27 @@ describe("agent-thread-manager transcript projection", () => {
   });
 
   test("subagent announce 应直接写入 transcript 并保留派生 metadata", () => {
-    const session = createAgentSession("append transcript");
+    const session = createAgentThread("append transcript");
     appendAgentTranscriptMessage(session.id, {
       id: "announce-1",
       role: "assistant",
-      content: "子任务完成通知: 测试子任务 (completed)\nrunId: run-123\nchildSessionKey: child-456",
+      content: "子任务完成通知: 测试子任务 (completed)\nrunId: run-123\nchildThreadId: child-456",
       createdAt: 200,
       model: "subagent/announce"
     });
 
-    const messages = getAgentSessionMessages(session.id);
+    const messages = getAgentThreadMessages(session.id);
     expect(messages).toHaveLength(1);
     expect(messages[0]?.content).toContain("子任务完成通知");
     expect(messages[0]?.model).toBe("subagent/announce");
     expect(messages[0]?.metadata?.subagentAnnounce).toBe(true);
     expect(messages[0]?.metadata?.runId).toBe("run-123");
-    expect(messages[0]?.metadata?.childSessionId).toBe("child-456");
+    expect(messages[0]?.metadata?.childThreadId).toBe("child-456");
     expect(messages[0]?.metadata?.status).toBe("completed");
   });
 
   test("appendAgentTranscriptMessage 应保留 reasoning", () => {
-    const session = createAgentSession("append reasoning");
+    const session = createAgentThread("append reasoning");
     appendAgentTranscriptMessage(session.id, {
       id: "assistant-1",
       role: "assistant",
@@ -61,7 +61,7 @@ describe("agent-thread-manager transcript projection", () => {
       model: "zai/glm-5-turbo"
     });
 
-    const messages = getAgentSessionMessages(session.id);
+    const messages = getAgentThreadMessages(session.id);
     expect(messages).toHaveLength(1);
     expect(messages[0]?.content).toBe("正式回答");
     expect(messages[0]?.reasoning).toBe("先检查配置再回答");

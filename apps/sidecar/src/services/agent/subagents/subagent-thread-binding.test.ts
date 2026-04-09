@@ -2,16 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAgentSession } from "../../agent/agent-thread-manager";
+import { createAgentThread } from "../../agent/agent-thread-manager";
 import { resolveSubagentThreadBinding } from "./subagent-thread-binding";
 
 describe("subagent-thread-binding", () => {
-  test("应在请求 thread 时标记 threadBound 并解析 delivery session", () => {
+  test("应在请求 thread 时标记 threadBound 并解析 delivery thread", () => {
     const prev = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-subagent-thread-"));
     try {
-      const parent = createAgentSession("父会话");
-      const inbox = createAgentSession("收件会话");
+      const parent = createAgentThread("父线程");
+      const inbox = createAgentThread("收件线程");
       const resolved = resolveSubagentThreadBinding({
         parentThreadId: parent.id,
         childThreadId: "child-x",
@@ -30,7 +30,7 @@ describe("subagent-thread-binding", () => {
     }
   });
 
-  test("delivery session 不存在时应回退到 parent session", () => {
+  test("delivery thread 不存在时应回退到 parent thread", () => {
     const resolved = resolveSubagentThreadBinding({
       parentThreadId: "parent-a",
       childThreadId: "child-a",
@@ -41,4 +41,3 @@ describe("subagent-thread-binding", () => {
     expect(resolved.threadBound).toBe(false);
   });
 });
-

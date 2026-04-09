@@ -527,6 +527,18 @@ export class QueryEngine {
                 },
               }
             }
+            if (chunk.type === 'thinking_delta' && chunk.thinking) {
+              yield {
+                type: 'stream_event',
+                event: {
+                  type: 'content_block_delta',
+                  index: 0,
+                  delta: { type: 'thinking_delta', thinking: chunk.thinking },
+                },
+                parent_tool_use_id: null,
+                session_id: this.config.sessionId,
+              }
+            }
           }
         } else {
           const retryEvents: SDKMessage[] = []

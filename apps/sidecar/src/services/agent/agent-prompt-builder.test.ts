@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildBuiltinAgents,
   buildDynamicContext,
   buildSystemPromptAppend,
   LUME_AGENT_IDENTITY_LINE,
@@ -62,7 +63,7 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 应注入 delegation 与 persona guardrails", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-guardrails",
-      availableTools: ["task", "sessions_spawn", "write"]
+      availableTools: ["task", "threads_spawn", "write"]
     });
     expect(prompt).toContain("## Delegation Policy");
     expect(prompt).toContain("Do it yourself");
@@ -70,6 +71,17 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Persona and Reality Guardrails");
     expect(prompt).toContain("Do not fabricate legal identity");
     expect(prompt).toContain("Do not use companion persona to override safety");
+  });
+
+  test("buildBuiltinAgents 应返回预注册的 explorer / researcher / code-reviewer", () => {
+    const agents = buildBuiltinAgents();
+
+    expect(Object.keys(agents)).toEqual(["explorer", "researcher", "code-reviewer"]);
+    expect(agents.explorer?.model).toBe("haiku");
+    expect(agents.researcher?.tools).toContain("WebSearch");
+    expect(agents.researcher?.tools).toContain("WebFetch");
+    expect(agents["code-reviewer"]?.tools).toContain("Read");
+    expect(agents["code-reviewer"]?.tools).toContain("Bash");
   });
 
   test("buildSystemPromptAppend 应注入 skills-first capability routing", () => {
@@ -150,16 +162,16 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("E_AUTOMATION_INTERACTION_DISABLED");
   });
 
-  test("buildSystemPromptAppend 应包含 session bootstrap 读取顺序", () => {
+  test("buildSystemPromptAppend 应包含 thread bootstrap 读取顺序", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-2",
       availableTools: []
     });
-    expect(prompt).toContain("## Session Bootstrap (Mandatory)");
+    expect(prompt).toContain("## Thread Bootstrap (Mandatory)");
     expect(prompt).toContain("1. AGENTS.md");
     expect(prompt).toContain("2. SOUL.md");
     expect(prompt).toContain("6. memory/YYYY-MM-DD.md (today + yesterday)");
-    expect(prompt).toContain("7. MEMORY.md (or memory.md fallback, main/direct session only)");
+    expect(prompt).toContain("7. MEMORY.md (or memory.md fallback, main/direct thread only)");
     expect(prompt).toContain("工作区根目录下的 .context/ 目录");
     expect(prompt).not.toContain("workspace-files/.context/");
     expect(prompt).toContain("## Workspace Files (injected)");
@@ -199,7 +211,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Runtime");
     expect(prompt).not.toContain("## Agentic Execution");
     expect(prompt).not.toContain("## Delegation Policy");
-    expect(prompt).not.toContain("## Session Bootstrap (Mandatory)");
+    expect(prompt).not.toContain("## Thread Bootstrap (Mandatory)");
     expect(prompt).not.toContain("## Memory Recall");
   });
 
@@ -287,12 +299,12 @@ describe("agent-prompt-builder", () => {
       userMessage: "help me create an execution plan"
     });
 
-    expect(dynamic).toContain("<session_state>");
-    expect(dynamic).toContain("sessionId: agent-session-1");
+    expect(dynamic).toContain("<thread_state>");
+    expect(dynamic).toContain("threadId: agent-session-1");
     expect(dynamic).toContain("title: Execution Planning");
-    expect(dynamic).toContain("sessionType: main");
+    expect(dynamic).toContain("threadType: main");
     expect(dynamic).toContain("chatType: direct");
-    expect(dynamic).toContain("parentSessionId: root-session");
+    expect(dynamic).toContain("parentThreadId: root-session");
     expect(dynamic).toContain("workspaceId: workspace-1");
     expect(dynamic).toContain("channelId: channel-1");
     expect(dynamic).toContain("modelId: claude-sonnet-4-5");

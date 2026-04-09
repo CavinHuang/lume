@@ -11,6 +11,7 @@ import type {
   LLMProvider,
   CreateMessageParams,
   CreateMessageResponse,
+  CreateMessageStreamEvent,
   NormalizedMessageParam,
   NormalizedContentBlock,
   NormalizedTool,
@@ -53,6 +54,8 @@ interface OpenAIChatResponse {
     message: {
       role: 'assistant'
       content: string | null
+      reasoning_content?: string | null
+      reasoning?: string | null
       tool_calls?: OpenAIToolCall[]
     }
     finish_reason: 'stop' | 'length' | 'tool_calls' | 'content_filter' | string
@@ -61,6 +64,32 @@ interface OpenAIChatResponse {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
+  }
+}
+
+interface OpenAIStreamChunk {
+  choices?: Array<{
+    index: number
+    delta?: {
+      content?: string | null
+      reasoning_content?: string | null
+      reasoning?: string | null
+      tool_calls?: Array<{
+        index?: number
+        id?: string
+        type?: 'function'
+        function?: {
+          name?: string
+          arguments?: string
+        }
+      }>
+    }
+    finish_reason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | string | null
+  }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
   }
 }
 
@@ -144,6 +173,227 @@ export class OpenAIProvider implements LLMProvider {
 
     // Convert response back to normalized format
     return this.convertResponse(data)
+  }
+
+  async *createMessageStream(
+    params: CreateMessageParams,
+  ): AsyncGenerator<CreateMessageStreamEvent, CreateMessageResponse> {
+    const messages = this.convertMessages(params.system, params.messages)
+    const tools = params.tools ? this.convertTools(params.tools) : undefined
+
+    const body: Record<string, any> = {
+      model: params.model,
+      max_tokens: params.maxTokens,
+      messages,
+      stream: true,
+    }
+
+    if (params.effort) {
+      body.reasoning_effort = params.effort
+    }
+
+    if (tools && tools.length > 0) {
+      body.tools = tools
+    }
+
+    const outputFormat = params.outputFormat ||
+      (params.jsonSchema
+        ? { type: 'json_schema' as const, schema: params.jsonSchema }
+        : undefined)
+    if (outputFormat?.type === 'json_schema') {
+      body.response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: 'structured_output',
+          schema: outputFormat.schema,
+        },
+      }
+    }
+
+    const response = await fetch(`${this.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '')
+      const err: any = new Error(
+        `OpenAI API error: ${response.status} ${response.statusText}: ${errBody}`,
+      )
+      err.status = response.status
+      throw err
+    }
+
+    if (!response.body) {
+      throw new Error('OpenAI API returned no response body for streaming request')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finishReason: string | null = null
+    let promptTokens = 0
+    let completionTokens = 0
+    const textParts: string[] = []
+    const reasoningParts: string[] = []
+    const toolCalls = new Map<number, OpenAIToolCall>()
+
+    const handleChunk = async (
+      chunk: OpenAIStreamChunk,
+    ): Promise<Array<CreateMessageStreamEvent>> => {
+      const events: Array<CreateMessageStreamEvent> = []
+      if (chunk.usage) {
+        promptTokens = chunk.usage.prompt_tokens || promptTokens
+        completionTokens = chunk.usage.completion_tokens || completionTokens
+      }
+
+      for (const choice of chunk.choices ?? []) {
+        const delta = choice.delta
+        if (typeof choice.finish_reason === 'string' && choice.finish_reason.length > 0) {
+          finishReason = choice.finish_reason
+        }
+        if (typeof delta?.content === 'string' && delta.content.length > 0) {
+          textParts.push(delta.content)
+          events.push({
+            type: 'text_delta',
+            text: delta.content,
+          })
+        }
+        const reasoningDelta = typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0
+          ? delta.reasoning_content
+          : typeof delta?.reasoning === 'string' && delta.reasoning.length > 0
+            ? delta.reasoning
+            : null
+        if (reasoningDelta) {
+          reasoningParts.push(reasoningDelta)
+          events.push({
+            type: 'thinking_delta',
+            thinking: reasoningDelta,
+          })
+        }
+
+        for (const toolCall of delta?.tool_calls ?? []) {
+          const index = typeof toolCall.index === 'number' ? toolCall.index : 0
+          const current = toolCalls.get(index) ?? {
+            id: toolCall.id || `tool_call_${index}`,
+            type: 'function',
+            function: {
+              name: '',
+              arguments: '',
+            },
+          }
+          if (toolCall.id) {
+            current.id = toolCall.id
+          }
+          if (toolCall.function?.name) {
+            current.function.name = toolCall.function.name
+          }
+          if (toolCall.function?.arguments) {
+            current.function.arguments += toolCall.function.arguments
+          }
+          toolCalls.set(index, current)
+        }
+      }
+
+      return events
+    }
+
+    const processBuffer = async (
+      flush = false,
+    ): Promise<Array<CreateMessageStreamEvent>> => {
+      const events: Array<CreateMessageStreamEvent> = []
+      while (true) {
+        const separatorIndex = buffer.indexOf('\n\n')
+        if (separatorIndex === -1) {
+          break
+        }
+
+        const frame = buffer.slice(0, separatorIndex)
+        buffer = buffer.slice(separatorIndex + 2)
+
+        for (const line of frame.split('\n')) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data:')) continue
+          const data = trimmed.slice(5).trim()
+          if (!data) continue
+          if (data === '[DONE]') {
+            continue
+          }
+          const parsed = JSON.parse(data) as OpenAIStreamChunk
+          events.push(...await handleChunk(parsed))
+        }
+      }
+
+      if (flush && buffer.trim().length > 0) {
+        const remaining = buffer
+        buffer = ''
+        for (const line of remaining.split('\n')) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data:')) continue
+          const data = trimmed.slice(5).trim()
+          if (!data || data === '[DONE]') continue
+          const parsed = JSON.parse(data) as OpenAIStreamChunk
+          events.push(...await handleChunk(parsed))
+        }
+      }
+
+      return events
+    }
+
+    for await (const chunk of response.body) {
+      buffer += decoder.decode(chunk, { stream: true })
+      const events = await processBuffer(false)
+      for (const event of events) {
+        yield event
+      }
+    }
+
+    buffer += decoder.decode()
+    const tailEvents = await processBuffer(true)
+    for (const event of tailEvents) {
+      yield event
+        }
+
+        const content: NormalizedResponseBlock[] = []
+        const reasoning = reasoningParts.join('')
+        if (reasoning) {
+            content.push({ type: 'thinking', thinking: reasoning })
+        }
+        const text = textParts.join('')
+        if (text) {
+            content.push({ type: 'text', text })
+        }
+
+    for (const toolCall of [...toolCalls.entries()].sort((a, b) => a[0] - b[0]).map((entry) => entry[1])) {
+      let input: any
+      try {
+        input = JSON.parse(toolCall.function.arguments)
+      } catch {
+        input = toolCall.function.arguments
+      }
+      content.push({
+        type: 'tool_use',
+        id: toolCall.id,
+        name: toolCall.function.name,
+        input,
+      })
+    }
+
+    if (content.length === 0) {
+      content.push({ type: 'text', text: '' })
+    }
+
+    return {
+      content,
+      stopReason: this.mapFinishReason(finishReason || 'stop'),
+      usage: {
+        input_tokens: promptTokens,
+        output_tokens: completionTokens,
+      },
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -283,6 +533,14 @@ export class OpenAIProvider implements LLMProvider {
     }
 
     const content: NormalizedResponseBlock[] = []
+    const reasoning = typeof choice.message.reasoning_content === 'string' && choice.message.reasoning_content.length > 0
+      ? choice.message.reasoning_content
+      : typeof choice.message.reasoning === 'string' && choice.message.reasoning.length > 0
+        ? choice.message.reasoning
+        : null
+    if (reasoning) {
+      content.push({ type: 'thinking', thinking: reasoning })
+    }
 
     // Add text content
     if (choice.message.content) {

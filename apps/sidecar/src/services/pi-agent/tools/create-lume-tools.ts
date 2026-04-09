@@ -8,14 +8,14 @@ import { createSdkCronTools } from "./cron/create-cron-tools";
 import { resolveEnabledPiMemoryToolNames } from "./permissions/tool-policy";
 
 const BASE_PI_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
-const SESSION_TOOL_NAMES = [
+const THREAD_TOOL_NAMES = [
   "agents_list",
-  "sessions_list",
-  "sessions_history",
-  "sessions_send",
-  "sessions_delete",
-  "sessions_spawn",
-  "session_status",
+  "threads_list",
+  "threads_history",
+  "threads_send",
+  "threads_delete",
+  "threads_spawn",
+  "thread_status",
   "subagents_list",
   "subagents_kill",
   "subagents_send",
@@ -85,7 +85,7 @@ export function createLumePiTools(input: CreateLumePiToolsInput): CreateLumePiTo
     customTools,
     availableToolNames: [
       ...BASE_PI_TOOL_NAMES,
-      ...SESSION_TOOL_NAMES,
+      ...THREAD_TOOL_NAMES,
       ...AUTOMATION_TOOL_NAMES,
       ...customToolNames
     ]

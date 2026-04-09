@@ -149,6 +149,39 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
     return next;
   }
 
+  if (message.type === "tool_result") {
+    const output = message.result.output as unknown;
+    const resultText = typeof output === "string"
+      ? output
+      : Array.isArray(output)
+        ? output
+            .filter((item): item is { type: string; text?: string } => !!item && typeof item === "object")
+            .filter((item) => item.type === "text" && typeof item.text === "string")
+            .map((item) => item.text ?? "")
+            .join("\n")
+        : (() => {
+            try {
+              return JSON.stringify(output, null, 2);
+            } catch {
+              return String(output ?? "");
+            }
+          })();
+
+    next.toolActivities = next.toolActivities.map((activity) =>
+      activity.toolUseId === message.result.tool_use_id
+        ? {
+            ...activity,
+            toolName: message.result.tool_name || activity.toolName,
+            done: true,
+            isError: false,
+            result: resultText,
+            elapsedMs: activity.startedAt ? Math.max(0, now - activity.startedAt) : activity.elapsedMs,
+          }
+        : activity
+    );
+    return next;
+  }
+
   if (message.type === "system") {
     if (message.subtype === "task_started") {
       next.toolActivities = upsertToolActivity(next.toolActivities, {

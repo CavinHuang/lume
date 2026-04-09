@@ -14,6 +14,8 @@ export function Tool({ className, ...props }: ToolProps): React.ReactElement {
     <Collapsible
       className={cn(
         "group/tool w-full rounded-xl border border-white/10 bg-[#2b3038]/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+        "transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out",
+        "data-[state=open]:border-white/15 data-[state=open]:bg-[#313740]/90 data-[state=open]:shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_24px_rgba(0,0,0,0.18)]",
         className
       )}
       {...props}
@@ -43,6 +45,8 @@ export function ToolHeader({
     <CollapsibleTrigger
       className={cn(
         "flex w-full items-center gap-2 px-3.5 py-3 text-left text-[13px]",
+        "transition-colors duration-200 ease-out",
+        "group-data-[state=open]/tool:bg-white/[0.02]",
         "disabled:cursor-default disabled:opacity-100",
         className
       )}
@@ -64,7 +68,8 @@ export function ToolContent({ className, ...props }: ToolContentProps): React.Re
   return (
     <CollapsibleContent
       className={cn(
-        "overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down",
+        "overflow-hidden will-change-[height,opacity,transform]",
+        "data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down",
         className
       )}
       {...props}

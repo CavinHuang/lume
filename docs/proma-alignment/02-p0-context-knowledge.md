@@ -1,5 +1,11 @@
 # P0-2: .context 目录知识管理体系
 
+## 状态
+
+✅ 已完成（代码已存在，2026-04-09 回写状态）
+
+`apps/sidecar/src/services/agent/agent-prompt-builder.ts` 已包含“文档输出与知识管理”章节、`AGENTS.md` 维护规则、`.context/note.md` / `.context/todo.md` / `.context/plan/` 指引，以及 Thread Bootstrap 中对线程级和工作区级 `.context/` 的检查说明。
+
 ## 差距分析
 
 ### Proma 的实现

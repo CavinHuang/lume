@@ -144,7 +144,9 @@ export function ChatMessageItem({
 
               {message.content ? (
                 <>
-                  <MessageResponse>{message.content}</MessageResponse>
+                  <MessageResponse streaming={isStreaming && isLastAssistant && !message.stopped}>
+                    {message.content}
+                  </MessageResponse>
                   {isStreaming && isLastAssistant && !message.stopped ? <StreamingIndicator /> : null}
                 </>
               ) : null}

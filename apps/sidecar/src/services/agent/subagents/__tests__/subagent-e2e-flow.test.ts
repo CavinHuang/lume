@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@lume/agent-sdk";
-import { createAgentSession } from "../../../agent/agent-thread-manager";
+import { createAgentThread } from "../../../agent/agent-thread-manager";
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
@@ -93,7 +93,7 @@ describe("subagent-e2e-flow", () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-subagent-e2e-"));
     resetSubagentRunRegistryForTest();
 
-    const parent = createAgentSession("父会话", "channel-current");
+    const parent = createAgentThread("父线程", "channel-current");
     createOrResumeRuntimeCoreSessionManager(process.cwd(), parent.id).appendMessage({
       role: "assistant",
       provider: "unknown",
@@ -115,7 +115,7 @@ describe("subagent-e2e-flow", () => {
     const tools = createSessionTools({
       threadId: parent.id
     });
-    const spawnTool = resolveTool(tools, "sessions_spawn");
+    const spawnTool = resolveTool(tools, "threads_spawn");
 
     const [okResult, errResult] = await Promise.all([
       callTool(spawnTool, {

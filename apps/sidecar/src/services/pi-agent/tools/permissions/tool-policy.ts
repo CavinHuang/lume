@@ -22,6 +22,7 @@ const log = createLogger("pi-tool-policy");
 
 // ===== 配置文件缓存 =====
 interface PolicyConfigCache {
+  path: string;
   config: AgentRuntimeToolPolicyConfig;
   mtimeMs: number;
   checkedAt: number;
@@ -46,12 +47,12 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:web": ["web_search", "web_fetch"],
   "group:sessions": [
     "agents_list",
-    "sessions_list",
-    "sessions_history",
-    "sessions_send",
-    "sessions_delete",
-    "sessions_spawn",
-    "session_status",
+    "threads_list",
+    "threads_history",
+    "threads_send",
+    "threads_delete",
+    "threads_spawn",
+    "thread_status",
     "subagents_list",
     "subagents_kill",
     "subagents_send",
@@ -63,12 +64,12 @@ const TOOL_GROUPS: Record<string, string[]> = {
 const DEFAULT_SUBAGENT_POLICY: ToolPolicy = {
   deny: [
     "agents_list",
-    "sessions_list",
-    "sessions_history",
-    "sessions_send",
-    "sessions_delete",
-    "sessions_spawn",
-    "session_status",
+    "threads_list",
+    "threads_history",
+    "threads_send",
+    "threads_delete",
+    "threads_spawn",
+    "thread_status",
     "subagents_list",
     "subagents_kill",
     "subagents_send",
@@ -177,7 +178,7 @@ function readRuntimeToolPolicyConfig(): AgentRuntimeToolPolicyConfig {
   const now = Date.now();
 
   // 缓存命中：距上次检查不足 1 秒，直接返回
-  if (_policyConfigCache && now - _policyConfigCache.checkedAt < CACHE_RECHECK_INTERVAL_MS) {
+  if (_policyConfigCache && _policyConfigCache.path === path && now - _policyConfigCache.checkedAt < CACHE_RECHECK_INTERVAL_MS) {
     return _policyConfigCache.config;
   }
 
@@ -190,14 +191,14 @@ function readRuntimeToolPolicyConfig(): AgentRuntimeToolPolicyConfig {
         error: error instanceof Error ? error.message : String(error)
       });
     }
-    _policyConfigCache = { config, mtimeMs: 0, checkedAt: now };
+    _policyConfigCache = { path, config, mtimeMs: 0, checkedAt: now };
     return config;
   }
 
   try {
     const mtimeMs = statSync(path).mtimeMs;
     // mtime 未变化，更新检查时间戳后直接返回缓存
-    if (_policyConfigCache && mtimeMs === _policyConfigCache.mtimeMs) {
+    if (_policyConfigCache && _policyConfigCache.path === path && mtimeMs === _policyConfigCache.mtimeMs) {
       _policyConfigCache.checkedAt = now;
       return _policyConfigCache.config;
     }
@@ -205,7 +206,7 @@ function readRuntimeToolPolicyConfig(): AgentRuntimeToolPolicyConfig {
     const config = (!parsed || typeof parsed !== "object")
       ? DEFAULT_AGENT_TOOL_POLICY_CONFIG
       : normalizeRuntimeToolPolicyConfig(parsed);
-    _policyConfigCache = { config, mtimeMs, checkedAt: now };
+    _policyConfigCache = { path, config, mtimeMs, checkedAt: now };
     return config;
   } catch (error) {
     log.warn("读取 Agent tool policy 配置失败，使用默认策略", {
@@ -256,7 +257,7 @@ export function saveAgentRuntimeToolPolicyConfig(
     writeFileSync(path, JSON.stringify(normalized, null, 2), "utf-8");
     // 写入成功后立即更新缓存，避免下次调用再读盘
     const mtimeMs = statSync(path).mtimeMs;
-    _policyConfigCache = { config: normalized, mtimeMs, checkedAt: Date.now() };
+    _policyConfigCache = { path, config: normalized, mtimeMs, checkedAt: Date.now() };
   } catch (error) {
     log.error("保存 Agent tool policy 配置失败", {
       error: error instanceof Error ? error.message : String(error)

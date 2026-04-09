@@ -1,6 +1,6 @@
 // TODO: 评估简化版本管理复杂度（当前 20+ 函数），与 UX 需求对齐
 import { randomUUID } from "node:crypto";
-import type { AgentMessage } from "@lume/shared";
+import type { AgentMessage, SDKMessage } from "@lume/shared";
 import {
   readAgentMessageVersionStore,
   type AgentMessageVersionGroupRecord,
@@ -15,6 +15,7 @@ interface CreateUserMessageVersionInput {
   createdAt: number;
   metadata?: Record<string, unknown>;
   sourceMessageId?: string;
+  sdkMessages?: SDKMessage[];
 }
 
 interface CreateUserMessageVersionResult {
@@ -337,7 +338,8 @@ export function createUserMessageVersion(input: CreateUserMessageVersionInput): 
       isLatestVersion: true,
       createdAt: input.createdAt,
       content: input.content,
-      metadata: input.metadata
+      metadata: input.metadata,
+      sdkMessages: input.sdkMessages
     };
     appendGroup(store, group, record);
     persistStore(store);
@@ -378,7 +380,8 @@ export function createUserMessageVersion(input: CreateUserMessageVersionInput): 
     isLatestVersion: true,
     createdAt: input.createdAt,
     content: input.content,
-    metadata: input.metadata
+    metadata: input.metadata,
+    sdkMessages: input.sdkMessages
   };
   store.messages.push(nextRecord);
   group.latestMessageId = messageId;

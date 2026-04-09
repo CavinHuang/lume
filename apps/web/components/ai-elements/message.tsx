@@ -164,16 +164,18 @@ const streamdownComponents = {
 interface MessageResponseProps {
   children: string;
   className?: string;
+  streaming?: boolean;
 }
 
 export const MessageResponse = React.memo(
-  function MessageResponse({ children, className }: MessageResponseProps): React.ReactElement {
+  function MessageResponse({ children, className, streaming = false }: MessageResponseProps): React.ReactElement {
     return (
       <div
         className={cn(
           "prose dark:prose-invert max-w-none text-[14px]",
           "prose-p:my-1.5 prose-p:leading-[1.6] prose-li:leading-[1.6] prose-pre:my-0 prose-headings:my-2",
           "[&_.code-block-wrapper+.code-block-wrapper]:mt-4 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          streaming && "streaming-response-shell pr-3",
           className
         )}
       >

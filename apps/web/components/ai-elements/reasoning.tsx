@@ -23,7 +23,7 @@ function useReasoning(): ReasoningContextValue {
   return ctx;
 }
 
-const AUTO_CLOSE_DELAY = 1000;
+const AUTO_CLOSE_DELAY = 2200;
 const MS_IN_S = 1000;
 
 interface ReasoningProps extends React.ComponentProps<typeof Collapsible> {
@@ -55,20 +55,27 @@ export const Reasoning = React.memo(function Reasoning({
   const [duration, setDuration] = React.useState<number | undefined>(durationProp);
   const [hasAutoClosed, setHasAutoClosed] = React.useState(false);
   const [startTime, setStartTime] = React.useState<number | null>(null);
+  const wasStreamingRef = React.useRef(isStreaming);
 
   React.useEffect(() => {
     if (isStreaming) {
       if (startTime === null) {
         setStartTime(Date.now());
       }
+      setHasAutoClosed(false);
+      if (!isOpen) {
+        setIsOpen(true);
+      }
     } else if (startTime !== null) {
       setDuration(Math.ceil((Date.now() - startTime) / MS_IN_S));
       setStartTime(null);
     }
-  }, [isStreaming, startTime]);
+  }, [isOpen, isStreaming, setIsOpen, startTime]);
 
   React.useEffect(() => {
-    if (defaultOpen && !isStreaming && isOpen && !hasAutoClosed) {
+    wasStreamingRef.current = isStreaming;
+    const hasFinishedThinking = durationProp !== undefined || duration !== undefined || startTime === null;
+    if (defaultOpen && !isStreaming && isOpen && !hasAutoClosed && hasFinishedThinking) {
       const timer = setTimeout(() => {
         setIsOpen(false);
         setHasAutoClosed(true);
@@ -76,7 +83,7 @@ export const Reasoning = React.memo(function Reasoning({
       return () => clearTimeout(timer);
     }
     return undefined;
-  }, [defaultOpen, hasAutoClosed, isOpen, isStreaming, setIsOpen]);
+  }, [defaultOpen, duration, durationProp, hasAutoClosed, isOpen, isStreaming, setIsOpen, startTime]);
 
   React.useEffect(() => {
     if (durationProp !== undefined) {
@@ -113,11 +120,7 @@ interface ReasoningTriggerProps extends React.ComponentProps<typeof CollapsibleT
 
 function defaultThinkingMessage(isStreaming: boolean, duration?: number, elapsedSeconds?: number): React.ReactNode {
   if (isStreaming) {
-    // 实时计时：思考中... 1s / 2s / ...
-    if (elapsedSeconds && elapsedSeconds > 0) {
-      return <span>思考中... {elapsedSeconds}s</span>;
-    }
-    return <span className="animate-pulse">思考中...</span>;
+    return <span>思考中... {elapsedSeconds ?? 0}s</span>;
   }
   if (duration !== undefined && duration > 0) {
     return <p>思考了 {duration} 秒</p>;
@@ -134,9 +137,10 @@ export const ReasoningTrigger = React.memo(function ReasoningTrigger({
   const { isStreaming, isOpen, duration, elapsedSeconds } = useReasoning();
 
   return (
-    <CollapsibleTrigger
+      <CollapsibleTrigger
       className={cn(
-        "flex w-full items-center gap-2 text-sm text-gray-400 transition-colors hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300",
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-400 transition-all duration-200 hover:bg-muted/25 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300",
+        isStreaming && "reasoning-stream-shell pr-3",
         className
       )}
       {...props}
@@ -144,8 +148,10 @@ export const ReasoningTrigger = React.memo(function ReasoningTrigger({
       {children ?? (
         <>
           <Brain className="size-4" />
-          {getThinkingMessage(isStreaming, duration, elapsedSeconds)}
-          <ChevronDown className={cn("size-4 transition-transform", isOpen ? "rotate-180" : "rotate-0")} />
+          <span className="text-[12px] font-medium tracking-[0.01em]">
+            {getThinkingMessage(isStreaming, duration, elapsedSeconds)}
+          </span>
+          <ChevronDown className={cn("size-4 transition-transform duration-200 ease-out", isOpen ? "rotate-180" : "rotate-0")} />
         </>
       )}
     </CollapsibleTrigger>
@@ -161,19 +167,23 @@ export const ReasoningContent = React.memo(
     return (
       <CollapsibleContent
         className={cn(
-          "mt-4 text-sm text-gray-400 dark:text-gray-500 outline-none",
+          "mt-3 overflow-hidden text-sm text-gray-400 dark:text-gray-500 outline-none",
           "data-[state=closed]:animate-out data-[state=open]:animate-in",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-          "data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2",
+          "data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1",
+          "data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down",
           className
         )}
         {...props}
       >
         <div
           className={cn(
-            "prose prose-sm dark:prose-invert max-w-none prose-p:my-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-            "prose-p:text-gray-400 prose-li:text-gray-400 prose-strong:text-gray-400 prose-code:text-gray-400 prose-headings:text-gray-400 prose-a:text-gray-500 hover:prose-a:text-gray-600",
-            "dark:prose-p:text-gray-500 dark:prose-li:text-gray-500 dark:prose-strong:text-gray-500 dark:prose-code:text-gray-500 dark:prose-headings:text-gray-500 dark:prose-a:text-gray-400 dark:hover:prose-a:text-gray-300"
+            "rounded-lg border border-white/6 bg-white/[0.02] px-3 py-2.5",
+            "prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+            "prose-p:my-1 prose-p:text-[12px] prose-p:leading-[1.65]",
+            "prose-li:text-[12px] prose-li:leading-[1.65] prose-code:text-[11px]",
+            "prose-p:text-gray-500 prose-li:text-gray-500 prose-strong:text-gray-500 prose-code:text-gray-500 prose-headings:text-gray-500 prose-a:text-gray-500 hover:prose-a:text-gray-600",
+            "dark:prose-p:text-gray-500/90 dark:prose-li:text-gray-500/90 dark:prose-strong:text-gray-500/90 dark:prose-code:text-gray-500/90 dark:prose-headings:text-gray-500/90 dark:prose-a:text-gray-400 dark:hover:prose-a:text-gray-300"
           )}
         >
           <Streamdown

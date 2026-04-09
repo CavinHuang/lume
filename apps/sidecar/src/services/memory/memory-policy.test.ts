@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyMemoryToolPolicy,
-  deriveChatTypeFromSessionKey,
-  deriveChatTypeFromSessionType,
+  deriveChatTypeFromThreadKey,
+  deriveChatTypeFromThreadType,
   normalizeMemoryChatType,
   parseMemoryRuntimeConfigPayload,
   shouldIncludeCitations
@@ -56,17 +56,17 @@ describe("memory-policy", () => {
   });
 
   test("从 session key 解析 chat type", () => {
-    expect(deriveChatTypeFromSessionKey("agent:main:discord:group:c123")).toBe("group");
-    expect(deriveChatTypeFromSessionKey("agent:main:slack:channel:c123")).toBe("channel");
-    expect(deriveChatTypeFromSessionKey("session-uuid")).toBe("direct");
+    expect(deriveChatTypeFromThreadKey("agent:main:discord:group:c123")).toBe("group");
+    expect(deriveChatTypeFromThreadKey("agent:main:slack:channel:c123")).toBe("channel");
+    expect(deriveChatTypeFromThreadKey("thread-uuid")).toBe("direct");
   });
 
-  test("从 sessionType 解析 chat type", () => {
-    expect(deriveChatTypeFromSessionType("main")).toBe("direct");
-    expect(deriveChatTypeFromSessionType("subagent")).toBe("direct");
-    expect(deriveChatTypeFromSessionType("group")).toBe("group");
-    expect(deriveChatTypeFromSessionType("channel")).toBe("channel");
-    expect(deriveChatTypeFromSessionType("other")).toBeUndefined();
+  test("从 threadType 解析 chat type", () => {
+    expect(deriveChatTypeFromThreadType("main")).toBe("direct");
+    expect(deriveChatTypeFromThreadType("subagent")).toBe("direct");
+    expect(deriveChatTypeFromThreadType("group")).toBe("group");
+    expect(deriveChatTypeFromThreadType("channel")).toBe("channel");
+    expect(deriveChatTypeFromThreadType("other")).toBeUndefined();
   });
 
   test("normalizeMemoryChatType 仅接受 direct/group/channel", () => {

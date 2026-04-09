@@ -11,16 +11,75 @@ import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-man
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
 import type { MemoryCitationsMode } from "../memory/memory-policy";
 import { canonicalizeAgentToolName } from "@lume/shared";
+import type { AgentDefinition } from "@lume/agent-sdk";
 import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
 } from "../system/workspace-bootstrap-service";
 import { isHeartbeatContentEffectivelyEmpty } from "../runtime/heartbeat-service";
-import type { SessionType } from "@lume/shared";
+import type { SessionType as ThreadType } from "@lume/shared";
 
 export const LUME_AGENT_IDENTITY_LINE =
   "You are Lume, a persistent counterpart running inside this workspace.";
 export type SystemPromptMode = "full" | "minimal" | "none";
+
+/**
+ * 内置 SubAgent 定义。
+ * 这些定义会在 runtime session 创建时注册到 SDK 的 Agent 工具中，
+ * 让主线程可以直接按名称调用 explorer / researcher / code-reviewer。
+ */
+export function buildBuiltinAgents(): Record<string, AgentDefinition> {
+  return {
+    explorer: {
+      description: "代码库探索子代理。快速搜索文件、理解项目结构、收集相关上下文，适合在修改前先摸清代码。",
+      prompt: `你是一个高效的代码库探索员。你的职责是快速搜索和收集信息，然后返回结构化结果。
+
+工作方式：
+- 优先并行使用 Glob、Grep、Read 与 Bash 收集上下文
+- 返回信息时包含具体文件路径、关键函数/类型、依赖关系与相关模式
+- 保持简洁，只输出与当前任务直接相关的信息
+- 不直接做代码修改，除非上级任务明确要求你执行修改
+
+输出应尽量结构化，方便主线程直接整合。`,
+      tools: ["Read", "Glob", "Grep", "Bash"],
+      model: "haiku"
+    },
+    researcher: {
+      description: "技术调研子代理。用于方案对比、依赖评估和架构分析，输出结构化结论与风险提示。",
+      prompt: `你是一个技术调研员。你的职责是围绕特定技术问题收集信息并输出结构化分析。
+
+输出格式：
+- 问题概述：一句话说明调研目标
+- 方案对比：用清晰结构比较候选方案的优劣
+- 推荐方案：明确给出推荐及理由
+- 风险提示：说明潜在问题、边界条件和实施注意事项
+- 参考来源：列出代码中的相关实现或外部资料线索
+
+保持客观，不要空泛表态。`,
+      tools: ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"],
+      model: "haiku"
+    },
+    "code-reviewer": {
+      description: "代码审查子代理。用于在变更完成后复核逻辑、边界、命名与规范一致性。",
+      prompt: `你是一个专注于代码质量的审查员。你的职责是审查变更结果并指出真实风险。
+
+审查重点：
+- 逻辑错误、边界条件与潜在回归
+- 命名是否清晰、一致、贴近领域语义
+- 是否存在重复实现、额外复杂度或可复用遗漏
+- 是否符合项目规范与已知架构边界
+
+输出要求：
+- 按严重程度组织结果
+- 每条意见尽量附带具体文件路径和定位信息
+- 若未发现问题，直接说明“审查通过，无需修改”
+
+保持客观、具体，不要泛泛而谈。`,
+      tools: ["Read", "Glob", "Grep", "Bash"],
+      model: "haiku"
+    }
+  };
+}
 
 const CLAUDE_PLAN_MODE_SECTION = `## Planning Protocol
 
@@ -72,7 +131,7 @@ Agent 工具支持 \`model\` 参数（可选值：\`sonnet\` / \`opus\` / \`haik
 
 ### 推荐的 SubAgent 角色
 
-以下是常用的子代理角色模式，可通过 Agent 工具直接创建（指定 description + prompt + model）：
+系统已预定义以下内置子代理，可直接通过 Agent 工具按名称调用：
 
 - **explorer**（haiku）：代码库探索。快速搜索文件、理解项目结构、收集相关上下文。动手修改前优先调用
 - **researcher**（haiku）：技术调研。方案对比、依赖评估、架构分析，输出结构化调研报告
@@ -138,12 +197,12 @@ const PROMPT_TOOL_ORDER = [
   "todowrite",
   "task",
   "agents_list",
-  "sessions_list",
-  "sessions_history",
-  "sessions_send",
-  "sessions_delete",
-  "sessions_spawn",
-  "session_status",
+  "threads_list",
+  "threads_history",
+  "threads_send",
+  "threads_delete",
+  "threads_spawn",
+  "thread_status",
   "askuserquestion",
   "memory_search",
   "memory_get",
@@ -155,7 +214,7 @@ interface SystemPromptContext {
   workspaceName?: string;
   workspaceSlug?: string;
   sessionId: string;
-  sessionType?: SessionType;
+  sessionType?: ThreadType;
   chatType?: "direct" | "group" | "channel";
   availableTools?: string[];
   memoryCitationsMode?: MemoryCitationsMode;
@@ -168,7 +227,7 @@ export function shouldLoadLongTermMemory(chatType?: "direct" | "group" | "channe
   return (chatType ?? "direct") === "direct";
 }
 
-function inferSessionType(ctx: Pick<SystemPromptContext, "chatType" | "sessionId">): SessionType {
+function inferSessionType(ctx: Pick<SystemPromptContext, "chatType" | "sessionId">): ThreadType {
   if (ctx.chatType === "group" || ctx.chatType === "channel") {
     return ctx.chatType;
   }
@@ -180,7 +239,7 @@ function inferSessionType(ctx: Pick<SystemPromptContext, "chatType" | "sessionId
   return "main";
 }
 
-function resolveSessionType(ctx: Pick<SystemPromptContext, "sessionType" | "chatType" | "sessionId">): SessionType {
+function resolveSessionType(ctx: Pick<SystemPromptContext, "sessionType" | "chatType" | "sessionId">): ThreadType {
   if (ctx.sessionType) {
     return ctx.sessionType;
   }
@@ -203,7 +262,7 @@ export function resolveSystemPromptMode(
 function buildProjectContextSection(ctx: {
   workspaceSlug: string;
   includeLongTermMemory: boolean;
-  sessionType: SessionType;
+  sessionType: ThreadType;
 }): string {
   const components = readSystemPromptComponents(ctx.workspaceSlug, {
     sessionType: ctx.sessionType,
@@ -283,7 +342,7 @@ function buildRuntimeSection(ctx: SystemPromptContext, promptMode: SystemPromptM
   const sessionType = resolveSessionType(ctx);
   return [
     "## Runtime",
-    `mode=${promptMode} | sessionType=${sessionType} | chatType=${ctx.chatType ?? "direct"}`
+    `mode=${promptMode} | threadType=${sessionType} | chatType=${ctx.chatType ?? "direct"}`
   ].join("\n");
 }
 
@@ -514,18 +573,18 @@ mcp.json 顶层 key 必须是 \`servers\`。
 
   sections.push(PERSONA_REALITY_GUARDRAILS_SECTION);
 
-  sections.push(`## Session Bootstrap (Mandatory)
+  sections.push(`## Thread Bootstrap (Mandatory)
 
-At the beginning of each session, silently check workspace files in this order:
+At the beginning of each thread, silently check workspace files in this order:
 1. AGENTS.md
 2. SOUL.md
 3. TOOLS.md
 4. IDENTITY.md
 5. USER.md
 6. memory/YYYY-MM-DD.md (today + yesterday)
-7. MEMORY.md (or memory.md fallback, main/direct session only)
+7. MEMORY.md (or memory.md fallback, main/direct thread only)
 8. 线程级 .context/ 目录，以及工作区根目录下的 .context/ 目录（note.md、todo.md）
-9. 工作区的 AGENTS.md（如 Session Bootstrap 第 1 步未加载）
+9. 工作区的 AGENTS.md（如 Thread Bootstrap 第 1 步未加载）
 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
 
@@ -620,7 +679,7 @@ These user-editable files are loaded by Lume and included below in Project Conte
 export interface DynamicContext {
   sessionId?: string;
   sessionTitle?: string;
-  sessionType?: SessionType;
+  sessionType?: ThreadType;
   chatType?: "direct" | "group" | "channel";
   parentSessionId?: string;
   workspaceId?: string;

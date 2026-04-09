@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  createAgentSession,
-  getAgentSessionMessages,
+  createAgentThread,
+  getAgentThreadMessages,
   getAgentThreadMeta
 } from "../../../agent/agent-thread-manager";
 import { createOrResumeRuntimeCoreSessionManager } from "../../runtime-core/session-store";
@@ -117,12 +117,12 @@ function appendTranscriptTextMessages(
 }
 
 describe("create-session-tools", () => {
-  test("agents_list 应返回可用于 sessions_spawn 的会话 agentId", async () => {
+  test("agents_list 应返回可用于 threads_spawn 的线程 agentId", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话", "channel-current");
-      const target = createAgentSession("目标 Agent", "channel-target");
+      const current = createAgentThread("当前线程", "channel-current");
+      const target = createAgentThread("目标 Agent", "channel-target");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: current.id
@@ -144,12 +144,12 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_spawn 指定 agentId 时应生效并写入 run registry", async () => {
+  test("threads_spawn 指定 agentId 时应生效并写入 run registry", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话", "channel-current");
-      const target = createAgentSession("目标 Agent", "channel-target");
+      const current = createAgentThread("当前线程", "channel-current");
+      const target = createAgentThread("目标 Agent", "channel-target");
       appendTranscriptTextMessages(target.id, [{
         role: "assistant",
         content: "hello",
@@ -161,7 +161,7 @@ describe("create-session-tools", () => {
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const spawnTool = resolveTool(tools, "threads_spawn");
       const result = await callTool(spawnTool, {
         task: "do routed work",
         agentId: target.id,
@@ -196,18 +196,18 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("ENABLE_SUBAGENT_TEAM_V2=false 时应禁用 sessions_spawn", async () => {
+  test("ENABLE_SUBAGENT_TEAM_V2=false 时应禁用 threads_spawn", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     const previousFlag = process.env.ENABLE_SUBAGENT_TEAM_V2;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     process.env.ENABLE_SUBAGENT_TEAM_V2 = "false";
     try {
-      const current = createAgentSession("当前会话", "channel-current");
+      const current = createAgentThread("当前线程", "channel-current");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const spawnTool = resolveTool(tools, "threads_spawn");
       const result = await callTool(spawnTool, {
         task: "should be blocked"
       });
@@ -231,12 +231,12 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("subagents_list 应返回当前会话的 run 列表", async () => {
+  test("subagents_list 应返回当前线程的 run 列表", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话", "channel-current");
-      const child = createAgentSession("子会话", "channel-current");
+      const current = createAgentThread("当前线程", "channel-current");
+      const child = createAgentThread("子线程", "channel-current");
       const registry = getSubagentRunRegistry();
       const run = registry.create({
         runId: randomUUID(),
@@ -270,12 +270,12 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("subagents_kill 应终止当前会话拥有的运行中 run", async () => {
+  test("subagents_kill 应终止当前线程拥有的运行中 run", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话", "channel-current");
-      const child = createAgentSession("子会话", "channel-current");
+      const current = createAgentThread("当前线程", "channel-current");
+      const child = createAgentThread("子线程", "channel-current");
       const registry = getSubagentRunRegistry();
       const runId = randomUUID();
       registry.create({
@@ -312,12 +312,12 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("subagents_send 应向受控子任务会话发送指令", async () => {
+  test("subagents_send 应向受控子任务线程发送指令", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话", "channel-current");
-      const child = createAgentSession("子会话", "channel-current");
+      const current = createAgentThread("当前线程", "channel-current");
+      const child = createAgentThread("子线程", "channel-current");
       const registry = getSubagentRunRegistry();
       const runId = randomUUID();
       registry.create({
@@ -361,8 +361,8 @@ describe("create-session-tools", () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话", "channel-current");
-      const child = createAgentSession("子会话", "channel-current");
+      const current = createAgentThread("当前线程", "channel-current");
+      const child = createAgentThread("子线程", "channel-current");
       const registry = getSubagentRunRegistry();
       const oldRunId = randomUUID();
       registry.create({
@@ -409,14 +409,14 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_spawn 应拒绝超过扇出限制", async () => {
+  test("threads_spawn 应拒绝超过扇出限制", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     const previousFanout = process.env.LUME_SUBAGENT_MAX_FANOUT;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     process.env.LUME_SUBAGENT_MAX_FANOUT = "1";
     try {
-      const current = createAgentSession("当前会话", "channel-current");
-      const child = createAgentSession("子会话", "channel-current");
+      const current = createAgentThread("当前线程", "channel-current");
+      const child = createAgentThread("子线程", "channel-current");
       getSubagentRunRegistry().create({
         runId: randomUUID(),
         parentThreadId: current.id,
@@ -430,7 +430,7 @@ describe("create-session-tools", () => {
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const spawnTool = resolveTool(tools, "threads_spawn");
       const result = await callTool(spawnTool, {
         task: "another child"
       });
@@ -451,14 +451,14 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_spawn 应拒绝超过深度限制", async () => {
+  test("threads_spawn 应拒绝超过深度限制", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     const previousDepth = process.env.LUME_SUBAGENT_MAX_DEPTH;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     process.env.LUME_SUBAGENT_MAX_DEPTH = "1";
     try {
-      const root = createAgentSession("根会话", "channel-current");
-      const current = createAgentSession("当前会话", "channel-current");
+      const root = createAgentThread("根线程", "channel-current");
+      const current = createAgentThread("当前线程", "channel-current");
       getSubagentRunRegistry().create({
         runId: randomUUID(),
         parentThreadId: root.id,
@@ -474,7 +474,7 @@ describe("create-session-tools", () => {
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const spawnTool = resolveTool(tools, "threads_spawn");
       const result = await callTool(spawnTool, {
         task: "too deep"
       });
@@ -495,32 +495,32 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_spawn 异步完成应按 deliverySessionKey 回传 completion", async () => {
+  test("threads_spawn 异步完成应按 deliveryThreadId 回传 completion", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const parent = createAgentSession("父会话", "channel-current");
-      const inbox = createAgentSession("收件会话", "channel-current");
+      const parent = createAgentThread("父线程", "channel-current");
+      const inbox = createAgentThread("收件线程", "channel-current");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: parent.id
       });
-      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const spawnTool = resolveTool(tools, "threads_spawn");
       const result = await callTool(spawnTool, {
         task: "async task",
         runTimeoutSeconds: 0,
         model: "model-delivery",
-        deliverySessionKey: inbox.id,
+        deliveryThreadId: inbox.id,
         thread: true
       });
       const details = result as {
         status?: string;
         runId?: string;
-        deliverySessionKey?: string;
+        deliveryThreadId?: string;
         threadBound?: boolean;
       };
       expect(details.status).toBe("accepted");
-      expect(details.deliverySessionKey).toBe(inbox.id);
+      expect(details.deliveryThreadId).toBe(inbox.id);
       expect(details.threadBound).toBe(true);
       const runId = details.runId as string;
 
@@ -530,8 +530,8 @@ describe("create-session-tools", () => {
       expect(run?.announceStatus).toBe("delivered");
       expect(run?.deliveryThreadId).toBe(inbox.id);
 
-      const inboxMessages = getAgentSessionMessages(inbox.id);
-      const parentMessages = getAgentSessionMessages(parent.id);
+      const inboxMessages = getAgentThreadMessages(inbox.id);
+      const parentMessages = getAgentThreadMessages(parent.id);
       expect(inboxMessages.some((item) => item.metadata?.subagentAnnounce === true)).toBe(true);
       expect(parentMessages.some((item) => item.metadata?.subagentAnnounce === true)).toBe(false);
     } finally {
@@ -543,7 +543,7 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("subagent 会话应拒绝 sessions_spawn", async () => {
+  test("subagent 线程应拒绝 threads_spawn", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
@@ -551,11 +551,11 @@ describe("create-session-tools", () => {
       const tools = createSdkSessionTools({
         threadId: "agent:main:subagent:test"
       });
-      const spawnTool = resolveTool(tools, "sessions_spawn");
+      const spawnTool = resolveTool(tools, "threads_spawn");
       const result = await callTool(spawnTool, { task: "do work" });
       const details = result as { status?: string; error?: string };
       expect(details.status).toBe("error");
-      expect(details.error).toContain("not allowed from sub-agent sessions");
+      expect(details.error).toContain("not allowed from sub-agent threads");
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -565,7 +565,7 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("subagent 会话应拒绝 sessions_send 与 agents_list", async () => {
+  test("subagent 线程应拒绝 threads_send 与 agents_list", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
@@ -573,28 +573,28 @@ describe("create-session-tools", () => {
       const tools = createSdkSessionTools({
         threadId: "agent:main:subagent:test"
       });
-      const sendTool = resolveTool(tools, "sessions_send");
+      const sendTool = resolveTool(tools, "threads_send");
       const sendResult = await callTool(sendTool, {
-        sessionKey: "main",
+        threadId: "main",
         message: "hello"
       });
       const sendDetails = sendResult as { status?: string; error?: string };
       expect(sendDetails.status).toBe("error");
-      expect(sendDetails.error).toContain("sessions_send is not allowed from sub-agent sessions");
+      expect(sendDetails.error).toContain("threads_send is not allowed from sub-agent threads");
 
       const agentsListTool = resolveTool(tools, "agents_list");
       const listResult = await callTool(agentsListTool, {});
       const listDetails = listResult as { status?: string; error?: string };
       expect(listDetails.status).toBe("error");
-      expect(listDetails.error).toContain("agents_list is not allowed from sub-agent sessions");
+      expect(listDetails.error).toContain("agents_list is not allowed from sub-agent threads");
 
-      const deleteTool = resolveTool(tools, "sessions_delete");
+      const deleteTool = resolveTool(tools, "threads_delete");
       const deleteResult = await callTool(deleteTool, {
-        sessionKey: "main"
+        threadId: "main"
       });
       const deleteDetails = deleteResult as { status?: string; error?: string };
       expect(deleteDetails.status).toBe("error");
-      expect(deleteDetails.error).toContain("sessions_delete is not allowed from sub-agent sessions");
+      expect(deleteDetails.error).toContain("threads_delete is not allowed from sub-agent threads");
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -604,20 +604,20 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_history 未传 sessionKey/label 时应返回错误", async () => {
+  test("threads_history 未传 threadId/label 时应返回错误", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话");
+      const current = createAgentThread("当前线程");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const historyTool = resolveTool(tools, "sessions_history");
+      const historyTool = resolveTool(tools, "threads_history");
       const result = await callTool(historyTool, {});
       const details = result as { status?: string; error?: string };
       expect(details.status).toBe("error");
-      expect(details.error).toContain("Either sessionKey or label is required");
+      expect(details.error).toContain("Either threadId or label is required");
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;
@@ -627,12 +627,12 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_history 应支持通过 label 读取目标会话历史", async () => {
+  test("threads_history 应支持通过 label 读取目标线程历史", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话");
-      const target = createAgentSession("目标会话");
+      const current = createAgentThread("当前线程");
+      const target = createAgentThread("目标线程");
       appendTranscriptTextMessages(target.id, [
         {
           role: "user",
@@ -651,19 +651,19 @@ describe("create-session-tools", () => {
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const historyTool = resolveTool(tools, "sessions_history");
+      const historyTool = resolveTool(tools, "threads_history");
       const result = await callTool(historyTool, {
-        label: "目标会话",
+        label: "目标线程",
         limit: 10
       });
       const details = result as {
         status?: string;
-        sessionKey?: string;
+        threadId?: string;
         count?: number;
         messages?: Array<{ content?: string }>;
       };
       expect(details.status).toBe("ok");
-      expect(details.sessionKey).toBe(target.id);
+      expect(details.threadId).toBe(target.id);
       expect(details.count).toBe(2);
       expect(details.messages?.[0]?.content).toBe("hello");
       expect(details.messages?.[1]?.content).toBe("world");
@@ -676,12 +676,12 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_delete 应支持通过 label 删除目标会话", async () => {
+  test("threads_delete 应支持通过 label 删除目标线程", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话");
-      const target = createAgentSession("目标会话");
+      const current = createAgentThread("当前线程");
+      const target = createAgentThread("目标线程");
       appendTranscriptTextMessages(target.id, [{
         role: "user",
         content: "待删除消息",
@@ -692,18 +692,18 @@ describe("create-session-tools", () => {
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const deleteTool = resolveTool(tools, "sessions_delete");
+      const deleteTool = resolveTool(tools, "threads_delete");
       const result = await callTool(deleteTool, {
-        label: "目标会话"
+        label: "目标线程"
       });
       const details = result as {
         status?: string;
         deleted?: boolean;
-        sessionKey?: string;
+        threadId?: string;
       };
       expect(details.status).toBe("ok");
       expect(details.deleted).toBe(true);
-      expect(details.sessionKey).toBe(target.id);
+      expect(details.threadId).toBe(target.id);
       expect(getAgentThreadMeta(target.id)).toBeUndefined();
     } finally {
       if (previousConfigDir === undefined) {
@@ -714,25 +714,25 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_delete 不允许删除当前会话", async () => {
+  test("threads_delete 不允许删除当前线程", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话");
+      const current = createAgentThread("当前线程");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const deleteTool = resolveTool(tools, "sessions_delete");
+      const deleteTool = resolveTool(tools, "threads_delete");
       const result = await callTool(deleteTool, {
-        sessionKey: current.id
+        threadId: current.id
       });
       const details = result as {
         status?: string;
         error?: string;
       };
       expect(details.status).toBe("error");
-      expect(details.error).toContain("不能删除当前会话");
+      expect(details.error).toContain("不能删除当前线程");
       expect(getAgentThreadMeta(current.id)?.id).toBe(current.id);
     } finally {
       if (previousConfigDir === undefined) {
@@ -743,31 +743,31 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_delete 应支持通过 sessionKeys 批量删除", async () => {
+  test("threads_delete 应支持通过 threadIds 批量删除", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话");
-      const targetA = createAgentSession("目标会话-A");
-      const targetB = createAgentSession("目标会话-B");
+      const current = createAgentThread("当前线程");
+      const targetA = createAgentThread("目标线程-A");
+      const targetB = createAgentThread("目标线程-B");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const deleteTool = resolveTool(tools, "sessions_delete");
+      const deleteTool = resolveTool(tools, "threads_delete");
       const result = await callTool(deleteTool, {
-        sessionKeys: [targetA.id, targetB.id]
+        threadIds: [targetA.id, targetB.id]
       });
       const details = result as {
         status?: string;
         deleted?: boolean;
         deletedCount?: number;
-        sessionKeys?: string[];
+        threadIds?: string[];
       };
       expect(details.status).toBe("ok");
       expect(details.deleted).toBe(true);
       expect(details.deletedCount).toBe(2);
-      expect(details.sessionKeys).toEqual([targetA.id, targetB.id]);
+      expect(details.threadIds).toEqual([targetA.id, targetB.id]);
       expect(getAgentThreadMeta(targetA.id)).toBeUndefined();
       expect(getAgentThreadMeta(targetB.id)).toBeUndefined();
     } finally {
@@ -779,31 +779,31 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_delete 输入 label 时应删除所有同名会话", async () => {
+  test("threads_delete 输入 label 时应删除所有同名线程", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话");
-      const targetA = createAgentSession("同名会话");
-      const targetB = createAgentSession("同名会话");
+      const current = createAgentThread("当前线程");
+      const targetA = createAgentThread("同名线程");
+      const targetB = createAgentThread("同名线程");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const deleteTool = resolveTool(tools, "sessions_delete");
+      const deleteTool = resolveTool(tools, "threads_delete");
       const result = await callTool(deleteTool, {
-        label: "同名会话"
+        label: "同名线程"
       });
       const details = result as {
         status?: string;
         deleted?: boolean;
         deletedCount?: number;
-        sessionKeys?: string[];
+        threadIds?: string[];
       };
       expect(details.status).toBe("ok");
       expect(details.deleted).toBe(true);
       expect(details.deletedCount).toBe(2);
-      expect([...(details.sessionKeys ?? [])].sort()).toEqual([targetA.id, targetB.id].sort());
+      expect([...(details.threadIds ?? [])].sort()).toEqual([targetA.id, targetB.id].sort());
       expect(getAgentThreadMeta(targetA.id)).toBeUndefined();
       expect(getAgentThreadMeta(targetB.id)).toBeUndefined();
       expect(getAgentThreadMeta(current.id)?.id).toBe(current.id);
@@ -816,26 +816,26 @@ describe("create-session-tools", () => {
     }
   });
 
-  test("sessions_delete 批量删除包含当前会话时应拒绝", async () => {
+  test("threads_delete 批量删除包含当前线程时应拒绝", async () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-openclaw-tools-"));
     try {
-      const current = createAgentSession("当前会话");
-      const target = createAgentSession("目标会话");
+      const current = createAgentThread("当前线程");
+      const target = createAgentThread("目标线程");
       const createSdkSessionTools = await loadCreateSdkSessionTools();
       const tools = createSdkSessionTools({
         threadId: current.id
       });
-      const deleteTool = resolveTool(tools, "sessions_delete");
+      const deleteTool = resolveTool(tools, "threads_delete");
       const result = await callTool(deleteTool, {
-        sessionKeys: [target.id, current.id]
+        threadIds: [target.id, current.id]
       });
       const details = result as {
         status?: string;
         error?: string;
       };
       expect(details.status).toBe("error");
-      expect(details.error).toContain("不能删除当前会话");
+      expect(details.error).toContain("不能删除当前线程");
       expect(getAgentThreadMeta(current.id)?.id).toBe(current.id);
       expect(getAgentThreadMeta(target.id)?.id).toBe(target.id);
     } finally {

@@ -10,6 +10,7 @@ import type { SDKMessage } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
+  AgentMessageAppendedEvent,
   AgentToolPolicy,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
@@ -58,6 +59,7 @@ import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 
 type AgentStreamEmitter = {
   onSdkMessage: (message: SDKMessage) => void;
+  onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
   onComplete: () => void;
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
@@ -223,6 +225,9 @@ function shouldPersistAssistantTurnSdkMessage(message: SDKMessage): boolean {
   if (message.type === "assistant" || message.type === "result") {
     return true;
   }
+  if (message.type === "tool_result") {
+    return true;
+  }
   if (message.type === "user") {
     return Array.isArray(message.message?.content)
       && message.message.content.some((block) => !!block && typeof block === "object" && block.type === "tool_result");
@@ -317,6 +322,7 @@ export async function sendAgentMessage(
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
   const persistedSdkMessages: SDKMessage[] = [];
+  let userSdkMessage: SDKMessage | null = null;
 
   let stateWorkspaceSlug: string | undefined;
   if (workspaceId) {
@@ -346,24 +352,28 @@ export async function sendAgentMessage(
 
   if (shouldAppendUserMessage) {
     const sourceMessageId = input.editFromMessageId ?? input.resendFromMessageId;
+    userSdkMessage = ensureSdkMessageCreatedAt(buildUserSdkMessage({
+      threadId,
+      userMessage,
+      createdAt: Date.now()
+    }));
     const createdUserVersion = createUserMessageVersion({
       sessionId: threadId,
       content: userMessage,
-      createdAt: Date.now(),
+      createdAt: (userSdkMessage as SDKMessage & { _createdAt?: number })._createdAt ?? Date.now(),
       metadata: effectiveMessageMetadata,
-      sourceMessageId
+      sourceMessageId,
+      sdkMessages: [userSdkMessage]
     });
     activeTurnId = createdUserVersion.turnId;
     if (sourceMessageId) {
       replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
     }
-    appendAgentThreadSDKMessages(threadId, [
-      ensureSdkMessageCreatedAt(buildUserSdkMessage({
-        threadId,
-        userMessage,
-        createdAt: createdUserVersion.message.createdAt
-      }))
-    ]);
+    appendAgentThreadSDKMessages(threadId, [userSdkMessage]);
+    emit.onMessageAppended?.({
+      threadId,
+      message: createdUserVersion.message
+    });
   }
 
   const sessionStateManager = getSessionStateManager();
@@ -451,11 +461,17 @@ export async function sendAgentMessage(
       modelId: resolvedModelId
     }) ?? resolveLatestAssistantTranscriptMessage(threadId);
     if (latestAssistantMessage) {
-      createAssistantMessageVersion({
+      const visibleAssistantMessage = createAssistantMessageVersion({
         sessionId: threadId,
         turnId: activeTurnId,
         message: latestAssistantMessage
       });
+      if (visibleAssistantMessage) {
+        emit.onMessageAppended?.({
+          threadId,
+          message: visibleAssistantMessage
+        });
+      }
     }
   }
   if (runtimeCompleted && piResult.status === "completed") {

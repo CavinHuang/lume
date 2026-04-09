@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@lume/shared";
+import type { AgentMessage, SDKMessage } from "@lume/shared";
 import type { ToolActivity } from "@/atoms/agent-atoms";
 
 export interface TodoItem {
@@ -17,13 +17,30 @@ export function parseTodoItemsFromInput(input: Record<string, unknown>): TodoIte
   return todos.length > 0 ? todos : null;
 }
 
-export function findLatestTodoItems(toolActivities: ToolActivity[], messages: AgentMessage[]): TodoItem[] | null {
+export function findLatestTodoItems(
+  toolActivities: ToolActivity[],
+  sdkMessages: SDKMessage[],
+  messages: AgentMessage[]
+): TodoItem[] | null {
   for (let i = toolActivities.length - 1; i >= 0; i -= 1) {
     const activity = toolActivities[i];
     if (!activity) continue;
     if (activity.toolName !== "TodoWrite" && activity.toolName !== "TaskCreate") continue;
     const todos = parseTodoItemsFromInput(activity.input);
     if (todos) return todos;
+  }
+
+  for (let i = sdkMessages.length - 1; i >= 0; i -= 1) {
+    const sdkMessage = sdkMessages[i];
+    if (!sdkMessage || sdkMessage.type !== "assistant") continue;
+    for (let blockIndex = (sdkMessage.message?.content ?? []).length - 1; blockIndex >= 0; blockIndex -= 1) {
+      const block = sdkMessage.message?.content?.[blockIndex];
+      if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
+      const toolBlock = block as { name?: string; input?: Record<string, unknown> };
+      if (toolBlock.name !== "TodoWrite" && toolBlock.name !== "TaskCreate") continue;
+      const todos = parseTodoItemsFromInput(toolBlock.input ?? {});
+      if (todos) return todos;
+    }
   }
 
   for (let i = messages.length - 1; i >= 0; i -= 1) {

@@ -37,7 +37,13 @@ describe("runtime-core run", () => {
     expect(result.session.threadId).toBe(result.sessionManager.getSessionId());
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
-    expect(result.session.getActiveToolNames()).toContain("sessions_list");
+    expect(result.session.getActiveToolNames()).toContain("threads_list");
+    const init = await result.agent.getInitializationResult();
+    expect(init.agents.map((agent) => agent.name)).toEqual([
+      "explorer",
+      "researcher",
+      "code-reviewer"
+    ]);
 
     result.session.dispose();
   });

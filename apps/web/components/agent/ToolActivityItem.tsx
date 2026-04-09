@@ -82,15 +82,15 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   // LSP / MCP
   lsp: Code2,
   mcpsearch: Search,
-  // Session / subagent tools
-  sessions_spawn: GitBranch,
+  // Thread / subagent tools
+  threads_spawn: GitBranch,
   agents_list: Bot,
-  sessions_list: Bot,
-  sessions_history: Bot,
-  sessions_send: Bot,
-  sessions_delete: Bot,
-  sessions_delete_all: Bot,
-  session_status: Bot,
+  threads_list: Bot,
+  threads_history: Bot,
+  threads_send: Bot,
+  threads_delete: Bot,
+  threads_delete_all: Bot,
+  thread_status: Bot,
   subagents_list: Bot,
   subagents_kill: Bot,
   subagents_send: Bot,
@@ -350,10 +350,14 @@ function ToolCard({
   activity,
   index = 0,
   animate = false,
+  expanded = false,
+  onExpandedChange,
 }: {
   activity: ToolActivity;
   index?: number;
   animate?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (open: boolean) => void;
 }): React.ReactElement {
   const status = getActivityStatus(activity);
   const ToolIcon = getToolIcon(activity.toolName);
@@ -365,7 +369,8 @@ function ToolCard({
   const hasDetails = Object.keys(activity.input).length > 0 || !!activity.result;
   const isBash = activity.toolName.toLowerCase() === "bash";
   const truncatedResult = truncateActivityResult(activity.result);
-  const [isExpanded, setIsExpanded] = React.useState(false);
+  const [transitionState, setTransitionState] = React.useState<"finish" | "error" | null>(null);
+  const prevStatusRef = React.useRef<ActivityStatus>(status);
 
   const resultSummary = status === "completed" && activity.result
     ? getResultSummary(activity.toolName, activity.result)
@@ -388,22 +393,45 @@ function ToolCard({
   const detailLabel = activity.isError ? "ERROR" : isBash ? "OUTPUT" : "RESULT";
   const detailText = truncatedResult;
 
+  React.useEffect(() => {
+    const previous = prevStatusRef.current;
+    if ((previous === "running" || previous === "backgrounded") && status === "completed") {
+      setTransitionState("finish");
+      const timer = window.setTimeout(() => setTransitionState(null), 520);
+      prevStatusRef.current = status;
+      return () => window.clearTimeout(timer);
+    }
+    if ((previous === "running" || previous === "backgrounded") && status === "error") {
+      setTransitionState("error");
+      const timer = window.setTimeout(() => setTransitionState(null), 560);
+      prevStatusRef.current = status;
+      return () => window.clearTimeout(timer);
+    }
+    prevStatusRef.current = status;
+    return undefined;
+  }, [status]);
+
   return (
     <Tool
-      open={hasDetails ? isExpanded : false}
-      onOpenChange={hasDetails ? setIsExpanded : undefined}
+      open={hasDetails ? expanded : false}
+      onOpenChange={hasDetails ? onExpandedChange : undefined}
       className={cn(
         animate && "animate-in fade-in slide-in-from-left-2 duration-200 fill-mode-both",
+        hasDetails && "hover:-translate-y-[1px]",
+        transitionState === "finish" && "animate-tool-card-finish",
+        transitionState === "error" && "animate-tool-card-error",
       )}
       style={animate ? { animationDelay: delay } : undefined}
     >
       <ToolHeader
         disabled={!hasDetails}
-        aria-expanded={hasDetails ? isExpanded : undefined}
+        aria-expanded={hasDetails ? expanded : undefined}
         summary={
           <span className={cn(
             "truncate text-[15px] leading-none text-[#cfd5df]",
-            isBash ? "font-mono" : "font-medium"
+            isBash ? "font-mono" : "font-medium",
+            transitionState === "finish" && "animate-tool-accent-finish",
+            transitionState === "error" && "animate-tool-accent-error"
           )}>
             {summaryText}
 
@@ -436,8 +464,8 @@ function ToolCard({
           </span>
         }
         icon={(
-          <span className="flex size-5 items-center justify-center rounded-md border border-white/10 bg-black/10 text-[#c7ced8]">
-            <ToolIcon className="size-3.5" />
+          <span className="flex size-5 items-center justify-center rounded-md border border-white/10 bg-black/10 text-[#c7ced8] transition-all duration-200 group-data-[state=open]/tool:border-white/15 group-data-[state=open]/tool:bg-black/20">
+            <ToolIcon className="size-3.5 transition-transform duration-200 group-hover/tool:scale-[1.06]" />
           </span>
         )}
         meta={
@@ -459,8 +487,10 @@ function ToolCard({
             {hasDetails ? (
               <ChevronDown
                 className={cn(
-                  "size-3.5 text-muted-foreground/50 transition-transform duration-200",
-                  isExpanded && "rotate-180"
+                  "size-3.5 text-muted-foreground/50 transition-all duration-200 ease-out",
+                  expanded && "rotate-180",
+                  transitionState === "finish" && "text-sky-300/80",
+                  transitionState === "error" && "text-red-300/80"
                 )}
               />
             ) : null}
@@ -468,24 +498,24 @@ function ToolCard({
         }
         className={cn(
           hasDetails
-            ? "cursor-pointer transition-colors duration-100 hover:bg-muted/20"
+            ? "cursor-pointer transition-all duration-150 hover:bg-muted/20 active:scale-[0.998]"
             : "cursor-default"
         )}
       />
 
       <ToolContent>
-        <div className="space-y-2 border-t border-border/40 px-3 py-3">
+        <div className="space-y-3 border-t border-border/40 bg-background/[0.02] px-3 py-3">
             {isBash ? (
               Object.keys(activity.input).length > 0 ? (
                 <ToolSection label="COMMAND">
-                  <ToolCodeBlock tone="success">
+                  <ToolCodeBlock tone="success" className="shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                     {typeof activity.input.command === "string" ? activity.input.command : formatInput(activity.input)}
                   </ToolCodeBlock>
                 </ToolSection>
               ) : null
             ) : Object.keys(activity.input).length > 0 ? (
               <ToolSection label="ARGUMENTS">
-                <ToolCodeBlock className="bg-muted/30">
+                <ToolCodeBlock className="bg-muted/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                   {formatInputAsFnCall(activity.input)}
                 </ToolCodeBlock>
               </ToolSection>
@@ -493,9 +523,14 @@ function ToolCard({
 
             {detailText ? (
               <ToolSection label={detailLabel} tone={activity.isError ? "error" : "default"}>
-                <ToolCodeBlock tone={activity.isError ? "error" : "default"}>
-                  {detailText}
-                </ToolCodeBlock>
+                <div className="mask-fade-y custom-scrollbar max-h-[260px] overflow-y-auto">
+                  <ToolCodeBlock
+                    tone={activity.isError ? "error" : "default"}
+                    className="max-h-none shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+                  >
+                    {detailText}
+                  </ToolCodeBlock>
+                </div>
               </ToolSection>
             ) : null}
 
@@ -515,21 +550,42 @@ function ActivityGroupRow({
   group,
   index = 0,
   animate = false,
+  expanded = false,
+  onExpandedChange,
+  expandedChildren,
+  onChildExpandedChange,
 }: {
   group: ActivityGroup;
   index?: number;
   animate?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (open: boolean) => void;
+  expandedChildren: Record<string, boolean>;
+  onChildExpandedChange: (toolUseId: string, open: boolean) => void;
 }): React.ReactElement {
   const { parent, children } = group;
 
   return (
     <div className="space-y-2">
-      <ToolCard activity={parent} index={index} animate={animate} />
-      {children.length > 0 ? (
+      <ToolCard
+        activity={parent}
+        index={index}
+        animate={animate}
+        expanded={expanded}
+        onExpandedChange={onExpandedChange}
+      />
+      {children.length > 0 && expanded ? (
         <div className="ml-4 border-l border-border/40 pl-4">
           <div className="space-y-2">
             {children.map((child, idx) => (
-              <ToolCard key={child.toolUseId} activity={child} index={idx} animate={animate} />
+              <ToolCard
+                key={child.toolUseId}
+                activity={child}
+                index={idx}
+                animate={animate}
+                expanded={expandedChildren[child.toolUseId] === true}
+                onExpandedChange={(open) => onChildExpandedChange(child.toolUseId, open)}
+              />
             ))}
           </div>
         </div>
@@ -556,6 +612,7 @@ interface ToolActivityListProps {
 
 export function ToolActivityList({ activities, animate = false }: ToolActivityListProps): React.ReactElement | null {
   const listRef = React.useRef<HTMLDivElement>(null);
+  const [expandedCards, setExpandedCards] = React.useState<Record<string, boolean>>({});
 
   const latestTodoActivityIndex = React.useMemo(() => {
     for (let i = activities.length - 1; i >= 0; i--) {
@@ -577,6 +634,20 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
   }, [activities, latestTodoActivityIndex]);
 
   const grouped = React.useMemo(() => groupActivities(normalizedActivities), [normalizedActivities]);
+  const visibleToolIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of grouped) {
+      if (isActivityGroup(item)) {
+        ids.add(item.parent.toolUseId);
+        for (const child of item.children) {
+          ids.add(child.toolUseId);
+        }
+      } else {
+        ids.add((item as ToolActivity).toolUseId);
+      }
+    }
+    return ids;
+  }, [grouped]);
 
   const visibleRows = React.useMemo(() => {
     let count = 0;
@@ -596,6 +667,21 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [visibleRows, needsCollapse, animate]);
+
+  React.useEffect(() => {
+    setExpandedCards((prev) => {
+      const next: Record<string, boolean> = {};
+      let changed = false;
+      for (const [toolUseId, open] of Object.entries(prev)) {
+        if (visibleToolIds.has(toolUseId)) {
+          next[toolUseId] = open;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [visibleToolIds]);
 
   if (normalizedActivities.length === 0) return null;
 
@@ -617,6 +703,20 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
                 group={item}
                 index={index}
                 animate={animate}
+                expanded={expandedCards[item.parent.toolUseId] === true}
+                onExpandedChange={(open) => {
+                  setExpandedCards((prev) => ({
+                    ...prev,
+                    [item.parent.toolUseId]: open
+                  }));
+                }}
+                expandedChildren={expandedCards}
+                onChildExpandedChange={(toolUseId, open) => {
+                  setExpandedCards((prev) => ({
+                    ...prev,
+                    [toolUseId]: open
+                  }));
+                }}
               />
             );
           }
@@ -629,6 +729,13 @@ export function ToolActivityList({ activities, animate = false }: ToolActivityLi
               activity={activity}
               index={index}
               animate={animate}
+              expanded={expandedCards[activity.toolUseId] === true}
+              onExpandedChange={(open) => {
+                setExpandedCards((prev) => ({
+                  ...prev,
+                  [activity.toolUseId]: open
+                }));
+              }}
             />
           );
         })}

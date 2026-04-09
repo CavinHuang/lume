@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAgentSession } from "./agent-thread-manager";
+import { createAgentThread } from "./agent-thread-manager";
 import { resolveAgentDynamicContextInput, resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
 import { getAgentWorkspacePath } from "../infra/config-paths";
 
@@ -29,7 +29,7 @@ describe("agent-runtime-context", () => {
   });
 
   test("应从 session meta 组装 dynamic context 输入", () => {
-    const meta = createAgentSession("Runtime Context Title", "channel-a", "workspace-a", "parent-a", "model-a");
+    const meta = createAgentThread("Runtime Context Title", "channel-a", "workspace-a", "parent-a", "model-a");
 
     const result = resolveAgentDynamicContextInput({
       threadId: meta.id,

@@ -43,6 +43,9 @@ export type MessageGroup =
   | { type: "system"; message: SDKSystemMessage }
   | AssistantTurn;
 
+const groupIdCache = new WeakMap<MessageGroup, string>();
+let fallbackGroupIdCounter = 0;
+
 function extractMeta(message: SDKMessage): { createdAt?: number } {
   const raw = message as unknown as Record<string, unknown>;
   return {
@@ -65,6 +68,13 @@ function isUserInputMessage(message: SDKUserMessage): boolean {
   const content = message.message?.content;
   if (Array.isArray(content) && content.some((block) => block.type === "tool_result")) return false;
   return extractUserText(message) !== null;
+}
+
+function extractAssistantModel(message: SDKAssistantMessage): string | undefined {
+  const rawMessage = message.message as { model?: unknown };
+  return typeof rawMessage.model === "string" && rawMessage.model.trim().length > 0
+    ? rawMessage.model
+    : undefined;
 }
 
 export function groupIntoTurns(messages: SDKMessage[]): MessageGroup[] {
@@ -98,7 +108,7 @@ export function groupIntoTurns(messages: SDKMessage[]): MessageGroup[] {
           type: "assistant-turn",
           assistantMessages: [assistantMsg],
           turnMessages: [msg],
-          model: undefined,
+          model: extractAssistantModel(assistantMsg),
           createdAt: meta.createdAt,
         };
       } else {
@@ -123,7 +133,69 @@ export function groupIntoTurns(messages: SDKMessage[]): MessageGroup[] {
   }
 
   flushTurn();
-  return groups;
+  return mergeAdjacentSameModelTurns(groups);
+}
+
+function mergeAdjacentSameModelTurns(groups: MessageGroup[]): MessageGroup[] {
+  if (groups.length <= 1) return groups;
+
+  const merged: MessageGroup[] = [];
+
+  for (const group of groups) {
+    if (group.type !== "assistant-turn") {
+      merged.push(group);
+      continue;
+    }
+
+    let mergeTargetIndex = -1;
+    for (let i = merged.length - 1; i >= 0; i -= 1) {
+      const previous = merged[i]!;
+      if (previous.type === "user") {
+        break;
+      }
+      if (previous.type === "assistant-turn") {
+        if (previous.model === group.model) {
+          mergeTargetIndex = i;
+        }
+        break;
+      }
+    }
+
+    if (mergeTargetIndex >= 0) {
+      const target = merged[mergeTargetIndex] as AssistantTurn;
+      target.assistantMessages.push(...group.assistantMessages);
+      target.turnMessages.push(...group.turnMessages);
+      continue;
+    }
+
+    merged.push(group);
+  }
+
+  return merged;
+}
+
+export function getGroupId(group: MessageGroup): string {
+  if (group.type === "user") {
+    if (group.message.uuid) return group.message.uuid;
+    if (!groupIdCache.has(group)) {
+      groupIdCache.set(group, `user-${++fallbackGroupIdCounter}`);
+    }
+    return groupIdCache.get(group)!;
+  }
+
+  if (group.type === "system") {
+    return `system-${group.message.subtype ?? "unknown"}`;
+  }
+
+  const firstAssistant = group.assistantMessages[0];
+  if (firstAssistant?.uuid) {
+    return firstAssistant.uuid;
+  }
+
+  if (!groupIdCache.has(group)) {
+    groupIdCache.set(group, `turn-${++fallbackGroupIdCounter}`);
+  }
+  return groupIdCache.get(group)!;
 }
 
 function AssistantLogo({ model }: { model?: string }): React.ReactElement {
@@ -191,6 +263,8 @@ function AssistantTurnRenderer({ turn, allMessages, isStreaming = false }: { tur
                 allMessages={allMessages}
                 childBlocks={childBlocks}
                 dimmed={hasText && block.type !== "text"}
+                animate={isStreaming}
+                index={index}
               />
             );
           })}
@@ -229,13 +303,19 @@ function UserInputMessage({ message }: { message: SDKUserMessage }) {
 }
 
 export function MessageGroupRenderer({ group, allMessages, isStreaming = false }: { group: MessageGroup; allMessages: SDKMessage[]; isStreaming?: boolean }) {
+  const groupId = getGroupId(group);
+
   if (group.type === "user") {
-    return <UserInputMessage message={group.message} />;
+    return (
+      <div data-message-id={groupId}>
+        <UserInputMessage message={group.message} />
+      </div>
+    );
   }
   if (group.type === "system") {
     if (group.message.subtype === "compact_boundary") {
       return (
-        <div className="my-4 flex items-center gap-3 px-1">
+        <div data-message-id={groupId} className="my-4 flex items-center gap-3 px-1">
           <div className="h-px flex-1 bg-border/40" />
           <span className="shrink-0 rounded-full border border-border/30 bg-muted/20 px-2 py-0.5 text-[11px] text-muted-foreground/60">
             上下文已压缩
@@ -246,5 +326,9 @@ export function MessageGroupRenderer({ group, allMessages, isStreaming = false }
     }
     return null;
   }
-  return <AssistantTurnRenderer turn={group} allMessages={allMessages} isStreaming={isStreaming} />;
+  return (
+    <div data-message-id={groupId}>
+      <AssistantTurnRenderer turn={group} allMessages={allMessages} isStreaming={isStreaming} />
+    </div>
+  );
 }

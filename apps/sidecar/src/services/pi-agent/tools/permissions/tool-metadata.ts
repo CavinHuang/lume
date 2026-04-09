@@ -243,42 +243,42 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "sessions_list",
+  name: "threads_list",
   category: "control",
   riskLevel: "low",
   description: "列出所有线程"
 });
 
 registerToolMetadata({
-  name: "sessions_history",
+  name: "threads_history",
   category: "read",
   riskLevel: "low",
   description: "获取线程历史"
 });
 
 registerToolMetadata({
-  name: "sessions_send",
+  name: "threads_send",
   category: "execute",
   riskLevel: "medium",
   description: "发送消息到线程"
 });
 
 registerToolMetadata({
-  name: "sessions_delete",
+  name: "threads_delete",
   category: "write",
   riskLevel: "medium",
   description: "删除线程及其数据"
 });
 
 registerToolMetadata({
-  name: "sessions_spawn",
+  name: "threads_spawn",
   category: "execute",
   riskLevel: "medium",
   description: "创建新线程"
 });
 
 registerToolMetadata({
-  name: "session_status",
+  name: "thread_status",
   category: "control",
   riskLevel: "low",
   description: "获取线程状态"

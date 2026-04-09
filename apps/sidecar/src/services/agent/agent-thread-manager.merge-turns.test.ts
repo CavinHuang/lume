@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  createAgentSession,
-  getAgentSessionMessages
+  createAgentThread,
+  getAgentThreadMessages
 } from "./agent-thread-manager";
 import {
   createAssistantMessageVersion,
@@ -23,7 +23,7 @@ import { createOrResumeRuntimeCoreSessionManager } from "../pi-agent/runtime-cor
  *   4. toolResult: 用户回答
  *   5. assistant: 最终 text (stopReason=stop)
  *
- * getAgentSessionMessages 应将同一次请求中的多个 assistant turn 合并为一条消息。
+ * getAgentThreadMessages 应将同一次请求中的多个 assistant turn 合并为一条消息。
  */
 describe("agent-thread-manager multi-turn merge", () => {
   let previousConfigDir: string | undefined;
@@ -48,7 +48,7 @@ describe("agent-thread-manager multi-turn merge", () => {
   });
 
   test("SDK agentic loop 多个 assistant turn 应合并为一条消息", () => {
-    const session = createAgentSession("multi-turn merge");
+    const session = createAgentThread("multi-turn merge");
     const sm = createOrResumeRuntimeCoreSessionManager(
       process.cwd(),
       session.id
@@ -128,7 +128,7 @@ describe("agent-thread-manager multi-turn merge", () => {
       timestamp: Date.now()
     });
 
-    const messages = getAgentSessionMessages(session.id);
+    const messages = getAgentThreadMessages(session.id);
 
     // 应该只有 2 条消息：1 条 user + 1 条合并后的 assistant
     expect(messages).toHaveLength(2);
@@ -161,7 +161,7 @@ describe("agent-thread-manager multi-turn merge", () => {
   });
 
   test("reasoning-only + content-only 两个 turn 应合并", () => {
-    const session = createAgentSession("reasoning merge");
+    const session = createAgentThread("reasoning merge");
     const sm = createOrResumeRuntimeCoreSessionManager(
       process.cwd(),
       session.id
@@ -213,7 +213,7 @@ describe("agent-thread-manager multi-turn merge", () => {
       timestamp: Date.now()
     });
 
-    const messages = getAgentSessionMessages(session.id);
+    const messages = getAgentThreadMessages(session.id);
     expect(messages).toHaveLength(2);
 
     const assistant = messages[1]!;
@@ -236,7 +236,7 @@ describe("agent-thread-manager multi-turn merge", () => {
   });
 
   test("不同用户消息之间的 assistant 不应合并", () => {
-    const session = createAgentSession("separate conversations");
+    const session = createAgentThread("separate conversations");
     const sm = createOrResumeRuntimeCoreSessionManager(
       process.cwd(),
       session.id
@@ -278,7 +278,7 @@ describe("agent-thread-manager multi-turn merge", () => {
       timestamp: Date.now()
     });
 
-    const messages = getAgentSessionMessages(session.id);
+    const messages = getAgentThreadMessages(session.id);
     // 应该有 4 条：user1, assistant1, user2, assistant2（不合并）
     expect(messages).toHaveLength(4);
     expect(messages[0]!.content).toBe("问题1");
@@ -288,7 +288,7 @@ describe("agent-thread-manager multi-turn merge", () => {
   });
 
   test("单个 assistant turn（无工具调用）不应被影响", () => {
-    const session = createAgentSession("single turn");
+    const session = createAgentThread("single turn");
     const sm = createOrResumeRuntimeCoreSessionManager(
       process.cwd(),
       session.id
@@ -315,14 +315,14 @@ describe("agent-thread-manager multi-turn merge", () => {
       timestamp: Date.now()
     });
 
-    const messages = getAgentSessionMessages(session.id);
+    const messages = getAgentThreadMessages(session.id);
     expect(messages).toHaveLength(2);
     expect(messages[1]!.content).toBe("简单回答");
     expect(messages[1]!.reasoning).toBe("简单思考");
   });
 
   test("已有版本存储时应优先返回原始 sdkMessages，而不是被空 transcript 覆盖", () => {
-    const session = createAgentSession("canonical sdk history");
+    const session = createAgentThread("canonical sdk history");
     initializeVersionStoreFromMessages(session.id, []);
 
     const userVersion = createUserMessageVersion({
@@ -378,7 +378,7 @@ describe("agent-thread-manager multi-turn merge", () => {
       }
     });
 
-    const messages = getAgentSessionMessages(session.id);
+    const messages = getAgentThreadMessages(session.id);
 
     expect(messages).toHaveLength(2);
     expect(messages[0]!.content).toBe("请帮我搜索");

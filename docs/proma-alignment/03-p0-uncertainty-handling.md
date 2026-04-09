@@ -1,5 +1,11 @@
 # P0-3: 不确定性处理策略
 
+## 状态
+
+✅ 已完成（代码已存在，2026-04-09 回写状态）
+
+`apps/sidecar/src/services/agent/agent-prompt-builder.ts` 已根据 `permissionMode` 区分 `bypassPermissions` / `plan` / 标准模式下的不确定性处理策略，并补齐了计划模式的 `.context/plan/` 规则、`AskUserQuestion` 使用约束以及“不要盲目附和”的指引。
+
 ## 差距分析
 
 ### Proma 的实现

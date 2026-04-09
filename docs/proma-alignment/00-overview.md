@@ -4,6 +4,17 @@
 
 本方案基于对 Proma 和 Lume 两个项目源码的深入对比分析，聚焦 P0（必须对齐）和 P1（高价值对齐）功能。
 
+## 当前状态
+
+| 项目 | 优先级 | 状态 | 说明 |
+|------|--------|------|------|
+| `01-p0-builtin-subagents.md` | P0 | ✅ 已完成 | 已补齐内置 SubAgent 定义、运行时注册与测试 |
+| `02-p0-context-knowledge.md` | P0 | ✅ 已完成 | `.context` 知识管理体系与 bootstrap 指引已在 prompt 中落地 |
+| `03-p0-uncertainty-handling.md` | P0 | ✅ 已完成 | 已根据 `permissionMode` 区分不确定性处理与计划模式规则 |
+| `04-p1-tool-builder-skill.md` | P1 | ✅ 已完成 | `tool-builder` Skill 已存在于默认 Skills |
+| `05-p1-memory-prompt.md` | P1 | ✅ 已完成 | 记忆系统哲学提示与存储风格指引已落地 |
+| `06-p1-skill-improvement.md` | P1 | ✅ 已完成 | `skill_improvement_hint` 已在动态上下文中按条件注入 |
+
 ## 项目架构映射
 
 | 维度 | Proma | Lume |

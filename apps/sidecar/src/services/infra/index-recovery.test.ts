@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getAgentSessionMessages, listAgentSessions } from "../agent/agent-thread-manager";
+import { getAgentThreadMessages, listAgentThreads } from "../agent/agent-thread-manager";
 import { listAgentWorkspaces } from "../agent/agent-workspace-manager";
 import { getConversationMessages } from "../chat/conversation-manager";
 import {
@@ -33,12 +33,12 @@ describe("index recovery", () => {
     }
   });
 
-  test("agent sessions 索引损坏时应自动备份并回退空列表", () => {
+  test("agent threads 索引损坏时应自动备份并回退空列表", () => {
     const indexPath = getAgentSessionsIndexPath();
     writeFileSync(indexPath, "{broken-json", "utf-8");
 
-    const sessions = listAgentSessions();
-    expect(sessions).toEqual([]);
+    const threads = listAgentThreads();
+    expect(threads).toEqual([]);
 
     const files = readdirSync(tempConfigDir);
     expect(files.some((name) => name.startsWith("agent-sessions.json.corrupt-"))).toBeTrue();

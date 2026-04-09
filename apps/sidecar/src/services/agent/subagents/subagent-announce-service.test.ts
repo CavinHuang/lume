@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { createAgentSession, getAgentSessionMessages } from "../../agent/agent-thread-manager";
+import { createAgentThread, getAgentThreadMessages } from "../../agent/agent-thread-manager";
 import { announceSubagentCompletion } from "./subagent-announce-service";
 import type { SubagentRun } from "./subagent-run.types";
 
@@ -45,40 +45,40 @@ function buildRun(parentThreadId: string): SubagentRun {
 }
 
 describe("subagent-announce-service", () => {
-  test("应向父会话追加 completion 消息", async () => {
-    const parent = createAgentSession("父会话", "channel-x");
+  test("应向父线程追加 completion 消息", async () => {
+    const parent = createAgentThread("父线程", "channel-x");
     const run = buildRun(parent.id);
     const result = await announceSubagentCompletion({ run });
     expect(result.delivered).toBe(true);
     expect(result.attempts).toBe(1);
 
-    const messages = getAgentSessionMessages(parent.id);
+    const messages = getAgentThreadMessages(parent.id);
     const last = messages[messages.length - 1];
     expect(last?.role).toBe("assistant");
     expect(last?.content).toContain("子任务完成通知");
     expect(last?.metadata?.subagentAnnounce).toBe(true);
     expect(last?.metadata?.runId).toBe(run.runId);
-    expect(last?.metadata?.childSessionId).toBe(run.childThreadId);
+    expect(last?.metadata?.childThreadId).toBe(run.childThreadId);
   });
 
-  test("父会话不存在时应返回失败", async () => {
+  test("父线程不存在时应返回失败", async () => {
     const run = buildRun("missing-parent");
     const result = await announceSubagentCompletion({ run });
     expect(result.delivered).toBe(false);
-    expect(result.error).toContain("目标会话不存在");
+    expect(result.error).toContain("目标线程不存在");
   });
 
   test("设置 deliveryThreadId 时应投递到指定会话", async () => {
-    const parent = createAgentSession("父会话", "channel-x");
-    const inbox = createAgentSession("收件会话", "channel-x");
+    const parent = createAgentThread("父线程", "channel-x");
+    const inbox = createAgentThread("收件线程", "channel-x");
     const run = {
       ...buildRun(parent.id),
       deliveryThreadId: inbox.id
     };
     const result = await announceSubagentCompletion({ run });
     expect(result.delivered).toBe(true);
-    const inboxMessages = getAgentSessionMessages(inbox.id);
-    const parentMessages = getAgentSessionMessages(parent.id);
+    const inboxMessages = getAgentThreadMessages(inbox.id);
+    const parentMessages = getAgentThreadMessages(parent.id);
     expect(inboxMessages.some((item) => item.metadata?.subagentAnnounce === true)).toBe(true);
     expect(parentMessages.some((item) => item.metadata?.subagentAnnounce === true)).toBe(false);
   });

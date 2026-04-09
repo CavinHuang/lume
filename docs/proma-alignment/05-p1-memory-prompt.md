@@ -1,5 +1,11 @@
 # P1-2: 记忆系统 Prompt 优化
 
+## 状态
+
+✅ 已完成（代码已存在，2026-04-09 回写状态）
+
+`apps/sidecar/src/services/agent/agent-prompt-builder.ts` 已包含“记忆系统”哲学章节，以及增强后的 `Memory Write Rules`，明确了“共同经历”“自然带入”与“不要记流水账”的行为引导。
+
 ## 差距分析
 
 ### Proma 的实现

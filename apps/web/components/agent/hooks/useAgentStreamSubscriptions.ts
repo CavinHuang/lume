@@ -11,6 +11,7 @@ import type {
 } from "@lume/shared";
 import type { PlanState } from "@/atoms/plan-atoms";
 import type { AgentStreamState } from "@/atoms/agent-atoms";
+import { enrichAssistantMessages } from "@/lib/agent-display-message";
 import { applySdkMessage } from "@/lib/agent-streaming";
 import {
   generateAgentThreadTitle,
@@ -18,6 +19,7 @@ import {
   getAgentThreadMessages,
   listAgentThreads,
   onAgentAskUserQuestion,
+  onAgentMessageAppended,
   onAgentPlanStateChanged,
   onAgentRuntimeStatusChanged,
   onAgentStreamError,
@@ -27,7 +29,6 @@ import {
   updateAgentThreadTitle
 } from "@/lib/desktop-api/agent";
 import { mergeServerMessagesWithPending, replaceVisibleMessage } from "@/lib/agent-message-merge";
-import { appendPersistedAgentMessage } from "@/lib/agent-message-appended";
 import { extractLatestAssistantText } from "../agent-session-lifecycle";
 
 function isAgentDebugEnabled(): boolean {
@@ -36,91 +37,6 @@ function isAgentDebugEnabled(): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * 将本轮流式的 thinking duration 注入到消息列表中最后一条带 reasoning 的 assistant 消息。
- * 前端渲染已完成消息时可用此值显示精确思考秒数。
- */
-function injectThinkingDuration(
-  messages: AgentMessage[],
-  duration: number | undefined,
-  targetMessageId?: string
-): AgentMessage[] {
-  if (duration === undefined) return messages;
-  if (targetMessageId) {
-    const targetIndex = messages.findIndex((message) => message.id === targetMessageId);
-    if (targetIndex !== -1) {
-      const msg = messages[targetIndex]!;
-      const patched = [...messages];
-      patched[targetIndex] = {
-        ...msg,
-        metadata: { ...msg.metadata, thinkingDuration: duration }
-      };
-      return patched;
-    }
-  }
-  // 从后往前找到第一条有 reasoning 的 assistant 消息
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!;
-    if (msg.role === "assistant" && msg.reasoning) {
-      const patched = [...messages];
-      patched[i] = {
-        ...msg,
-        metadata: { ...msg.metadata, thinkingDuration: duration }
-      };
-      return patched;
-    }
-  }
-  return messages;
-}
-
-function injectToolActivitiesSnapshot(
-  messages: AgentMessage[],
-  toolActivities: AgentStreamState["toolActivities"] | undefined,
-  targetMessageId?: string
-): AgentMessage[] {
-  if (!toolActivities || toolActivities.length === 0) return messages;
-  if (targetMessageId) {
-    const targetIndex = messages.findIndex((message) => message.id === targetMessageId);
-    if (targetIndex !== -1) {
-      const msg = messages[targetIndex]!;
-      const patched = [...messages];
-      patched[targetIndex] = {
-        ...msg,
-        metadata: { ...msg.metadata, toolActivitiesSnapshot: toolActivities }
-      };
-      return patched;
-    }
-  }
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!;
-    if (msg.role === "assistant") {
-      const patched = [...messages];
-      patched[i] = {
-        ...msg,
-        metadata: { ...msg.metadata, toolActivitiesSnapshot: toolActivities }
-      };
-      return patched;
-    }
-  }
-  return messages;
-}
-
-function enrichAssistantMessage(
-  message: AgentMessage,
-  thinkingDuration: number | undefined,
-  toolActivities: AgentStreamState["toolActivities"] | undefined
-): AgentMessage {
-  return {
-    ...message,
-    metadata: {
-      ...message.metadata,
-      ...(thinkingDuration !== undefined ? { thinkingDuration } : {}),
-      ...(toolActivities && toolActivities.length > 0 ? { toolActivitiesSnapshot: toolActivities } : {}),
-      ...(message.reasoning ? { reasoningExpanded: true } : {})
-    }
-  };
 }
 
 interface UseAgentStreamSubscriptionsParams {
@@ -318,12 +234,12 @@ export function useAgentStreamSubscriptions({
                 }
               }
               const latestAssistantId = [...next].reverse().find((message) => message.role === "assistant")?.id;
-              const withThinkingDuration = injectThinkingDuration(next, thinkingDuration, latestAssistantId);
-              const enriched = injectToolActivitiesSnapshot(
-                withThinkingDuration,
-                streamStateForDuration?.toolActivities,
-                latestAssistantId
-              );
+              const enriched = enrichAssistantMessages({
+                messages: next,
+                thinkingDuration,
+                toolActivities: streamStateForDuration?.toolActivities,
+                targetMessageId: latestAssistantId
+              });
               setMessages((prev) => mergeServerMessagesWithPending(prev, enriched));
               setSdkMessages(sdkMessages);
               finalize();
@@ -442,7 +358,7 @@ export function useAgentStreamSubscriptions({
         return;
       }
       startTransition(() => {
-        setMessages((prev) => appendPersistedAgentMessage(prev, payload.message));
+        setMessages((prev) => replaceVisibleMessage(prev, payload.message));
         if (Array.isArray(payload.message.sdkMessages) && payload.message.sdkMessages.length > 0) {
           setSdkMessages((prev) => [...prev, ...payload.message.sdkMessages!]);
         }
@@ -626,4 +542,3 @@ export function useAgentStreamSubscriptions({
     updatePlanDraft
   ]);
 }
-

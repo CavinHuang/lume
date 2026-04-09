@@ -10,11 +10,11 @@ import type {
   AgentToolPermissionRequest
 } from "@lume/shared";
 import {
-  createAgentSession,
-  deleteAgentSession,
-  getAgentSessionMessages,
+  createAgentThread,
+  deleteAgentThread,
+  getAgentThreadMessages,
   getAgentThreadMeta,
-  listAgentSessions,
+  listAgentThreads,
   updateAgentThreadMeta
 } from "../../../agent/agent-thread-manager";
 import type { AgentMessage } from "@lume/shared";
@@ -51,16 +51,16 @@ interface SessionTool {
   execute: (toolCallId: string, args: Record<string, unknown>) => Promise<unknown>;
 }
 
-interface ResolveSessionTargetInput {
-  currentSessionId: string;
-  sessionKey?: unknown;
+interface ResolveThreadTargetInput {
+  currentThreadId: string;
+  threadId?: unknown;
   label?: unknown;
   agentId?: unknown;
 }
 
 interface ResolveSpawnRouteInput {
   spawnAgentId: string;
-  currentSessionId: string;
+  currentThreadId: string;
   fallbackChannelId?: string;
   requestedModel?: string;
 }
@@ -74,12 +74,12 @@ function isSubagentSessionId(threadId: string): boolean {
 
 const SUBAGENT_BLOCKED_TOOL_NAMES = new Set([
   "agents_list",
-  "sessions_list",
-  "sessions_history",
-  "sessions_send",
-  "sessions_delete",
-  "sessions_spawn",
-  "session_status",
+  "threads_list",
+  "threads_history",
+  "threads_send",
+  "threads_delete",
+  "threads_spawn",
+  "thread_status",
   "subagents_list",
   "subagents_kill",
   "subagents_send",
@@ -97,7 +97,7 @@ function buildSubagentBlockedResult(toolName: string): {
 } {
   return {
     status: "error",
-    error: `${toolName} is not allowed from sub-agent sessions`
+    error: `${toolName} is not allowed from sub-agent threads`
   };
 }
 
@@ -124,63 +124,63 @@ function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n...(truncated)...`;
 }
 
-function pickSessionId(rawValue: unknown, currentSessionId: string): string {
+function pickThreadId(rawValue: unknown, currentThreadId: string): string {
   if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
-    return currentSessionId;
+    return currentThreadId;
   }
   const normalized = rawValue.trim();
   if (normalized === "current" || normalized === "main") {
-    return currentSessionId;
+    return currentThreadId;
   }
   return normalized;
 }
 
-function resolveSessionByLabel(label: string): string | null {
+function resolveThreadByLabel(label: string): string | null {
   const normalized = label.trim().toLowerCase();
   if (!normalized) return null;
-  const matched = listAgentSessions().find((session) => session.title.trim().toLowerCase() === normalized);
+  const matched = listAgentThreads().find((session) => session.title.trim().toLowerCase() === normalized);
   return matched?.id ?? null;
 }
 
-function resolveSessionIdsByLabel(label: string): string[] {
+function resolveThreadIdsByLabel(label: string): string[] {
   const normalized = label.trim().toLowerCase();
   if (!normalized) return [];
-  return listAgentSessions()
+  return listAgentThreads()
     .filter((session) => session.title.trim().toLowerCase() === normalized)
     .map((session) => session.id);
 }
 
-function resolveSessionTarget(input: ResolveSessionTargetInput): {
+function resolveThreadTarget(input: ResolveThreadTargetInput): {
   ok: true;
   threadId: string;
 } | {
   ok: false;
   error: string;
 } {
-  const sessionKey = typeof input.sessionKey === "string" ? input.sessionKey.trim() : "";
+  const threadId = typeof input.threadId === "string" ? input.threadId.trim() : "";
   const label = typeof input.label === "string" ? input.label.trim() : "";
   const agentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
 
-  if (sessionKey && label) {
-    return { ok: false, error: "Provide either sessionKey or label (not both)." };
+  if (threadId && label) {
+    return { ok: false, error: "Provide either threadId or label (not both)." };
   }
-  if (sessionKey) {
-    return { ok: true, threadId: pickSessionId(sessionKey, input.currentSessionId) };
+  if (threadId) {
+    return { ok: true, threadId: pickThreadId(threadId, input.currentThreadId) };
   }
   if (label) {
     if (agentId) {
       return {
         ok: false,
-        error: "当前 Lume 尚未实现 label + agentId 的联合解析，请直接传 sessionKey。"
+        error: "当前 Lume 尚未实现 label + agentId 的联合解析，请直接传 threadId。"
       };
     }
-    const resolved = resolveSessionByLabel(label);
+    const resolved = resolveThreadByLabel(label);
     if (!resolved) {
-      return { ok: false, error: `No session found with label: ${label}` };
+      return { ok: false, error: `No thread found with label: ${label}` };
     }
     return { ok: true, threadId: resolved };
   }
-  return { ok: true, threadId: input.currentSessionId };
+  return { ok: true, threadId: input.currentThreadId };
 }
 
 function pickModelIdForChannel(channelId: string | undefined, requestedModelId?: string): string | null {
@@ -190,8 +190,8 @@ function pickModelIdForChannel(channelId: string | undefined, requestedModelId?:
   return resolveRequestedModelIdForChannel(channel, requestedModelId) ?? null;
 }
 
-function extractLatestModelFromSession(threadId: string): string | undefined {
-  const messages = getAgentSessionMessages(threadId);
+function extractLatestModelFromThread(threadId: string): string | undefined {
+  const messages = getAgentThreadMessages(threadId);
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message || message.role !== "assistant" || typeof message.model !== "string") {
@@ -291,7 +291,7 @@ async function finalizeSubagentRun(params: {
     });
   if (params.cleanup === "delete") {
     try {
-      deleteAgentSession(params.childThreadId);
+      deleteAgentThread(params.childThreadId);
     } catch {
       // ignore cleanup failure to keep status stable
     }
@@ -319,7 +319,7 @@ function resolveSpawnRoute(input: ResolveSpawnRouteInput): {
   ok: false;
   error: string;
 } {
-  const currentMeta = getAgentThreadMeta(input.currentSessionId);
+  const currentMeta = getAgentThreadMeta(input.currentThreadId);
   const normalizedAgentId = input.spawnAgentId.trim();
 
   if (!normalizedAgentId || normalizedAgentId === "lume") {
@@ -327,7 +327,7 @@ function resolveSpawnRoute(input: ResolveSpawnRouteInput): {
       ok: true,
       resolvedAgentId: normalizedAgentId || undefined,
       channelId: currentMeta?.channelId ?? input.fallbackChannelId,
-      modelHint: input.requestedModel || extractLatestModelFromSession(input.currentSessionId)
+      modelHint: input.requestedModel || extractLatestModelFromThread(input.currentThreadId)
     };
   }
 
@@ -344,8 +344,8 @@ function resolveSpawnRoute(input: ResolveSpawnRouteInput): {
     resolvedAgentId: targetMeta.id,
     channelId: targetMeta.channelId ?? currentMeta?.channelId ?? input.fallbackChannelId,
     modelHint: input.requestedModel
-      || extractLatestModelFromSession(targetMeta.id)
-      || extractLatestModelFromSession(input.currentSessionId)
+      || extractLatestModelFromThread(targetMeta.id)
+      || extractLatestModelFromThread(input.currentThreadId)
   };
 }
 
@@ -517,7 +517,7 @@ async function executeAgentTurn(params: {
     const runText = truncateText(collectedChunks.join(""), 8_000);
     const errorMsg = runtimeError || result.errorMessage;
     if (errorMsg || result.status === "errored") {
-      return { status: "errored", error: errorMsg || "子会话执行异常", runText, usageEvents };
+      return { status: "errored", error: errorMsg || "子线程执行异常", runText, usageEvents };
     }
     return { status: result.status, runText, usageEvents };
   }
@@ -540,7 +540,7 @@ async function executeAgentTurn(params: {
     }
     const errorMsg = runtimeError || result.errorMessage;
     if (errorMsg || result.status === "errored") {
-      return { status: "errored", error: errorMsg || "子会话执行异常", runText, usageEvents };
+      return { status: "errored", error: errorMsg || "子线程执行异常", runText, usageEvents };
     }
     return { status: result.status, runText, usageEvents };
   } finally {
@@ -564,13 +564,13 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
     {
       name: "agents_list",
       label: "agents_list",
-      description: "List agent ids you can target with sessions_spawn.",
+      description: "List agent ids you can target with threads_spawn.",
       parameters: Type.Object({}),
       async execute() {
         if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("agents_list")) {
           return buildSubagentBlockedResult("agents_list");
         }
-        const sessionAgents = listAgentSessions()
+        const threadAgents = listAgentThreads()
           .slice(0, 50)
           .map((session) => ({
             id: session.id,
@@ -582,14 +582,14 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         return {
           requester: "lume",
           allowAny: false,
-          agents: [{ id: "lume", name: "Lume Agent", configured: true }, ...sessionAgents]
+          agents: [{ id: "lume", name: "Lume Agent", configured: true }, ...threadAgents]
         };
       }
     },
     {
-      name: "sessions_list",
-      label: "sessions_list",
-      description: "List sessions with optional filters and recent messages.",
+      name: "threads_list",
+      label: "threads_list",
+      description: "List threads with optional filters and recent messages.",
       parameters: Type.Object({
         kinds: Type.Optional(Type.Array(Type.String())),
         limit: Type.Optional(Type.Number({ minimum: 1 })),
@@ -597,8 +597,8 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         messageLimit: Type.Optional(Type.Number({ minimum: 0 }))
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_list")) {
-          return buildSubagentBlockedResult("sessions_list");
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("threads_list")) {
+          return buildSubagentBlockedResult("threads_list");
         }
         const params = (args ?? {}) as Record<string, unknown>;
         const limit = clampInt(params.limit, 1, 200, 50);
@@ -610,29 +610,29 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
             .map((item) => item.trim().toLowerCase())
           : [];
 
-        let sessions = listAgentSessions();
+        let threads = listAgentThreads();
         if (activeMinutes > 0) {
           const minUpdatedAt = Date.now() - activeMinutes * 60 * 1000;
-          sessions = sessions.filter((session) => session.updatedAt >= minUpdatedAt);
+          threads = threads.filter((thread) => thread.updatedAt >= minUpdatedAt);
         }
         if (kinds.length > 0 && !kinds.includes("main")) {
-          sessions = [];
+          threads = [];
         }
-        sessions = sessions.slice(0, limit);
+        threads = threads.slice(0, limit);
 
-        const rows = sessions.map((session) => {
-          const allMessages = getAgentSessionMessages(session.id);
+        const rows = threads.map((thread) => {
+          const allMessages = getAgentThreadMessages(thread.id);
           const lastAssistant = [...allMessages].reverse().find((message) => message.role === "assistant");
           const withMessages = messageLimit > 0
             ? mapMessagesForTool(allMessages.slice(Math.max(0, allMessages.length - messageLimit)))
             : undefined;
           return {
-            key: session.id,
+            key: thread.id,
             kind: "main",
-            label: session.title,
-            updatedAt: session.updatedAt,
-            channelId: session.channelId,
-            workspaceId: session.workspaceId,
+            label: thread.title,
+            updatedAt: thread.updatedAt,
+            channelId: thread.channelId,
+            workspaceId: thread.workspaceId,
             model: lastAssistant?.model,
             ...(withMessages ? { messages: withMessages } : {})
           };
@@ -640,37 +640,37 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
 
         return {
           count: rows.length,
-          sessions: rows
+          threads: rows
         };
       }
     },
     {
-      name: "sessions_history",
-      label: "sessions_history",
-      description: "Fetch message history for a session.",
+      name: "threads_history",
+      label: "threads_history",
+      description: "Fetch message history for a thread.",
       parameters: Type.Object({
-        sessionKey: Type.Optional(Type.String({ minLength: 1 })),
+        threadId: Type.Optional(Type.String({ minLength: 1 })),
         label: Type.Optional(Type.String()),
         agentId: Type.Optional(Type.String()),
         limit: Type.Optional(Type.Number({ minimum: 1 })),
         includeTools: Type.Optional(Type.Boolean())
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_history")) {
-          return buildSubagentBlockedResult("sessions_history");
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("threads_history")) {
+          return buildSubagentBlockedResult("threads_history");
         }
         const params = (args ?? {}) as Record<string, unknown>;
-        const hasSessionKey = typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0;
+        const hasThreadId = typeof params.threadId === "string" && params.threadId.trim().length > 0;
         const hasLabel = typeof params.label === "string" && params.label.trim().length > 0;
-        if (!hasSessionKey && !hasLabel) {
+        if (!hasThreadId && !hasLabel) {
           return {
             status: "error",
-            error: "Either sessionKey or label is required"
+            error: "Either threadId or label is required"
           };
         }
-        const resolvedTarget = resolveSessionTarget({
-          currentSessionId: input.threadId,
-          sessionKey: params.sessionKey,
+        const resolvedTarget = resolveThreadTarget({
+          currentThreadId: input.threadId,
+          threadId: params.threadId,
           label: params.label,
           agentId: params.agentId
         });
@@ -687,38 +687,38 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         if (!meta) {
           return {
             status: "not_found",
-            error: `Session not found: ${sessionId}`
+            error: `Thread not found: ${sessionId}`
           };
         }
-        let messages = getAgentSessionMessages(sessionId);
+        let messages = getAgentThreadMessages(sessionId);
         if (!includeTools) {
           messages = messages.filter((message) => message.role === "user" || message.role === "assistant");
         }
         messages = messages.slice(Math.max(0, messages.length - limit));
         return {
           status: "ok",
-          sessionKey: sessionId,
+          threadId: sessionId,
           count: messages.length,
           messages: mapMessagesForTool(messages)
         };
       }
     },
     {
-      name: "session_status",
-      label: "session_status",
-      description: "Show current session status and summary.",
+      name: "thread_status",
+      label: "thread_status",
+      description: "Show current thread status and summary.",
       parameters: Type.Object({
-        sessionKey: Type.Optional(Type.String()),
+        threadId: Type.Optional(Type.String()),
         model: Type.Optional(Type.String())
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("session_status")) {
-          return buildSubagentBlockedResult("session_status");
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("thread_status")) {
+          return buildSubagentBlockedResult("thread_status");
         }
         const params = (args ?? {}) as Record<string, unknown>;
-        const resolvedTarget = resolveSessionTarget({
-          currentSessionId: input.threadId,
-          sessionKey: params.sessionKey
+        const resolvedTarget = resolveThreadTarget({
+          currentThreadId: input.threadId,
+          threadId: params.threadId
         });
         if (!resolvedTarget.ok) {
           return {
@@ -731,14 +731,14 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         if (!meta) {
           return {
             status: "not_found",
-            error: `Session not found: ${sessionId}`
+            error: `Thread not found: ${sessionId}`
           };
         }
-        const messages = getAgentSessionMessages(sessionId);
+        const messages = getAgentThreadMessages(sessionId);
         const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
         return {
           status: "ok",
-          sessionKey: sessionId,
+          threadId: sessionId,
           title: meta.title,
           messageCount: messages.length,
           updatedAt: meta.updatedAt,
@@ -750,33 +750,33 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
       }
     },
     {
-      name: "sessions_send",
-      label: "sessions_send",
-      description: "Send a message into another session.",
+      name: "threads_send",
+      label: "threads_send",
+      description: "Send a message into another thread.",
       parameters: Type.Object({
-        sessionKey: Type.Optional(Type.String()),
+        threadId: Type.Optional(Type.String()),
         label: Type.Optional(Type.String()),
         agentId: Type.Optional(Type.String()),
         message: Type.String({ minLength: 1 }),
         timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 }))
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_send")) {
-          return buildSubagentBlockedResult("sessions_send");
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("threads_send")) {
+          return buildSubagentBlockedResult("threads_send");
         }
         const params = (args ?? {}) as Record<string, unknown>;
-        const hasSessionKey = typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0;
+        const hasThreadId = typeof params.threadId === "string" && params.threadId.trim().length > 0;
         const hasLabel = typeof params.label === "string" && params.label.trim().length > 0;
-        if (!hasSessionKey && !hasLabel) {
+        if (!hasThreadId && !hasLabel) {
           return {
             status: "error",
             runId: randomUUID(),
-            error: "Either sessionKey or label is required"
+            error: "Either threadId or label is required"
           };
         }
-        const resolvedTarget = resolveSessionTarget({
-          currentSessionId: input.threadId,
-          sessionKey: params.sessionKey,
+        const resolvedTarget = resolveThreadTarget({
+          currentThreadId: input.threadId,
+          threadId: params.threadId,
           label: params.label,
           agentId: params.agentId
         });
@@ -794,7 +794,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         }
         const meta = getAgentThreadMeta(sessionId);
         if (!meta) {
-          return { status: "not_found", error: `Session not found: ${sessionId}` };
+          return { status: "not_found", error: `Thread not found: ${sessionId}` };
         }
         const resolvedChannelId = meta.channelId ?? input.channelId;
         if (!resolvedChannelId) {
@@ -812,7 +812,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           };
         }
         const timeoutSeconds = clampInt(params.timeoutSeconds, 0, 600, 60);
-        const requestedModel = extractLatestModelFromSession(sessionId);
+        const requestedModel = extractLatestModelFromThread(sessionId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedModelId) {
           return {
@@ -840,7 +840,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         return {
           status: runResult.status,
           runId: randomUUID(),
-          sessionKey: sessionId,
+          threadId: sessionId,
           model: resolvedModelId,
           usageEvents: runResult.usageEvents,
           output: runResult.runText,
@@ -849,25 +849,25 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
       }
     },
     {
-      name: "sessions_delete",
-      label: "sessions_delete",
-      description: "Delete an existing session and its persisted data.",
+      name: "threads_delete",
+      label: "threads_delete",
+      description: "Delete an existing thread and its persisted data.",
       parameters: Type.Object({
-        sessionKey: Type.Optional(Type.String()),
-        sessionKeys: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+        threadId: Type.Optional(Type.String()),
+        threadIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
         label: Type.Optional(Type.String()),
         labels: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
         agentId: Type.Optional(Type.String())
       }),
       async execute(_toolCallId, args) {
-        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_delete")) {
-          return buildSubagentBlockedResult("sessions_delete");
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("threads_delete")) {
+          return buildSubagentBlockedResult("threads_delete");
         }
         const params = (args ?? {}) as Record<string, unknown>;
-        const singleSessionKey = typeof params.sessionKey === "string" ? params.sessionKey.trim() : "";
-        const hasSessionKey = singleSessionKey.length > 0;
-        const sessionKeys = Array.isArray(params.sessionKeys)
-          ? params.sessionKeys
+        const singleThreadId = typeof params.threadId === "string" ? params.threadId.trim() : "";
+        const hasThreadId = singleThreadId.length > 0;
+        const threadIds = Array.isArray(params.threadIds)
+          ? params.threadIds
             .filter((item): item is string => typeof item === "string")
             .map((item) => item.trim())
             .filter((item) => item.length > 0)
@@ -880,30 +880,30 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
             .map((item) => item.trim())
             .filter((item) => item.length > 0)
           : [];
-        const hasBatchSessionKeys = sessionKeys.length > 0;
+        const hasBatchThreadIds = threadIds.length > 0;
         const hasBatchLabels = labels.length > 0;
-        if (!hasSessionKey && !hasLabel && !hasBatchSessionKeys && !hasBatchLabels) {
+        if (!hasThreadId && !hasLabel && !hasBatchThreadIds && !hasBatchLabels) {
           return {
             status: "error",
-            error: "Either sessionKey/label or sessionKeys/labels is required"
+            error: "Either threadId/label or threadIds/labels is required"
           };
         }
 
-        const resolvedSessionIds: string[] = [];
+        const resolvedThreadIds: string[] = [];
         const seen = new Set<string>();
         const agentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
 
-        const appendSessionId = (sessionId: string): void => {
-          if (seen.has(sessionId)) return;
-          seen.add(sessionId);
-          resolvedSessionIds.push(sessionId);
+        const appendThreadId = (threadId: string): void => {
+          if (seen.has(threadId)) return;
+          seen.add(threadId);
+          resolvedThreadIds.push(threadId);
         };
 
-        if (hasSessionKey) {
-          appendSessionId(pickSessionId(singleSessionKey, input.threadId));
+        if (hasThreadId) {
+          appendThreadId(pickThreadId(singleThreadId, input.threadId));
         }
-        for (const item of sessionKeys) {
-          appendSessionId(pickSessionId(item, input.threadId));
+        for (const item of threadIds) {
+          appendThreadId(pickThreadId(item, input.threadId));
         }
 
         const allLabels: string[] = [];
@@ -913,82 +913,82 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           if (agentId) {
             return {
               status: "error",
-              error: "当前 Lume 尚未实现 label + agentId 的联合解析，请直接传 sessionKey。"
+              error: "当前 Lume 尚未实现 label + agentId 的联合解析，请直接传 threadId。"
             };
           }
-          const matchedIds = resolveSessionIdsByLabel(targetLabel);
+          const matchedIds = resolveThreadIdsByLabel(targetLabel);
           if (matchedIds.length === 0) {
             return {
               status: "error",
-              error: `No session found with label: ${targetLabel}`
+              error: `No thread found with label: ${targetLabel}`
             };
           }
           for (const matchedId of matchedIds) {
-            appendSessionId(matchedId);
+            appendThreadId(matchedId);
           }
         }
-        if (resolvedSessionIds.length === 0) {
+        if (resolvedThreadIds.length === 0) {
           return {
             status: "error",
-            error: "未解析到可删除的会话"
+            error: "未解析到可删除的线程"
           };
         }
-        if (resolvedSessionIds.includes(input.threadId)) {
+        if (resolvedThreadIds.includes(input.threadId)) {
           return {
             status: "error",
-            error: "不能删除当前会话"
+            error: "不能删除当前线程"
           };
         }
 
-        const metas = resolvedSessionIds.map((sessionId) => ({
-          threadId: sessionId,
-          meta: getAgentThreadMeta(sessionId)
+        const metas = resolvedThreadIds.map((threadId) => ({
+          threadId,
+          meta: getAgentThreadMeta(threadId)
         }));
         const missing = metas.find((item) => !item.meta);
         if (missing) {
           return {
             status: "not_found",
-            error: `Session not found: ${missing.threadId}`
+            error: `Thread not found: ${missing.threadId}`
           };
         }
 
-        const deletedSessionKeys: string[] = [];
+        const deletedThreadIds: string[] = [];
         const deletedTitles: string[] = [];
         try {
           for (const item of metas) {
-            deleteAgentSession(item.threadId);
-            deletedSessionKeys.push(item.threadId);
+            deleteAgentThread(item.threadId);
+            deletedThreadIds.push(item.threadId);
             deletedTitles.push(item.meta?.title ?? "");
           }
         } catch (error) {
           return {
             status: "error",
-            error: `删除会话失败: ${error instanceof Error ? error.message : String(error)}`,
-            deletedCount: deletedSessionKeys.length,
-            sessionKeys: deletedSessionKeys
+            error: `删除线程失败: ${error instanceof Error ? error.message : String(error)}`,
+            deletedCount: deletedThreadIds.length,
+            threadIds: deletedThreadIds
           };
         }
-        if (deletedSessionKeys.length === 1) {
+        if (deletedThreadIds.length === 1) {
           return {
             status: "ok",
             deleted: true,
-            sessionKey: deletedSessionKeys[0],
+            threadId: deletedThreadIds[0],
             title: deletedTitles[0]
           };
         }
         return {
           status: "ok",
           deleted: true,
-          deletedCount: deletedSessionKeys.length,
-          sessionKeys: deletedSessionKeys,
+          deletedCount: deletedThreadIds.length,
+          threadIds: deletedThreadIds,
           titles: deletedTitles
         };
       }
     },
     {
-      name: "sessions_spawn",
-      label: "sessions_spawn",
-      description: "Spawn an isolated sub-session for a task.",
+      name: "threads_spawn",
+      label: "threads_spawn",
+      description: "Spawn an isolated sub-thread for a task.",
       parameters: Type.Object({
         task: Type.String({ minLength: 1 }),
         label: Type.Optional(Type.String()),
@@ -1000,14 +1000,14 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         cleanup: Type.Optional(Type.Union([Type.Literal("delete"), Type.Literal("keep")])),
         sandbox: Type.Optional(Type.Union([Type.Literal("inherit"), Type.Literal("require")])),
         thread: Type.Optional(Type.Boolean()),
-        deliverySessionKey: Type.Optional(Type.String())
+        deliveryThreadId: Type.Optional(Type.String())
       }),
       async execute(_toolCallId, args) {
         if (!isSubagentTeamV2Enabled()) {
-          return buildSubagentFeatureDisabledResult("sessions_spawn");
+          return buildSubagentFeatureDisabledResult("threads_spawn");
         }
-        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("sessions_spawn")) {
-          return buildSubagentBlockedResult("sessions_spawn");
+        if (isSubagentSessionId(input.threadId) && SUBAGENT_BLOCKED_TOOL_NAMES.has("threads_spawn")) {
+          return buildSubagentBlockedResult("threads_spawn");
         }
         const params = (args ?? {}) as Record<string, unknown>;
         const task = typeof params.task === "string" ? params.task.trim() : "";
@@ -1020,16 +1020,16 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
             : "keep";
         const sandbox = params.sandbox === "require" ? "require" : "inherit";
         const threadRequested = params.thread === true;
-        const deliverySessionKeyRaw = typeof params.deliverySessionKey === "string"
-          ? params.deliverySessionKey.trim()
+        const deliveryThreadIdRaw = typeof params.deliveryThreadId === "string"
+          ? params.deliveryThreadId.trim()
           : "";
-        const requestedDeliverySessionId = deliverySessionKeyRaw
-          ? pickSessionId(deliverySessionKeyRaw, input.threadId)
+        const requestedDeliverySessionId = deliveryThreadIdRaw
+          ? pickThreadId(deliveryThreadIdRaw, input.threadId)
           : undefined;
         if (requestedDeliverySessionId && !getAgentThreadMeta(requestedDeliverySessionId)) {
           return {
             status: "error",
-            error: `deliverySessionKey 不存在: ${requestedDeliverySessionId}`
+            error: `deliveryThreadId 不存在: ${requestedDeliverySessionId}`
           };
         }
         const policyDecision = resolveSubagentSpawnPolicy({
@@ -1049,7 +1049,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         const spawnAgentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
         const route = resolveSpawnRoute({
           spawnAgentId,
-          currentSessionId: input.threadId,
+          currentThreadId: input.threadId,
           fallbackChannelId: currentMeta?.channelId ?? input.channelId,
           requestedModel: modelOverride
         });
@@ -1059,21 +1059,21 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
             error: route.error
           };
         }
-        const created = createAgentSession(
+        const created = createAgentThread(
           label || "子会话",
           route.channelId ?? currentMeta?.channelId ?? input.channelId,
           currentMeta?.workspaceId ?? input.workspaceId,
           input.threadId
         );
-        const requestedModel = route.modelHint || extractLatestModelFromSession(input.threadId);
+        const requestedModel = route.modelHint || extractLatestModelFromThread(input.threadId);
         const thinking = typeof params.thinking === "string" ? params.thinking.trim() : "";
         const resolvedChannelId = created.channelId;
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
           return {
             status: "error",
-            error: "子会话缺少 channel/model，无法执行",
-            childSessionKey: created.id
+            error: "子线程缺少 channel/model，无法执行",
+            childThreadId: created.id
           };
         }
         const runRegistry = getSubagentRunRegistry();
@@ -1175,14 +1175,14 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           }));
           if (cleanup === "delete") {
             try {
-              deleteAgentSession(created.id);
+              deleteAgentThread(created.id);
             } catch {
               // ignore cleanup failure to keep tool result stable
             }
           }
           return {
             status: runResult.status,
-            childSessionKey: created.id,
+            childThreadId: created.id,
             runId,
             model: resolvedModelId,
             output: runResult.runText,
@@ -1191,8 +1191,8 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
             ...(route.resolvedAgentId ? { resolvedAgentId: route.resolvedAgentId } : {}),
             ...(thinking ? { requestedThinking: thinking } : {}),
             spawnDepth: policyDecision.depth,
-            rootSessionKey: policyDecision.rootThreadId,
-            deliverySessionKey: threadBinding.deliveryThreadId,
+            rootThreadId: policyDecision.rootThreadId,
+            deliveryThreadId: threadBinding.deliveryThreadId,
             thread: threadBinding.threadRequested,
             threadBound: threadBinding.threadBound,
             ...(runResult.error ? { error: runResult.error } : {})
@@ -1267,7 +1267,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         });
         return {
           status: "accepted",
-          childSessionKey: created.id,
+          childThreadId: created.id,
           runId,
           model: resolvedModelId,
           cleanup,
@@ -1275,12 +1275,12 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           ...(route.resolvedAgentId ? { resolvedAgentId: route.resolvedAgentId } : {}),
           ...(thinking ? { requestedThinking: thinking } : {}),
           spawnDepth: policyDecision.depth,
-          rootSessionKey: policyDecision.rootThreadId,
-          deliverySessionKey: threadBinding.deliveryThreadId,
+          rootThreadId: policyDecision.rootThreadId,
+          deliveryThreadId: threadBinding.deliveryThreadId,
           thread: threadBinding.threadRequested,
           threadBound: threadBinding.threadBound,
           sandbox,
-          note: "已启动后台子会话执行（runTimeoutSeconds=0 为异步模式）"
+          note: "已启动后台子线程执行（runTimeoutSeconds=0 为异步模式）"
         };
       }
     },
@@ -1289,7 +1289,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
       label: "subagents_list",
       description: "List spawned subagent runs controlled by current session.",
       parameters: Type.Object({
-        sessionKey: Type.Optional(Type.String()),
+        threadId: Type.Optional(Type.String()),
         status: Type.Optional(Type.String()),
         limit: Type.Optional(Type.Number({ minimum: 1, maximum: 200 })),
         runId: Type.Optional(Type.String())
@@ -1302,7 +1302,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           return buildSubagentBlockedResult("subagents_list");
         }
         const params = (args ?? {}) as Record<string, unknown>;
-        const ownerThreadId = pickSessionId(params.sessionKey, input.threadId);
+        const ownerThreadId = pickThreadId(params.threadId, input.threadId);
         const statusFilter = typeof params.status === "string" ? params.status.trim() : "";
         const runIdFilter = typeof params.runId === "string" ? params.runId.trim() : "";
         const limit = clampInt(params.limit, 1, 200, 50);
@@ -1402,7 +1402,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           });
           if (target.cleanup === "delete") {
             try {
-              deleteAgentSession(target.childThreadId);
+              deleteAgentThread(target.childThreadId);
             } catch {
               // keep result deterministic
             }
@@ -1414,7 +1414,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           runId,
           killedCount: runningTargets.length,
           cascade,
-          childSessionKey: matched.childThreadId,
+          childThreadId: matched.childThreadId,
           killedRunIds: runningTargets.map((item) => item.runId)
         };
       }
@@ -1461,16 +1461,16 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         if (!childMeta) {
           return {
             status: "not_found",
-            error: `child session not found: ${matched.childThreadId}`
+            error: `child thread not found: ${matched.childThreadId}`
           };
         }
         const resolvedChannelId = matched.channelId ?? childMeta.channelId ?? input.channelId;
-        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childThreadId);
+        const requestedModel = matched.modelId || extractLatestModelFromThread(matched.childThreadId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
           return {
             status: "error",
-            error: "目标子会话缺少 channel/model，无法执行"
+            error: "目标子线程缺少 channel/model，无法执行"
           };
         }
         runRegistry.update(matched.runId, {
@@ -1515,7 +1515,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         return {
           status: runResult.status,
           runId: matched.runId,
-          childSessionKey: matched.childThreadId,
+          childThreadId: matched.childThreadId,
           model: resolvedModelId,
           output: runResult.runText,
           ...(runResult.error ? { error: runResult.error } : {})
@@ -1565,7 +1565,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
         if (!childMeta) {
           return {
             status: "not_found",
-            error: `child session not found: ${matched.childThreadId}`
+            error: `child thread not found: ${matched.childThreadId}`
           };
         }
         if (!isTerminalSubagentStatus(matched.status)) {
@@ -1582,12 +1582,12 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           });
         }
         const resolvedChannelId = matched.channelId ?? childMeta.channelId ?? input.channelId;
-        const requestedModel = matched.modelId || extractLatestModelFromSession(matched.childThreadId);
+        const requestedModel = matched.modelId || extractLatestModelFromThread(matched.childThreadId);
         const resolvedModelId = pickModelIdForChannel(resolvedChannelId, requestedModel);
         if (!resolvedChannelId || !resolvedModelId) {
           return {
             status: "error",
-            error: "目标子会话缺少 channel/model，无法执行"
+            error: "目标子线程缺少 channel/model，无法执行"
           };
         }
         const nextRunId = randomUUID();
@@ -1658,7 +1658,7 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
             status: runResult.status,
             runId: nextRunId,
             replacedRunId: matched.runId,
-            childSessionKey: matched.childThreadId,
+            childThreadId: matched.childThreadId,
             model: resolvedModelId,
             output: runResult.runText,
             ...(runResult.error ? { error: runResult.error } : {})
@@ -1710,9 +1710,9 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
           status: "accepted",
           runId: nextRunId,
           replacedRunId: matched.runId,
-          childSessionKey: matched.childThreadId,
+          childThreadId: matched.childThreadId,
           model: resolvedModelId,
-          note: "已提交 steer 指令，子会话将在后台继续执行"
+          note: "已提交 steer 指令，子线程将在后台继续执行"
         };
       }
     },
@@ -1729,9 +1729,9 @@ function createSessionTools(input: CreateSessionToolsInput): ToolDefinition[] {
 
 const SESSION_READ_ONLY_TOOL_NAMES = new Set([
   "agents_list",
-  "sessions_list",
-  "sessions_history",
-  "session_status",
+  "threads_list",
+  "threads_history",
+  "thread_status",
   "subagents_list",
   "WebSearch",
   "WebFetch"
@@ -1744,4 +1744,3 @@ export function createSdkSessionTools(input: CreateSessionToolsInput): ToolDefin
   }
   return tools;
 }
-

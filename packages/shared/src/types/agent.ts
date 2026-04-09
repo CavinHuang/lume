@@ -8,7 +8,7 @@
 /**
  * Agent 相关类型定义
  *
- * 包含 Agent SDK 集成所需的事件类型、会话管理、消息持久化和 IPC 通道常量。
+ * 包含 Agent SDK 集成所需的事件类型、线程管理、消息持久化和 IPC 通道常量。
  */
 
 import type { SDKMessage } from "@lume/agent-sdk"
@@ -52,10 +52,10 @@ export interface AgentRuntimeStatus {
   updatedAt: number
 }
 
-// ===== Agent 会话管理 =====
+// ===== Agent 线程管理 =====
 
 /**
- * Agent 会话轻量索引项
+ * Agent 线程轻量索引项
  *
  * 存储在 ~/.proma/agent-sessions.json 中，
  * 类似 ConversationMeta，独立存储。
@@ -699,7 +699,7 @@ export const AGENT_IPC_CHANNELS = {
   DELETE_WORKSPACE: 'agent:delete-workspace',
 
   // 标题生成
-  /** 生成 Agent 会话标题 */
+  /** 生成 Agent 线程标题 */
   GENERATE_TITLE: 'agent:generate-title',
 
   // 消息发送
@@ -742,13 +742,15 @@ export const AGENT_IPC_CHANNELS = {
   // 流式事件（主进程 → 渲染进程推送）
   /** Agent 流式事件 */
   STREAM_EVENT: 'agent:stream:event',
+  /** Agent 流式完成 */
+  STREAM_COMPLETE: 'agent:stream:complete',
   /** Agent 流式错误 */
   STREAM_ERROR: 'agent:stream:error',
   /** 线程消息追加通知 */
   MESSAGE_APPENDED: 'agent:message-appended',
   /** 查询 subagent run 状态（调试/观测） */
   LIST_SUBAGENT_RUNS: 'agent:list-subagent-runs',
-  /** 获取当前会话 runtime status */
+  /** 获取当前线程 runtime status */
   GET_RUNTIME_STATUS: 'agent:get-runtime-status',
   /** AskUserQuestion 请求（sidecar -> web） */
   ASK_USER_QUESTION: 'agent:ask-user-question',

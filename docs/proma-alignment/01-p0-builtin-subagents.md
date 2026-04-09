@@ -1,5 +1,11 @@
 # P0-1: 内置 SubAgent 定义
 
+## 状态
+
+✅ 已完成（2026-04-09）
+
+已在 [apps/sidecar/src/services/agent/agent-prompt-builder.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/services/agent/agent-prompt-builder.ts) 补齐 `buildBuiltinAgents()`，并在 [apps/sidecar/src/services/pi-agent/runtime-core/run.ts](/E:/projects/ai-projects/lume/apps/sidecar/src/services/pi-agent/runtime-core/run.ts) 通过 `createAgent({ agents })` 接入运行时注册。相关测试已补到 `agent-prompt-builder.test.ts` 与 `runtime-core/run.test.ts`，`bun run typecheck` 通过。
+
 ## 差距分析
 
 ### Proma 的实现

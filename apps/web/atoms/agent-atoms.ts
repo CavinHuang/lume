@@ -76,6 +76,11 @@ export const currentAgentLiveSdkMessagesAtom = atom<SDKMessage[]>((get) => {
   return get(agentLiveSdkMessagesMapAtom).get(currentId) ?? [];
 });
 
+export const currentAgentAllSdkMessagesAtom = atom<SDKMessage[]>((get) => [
+  ...get(currentAgentThreadSdkMessagesAtom),
+  ...get(currentAgentLiveSdkMessagesAtom)
+]);
+
 export const currentAgentRuntimeStatusAtom = atom<AgentRuntimeStatus | null>((get) => {
   const currentId = get(currentAgentThreadIdAtom);
   if (!currentId) return null;

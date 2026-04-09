@@ -16,8 +16,8 @@ describe("tool-policy", () => {
     try {
       const tools = [
         { name: "read" },
-        { name: "sessions_list" },
-        { name: "sessions_spawn" },
+        { name: "threads_list" },
+        { name: "threads_spawn" },
         { name: "web_fetch" }
       ];
       const filtered = applyPiToolPolicies(tools, {
@@ -93,12 +93,12 @@ describe("tool-policy", () => {
       expect(saved.tools?.byProvider?.anthropic?.allow).toEqual(["web_*"]);
       expect(saved.tools?.subagent?.deny).toEqual([
         "agents_list",
-        "sessions_list",
-        "sessions_history",
-        "sessions_send",
-        "sessions_delete",
-        "sessions_spawn",
-        "session_status",
+        "threads_list",
+        "threads_history",
+        "threads_send",
+        "threads_delete",
+        "threads_spawn",
+        "thread_status",
         "subagents_list",
         "subagents_kill",
         "subagents_send",

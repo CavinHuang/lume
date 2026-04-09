@@ -105,14 +105,18 @@ export class AnthropicProvider implements LLMProvider {
     const stream = this.client.messages.stream(requestParams)
 
     for await (const event of stream) {
-      if (
-        event.type === 'content_block_delta' &&
-        event.delta.type === 'text_delta' &&
-        event.delta.text
-      ) {
-        yield {
-          type: 'text_delta',
-          text: event.delta.text,
+      if (event.type === 'content_block_delta') {
+        if (event.delta.type === 'text_delta' && event.delta.text) {
+          yield {
+            type: 'text_delta',
+            text: event.delta.text,
+          }
+        }
+        if (event.delta.type === 'thinking_delta' && event.delta.thinking) {
+          yield {
+            type: 'thinking_delta',
+            thinking: event.delta.thinking,
+          }
         }
       }
     }

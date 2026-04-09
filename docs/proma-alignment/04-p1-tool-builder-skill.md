@@ -1,5 +1,11 @@
 # P1-1: tool-builder Skill
 
+## 状态
+
+✅ 已完成（代码已存在，2026-04-09 回写状态）
+
+默认 Skill 已存在于 [apps/sidecar/default-skills/tool-builder/SKILL.md](/E:/projects/ai-projects/lume/apps/sidecar/default-skills/tool-builder/SKILL.md)，内容已适配 `~/.lume/chat-tools.json`、`customTools` 结构与现有 HTTP 工具执行链路。
+
 ## 差距分析
 
 ### Proma 的实现

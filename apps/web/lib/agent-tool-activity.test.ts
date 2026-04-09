@@ -58,6 +58,53 @@ describe("agent-tool-activity", () => {
     ]);
   });
 
+  test("extractToolActivitiesFromMessages 应识别独立 tool_result sdk 消息", () => {
+    const messages: AgentMessage[] = [
+      {
+        id: "m-tool-result",
+        role: "assistant",
+        content: "",
+        createdAt: 1,
+        sdkMessages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{
+                type: "tool_use",
+                id: "tool-openai-1",
+                name: "Read",
+                input: { path: "README.md" }
+              }]
+            }
+          },
+          {
+            type: "tool_result",
+            result: {
+              tool_use_id: "tool-openai-1",
+              tool_name: "Read",
+              output: "file content"
+            }
+          }
+        ] as AgentMessage["sdkMessages"]
+      }
+    ];
+
+    expect(extractToolActivitiesFromMessages(messages)).toEqual([
+      {
+        toolUseId: "tool-openai-1",
+        toolName: "Read",
+        input: { path: "README.md" },
+        intent: undefined,
+        displayName: undefined,
+        parentToolUseId: undefined,
+        result: "file content",
+        isError: false,
+        done: true
+      }
+    ]);
+  });
+
   test("mergeToolActivities 应用 streaming 状态覆盖 history 同 toolUseId 条目", () => {
     const history: ToolActivity[] = [
       {

@@ -13,11 +13,9 @@ import {
   agentStreamingContentAtom,
   agentToolActivitiesAtom,
   agentStreamingReasoningAtom,
-  agentThinkingSecondsAtom,
   currentAgentThreadMessagesAtom,
   currentAgentThreadIdAtom,
   currentAgentLiveSdkMessagesAtom,
-  currentAgentThreadSdkMessagesAtom,
   currentAgentStreamStateAtom,
   userProfileAtom
 } from "@/atoms";
@@ -48,13 +46,15 @@ import {
   getLatestVersionIndex,
   getVersionLabel
 } from "@/lib/agent-message-versions";
+import { buildAssistantDisplayMessage } from "@/lib/agent-display-message";
 import { extractToolActivitiesFromMessages } from "@/lib/agent-tool-activity";
 import { getAgentThreadMessageVersions } from "@/lib/desktop-api/agent";
 import { getModelLogo } from "@/lib/model-logo";
 import { cn } from "@/lib/utils";
 import { AgentRunningIndicator } from "./AgentRunningIndicator";
 import { AgentStatusLine } from "./AgentStatusLine";
-import { groupIntoTurns, MessageGroupRenderer } from "./SDKMessageRenderer";
+import { SDKContentBlockRenderer, getAssistantContentBlocks } from "./SDKContentBlock";
+import { ToolActivityTree } from "./ToolActivityItem";
 
 
 export interface AgentInlineEditSubmitPayload {
@@ -266,11 +266,16 @@ function SubagentAnnounceMessage({
 function EmptyState(): React.ReactElement {
   return (
     <div className="flex h-full items-center justify-center">
-      <div className="flex flex-col items-center gap-3 text-muted-foreground">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-          <Bot size={24} className="text-muted-foreground/60" />
+      <div className="flex flex-col items-center gap-4 px-6 text-center">
+        <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/8 ring-1 ring-primary/10">
+          <Bot size={26} className="text-primary/60" />
         </div>
-        <p className="text-sm">在下方输入框开始使用 Agent</p>
+        <div className="space-y-1.5">
+          <p className="text-sm font-medium text-foreground/80">Agent 已就绪</p>
+          <p className="text-xs text-muted-foreground/70 max-w-[220px] leading-relaxed">
+            在下方输入框描述你的任务，Agent 将自动调用工具完成
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -384,7 +389,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onSubmitInlineEdit,
   onCancelInlineEdit,
   onOpenSession,
-  allSdkMessages
+  isStreamingMessage = false
 }: {
   message: AgentMessage;
   displayedMessage: AgentMessage;
@@ -402,7 +407,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onSubmitInlineEdit?: (message: AgentMessage, payload: AgentInlineEditSubmitPayload) => Promise<void>;
   onCancelInlineEdit?: () => void;
   onOpenSession?: (sessionId: string) => void;
-  allSdkMessages: import("@lume/shared").SDKMessage[];
+  isStreamingMessage?: boolean;
 }): React.ReactElement | null {
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -592,53 +597,86 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
       return <SubagentAnnounceMessage message={displayedMessage} onOpenSession={onOpenSession} />;
     }
 
-    if (Array.isArray(displayedMessage.sdkMessages) && displayedMessage.sdkMessages.length > 0) {
-      const groups = groupIntoTurns(displayedMessage.sdkMessages);
-      return (
-        <>
-          {groups.map((group, index) => (
-            <div key={`${displayedMessage.id}-sdk-${index}`}>
-              <MessageGroupRenderer
-                group={group}
-                allMessages={allSdkMessages.length > 0 ? allSdkMessages : (displayedMessage.sdkMessages ?? [])}
-              />
-            </div>
-          ))}
-        </>
-      );
-    }
+    const assistantMessage = buildAssistantDisplayMessage({
+      id: displayedMessage.id,
+      content: displayedMessage.content,
+      reasoning: displayedMessage.reasoning,
+      createdAt: displayedMessage.createdAt,
+      model: displayedMessage.model,
+      metadata: displayedMessage.metadata as Record<string, unknown> | undefined,
+      toolActivities: messageToolActivities,
+      sdkMessages: displayedMessage.sdkMessages
+    });
+    const orderedAssistantBlocks = Array.isArray(assistantMessage.sdkMessages) && assistantMessage.sdkMessages.length > 0
+      ? getAssistantContentBlocks(
+          assistantMessage.sdkMessages.filter(
+            (sdkMessage): sdkMessage is Extract<typeof sdkMessage, { type: "assistant" }> =>
+              sdkMessage.type === "assistant"
+          )
+        )
+      : [];
 
     return (
       <Message from="assistant">
         <MessageHeader
-          model={displayedMessage.model}
-          time={formatMessageTime(displayedMessage.createdAt)}
-          logo={<AssistantLogo model={displayedMessage.model} />}
+          model={assistantMessage.model}
+          time={formatMessageTime(assistantMessage.createdAt)}
+          logo={<AssistantLogo model={assistantMessage.model} />}
         />
 
         <MessageContent>
-          {displayedMessage.reasoning ? (
-            <Reasoning
-              defaultOpen={Boolean((displayedMessage.metadata as Record<string, unknown>)?.reasoningExpanded)}
-              duration={typeof (displayedMessage.metadata as Record<string, unknown>)?.thinkingDuration === "number"
-                ? ((displayedMessage.metadata as Record<string, unknown>).thinkingDuration as number)
-                : undefined}
-            >
-              <ReasoningTrigger />
-              <ReasoningContent>{displayedMessage.reasoning}</ReasoningContent>
-            </Reasoning>
-          ) : null}
-          {displayedMessage.content ? (
-            <MessageResponse>{displayedMessage.content}</MessageResponse>
-          ) : null}
+          {orderedAssistantBlocks.length > 0 ? (
+            <div className="space-y-2">
+              {orderedAssistantBlocks.map((block, index) => {
+                const childBlocks = block.type === "tool_use"
+                  ? orderedAssistantBlocks.filter(
+                      (candidate) =>
+                        "parentToolUseId" in candidate
+                        && (candidate as { parentToolUseId?: string }).parentToolUseId === (block as { id: string }).id
+                    )
+                  : undefined;
+                return (
+                  <SDKContentBlockRenderer
+                    key={`${assistantMessage.id}-block-${index}`}
+                    block={block}
+                    allMessages={assistantMessage.sdkMessages ?? []}
+                    childBlocks={childBlocks}
+                    animate={isStreamingMessage}
+                    index={index}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <>
+              {assistantMessage.reasoning ? (
+                <Reasoning
+                  isStreaming={isStreamingMessage && !(assistantMessage.content ?? "").trim()}
+                  defaultOpen={Boolean((assistantMessage.metadata as Record<string, unknown>)?.reasoningExpanded)}
+                  duration={typeof (assistantMessage.metadata as Record<string, unknown>)?.thinkingDuration === "number"
+                    ? ((assistantMessage.metadata as Record<string, unknown>).thinkingDuration as number)
+                    : undefined}
+                >
+                  <ReasoningTrigger />
+                  <ReasoningContent>{assistantMessage.reasoning}</ReasoningContent>
+                </Reasoning>
+              ) : null}
+              {messageToolActivities.length > 0 ? (
+                <ToolActivityTree activities={messageToolActivities} />
+              ) : null}
+              {assistantMessage.content ? (
+                <MessageResponse streaming={isStreamingMessage}>{assistantMessage.content}</MessageResponse>
+              ) : null}
+            </>
+          )}
         </MessageContent>
-        {(displayedMessage.content ?? "").trim().length > 0 ? (
+        {(assistantMessage.content ?? "").trim().length > 0 ? (
           <MessageActions
             className="mt-0.5 pl-[46px] transition-none group-data-[actions-disabled=true]/agentlist:pointer-events-none group-data-[actions-disabled=true]/agentlist:opacity-0"
           >
-            <CopyButton content={displayedMessage.content} />
+            <CopyButton content={assistantMessage.content} />
             {onSaveAsTask ? (
-              <MessageAction tooltip="保存为任务" onClick={() => void onSaveAsTask(displayedMessage)}>
+              <MessageAction tooltip="保存为任务" onClick={() => void onSaveAsTask(assistantMessage)}>
                 <CalendarClock className="size-3.5" />
               </MessageAction>
             ) : null}
@@ -686,7 +724,6 @@ export function AgentMessages({
 }: AgentMessagesProps): React.ReactElement {
   const messages = useAtomValue(currentAgentThreadMessagesAtom);
   const liveSdkMessages = useAtomValue(currentAgentLiveSdkMessagesAtom);
-  const persistedSdkMessages = useAtomValue(currentAgentThreadSdkMessagesAtom);
   const sessionId = useAtomValue(currentAgentThreadIdAtom);
   const [messageVersionsByGroup, setMessageVersionsByGroup] = useAtom(agentMessageVersionsByGroupAtom);
   const [selectedVersionIndexByGroup, setSelectedVersionIndexByGroup] = useAtom(agentSelectedVersionIndexByGroupAtom);
@@ -696,27 +733,9 @@ export function AgentMessages({
   const streamingToolActivities = useAtomValue(agentToolActivitiesAtom);
   const agentModelId = useAtomValue(agentModelIdAtom);
   const isCompacting = useAtomValue(agentIsCompactingAtom);
-  const thinkingSeconds = useAtomValue(agentThinkingSecondsAtom);
   const statusLine = useAtomValue(agentStatusLineAtom);
   const streamState = useAtomValue(currentAgentStreamStateAtom);
   const streamStartedAt = streamState?.streamStartedAt;
-  const allSdkMessages = React.useMemo(
-    () => [...persistedSdkMessages, ...liveSdkMessages],
-    [persistedSdkMessages, liveSdkMessages]
-  );
-  const useSDKRenderer = persistedSdkMessages.length > 0;
-  const persistedGroups = React.useMemo(
-    () => useSDKRenderer ? groupIntoTurns(persistedSdkMessages) : [],
-    [persistedSdkMessages, useSDKRenderer]
-  );
-  const liveGroups = React.useMemo(
-    () => liveSdkMessages.length > 0 ? groupIntoTurns(liveSdkMessages) : [],
-    [liveSdkMessages]
-  );
-  const hasLiveAssistantContent = React.useMemo(
-    () => liveGroups.some((group) => group.type === "assistant-turn"),
-    [liveGroups]
-  );
 
   const { displayedContent: smoothContent } = useSmoothStream({
     content: streamingContent,
@@ -726,9 +745,11 @@ export function AgentMessages({
   const actionsDisabled = isStreaming || streaming;
   const shouldShowStreamingMessage = streaming;
 
-  const hasStreamingSdkMessages = liveSdkMessages.length > 0;
-  const showSmoothContent = Boolean(smoothContent) && !hasStreamingSdkMessages;
-  const showLoadingDots = streaming && !smoothContent && !streamingReasoning && !hasStreamingSdkMessages;
+  const showSmoothContent = Boolean(smoothContent);
+  const showLoadingDots = streaming
+    && !smoothContent
+    && !streamingReasoning
+    && streamingToolActivities.length === 0;
   const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
 
   // --- 流式 → 持久化切换的高度锁定，防止列表抖动 ---
@@ -772,15 +793,17 @@ export function AgentMessages({
   });
 
   const renderedMessages = React.useMemo(() => {
-    return messages.map((message) => {
+    return messages.map((message, index) => {
       const displayedMessage = getDisplayedAgentMessage(
         message,
         messageVersionsByGroup,
         selectedVersionIndexByGroup
       );
+      const isLastAssistant = displayedMessage.role === "assistant" && index === messages.length - 1;
       return {
         message,
         displayedMessage,
+        renderKey: isLastAssistant ? "agent-last-assistant" : (displayedMessage.versionGroupId ?? message.id),
         versionLabel: getVersionLabel(message, displayedMessage, messageVersionsByGroup),
         canGoPrevVersion: canMoveToPreviousVersion(message, displayedMessage, messageVersionsByGroup),
         canGoNextVersion: canMoveToNextVersion(message, displayedMessage, messageVersionsByGroup),
@@ -793,19 +816,20 @@ export function AgentMessages({
     if (!shouldShowStreamingMessage) {
       return null;
     }
-    return {
+    const streamingMetadata: Record<string, unknown> = {
+      versionGroupId: "streaming-assistant",
+      reasoningExpanded: true,
+    };
+    return buildAssistantDisplayMessage({
       id: "streaming-assistant",
-      role: "assistant",
       content: showSmoothContent ? smoothContent : "",
       reasoning: streamingReasoning || undefined,
-      createdAt: Date.now(),
+      createdAt: streamState?.streamStartedAt ?? Date.now(),
       model: agentModelId ?? undefined,
-      sdkMessages: liveSdkMessages,
-      metadata: {
-        ...(streamingToolActivities.length > 0 ? { toolActivitiesSnapshot: streamingToolActivities } : {}),
-        ...(streamingReasoning ? { reasoningExpanded: true } : {})
-      }
-    };
+      metadata: streamingMetadata,
+      toolActivities: streamingToolActivities,
+      sdkMessages: liveSdkMessages.length > 0 ? liveSdkMessages : undefined
+    });
   }, [
     agentModelId,
     shouldShowStreamingMessage,
@@ -814,6 +838,8 @@ export function AgentMessages({
     streamingReasoning,
     liveSdkMessages,
     streamingToolActivities
+    ,
+    streamState?.streamStartedAt
   ]);
 
   const ensureVersionsLoaded = React.useCallback(async (message: AgentMessage): Promise<AgentMessage[] | null> => {
@@ -872,22 +898,13 @@ export function AgentMessages({
               <div className="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
             </div>
           </div>
-        ) : ((!useSDKRenderer && messages.length === 0) || (useSDKRenderer && persistedGroups.length === 0 && liveGroups.length === 0)) && !streaming ? (
+        ) : messages.length === 0 && !streaming ? (
           <EmptyState />
         ) : (
           <>
-            {useSDKRenderer ? (
-              persistedGroups.map((group, index) => (
-                <div key={`persisted-sdk-group-${index}`}>
-                  <MessageGroupRenderer
-                    group={group}
-                    allMessages={allSdkMessages}
-                  />
-                </div>
-              ))
-            ) : renderedMessages.map((item) => {
+            {renderedMessages.map((item) => {
               return (
-                <div key={item.message.id} data-message-id={item.message.id}>
+                <div key={item.renderKey} data-message-id={item.message.id}>
                   <AgentMessageItem
                     message={item.message}
                     displayedMessage={item.displayedMessage}
@@ -905,21 +922,12 @@ export function AgentMessages({
                     onSubmitInlineEdit={onSubmitInlineEdit}
                     onCancelInlineEdit={onCancelInlineEdit}
                     onOpenSession={onOpenSession}
-                    allSdkMessages={allSdkMessages}
+                    isStreamingMessage={false}
                   />
                 </div>
               );
             })}
-            {liveGroups.map((group, index) => (
-              <div key={`live-sdk-group-${index}`} data-message-id={`live-sdk-group-${index}`}>
-                <MessageGroupRenderer
-                  group={group}
-                  allMessages={allSdkMessages}
-                  isStreaming
-                />
-              </div>
-            ))}
-            {!hasLiveAssistantContent && streamingMessage ? (
+            {streamingMessage ? (
               <div data-message-id="streaming-assistant" ref={streamingBlockRef}>
                 <AgentMessageItem
                   message={streamingMessage}
@@ -929,7 +937,7 @@ export function AgentMessages({
                   canGoPrevVersion={false}
                   canGoNextVersion={false}
                   versionLoading={false}
-                  allSdkMessages={allSdkMessages}
+                  isStreamingMessage
                 />
                 {isCompacting ? (
                   <div className="pl-[46px]">
@@ -960,10 +968,6 @@ export function AgentMessages({
                     <AgentRunningIndicator startedAt={streamStartedAt} />
                   </div>
                 ) : null}
-              </div>
-            ) : hasLiveAssistantContent && streaming ? (
-              <div className="pl-[46px]">
-                <AgentRunningIndicator startedAt={streamStartedAt} />
               </div>
             ) : null}
             {/* 过渡锚点：流式结束瞬间，通过 min-height 补偿流式消息块被移除导致的高度缩减，

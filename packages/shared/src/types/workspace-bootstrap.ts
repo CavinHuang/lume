@@ -32,9 +32,9 @@ export interface BootstrapFileMeta {
   filename: string
   /** 开发模式文件名（可选） */
   devFilename?: string
-  /** 是否在所有会话类型中加载 */
+  /** 是否在所有线程类型中加载 */
   loadInAllSessions: boolean
-  /** 仅在以下会话类型中加载（空表示所有） */
+  /** 仅在以下线程类型中加载（空表示所有） */
   sessionTypes?: ('main' | 'subagent' | 'group' | 'channel')[]
   /** 是否在首次运行后删除（如 BOOTSTRAP.md） */
   deleteAfterFirstRun?: boolean
@@ -94,16 +94,16 @@ export const BOOTSTRAP_FILES: BootstrapFileMeta[] = [
   },
 ]
 
-// ===== 会话类型 =====
+// ===== 线程类型 =====
 
 /**
- * 会话类型
+ * 线程类型
  *
  * 决定加载哪些 Bootstrap 文件
- * - main: 主会话，直接与用户对话
- * - subagent: 子智能体会话
- * - group: 群聊会话
- * - channel: 频道会话
+ * - main: 主线程，直接与用户对话
+ * - subagent: 子智能体线程
+ * - group: 群聊线程
+ * - channel: 频道线程
  */
 export type SessionType = 'main' | 'subagent' | 'group' | 'channel'
 
@@ -115,7 +115,7 @@ export type SessionType = 'main' | 'subagent' | 'group' | 'channel'
 export interface WorkspaceBootstrapConfig {
   /** 要创建的文件类型列表 */
   files: BootstrapFileType[]
-  /** 会话类型 */
+  /** 线程类型 */
   sessionType: SessionType
   /** 是否使用开发模式模板 */
   devMode?: boolean
@@ -165,7 +165,7 @@ export interface SystemPromptComponents {
  * 系统提示词构建选项
  */
 export interface SystemPromptBuildOptions {
-  /** 会话类型 */
+  /** 线程类型 */
   sessionType: SessionType
   /** 是否包含记忆文件 */
   includeMemory?: boolean

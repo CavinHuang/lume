@@ -57,7 +57,7 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
   const bodyLines = [
     headline,
     `runId: ${run.runId}`,
-    `childSessionKey: ${run.childThreadId}`
+    `childThreadId: ${run.childThreadId}`
   ];
   if (output) {
     bodyLines.push("", "输出摘要:", truncateText(output, 1200));
@@ -97,7 +97,7 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
           content: JSON.stringify({
             runId: run.runId,
             status,
-            childSessionKey: run.childThreadId,
+            childThreadId: run.childThreadId,
             output: output ? truncateText(output, 1200) : undefined,
             error: error || undefined
           }, null, 2),

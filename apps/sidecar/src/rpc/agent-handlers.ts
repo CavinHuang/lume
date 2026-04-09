@@ -477,6 +477,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             message
           });
         },
+        onMessageAppended: (event) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+        },
         onComplete: () => {
           context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
             threadId: input.threadId

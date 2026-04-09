@@ -66,8 +66,8 @@ function compilePatterns(entries?: string[]): CompiledPattern[] {
   return compilePatterns_shared(expandToolEntries(entries), normalizeEntry);
 }
 
-export function deriveChatTypeFromSessionKey(sessionKey?: string): MemoryChatType {
-  const raw = (sessionKey ?? "").trim().toLowerCase();
+export function deriveChatTypeFromThreadKey(threadKey?: string): MemoryChatType {
+  const raw = (threadKey ?? "").trim().toLowerCase();
   if (!raw) return "direct";
   const tokens = new Set(raw.split(":").filter(Boolean));
   if (tokens.has("channel")) return "channel";
@@ -75,11 +75,11 @@ export function deriveChatTypeFromSessionKey(sessionKey?: string): MemoryChatTyp
   return "direct";
 }
 
-export function deriveChatTypeFromSessionType(sessionType?: unknown): MemoryChatType | undefined {
-  if (sessionType === "group" || sessionType === "channel") {
-    return sessionType;
+export function deriveChatTypeFromThreadType(threadType?: unknown): MemoryChatType | undefined {
+  if (threadType === "group" || threadType === "channel") {
+    return threadType;
   }
-  if (sessionType === "main" || sessionType === "subagent") {
+  if (threadType === "main" || threadType === "subagent") {
     return "direct";
   }
   return undefined;

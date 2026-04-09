@@ -63,15 +63,15 @@ const TOOL_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   // LSP / MCP
   lsp: Code2,
   mcpsearch: Search,
-  // Session / subagent
-  sessions_spawn: GitBranch,
+  // Thread / subagent
+  threads_spawn: GitBranch,
   agents_list: Bot,
-  sessions_list: Bot,
-  sessions_history: Bot,
-  sessions_send: Bot,
-  sessions_delete: Bot,
-  sessions_delete_all: Bot,
-  session_status: Bot,
+  threads_list: Bot,
+  threads_history: Bot,
+  threads_send: Bot,
+  threads_delete: Bot,
+  threads_delete_all: Bot,
+  thread_status: Bot,
   subagents_list: Bot,
   subagents_kill: Bot,
   subagents_send: Bot,
@@ -210,4 +210,50 @@ export function formatElapsed(value: number, unit: "ms" | "s" = "s"): string {
   const m = Math.floor(value / 60);
   const s = Math.round(value % 60);
   return `${m}m${s}s`;
+}
+
+// ─── 文件语言推断 ───
+
+const EXT_LANGUAGE_MAP: Record<string, string> = {
+  ts: "typescript",
+  tsx: "tsx",
+  js: "javascript",
+  jsx: "jsx",
+  py: "python",
+  go: "go",
+  rs: "rust",
+  java: "java",
+  cs: "csharp",
+  cpp: "cpp",
+  c: "c",
+  rb: "ruby",
+  php: "php",
+  swift: "swift",
+  kt: "kotlin",
+  json: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "toml",
+  md: "markdown",
+  mdx: "markdown",
+  html: "html",
+  htm: "html",
+  css: "css",
+  scss: "scss",
+  sh: "shellscript",
+  bash: "shellscript",
+  sql: "sql",
+  xml: "xml",
+  tf: "terraform",
+  dockerfile: "docker",
+};
+
+/**
+ * 根据文件路径推断 Shiki 语言标识符
+ */
+export function inferLanguageFromPath(filePath: string): string {
+  const filename = filePath.replace(/\\/g, "/").split("/").pop() ?? "";
+  if (filename.toLowerCase() === "dockerfile") return "docker";
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return EXT_LANGUAGE_MAP[ext] ?? "text";
 }

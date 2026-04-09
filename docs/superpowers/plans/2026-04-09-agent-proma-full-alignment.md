@@ -19,10 +19,10 @@
 - Test: `apps/sidecar/src/services/agent/agent-thread-manager.test.ts`
 - Test: `apps/sidecar/src/services/agent/agent-thread-manager.merge-turns.test.ts`
 
-- [ ] Keep raw SDK transcript in a single `${threadId}.jsonl` file as the canonical thread history source.
-- [ ] Ensure `append / replace / truncate / fork / migrate / delete` all keep raw SDK transcript, runtime-core transcript, and version store in sync.
-- [ ] Keep transcript re-projection only as a fallback for threads without raw SDK transcript.
-- [ ] Add or update tests for append, fork, truncate, migrate, and fallback read behavior.
+- [x] Keep raw SDK transcript in a single `${threadId}.jsonl` file as the canonical thread history source.
+- [x] Ensure `append / replace / truncate / fork / migrate / delete` all keep raw SDK transcript, runtime-core transcript, and version store in sync.
+- [x] Keep transcript re-projection only as a fallback for threads without raw SDK transcript.
+- [x] Add or update tests for append, fork, truncate, migrate, and fallback read behavior.
 
 ### Task 2: Complete send pipeline parity with Proma
 
@@ -30,10 +30,10 @@
 - Modify: `apps/sidecar/src/services/agent/agent-service.ts`
 - Test: `apps/sidecar/src/services/agent/agent-service.test.ts`
 
-- [ ] Persist user SDK messages before execution starts.
-- [ ] Persist assistant/result/tool_result/system SDK messages at turn completion and on error paths.
-- [ ] Keep title generation, runtime status, and memory flush behavior working off thread terminology and canonical history.
-- [ ] Add tests for thread send lifecycle where raw SDK transcript and visible assistant version are both updated.
+- [x] Persist user SDK messages before execution starts.
+- [x] Persist assistant/result/tool_result/system SDK messages at turn completion and on error paths.
+- [x] Keep title generation, runtime status, and memory flush behavior working off thread terminology and canonical history.
+- [x] Add tests for thread send lifecycle where raw SDK transcript and visible assistant version are both updated.
 
 ## Chunk 2: RPC and Contract Completion
 
@@ -45,10 +45,10 @@
 - Modify: `apps/web/lib/desktop-api/agent.ts`
 - Test: `apps/web/lib/desktop-api.agent-runtime-status.test.ts`
 
-- [ ] Expose the remaining thread-level SDK transcript reads and append notifications cleanly through RPC.
-- [ ] Remove stale session-oriented naming from active thread RPC paths where compatibility is no longer needed.
-- [ ] Keep compatibility aliases only when a live caller still depends on them.
-- [ ] Verify desktop API wrappers expose the final Agent thread contract surface.
+- [x] Expose the remaining thread-level SDK transcript reads and append notifications cleanly through RPC.
+- [x] Remove stale session-oriented naming from active thread RPC paths where compatibility is no longer needed.
+- [x] Keep compatibility aliases only when a live caller still depends on them.
+- [x] Verify desktop API wrappers expose the final Agent thread contract surface.
 
 ## Chunk 3: Frontend Rendering Cutover
 
@@ -62,10 +62,10 @@
 - Modify: `apps/web/components/agent/hooks/useAgentStreamSubscriptions.ts`
 - Modify: `apps/web/lib/agent-streaming.ts`
 
-- [ ] Keep `persistedSDKMessages` and `liveMessages` as independent sources like Proma.
-- [ ] Render persisted groups first, then live groups, with fallback placeholder bubbles only when live assistant content is absent.
-- [ ] Stop using `AgentMessage.sdkMessages` as the primary source when full persisted/live SDK transcripts are available.
-- [ ] Preserve layout stability at stream completion without forcing whole-thread reloads.
+- [x] Keep `persistedSDKMessages` and `liveMessages` as independent sources like Proma.
+- [x] Render persisted groups first, then live groups, with fallback placeholder bubbles only when live assistant content is absent.
+- [x] Stop using `AgentMessage.sdkMessages` as the primary source when full persisted/live SDK transcripts are available.
+- [x] Preserve layout stability at stream completion without forcing whole-thread reloads.
 
 ### Task 5: Reduce `AgentMessage[]` to compatibility/fallback
 
@@ -74,9 +74,9 @@
 - Modify: `apps/web/lib/agent-message-merge.ts`
 - Modify: `apps/web/lib/agent-tool-activity.ts`
 
-- [ ] Keep version navigation, inline edit, and delete actions working for legacy/message-version flows.
-- [ ] Use `AgentMessage[]` mainly for user-visible versioned thread records and legacy fallback, not for primary SDK rendering.
-- [ ] Ensure tool activity reconstruction prefers full SDK transcripts when present.
+- [x] Keep version navigation, inline edit, and delete actions working for legacy/message-version flows.
+- [x] Use `AgentMessage[]` mainly for user-visible versioned thread records and legacy fallback, not for primary SDK rendering.
+- [x] Ensure tool activity reconstruction prefers full SDK transcripts when present.
 
 ## Chunk 4: Tooling Surface Alignment
 
@@ -89,9 +89,9 @@
 - Modify: `apps/sidecar/src/services/pi-agent/tools/permissions/tool-policy.ts`
 - Test: `apps/sidecar/src/services/pi-agent/tools/session/create-session-tools.test.ts`
 
-- [ ] Keep SDK-native tool names (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUserQuestion`) as the runtime truth.
-- [ ] Audit `sessions_* / subagents_* / cron_* / memory_*` and identify which ones are true product tools versus wrappers around SDK-native behavior.
-- [ ] Where possible, move toward Proma’s preference for native `Agent / Task* / TaskOutput` semantics and compatibility normalization instead of redundant wrappers.
+- [x] Keep SDK-native tool names (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUserQuestion`) as the runtime truth.
+- [x] Audit `sessions_* / subagents_* / cron_* / memory_*` and identify which ones are true product tools versus wrappers around SDK-native behavior.
+- [x] Where possible, move toward Proma’s preference for native `Agent / Task* / TaskOutput` semantics and compatibility normalization instead of redundant wrappers.
 
 ## Chunk 5: Final Verification and Cleanup
 
@@ -105,11 +105,11 @@
 - Test: `apps/web/lib/desktop-api.agent-runtime-status.test.ts`
 - Test: `apps/web/lib/agent-message-appended.test.ts`
 
-- [ ] Run `bun run --filter @lume/sidecar typecheck`
-- [ ] Run `bun run --filter @lume/web typecheck`
-- [ ] Run targeted Agent sidecar tests
-- [ ] Run targeted Agent web tests
-- [ ] Record any still-unaligned Proma differences that are intentional or blocked by SDK limitations
+- [x] Run `bun run --filter @lume/sidecar typecheck`
+- [x] Run `bun run --filter @lume/web typecheck`
+- [x] Run targeted Agent sidecar tests
+- [x] Run targeted Agent web tests
+- [x] Record any still-unaligned Proma differences that are intentional or blocked by SDK limitations
 
 ## Current Status Snapshot
 
@@ -117,6 +117,11 @@
 - [x] `AskUserQuestion` switched to native SDK tool + interception flow
 - [x] Raw SDK transcript persistence introduced on sidecar
 - [x] Frontend `persistedSDKMessages + liveMessages` state model introduced
-- [ ] Frontend render path fully centered on SDK transcript groups
-- [ ] Thread operations and RPC surface fully normalized around the canonical raw SDK transcript
-- [ ] Legacy compatibility paths reduced to explicit fallback-only behavior
+- [x] Frontend render path fully centered on SDK transcript groups
+- [x] Thread operations and RPC surface fully normalized around the canonical raw SDK transcript
+- [x] Legacy compatibility paths reduced to explicit fallback-only behavior
+
+## Remaining Notes
+
+- `AgentMessage[]` 仍保留给版本导航、inline edit、delete 与旧 transcript fallback 使用；主渲染、Todo 提取、工具活动恢复已优先使用完整 SDK transcript。
+- 子任务能力仍保留 `subagents_*` 作为产品语义层；线程管理工具已统一切换为 `threads_*`。

@@ -116,12 +116,10 @@ function writeIndex(index: AgentThreadsIndex): void {
 export function listAgentThreads(): AgentThreadMeta[] {
   return readIndex().threads.sort((a, b) => b.updatedAt - a.updatedAt);
 }
-export const listAgentSessions = listAgentThreads;
 
 export function getAgentThreadMeta(id: string): AgentThreadMeta | undefined {
   return readIndex().threads.find((thread) => thread.id === id);
 }
-export const getAgentSessionMeta = getAgentThreadMeta;
 
 
 export function createAgentThread(
@@ -160,7 +158,6 @@ export function createAgentThread(
   console.log(`[Agent 线程] 已创建线程: ${meta.title} (${meta.id})`);
   return meta;
 }
-export const createAgentSession = createAgentThread;
 
 export function getAgentThreadMessages(id: string): AgentMessage[] {
   const existingStore = readAgentMessageVersionStore(id);
@@ -171,7 +168,6 @@ export function getAgentThreadMessages(id: string): AgentMessage[] {
   syncVersionStoreFromMessages(id, transcriptMessages);
   return getVisibleAgentMessages(id);
 }
-export const getAgentSessionMessages = getAgentThreadMessages;
 
 type FlatAssistantSdkMessage = Extract<SDKMessage, { type: "assistant" }>;
 type FlatUserSdkMessage = Extract<SDKMessage, { type: "user" }>;
@@ -284,7 +280,6 @@ export function getRecentAgentThreadMessages(id: string, limit: number): AgentRe
   }
   return sliceRecentAgentMessages(readRuntimeCoreTranscriptMessages(id), limit);
 }
-export const getRecentAgentMessages = getRecentAgentThreadMessages;
 
 export function appendAgentTranscriptMessage(
   id: string,
@@ -341,7 +336,6 @@ export function toggleAgentThreadPin(id: string): AgentThreadMeta {
   }
   return updateAgentThreadMeta(id, { pinned: !meta.pinned });
 }
-export const toggleAgentSessionPin = toggleAgentThreadPin;
 
 function moveThreadDir(sourceDir: string, targetDir: string): void {
   if (!existsSync(sourceDir)) return;
@@ -411,7 +405,6 @@ export function moveAgentThreadToWorkspace(id: string, workspaceId: string): Age
     runtimeThreadId: undefined
   });
 }
-export const moveAgentSessionToWorkspace = moveAgentThreadToWorkspace;
 
 /**
  * 迁移 Chat 对话消息到指定 Agent 线程。
@@ -479,7 +472,6 @@ export function migrateChatToAgentThread(conversationId: string, agentThreadId: 
   }
   return migratedCount;
 }
-export const migrateChatToAgentSession = migrateChatToAgentThread;
 
 export function deleteAgentThread(id: string): void {
   const index = readIndex();
@@ -527,7 +519,6 @@ export function deleteAgentThread(id: string): void {
 
   console.log(`[Agent 线程] 已删除线程: ${removed.title} (${removed.id})`);
 }
-export const deleteAgentSession = deleteAgentThread;
 
 export function truncateAgentMessagesFrom(threadId: string, messageId: string): AgentMessage[] {
   const messages = getAgentThreadMessages(threadId);
@@ -573,7 +564,6 @@ export function forkAgentThread(
   console.log(`[Agent 线程] 已从 ${sourceThreadId.slice(0, 8)} 分叉到 ${newThread.id.slice(0, 8)}，包含 ${forkedMessages.length} 条消息`);
   return { newThreadId: newThread.id };
 }
-export const forkAgentSession = forkAgentThread;
 
 export function replaceAgentThreadTranscript(threadId: string, messages: AgentMessage[]): void {
   const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(threadId);
@@ -588,7 +578,6 @@ export function replaceAgentThreadTranscript(threadId: string, messages: AgentMe
     runtimeThreadId: undefined
   });
 }
-export const replaceAgentSessionTranscript = replaceAgentThreadTranscript;
 
 function rebuildRuntimeCoreTranscript(threadId: string, messages: AgentMessage[]): void {
   if (messages.length === 0) {
@@ -941,15 +930,15 @@ function parseSubagentAnnounceMetadata(content: string): Record<string, unknown>
   const lines = content.split("\n").map((line) => line.trim()).filter(Boolean);
   const headline = lines[0] ?? "";
   const runIdLine = lines.find((line) => line.startsWith("runId:"));
-  const childSessionLine = lines.find((line) => line.startsWith("childSessionKey:"));
+  const childThreadLine = lines.find((line) => line.startsWith("childThreadId:"));
   const statusMatch = headline.match(/\((completed|errored|aborted|timed_out|canceled|running|accepted)\)\s*$/);
   const runId = runIdLine?.slice("runId:".length).trim();
-  const childSessionId = childSessionLine?.slice("childSessionKey:".length).trim();
+  const childThreadId = childThreadLine?.slice("childThreadId:".length).trim();
   const status = statusMatch?.[1];
   return {
     subagentAnnounce: true,
     ...(runId ? { runId } : {}),
-    ...(childSessionId ? { childSessionId } : {}),
+    ...(childThreadId ? { childThreadId } : {}),
     ...(status ? { status } : {})
   };
 }

@@ -95,6 +95,18 @@ function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[
       continue;
     }
 
+    if (message.type === "tool_result") {
+      const current = ensureActivity(message.result.tool_use_id, message.result.tool_name || "Unknown");
+      map.set(message.result.tool_use_id, {
+        ...current,
+        toolName: message.result.tool_name || current.toolName,
+        result: stringifyToolResultContent(message.result.output),
+        isError: false,
+        done: true,
+      });
+      continue;
+    }
+
     if (message.type !== "system") {
       continue;
     }

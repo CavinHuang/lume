@@ -157,6 +157,31 @@ describe("agent-message-versioning-service", () => {
     expect(versions[0]?.content).toBe("回答2");
   });
 
+  test("createUserMessageVersion 应保留用户原始 sdkMessages", () => {
+    initializeVersionStoreFromMessages("session-sdk-user", []);
+
+    const created = createUserMessageVersion({
+      sessionId: "session-sdk-user",
+      content: "用户问题",
+      createdAt: 1,
+      sdkMessages: [{
+        type: "user",
+        message: {
+          role: "user",
+          content: [{
+            type: "text",
+            text: "用户问题"
+          }]
+        }
+      }]
+    });
+
+    const visible = getVisibleAgentMessages("session-sdk-user");
+    expect(created.message.sdkMessages).toHaveLength(1);
+    expect(created.message.sdkMessages?.[0]?.type).toBe("user");
+    expect(visible[0]?.sdkMessages?.[0]?.type).toBe("user");
+  });
+
   test("syncVersionStoreFromMessages 在已有历史版本时不应重置版本链", () => {
     initializeVersionStoreFromMessages("session-f", [
       { id: "runtime-1", role: "user", content: "问题1", createdAt: 1 }

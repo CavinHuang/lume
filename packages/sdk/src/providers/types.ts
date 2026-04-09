@@ -74,11 +74,17 @@ export interface CreateMessageResponse {
 export type NormalizedResponseBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: any }
+  | { type: 'thinking'; thinking: string }
 
-export interface CreateMessageStreamEvent {
-  type: 'text_delta'
-  text: string
-}
+export type CreateMessageStreamEvent =
+  | {
+      type: 'text_delta'
+      text: string
+    }
+  | {
+      type: 'thinking_delta'
+      thinking: string
+    }
 
 // --------------------------------------------------------------------------
 // Provider Interface
