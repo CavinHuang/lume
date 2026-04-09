@@ -4,7 +4,7 @@
  * 对齐 Proma SidePanel UI 风格：
  * - 顶部标题栏：FolderOpen 图标 + "文件" + 活动指示点
  * - 切换按钮带 Tooltip，面板关闭时显示活动指示点
- * - 会话文件区 section header（FolderOpen + Info + breadcrumb + ExternalLink + RefreshCw）
+ * - 线程文件区 section header（FolderOpen + Info + breadcrumb + ExternalLink + RefreshCw）
  * - 虚线分隔线
  * - 工作区文件区用 FolderHeart + bg-muted/30 容器
  * - 附加目录文字：附加目录（Agent 可以读取并操作此文件夹）
@@ -110,7 +110,7 @@ export function AgentSidePanel({
     setFilesVersion((v) => v + 1);
   }, [setFilesVersion]);
 
-  // 会话级附加文件夹（无参数，内部调用 openFolderDialog）
+  // 线程级附加文件夹（无参数，内部调用 openFolderDialog）
   const handleAttachSessionFolder = React.useCallback(async (): Promise<void> => {
     if (!sessionId) return;
     try {
@@ -125,7 +125,7 @@ export function AgentSidePanel({
         return map;
       });
     } catch (error) {
-      console.error("[AgentSidePanel] 附加会话文件夹失败:", error);
+      console.error("[AgentSidePanel] 附加线程文件夹失败:", error);
     }
   }, [sessionId, setSessionAttachedDirs]);
 
@@ -256,18 +256,18 @@ export function AgentSidePanel({
           {/* ===== 文件浏览内容 ===== */}
           {hasFiles && workspaceSlug && sessionPath ? (
             <div className="flex-1 min-h-0 flex flex-col">
-              {/* ===== 会话文件区 section header ===== */}
+              {/* ===== 线程文件区 section header ===== */}
               <div className="flex items-center gap-1 px-3 h-[32px] flex-shrink-0">
                 <FolderOpen className="size-3 text-muted-foreground" />
                 <span className="text-[11px] font-medium text-muted-foreground">
-                  会话文件
+                  线程文件
                 </span>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Info className="size-3 text-muted-foreground/50 cursor-help" />
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-[200px]">
-                    <p>当前会话的专属文件，仅本次对话的 Agent 可以访问</p>
+                    <p>当前线程的专属文件，仅本次对话的 Agent 可以访问</p>
                   </TooltipContent>
                 </Tooltip>
                 <span
@@ -312,7 +312,7 @@ export function AgentSidePanel({
                 </Tooltip>
               </div>
 
-              {/* 会话文件内容区（独立滚动） */}
+              {/* 线程文件内容区（独立滚动） */}
               <div className="flex-1 min-h-0 overflow-y-auto">
                 {/* 附加目录 */}
                 {currentSessionDirs.length > 0 && (
@@ -321,7 +321,7 @@ export function AgentSidePanel({
                     onDetach={handleDetachSessionFolder}
                   />
                 )}
-                {/* 会话文件浏览器 */}
+                {/* 线程文件浏览器 */}
                 <FileBrowser
                   workspaceSlug={workspaceSlug}
                   threadId={sessionId}
@@ -330,7 +330,7 @@ export function AgentSidePanel({
                   embedded
                 />
               </div>
-              {/* 会话文件拖拽上传区域（固定在滚动区域外，始终可见） */}
+              {/* 线程文件拖拽上传区域（固定在滚动区域外，始终可见） */}
               <FileDropZone
                 workspaceSlug={workspaceSlug}
                 threadId={sessionId}
@@ -355,7 +355,7 @@ export function AgentSidePanel({
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[220px]">
                       <p>
-                        工作区内所有会话可访问的文件和文件夹，每个新对话都可以自动读取
+                        工作区内所有线程可访问的文件和文件夹，每个新对话都可以自动读取
                       </p>
                     </TooltipContent>
                   </Tooltip>

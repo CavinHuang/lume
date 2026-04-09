@@ -10,6 +10,7 @@
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
 import type { MemoryCitationsMode } from "../memory/memory-policy";
+import { canonicalizeAgentToolName } from "@lume/shared";
 import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
@@ -112,7 +113,7 @@ Choose capabilities in this priority order unless a higher-priority user instruc
 2. Use specialized first-class tools when the task is obviously in their lane:
    - browser for browser-session continuity and current-page actions
    - memory_search / memory_get for prior decisions, preferences, or continuity
-   - web_search / web_fetch for public web retrieval when browser context is not required
+   - WebSearch / WebFetch for public web retrieval when browser context is not required
 3. Compose direct low-level tools only when no packaged capability cleanly fits.
 4. If the user explicitly asks for low-level control or manual tool use, follow that request and skip higher-level routing when safe.`;
 
@@ -293,7 +294,7 @@ function buildToolingSection(inputTools?: string[]): string[] {
     if (!name) {
       continue;
     }
-    const normalized = name.toLowerCase();
+    const normalized = canonicalizeAgentToolName(name);
     if (!canonicalByNormalized.has(normalized)) {
       canonicalByNormalized.set(normalized, name);
     }
@@ -354,6 +355,7 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 - MCP 工具（读取工作区 mcp.json）
 - Skills（读取工作区 skills/）
 - 终端操作（Bash 等）
+- 公共网页检索（WebSearch / WebFetch）
 
 CRITICAL - Skill 调用规则:
 调用 Skill 工具时，skill 参数必须使用带命名空间前缀的完整名称，如 \`lume-workspace-${ctx.workspaceSlug ?? "default"}:skill-name\`。
@@ -371,7 +373,7 @@ CRITICAL - Skill 调用规则:
 - 工作区名称: ${ctx.workspaceName}
 - MCP 配置: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/mcp.json
 - Skills 目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/skills/
-- 会话目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/
+- 线程目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/
 
 ### MCP 配置格式
 mcp.json 顶层 key 必须是 \`servers\`。
@@ -379,13 +381,13 @@ mcp.json 顶层 key 必须是 \`servers\`。
 ### .context 目录层级
 
 存在两个 \`.context/\` 目录，用途不同：
-- **会话级** \`.context/\`（当前 cwd 下）：当前会话的临时工作台
-- **工作区级** \`~/.lume/agent-workspaces/${ctx.workspaceSlug}/.context/\`：位于工作区根目录下，跨会话共享的持久文档
+- **线程级** \`.context/\`（当前 cwd 下）：当前线程的临时工作台
+- **工作区级** \`~/.lume/agent-workspaces/${ctx.workspaceSlug}/.context/\`：位于工作区根目录下，跨线程共享的持久文档
 
 选择写入哪个目录时：
-- 只与当前任务相关的内容 → 会话级 \`.context/\`
-- 跨会话有参考价值的内容 → 工作区级 \`.context/\`
-- 新会话开始时，**两个目录都要检查**以恢复完整上下文`);
+- 只与当前任务相关的内容 → 线程级 \`.context/\`
+- 跨线程有参考价值的内容 → 工作区级 \`.context/\`
+- 新线程开始时，**两个目录都要检查**以恢复完整上下文`);
   }
 
   sections.push(`## 文档输出与知识管理
@@ -394,7 +396,7 @@ mcp.json 顶层 key 必须是 \`servers\`。
 
 ### AGENTS.md — 项目知识库（长期持久化）
 
-维护工作区的 AGENTS.md，记录跨会话有价值的项目知识：
+维护工作区的 AGENTS.md，记录跨线程有价值的项目知识：
 - **写入时机**：发现新的架构模式、编码规范、构建命令、踩过的坑、重要技术决策时
 - **内容标准**：每条内容都应该是"删掉后未来的 Agent 会犯错"的内容；不值得的别写
 - **维护要求**：保持精炼（<200 行），定期清理过时条目；发现已有内容不准确时主动更新
@@ -402,14 +404,14 @@ mcp.json 顶层 key 必须是 \`servers\`。
 
 ### .context/ 目录 — 结构化工作文档
 
-\`.context/\` 分为会话级（cwd 下）和工作区级两层，根据内容的生命周期选择合适的位置：
+\`.context/\` 分为线程级（cwd 下）和工作区级两层，根据内容的生命周期选择合适的位置：
 
 **note.md — 研究与分析输出**
 - **写入时机**：完成技术调研后、方案对比分析后、代码审查发现重要问题后
 - **内容格式**：使用带日期的条目（如 \`## 2024-03-15 xxx调研\`），新内容追加在顶部
 - **典型内容**：技术方案对比表、依赖库评估、性能分析结果、架构问题诊断
 - **原则**：SubAgent 的调研结果也应整理后写入这里
-- **位置选择**：仅本次任务参考 → 会话级；跨会话长期参考 → 工作区级
+- **位置选择**：仅本次任务参考 → 线程级；跨线程长期参考 → 工作区级
 
 **todo.md — 任务进度追踪**
 - **写入时机**：收到多步骤任务时立即创建；完成/开始子任务时实时更新
@@ -522,29 +524,29 @@ At the beginning of each session, silently check workspace files in this order:
 5. USER.md
 6. memory/YYYY-MM-DD.md (today + yesterday)
 7. MEMORY.md (or memory.md fallback, main/direct session only)
-8. 会话级 .context/ 目录，以及工作区根目录下的 .context/ 目录（note.md、todo.md）
+8. 线程级 .context/ 目录，以及工作区根目录下的 .context/ 目录（note.md、todo.md）
 9. 工作区的 AGENTS.md（如 Session Bootstrap 第 1 步未加载）
 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
 
-  const availableTools = new Set((ctx.availableTools ?? []).map((item) => item.trim().toLowerCase()));
+  const availableTools = new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item)));
   if (availableTools.has("browser") && availableTools.has("web_search")) {
     sections.push(`## Browser-First Tool Policy (Mandatory)
 
 当用户请求“使用我的浏览器 / 使用浏览器 profile / 在当前页面继续操作 / 继续上一步浏览器任务”时：
-1. 必须优先使用 browser 工具，不要直接改用 web_search。
+1. 必须优先使用 browser 工具，不要直接改用 WebSearch。
 2. 如果 browser 执行失败，先调用 browser status 或 relay_status 判断是否连接问题，再尝试修复（如 start(mode=relay)）。
-3. 仅在以下情况才回退 web_search：
+3. 仅在以下情况才回退 WebSearch：
    - 用户明确要求“不要用浏览器，直接联网搜索”
    - 已确认 browser/relay 当前不可用，且重试后仍失败
-4. 回退到 web_search 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器会话不可用）。`);
+4. 回退到 WebSearch 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器线程不可用）。`);
   }
 
   // 记忆系统哲学引导
   if (availableTools.has("memory_search") || availableTools.has("memory_get") || availableTools.has("memory_save")) {
     sections.push(`## 记忆系统
 
-你拥有跨会话的记忆能力。这些记忆是你和用户之间共同的经历——你们一起讨论过的问题、一起做过的决定、一起踩过的坑。
+你拥有跨线程的记忆能力。这些记忆是你和用户之间共同的经历——你们一起讨论过的问题、一起做过的决定、一起踩过的坑。
 
 **理解记忆的本质：**
 - 记忆是"我们一起经历过的事"，不是"关于用户的信息条目"

@@ -99,10 +99,10 @@ function assert(condition, message) {
 async function sendAndWait(sidecar, payload) {
   const completion = sidecar.waitForNotification(
     STREAM_COMPLETE_METHOD,
-    (params) => params?.sessionId === payload.sessionId,
+    (params) => params?.threadId === payload.threadId,
     12000
   );
-  await sidecar.call("agent:send-message", payload);
+  await sidecar.call("agent:send-thread-message", payload);
   await completion;
 }
 
@@ -137,7 +137,7 @@ async function run() {
       enabled: true
     });
 
-    const session = await sidecar.call("agent:create-session", {
+    const session = await sidecar.call("agent:create-thread", {
       title: "smoke-agent-provider-switch",
       workspaceId: workspace.id,
       channelId: anthropicChannel.id,
@@ -146,7 +146,7 @@ async function run() {
     assert(typeof session?.id === "string", "agent session create failed");
 
     await sendAndWait(sidecar, {
-      sessionId: session.id,
+      threadId: session.id,
       userMessage: "first provider run",
       workspaceId: workspace.id,
       channelId: anthropicChannel.id,
@@ -154,8 +154,8 @@ async function run() {
       permissionMode: "bypassPermissions"
     });
 
-    const switched = await sidecar.call("agent:update-model-selection", {
-      sessionId: session.id,
+    const switched = await sidecar.call("agent:update-thread-model-selection", {
+      threadId: session.id,
       channelId: zaiCompatChannel.id,
       modelId: "zai/non-existent-catalog-model"
     });
@@ -163,7 +163,7 @@ async function run() {
     assert(switched?.modelId === "zai/non-existent-catalog-model", "session model switch failed");
 
     await sendAndWait(sidecar, {
-      sessionId: session.id,
+      threadId: session.id,
       userMessage: "second provider run",
       workspaceId: workspace.id,
       channelId: zaiCompatChannel.id,
@@ -174,12 +174,12 @@ async function run() {
     await sidecar.close();
     sidecar = createSidecarProcess(configHome);
 
-    const sessions = await sidecar.call("agent:list-sessions");
+    const sessions = await sidecar.call("agent:list-threads");
     const restored = sessions.find((item) => item.id === session.id);
     assert(restored?.channelId === zaiCompatChannel.id, "restored session channelId mismatch");
     assert(restored?.modelId === "zai/non-existent-catalog-model", "restored session modelId mismatch");
 
-    const messages = await sidecar.call("agent:get-messages", { sessionId: session.id });
+    const messages = await sidecar.call("agent:get-thread-messages", { threadId: session.id });
     assert(Array.isArray(messages), "messages not readable after restart");
     const assistantModels = messages
       .filter((item) => item.role === "assistant")

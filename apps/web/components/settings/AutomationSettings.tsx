@@ -228,8 +228,8 @@ export function AutomationSettings(): React.ReactElement {
                       <p className="text-xs text-muted-foreground">
                         触发: {run.trigger} · {new Date(run.startedAt).toLocaleString()}
                       </p>
-                      {run.sessionId ? (
-                        <p className="text-xs text-muted-foreground">会话: {run.sessionId}</p>
+                      {run.threadId ? (
+                        <p className="text-xs text-muted-foreground">线程: {run.threadId}</p>
                       ) : null}
                       <p className="mt-1 text-xs text-muted-foreground">{run.message}</p>
                     </div>

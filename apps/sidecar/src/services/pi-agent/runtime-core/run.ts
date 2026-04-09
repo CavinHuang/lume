@@ -1,4 +1,5 @@
 import {
+  AskUserQuestionTool,
   BashTool,
   createAgent,
   EnterPlanModeTool,
@@ -17,7 +18,9 @@ import {
   SkillTool,
   TodoWriteTool,
   defineTool,
-  type ToolDefinition
+  type ToolDefinition,
+  WebFetchTool,
+  WebSearchTool
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
@@ -102,14 +105,6 @@ interface RuntimeCoreToolset {
   availableToolNames: string[];
 }
 
-function cloneToolWithName(tool: ToolDefinition, name: string, description?: string): ToolDefinition {
-  return {
-    ...tool,
-    name,
-    ...(description ? { description } : {})
-  };
-}
-
 const ListDirectoryTool = defineTool({
   name: "ls",
   description: "List files and directories in a path.",
@@ -146,23 +141,35 @@ const ListDirectoryTool = defineTool({
   }
 });
 
-function createBaseSdkAlignedTools(permissionMode: AgentSendInput["permissionMode"]): ToolDefinition[] {
+function createBaseSdkAlignedTools(
+  permissionMode: AgentSendInput["permissionMode"],
+  options: { includeAskUserQuestion: boolean }
+): ToolDefinition[] {
   const readOnlyTools: ToolDefinition[] = [
-    cloneToolWithName(FileReadTool, "read"),
-    cloneToolWithName(GlobTool, "find", "Find files by glob pattern."),
-    cloneToolWithName(GrepTool, "grep"),
-    ListDirectoryTool
+    FileReadTool,
+    GlobTool,
+    GrepTool,
+    ListDirectoryTool,
+    WebSearchTool,
+    WebFetchTool
   ];
 
   if (permissionMode === "plan") {
-    return [...readOnlyTools, EnterPlanModeTool, ExitPlanModeTool, SkillTool];
+    return [
+      ...readOnlyTools,
+      ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
+      EnterPlanModeTool,
+      ExitPlanModeTool,
+      SkillTool
+    ];
   }
 
   return [
     ...readOnlyTools,
-    cloneToolWithName(FileWriteTool, "write"),
-    cloneToolWithName(FileEditTool, "edit"),
-    cloneToolWithName(BashTool, "bash"),
+    ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
+    FileWriteTool,
+    FileEditTool,
+    BashTool,
     NotebookEditTool,
     SkillTool,
     TodoWriteTool,
@@ -188,14 +195,15 @@ function buildRuntimeCoreTools(input: {
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
-  const baseTools = createBaseSdkAlignedTools(permissionMode);
-
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
   const includeCitations = shouldIncludeCitations(
     memoryRuntimeConfig.citationsMode,
     input.chatType ?? "direct"
   );
   const automationExecution = isAutomationExecution(input.messageMetadata);
+  const baseTools = createBaseSdkAlignedTools(permissionMode, {
+    includeAskUserQuestion: automationExecution !== true
+  });
   const lumeTools = createLumePiTools({
     threadId: input.sessionId,
     workspaceId: input.workspaceId,
@@ -316,7 +324,7 @@ function buildCombinedSystemPrompt(input: {
 
   const dynamicContext = buildDynamicContext(
     resolveAgentDynamicContextInput({
-      sessionId: input.lumeSessionId,
+      threadId: input.lumeSessionId,
       userMessage: input.userMessage,
       workspaceName: input.workspaceName,
       workspaceSlug: input.workspaceSlug,

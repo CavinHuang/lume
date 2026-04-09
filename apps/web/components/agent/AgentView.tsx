@@ -26,10 +26,12 @@ import {
   agentToolPermissionRequestsAtom,
   agentToolActivitiesAtom,
   agentStreamingStatesAtom,
+  agentLiveSdkMessagesMapAtom,
   agentThreadContextCacheAtom,
   agentWorkspacesAtom,
   currentAgentErrorAtom,
   currentAgentAskUserQuestionRequestAtom,
+  currentAgentThreadSdkMessagesAtom,
   currentAgentThreadMessagesAtom,
   currentAgentRuntimeStatusAtom,
   currentAgentThreadAtom,
@@ -137,7 +139,9 @@ export function AgentView(): React.ReactElement {
   const [workspaceId] = useAtom(currentAgentWorkspaceIdAtom);
   const [workspaces] = useAtom(agentWorkspacesAtom);
   const [messages, setMessages] = useAtom(currentAgentThreadMessagesAtom);
+  const [, setSdkMessages] = useAtom(currentAgentThreadSdkMessagesAtom);
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom);
+  const setLiveSdkMessagesMap = useSetAtom(agentLiveSdkMessagesMapAtom);
   const setRuntimeStatuses = useSetAtom(agentRuntimeStatusesAtom);
   const setAskUserQuestionRequests = useSetAtom(agentAskUserQuestionRequestsAtom);
   const setToolPermissionRequests = useSetAtom(agentToolPermissionRequestsAtom);
@@ -278,6 +282,8 @@ export function AgentView(): React.ReactElement {
     pendingTitleRef,
     planStreamCaptureRef,
     setMessages,
+    setSdkMessages,
+    setLiveSdkMessagesMap,
     setAskUserQuestionRequests,
     setRuntimeStatuses,
     setSessions,

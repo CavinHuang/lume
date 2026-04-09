@@ -3,6 +3,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import type { AgentSavedFile, Channel } from "@lume/shared";
 import {
   agentChannelIdAtom,
+  agentLiveSdkMessagesMapAtom,
   agentMessageVersionsByGroupAtom,
   agentModelIdAtom,
   agentPendingFilesAtom,
@@ -10,6 +11,7 @@ import {
   agentSelectedVersionIndexByGroupAtom,
   agentStreamErrorsAtom,
   agentWorkspacesAtom,
+  currentAgentThreadSdkMessagesAtom,
   currentAgentThreadMessagesAtom,
   currentAgentThreadAtom,
   currentAgentThreadIdAtom,
@@ -18,6 +20,7 @@ import {
 import { resetPlanStateAtom } from "@/atoms/plan-atoms";
 import {
   getAgentThreadRuntimeStatus,
+  getAgentThreadSDKMessages,
   getAgentThreadMessages,
   getAgentThreadPath
 } from "@/lib/desktop-api/agent";
@@ -47,6 +50,8 @@ export function useAgentSessionLifecycle({
   const workspaceId = useAtomValue(currentAgentWorkspaceIdAtom);
   const workspaces = useAtomValue(agentWorkspacesAtom);
   const [, setMessages] = useAtom(currentAgentThreadMessagesAtom);
+  const [, setSdkMessages] = useAtom(currentAgentThreadSdkMessagesAtom);
+  const setLiveSdkMessagesMap = useSetAtom(agentLiveSdkMessagesMapAtom);
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [agentModelId, setAgentModelId] = useAtom(agentModelIdAtom);
   const setMessageVersionsByGroup = useSetAtom(agentMessageVersionsByGroupAtom);
@@ -98,6 +103,8 @@ export function useAgentSessionLifecycle({
   useEffect(() => {
     if (!sessionId) {
       setMessages([]);
+      setSdkMessages([]);
+      setLiveSdkMessagesMap(new Map());
       setMessageVersionsByGroup({});
       setSelectedVersionIndexByGroup({});
       setSessionRootPath(null);
@@ -113,25 +120,33 @@ export function useAgentSessionLifecycle({
     setInputContent("");
     setMessageVersionsByGroup({});
     setSelectedVersionIndexByGroup({});
+    setLiveSdkMessagesMap((prev) => {
+      const map = new Map(prev);
+      map.delete(sessionId);
+      return map;
+    });
     resetPlan();
 
     let cancelled = false;
     void getAgentThreadMessages(sessionId)
-      .then((next) => {
+      .then(async (next) => {
+        const sdkMessages = await getAgentThreadSDKMessages(sessionId);
         if (cancelled) return;
         startTransition(() => {
           setMessages(next);
+          setSdkMessages(sdkMessages);
           setSessionSwitching(false);
         });
       })
       .catch((error) => {
         if (cancelled) return;
         setMessages([]);
+        setSdkMessages([]);
         setSessionSwitching(false);
         const message = error instanceof Error ? error.message : String(error);
         setStreamErrors((prev) => {
           const map = new Map(prev);
-          map.set(sessionId, `读取会话消息失败: ${message}`);
+          map.set(sessionId, `读取线程消息失败: ${message}`);
           return map;
         });
       });
@@ -144,7 +159,9 @@ export function useAgentSessionLifecycle({
     sessionId,
     setInputContent,
     setInlineEditingMessageId,
+    setLiveSdkMessagesMap,
     setMessages,
+    setSdkMessages,
     setPendingFiles,
     setPendingFolderRefs,
     setMessageVersionsByGroup,

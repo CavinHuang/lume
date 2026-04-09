@@ -1,12 +1,14 @@
 import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
 import type {
   AgentAskUserQuestionRequest,
+  AgentMessageAppendedEvent,
   AgentAskUserQuestionResponseInput,
   AgentCopyFolderInput,
   AgentGenerateTitleInput,
   AgentListSubagentRunsInput,
   AgentListSubagentRunsResult,
   AgentMessage,
+  AgentThreadSDKMessagesResult,
   AgentMessageVersionsResult,
   AgentProxySettings,
   AgentProxyStatus,
@@ -72,6 +74,13 @@ export async function createAgentThread(params?: {
 
 export async function getAgentThreadMessages(threadId: string): Promise<AgentMessage[]> {
   return sidecarCall<AgentMessage[]>(AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES, { threadId: threadId });
+}
+
+export async function getAgentThreadSDKMessages(threadId: string) {
+  const result = await sidecarCall<AgentThreadSDKMessagesResult>(AGENT_IPC_CHANNELS.GET_THREAD_SDK_MESSAGES, {
+    threadId
+  });
+  return result.messages;
 }
 
 export async function getAgentThreadMessageVersions(
@@ -285,6 +294,14 @@ export async function onAgentRuntimeStatusChanged(
 ): Promise<UnlistenFn> {
   return onSidecarMethodEvent(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, (params) => {
     handler(params as AgentRuntimeStatusChangedEvent);
+  });
+}
+
+export async function onAgentMessageAppended(
+  handler: (event: AgentMessageAppendedEvent) => void
+): Promise<UnlistenFn> {
+  return onSidecarMethodEvent(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, (params) => {
+    handler(params as AgentMessageAppendedEvent);
   });
 }
 

@@ -19,16 +19,17 @@ import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
 import { decryptApiKey, listChannels } from "../channel/channel-manager";
 import {
-  getAgentSessionMessages,
-  getAgentSessionMeta,
+  appendAgentThreadSDKMessages,
+  getAgentThreadMessages,
+  getAgentThreadMeta,
   readRuntimeCoreTranscriptMessages,
-  replaceAgentSessionTranscript,
-  updateAgentSessionMeta
-} from "./agent-session-manager";
+  replaceAgentThreadTranscript,
+  updateAgentThreadMeta
+} from "./agent-thread-manager";
 import {
   createAssistantMessageVersion,
   createUserMessageVersion,
-  getLatestVisibleMessagesForSession
+  getLatestVisibleMessagesForThread
 } from "./agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
@@ -51,7 +52,7 @@ import {
   isWeakGeneratedTitle,
   resolveAgentTitleSourceText,
   sanitizeGeneratedTitle,
-  shouldAutoGenerateSessionTitle
+  shouldAutoGenerateThreadTitle
 } from "./session-title-summarizer";
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 
@@ -64,12 +65,12 @@ type AgentStreamEmitter = {
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 };
 
-// Memory Flush 待发送队列：sessionId -> prompt
+// Memory Flush 待发送队列：threadId -> prompt
 const pendingMemoryFlushPrompts = new Map<string, string>();
 
-export function consumeMemoryFlushPrompt(sessionId: string): string | undefined {
-  const prompt = pendingMemoryFlushPrompts.get(sessionId);
-  if (prompt) pendingMemoryFlushPrompts.delete(sessionId);
+export function consumeMemoryFlushPrompt(threadId: string): string | undefined {
+  const prompt = pendingMemoryFlushPrompts.get(threadId);
+  if (prompt) pendingMemoryFlushPrompts.delete(threadId);
   return prompt;
 }
 
@@ -77,16 +78,16 @@ const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 
 const log = createLogger("agent-service");
 const ROUTING_HEURISTIC_TOOLS = [
-  "read",
-  "write",
-  "edit",
-  "bash",
-  "find",
-  "grep",
+  "Read",
+  "Write",
+  "Edit",
+  "Bash",
+  "Glob",
+  "Grep",
   "ls",
   "browser",
-  "web_search",
-  "web_fetch",
+  "WebSearch",
+  "WebFetch",
   "memory_search",
   "memory_get",
   "memory_save"
@@ -114,8 +115,8 @@ function mergeToolPolicies(
   };
 }
 
-function handleRuntimeSessionStateMessage(
-  sessionId: string,
+function handleRuntimeThreadStateMessage(
+  threadId: string,
   message: SDKMessage,
   sessionStateManager: ReturnType<typeof getSessionStateManager>
 ): void {
@@ -127,26 +128,26 @@ function handleRuntimeSessionStateMessage(
       + (usage.cache_creation_input_tokens ?? 0);
     const contextWindow = message.modelUsage ? Object.values(message.modelUsage)[0]?.contextWindow : undefined;
     sessionStateManager.updateTokens(
-      sessionId,
+      threadId,
       totalTokens,
       contextWindow
     );
 
-    const flushCheck = sessionStateManager.checkMemoryFlush(sessionId);
+    const flushCheck = sessionStateManager.checkMemoryFlush(threadId);
     if (flushCheck.executed && flushCheck.prompt) {
       log.info("Memory Flush 触发条件满足，已加入待发送队列", {
-        sessionId: sessionId.slice(0, 8),
+        threadId: threadId.slice(0, 8),
         reason: flushCheck.reason,
       });
-      pendingMemoryFlushPrompts.set(sessionId, flushCheck.prompt);
-      sessionStateManager.markMemoryFlushExecuted(sessionId);
+      pendingMemoryFlushPrompts.set(threadId, flushCheck.prompt);
+      sessionStateManager.markMemoryFlushExecuted(threadId);
     }
   }
 
   if (message.type === "system" && message.subtype === "compact_boundary") {
-    sessionStateManager.incrementCompaction(sessionId);
-    log.info("会话开始压缩", { sessionId: sessionId.slice(0, 8) });
-    log.info("会话压缩完成", { sessionId: sessionId.slice(0, 8) });
+    sessionStateManager.incrementCompaction(threadId);
+    log.info("线程开始压缩", { threadId: threadId.slice(0, 8) });
+    log.info("线程压缩完成", { threadId: threadId.slice(0, 8) });
   }
 }
 
@@ -175,8 +176,8 @@ function pickModelId(channelId: string | undefined, requestedModelId?: string): 
   return resolveRequestedModelIdForChannel(channel, requestedModelId) ?? DEFAULT_MODEL_ID;
 }
 
-function resolveLatestAssistantTranscriptMessage(sessionId: string) {
-  const transcriptMessages = readRuntimeCoreTranscriptMessages(sessionId);
+function resolveLatestAssistantTranscriptMessage(threadId: string) {
+  const transcriptMessages = readRuntimeCoreTranscriptMessages(threadId);
   for (let index = transcriptMessages.length - 1; index >= 0; index--) {
     const message = transcriptMessages[index]!;
     if (message.role === "assistant") {
@@ -186,23 +187,136 @@ function resolveLatestAssistantTranscriptMessage(sessionId: string) {
   return null;
 }
 
+function buildUserSdkMessage(input: {
+  threadId: string;
+  userMessage: string;
+  createdAt: number;
+}): SDKMessage {
+  return {
+    type: "user",
+    uuid: `user:${input.threadId}:${input.createdAt}`,
+    session_id: input.threadId,
+    timestamp: new Date(input.createdAt).toISOString(),
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [{
+        type: "text",
+        text: input.userMessage
+      }]
+    }
+  } as SDKMessage;
+}
+
+function ensureSdkMessageCreatedAt(message: SDKMessage): SDKMessage {
+  const record = message as SDKMessage & { _createdAt?: number };
+  if (typeof record._createdAt === "number") {
+    return message;
+  }
+  return ({
+    ...message,
+    _createdAt: Date.now()
+  } as unknown) as SDKMessage;
+}
+
+function shouldPersistAssistantTurnSdkMessage(message: SDKMessage): boolean {
+  if (message.type === "assistant" || message.type === "result") {
+    return true;
+  }
+  if (message.type === "user") {
+    return Array.isArray(message.message?.content)
+      && message.message.content.some((block) => !!block && typeof block === "object" && block.type === "tool_result");
+  }
+  return message.type === "system" && (
+    message.subtype === "compact_boundary"
+    || message.subtype === "task_started"
+    || message.subtype === "task_progress"
+    || message.subtype === "task_notification"
+  );
+}
+
+function extractAssistantTextFromSdkMessages(messages: SDKMessage[]): string {
+  return messages
+    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => message.type === "assistant")
+    .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+    .filter((block): block is { type: "text"; text: string } => !!block && typeof block === "object" && block.type === "text" && typeof (block as { text?: string }).text === "string")
+    .map((block) => block.text)
+    .join("\n\n")
+    .trim();
+}
+
+function extractAssistantReasoningFromSdkMessages(messages: SDKMessage[]): string | undefined {
+  const reasoning = messages
+    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => message.type === "assistant")
+    .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
+    .filter((block) => !!block && typeof block === "object" && block.type === "thinking")
+    .map((block) => {
+      const value = block as { thinking?: string; text?: string };
+      return value.thinking ?? value.text ?? "";
+    })
+    .filter((value) => value.trim().length > 0)
+    .join("\n\n")
+    .trim();
+  return reasoning || undefined;
+}
+
+function resolveAssistantCreatedAtFromSdkMessages(messages: SDKMessage[]): number {
+  for (const message of messages) {
+    const createdAt = (message as SDKMessage & { _createdAt?: number })._createdAt;
+    if (typeof createdAt === "number") {
+      return createdAt;
+    }
+  }
+  return Date.now();
+}
+
+function projectAssistantMessageFromSdkMessages(input: {
+  threadId: string;
+  sdkMessages: SDKMessage[];
+  modelId: string;
+}): {
+  id: string;
+  role: "assistant";
+  content: string;
+  reasoning?: string;
+  createdAt: number;
+  model: string;
+  sdkMessages: SDKMessage[];
+} | null {
+  const assistantMessages = input.sdkMessages.filter((message) => message.type === "assistant");
+  if (assistantMessages.length === 0) {
+    return null;
+  }
+
+  return {
+    id: `sdk-turn:${input.threadId}:${resolveAssistantCreatedAtFromSdkMessages(input.sdkMessages)}`,
+    role: "assistant",
+    content: extractAssistantTextFromSdkMessages(input.sdkMessages),
+    reasoning: extractAssistantReasoningFromSdkMessages(input.sdkMessages),
+    createdAt: resolveAssistantCreatedAtFromSdkMessages(input.sdkMessages),
+    model: input.modelId,
+    sdkMessages: input.sdkMessages
+  };
+}
+
 
 export async function sendAgentMessage(
   input: AgentSendInput,
   emit: AgentStreamEmitter,
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean } = {}
 ): Promise<void> {
-  const { threadId: sessionId, userMessage, workspaceId } = input;
-  const messageHistoryBeforeSend = getAgentSessionMessages(sessionId);
+  const { threadId, userMessage, workspaceId } = input;
+  const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
-  const sessionMeta = getAgentSessionMeta(sessionId);
-  const resolvedChannelId = input.channelId ?? sessionMeta?.channelId;
+  const threadMeta = getAgentThreadMeta(threadId);
+  const resolvedChannelId = input.channelId ?? threadMeta?.channelId;
   const resolvedModelId = pickModelId(resolvedChannelId, input.modelId);
 
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
+  const persistedSdkMessages: SDKMessage[] = [];
 
   let stateWorkspaceSlug: string | undefined;
   if (workspaceId) {
@@ -233,7 +347,7 @@ export async function sendAgentMessage(
   if (shouldAppendUserMessage) {
     const sourceMessageId = input.editFromMessageId ?? input.resendFromMessageId;
     const createdUserVersion = createUserMessageVersion({
-      sessionId,
+      sessionId: threadId,
       content: userMessage,
       createdAt: Date.now(),
       metadata: effectiveMessageMetadata,
@@ -241,29 +355,36 @@ export async function sendAgentMessage(
     });
     activeTurnId = createdUserVersion.turnId;
     if (sourceMessageId) {
-      replaceAgentSessionTranscript(sessionId, getLatestVisibleMessagesForSession(sessionId));
+      replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
     }
+    appendAgentThreadSDKMessages(threadId, [
+      ensureSdkMessageCreatedAt(buildUserSdkMessage({
+        threadId,
+        userMessage,
+        createdAt: createdUserVersion.message.createdAt
+      }))
+    ]);
   }
 
   const sessionStateManager = getSessionStateManager();
   const runtimeStatusManager = getAgentRuntimeStatusManager();
-  sessionStateManager.getOrCreate(sessionId, stateWorkspaceSlug);
+  sessionStateManager.getOrCreate(threadId, stateWorkspaceSlug);
   if (stateWorkspaceSlug) {
-    startSessionHeartbeat(sessionId, stateWorkspaceSlug, async () => {
-      log.info("Heartbeat 检查完成", { sessionId: sessionId.slice(0, 8), workspaceSlug: stateWorkspaceSlug });
+    startSessionHeartbeat(threadId, stateWorkspaceSlug, async () => {
+      log.info("Heartbeat 检查完成", { threadId: threadId.slice(0, 8), workspaceSlug: stateWorkspaceSlug });
     });
   }
 
-  updateAgentSessionMeta(sessionId, {
+  updateAgentThreadMeta(threadId, {
     channelId: resolvedChannelId,
     modelId: resolvedModelId
   });
-  runtimeStatusManager.markStreaming(sessionId);
+  runtimeStatusManager.markStreaming(threadId);
   let runtimeCompleted = false;
 
   if (!resolvedChannelId || !resolvedModelId) {
     const msg = "Pi Agent runtime 缺少 channelId/modelId。";
-    runtimeStatusManager.markErrored(sessionId, msg);
+    runtimeStatusManager.markErrored(threadId, msg);
     emit.onError(msg);
     return;
   }
@@ -276,7 +397,7 @@ export async function sendAgentMessage(
       modelId: resolvedModelId
     },
     runtime: {
-      sessionId,
+      sessionId: threadId,
       channelId: resolvedChannelId,
       modelId: resolvedModelId,
       workspaceId: input.workspaceId,
@@ -284,21 +405,25 @@ export async function sendAgentMessage(
     }
   }, {
     onSdkMessage: (message) => {
-      handleRuntimeSessionStateMessage(sessionId, message, sessionStateManager);
-      if (message.type === "system" && message.subtype === "compact_boundary") {
-        runtimeStatusManager.markCompacting(sessionId);
+      const stampedMessage = ensureSdkMessageCreatedAt(message);
+      handleRuntimeThreadStateMessage(threadId, stampedMessage, sessionStateManager);
+      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
+        runtimeStatusManager.markCompacting(threadId);
       }
-      emit.onSdkMessage(message);
+      if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
+        persistedSdkMessages.push(stampedMessage);
+      }
+      emit.onSdkMessage(stampedMessage);
     },
     onComplete: () => {
       runtimeCompleted = true;
     },
     onError: (error) => {
-      runtimeStatusManager.markErrored(sessionId, error);
+      runtimeStatusManager.markErrored(threadId, error);
       emit.onError(error);
     },
     onAskUserQuestion: (request) => {
-      runtimeStatusManager.markAwaitingUserAnswer(sessionId, {
+      runtimeStatusManager.markAwaitingUserAnswer(threadId, {
         toolUseId: request.toolUseId,
         originThreadId: request.originThreadId,
         subagentRunId: request.subagentRunId
@@ -306,7 +431,7 @@ export async function sendAgentMessage(
       emit.onAskUserQuestion(request);
     },
     onToolPermissionRequest: (request) => {
-      runtimeStatusManager.markAwaitingPermission(sessionId, {
+      runtimeStatusManager.markAwaitingPermission(threadId, {
         requestId: request.requestId,
         toolUseId: request.toolUseId,
         toolName: request.toolName,
@@ -316,36 +441,43 @@ export async function sendAgentMessage(
       emit.onToolPermissionRequest(request);
     }
   });
+  if (persistedSdkMessages.length > 0) {
+    appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
+  }
   if (piResult.status === "completed" && activeTurnId) {
-    const latestAssistantMessage = resolveLatestAssistantTranscriptMessage(sessionId);
+    const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
+      threadId,
+      sdkMessages: persistedSdkMessages,
+      modelId: resolvedModelId
+    }) ?? resolveLatestAssistantTranscriptMessage(threadId);
     if (latestAssistantMessage) {
       createAssistantMessageVersion({
-        sessionId,
+        sessionId: threadId,
         turnId: activeTurnId,
         message: latestAssistantMessage
       });
     }
   }
   if (runtimeCompleted && piResult.status === "completed") {
-    runtimeStatusManager.markCompleted(sessionId);
+    runtimeStatusManager.markCompleted(threadId);
     emit.onComplete();
   }
   if (piResult.status === "completed" && shouldTryAutoTitle) {
-    void autoGenerateAgentTitle(sessionId, userMessage, emit);
+    void autoGenerateAgentTitle(threadId, userMessage, emit);
   }
   return;
 }
 
-export function stopAgent(sessionId: string): void {
+export function stopAgent(threadId: string): void {
   const sessionStateManager = getSessionStateManager();
-  const state = sessionStateManager.getAll().find((s) => s.sessionId === sessionId);
+  const state = sessionStateManager.getAll().find((s) => s.sessionId === threadId);
   if (state?.workspaceSlug) {
     stopSessionHeartbeat(state.workspaceSlug);
   }
-  sessionStateManager.delete(sessionId);
-  getAgentRuntimeStatusManager().markIdle(sessionId);
+  sessionStateManager.delete(threadId);
+  getAgentRuntimeStatusManager().markIdle(threadId);
   void import("../pi-agent/runtime-core/attempt")
-    .then((module) => module.stopPiAgent(sessionId))
+    .then((module) => module.stopPiAgent(threadId))
     .catch(() => undefined);
 }
 
@@ -415,42 +547,41 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
 }
 
 function autoGenerateAgentTitle(
-  sessionId: string,
+  threadId: string,
   fallbackUserMessage: string,
   emit: AgentStreamEmitter
 ): void {
   try {
-    const meta = getAgentSessionMeta(sessionId);
+    const meta = getAgentThreadMeta(threadId);
     if (!meta) {
-      log.debug("自动标题跳过：会话不存在", { sessionId });
+      log.debug("自动标题跳过：线程不存在", { threadId });
       return;
     }
-    if (!shouldAutoGenerateSessionTitle(meta.title)) {
-      log.debug("自动标题跳过：会话标题不是默认值", {
-        sessionId,
+    if (!shouldAutoGenerateThreadTitle(meta.title)) {
+      log.debug("自动标题跳过：线程标题不是默认值", {
+        threadId,
         currentTitle: meta.title
       });
       return;
     }
-    const sessionMessages = getAgentSessionMessages(sessionId);
-    const sourceText = resolveAgentTitleSourceText(sessionMessages, fallbackUserMessage);
+    const threadMessages = getAgentThreadMessages(threadId);
+    const sourceText = resolveAgentTitleSourceText(threadMessages, fallbackUserMessage);
     const fallbackTitle = sanitizeGeneratedTitle(deriveFallbackAgentTitleFromSourceText(sourceText) ?? "");
     if (!fallbackTitle) {
-      log.debug("自动标题跳过：未能生成可用标题", { sessionId });
+      log.debug("自动标题跳过：未能生成可用标题", { threadId });
       return;
     }
-    updateAgentSessionMeta(sessionId, { title: fallbackTitle });
+    updateAgentThreadMeta(threadId, { title: fallbackTitle });
     log.info("自动标题更新成功（临时）", {
-      sessionId,
+      threadId,
       title: fallbackTitle,
       source: "fallback"
     });
     emit.onTitleUpdated(fallbackTitle);
   } catch (error) {
     log.warn("自动标题生成流程异常", {
-      sessionId,
+      threadId,
       error: error instanceof Error ? error.message : String(error)
     });
   }
 }
-

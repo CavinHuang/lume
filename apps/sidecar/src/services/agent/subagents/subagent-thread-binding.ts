@@ -1,4 +1,4 @@
-import { getAgentSessionMeta } from "../../agent/agent-session-manager";
+import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 
 function normalizeSessionId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -28,7 +28,7 @@ export function resolveSubagentThreadBinding(
   input: ResolveSubagentThreadBindingInput
 ): ResolvedSubagentThreadBinding {
   const requestedDelivery = normalizeSessionId(input.requestedDeliverySessionId);
-  const resolvedDelivery = requestedDelivery && getAgentSessionMeta(requestedDelivery)
+  const resolvedDelivery = requestedDelivery && getAgentThreadMeta(requestedDelivery)
     ? requestedDelivery
     : input.parentThreadId;
   const threadRequested = input.threadRequested === true;

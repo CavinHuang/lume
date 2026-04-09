@@ -126,7 +126,7 @@ async function run() {
     });
     assert(typeof channel?.id === "string", "channel create failed");
 
-    const session = await sidecar.call("agent:create-session", {
+    const session = await sidecar.call("agent:create-thread", {
       title: "smoke-agent-new-runtime-bridges",
       workspaceId: workspace.id,
       channelId: channel.id
@@ -135,37 +135,37 @@ async function run() {
 
     const permissionRequestPromise = sidecar.waitForNotification(
       TOOL_PERMISSION_REQUEST_METHOD,
-      (params) => params?.sessionId === session.id,
+      (params) => params?.threadId === session.id,
       12000
     );
     const awaitingPermissionStatusPromise = sidecar.waitForNotification(
       RUNTIME_STATUS_CHANGED_METHOD,
-      (params) => params?.status?.sessionId === session.id && params?.status?.phase === "awaiting_permission",
+      (params) => params?.status?.threadId === session.id && params?.status?.phase === "awaiting_permission",
       12000
     );
     const askUserQuestionPromise = sidecar.waitForNotification(
       ASK_USER_QUESTION_METHOD,
-      (params) => params?.sessionId === session.id,
+      (params) => params?.threadId === session.id,
       12000
     );
     const awaitingQuestionStatusPromise = sidecar.waitForNotification(
       RUNTIME_STATUS_CHANGED_METHOD,
-      (params) => params?.status?.sessionId === session.id && params?.status?.phase === "awaiting_user_answer",
+      (params) => params?.status?.threadId === session.id && params?.status?.phase === "awaiting_user_answer",
       12000
     );
     const messageAppendedPromise = sidecar.waitForNotification(
       MESSAGE_APPENDED_METHOD,
-      (params) => params?.sessionId === session.id && params?.message?.metadata?.subagentAnnounce === true,
+      (params) => params?.threadId === session.id && params?.message?.metadata?.subagentAnnounce === true,
       12000
     );
     const streamCompletePromise = sidecar.waitForNotification(
       STREAM_COMPLETE_METHOD,
-      (params) => params?.sessionId === session.id,
+      (params) => params?.threadId === session.id,
       12000
     );
 
-    await sidecar.call("agent:send-message", {
-      sessionId: session.id,
+    await sidecar.call("agent:send-thread-message", {
+      threadId: session.id,
       userMessage: "smoke new runtime bridges",
       workspaceId: workspace.id,
       channelId: channel.id,
@@ -176,7 +176,7 @@ async function run() {
     const permissionRequest = await permissionRequestPromise;
     const awaitingPermissionStatus = await awaitingPermissionStatusPromise;
     await sidecar.call("agent:submit-tool-permission", {
-      sessionId: session.id,
+      threadId: session.id,
       requestId: permissionRequest.requestId,
       decision: "allow_once"
     });
@@ -185,11 +185,11 @@ async function run() {
     const awaitingQuestionStatus = await awaitingQuestionStatusPromise;
     const completedStatusPromise = sidecar.waitForNotification(
       RUNTIME_STATUS_CHANGED_METHOD,
-      (params) => params?.status?.sessionId === session.id && params?.status?.phase === "completed",
+      (params) => params?.status?.threadId === session.id && params?.status?.phase === "completed",
       12000
     );
     await sidecar.call("agent:submit-ask-user-question", {
-      sessionId: session.id,
+      threadId: session.id,
       toolUseId: askUserRequest.toolUseId,
       answers: {
         scope: "continue"
@@ -212,8 +212,8 @@ async function run() {
       ownerSessionId: session.id,
       limit: 10
     });
-    const restoredRuntimeStatus = await sidecar.call("agent:get-runtime-status", { sessionId: session.id });
-    const messages = await sidecar.call("agent:get-messages", { sessionId: session.id });
+    const restoredRuntimeStatus = await sidecar.call("agent:get-runtime-status", { threadId: session.id });
+    const messages = await sidecar.call("agent:get-thread-messages", { threadId: session.id });
     assert(Array.isArray(messages), "messages not readable after bridges restart");
 
     assertBridgeSmokeOutcome({

@@ -14,6 +14,7 @@ import {
   createAgentThread,
   deleteAgentThread,
   getAgentThreadMessages,
+  getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
   listAgentThreads,
   migrateChatToAgentThread,
@@ -22,7 +23,7 @@ import {
   forkAgentThread,
   truncateAgentMessagesFrom,
   updateAgentThreadMeta
-} from "../services/agent/agent-session-manager";
+} from "../services/agent/agent-thread-manager";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import {
@@ -156,6 +157,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES);
       return getAgentThreadMessages(input.threadId);
     },
+    [AGENT_IPC_CHANNELS.GET_THREAD_SDK_MESSAGES]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_SDK_MESSAGES);
+      return {
+        threadId: input.threadId,
+        messages: getAgentThreadSDKMessages(input.threadId)
+      };
+    },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS]: async (params) => {
       const input = validateInput(
         agentGetThreadMessageVersionsInputSchema,
@@ -211,11 +219,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         modelId: input.modelId
       });
     },
-    [AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT]: async (params) => {
-      const input = validateInput(agentMigrateChatInputSchema, params, AGENT_IPC_CHANNELS.MIGRATE_CHAT_TO_AGENT);
-      const migrated = migrateChatToAgentThread(input.conversationId, input.threadId);
-      return { ok: true, migrated };
-    },
     [AGENT_IPC_CHANNELS.TOGGLE_PIN_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.TOGGLE_PIN_THREAD);
       return toggleAgentThreadPin(input.threadId);
@@ -225,7 +228,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       if (isPiAgentSessionActive(input.threadId)) {
         await new Promise((resolve) => setTimeout(resolve, 500));
         if (isPiAgentSessionActive(input.threadId)) {
-          throw new Error("会话正在运行中，请停止后再移动。");
+          throw new Error("线程正在运行中，请停止后再移动。");
         }
       }
       return moveAgentThreadToWorkspace(input.threadId, input.workspaceId);
@@ -388,7 +391,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(plansListInputSchema, params, AGENT_IPC_CHANNELS.LIST_PLANS);
       const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
       if (!resolvedWorkspaceSlug) {
-        throw new Error("未找到会话对应的 workspace");
+        throw new Error("未找到线程对应的 workspace");
       }
       return listAgentPlans(resolvedWorkspaceSlug, input.threadId);
     },
@@ -396,7 +399,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(plansReadDeleteInputSchema, params, AGENT_IPC_CHANNELS.READ_PLAN);
       const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
       if (!resolvedWorkspaceSlug) {
-        throw new Error("未找到会话对应的 workspace");
+        throw new Error("未找到线程对应的 workspace");
       }
       return readAgentPlan(resolvedWorkspaceSlug, input.threadId, input.planPath);
     },
@@ -404,7 +407,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(plansReadDeleteInputSchema, params, AGENT_IPC_CHANNELS.DELETE_PLAN);
       const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
       if (!resolvedWorkspaceSlug) {
-        throw new Error("未找到会话对应的 workspace");
+        throw new Error("未找到线程对应的 workspace");
       }
       return deleteAgentPlan(resolvedWorkspaceSlug, input.threadId, input.planPath);
     },
@@ -475,6 +478,16 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           });
         },
         onComplete: () => {
+          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
+            threadId: input.threadId
+          });
+          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, {
+            status: {
+              threadId: input.threadId,
+              phase: "completed",
+              updatedAt: Date.now()
+            }
+          });
           if (context.planStateTracker.getPhase(input.threadId) === "executing") {
             const steps = context.planStateTracker.markCurrentStepCompleted(input.threadId);
             context.notifyPlanStateChange(input.threadId, "executed", steps ? { steps } : undefined);
@@ -511,6 +524,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           );
           context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
         }
+      }).then(() => {
+        context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
+          threadId: input.threadId
+        });
+        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, {
+          status: {
+            threadId: input.threadId,
+            phase: "completed",
+            updatedAt: Date.now()
+          }
+        });
       });
       return { ok: true };
     },
@@ -544,4 +568,3 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
 
   return handlers;
 }
-

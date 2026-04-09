@@ -114,6 +114,11 @@ export function getAgentSessionsDir(): string {
   return ensureDir(join(getAgentConfigDir(), "sessions"), "Agent 会话数据目录");
 }
 
+export function getAgentThreadMessagesPath(threadId: string): string {
+  const safeThreadId = assertSafeSegment(threadId, "agent thread id");
+  return join(getAgentSessionsDir(), `${safeThreadId}.jsonl`);
+}
+
 export function getAgentSessionDataDir(sessionId: string): string {
   const safeSessionId = assertSafeSegment(sessionId, "agent session id");
   return ensureDir(join(getAgentSessionsDir(), safeSessionId), "Agent 会话数据目录");
@@ -200,5 +205,4 @@ export function getAutomationRunsDir(): string {
 export function getAutomationRunsPath(): string {
   return join(getAutomationRunsDir(), "all.jsonl");
 }
-
 

@@ -76,21 +76,21 @@ async function run() {
     const workspace = await sidecar.call("agent:ensure-default-workspace");
     assert(workspace?.slug === "default", "default workspace not ready");
 
-    const session = await sidecar.call("agent:create-session", {
+    const session = await sidecar.call("agent:create-thread", {
       title: "smoke-session",
       workspaceId: workspace.id
     });
     assert(typeof session?.id === "string", "session create failed");
 
-    const sessionPath = await sidecar.call("agent:get-session-path", {
+    const sessionPath = await sidecar.call("agent:get-thread-path", {
       workspaceSlug: workspace.slug,
-      sessionId: session.id
+      threadId: session.id
     });
     assert(typeof sessionPath === "string" && sessionPath.length > 0, "session path missing");
 
     await sidecar.call("agent:save-files-to-session", {
       workspaceSlug: workspace.slug,
-      sessionId: session.id,
+      threadId: session.id,
       files: [
         {
           filename: "smoke.txt",
@@ -101,7 +101,7 @@ async function run() {
 
     const firstList = await sidecar.call("agent:list-directory", {
       workspaceSlug: workspace.slug,
-      sessionId: session.id,
+      threadId: session.id,
       path: sessionPath
     });
     assert(Array.isArray(firstList) && firstList.some((item) => item.name === "smoke.txt"), "file write/list failed");
@@ -109,7 +109,7 @@ async function run() {
     await sidecar.close();
     sidecar = createSidecarProcess(configHome);
 
-    const sessionsAfterRestart = await sidecar.call("agent:list-sessions");
+    const sessionsAfterRestart = await sidecar.call("agent:list-threads");
     assert(
       Array.isArray(sessionsAfterRestart) &&
         sessionsAfterRestart.some((item) => item.id === session.id),
@@ -118,7 +118,7 @@ async function run() {
 
     const listAfterRestart = await sidecar.call("agent:list-directory", {
       workspaceSlug: workspace.slug,
-      sessionId: session.id,
+      threadId: session.id,
       path: sessionPath
     });
     assert(

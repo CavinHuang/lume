@@ -79,7 +79,7 @@ const PHRASES: Record<string, PhraseEntry> = {
   // Agent / 子任务
   task: { active: "派发子任务", done: "子任务完成" },
   agent: { active: "启动子 Agent", done: "子 Agent 完成" },
-  sessions_spawn: { active: "创建子会话", done: "子会话完成" },
+  sessions_spawn: { active: "创建子线程", done: "子线程完成" },
   skill: { active: "调用技能", done: "技能调用完成" },
 
   // 网络

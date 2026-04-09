@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreSessionDir } from "./session-store";
@@ -39,6 +40,75 @@ describe("runtime-core run", () => {
     expect(result.session.getActiveToolNames()).toContain("sessions_list");
 
     result.session.dispose();
+  });
+
+  test("应优先暴露 SDK 原生基础工具名，而不是小写包装名", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-native-tools-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "native-tool-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits"
+    });
+
+    const toolNames = result.session.getActiveToolNames();
+    expect(toolNames).toContain("Read");
+    expect(toolNames).toContain("Write");
+    expect(toolNames).toContain("Edit");
+    expect(toolNames).toContain("Bash");
+    expect(toolNames).toContain("Glob");
+    expect(toolNames).toContain("Grep");
+    expect(toolNames).toContain("WebSearch");
+    expect(toolNames).toContain("WebFetch");
+    expect(toolNames).not.toContain("read");
+    expect(toolNames).not.toContain("write");
+    expect(toolNames).not.toContain("edit");
+    expect(toolNames).not.toContain("bash");
+    expect(toolNames).not.toContain("find");
+    expect(toolNames).not.toContain("grep");
+    expect(toolNames).not.toContain("web_search");
+    expect(toolNames).not.toContain("web_fetch");
+
+    result.session.dispose();
+  });
+
+  test("应直接注册 SDK 原生 AskUserQuestionTool，并在自动化执行时移除它", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-ask-user-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const interactive = await createRuntimeCoreSession({
+      lumeSessionId: "ask-user-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits"
+    });
+    expect(interactive.tools.some((tool) => tool === AskUserQuestionTool)).toBeTrue();
+    interactive.session.dispose();
+
+    const automation = await createRuntimeCoreSession({
+      lumeSessionId: "ask-user-automation-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      messageMetadata: {
+        automationJobId: "job-1"
+      }
+    });
+    expect(automation.tools.some((tool) => tool === AskUserQuestionTool)).toBeFalse();
+    automation.session.dispose();
   });
 
   test("应为同一个 Lume session 使用稳定 transcript 目录", () => {
@@ -179,7 +249,6 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("Always verify edits before final output.");
     expect(systemPrompt).toContain("- Skill");
     expect(systemPrompt).toContain("<thread_state>");
-    expect(systemPrompt).toContain("threadId: prompt-session");
     expect(systemPrompt).toContain("threadType: main");
     expect(systemPrompt).toContain("chatType: direct");
     expect(systemPrompt).toContain("modelId: claude-sonnet-4-5");

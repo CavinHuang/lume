@@ -564,6 +564,16 @@ export interface AgentStreamEvent {
   message: SDKMessage
 }
 
+export interface AgentThreadSDKMessagesResult {
+  threadId: string
+  messages: SDKMessage[]
+}
+
+export interface AgentMessageAppendedEvent {
+  threadId: string
+  message: AgentMessage
+}
+
 export interface AgentRuntimeStatusChangedEvent {
   status: AgentRuntimeStatus
 }
@@ -658,6 +668,8 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_THREAD: 'agent:create-thread',
   /** 获取线程消息 */
   GET_THREAD_MESSAGES: 'agent:get-thread-messages',
+  /** 获取线程原始 SDK 消息 */
+  GET_THREAD_SDK_MESSAGES: 'agent:get-thread-sdk-messages',
   /** 获取线程单个消息版本组 */
   GET_THREAD_MESSAGE_VERSIONS: 'agent:get-thread-message-versions',
   /** 获取最近 N 条线程消息（分页） */
@@ -666,7 +678,6 @@ export const AGENT_IPC_CHANNELS = {
   UPDATE_THREAD_TITLE: 'agent:update-thread-title',
   /** 更新线程模型/渠道选择 */
   UPDATE_THREAD_MODEL_SELECTION: 'agent:update-thread-model-selection',
-  MIGRATE_CHAT_TO_AGENT: 'agent:migrate-chat-to-agent',
   /** 迁移 Chat 对话消息到 Agent 线程 */
   MIGRATE_CHAT_TO_THREAD: 'agent:migrate-chat-to-thread',
   /** 置顶/取消置顶线程 */
@@ -677,7 +688,6 @@ export const AGENT_IPC_CHANNELS = {
   DELETE_THREAD: 'agent:delete-thread',
   /** 从指定消息开始截断线程（包含该消息） */
   TRUNCATE_THREAD_MESSAGES_FROM: 'agent:truncate-thread-messages-from',
-
   // 工作区管理
   /** 获取工作区列表 */
   LIST_WORKSPACES: 'agent:list-workspaces',
@@ -697,7 +707,6 @@ export const AGENT_IPC_CHANNELS = {
   SEND_THREAD_MESSAGE: 'agent:send-thread-message',
   /** 中止 Agent 线程执行 */
   STOP_THREAD: 'agent:stop-thread',
-
   // 工作区能力（MCP + Skill）
   /** 获取工作区能力摘要 */
   GET_CAPABILITIES: 'agent:get-capabilities',
@@ -735,6 +744,8 @@ export const AGENT_IPC_CHANNELS = {
   STREAM_EVENT: 'agent:stream:event',
   /** Agent 流式错误 */
   STREAM_ERROR: 'agent:stream:error',
+  /** 线程消息追加通知 */
+  MESSAGE_APPENDED: 'agent:message-appended',
   /** 查询 subagent run 状态（调试/观测） */
   LIST_SUBAGENT_RUNS: 'agent:list-subagent-runs',
   /** 获取当前会话 runtime status */

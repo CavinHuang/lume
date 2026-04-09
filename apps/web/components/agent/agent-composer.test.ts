@@ -30,7 +30,7 @@ describe("agent-composer", () => {
 
   test("shouldQueueAgentTitleGeneration 仅在默认标题且输入有效时返回 true", () => {
     expect(shouldQueueAgentTitleGeneration({
-      currentTitle: "新 Agent 会话",
+      currentTitle: "新 Agent 线程",
       userMessage: "实现新的动作拆分",
       channelId: "channel-1",
       modelId: "model-1",
@@ -46,7 +46,7 @@ describe("agent-composer", () => {
     })).toBe(false);
 
     expect(shouldQueueAgentTitleGeneration({
-      currentTitle: "新 Agent 会话",
+      currentTitle: "新 Agent 线程",
       userMessage: "   ",
       channelId: "channel-1",
       modelId: "model-1",

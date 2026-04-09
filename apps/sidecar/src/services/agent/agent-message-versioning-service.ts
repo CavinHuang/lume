@@ -477,8 +477,8 @@ export function createAssistantMessageVersion(params: {
   return toAgentMessage(nextRecord, records.length);
 }
 
-export function getLatestVisibleMessagesForSession(sessionId: string): AgentMessage[] {
-  return getVisibleAgentMessages(sessionId);
+export function getLatestVisibleMessagesForThread(threadId: string): AgentMessage[] {
+  return getVisibleAgentMessages(threadId);
 }
 
 export function getVisibleTurnIdForMessage(sessionId: string, messageId: string): string | null {

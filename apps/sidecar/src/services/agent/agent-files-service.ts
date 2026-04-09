@@ -66,7 +66,7 @@ function resolveSafeTarget(workspaceSlug: string, sessionId: string, targetPath?
   if (!targetPath || targetPath.trim().length === 0) return sessionDir;
   const resolved = resolve(targetPath);
   if (!isWithin(sessionDir, resolved)) {
-    throw new Error("目标路径超出会话工作目录");
+    throw new Error("目标路径超出线程工作目录");
   }
   return resolved;
 }
@@ -146,7 +146,7 @@ function resolveSafePlanPath(
   const filenameResolved = resolve(join(plansDir, planPath));
   const resolvedCandidate = isWithin(plansDir, directResolved) ? directResolved : filenameResolved;
   if (!isWithin(plansDir, resolvedCandidate)) {
-    throw new Error("Plan 路径超出会话 plans 目录");
+    throw new Error("Plan 路径超出线程 plans 目录");
   }
   return resolvedCandidate;
 }
@@ -190,7 +190,7 @@ export function deleteAgentFile(
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
   if (resolve(resolved) === resolve(rootPath)) {
-    throw new Error("不能删除会话根目录");
+    throw new Error("不能删除线程根目录");
   }
   if (!existsSync(resolved)) return { ok: true };
 
@@ -212,7 +212,7 @@ export function renameAgentFile(
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
   if (resolve(resolved) === resolve(rootPath)) {
-    throw new Error("不能重命名会话根目录");
+    throw new Error("不能重命名线程根目录");
   }
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
@@ -220,7 +220,7 @@ export function renameAgentFile(
   const safeName = validateNewName(newName);
   const nextPath = join(dirname(resolved), safeName);
   if (!isWithin(rootPath, nextPath)) {
-    throw new Error("重命名后路径超出会话工作目录");
+    throw new Error("重命名后路径超出线程工作目录");
   }
   if (existsSync(nextPath)) {
     throw new Error("目标名称已存在");
@@ -240,7 +240,7 @@ export function moveAgentFile(
   const resolvedTargetDir = resolveSafeTarget(workspaceSlug, sessionId, targetDir);
 
   if (resolve(resolved) === resolve(rootPath)) {
-    throw new Error("不能移动会话根目录");
+    throw new Error("不能移动线程根目录");
   }
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
@@ -251,7 +251,7 @@ export function moveAgentFile(
 
   const nextPath = join(resolvedTargetDir, basename(resolved));
   if (!isWithin(rootPath, nextPath)) {
-    throw new Error("移动后路径超出会话工作目录");
+    throw new Error("移动后路径超出线程工作目录");
   }
   if (resolve(nextPath) === resolve(resolved)) {
     return { ok: true, path: nextPath };

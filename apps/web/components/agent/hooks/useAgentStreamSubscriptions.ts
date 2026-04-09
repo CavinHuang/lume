@@ -14,6 +14,7 @@ import type { AgentStreamState } from "@/atoms/agent-atoms";
 import { applySdkMessage } from "@/lib/agent-streaming";
 import {
   generateAgentThreadTitle,
+  getAgentThreadSDKMessages,
   getAgentThreadMessages,
   listAgentThreads,
   onAgentAskUserQuestion,
@@ -26,6 +27,7 @@ import {
   updateAgentThreadTitle
 } from "@/lib/desktop-api/agent";
 import { mergeServerMessagesWithPending, replaceVisibleMessage } from "@/lib/agent-message-merge";
+import { appendPersistedAgentMessage } from "@/lib/agent-message-appended";
 import { extractLatestAssistantText } from "../agent-session-lifecycle";
 
 function isAgentDebugEnabled(): boolean {
@@ -133,6 +135,8 @@ interface UseAgentStreamSubscriptionsParams {
   pendingTitleRef: MutableRefObject<Map<string, { userMessage: string; channelId: string; modelId: string }>>;
   planStreamCaptureRef: MutableRefObject<boolean>;
   setMessages: Dispatch<SetStateAction<AgentMessage[]>>;
+  setSdkMessages: Dispatch<SetStateAction<import("@lume/shared").SDKMessage[]>>;
+  setLiveSdkMessagesMap: Dispatch<SetStateAction<Map<string, import("@lume/shared").SDKMessage[]>>>;
   setAskUserQuestionRequests: Dispatch<SetStateAction<Map<string, AgentAskUserQuestionRequest>>>;
   setRuntimeStatuses: Dispatch<SetStateAction<Map<string, AgentRuntimeStatus>>>;
   setSessions: Dispatch<SetStateAction<AgentThreadMeta[]>>;
@@ -176,6 +180,8 @@ export function useAgentStreamSubscriptions({
   pendingTitleRef,
   planStreamCaptureRef,
   setMessages,
+  setSdkMessages,
+  setLiveSdkMessagesMap,
   setAskUserQuestionRequests,
   setRuntimeStatuses,
   setSessions,
@@ -224,6 +230,12 @@ export function useAgentStreamSubscriptions({
     const removeState = (targetSessionId: string): void => {
       lastAgentEventAtRef.current.delete(targetSessionId);
       setStreamingStates((prev) => {
+        const map = new Map(prev);
+        map.delete(targetSessionId);
+        return map;
+      });
+      setLiveSdkMessagesMap((prev) => {
+        if (!prev.has(targetSessionId)) return prev;
         const map = new Map(prev);
         map.delete(targetSessionId);
         return map;
@@ -283,8 +295,11 @@ export function useAgentStreamSubscriptions({
       }
 
       if (targetThreadId === currentSessionIdRef.current) {
-        void getAgentThreadMessages(targetThreadId)
-          .then((next) => {
+        void Promise.all([
+          getAgentThreadMessages(targetThreadId),
+          getAgentThreadSDKMessages(targetThreadId)
+        ])
+          .then(([next, sdkMessages]) => {
             startTransition(() => {
               if (planStreamCaptureRef.current) {
                 const fallbackText = extractLatestAssistantText(next);
@@ -310,6 +325,7 @@ export function useAgentStreamSubscriptions({
                 latestAssistantId
               );
               setMessages((prev) => mergeServerMessagesWithPending(prev, enriched));
+              setSdkMessages(sdkMessages);
               finalize();
             });
           })
@@ -393,6 +409,15 @@ export function useAgentStreamSubscriptions({
         map.set(payload.threadId, applySdkMessage(current, payload.message));
         return map;
       });
+      const isReplay = ((payload.message as unknown) as Record<string, unknown>).isReplay === true;
+      if (!isReplay) {
+        setLiveSdkMessagesMap((prev) => {
+          const map = new Map(prev);
+          const current = map.get(payload.threadId) ?? [];
+          map.set(payload.threadId, [...current, payload.message]);
+          return map;
+        });
+      }
 
       if (payload.message.type === "result" && payload.message.usage) {
         const usage = payload.message.usage;
@@ -408,6 +433,21 @@ export function useAgentStreamSubscriptions({
         });
       }
 
+    }));
+
+    trackUnlisten(onAgentMessageAppended((payload) => {
+      lastAgentEventAtRef.current.set(payload.threadId, Date.now());
+      if (payload.threadId !== currentSessionIdRef.current) {
+        void listAgentThreads().then(setSessions);
+        return;
+      }
+      startTransition(() => {
+        setMessages((prev) => appendPersistedAgentMessage(prev, payload.message));
+        if (Array.isArray(payload.message.sdkMessages) && payload.message.sdkMessages.length > 0) {
+          setSdkMessages((prev) => [...prev, ...payload.message.sdkMessages!]);
+        }
+      });
+      void listAgentThreads().then(setSessions);
     }));
 
     trackUnlisten(onAgentStreamError((payload) => {
@@ -437,10 +477,14 @@ export function useAgentStreamSubscriptions({
       };
 
       if (payload.threadId === currentSessionIdRef.current) {
-        void getAgentThreadMessages(payload.threadId)
-          .then((next) => {
+        void Promise.all([
+          getAgentThreadMessages(payload.threadId),
+          getAgentThreadSDKMessages(payload.threadId)
+        ])
+          .then(([next, sdkMessages]) => {
             startTransition(() => {
               setMessages((prev) => mergeServerMessagesWithPending(prev, next));
+              setSdkMessages(sdkMessages);
               finalize();
             });
           })
@@ -483,7 +527,7 @@ export function useAgentStreamSubscriptions({
           : item
       )));
       void listAgentThreads().then(setSessions).catch((error) => {
-        console.warn("[AgentView] 刷新会话标题失败", error);
+        console.warn("[AgentView] 刷新线程标题失败", error);
       });
     }));
 

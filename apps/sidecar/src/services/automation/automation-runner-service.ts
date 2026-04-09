@@ -7,8 +7,8 @@ import type {
   AutomationRunNowInput,
   Channel
 } from "@lume/shared";
-import { createAgentSession } from "../agent/agent-session-manager";
-import { getAgentSessionMeta } from "../agent/agent-session-manager";
+import { createAgentThread } from "../agent/agent-thread-manager";
+import { getAgentThreadMeta } from "../agent/agent-thread-manager";
 import { sendAgentMessage } from "../agent/agent-service";
 import { listAutomationJobs, updateAutomationJob } from "./automation-manager";
 import { listChannels } from "../channel/channel-manager";
@@ -135,24 +135,27 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
   }
 
   runningJobs.add(job.id);
-  let sessionId: string | undefined;
+  let threadId: string | undefined;
   let runStatus: AutomationRun["status"] = "success";
   let runMessage = "任务执行完成";
 
   try {
     const { channelId, modelId } = pickExecutionChannel();
-    const boundSessionId = job.sessionId?.trim();
-    if (boundSessionId && getAgentSessionMeta(boundSessionId)) {
-      sessionId = boundSessionId;
+    const boundThreadId = job.threadId?.trim();
+    if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
+      threadId = boundThreadId;
     } else {
-      const session = createAgentSession(`[自动化] ${job.name}`, channelId, job.workspaceId);
-      sessionId = session.id;
+      const thread = createAgentThread(`[自动化] ${job.name}`, channelId, job.workspaceId);
+      threadId = thread.id;
+    }
+    if (!threadId) {
+      throw new Error("自动化执行缺少可用线程");
     }
 
     let runtimeError: string | null = null;
     await sendAgentMessage(
       {
-        threadId: sessionId,
+        threadId,
         userMessage: job.prompt,
         workspaceId: job.workspaceId,
         channelId,
@@ -184,7 +187,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
       throw new Error(runtimeError);
     }
 
-    runMessage = `任务执行完成，会话: ${sessionId}`;
+    runMessage = `任务执行完成，线程: ${threadId}`;
   } catch (error) {
     runStatus = "failed";
     runMessage = error instanceof Error ? error.message : String(error);
@@ -203,7 +206,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     id: randomUUID(),
     jobId: job.id,
     jobName: job.name,
-    ...(sessionId ? { sessionId } : {}),
+    ...(threadId ? { threadId } : {}),
     trigger,
     status: runStatus,
     message: runMessage,
@@ -313,4 +316,3 @@ export function listAutomationRuns(input: AutomationListRunsInput = {}): Automat
   }
   return runs.sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
 }
-

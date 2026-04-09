@@ -99,10 +99,10 @@ function assert(condition, message) {
 async function sendAndWait(sidecar, payload) {
   const completion = sidecar.waitForNotification(
     STREAM_COMPLETE_METHOD,
-    (params) => params?.sessionId === payload.sessionId,
+    (params) => params?.threadId === payload.threadId,
     12000
   );
-  await sidecar.call("agent:send-message", payload);
+  await sidecar.call("agent:send-thread-message", payload);
   await completion;
 }
 
@@ -179,7 +179,7 @@ async function run() {
       const channel = await sidecar.call("channel:create", providerCase.channelInput);
       assert(typeof channel?.id === "string", `channel create failed: ${providerCase.providerKey}`);
 
-      const session = await sidecar.call("agent:create-session", {
+      const session = await sidecar.call("agent:create-thread", {
         title: `smoke-provider-matrix-${providerCase.providerKey}`,
         workspaceId: workspace.id,
         channelId: channel.id,
@@ -188,7 +188,7 @@ async function run() {
       assert(typeof session?.id === "string", `session create failed: ${providerCase.providerKey}`);
 
       await sendAndWait(sidecar, {
-        sessionId: session.id,
+        threadId: session.id,
         userMessage: `provider matrix ${providerCase.providerKey}`,
         workspaceId: workspace.id,
         channelId: channel.id,
@@ -197,7 +197,7 @@ async function run() {
       });
 
       sessionsByProvider.set(providerCase.providerKey, {
-        sessionId: session.id,
+        threadId: session.id,
         channelId: channel.id,
         modelId: providerCase.channelInput.defaultModelId,
         expectedAssistantModel: providerCase.expectedAssistantModel
@@ -207,13 +207,13 @@ async function run() {
     await sidecar.close();
     sidecar = createSidecarProcess(configHome);
 
-    const sessions = await sidecar.call("agent:list-sessions");
+    const sessions = await sidecar.call("agent:list-threads");
     for (const [providerKey, expected] of sessionsByProvider) {
-      const restored = sessions.find((item) => item.id === expected.sessionId);
+      const restored = sessions.find((item) => item.id === expected.threadId);
       assert(restored?.channelId === expected.channelId, `restored channel mismatch: ${providerKey}`);
       assert(restored?.modelId === expected.modelId, `restored model mismatch: ${providerKey}`);
 
-      const messages = await sidecar.call("agent:get-messages", { sessionId: expected.sessionId });
+      const messages = await sidecar.call("agent:get-thread-messages", { threadId: expected.threadId });
       assert(Array.isArray(messages), `messages not readable after restart: ${providerKey}`);
       const assistantModels = messages
         .filter((item) => item.role === "assistant")

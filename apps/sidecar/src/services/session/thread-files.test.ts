@@ -2,21 +2,21 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAgentSession } from "../agent/agent-session-manager";
+import { createAgentThread } from "../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath
 } from "../pi-agent/runtime-core/session-store";
-import { listSessionEntriesForWorkspace } from "./session-files";
+import { listThreadEntriesForWorkspace } from "./thread-files";
 
-describe("memory session-files", () => {
+describe("memory thread-files", () => {
   let previousConfigDir: string | undefined;
   let tempConfigDir = "";
 
   beforeEach(() => {
     previousConfigDir = process.env.LUME_CONFIG_DIR;
-    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-memory-session-files-"));
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-memory-thread-files-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
   });
 
@@ -32,10 +32,10 @@ describe("memory session-files", () => {
     }
   });
 
-  test("应支持仅 transcript 的 session 索引", () => {
+  test("应支持仅 transcript 的 thread 索引", () => {
     const workspace = createAgentWorkspace("记忆工作区");
-    const session = createAgentSession("transcript only", undefined, workspace.id);
-    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+    const thread = createAgentThread("transcript only", undefined, workspace.id);
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), thread.id);
 
     sessionManager.appendMessage({
       role: "user",
@@ -60,11 +60,11 @@ describe("memory session-files", () => {
       timestamp: 200
     });
 
-    const entries = listSessionEntriesForWorkspace(workspace.id);
+    const entries = listThreadEntriesForWorkspace(workspace.id);
 
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.path).toBe(`sessions/${session.id}`);
-    expect(entries[0]?.absPath).toBe(getRuntimeCoreSessionDirPath(session.id));
+    expect(entries[0]?.path).toBe(`threads/${thread.id}`);
+    expect(entries[0]?.absPath).toBe(getRuntimeCoreSessionDirPath(thread.id));
     expect(entries[0]?.content).toContain("User: 第一条 用户 消息");
     expect(entries[0]?.content).toContain("Assistant: 第二条 助手 回复");
     expect(entries[0]?.lineMap).toEqual([1, 2]);

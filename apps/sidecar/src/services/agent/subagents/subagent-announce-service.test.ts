@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { createAgentSession, getAgentSessionMessages } from "../../agent/agent-session-manager";
+import { createAgentSession, getAgentSessionMessages } from "../../agent/agent-thread-manager";
 import { announceSubagentCompletion } from "./subagent-announce-service";
 import type { SubagentRun } from "./subagent-run.types";
 

@@ -1,5 +1,5 @@
-import type { CanUseToolFn } from "@lume/agent-sdk";
-import { updateAgentSessionMeta } from "../../agent/agent-session-manager";
+import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
+import { updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
@@ -25,6 +25,8 @@ import {
   inferToolMetadata,
   isToolAllowedInPlanMode
 } from "../tools/permissions/tool-metadata";
+import { waitForPiAskUserQuestionAnswers } from "../tools/bridges/ask-user-question-bridge";
+import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -104,9 +106,50 @@ function buildPermissionReason(toolName: string): string {
   return `${toolName} 将触发操作，需要你确认。`;
 }
 
+function toReadableString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function parseAskUserQuestions(input: Record<string, unknown>): AgentAskUserQuestionQuestion[] {
+  const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
+  const result: AgentAskUserQuestionQuestion[] = [];
+  for (const item of rawQuestions) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const question = toReadableString(record.question);
+    const header = toReadableString(record.header) || `问题${result.length + 1}`;
+    const rawOptions = Array.isArray(record.options) ? record.options : [];
+    const options = rawOptions
+      .map((option) => {
+        if (typeof option === "string") {
+          const text = option.trim();
+          return text ? { label: text, description: text } : null;
+        }
+        if (!option || typeof option !== "object") return null;
+        const optionRecord = option as Record<string, unknown>;
+        const label = toReadableString(optionRecord.label) || toReadableString(optionRecord.text);
+        const description = toReadableString(optionRecord.description) || label;
+        if (!label) return null;
+        return { label, description };
+      })
+      .filter((option): option is { label: string; description: string } => !!option);
+    if (!question || options.length < 2) continue;
+    result.push({
+      header,
+      question,
+      options,
+      multiSelect: record.multiSelect === true
+    });
+  }
+  return result;
+}
+
 function createCanUseToolHandler(
   params: PiAgentRunParams,
-  emit: PiAgentRuntimeEmitter
+  emit: PiAgentRuntimeEmitter,
+  askUserSignal: AbortSignal
 ): CanUseToolFn {
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
@@ -123,6 +166,43 @@ function createCanUseToolHandler(
       return {
         behavior: "deny",
         message: `工具参数被拒绝: ${paramDenyReason}`
+      };
+    }
+
+    if (toolName === "AskUserQuestion") {
+      const normalizedInput = input && typeof input === "object"
+        ? input as Record<string, unknown>
+        : {};
+      const questions = parseAskUserQuestions(normalizedInput);
+      if (questions.length === 0) {
+        return {
+          behavior: "deny",
+          message: "AskUserQuestion 缺少有效问题，已拒绝执行"
+        };
+      }
+      const askResult = await waitForPiAskUserQuestionAnswers(
+        params.runtime.sessionId,
+        metadata?.toolUseId ?? toolName,
+        questions,
+        askUserSignal,
+        emit.onAskUserQuestion
+      );
+      if (askResult.status !== "answered" || !askResult.answers) {
+        if (askResult.status === "timeout") {
+          return { behavior: "deny", message: "AskUserQuestion 等待用户回答超时" };
+        }
+        if (askResult.status === "aborted") {
+          return { behavior: "deny", message: "AskUserQuestion 被线程中止" };
+        }
+        return { behavior: "deny", message: "用户取消了 AskUserQuestion" };
+      }
+      return {
+        behavior: "allow",
+        updatedInput: {
+          ...normalizedInput,
+          questions,
+          answers: askResult.answers
+        }
       };
     }
 
@@ -213,12 +293,26 @@ export async function runRuntimeCoreAttempt(
   const accumulator = createAgentStreamAccumulatorState();
   let finalResult: PiAgentRunResult = { status: "completed" };
   let finalError = "";
+  const askUserAbortController = new AbortController();
 
   options.registerAbort(runtime.sessionId, async () => {
+    askUserAbortController.abort();
     await agent.interrupt();
   });
 
   try {
+    setQuestionHandler((async (request: {
+      questions: AgentAskUserQuestionQuestion[];
+      answers?: Record<string, string>;
+    }) => {
+      if (request.answers && typeof request.answers === "object") {
+        return {
+          questions: request.questions,
+          answers: request.answers as Record<string, string>
+        };
+      }
+      throw new Error("AskUserQuestion answers missing");
+    }) as any);
     await agent.setModel(prepared.modelResolution.resolvedModelId);
     const thinkingLevel = resolveAgentThinkingLevel(
       prepared.modelResolution.model,
@@ -234,7 +328,7 @@ export async function runRuntimeCoreAttempt(
     }
 
     const query = agent.query(input.userMessage, {
-      canUseTool: createCanUseToolHandler(params, emit),
+      canUseTool: createCanUseToolHandler(params, emit, askUserAbortController.signal),
       permissionMode: input.permissionMode === "bypassPermissions"
         ? "bypassPermissions"
         : input.permissionMode === "plan"
@@ -272,7 +366,7 @@ export async function runRuntimeCoreAttempt(
       };
     }
 
-    updateAgentSessionMeta(runtime.sessionId, {
+    updateAgentThreadMeta(runtime.sessionId, {
       sdkThreadId: session.threadId ?? session.sessionId,
       runtimeThreadId: session.threadId ?? session.sessionId
     });
@@ -291,6 +385,8 @@ export async function runRuntimeCoreAttempt(
       errorMessage: finalError || errorMessage
     };
   } finally {
+    clearQuestionHandler();
+    askUserAbortController.abort();
     await session.dispose();
     options.unregisterAbort(runtime.sessionId);
   }
