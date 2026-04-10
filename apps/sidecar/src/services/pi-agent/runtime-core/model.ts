@@ -4,21 +4,10 @@ import { adaptModelCapabilities, resolveAgentThinkingLevel } from "../runner/mod
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "../runner/provider-routing";
 import { resolvePiProviderCandidates } from "../runner/provider-resolution";
 
-export interface ResolveRuntimeCoreModelInput {
-  provider: KnownProvider;
-  modelId: string;
-}
-
 export interface ResolvedPiChannelModel {
   provider: KnownProvider;
   resolvedModelId: string;
   model: Model<Api>;
-}
-
-export function resolveRuntimeCoreModel(
-  input: ResolveRuntimeCoreModelInput
-): Model<Api> | undefined {
-  return createFallbackModel(input.provider, input.modelId);
 }
 
 export function resolvePiChannelModel(params: {
@@ -76,17 +65,6 @@ export function resolvePiChannelModel(params: {
 }
 
 export const resolveRuntimeCoreChannelModel = resolvePiChannelModel;
-
-function applyChannelBaseUrl(model: Model<Api>, baseUrl?: string): Model<Api> {
-  const trimmedBaseUrl = baseUrl?.trim();
-  if (!trimmedBaseUrl) {
-    return adaptModelCapabilities(model);
-  }
-  return adaptModelCapabilities({
-    ...model,
-    baseUrl: trimmedBaseUrl
-  }, trimmedBaseUrl);
-}
 
 function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?: string): Model<Api> {
   const normalizedBaseUrl = baseUrl?.trim() || resolveFallbackBaseUrl(provider);

@@ -50,28 +50,11 @@ export function getToolMetadata(toolName: string): ToolMetadata | undefined {
 }
 
 /**
- * 获取所有工具元数据
- */
-export function getAllToolMetadata(): ToolMetadata[] {
-  return Array.from(TOOL_METADATA_REGISTRY.values());
-}
-
-/**
  * 判断类别是否在 Plan 模式下允许
  */
 function isCategoryAllowedInPlanMode(category: ToolCategory): boolean {
   return category === "read" || category === "control";
 }
-
-/**
- * Plan 模式规则
- */
-export const PLAN_MODE_RULES = {
-  /** 允许的类别 */
-  allowedCategories: ["read", "control"] as ToolCategory[],
-  /** 禁止的类别 */
-  blockedCategories: ["write", "execute", "network"] as ToolCategory[]
-};
 
 /**
  * 检查工具是否在 Plan 模式下允许
@@ -232,84 +215,6 @@ registerToolMetadata({
   category: "write",
   riskLevel: "medium",
   description: "保存记忆内容"
-});
-
-// 线程工具
-registerToolMetadata({
-  name: "agents_list",
-  category: "control",
-  riskLevel: "low",
-  description: "列出所有 Agent"
-});
-
-registerToolMetadata({
-  name: "threads_list",
-  category: "control",
-  riskLevel: "low",
-  description: "列出所有线程"
-});
-
-registerToolMetadata({
-  name: "threads_history",
-  category: "read",
-  riskLevel: "low",
-  description: "获取线程历史"
-});
-
-registerToolMetadata({
-  name: "threads_send",
-  category: "execute",
-  riskLevel: "medium",
-  description: "发送消息到线程"
-});
-
-registerToolMetadata({
-  name: "threads_delete",
-  category: "write",
-  riskLevel: "medium",
-  description: "删除线程及其数据"
-});
-
-registerToolMetadata({
-  name: "threads_spawn",
-  category: "execute",
-  riskLevel: "medium",
-  description: "创建新线程"
-});
-
-registerToolMetadata({
-  name: "thread_status",
-  category: "control",
-  riskLevel: "low",
-  description: "获取线程状态"
-});
-
-registerToolMetadata({
-  name: "subagents_list",
-  category: "control",
-  riskLevel: "low",
-  description: "列出子代理运行状态"
-});
-
-registerToolMetadata({
-  name: "subagents_kill",
-  category: "execute",
-  riskLevel: "medium",
-  description: "终止子代理运行"
-});
-
-registerToolMetadata({
-  name: "subagents_send",
-  category: "execute",
-  riskLevel: "medium",
-  description: "向子代理发送跟进指令"
-});
-
-registerToolMetadata({
-  name: "subagents_steer",
-  category: "execute",
-  riskLevel: "medium",
-  description: "重定向子代理任务方向"
 });
 
 // 网络工具

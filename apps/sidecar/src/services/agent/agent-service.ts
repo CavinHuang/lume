@@ -36,11 +36,7 @@ import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
 import { resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
 import { createLogger } from "../infra/logger";
-import {
-  getSessionStateManager,
-  startSessionHeartbeat,
-  stopSessionHeartbeat,
-} from "../runtime/session-state-manager";
+import { getSessionStateManager } from "../runtime/session-state-manager";
 import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/bridges/ask-user-question-bridge";
 import { submitToolPermissionDecision } from "../pi-agent/tools/bridges/tool-permission-bridge";
 import {
@@ -66,15 +62,6 @@ type AgentStreamEmitter = {
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 };
-
-// Memory Flush 待发送队列：threadId -> prompt
-const pendingMemoryFlushPrompts = new Map<string, string>();
-
-export function consumeMemoryFlushPrompt(threadId: string): string | undefined {
-  const prompt = pendingMemoryFlushPrompts.get(threadId);
-  if (prompt) pendingMemoryFlushPrompts.delete(threadId);
-  return prompt;
-}
 
 const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
 
@@ -134,16 +121,6 @@ function handleRuntimeThreadStateMessage(
       totalTokens,
       contextWindow
     );
-
-    const flushCheck = sessionStateManager.checkMemoryFlush(threadId);
-    if (flushCheck.executed && flushCheck.prompt) {
-      log.info("Memory Flush 触发条件满足，已加入待发送队列", {
-        threadId: threadId.slice(0, 8),
-        reason: flushCheck.reason,
-      });
-      pendingMemoryFlushPrompts.set(threadId, flushCheck.prompt);
-      sessionStateManager.markMemoryFlushExecuted(threadId);
-    }
   }
 
   if (message.type === "system" && message.subtype === "compact_boundary") {
@@ -324,13 +301,9 @@ export async function sendAgentMessage(
   const persistedSdkMessages: SDKMessage[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
-  let stateWorkspaceSlug: string | undefined;
-  if (workspaceId) {
-    const workspace = getAgentWorkspace(workspaceId);
-    if (workspace) {
-      stateWorkspaceSlug = workspace.slug;
-    }
-  }
+  const stateWorkspaceSlug = workspaceId
+    ? getAgentWorkspace(workspaceId)?.slug
+    : undefined;
 
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: stateWorkspaceSlug,
@@ -378,12 +351,7 @@ export async function sendAgentMessage(
 
   const sessionStateManager = getSessionStateManager();
   const runtimeStatusManager = getAgentRuntimeStatusManager();
-  sessionStateManager.getOrCreate(threadId, stateWorkspaceSlug);
-  if (stateWorkspaceSlug) {
-    startSessionHeartbeat(threadId, stateWorkspaceSlug, async () => {
-      log.info("Heartbeat 检查完成", { threadId: threadId.slice(0, 8), workspaceSlug: stateWorkspaceSlug });
-    });
-  }
+  sessionStateManager.getOrCreate(threadId);
 
   updateAgentThreadMeta(threadId, {
     channelId: resolvedChannelId,
@@ -486,10 +454,6 @@ export async function sendAgentMessage(
 
 export function stopAgent(threadId: string): void {
   const sessionStateManager = getSessionStateManager();
-  const state = sessionStateManager.getAll().find((s) => s.sessionId === threadId);
-  if (state?.workspaceSlug) {
-    stopSessionHeartbeat(state.workspaceSlug);
-  }
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);
   void import("../pi-agent/runtime-core/attempt")
@@ -498,10 +462,6 @@ export function stopAgent(threadId: string): void {
 }
 
 export function stopAllAgents(): void {
-  // 停止所有 Heartbeat 定时器
-  const { getHeartbeatService } = require("../runtime/heartbeat-service");
-  const heartbeatService = getHeartbeatService();
-  heartbeatService.stopAllTimers();
   void import("../pi-agent/runtime-core/attempt")
     .then((module) => module.stopAllPiAgents())
     .catch(() => undefined);

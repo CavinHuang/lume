@@ -45,37 +45,10 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:search": ["find", "grep", "ls"],
   "group:memory": ["memory_search", "memory_get", "memory_save"],
   "group:web": ["web_search", "web_fetch"],
-  "group:sessions": [
-    "agents_list",
-    "threads_list",
-    "threads_history",
-    "threads_send",
-    "threads_delete",
-    "threads_spawn",
-    "thread_status",
-    "subagents_list",
-    "subagents_kill",
-    "subagents_send",
-    "subagents_steer"
-  ],
   "group:planning": ["askuserquestion"]
 };
 
-const DEFAULT_SUBAGENT_POLICY: ToolPolicy = {
-  deny: [
-    "agents_list",
-    "threads_list",
-    "threads_history",
-    "threads_send",
-    "threads_delete",
-    "threads_spawn",
-    "thread_status",
-    "subagents_list",
-    "subagents_kill",
-    "subagents_send",
-    "subagents_steer"
-  ]
-};
+const DEFAULT_SUBAGENT_POLICY: ToolPolicy = {};
 
 const DEFAULT_AGENT_TOOL_POLICY_CONFIG: AgentRuntimeToolPolicyConfig = {
   version: 1,

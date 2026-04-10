@@ -1,13 +1,10 @@
 /**
  * Session State Manager
  *
- * 管理会话状态，用于 Memory Flush 和 Heartbeat 功能
+ * 管理会话状态，用于 runtime 统计
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import type { MemoryFlushCheckParams, MemoryFlushResult } from "@lume/shared";
-import { getMemoryFlushService } from "../session/memory-flush-service";
-import { getHeartbeatService } from "./heartbeat-service";
 import { getSessionStatesPath } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 
@@ -19,18 +16,12 @@ const log = createLogger("session-state");
 export interface SessionState {
   /** 会话 ID */
   sessionId: string;
-  /** 工作区 slug */
-  workspaceSlug?: string;
   /** 当前 token 使用量 */
   totalTokens: number;
   /** 上下文窗口大小 */
   contextWindow: number;
   /** 压缩次数 */
   compactionCount: number;
-  /** 上次 Memory Flush 时的压缩次数 */
-  memoryFlushCompactionCount: number | null;
-  /** Plan 模式状态 */
-  planMode?: boolean;
   /** 会话创建时间 */
   createdAt: number;
   /** 最后更新时间 */
@@ -75,16 +66,14 @@ class SessionStateManager {
   /**
    * 创建或获取会话状态
    */
-  getOrCreate(sessionId: string, workspaceSlug?: string): SessionState {
+  getOrCreate(sessionId: string): SessionState {
     let state = this.states.get(sessionId);
     if (!state) {
       state = {
         sessionId,
-        workspaceSlug,
         totalTokens: 0,
         contextWindow: 200000,
         compactionCount: 0,
-        memoryFlushCompactionCount: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -136,64 +125,6 @@ class SessionStateManager {
   }
 
   /**
-   * 标记 Memory Flush 已执行
-   */
-  markMemoryFlushExecuted(sessionId: string): SessionState | null {
-    const state = this.states.get(sessionId);
-    if (!state) return null;
-
-    state.memoryFlushCompactionCount = state.compactionCount;
-    state.updatedAt = Date.now();
-    this.saveToDisk();
-
-    log.info("Memory Flush 已执行", {
-      sessionId: sessionId.slice(0, 8),
-      atCompaction: state.compactionCount,
-    });
-
-    return state;
-  }
-
-  /**
-   * 检查是否需要执行 Memory Flush
-   */
-  checkMemoryFlush(sessionId: string): MemoryFlushResult {
-    const state = this.states.get(sessionId);
-    if (!state) {
-      return { executed: false, reason: "会话状态不存在" };
-    }
-
-    const memoryFlushService = getMemoryFlushService();
-    if (!memoryFlushService.isEnabled()) {
-      return { executed: false, reason: "Memory Flush 未启用" };
-    }
-
-    const params: MemoryFlushCheckParams = {
-      entry: {
-        totalTokens: state.totalTokens,
-        compactionCount: state.compactionCount,
-        memoryFlushCompactionCount: state.memoryFlushCompactionCount ?? undefined,
-      },
-      contextWindowTokens: state.contextWindow,
-      reserveTokensFloor: memoryFlushService.getConfig()?.reserveTokensFloor ?? 8000,
-      softThresholdTokens: memoryFlushService.getConfig()?.softThresholdTokens ?? 4000,
-    };
-
-    return memoryFlushService.check(params);
-  }
-
-  /**
-   * 设置 Plan 模式状态
-   */
-  setPlanMode(sessionId: string, planMode: boolean): void {
-    const state = this.states.get(sessionId);
-    if (!state) return;
-    state.planMode = planMode;
-    state.updatedAt = Date.now();
-    this.saveToDisk();
-  }
-
-  /**
    * 删除会话状态
    */
   delete(sessionId: string): void {
@@ -239,58 +170,6 @@ const sessionStateManager = new SessionStateManager();
  */
 export function getSessionStateManager(): SessionStateManager {
   return sessionStateManager;
-}
-
-// ===== Heartbeat 集成 =====
-
-/**
- * 启动会话的心跳定时器
- */
-export function startSessionHeartbeat(
-  sessionId: string,
-  workspaceSlug: string,
-  onHeartbeat: () => void | Promise<void>
-): void {
-  const heartbeatService = getHeartbeatService();
-
-  if (!heartbeatService.isEnabled()) {
-    log.debug("Heartbeat 未启用", { sessionId: sessionId.slice(0, 8) });
-    return;
-  }
-
-  if (!heartbeatService.shouldRunHeartbeat(workspaceSlug)) {
-    log.debug("HEARTBEAT.md 为空或不存在，跳过心跳", {
-      sessionId: sessionId.slice(0, 8),
-      workspaceSlug,
-    });
-    return;
-  }
-
-  heartbeatService.startTimer(workspaceSlug, async () => {
-    log.info("执行心跳检查", { sessionId: sessionId.slice(0, 8), workspaceSlug });
-    try {
-      await onHeartbeat();
-      heartbeatService.updateState(workspaceSlug, "completed");
-    } catch (error) {
-      log.error("心跳执行失败", { sessionId: sessionId.slice(0, 8), error: String(error) });
-      heartbeatService.updateState(workspaceSlug, `error: ${error}`);
-    }
-  });
-
-  log.info("心跳定时器已启动", {
-    sessionId: sessionId.slice(0, 8),
-    workspaceSlug,
-    interval: heartbeatService.getIntervalMs() / 1000 / 60 + "m",
-  });
-}
-
-/**
- * 停止会话的心跳定时器
- */
-export function stopSessionHeartbeat(workspaceSlug: string): void {
-  const heartbeatService = getHeartbeatService();
-  heartbeatService.stopTimer(workspaceSlug);
-  log.info("心跳定时器已停止", { workspaceSlug });
 }
 
 // 定期清理过期会话状态（每小时执行一次）

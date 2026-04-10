@@ -10,14 +10,12 @@ import {
 } from "./tool-policy";
 
 describe("tool-policy", () => {
-  test("subagent 默认策略应禁止 sessions 工具", () => {
+  test("subagent 默认策略在未配置线程工具时不应额外过滤", () => {
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-policy-test-"));
     try {
       const tools = [
         { name: "read" },
-        { name: "threads_list" },
-        { name: "threads_spawn" },
         { name: "web_fetch" }
       ];
       const filtered = applyPiToolPolicies(tools, {
@@ -84,26 +82,15 @@ describe("tool-policy", () => {
             anthropic: { allow: ["web_*"] }
           },
           bySessionType: {
-            subagent: { deny: ["group:sessions"] }
+            subagent: { deny: ["group:web"] }
           }
         }
       });
       expect(saved.version).toBe(99);
       expect(saved.tools?.allow).toEqual(["group:fs"]);
       expect(saved.tools?.byProvider?.anthropic?.allow).toEqual(["web_*"]);
-      expect(saved.tools?.subagent?.deny).toEqual([
-        "agents_list",
-        "threads_list",
-        "threads_history",
-        "threads_send",
-        "threads_delete",
-        "threads_spawn",
-        "thread_status",
-        "subagents_list",
-        "subagents_kill",
-        "subagents_send",
-        "subagents_steer"
-      ]);
+      expect(saved.tools?.bySessionType?.subagent?.deny).toEqual(["group:web"]);
+      expect(saved.tools?.subagent).toEqual({});
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;

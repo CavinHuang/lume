@@ -126,9 +126,7 @@ function writeConfig(config: SystemPromptConfig): void {
 }
 
 export function getSystemPromptConfig(): SystemPromptConfig {
-  const config = readConfig();
-  writeConfig(config);
-  return config;
+  return readConfig();
 }
 
 export function createSystemPrompt(input: SystemPromptCreateInput): SystemPrompt {

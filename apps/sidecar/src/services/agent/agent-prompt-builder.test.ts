@@ -63,7 +63,7 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 应注入 delegation 与 persona guardrails", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-guardrails",
-      availableTools: ["task", "threads_spawn", "write"]
+      availableTools: ["task", "write"]
     });
     expect(prompt).toContain("## Delegation Policy");
     expect(prompt).toContain("Do it yourself");

@@ -16,7 +16,7 @@ import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
 } from "../system/workspace-bootstrap-service";
-import { isHeartbeatContentEffectivelyEmpty } from "../runtime/heartbeat-service";
+import { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-content";
 import type { SessionType as ThreadType } from "@lume/shared";
 
 export const LUME_AGENT_IDENTITY_LINE =
@@ -196,13 +196,6 @@ const PROMPT_TOOL_ORDER = [
   "web_search",
   "todowrite",
   "task",
-  "agents_list",
-  "threads_list",
-  "threads_history",
-  "threads_send",
-  "threads_delete",
-  "threads_spawn",
-  "thread_status",
   "askuserquestion",
   "memory_search",
   "memory_get",
