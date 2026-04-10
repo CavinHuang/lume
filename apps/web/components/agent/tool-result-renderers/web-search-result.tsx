@@ -4,11 +4,8 @@
 import * as React from "react";
 import { Globe } from "lucide-react";
 import { CollapsibleResult } from "./collapsible-result";
-
-interface WebSearchResultRendererProps {
-  result: string;
-  isError: boolean;
-}
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
 interface SearchResult {
   title: string;
@@ -58,13 +55,9 @@ function parseSearchResults(text: string): SearchResult[] | null {
   return results.length > 0 ? results : null;
 }
 
-export function WebSearchResultRenderer({ result, isError }: WebSearchResultRendererProps): React.ReactElement {
+export function WebSearchResultRenderer({ result, isError }: ToolResultContentProps): React.ReactElement {
   if (isError) {
-    return (
-      <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-        {result}
-      </pre>
-    );
+    return <ErrorResult result={result} />;
   }
 
   const searchResults = React.useMemo(() => parseSearchResults(result), [result]);

@@ -4,19 +4,12 @@
 import * as React from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { CollapsibleResult } from "./collapsible-result";
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
-interface WebFetchResultRendererProps {
-  result: string;
-  isError: boolean;
-}
-
-export function WebFetchResultRenderer({ result, isError }: WebFetchResultRendererProps): React.ReactElement {
+export function WebFetchResultRenderer({ result, isError }: ToolResultContentProps): React.ReactElement {
   if (isError) {
-    return (
-      <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-        {result}
-      </pre>
-    );
+    return <ErrorResult result={result} />;
   }
 
   return (

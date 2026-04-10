@@ -53,7 +53,7 @@ export function ToolHeader({
       {...props}
     >
       {icon ? <span className="shrink-0">{icon}</span> : null}
-      <span className="min-w-0 flex-1 truncate text-foreground/75">{summary}</span>
+      <span className="min-w-0 flex-1 overflow-hidden text-foreground/75">{summary}</span>
       {meta ? <div className="shrink-0 flex items-center gap-2">{meta}</div> : null}
       {status ? <div className="shrink-0 flex items-center">{status}</div> : null}
       {trailing ? <div className="shrink-0 flex items-center gap-2">{trailing}</div> : null}

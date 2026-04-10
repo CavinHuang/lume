@@ -7,14 +7,10 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { inferLanguageFromPath } from "../tool-utils";
 import { CollapsibleResult } from "./collapsible-result";
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
-interface ReadResultRendererProps {
-  result: string;
-  isError: boolean;
-  input: Record<string, unknown>;
-}
-
-export function ReadResultRenderer({ result, isError, input }: ReadResultRendererProps): React.ReactElement {
+export function ReadResultRenderer({ result, isError, input }: ToolResultContentProps): React.ReactElement {
   const filePath =
     typeof input.file_path === "string"
       ? input.file_path
@@ -28,11 +24,7 @@ export function ReadResultRenderer({ result, isError, input }: ReadResultRendere
   const renderCode = React.useCallback(
     (text: string): React.ReactNode => {
       if (isError) {
-        return (
-          <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-            {text}
-          </pre>
-        );
+        return <ErrorResult result={text} />;
       }
 
       const lines = text.split("\n");

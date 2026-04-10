@@ -18,11 +18,12 @@ import {
 } from "@/lib/agent-runtime-status";
 import type {
   AgentStreamState,
+  StreamContentBlock,
   ToolActivity
 } from "@/lib/agent-streaming";
 import { formatToolStatusLine } from "@/lib/agent-status-line";
 
-export type { AgentStreamState, ToolActivity } from "@/lib/agent-streaming";
+export type { AgentStreamState, StreamContentBlock, ToolActivity } from "@/lib/agent-streaming";
 
 export const agentThreadsAtom = atom<AgentThreadMeta[]>([]);
 export const agentWorkspacesAtom = atom<AgentWorkspace[]>([]);
@@ -109,6 +110,10 @@ export const agentStreamingContentAtom = atom<string>((get) => get(currentAgentS
 export const agentStreamingReasoningAtom = atom<string>((get) => get(currentAgentStreamStateAtom)?.reasoning ?? "");
 
 export const agentToolActivitiesAtom = atom<ToolActivity[]>((get) => get(currentAgentStreamStateAtom)?.toolActivities ?? []);
+
+export const agentStreamingContentBlocksAtom = atom<StreamContentBlock[]>(
+  (get) => get(currentAgentStreamStateAtom)?.contentBlocks ?? []
+);
 
 
 /** 当前流式回合的 turnId */

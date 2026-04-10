@@ -4,19 +4,12 @@
 import * as React from "react";
 import { FileTypeIcon } from "@/components/file-browser";
 import { CollapsibleResult } from "./collapsible-result";
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
-interface GlobResultRendererProps {
-  result: string;
-  isError: boolean;
-}
-
-export function GlobResultRenderer({ result, isError }: GlobResultRendererProps): React.ReactElement {
+export function GlobResultRenderer({ result, isError }: ToolResultContentProps): React.ReactElement {
   if (isError) {
-    return (
-      <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-        {result}
-      </pre>
-    );
+    return <ErrorResult result={result} />;
   }
 
   const files = React.useMemo(() => result.split("\n").filter(Boolean), [result]);

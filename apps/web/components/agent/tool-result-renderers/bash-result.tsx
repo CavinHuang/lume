@@ -6,12 +6,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { CollapsibleResult } from "./collapsible-result";
-
-interface BashResultRendererProps {
-  result: string;
-  isError: boolean;
-  input: Record<string, unknown>;
-}
+import type { ToolResultContentProps } from "./types";
 
 function classifyLine(line: string): "stderr" | "normal" {
   const lower = line.toLowerCase();
@@ -29,7 +24,7 @@ function classifyLine(line: string): "stderr" | "normal" {
   return "normal";
 }
 
-export function BashResultRenderer({ result, isError, input }: BashResultRendererProps): React.ReactElement {
+export function BashResultRenderer({ result, isError, input }: ToolResultContentProps): React.ReactElement {
   const command = typeof input.command === "string" ? input.command : undefined;
 
   const renderTerminal = React.useCallback(

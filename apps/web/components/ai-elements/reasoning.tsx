@@ -23,12 +23,13 @@ function useReasoning(): ReasoningContextValue {
   return ctx;
 }
 
-const AUTO_CLOSE_DELAY = 2200;
+const DEFAULT_AUTO_CLOSE_DELAY = 600;
 const MS_IN_S = 1000;
 
 interface ReasoningProps extends React.ComponentProps<typeof Collapsible> {
   isStreaming?: boolean;
   duration?: number;
+  autoCloseDelayMs?: number | null;
 }
 
 export const Reasoning = React.memo(function Reasoning({
@@ -38,6 +39,7 @@ export const Reasoning = React.memo(function Reasoning({
   defaultOpen = true,
   onOpenChange,
   duration: durationProp,
+  autoCloseDelayMs = DEFAULT_AUTO_CLOSE_DELAY,
   children,
   ...props
 }: ReasoningProps): React.ReactElement {
@@ -76,14 +78,19 @@ export const Reasoning = React.memo(function Reasoning({
     wasStreamingRef.current = isStreaming;
     const hasFinishedThinking = durationProp !== undefined || duration !== undefined || startTime === null;
     if (defaultOpen && !isStreaming && isOpen && !hasAutoClosed && hasFinishedThinking) {
+      if (autoCloseDelayMs !== null && autoCloseDelayMs <= 0) {
+        setIsOpen(false);
+        setHasAutoClosed(true);
+        return undefined;
+      }
       const timer = setTimeout(() => {
         setIsOpen(false);
         setHasAutoClosed(true);
-      }, AUTO_CLOSE_DELAY);
+      }, autoCloseDelayMs ?? DEFAULT_AUTO_CLOSE_DELAY);
       return () => clearTimeout(timer);
     }
     return undefined;
-  }, [defaultOpen, duration, durationProp, hasAutoClosed, isOpen, isStreaming, setIsOpen, startTime]);
+  }, [autoCloseDelayMs, defaultOpen, duration, durationProp, hasAutoClosed, isOpen, isStreaming, setIsOpen, startTime]);
 
   React.useEffect(() => {
     if (durationProp !== undefined) {

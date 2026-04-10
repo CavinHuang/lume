@@ -6,23 +6,15 @@
  */
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
-interface EditResultRendererProps {
-  result: string;
-  isError: boolean;
-  input: Record<string, unknown>;
-}
-
-export function EditResultRenderer({ result, isError, input }: EditResultRendererProps): React.ReactElement {
+export function EditResultRenderer({ result, isError, input }: ToolResultContentProps): React.ReactElement {
   const oldStr = typeof input.old_string === "string" ? input.old_string : "";
   const newStr = typeof input.new_string === "string" ? input.new_string : "";
 
   if (isError) {
-    return (
-      <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-        {result}
-      </pre>
-    );
+    return <ErrorResult result={result} />;
   }
 
   if (!oldStr && !newStr) {

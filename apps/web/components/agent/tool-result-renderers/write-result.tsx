@@ -2,20 +2,12 @@
  * Write 工具结果渲染器 — 简洁成功消息
  */
 import * as React from "react";
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
-interface WriteResultRendererProps {
-  result: string;
-  isError: boolean;
-  input: Record<string, unknown>;
-}
-
-export function WriteResultRenderer({ result, isError, input }: WriteResultRendererProps): React.ReactElement {
+export function WriteResultRenderer({ result, isError, input }: ToolResultContentProps): React.ReactElement {
   if (isError) {
-    return (
-      <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-        {result}
-      </pre>
-    );
+    return <ErrorResult result={result} />;
   }
 
   const filePath = typeof input.file_path === "string" ? input.file_path : "";

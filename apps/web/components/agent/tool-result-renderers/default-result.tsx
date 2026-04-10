@@ -5,11 +5,8 @@
  */
 import * as React from "react";
 import { CollapsibleResult } from "./collapsible-result";
-
-interface DefaultResultRendererProps {
-  result: string;
-  isError: boolean;
-}
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
 function KeyValueResult({
   items,
@@ -67,13 +64,9 @@ function tryParseKeyValue(text: string): Array<{ key: string; value: string }> |
   return null;
 }
 
-export function DefaultResultRenderer({ result, isError }: DefaultResultRendererProps): React.ReactElement {
+export function DefaultResultRenderer({ result, isError }: ToolResultContentProps): React.ReactElement {
   if (isError) {
-    return (
-      <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-        {result}
-      </pre>
-    );
+    return <ErrorResult result={result} />;
   }
 
   const keyValues = React.useMemo(() => tryParseKeyValue(result), [result]);

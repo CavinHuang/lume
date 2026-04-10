@@ -21,9 +21,10 @@ import type { SDKMessage } from "@lume/agent-sdk";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { cn } from "@/lib/utils";
+import type { ToolActivity } from "@/atoms";
 import { getToolIcon } from "./tool-utils";
 import { getToolActivePhrase, getToolDonePhrase } from "./tool-phrase";
-import { ToolResultRenderer } from "./tool-result-renderers";
+import { ToolCard } from "./tool-activity/ToolCard";
 
 type SDKTextBlock = { type: "text"; text: string };
 type SDKThinkingBlock = { type: "thinking"; thinking: string };
@@ -194,43 +195,24 @@ function ToolUseBlock({
   }
 
   // 普通工具：语义化短语 + 专属结果渲染
-  return (
-    <div
-      className={cn(animate && "animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both")}
-      style={animate ? { animationDelay: animDelay } : undefined}
-    >
-      <button
-        type="button"
-        className="group flex items-center gap-2 py-0.5 text-left transition-opacity hover:opacity-70"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        {!isCompleted ? (
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-primary/50" />
-        ) : isError ? (
-          <XCircle className="size-3.5 shrink-0 text-destructive/70" />
-        ) : null}
-        <ToolIcon className={cn("size-3.5 shrink-0", dimmed ? "text-muted-foreground/70" : "text-muted-foreground")} />
-        <span className={cn("truncate text-[14px]", dimmed ? "text-muted-foreground/70" : "text-muted-foreground")}>
-          {label}
-        </span>
-        <ChevronRight
-          className={cn(
-            "size-3 shrink-0 text-muted-foreground/40 opacity-0 transition-all duration-150 group-hover:opacity-100",
-            expanded && "rotate-90 opacity-100",
-          )}
-        />
-      </button>
+  const activityForCard: ToolActivity = {
+    toolUseId: block.id,
+    toolName: block.name,
+    input: block.input ?? {},
+    done: isCompleted,
+    isError,
+    result: toolResult?.result,
+  };
 
-      {expanded && toolResult?.result && (
-        <div className="mb-2 ml-5.5 mt-1 border-l-2 border-border/30 pl-3 animate-in fade-in slide-in-from-top-1 duration-150">
-          <ToolResultRenderer
-            toolName={block.name}
-            input={block.input}
-            result={toolResult.result}
-            isError={isError}
-          />
-        </div>
-      )}
+  return (
+    <div className={cn(dimmed && "opacity-80")}>
+      <ToolCard
+        activity={activityForCard}
+        index={index}
+        animate={animate}
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+      />
     </div>
   );
 }

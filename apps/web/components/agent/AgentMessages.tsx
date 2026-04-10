@@ -11,6 +11,7 @@ import {
   agentStatusLineAtom,
   agentStreamingAtom,
   agentStreamingContentAtom,
+  agentStreamingContentBlocksAtom,
   agentToolActivitiesAtom,
   agentStreamingReasoningAtom,
   currentAgentThreadMessagesAtom,
@@ -19,6 +20,7 @@ import {
   currentAgentStreamStateAtom,
   userProfileAtom
 } from "@/atoms";
+import type { StreamContentBlock, ToolActivity } from "@/atoms";
 import {
   Conversation,
   ConversationContent,
@@ -53,9 +55,87 @@ import { getModelLogo } from "@/lib/model-logo";
 import { cn } from "@/lib/utils";
 import { AgentRunningIndicator } from "./AgentRunningIndicator";
 import { AgentStatusLine } from "./AgentStatusLine";
-import { SDKContentBlockRenderer, getAssistantContentBlocks } from "./SDKContentBlock";
 import { ToolActivityTree } from "./ToolActivityItem";
+import { getAssistantContentBlocks, SDKContentBlockRenderer } from "./SDKContentBlock";
+import { ToolCard } from "./tool-activity/ToolCard";
+import type { SDKMessage } from "@lume/shared";
 
+
+// ─── StreamingOrderedBlocks ───
+
+function StreamingOrderedBlocks({
+  contentBlocks,
+  toolActivities,
+  expandedCards,
+  onExpandedChange,
+}: {
+  contentBlocks: StreamContentBlock[];
+  toolActivities: ToolActivity[];
+  expandedCards: Record<string, boolean>;
+  onExpandedChange: (id: string, open: boolean) => void;
+}): React.ReactElement | null {
+  if (contentBlocks.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {contentBlocks.map((block, i) => {
+        if (block.type === "thinking") {
+          if (!block.thinking) return null;
+          return (
+            <Reasoning key={i} defaultOpen={false}>
+              <ReasoningTrigger />
+              <ReasoningContent>{block.thinking}</ReasoningContent>
+            </Reasoning>
+          );
+        }
+        if (block.type === "text") {
+          if (!block.text) return null;
+          return <MessageResponse key={i} streaming>{block.text}</MessageResponse>;
+        }
+        if (block.type === "tool_use") {
+          const activity = toolActivities.find((a) => a.toolUseId === block.toolUseId);
+          if (!activity) return null;
+          return (
+            <ToolCard
+              key={activity.toolUseId}
+              activity={activity}
+              animate
+              index={i}
+              expanded={expandedCards[activity.toolUseId] === true}
+              onExpandedChange={(open) => onExpandedChange(activity.toolUseId, open)}
+            />
+          );
+        }
+        return null;
+      })}
+    </div>
+  );
+}
+
+// ─── PersistedOrderedBlocks ───
+
+function PersistedOrderedBlocks({
+  sdkMessages,
+}: {
+  sdkMessages: SDKMessage[];
+}): React.ReactElement | null {
+  const assistantMessages = sdkMessages.filter(
+    (m): m is Extract<SDKMessage, { type: "assistant" }> => m.type === "assistant"
+  );
+  const blocks = getAssistantContentBlocks(assistantMessages);
+  if (blocks.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {blocks.map((block, index) => (
+        <SDKContentBlockRenderer
+          key={index}
+          block={block}
+          allMessages={sdkMessages}
+          index={index}
+        />
+      ))}
+    </div>
+  );
+}
 
 export interface AgentInlineEditSubmitPayload {
   content: string;
@@ -389,7 +469,11 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onSubmitInlineEdit,
   onCancelInlineEdit,
   onOpenSession,
-  isStreamingMessage = false
+  isStreamingMessage = false,
+  streamingContentBlocks,
+  streamingToolActivities,
+  streamingExpandedCards,
+  onStreamingExpandedChange,
 }: {
   message: AgentMessage;
   displayedMessage: AgentMessage;
@@ -408,6 +492,10 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   onCancelInlineEdit?: () => void;
   onOpenSession?: (sessionId: string) => void;
   isStreamingMessage?: boolean;
+  streamingContentBlocks?: StreamContentBlock[];
+  streamingToolActivities?: ToolActivity[];
+  streamingExpandedCards?: Record<string, boolean>;
+  onStreamingExpandedChange?: (id: string, open: boolean) => void;
 }): React.ReactElement | null {
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -607,15 +695,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
       toolActivities: messageToolActivities,
       sdkMessages: displayedMessage.sdkMessages
     });
-    const orderedAssistantBlocks = Array.isArray(assistantMessage.sdkMessages) && assistantMessage.sdkMessages.length > 0
-      ? getAssistantContentBlocks(
-          assistantMessage.sdkMessages.filter(
-            (sdkMessage): sdkMessage is Extract<typeof sdkMessage, { type: "assistant" }> =>
-              sdkMessage.type === "assistant"
-          )
-        )
-      : [];
-
     return (
       <Message from="assistant">
         <MessageHeader
@@ -625,33 +704,37 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
         />
 
         <MessageContent>
-          {orderedAssistantBlocks.length > 0 && !isStreamingMessage ? (
-            <div className="space-y-2">
-              {orderedAssistantBlocks.map((block, index) => {
-                const childBlocks = block.type === "tool_use"
-                  ? orderedAssistantBlocks.filter(
-                      (candidate) =>
-                        "parentToolUseId" in candidate
-                        && (candidate as { parentToolUseId?: string }).parentToolUseId === (block as { id: string }).id
-                    )
-                  : undefined;
-                return (
-                  <SDKContentBlockRenderer
-                    key={`${assistantMessage.id}-block-${index}`}
-                    block={block}
-                    allMessages={assistantMessage.sdkMessages ?? []}
-                    childBlocks={childBlocks}
-                    animate={isStreamingMessage}
-                    index={index}
-                  />
-                );
-              })}
-            </div>
+          {isStreamingMessage && streamingContentBlocks && streamingContentBlocks.length > 0 ? (
+            <StreamingOrderedBlocks
+              contentBlocks={streamingContentBlocks}
+              toolActivities={streamingToolActivities ?? []}
+              expandedCards={streamingExpandedCards ?? {}}
+              onExpandedChange={onStreamingExpandedChange ?? (() => undefined)}
+            />
+          ) : isStreamingMessage ? (
+            <>
+              {assistantMessage.reasoning ? (
+                <Reasoning
+                  isStreaming={!(assistantMessage.content ?? "").trim()}
+                  defaultOpen={Boolean((assistantMessage.metadata as Record<string, unknown>)?.reasoningExpanded)}
+                >
+                  <ReasoningTrigger />
+                  <ReasoningContent>{assistantMessage.reasoning}</ReasoningContent>
+                </Reasoning>
+              ) : null}
+              {messageToolActivities.length > 0 ? (
+                <ToolActivityTree activities={messageToolActivities} />
+              ) : null}
+              {assistantMessage.content ? (
+                <MessageResponse streaming>{assistantMessage.content}</MessageResponse>
+              ) : null}
+            </>
+          ) : displayedMessage.sdkMessages && displayedMessage.sdkMessages.length > 0 ? (
+            <PersistedOrderedBlocks sdkMessages={displayedMessage.sdkMessages} />
           ) : (
             <>
               {assistantMessage.reasoning ? (
                 <Reasoning
-                  isStreaming={isStreamingMessage && !(assistantMessage.content ?? "").trim()}
                   defaultOpen={Boolean((assistantMessage.metadata as Record<string, unknown>)?.reasoningExpanded)}
                   duration={typeof (assistantMessage.metadata as Record<string, unknown>)?.thinkingDuration === "number"
                     ? ((assistantMessage.metadata as Record<string, unknown>).thinkingDuration as number)
@@ -665,7 +748,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
                 <ToolActivityTree activities={messageToolActivities} />
               ) : null}
               {assistantMessage.content ? (
-                <MessageResponse streaming={isStreamingMessage}>{assistantMessage.content}</MessageResponse>
+                <MessageResponse>{assistantMessage.content}</MessageResponse>
               ) : null}
             </>
           )}
@@ -707,7 +790,10 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   prev.canGoPrevVersion === next.canGoPrevVersion &&
   prev.canGoNextVersion === next.canGoNextVersion &&
   prev.versionLoading === next.versionLoading &&
-  prev.onOpenSession === next.onOpenSession
+  prev.onOpenSession === next.onOpenSession &&
+  prev.streamingContentBlocks === next.streamingContentBlocks &&
+  prev.streamingToolActivities === next.streamingToolActivities &&
+  prev.streamingExpandedCards === next.streamingExpandedCards
 )
 
 export function AgentMessages({
@@ -722,6 +808,17 @@ export function AgentMessages({
   onCancelInlineEdit,
   onOpenSession
 }: AgentMessagesProps): React.ReactElement {
+  interface RenderedMessageItem {
+    message: AgentMessage;
+    displayedMessage: AgentMessage;
+    renderKey: string;
+    versionLabel: string | null;
+    canGoPrevVersion: boolean;
+    canGoNextVersion: boolean;
+    versionLoading: boolean;
+    isStreamingMessage: boolean;
+  }
+
   const messages = useAtomValue(currentAgentThreadMessagesAtom);
   const liveSdkMessages = useAtomValue(currentAgentLiveSdkMessagesAtom);
   const sessionId = useAtomValue(currentAgentThreadIdAtom);
@@ -736,6 +833,9 @@ export function AgentMessages({
   const statusLine = useAtomValue(agentStatusLineAtom);
   const streamState = useAtomValue(currentAgentStreamStateAtom);
   const streamStartedAt = streamState?.streamStartedAt;
+
+  const streamingContentBlocks = useAtomValue(agentStreamingContentBlocksAtom);
+  const [streamingExpandedCards, setStreamingExpandedCards] = React.useState<Record<string, boolean>>({});
 
   const { displayedContent: smoothContent } = useSmoothStream({
     content: streamingContent,
@@ -792,7 +892,7 @@ export function AgentMessages({
     }
   });
 
-  const renderedMessages = React.useMemo(() => {
+  const renderedMessages = React.useMemo<RenderedMessageItem[]>(() => {
     return messages.map((message, index) => {
       const displayedMessage = getDisplayedAgentMessage(
         message,
@@ -807,21 +907,24 @@ export function AgentMessages({
         versionLabel: getVersionLabel(message, displayedMessage, messageVersionsByGroup),
         canGoPrevVersion: canMoveToPreviousVersion(message, displayedMessage, messageVersionsByGroup),
         canGoNextVersion: canMoveToNextVersion(message, displayedMessage, messageVersionsByGroup),
-        versionLoading: Boolean(message.versionGroupId && loadingGroupIds[message.versionGroupId])
+        versionLoading: Boolean(message.versionGroupId && loadingGroupIds[message.versionGroupId]),
+        isStreamingMessage: false
       };
     });
   }, [messages, messageVersionsByGroup, selectedVersionIndexByGroup, loadingGroupIds]);
 
-  const streamingMessage = React.useMemo<AgentMessage | null>(() => {
+  const renderedMessagesWithStreaming = React.useMemo<RenderedMessageItem[]>(() => {
     if (!shouldShowStreamingMessage) {
-      return null;
+      return renderedMessages;
     }
+
+    const items = [...renderedMessages];
     const streamingMetadata: Record<string, unknown> = {
       versionGroupId: "streaming-assistant",
       reasoningExpanded: true,
     };
-    return buildAssistantDisplayMessage({
-      id: "streaming-assistant",
+    const streamingMessage = buildAssistantDisplayMessage({
+      id: "agent-last-assistant",
       content: showSmoothContent ? smoothContent : "",
       reasoning: streamingReasoning || undefined,
       createdAt: streamState?.streamStartedAt ?? Date.now(),
@@ -830,16 +933,53 @@ export function AgentMessages({
       toolActivities: streamingToolActivities,
       sdkMessages: liveSdkMessages.length > 0 ? liveSdkMessages : undefined
     });
+    const lastItem = items.length > 0 ? items[items.length - 1] : null;
+    if (lastItem && lastItem.displayedMessage.role === "assistant" && lastItem.renderKey === "agent-last-assistant") {
+      items[items.length - 1] = {
+        ...lastItem,
+        displayedMessage: buildAssistantDisplayMessage({
+          id: lastItem.displayedMessage.id,
+          content: streamingMessage.content,
+          reasoning: streamingMessage.reasoning,
+          createdAt: lastItem.displayedMessage.createdAt,
+          model: streamingMessage.model ?? lastItem.displayedMessage.model,
+          metadata: {
+            ...(lastItem.displayedMessage.metadata as Record<string, unknown> | undefined),
+            ...streamingMetadata
+          },
+          toolActivities: streamingToolActivities,
+          sdkMessages: liveSdkMessages.length > 0 ? liveSdkMessages : lastItem.displayedMessage.sdkMessages
+        }),
+        versionLabel: null,
+        canGoPrevVersion: false,
+        canGoNextVersion: false,
+        versionLoading: false,
+        isStreamingMessage: true
+      };
+      return items;
+    }
+
+    items.push({
+      message: streamingMessage,
+      displayedMessage: streamingMessage,
+      renderKey: "agent-last-assistant",
+      versionLabel: null,
+      canGoPrevVersion: false,
+      canGoNextVersion: false,
+      versionLoading: false,
+      isStreamingMessage: true
+    });
+    return items;
   }, [
-    agentModelId,
     shouldShowStreamingMessage,
+    renderedMessages,
+    agentModelId,
     showSmoothContent,
     smoothContent,
     streamingReasoning,
-    liveSdkMessages,
-    streamingToolActivities
-    ,
-    streamState?.streamStartedAt
+    streamState?.streamStartedAt,
+    streamingToolActivities,
+    liveSdkMessages
   ]);
 
   const ensureVersionsLoaded = React.useCallback(async (message: AgentMessage): Promise<AgentMessage[] | null> => {
@@ -902,9 +1042,13 @@ export function AgentMessages({
           <EmptyState />
         ) : (
           <>
-            {renderedMessages.map((item) => {
+            {renderedMessagesWithStreaming.map((item) => {
               return (
-                <div key={item.renderKey} data-message-id={item.message.id}>
+                <div
+                  key={item.renderKey}
+                  data-message-id={item.message.id}
+                  ref={item.isStreamingMessage ? streamingBlockRef : undefined}
+                >
                   <AgentMessageItem
                     message={item.message}
                     displayedMessage={item.displayedMessage}
@@ -922,54 +1066,50 @@ export function AgentMessages({
                     onSubmitInlineEdit={onSubmitInlineEdit}
                     onCancelInlineEdit={onCancelInlineEdit}
                     onOpenSession={onOpenSession}
-                    isStreamingMessage={false}
+                    isStreamingMessage={item.isStreamingMessage}
+                    {...(item.isStreamingMessage ? {
+                      streamingContentBlocks,
+                      streamingToolActivities,
+                      streamingExpandedCards,
+                      onStreamingExpandedChange: (id: string, open: boolean) =>
+                        setStreamingExpandedCards((prev) => ({ ...prev, [id]: open })),
+                    } : {})}
                   />
+                  {item.isStreamingMessage ? (
+                    <>
+                      {isCompacting ? (
+                        <div className="pl-[46px]">
+                          <div className="mb-2 flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground/60">
+                            <Loader2 className="size-3 animate-spin shrink-0" />
+                            上下文压缩中...
+                          </div>
+                        </div>
+                      ) : null}
+                      {!showSmoothContent && showLoadingDots ? (
+                        <div className="pl-[46px]">
+                          <AgentStatusLine text={statusLine ?? "正在处理..."} />
+                        </div>
+                      ) : null}
+                      {!showSmoothContent && !showLoadingDots && streaming && statusLine ? (
+                        <div className="pl-[46px]">
+                          <AgentStatusLine text={statusLine} />
+                        </div>
+                      ) : null}
+                      {showSmoothContent && streaming ? (
+                        <div className="pl-[46px]">
+                          <AgentRunningIndicator startedAt={streamStartedAt} />
+                        </div>
+                      ) : null}
+                      {streaming && !showSmoothContent && !showLoadingDots && !statusLine ? (
+                        <div className="pl-[46px]">
+                          <AgentRunningIndicator startedAt={streamStartedAt} />
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
               );
             })}
-            {streamingMessage ? (
-              <div data-message-id="streaming-assistant" ref={streamingBlockRef}>
-                <AgentMessageItem
-                  message={streamingMessage}
-                  displayedMessage={streamingMessage}
-                  isInlineEditing={false}
-                  versionLabel={null}
-                  canGoPrevVersion={false}
-                  canGoNextVersion={false}
-                  versionLoading={false}
-                  isStreamingMessage
-                />
-                {isCompacting ? (
-                  <div className="pl-[46px]">
-                    <div className="mb-2 flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground/60">
-                      <Loader2 className="size-3 animate-spin shrink-0" />
-                      上下文压缩中...
-                    </div>
-                  </div>
-                ) : null}
-                {!showSmoothContent && showLoadingDots ? (
-                  <div className="pl-[46px]">
-                    <AgentStatusLine text={statusLine ?? "正在处理..."} />
-                  </div>
-                ) : null}
-                {!showSmoothContent && !showLoadingDots && streaming && statusLine ? (
-                  <div className="pl-[46px]">
-                    <AgentStatusLine text={statusLine} />
-                  </div>
-                ) : null}
-                {showSmoothContent && streaming ? (
-                  <div className="pl-[46px]">
-                    <AgentRunningIndicator startedAt={streamStartedAt} />
-                  </div>
-                ) : null}
-                {/* 兜底：流式进行中但没有其他指示器时，始终显示运行指示 */}
-                {streaming && !showSmoothContent && !showLoadingDots && !statusLine ? (
-                  <div className="pl-[46px]">
-                    <AgentRunningIndicator startedAt={streamStartedAt} />
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             {/* 过渡锚点：流式结束瞬间，通过 min-height 补偿流式消息块被移除导致的高度缩减，
                 防止 StickToBottom 的 ResizeObserver 检测到负向 resize 而引起滚动跳变 */}
             <div ref={transitionAnchorRef} aria-hidden />

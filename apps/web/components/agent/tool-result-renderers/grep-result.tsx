@@ -5,12 +5,8 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { FileTypeIcon } from "@/components/file-browser";
 import { CollapsibleResult } from "./collapsible-result";
-
-interface GrepResultRendererProps {
-  result: string;
-  isError: boolean;
-  input: Record<string, unknown>;
-}
+import { ErrorResult } from "./shared";
+import type { ToolResultContentProps } from "./types";
 
 interface GrepMatch {
   file: string;
@@ -69,15 +65,11 @@ function highlightPattern(text: string, pattern: string): React.ReactNode {
   }
 }
 
-export function GrepResultRenderer({ result, isError, input }: GrepResultRendererProps): React.ReactElement {
+export function GrepResultRenderer({ result, isError, input }: ToolResultContentProps): React.ReactElement {
   const pattern = typeof input.pattern === "string" ? input.pattern : "";
 
   if (isError) {
-    return (
-      <pre className="overflow-x-auto rounded-md bg-destructive/5 p-3 font-mono text-[12px] text-destructive/80 whitespace-pre-wrap break-all">
-        {result}
-      </pre>
-    );
+    return <ErrorResult result={result} />;
   }
 
   const groups = React.useMemo(() => parseGrepOutput(result), [result]);

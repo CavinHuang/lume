@@ -20,6 +20,14 @@ export interface ToolActivity {
   inputJsonBuffer?: string;
 }
 
+export interface StreamContentBlock {
+  blockIndex: number;
+  type: "thinking" | "text" | "tool_use";
+  thinking?: string;
+  text?: string;
+  toolUseId?: string;
+}
+
 export interface AgentStreamState {
   running: boolean;
   sdkMessages?: SDKMessage[];
@@ -39,6 +47,8 @@ export interface AgentStreamState {
   turnCount?: number;
   /** Anthropic/OpenAI stream event 的 block index -> toolUseId 映射 */
   toolBlockIndexMap?: Record<number, string>;
+  /** 按流式到达顺序排列的内容块 */
+  contentBlocks?: StreamContentBlock[];
 }
 
 function extractTextFromAssistantMessage(message: Extract<SDKMessage, { type: "assistant" }>): string {
@@ -102,25 +112,36 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
       content_block?: { type?: string; id?: string; name?: string };
       delta?: { type?: string; text?: string; thinking?: string; partial_json?: string };
     };
-    if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
-      const toolUseId = event.content_block.id ?? "";
-      if (toolUseId) {
-        next = {
-          ...next,
-          toolActivities: upsertToolActivity(next.toolActivities, {
-            toolUseId,
-            toolName: event.content_block.name ?? "Unknown",
-            input: {},
-            parentToolUseId: message.parent_tool_use_id ?? undefined,
-            startedAt: now,
-            done: false,
-          }),
-        };
-        if (typeof event.index === "number") {
-          next.toolBlockIndexMap = {
-            ...(next.toolBlockIndexMap ?? {}),
-            [event.index]: toolUseId,
+    if (event.type === "content_block_start") {
+      const blockType = event.content_block?.type;
+      if (blockType === "text" && typeof event.index === "number") {
+        next.contentBlocks = [...(next.contentBlocks ?? []),
+          { blockIndex: event.index, type: "text" as const, text: "" }];
+      } else if (blockType === "thinking" && typeof event.index === "number") {
+        next.contentBlocks = [...(next.contentBlocks ?? []),
+          { blockIndex: event.index, type: "thinking" as const, thinking: "" }];
+      } else if (blockType === "tool_use") {
+        const toolUseId = event.content_block?.id ?? "";
+        if (toolUseId) {
+          next = {
+            ...next,
+            toolActivities: upsertToolActivity(next.toolActivities, {
+              toolUseId,
+              toolName: event.content_block?.name ?? "Unknown",
+              input: {},
+              parentToolUseId: message.parent_tool_use_id ?? undefined,
+              startedAt: now,
+              done: false,
+            }),
           };
+          if (typeof event.index === "number") {
+            next.toolBlockIndexMap = {
+              ...(next.toolBlockIndexMap ?? {}),
+              [event.index]: toolUseId,
+            };
+            next.contentBlocks = [...(next.contentBlocks ?? []),
+              { blockIndex: event.index, type: "tool_use" as const, toolUseId }];
+          }
         }
       }
     }
@@ -131,6 +152,13 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
           content: next.content + event.delta.text,
           firstOutputAt: next.firstOutputAt ?? now,
         };
+        if (typeof event.index === "number") {
+          next.contentBlocks = (next.contentBlocks ?? []).map((b) =>
+            b.blockIndex === event.index
+              ? { ...b, text: (b.text ?? "") + (event.delta?.text ?? "") }
+              : b
+          );
+        }
       } else if (event.delta?.type === "thinking_delta") {
         const text = typeof event.delta.thinking === "string" ? event.delta.thinking : event.delta.text ?? "";
         if (text) {
@@ -139,6 +167,13 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
             reasoning: (next.reasoning ?? "") + text,
             firstOutputAt: next.firstOutputAt ?? now,
           };
+          if (typeof event.index === "number") {
+            next.contentBlocks = (next.contentBlocks ?? []).map((b) =>
+              b.blockIndex === event.index
+                ? { ...b, thinking: (b.thinking ?? "") + text }
+                : b
+            );
+          }
         }
       } else if (event.delta?.type === "input_json_delta" && typeof event.delta.partial_json === "string") {
         const mappedToolUseId = typeof event.index === "number"
@@ -187,6 +222,22 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
         done: false,
         inputJsonBuffer: undefined,
       });
+    }
+    // 从 assistant 消息内容构建 contentBlocks（非流式 fallback）
+    const newBlocks: StreamContentBlock[] = (message.message?.content ?? [])
+      .map((block, i): StreamContentBlock | null => {
+        if (!block || typeof block !== "object") return null;
+        const b = block as { type?: string; text?: string; thinking?: string; id?: string };
+        if (b.type === "text") return { blockIndex: i, type: "text", text: b.text ?? "" };
+        if (b.type === "thinking") return { blockIndex: i, type: "thinking", thinking: b.thinking ?? "" };
+        if (b.type === "tool_use") return { blockIndex: i, type: "tool_use", toolUseId: b.id ?? "" };
+        return null;
+      })
+      .filter((b): b is StreamContentBlock => b !== null);
+    const existingIndexes = new Set((next.contentBlocks ?? []).map((b) => b.blockIndex));
+    const toAdd = newBlocks.filter((b) => !existingIndexes.has(b.blockIndex));
+    if (toAdd.length > 0) {
+      next.contentBlocks = [...(next.contentBlocks ?? []), ...toAdd];
     }
     return next;
   }
