@@ -326,7 +326,7 @@ export class MemoryIndexManager {
     const resolvedPath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, filePath));
     const relativePath = relative(this.workspaceRoot, resolvedPath).replace(/\\/g, "/");
     if (!isMemoryPath(relativePath)) {
-      throw new Error("仅允许移除 MEMORY.md、memory.md 或 memory/*.md 的索引");
+      throw new Error("仅允许移除 MEMORY.md 或 memory/YYYY-MM-DD.md 的索引");
     }
     this.removeFileChunks(relativePath);
     this.db.query("DELETE FROM files WHERE path = ?1").run(relativePath);
@@ -764,7 +764,7 @@ export class MemoryIndexManager {
       resolvedPath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, input.path));
       const relPath = relative(this.workspaceRoot, resolvedPath).replace(/\\/g, "/");
       if (!isMemoryPath(relPath)) {
-        throw new Error("仅允许读取 MEMORY.md、memory.md、memory/*.md 或 sessions/*");
+        throw new Error("仅允许读取 MEMORY.md、memory/YYYY-MM-DD.md 或 sessions/*");
       }
       if (existsSync(resolvedPath)) {
         const st = lstatSync(resolvedPath);
@@ -825,7 +825,7 @@ export class MemoryIndexManager {
     let relativePath: string;
     let absolutePath: string;
 
-    if (input.path && (input.path === "MEMORY.md" || input.path === "memory.md")) {
+    if (input.path === "MEMORY.md") {
       // 长期记忆：追加到 MEMORY.md
       relativePath = input.path;
       absolutePath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, relativePath));

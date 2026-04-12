@@ -46,7 +46,7 @@ export interface MemoryGetResult {
 export interface MemorySaveInput {
   workspaceSlug: string;
   content: string;
-  /** 指定写入路径，如 "MEMORY.md" 表示长期记忆；省略则写入 memory/YYYY-MM-DD.md */
+  /** 指定写入路径，如 "MEMORY.md" 表示 workspace 长期记忆；省略则写入 memory/YYYY-MM-DD.md */
   path?: string;
   date?: string;
 }
@@ -75,6 +75,12 @@ export interface MemoryStats {
   vecEnabled: boolean;
 }
 
+export interface MemoryDistillationResult {
+  workspaceSlug: string;
+  updatedWorkspaceMemory: boolean;
+  promotedToGlobal: string[];
+}
+
 export interface MemoryProviderStatus {
   backend?: "builtin" | "qmd";
   provider: string;
@@ -96,11 +102,12 @@ export interface MemoryProviderStatus {
 }
 
 export const MEMORY_IPC_CHANNELS = {
-  INDEX_WORKSPACE: "memory:index-workspace",
-  INDEX_FILE: "memory:index-file",
-  SEARCH: "memory:search",
-  STATS: "memory:stats",
-  GET: "memory:get",
-  SAVE: "memory:save",
-  STATUS: "memory:status"
+  INDEX_CORPUS: "memory:index-corpus",
+  INDEX_DOCUMENT: "memory:index-document",
+  SEARCH_LAYERED: "memory:search-layered",
+  READ_LAYERED: "memory:read-layered",
+  WRITE_WORKSPACE: "memory:write-workspace",
+  STATUS_LAYERED: "memory:status-layered",
+  STATS_LAYERED: "memory:stats-layered",
+  DISTILL_WORKSPACE: "memory:distill-workspace"
 } as const;

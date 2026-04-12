@@ -5,6 +5,9 @@
 
 import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
+import { resolveChannelEmbeddingBinding } from "../channel/channel-manager";
+import { fetchWithProxy } from "../infra/proxy-fetch";
+import { getEffectiveSystemConfig } from "../system/system-config-service";
 
 // ─── Lite embedding (from embeddings-lite.ts) ───
 
@@ -58,6 +61,8 @@ export interface ResolvedEmbeddingProvider {
   provider: Exclude<MemoryEmbeddingProvider, "auto">;
   model: string;
   providerKey: string;
+  apiKey?: string;
+  baseUrl?: string;
   fallbackFrom?: "openai" | "gemini";
   fallbackReason?: string;
 }
@@ -66,66 +71,59 @@ function hashShort(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
-function resolveOpenAi(): ResolvedEmbeddingProvider | null {
-  const key = process.env.OPENAI_API_KEY?.trim();
-  if (!key) return null;
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
+function resolveOpenAiFromChannel(modelRef: string, modelOverride?: string): ResolvedEmbeddingProvider | null {
+  const binding = resolveChannelEmbeddingBinding(modelRef);
+  if (!binding || binding.family !== "openai") {
+    return null;
+  }
   return {
     provider: "openai",
-    model: process.env.LUME_MEMORY_OPENAI_MODEL?.trim() || "text-embedding-3-small",
-    providerKey: `openai:${hashShort(key)}`
+    model: modelOverride?.trim() || "text-embedding-3-small",
+    providerKey: `openai:${hashShort(`${binding.channel.id}:${binding.apiKey}`)}`,
+    apiKey: binding.apiKey,
+    baseUrl: normalizeBaseUrl(binding.channel.baseUrl)
   };
 }
 
-function resolveGemini(): ResolvedEmbeddingProvider | null {
-  const key = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim();
-  if (!key) return null;
+function resolveGeminiFromChannel(modelRef: string, modelOverride?: string): ResolvedEmbeddingProvider | null {
+  const binding = resolveChannelEmbeddingBinding(modelRef);
+  if (!binding || binding.family !== "google") {
+    return null;
+  }
   return {
     provider: "gemini",
-    model: process.env.LUME_MEMORY_GEMINI_MODEL?.trim() || "gemini-embedding-001",
-    providerKey: `gemini:${hashShort(key)}`
+    model: modelOverride?.trim() || "gemini-embedding-001",
+    providerKey: `gemini:${hashShort(`${binding.channel.id}:${binding.apiKey}`)}`,
+    apiKey: binding.apiKey,
+    baseUrl: normalizeBaseUrl(binding.channel.baseUrl)
   };
 }
 
 export function resolveEmbeddingProvider(): ResolvedEmbeddingProvider {
-  const preferred = (process.env.LUME_MEMORY_PROVIDER?.trim().toLowerCase() || "auto") as MemoryEmbeddingProvider;
+  const configuredRef = getEffectiveSystemConfig().models?.embedding?.defaultModelRef;
+  const binding = configuredRef ? resolveChannelEmbeddingBinding(configuredRef) : null;
 
-  if (preferred === "openai") {
-    return resolveOpenAi() ?? {
+  if (configuredRef && binding?.family === "openai") {
+    return resolveOpenAiFromChannel(configuredRef, binding.modelId) ?? {
       provider: "lite",
       model: "lume-lite-embedding-v1",
       providerKey: "lite:default",
       fallbackFrom: "openai",
-      fallbackReason: "缺少 OPENAI_API_KEY"
+      fallbackReason: "未找到可用的 OpenAI Compatible Embedding 渠道"
     };
   }
 
-  if (preferred === "gemini") {
-    return resolveGemini() ?? {
+  if (configuredRef && binding?.family === "google") {
+    return resolveGeminiFromChannel(configuredRef, binding.modelId) ?? {
       provider: "lite",
       model: "lume-lite-embedding-v1",
       providerKey: "lite:default",
       fallbackFrom: "gemini",
-      fallbackReason: "缺少 GEMINI_API_KEY/GOOGLE_API_KEY"
-    };
-  }
-
-  if (preferred === "lite") {
-    return {
-      provider: "lite",
-      model: "lume-lite-embedding-v1",
-      providerKey: "lite:default"
-    };
-  }
-
-  const openai = resolveOpenAi();
-  if (openai) return openai;
-
-  const gemini = resolveGemini();
-  if (gemini) {
-    return {
-      ...gemini,
-      fallbackFrom: "openai",
-      fallbackReason: "缺少 OPENAI_API_KEY，回退到 Gemini"
+      fallbackReason: "未找到可用的 Gemini Embedding 渠道"
     };
   }
 
@@ -133,16 +131,14 @@ export function resolveEmbeddingProvider(): ResolvedEmbeddingProvider {
     provider: "lite",
     model: "lume-lite-embedding-v1",
     providerKey: "lite:default",
-    fallbackFrom: "openai",
-    fallbackReason: "缺少 OPENAI_API_KEY/GEMINI_API_KEY，回退到 Lite"
+    fallbackReason: configuredRef ? "未配置可用的 Embedding 渠道" : "尚未配置默认 Embedding 模型"
   };
 }
 
-async function embedOpenAiBatch(texts: string[], model: string): Promise<number[][]> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("缺少 OPENAI_API_KEY");
+async function embedOpenAiBatch(texts: string[], model: string, baseUrl: string, apiKey: string): Promise<number[][]> {
+  if (!apiKey) throw new Error("缺少渠道 API Key");
 
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
+  const response = await fetchWithProxy(`${baseUrl}/embeddings`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -178,12 +174,11 @@ async function embedOpenAiBatch(texts: string[], model: string): Promise<number[
   return result;
 }
 
-async function embedGeminiOne(text: string, model: string): Promise<number[]> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim();
-  if (!apiKey) throw new Error("缺少 GEMINI_API_KEY/GOOGLE_API_KEY");
+async function embedGeminiOne(text: string, model: string, baseUrl: string, apiKey: string): Promise<number[]> {
+  if (!apiKey) throw new Error("缺少渠道 API Key");
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`;
-  const response = await fetch(endpoint, {
+  const endpoint = `${baseUrl}/v1beta/models/${model}:embedContent?key=${apiKey}`;
+  const response = await fetchWithProxy(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -256,34 +251,32 @@ export async function embedTextsWithProvider(
 
   if (resolved.provider === "openai") {
     try {
+      if (!resolved.baseUrl || !resolved.apiKey) {
+        throw new Error("OpenAI Embedding 渠道绑定缺失");
+      }
       const chunks = chunkArray(texts, batchSize);
       const result: number[][] = [];
       for (const batch of chunks) {
-        const embeddings = await embedOpenAiBatch(batch, resolved.model);
+        const embeddings = await embedOpenAiBatch(batch, resolved.model, resolved.baseUrl, resolved.apiKey);
         result.push(...embeddings);
       }
       return result;
     } catch (error) {
-      const gemini = resolveGemini();
-      if (gemini) {
-        return embedTextsWithProvider(texts, gemini, opts);
-      }
       throw error;
     }
   }
 
   if (resolved.provider === "gemini") {
     try {
+      if (!resolved.baseUrl || !resolved.apiKey) {
+        throw new Error("Gemini Embedding 渠道绑定缺失");
+      }
       const result = Array.from({ length: texts.length }, () => [] as number[]);
       await runWithConcurrency(texts, concurrency, async (text, index) => {
-        result[index] = await embedGeminiOne(text, resolved.model);
+        result[index] = await embedGeminiOne(text, resolved.model, resolved.baseUrl!, resolved.apiKey!);
       });
       return result;
     } catch (error) {
-      const openai = resolveOpenAi();
-      if (openai) {
-        return embedTextsWithProvider(texts, openai, opts);
-      }
       throw error;
     }
   }

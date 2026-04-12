@@ -4,6 +4,17 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MemoryIndexManager } from "./memory-index-manager";
 
+function removeDirWithRetry(path: string): void {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+}
+
 describe("memory-index-manager", () => {
   test("应索引工作区并可通过关键词搜索命中", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-memory-"));
@@ -47,7 +58,7 @@ describe("memory-index-manager", () => {
     expect(stats.chunkCount).toBeGreaterThan(0);
 
     manager.dispose();
-    rmSync(root, { recursive: true, force: true });
+    removeDirWithRetry(root);
   });
 
   test("readFile 默认返回完整内容，且拒绝非记忆路径", async () => {
@@ -73,13 +84,13 @@ describe("memory-index-manager", () => {
     expect(() => manager.readFile({ path: "notes.md" })).toThrow("仅允许读取");
 
     manager.dispose();
-    rmSync(root, { recursive: true, force: true });
+    removeDirWithRetry(root);
   });
 
-  test("indexWorkspace 应兼容 memory.md 作为长期记忆文件", async () => {
+  test("indexWorkspace 不应再索引旧的 memory.md 长期记忆路径", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-memory-alt-"));
     mkdirSync(join(root, "memory"), { recursive: true });
-    writeFileSync(join(root, "memory.md"), "alt long-term memory text", "utf-8");
+    writeFileSync(join(root, "memory.md"), "legacy long-term memory text", "utf-8");
 
     const manager = new MemoryIndexManager({
       workspaceRoot: root,
@@ -88,11 +99,11 @@ describe("memory-index-manager", () => {
     });
 
     await manager.indexWorkspace(true);
-    const results = await manager.search({ query: "long-term memory", maxResults: 3 });
-    expect(results.some((item) => item.path === "memory.md" || item.path === "MEMORY.md")).toBeTrue();
+    const results = await manager.search({ query: "legacy long-term memory", maxResults: 3 });
+    expect(results.some((item) => item.path === "memory.md")).toBeFalse();
 
     manager.dispose();
-    rmSync(root, { recursive: true, force: true });
+    removeDirWithRetry(root);
   });
 
   test("indexWorkspace 应跳过符号链接的长期记忆文件", async () => {
@@ -112,15 +123,15 @@ describe("memory-index-manager", () => {
     expect(results.length).toBe(0);
 
     manager.dispose();
-    rmSync(root, { recursive: true, force: true });
-    rmSync(external, { recursive: true, force: true });
+    removeDirWithRetry(root);
+    removeDirWithRetry(external);
   });
 
   test("indexFile 应跳过符号链接文件", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-memory-indexfile-symlink-"));
     const external = mkdtempSync(join(tmpdir(), "lume-memory-indexfile-src-"));
     writeFileSync(join(external, "note.md"), "external", "utf-8");
-    symlinkSync(join(external, "note.md"), join(root, "memory.md"));
+    symlinkSync(join(external, "note.md"), join(root, "MEMORY.md"));
 
     const manager = new MemoryIndexManager({
       workspaceRoot: root,
@@ -128,12 +139,12 @@ describe("memory-index-manager", () => {
       dbPath: join(root, "default.sqlite")
     });
 
-    const indexed = await manager.indexFile("memory.md", true);
+    const indexed = await manager.indexFile("MEMORY.md", true);
     expect(indexed).toBe(0);
     expect(manager.getStats().chunkCount).toBe(0);
 
     manager.dispose();
-    rmSync(root, { recursive: true, force: true });
-    rmSync(external, { recursive: true, force: true });
+    removeDirWithRetry(root);
+    removeDirWithRetry(external);
   });
 });

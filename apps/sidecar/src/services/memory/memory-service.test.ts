@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeMemoryManagers, syncWorkspaceMemoryPath } from "./memory-service";
-import { getAgentWorkspacePath } from "../infra/config-paths";
+import { closeMemoryManagers, searchLayeredMemory, syncGlobalMemoryPath, syncWorkspaceMemoryPath } from "./memory-service";
+import { getAgentWorkspacePath, getGlobalMemoryPath } from "../infra/config-paths";
 
 function removeDirWithRetry(path: string): void {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -64,13 +64,13 @@ describe("memory-service", () => {
     closeMemoryManagers();
   });
 
-  test("syncWorkspaceMemoryPath 支持 memory.md", async () => {
+  test("syncWorkspaceMemoryPath 支持 MEMORY.md", async () => {
     closeMemoryManagers();
     const workspaceSlug = `memory-sync-alt-${Date.now()}`;
     const root = getAgentWorkspacePath(workspaceSlug);
     mkdirSync(root, { recursive: true });
 
-    const memoryFile = join(root, "memory.md");
+    const memoryFile = join(root, "MEMORY.md");
     writeFileSync(memoryFile, "alt memory", "utf-8");
 
     const result = await syncWorkspaceMemoryPath({
@@ -78,6 +78,46 @@ describe("memory-service", () => {
       absolutePath: memoryFile
     });
     expect(result.indexedChunks).toBeGreaterThan(0);
+
+    closeMemoryManagers();
+  });
+
+  test("syncGlobalMemoryPath 支持 ~/.lume/MEMORY.md", async () => {
+    closeMemoryManagers();
+    const globalMemoryPath = getGlobalMemoryPath();
+    writeFileSync(globalMemoryPath, "global memory", "utf-8");
+
+    const result = await syncGlobalMemoryPath({
+      absolutePath: globalMemoryPath
+    });
+    expect(result.indexedChunks).toBeGreaterThan(0);
+
+    closeMemoryManagers();
+  });
+
+  test("searchLayeredMemory 不应把 workspace MEMORY.md 误标成全局 MEMORY", async () => {
+    closeMemoryManagers();
+    const workspaceSlug = `memory-search-layered-${Date.now()}`;
+    const root = getAgentWorkspacePath(workspaceSlug);
+    mkdirSync(root, { recursive: true });
+
+    writeFileSync(join(root, "MEMORY.md"), "workspace only marker", "utf-8");
+    writeFileSync(getGlobalMemoryPath(), "global only marker", "utf-8");
+
+    const workspaceResults = await searchLayeredMemory({
+      workspaceSlug,
+      query: "workspace only marker",
+      maxResults: 5
+    });
+    expect(workspaceResults.some((item) => item.path === "MEMORY.md")).toBeTrue();
+    expect(workspaceResults.some((item) => item.path === "~/.lume/MEMORY.md" && item.snippet.includes("workspace only marker"))).toBeFalse();
+
+    const globalResults = await searchLayeredMemory({
+      workspaceSlug,
+      query: "global only marker",
+      maxResults: 5
+    });
+    expect(globalResults.some((item) => item.path === "~/.lume/MEMORY.md")).toBeTrue();
 
     closeMemoryManagers();
   });

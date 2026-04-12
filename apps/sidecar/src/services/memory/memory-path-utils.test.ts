@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { collectMarkdownFiles, isMemoryPath } from "./memory-path-utils";
 
 describe("memory-path-utils", () => {
-  test("isMemoryPath 应兼容 MEMORY.md / memory.md / memory/*", () => {
+  test("isMemoryPath 应仅接受 MEMORY.md / memory/YYYY-MM-DD.md", () => {
     expect(isMemoryPath("MEMORY.md")).toBeTrue();
-    expect(isMemoryPath("memory.md")).toBeTrue();
     expect(isMemoryPath("memory/2026-02-15.md")).toBeTrue();
+    expect(isMemoryPath("memory/daily/2026-02-15.md")).toBeFalse();
+    expect(isMemoryPath("memory.md")).toBeFalse();
     expect(isMemoryPath("notes.md")).toBeFalse();
   });
 

@@ -2,7 +2,10 @@
 import { existsSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import {
+  getConfigDir,
   getAgentWorkspacePath,
+  getGlobalMemoryPath,
+  getGlobalMemoryDbPath,
   getWorkspaceMemoryDbPath
 } from "../infra/config-paths";
 import { MemoryIndexManager } from "./memory-index-manager";
@@ -10,7 +13,9 @@ import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { resolveMemoryRuntimeConfig } from "./memory-policy";
 import { isMemoryPath, normalizeRelPath } from "./memory-path-utils";
 import { getEmbeddingCacheStats } from "./embedding";
+import { distillWorkspaceMemory } from "./memory-distillation-service";
 import type {
+  MemoryDistillationResult,
   MemoryGetInput,
   MemoryGetResult,
   MemoryIndexFileInput,
@@ -24,6 +29,7 @@ import type {
 } from "@lume/shared";
 
 const managerCache = new Map<string, MemoryIndexManager>();
+const GLOBAL_MEMORY_KEY = "__global__";
 
 function getManager(workspaceSlug: string): MemoryIndexManager {
   const cached = managerCache.get(workspaceSlug);
@@ -43,19 +49,34 @@ function getManager(workspaceSlug: string): MemoryIndexManager {
   return manager;
 }
 
-export async function indexWorkspaceMemory(input: MemoryIndexWorkspaceInput): Promise<{ indexedChunks: number }> {
+function getGlobalManager(): MemoryIndexManager {
+  const cached = managerCache.get(GLOBAL_MEMORY_KEY);
+  if (cached) return cached;
+
+  const manager = new MemoryIndexManager({
+    workspaceSlug: GLOBAL_MEMORY_KEY,
+    workspaceRoot: getConfigDir(),
+    dbPath: getGlobalMemoryDbPath(),
+    sources: ["memory"],
+    extraPaths: []
+  });
+  managerCache.set(GLOBAL_MEMORY_KEY, manager);
+  return manager;
+}
+
+export async function indexWorkspaceMemoryCorpus(input: MemoryIndexWorkspaceInput): Promise<{ indexedChunks: number }> {
   const manager = getManager(input.workspaceSlug);
   const indexedChunks = await manager.indexWorkspace(Boolean(input.force));
   return { indexedChunks };
 }
 
-export async function indexWorkspaceMemoryFile(input: MemoryIndexFileInput): Promise<{ indexedChunks: number }> {
+export async function indexWorkspaceMemoryDocument(input: MemoryIndexFileInput): Promise<{ indexedChunks: number }> {
   const manager = getManager(input.workspaceSlug);
   const indexedChunks = await manager.indexFile(input.filePath, Boolean(input.force));
   return { indexedChunks };
 }
 
-export function removeWorkspaceMemoryFile(input: {
+export function removeWorkspaceMemoryDocument(input: {
   workspaceSlug: string;
   filePath: string;
 }): { ok: true } {
@@ -64,20 +85,51 @@ export function removeWorkspaceMemoryFile(input: {
   return { ok: true };
 }
 
-export async function searchWorkspaceMemory(input: MemorySearchInput): Promise<MemorySearchResult[]> {
+export async function searchLayeredMemory(input: MemorySearchInput): Promise<MemorySearchResult[]> {
   const manager = getManager(input.workspaceSlug);
+  const globalManager = getGlobalManager();
   const stats = manager.getStats();
   if (stats.chunkCount === 0) {
     await manager.indexWorkspace(false);
   }
-  return manager.search({
-    query: input.query,
-    maxResults: input.maxResults,
-    minScore: input.minScore
-  });
+  const globalStats = globalManager.getStats();
+  if (globalStats.chunkCount === 0) {
+    await globalManager.indexWorkspace(false);
+  }
+  const limit = input.maxResults ?? 10;
+  const [workspaceResults, globalResults] = await Promise.all([
+    manager.search({
+      query: input.query,
+      maxResults: limit,
+      minScore: input.minScore
+    }),
+    globalManager.search({
+      query: input.query,
+      maxResults: limit,
+      minScore: input.minScore
+    })
+  ]);
+
+  const normalizedGlobalResults = globalResults.map((entry) =>
+    entry.path === "MEMORY.md" && entry.source === "memory"
+      ? { ...entry, path: "~/.lume/MEMORY.md" }
+      : entry
+  );
+
+  return [...workspaceResults, ...normalizedGlobalResults]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
 }
 
-export function getWorkspaceMemoryFile(input: MemoryGetInput): MemoryGetResult {
+export function readLayeredMemoryFile(input: MemoryGetInput): MemoryGetResult {
+  if (input.path === "~/.lume/MEMORY.md") {
+    const manager = getGlobalManager();
+    return manager.readFile({
+      path: "MEMORY.md",
+      from: input.from,
+      lines: input.lines
+    });
+  }
   const manager = getManager(input.workspaceSlug);
   return manager.readFile({
     path: input.path,
@@ -86,12 +138,12 @@ export function getWorkspaceMemoryFile(input: MemoryGetInput): MemoryGetResult {
   });
 }
 
-export function getWorkspaceMemoryStats(workspaceSlug: string): MemoryStats {
+export function getLayeredMemoryStats(workspaceSlug: string): MemoryStats {
   const manager = getManager(workspaceSlug);
   return manager.getStats();
 }
 
-export function getWorkspaceMemoryStatus(workspaceSlug: string): MemoryProviderStatus {
+export function getLayeredMemoryStatus(workspaceSlug: string): MemoryProviderStatus {
   const manager = getManager(workspaceSlug);
   return manager.status();
 }
@@ -100,7 +152,13 @@ export function getEmbeddingCacheHitStats(): { hits: number; misses: number; hit
   return getEmbeddingCacheStats();
 }
 
-export async function saveWorkspaceMemory(input: MemorySaveInput): Promise<MemorySaveResult> {
+export async function runWorkspaceMemoryDistillation(input: {
+  workspaceSlug: string;
+}): Promise<MemoryDistillationResult> {
+  return distillWorkspaceMemory(input);
+}
+
+export async function writeWorkspaceMemory(input: MemorySaveInput): Promise<MemorySaveResult> {
   const manager = getManager(input.workspaceSlug);
   return manager.saveMemory({
     content: input.content,
@@ -127,15 +185,34 @@ export async function syncWorkspaceMemoryPath(input: {
   }
 
   if (!existsSync(resolvedTarget)) {
-    removeWorkspaceMemoryFile({ workspaceSlug: input.workspaceSlug, filePath: rel });
+    removeWorkspaceMemoryDocument({ workspaceSlug: input.workspaceSlug, filePath: rel });
     return { indexedChunks: 0, removed: true };
   }
 
-  return indexWorkspaceMemoryFile({
+  return indexWorkspaceMemoryDocument({
     workspaceSlug: input.workspaceSlug,
     filePath: rel,
     force: true
   });
+}
+
+export async function syncGlobalMemoryPath(input: {
+  absolutePath: string;
+}): Promise<{ indexedChunks: number; removed?: true }> {
+  const globalMemoryPath = resolve(getGlobalMemoryPath());
+  const resolvedTarget = resolve(input.absolutePath);
+  if (resolvedTarget !== globalMemoryPath) {
+    return { indexedChunks: 0 };
+  }
+
+  const manager = getGlobalManager();
+  if (!existsSync(resolvedTarget)) {
+    manager.removeFile("MEMORY.md");
+    return { indexedChunks: 0, removed: true };
+  }
+
+  const indexedChunks = await manager.indexFile("MEMORY.md", true);
+  return { indexedChunks };
 }
 
 export function closeMemoryManagers(): void {

@@ -2,10 +2,10 @@ import { z } from "zod";
 import type { MemorySearchResult } from "@lume/shared";
 import type { MemoryCitationsMode } from "./memory-policy";
 import {
-  getWorkspaceMemoryFile,
-  getWorkspaceMemoryStatus,
-  saveWorkspaceMemory,
-  searchWorkspaceMemory
+  getLayeredMemoryStatus,
+  readLayeredMemoryFile,
+  searchLayeredMemory,
+  writeWorkspaceMemory
 } from "./memory-service";
 import { createMemoryToolErrorResult, createMemoryToolResult } from "./memory-tool-response";
 
@@ -45,18 +45,18 @@ export function buildMemoryMcpServer(
     includeCitations: boolean;
     citationsMode: MemoryCitationsMode;
     deps?: {
-      searchWorkspaceMemory?: typeof searchWorkspaceMemory;
-      getWorkspaceMemoryFile?: typeof getWorkspaceMemoryFile;
-      saveWorkspaceMemory?: typeof saveWorkspaceMemory;
-      getWorkspaceMemoryStatus?: typeof getWorkspaceMemoryStatus;
+      searchLayeredMemory?: typeof searchLayeredMemory;
+      readLayeredMemoryFile?: typeof readLayeredMemoryFile;
+      writeWorkspaceMemory?: typeof writeWorkspaceMemory;
+      getLayeredMemoryStatus?: typeof getLayeredMemoryStatus;
     };
   }
 ): McpServerConfig {
   const deps = {
-    searchWorkspaceMemory,
-    getWorkspaceMemoryFile,
-    saveWorkspaceMemory,
-    getWorkspaceMemoryStatus,
+    searchLayeredMemory,
+    readLayeredMemoryFile,
+    writeWorkspaceMemory,
+    getLayeredMemoryStatus,
     ...(options.deps ?? {})
   };
 
@@ -82,14 +82,14 @@ export function buildMemoryMcpServer(
         ? [{
         name: MEMORY_SEARCH_TOOL_NAME,
         description:
-          "Mandatory recall step: semantically search MEMORY.md/memory.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.",
+          "Mandatory recall step: semantically search thread note + workspace memory/YYYY-MM-DD.md + workspace MEMORY.md + global ~/.lume/MEMORY.md before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.",
         inputSchema: memorySearchSchema.shape,
         handler: async (rawArgs: unknown) => {
           try {
             const { query, maxResults, minScore } = memorySearchSchema.parse(rawArgs);
             const [results, status] = await Promise.all([
-              deps.searchWorkspaceMemory({ workspaceSlug, query, maxResults, minScore }),
-              Promise.resolve(deps.getWorkspaceMemoryStatus(workspaceSlug))
+              deps.searchLayeredMemory({ workspaceSlug, query, maxResults, minScore }),
+              Promise.resolve(deps.getLayeredMemoryStatus(workspaceSlug))
             ]);
             const decorated = decorateMemorySearchResults({
               includeCitations: options.includeCitations,
@@ -114,12 +114,12 @@ export function buildMemoryMcpServer(
         ? [{
         name: MEMORY_GET_TOOL_NAME,
         description:
-          "Safe snippet read from MEMORY.md/memory.md or memory/*.md with optional from/lines; use after memory_search to pull only the needed lines and keep context small.",
+          "Safe snippet read from workspace MEMORY.md, workspace memory/YYYY-MM-DD.md, sessions/*, or global ~/.lume/MEMORY.md with optional from/lines; use after memory_search to pull only the needed lines and keep context small.",
         inputSchema: memoryGetSchema.shape,
         handler: async (rawArgs: unknown) => {
           try {
             const { path, from, lines } = memoryGetSchema.parse(rawArgs);
-            const result = deps.getWorkspaceMemoryFile({ workspaceSlug, path, from, lines });
+            const result = deps.readLayeredMemoryFile({ workspaceSlug, path, from, lines });
             return createMemoryToolResult(result);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -140,12 +140,12 @@ export function buildMemoryMcpServer(
       ...(options.enabledTools.has(MEMORY_SAVE_TOOL_NAME)
         ? [{
         name: MEMORY_SAVE_TOOL_NAME,
-        description: "将新记忆写入 memory/YYYY-MM-DD.md 并立即索引。",
+        description: "将新记忆写入 memory/YYYY-MM-DD.md（短期）或 MEMORY.md（workspace 长期，需指定 path='MEMORY.md'）并立即索引。",
         inputSchema: memorySaveSchema.shape,
         handler: async (rawArgs: unknown) => {
           try {
             const { content, date } = memorySaveSchema.parse(rawArgs);
-            const result = await deps.saveWorkspaceMemory({ workspaceSlug, content, date });
+            const result = await deps.writeWorkspaceMemory({ workspaceSlug, content, date });
             return createMemoryToolResult(result);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

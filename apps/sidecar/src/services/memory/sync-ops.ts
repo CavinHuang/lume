@@ -41,7 +41,6 @@ export function collectWorkspaceMemoryEntries(params: {
   };
 
   addCandidateFile(resolve(params.workspaceRoot, "MEMORY.md"));
-  addCandidateFile(resolve(params.workspaceRoot, "memory.md"));
 
   const memoryDir = resolve(params.workspaceRoot, "memory");
   for (const file of collectMarkdownFiles(memoryDir)) {

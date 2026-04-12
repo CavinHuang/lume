@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { Search, Loader2 } from "lucide-react";
 import type { MemorySearchResult } from "@lume/shared";
-import { searchWorkspaceMemory } from "@/lib/desktop-api/agent";
+import { searchLayeredMemory } from "@/lib/desktop-api/agent";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -19,7 +19,7 @@ export function MemoryBrowser({ workspaceSlug }: MemoryBrowserProps): React.Reac
     if (!query.trim()) return;
     setLoading(true);
     try {
-      const res = await searchWorkspaceMemory(workspaceSlug, query.trim(), 20);
+      const res = await searchLayeredMemory(workspaceSlug, query.trim(), 20);
       setResults(res);
       setSearched(true);
     } catch {

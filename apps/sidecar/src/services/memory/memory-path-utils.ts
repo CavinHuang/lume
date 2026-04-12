@@ -20,10 +20,10 @@ export function isMemoryPath(relPath: string): boolean {
   if (!normalized) {
     return false;
   }
-  if (normalized === "MEMORY.md" || normalized === "memory.md") {
+  if (normalized === "MEMORY.md") {
     return true;
   }
-  return normalized.startsWith("memory/");
+  return /^memory\/\d{4}-\d{2}-\d{2}\.md$/i.test(normalized);
 }
 
 export function normalizeExtraMemoryPaths(workspaceRoot: string, extraPaths: string[]): string[] {

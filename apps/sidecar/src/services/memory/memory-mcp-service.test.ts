@@ -30,6 +30,27 @@ function getTools(server: unknown): FakeTool[] {
 }
 
 describe("memory-mcp-service", () => {
+  test("memory_search / memory_get 描述应体现新的记忆层次", () => {
+    const server = buildMemoryMcpServer(
+      "ws",
+      createFakeSdk() as never,
+      {
+        enabledTools: new Set([MEMORY_SEARCH_TOOL_NAME, MEMORY_GET_TOOL_NAME]),
+        includeCitations: true,
+        citationsMode: "auto"
+      }
+    ) as unknown;
+
+    const tools = getTools(server);
+    const searchTool = tools.find((item) => item.name === MEMORY_SEARCH_TOOL_NAME);
+    const getTool = tools.find((item) => item.name === MEMORY_GET_TOOL_NAME);
+    expect(searchTool).toBeDefined();
+    expect(getTool).toBeDefined();
+    expect((searchTool as unknown as { description?: string }).description).toContain("~/.lume/MEMORY.md");
+    expect((searchTool as unknown as { description?: string }).description).toContain("memory/YYYY-MM-DD.md");
+    expect((getTool as unknown as { description?: string }).description).toContain("~/.lume/MEMORY.md");
+  });
+
   test("memory_search 正常返回并附带 citations", async () => {
     const server = buildMemoryMcpServer(
       "ws",
@@ -39,10 +60,10 @@ describe("memory-mcp-service", () => {
         includeCitations: true,
         citationsMode: "auto",
         deps: {
-          searchWorkspaceMemory: () => Promise.resolve([
+          searchLayeredMemory: () => Promise.resolve([
             {
               id: "c1",
-              path: "MEMORY.md",
+              path: "~/.lume/MEMORY.md",
               startLine: 3,
               endLine: 4,
               snippet: "remember this",
@@ -50,7 +71,7 @@ describe("memory-mcp-service", () => {
               source: "memory"
             }
           ]),
-          getWorkspaceMemoryStatus: () => ({
+          getLayeredMemoryStatus: () => ({
             backend: "builtin",
             provider: "lite",
             model: "lite-v1",
@@ -106,7 +127,7 @@ describe("memory-mcp-service", () => {
         includeCitations: false,
         citationsMode: "off",
         deps: {
-          saveWorkspaceMemory: async () => {
+          writeWorkspaceMemory: async () => {
             throw new Error("save failed");
           }
         }

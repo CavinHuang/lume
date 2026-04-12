@@ -4,6 +4,17 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MemoryIndexManager } from "./memory-index-manager";
 
+function removeDirWithRetry(path: string): void {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+}
+
 describe("memory-save", () => {
   test("saveMemory 应写入 memory/YYYY-MM-DD.md 并可检索", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-memory-save-"));
@@ -27,6 +38,6 @@ describe("memory-save", () => {
     expect(result[0]?.path).toBe("memory/2026-02-12.md");
 
     manager.dispose();
-    rmSync(root, { recursive: true, force: true });
+    removeDirWithRetry(root);
   });
 });

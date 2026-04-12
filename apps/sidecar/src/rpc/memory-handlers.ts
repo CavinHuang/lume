@@ -1,16 +1,18 @@
 import { MEMORY_IPC_CHANNELS } from "@lume/shared";
 import {
   closeMemoryManagers,
-  getWorkspaceMemoryFile,
-  getWorkspaceMemoryStats,
-  getWorkspaceMemoryStatus,
-  indexWorkspaceMemory,
-  indexWorkspaceMemoryFile,
-  saveWorkspaceMemory,
-  searchWorkspaceMemory
+  getLayeredMemoryStats,
+  getLayeredMemoryStatus,
+  indexWorkspaceMemoryCorpus,
+  indexWorkspaceMemoryDocument,
+  readLayeredMemoryFile,
+  runWorkspaceMemoryDistillation,
+  searchLayeredMemory,
+  writeWorkspaceMemory
 } from "../services/memory/memory-service";
 import { startMemorySyncWatcher } from "../services/memory/memory-sync-watcher";
 import {
+  memoryDistillInputSchema,
   memoryGetInputSchema,
   memoryIndexFileInputSchema,
   memoryIndexWorkspaceInputSchema,
@@ -23,39 +25,45 @@ import { validateInput } from "./validation";
 
 export function createMemoryHandlers(): Record<string, RpcHandler> {
   return {
-    [MEMORY_IPC_CHANNELS.INDEX_WORKSPACE]: async (params) => {
+    [MEMORY_IPC_CHANNELS.INDEX_CORPUS]: async (params) => {
       startMemorySyncWatcher();
-      return indexWorkspaceMemory(
-        validateInput(memoryIndexWorkspaceInputSchema, params, MEMORY_IPC_CHANNELS.INDEX_WORKSPACE)
+      return indexWorkspaceMemoryCorpus(
+        validateInput(memoryIndexWorkspaceInputSchema, params, MEMORY_IPC_CHANNELS.INDEX_CORPUS)
       );
     },
-    [MEMORY_IPC_CHANNELS.INDEX_FILE]: async (params) => {
+    [MEMORY_IPC_CHANNELS.INDEX_DOCUMENT]: async (params) => {
       startMemorySyncWatcher();
-      return indexWorkspaceMemoryFile(
-        validateInput(memoryIndexFileInputSchema, params, MEMORY_IPC_CHANNELS.INDEX_FILE)
+      return indexWorkspaceMemoryDocument(
+        validateInput(memoryIndexFileInputSchema, params, MEMORY_IPC_CHANNELS.INDEX_DOCUMENT)
       );
     },
-    [MEMORY_IPC_CHANNELS.SEARCH]: async (params) => {
+    [MEMORY_IPC_CHANNELS.SEARCH_LAYERED]: async (params) => {
       startMemorySyncWatcher();
-      return searchWorkspaceMemory(validateInput(memorySearchInputSchema, params, MEMORY_IPC_CHANNELS.SEARCH));
+      return searchLayeredMemory(validateInput(memorySearchInputSchema, params, MEMORY_IPC_CHANNELS.SEARCH_LAYERED));
     },
-    [MEMORY_IPC_CHANNELS.STATS]: async (params) => {
+    [MEMORY_IPC_CHANNELS.STATS_LAYERED]: async (params) => {
       startMemorySyncWatcher();
-      const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.STATS);
-      return getWorkspaceMemoryStats(input.workspaceSlug);
+      const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.STATS_LAYERED);
+      return getLayeredMemoryStats(input.workspaceSlug);
     },
-    [MEMORY_IPC_CHANNELS.GET]: async (params) => {
+    [MEMORY_IPC_CHANNELS.READ_LAYERED]: async (params) => {
       startMemorySyncWatcher();
-      return getWorkspaceMemoryFile(validateInput(memoryGetInputSchema, params, MEMORY_IPC_CHANNELS.GET));
+      return readLayeredMemoryFile(validateInput(memoryGetInputSchema, params, MEMORY_IPC_CHANNELS.READ_LAYERED));
     },
-    [MEMORY_IPC_CHANNELS.SAVE]: async (params) => {
+    [MEMORY_IPC_CHANNELS.WRITE_WORKSPACE]: async (params) => {
       startMemorySyncWatcher();
-      return saveWorkspaceMemory(validateInput(memorySaveInputSchema, params, MEMORY_IPC_CHANNELS.SAVE));
+      return writeWorkspaceMemory(validateInput(memorySaveInputSchema, params, MEMORY_IPC_CHANNELS.WRITE_WORKSPACE));
     },
-    [MEMORY_IPC_CHANNELS.STATUS]: async (params) => {
+    [MEMORY_IPC_CHANNELS.DISTILL_WORKSPACE]: async (params) => {
       startMemorySyncWatcher();
-      const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.STATUS);
-      return getWorkspaceMemoryStatus(input.workspaceSlug);
+      return runWorkspaceMemoryDistillation(
+        validateInput(memoryDistillInputSchema, params, MEMORY_IPC_CHANNELS.DISTILL_WORKSPACE)
+      );
+    },
+    [MEMORY_IPC_CHANNELS.STATUS_LAYERED]: async (params) => {
+      startMemorySyncWatcher();
+      const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.STATUS_LAYERED);
+      return getLayeredMemoryStatus(input.workspaceSlug);
     }
   };
 }
