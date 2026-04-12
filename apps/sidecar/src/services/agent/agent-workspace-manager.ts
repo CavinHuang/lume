@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
   AgentWorkspace,
+  McpServerEntry,
   SkillMeta,
   WorkspaceCapabilities,
   WorkspaceMcpConfig
@@ -28,11 +29,14 @@ import {
   getAgentWorkspacePath,
   getAgentWorkspacesIndexPath,
   getDefaultSkillsDir,
+  getWorkspaceMetaPath,
   getWorkspaceMcpPath,
+  getWorkspaceResourcesPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
 import { seedDefaultSkills } from "../system/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
 
 interface AgentWorkspacesIndex {
   version: number;
@@ -40,6 +44,7 @@ interface AgentWorkspacesIndex {
 }
 
 const INDEX_VERSION = 1;
+const MCP_TRANSPORT_TYPES = new Set(["stdio", "http", "sse"]);
 
 function writeJsonAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -154,10 +159,112 @@ function copyDefaultSkills(workspaceSlug: string): void {
   }
 }
 
-export function ensureWorkspaceAgentAssets(workspaceSlug: string, workspaceName?: string): void {
-  if (workspaceName) {
-    ensurePluginManifest(workspaceSlug, workspaceName);
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
   }
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
+function parseMcpServerEntry(value: unknown): McpServerEntry | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const enabled = value.enabled;
+  const type = value.type;
+  if (typeof enabled !== "boolean" || typeof type !== "string" || !MCP_TRANSPORT_TYPES.has(type)) {
+    return undefined;
+  }
+  const transportType = type as McpServerEntry["type"];
+
+  const entry: McpServerEntry = {
+    enabled,
+    type: transportType
+  };
+
+  if (typeof value.command === "string") {
+    entry.command = value.command;
+  }
+  const args = normalizeStringList(value.args);
+  if (args.length > 0) {
+    entry.args = args;
+  }
+  if (isPlainObject(value.env)) {
+    const env: Record<string, string> = {};
+    for (const [key, envValue] of Object.entries(value.env)) {
+      if (typeof envValue === "string") {
+        env[key] = envValue;
+      }
+    }
+    if (Object.keys(env).length > 0) {
+      entry.env = env;
+    }
+  }
+  if (typeof value.url === "string") {
+    entry.url = value.url;
+  }
+  if (isPlainObject(value.headers)) {
+    const headers: Record<string, string> = {};
+    for (const [key, headerValue] of Object.entries(value.headers)) {
+      if (typeof headerValue === "string") {
+        headers[key] = headerValue;
+      }
+    }
+    if (Object.keys(headers).length > 0) {
+      entry.headers = headers;
+    }
+  }
+
+  return entry;
+}
+
+function parseMcpConfigFromUnknown(value: unknown): WorkspaceMcpConfig {
+  if (!isPlainObject(value) || !isPlainObject(value.servers)) {
+    return { servers: {} };
+  }
+  const servers: WorkspaceMcpConfig["servers"] = {};
+  for (const [name, entry] of Object.entries(value.servers)) {
+    const parsedEntry = parseMcpServerEntry(entry);
+    if (!parsedEntry) {
+      continue;
+    }
+    servers[name] = parsedEntry;
+  }
+  return { servers };
+}
+
+function getWorkspaceSkillOverrides(workspaceSlug: string): { enabled: Set<string>; disabled: Set<string> } {
+  const effectiveConfig = getEffectiveLumeConfig(workspaceSlug);
+  const skills = effectiveConfig.skills;
+  if (!isPlainObject(skills)) {
+    return { enabled: new Set<string>(), disabled: new Set<string>() };
+  }
+  return {
+    enabled: new Set(normalizeStringList(skills.enabled)),
+    disabled: new Set(normalizeStringList(skills.disabled))
+  };
+}
+
+function shouldKeepSkill(
+  skillSlug: string,
+  overrides: { enabled: Set<string>; disabled: Set<string> }
+): boolean {
+  if (overrides.disabled.has(skillSlug)) {
+    return false;
+  }
+  if (overrides.enabled.size > 0 && !overrides.enabled.has(skillSlug)) {
+    return false;
+  }
+  return true;
+}
+
+export function ensureWorkspaceAgentAssets(workspaceSlug: string, workspaceName?: string): void {
+  getWorkspaceResourcesPath(workspaceSlug);
+  getWorkspaceMetaPath(workspaceSlug);
   copyDefaultSkills(workspaceSlug);
 }
 
@@ -277,40 +384,29 @@ export function ensureDefaultWorkspace(): AgentWorkspace {
   return workspace;
 }
 
-export function ensurePluginManifest(workspaceSlug: string, workspaceName: string): void {
-  const workspacePath = getAgentWorkspacePath(workspaceSlug);
-  const pluginDir = join(workspacePath, ".claude-plugin");
-  const manifestPath = join(pluginDir, "plugin.json");
-
-  if (existsSync(manifestPath)) return;
-
-  if (!existsSync(pluginDir)) {
-    mkdirSync(pluginDir, { recursive: true });
-  }
-
-  const manifest = {
-    name: `lume-workspace-${workspaceSlug}`,
-    version: "1.0.0",
-    displayName: workspaceName
-  };
-
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
-  console.log(`[Agent 工作区] 已创建 plugin manifest: ${workspaceSlug}`);
-}
-
 export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig {
   const mcpPath = getWorkspaceMcpPath(workspaceSlug);
+  let workspaceConfig: WorkspaceMcpConfig = { servers: {} };
   if (!existsSync(mcpPath)) {
-    return { servers: {} };
+    workspaceConfig = { servers: {} };
+  } else {
+    try {
+      workspaceConfig = parseMcpConfigFromUnknown(JSON.parse(readFileSync(mcpPath, "utf-8")));
+    } catch (error) {
+      console.error("[Agent 工作区] 读取 MCP 配置失败:", error);
+      workspaceConfig = { servers: {} };
+    }
   }
 
-  try {
-    const parsed = JSON.parse(readFileSync(mcpPath, "utf-8")) as Partial<WorkspaceMcpConfig>;
-    return { servers: parsed.servers ?? {} };
-  } catch (error) {
-    console.error("[Agent 工作区] 读取 MCP 配置失败:", error);
-    return { servers: {} };
-  }
+  const effectiveConfig = getEffectiveLumeConfig(workspaceSlug);
+  const lumeConfig = parseMcpConfigFromUnknown(effectiveConfig.mcp);
+
+  return {
+    servers: {
+      ...workspaceConfig.servers,
+      ...lumeConfig.servers
+    }
+  };
 }
 
 export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceMcpConfig): void {
@@ -326,12 +422,14 @@ export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceM
 
 export function getWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
   const skillsDir = getWorkspaceSkillsDir(workspaceSlug);
+  const skillOverrides = getWorkspaceSkillOverrides(workspaceSlug);
   const skills: SkillMeta[] = [];
 
   try {
     const entries = readdirSync(skillsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      if (!shouldKeepSkill(entry.name, skillOverrides)) continue;
 
       const skillMdPath = join(skillsDir, entry.name, "SKILL.md");
       if (!existsSync(skillMdPath)) continue;

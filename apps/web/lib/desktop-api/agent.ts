@@ -39,6 +39,8 @@ import type {
   MemoryStats,
   PlanFileMeta,
   PlanStateChangedEvent,
+  PromoteFileToWorkspaceInput,
+  PromoteFileToWorkspaceResult,
   WorkspaceCapabilities,
   WorkspaceMcpConfig
 } from "@lume/shared";
@@ -61,6 +63,7 @@ export async function getAgentThreadRuntimeStatus(threadId: string): Promise<Age
 
 export async function createAgentThread(params?: {
   title?: string;
+  modelRef?: string;
   channelId?: string;
   modelId?: string;
   workspaceId?: string;
@@ -106,12 +109,14 @@ export async function updateAgentThreadTitle(threadId: string, title: string): P
 export async function updateAgentThreadModelSelection(
   threadId: string,
   modelId?: string,
-  channelId?: string
+  channelId?: string,
+  modelRef?: string
 ): Promise<AgentThreadMeta> {
   return sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION, {
     threadId: threadId,
     modelId,
-    channelId
+    channelId,
+    modelRef
   });
 }
 
@@ -372,6 +377,16 @@ export async function listAgentDirectory(
   });
 }
 
+export async function listWorkspaceDirectory(
+  workspaceSlug: string,
+  path?: string
+): Promise<FileEntry[]> {
+  return sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_WORKSPACE_DIRECTORY, {
+    workspaceSlug,
+    path
+  });
+}
+
 export async function deleteAgentFile(
   workspaceSlug: string,
   threadId: string,
@@ -380,6 +395,16 @@ export async function deleteAgentFile(
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_FILE, {
     workspaceSlug,
     threadId,
+    path
+  });
+}
+
+export async function deleteWorkspaceFile(
+  workspaceSlug: string,
+  path: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.DELETE_WORKSPACE_FILE, {
+    workspaceSlug,
     path
   });
 }
@@ -396,6 +421,16 @@ export async function openAgentFile(
   });
 }
 
+export async function openWorkspaceFile(
+  workspaceSlug: string,
+  path: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.OPEN_WORKSPACE_FILE, {
+    workspaceSlug,
+    path
+  });
+}
+
 export async function showAgentFileInFolder(
   workspaceSlug: string,
   threadId: string,
@@ -408,6 +443,16 @@ export async function showAgentFileInFolder(
   });
 }
 
+export async function showWorkspaceFileInFolder(
+  workspaceSlug: string,
+  path: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SHOW_WORKSPACE_IN_FOLDER, {
+    workspaceSlug,
+    path
+  });
+}
+
 export async function previewAgentFile(
   workspaceSlug: string,
   threadId: string,
@@ -416,6 +461,16 @@ export async function previewAgentFile(
   return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.PREVIEW_FILE, {
     workspaceSlug,
     threadId,
+    path
+  });
+}
+
+export async function previewWorkspaceFile(
+  workspaceSlug: string,
+  path: string
+): Promise<{ ok: true }> {
+  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.PREVIEW_WORKSPACE_FILE, {
+    workspaceSlug,
     path
   });
 }
@@ -434,6 +489,18 @@ export async function renameAgentFile(
   });
 }
 
+export async function renameWorkspaceFile(
+  workspaceSlug: string,
+  path: string,
+  newName: string
+): Promise<{ ok: true; path: string }> {
+  return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.RENAME_WORKSPACE_FILE, {
+    workspaceSlug,
+    path,
+    newName
+  });
+}
+
 export async function moveAgentFile(
   workspaceSlug: string,
   threadId: string,
@@ -443,6 +510,18 @@ export async function moveAgentFile(
   return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.MOVE_FILE, {
     workspaceSlug,
     threadId,
+    path,
+    targetDir
+  });
+}
+
+export async function moveWorkspaceFile(
+  workspaceSlug: string,
+  path: string,
+  targetDir: string
+): Promise<{ ok: true; path: string }> {
+  return sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.MOVE_WORKSPACE_FILE, {
+    workspaceSlug,
     path,
     targetDir
   });
@@ -474,8 +553,18 @@ export async function moveAttachedFile(path: string, targetDir: string): Promise
   });
 }
 
+export async function promoteFileToWorkspace(
+  input: PromoteFileToWorkspaceInput
+): Promise<PromoteFileToWorkspaceResult> {
+  return sidecarCall<PromoteFileToWorkspaceResult>(AGENT_IPC_CHANNELS.PROMOTE_FILE_TO_WORKSPACE, input);
+}
+
 export async function getAgentWorkspaceRootPath(workspaceSlug: string): Promise<string> {
   return sidecarCall<string>(AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH, { workspaceSlug });
+}
+
+export async function getAgentWorkspaceResourcesPath(workspaceSlug: string): Promise<string> {
+  return sidecarCall<string>(AGENT_IPC_CHANNELS.GET_WORKSPACE_RESOURCES_PATH, { workspaceSlug });
 }
 
 export async function searchAgentWorkspaceFiles(
@@ -501,6 +590,12 @@ export async function saveFilesToAgentThread(
     ...input,
     threadId: input.threadId
   });
+}
+
+export async function saveFilesToWorkspace(
+  input: { workspaceSlug: string; files: Array<{ filename: string; data?: string; sourcePath?: string }> }
+): Promise<AgentSavedFile[]> {
+  return sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE, input);
 }
 
 export async function copyFolderToAgentThread(
@@ -587,18 +682,18 @@ export async function getLogsDir(): Promise<{ path: string }> {
   return sidecarCall<{ path: string }>(AGENT_IPC_CHANNELS.GET_LOGS_DIR);
 }
 
-export async function searchWorkspaceMemory(
+export async function searchLayeredMemory(
   workspaceSlug: string,
   query: string,
   maxResults = 10
 ): Promise<MemorySearchResult[]> {
-  return sidecarCall<MemorySearchResult[]>(MEMORY_IPC_CHANNELS.SEARCH, { workspaceSlug, query, maxResults });
+  return sidecarCall<MemorySearchResult[]>(MEMORY_IPC_CHANNELS.SEARCH_LAYERED, { workspaceSlug, query, maxResults });
 }
 
-export async function getWorkspaceMemoryStats(
+export async function getLayeredMemoryStats(
   workspaceSlug: string
 ): Promise<MemoryStats> {
-  return sidecarCall<MemoryStats>(MEMORY_IPC_CHANNELS.STATS, { workspaceSlug });
+  return sidecarCall<MemoryStats>(MEMORY_IPC_CHANNELS.STATS_LAYERED, { workspaceSlug });
 }
 
 export const log = {
@@ -622,4 +717,3 @@ export async function forkAgentThread(
     threadId: input.threadId
   });
 }
-
