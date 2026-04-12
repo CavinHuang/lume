@@ -1,7 +1,9 @@
 import {
   AUTOMATION_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
-  GITHUB_RELEASE_IPC_CHANNELS
+  GITHUB_RELEASE_IPC_CHANNELS,
+  SYSTEM_CONFIG_IPC_CHANNELS,
+  UI_STATE_IPC_CHANNELS
 } from "@lume/shared";
 import type {
   AutomationCreateJobInput,
@@ -15,7 +17,11 @@ import type {
   FetchModelsInput,
   FetchModelsResult,
   GitHubRelease,
-  GitHubReleaseListOptions
+  GitHubReleaseListOptions,
+  EffectiveSystemConfig,
+  NetworkDiagnosticResult,
+  PersistedUiState,
+  UpdateUiStateInput
 } from "@lume/shared";
 import { invoke } from "@tauri-apps/api/core";
 import { sidecarCall } from "./core";
@@ -32,6 +38,29 @@ export async function listGitHubReleases(
 
 export async function getGitHubReleaseByTag(tag: string): Promise<GitHubRelease | null> {
   return sidecarCall<GitHubRelease | null>(GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG, { tag });
+}
+
+export async function getPersistedUiState(): Promise<PersistedUiState> {
+  return sidecarCall<PersistedUiState>(UI_STATE_IPC_CHANNELS.GET);
+}
+
+export async function updatePersistedUiState(input: UpdateUiStateInput): Promise<PersistedUiState> {
+  return sidecarCall<PersistedUiState>(UI_STATE_IPC_CHANNELS.UPDATE, input);
+}
+
+export async function getEffectiveSystemConfig(workspaceSlug?: string): Promise<EffectiveSystemConfig> {
+  return sidecarCall<EffectiveSystemConfig>(
+    SYSTEM_CONFIG_IPC_CHANNELS.GET_EFFECTIVE,
+    workspaceSlug ? { workspaceSlug } : {}
+  );
+}
+
+export async function updateSystemConfigSection(path: string, value: unknown): Promise<EffectiveSystemConfig> {
+  return sidecarCall<EffectiveSystemConfig>(SYSTEM_CONFIG_IPC_CHANNELS.UPDATE_SECTION, { path, value });
+}
+
+export async function runNetworkDiagnostic(): Promise<NetworkDiagnosticResult> {
+  return sidecarCall<NetworkDiagnosticResult>(SYSTEM_CONFIG_IPC_CHANNELS.NETWORK_DIAGNOSTIC);
 }
 
 export async function listAutomationJobs(): Promise<AutomationJob[]> {
@@ -103,3 +132,10 @@ export async function openFolderDialog(): Promise<{ path: string | null }> {
   }
   return { path: null };
 }
+
+export {
+  getEffectiveLumeConfig,
+  getLumeConfigSourcePath,
+  onLumeConfigChanged,
+  openLumeConfigSourceFile
+} from "./lume-config";

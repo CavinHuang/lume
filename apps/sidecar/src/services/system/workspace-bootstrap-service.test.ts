@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentWorkspacePath } from "../infra/config-paths";
@@ -7,7 +7,6 @@ import {
   ensureBootstrapFiles,
   filterComponentsForSessionType,
   resolveLoadedLongTermMemoryPath,
-  readSystemPromptComponents,
   readTemplateContent
 } from "./workspace-bootstrap-service";
 
@@ -43,7 +42,6 @@ describe("workspace-bootstrap-service", () => {
     const soul = readTemplateContent("SOUL");
     const identity = readTemplateContent("IDENTITY");
     const agents = readTemplateContent("AGENTS");
-    const bootstrap = readTemplateContent("BOOTSTRAP");
 
     expect(soul).toContain("## Core Truths");
     expect(soul).toContain("## Subjecthood");
@@ -51,11 +49,9 @@ describe("workspace-bootstrap-service", () => {
     expect(identity).toContain("## Appearance");
     expect(identity).toContain("## Self-Recognition");
     expect(agents).toContain("## Persona Guardrails");
-    expect(bootstrap).toContain("## Default Stance");
-    expect(bootstrap).toContain("## Optional Style Tuning");
   });
 
-  test("ensureBootstrapFiles 默认仅创建核心文件与 BOOTSTRAP（不自动创建 HEARTBEAT/MEMORY）", () => {
+  test("ensureBootstrapFiles 默认仅创建核心文件（不再创建 BOOTSTRAP，且不自动创建 HEARTBEAT/MEMORY）", () => {
     const workspaceSlug = `bootstrap-default-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);
 
@@ -63,7 +59,7 @@ describe("workspace-bootstrap-service", () => {
       const result = ensureBootstrapFiles(workspaceSlug);
       expect(result.created).toContain("SOUL.md");
       expect(result.created).toContain("AGENTS.md");
-      expect(result.created).toContain("BOOTSTRAP.md");
+      expect(result.created).not.toContain("BOOTSTRAP.md");
 
       expect(existsSync(join(workspacePath, "HEARTBEAT.md"))).toBeFalse();
       expect(existsSync(join(workspacePath, "MEMORY.md"))).toBeFalse();
@@ -72,7 +68,7 @@ describe("workspace-bootstrap-service", () => {
     }
   });
 
-  test("非全新工作区不应再次创建 BOOTSTRAP.md", () => {
+  test("非全新工作区不应创建 BOOTSTRAP.md", () => {
     const workspaceSlug = `bootstrap-existing-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);
 
@@ -82,31 +78,8 @@ describe("workspace-bootstrap-service", () => {
 
       const result = ensureBootstrapFiles(workspaceSlug);
       expect(result.created).not.toContain("BOOTSTRAP.md");
-      expect(result.skipped).toContain("BOOTSTRAP.md");
+      expect(result.skipped).not.toContain("BOOTSTRAP.md");
       expect(existsSync(join(workspacePath, "BOOTSTRAP.md"))).toBeFalse();
-    } finally {
-      rmSync(workspacePath, { recursive: true, force: true });
-    }
-  });
-
-  test("readSystemPromptComponents 应兼容 memory.md 作为备用长期记忆", () => {
-    const workspaceSlug = `bootstrap-memory-alt-${Date.now()}`;
-    const workspacePath = getAgentWorkspacePath(workspaceSlug);
-
-    try {
-      mkdirSync(workspacePath, { recursive: true });
-      const altMemoryPath = join(workspacePath, "memory.md");
-      writeFileSync(altMemoryPath, "---\ntitle: memory\n---\n# alt memory\nremember this", "utf-8");
-
-      const components = readSystemPromptComponents(workspaceSlug, {
-        sessionType: "main",
-        includeMemory: true,
-        includeDailyMemory: false
-      });
-
-      expect(components.memory).toContain("remember this");
-      expect(components.memory?.startsWith("---")).toBeFalse();
-      expect(readFileSync(altMemoryPath, "utf-8")).toContain("alt memory");
     } finally {
       rmSync(workspacePath, { recursive: true, force: true });
     }
@@ -132,20 +105,20 @@ describe("workspace-bootstrap-service", () => {
     });
   });
 
-  test("resolveLoadedLongTermMemoryPath 仅存在 memory.md 时应返回 memory.md", () => {
+  test("resolveLoadedLongTermMemoryPath 仅存在旧 memory.md 时应返回 null", () => {
     const workspaceSlug = `bootstrap-memory-path-alt-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);
 
     try {
       mkdirSync(workspacePath, { recursive: true });
       writeFileSync(join(workspacePath, "memory.md"), "alt", "utf-8");
-      expect(resolveLoadedLongTermMemoryPath(workspaceSlug)).toBe("memory.md");
+      expect(resolveLoadedLongTermMemoryPath(workspaceSlug)).toBeNull();
     } finally {
       rmSync(workspacePath, { recursive: true, force: true });
     }
   });
 
-  test("resolveLoadedLongTermMemoryPath 同时存在时优先非空 MEMORY.md", () => {
+  test("resolveLoadedLongTermMemoryPath 同时存在时仅接受 MEMORY.md", () => {
     const workspaceSlug = `bootstrap-memory-path-both-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);
 
@@ -159,7 +132,7 @@ describe("workspace-bootstrap-service", () => {
     }
   });
 
-  test("resolveLoadedLongTermMemoryPath 主文件为空时回退 memory.md", () => {
+  test("resolveLoadedLongTermMemoryPath 主文件为空时返回 null", () => {
     const workspaceSlug = `bootstrap-memory-path-fallback-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);
 
@@ -167,14 +140,13 @@ describe("workspace-bootstrap-service", () => {
       mkdirSync(workspacePath, { recursive: true });
       writeFileSync(join(workspacePath, "MEMORY.md"), "   \n", "utf-8");
       writeFileSync(join(workspacePath, "memory.md"), "alt", "utf-8");
-      // 在大小写不敏感文件系统上，两个名字可能指向同一文件，此时无法稳定构造“主文件为空、备用非空”。
       const dirEntries = new Set(readdirSync(workspacePath));
       const bothDistinct = dirEntries.has("MEMORY.md") && dirEntries.has("memory.md");
       const resolved = resolveLoadedLongTermMemoryPath(workspaceSlug);
       if (bothDistinct) {
-        expect(resolved).toBe("memory.md");
+        expect(resolved).toBeNull();
       } else {
-        expect(resolved === "MEMORY.md" || resolved === "memory.md").toBeTrue();
+        expect(resolved === null || resolved === "MEMORY.md").toBeTrue();
       }
     } finally {
       rmSync(workspacePath, { recursive: true, force: true });

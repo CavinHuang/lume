@@ -75,13 +75,6 @@ const BOOTSTRAP_FILE_CONFIGS: BootstrapFileMeta[] = [
     loadInAllSessions: false,
     sessionTypes: ['main'],
   },
-  {
-    type: 'BOOTSTRAP',
-    filename: 'BOOTSTRAP.md',
-    loadInAllSessions: false,
-    sessionTypes: ['main'],
-    deleteAfterFirstRun: true,
-  },
 ];
 
 const CORE_WORKSPACE_FILE_TYPES: BootstrapFileType[] = ['AGENTS', 'SOUL', 'TOOLS', 'IDENTITY', 'USER'];
@@ -230,7 +223,7 @@ export function deleteBootstrapFile(workspaceSlug: string, fileType: BootstrapFi
  */
 export function ensureBootstrapFiles(
   workspaceSlug: string,
-  fileTypes: BootstrapFileType[] = ['SOUL', 'USER', 'IDENTITY', 'AGENTS', 'TOOLS', 'BOOTSTRAP'],
+  fileTypes: BootstrapFileType[] = ['SOUL', 'USER', 'IDENTITY', 'AGENTS', 'TOOLS'],
   devMode: boolean = false
 ): BootstrapResult {
   const result: BootstrapResult = {
@@ -239,17 +232,10 @@ export function ensureBootstrapFiles(
     failed: [],
   };
 
-  const shouldCreateBootstrap = isBrandNewWorkspace(workspaceSlug);
-
   for (const fileType of fileTypes) {
     const config = BOOTSTRAP_FILE_CONFIGS.find(c => c.type === fileType);
     if (!config) {
       result.failed.push({ file: fileType, error: '未知的文件类型' });
-      continue;
-    }
-
-    if (fileType === 'BOOTSTRAP' && !shouldCreateBootstrap) {
-      result.skipped.push(config.filename);
       continue;
     }
 
@@ -366,20 +352,6 @@ export function readSystemPromptComponents(
     }
   }
 
-  if (!components.memory && includeMemory) {
-    const altMemoryPath = join(getAgentWorkspacePath(workspaceSlug), 'memory.md');
-    if (existsSync(altMemoryPath)) {
-      try {
-        const altMemory = stripFrontMatter(readFileSync(altMemoryPath, 'utf-8'));
-        if (altMemory.trim()) {
-          components.memory = altMemory;
-        }
-      } catch (error) {
-        console.warn(`[Bootstrap] 读取备用记忆文件失败: ${altMemoryPath}`, error);
-      }
-    }
-  }
-
   // 读取每日记忆文件（如果需要）
   if (includeDailyMemory) {
     components.dailyMemory = readDailyMemoryFiles(workspaceSlug, options.dailyMemoryDays ?? 2);
@@ -390,7 +362,7 @@ export function readSystemPromptComponents(
 
 export function resolveLoadedLongTermMemoryPath(
   workspaceSlug: string
-): "MEMORY.md" | "memory.md" | null {
+): "MEMORY.md" | null {
   const workspacePath = getAgentWorkspacePath(workspaceSlug);
   let entries: Set<string> = new Set();
   try {
@@ -399,38 +371,11 @@ export function resolveLoadedLongTermMemoryPath(
     entries = new Set();
   }
 
-  const hasPrimaryExact = entries.has("MEMORY.md");
-  const hasAltExact = entries.has("memory.md");
-
-  // 在大小写不敏感文件系统上（如默认 macOS），existsSync("MEMORY.md") 可能命中 memory.md。
-  // 这里优先依据目录中的真实文件名，保证提示词显示的文件名与磁盘实际一致。
-  if (!hasPrimaryExact && hasAltExact) {
-    const altPath = join(workspacePath, "memory.md");
-    try {
-      if (stripFrontMatter(readFileSync(altPath, "utf-8")).trim()) {
-        return "memory.md";
-      }
-    } catch {
-      // ignore read failure
-    }
-  }
-
-  const primaryPath = join(workspacePath, "MEMORY.md");
-  if (existsSync(primaryPath)) {
+  if (entries.has("MEMORY.md")) {
+    const primaryPath = join(workspacePath, "MEMORY.md");
     try {
       if (stripFrontMatter(readFileSync(primaryPath, "utf-8")).trim()) {
         return "MEMORY.md";
-      }
-    } catch {
-      // ignore read failure
-    }
-  }
-
-  const altPath = join(workspacePath, "memory.md");
-  if (existsSync(altPath)) {
-    try {
-      if (stripFrontMatter(readFileSync(altPath, "utf-8")).trim()) {
-        return "memory.md";
       }
     } catch {
       // ignore read failure

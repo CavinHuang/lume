@@ -1,16 +1,94 @@
-import { GITHUB_RELEASE_IPC_CHANNELS, IPC_PROTOCOL_VERSION } from "@lume/shared";
-import type { GitHubReleaseListOptions } from "@lume/shared";
+import {
+  GITHUB_RELEASE_IPC_CHANNELS,
+  IPC_PROTOCOL_VERSION,
+  LUME_CONFIG_IPC_CHANNELS,
+  SYSTEM_CONFIG_IPC_CHANNELS,
+  UI_STATE_IPC_CHANNELS
+} from "@lume/shared";
+import type { GitHubReleaseListOptions, NetworkDiagnosticResult, UpdateUiStateInput } from "@lume/shared";
+import { spawn } from "node:child_process";
 import {
   getGitHubReleaseByTag,
   getLatestGitHubRelease,
   listGitHubReleases
 } from "../services/system/github-release-service";
-import { githubReleaseByTagInputSchema } from "./schemas";
+import { fetchWithProxy } from "../services/infra/proxy-fetch";
+import { getChatToolCredentials } from "../services/chat/chat-tool-manager";
+import { getLumeConfigYamlPath } from "../services/infra/config-paths";
+import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
+import { getEffectiveSystemConfig, updatePrimarySystemConfigSection } from "../services/system/system-config-service";
+import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
+import { githubReleaseByTagInputSchema, lumeConfigEffectiveInputSchema, systemConfigUpdateInputSchema, updateUiStateInputSchema } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
 
 interface SystemHandlersContext {
   getMethodNames: () => string[];
+}
+
+function spawnDetached(command: string, args: string[]): void {
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+}
+
+function openInSystem(path: string): void {
+  if (process.platform === "win32") {
+    spawnDetached("cmd", ["/c", "start", "", path]);
+    return;
+  }
+  if (process.platform === "darwin") {
+    spawnDetached("open", [path]);
+    return;
+  }
+  spawnDetached("xdg-open", [path]);
+}
+
+async function runNetworkDiagnostic(): Promise<NetworkDiagnosticResult> {
+  const targets = [
+    { name: "Jina", url: "https://api.jina.ai/v1/embeddings", method: "POST" as const, body: JSON.stringify({ model: "jina-embeddings-v5-text-small", input: ["hello lume"] }) },
+    { name: "DuckDuckGo", url: "https://duckduckgo.com/html/?q=lume", method: "GET" as const },
+    { name: "Brave", url: "https://api.search.brave.com/res/v1/web/search?q=lume&count=1", method: "GET" as const }
+  ];
+
+  const checks = await Promise.all(targets.map(async (target) => {
+    try {
+      const response = await fetchWithProxy(target.url, {
+        method: target.method,
+        headers: target.method === "POST" ? { "Content-Type": "application/json" } : undefined,
+        body: target.body,
+      });
+      return {
+        name: target.name,
+        url: target.url,
+        ok: response.ok,
+        statusCode: response.status,
+        ...(response.ok ? {} : { error: `HTTP ${response.status}` })
+      };
+    } catch (error) {
+      return {
+        name: target.name,
+        url: target.url,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }));
+
+  return {
+    proxy: {
+      httpProxy: process.env.HTTP_PROXY ?? process.env.http_proxy,
+      httpsProxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
+      noProxy: process.env.NO_PROXY ?? process.env.no_proxy
+    },
+    searchCredentials: {
+      braveConfigured: Boolean(getChatToolCredentials("web_search").braveApiKey?.trim()),
+      tavilyConfigured: Boolean(getChatToolCredentials("web_search").tavilyApiKey?.trim())
+    },
+    checks
+  };
 }
 
 export function createSystemHandlers(context: SystemHandlersContext): Record<string, RpcHandler> {
@@ -22,6 +100,43 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       pid: process.pid
     }),
     "rpc:list-methods": async () => context.getMethodNames(),
+    [UI_STATE_IPC_CHANNELS.GET]: async () => getPersistedUiState(),
+    [UI_STATE_IPC_CHANNELS.UPDATE]: async (params) =>
+      updatePersistedUiState(
+        validateInput(updateUiStateInputSchema, params, UI_STATE_IPC_CHANNELS.UPDATE) as UpdateUiStateInput
+      ),
+    [LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
+      const input = validateInput(
+        lumeConfigEffectiveInputSchema,
+        params ?? {},
+        LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE
+      );
+      return getEffectiveLumeConfig(input.workspaceSlug);
+    },
+    [LUME_CONFIG_IPC_CHANNELS.GET_SOURCE_PATH]: async () => ({
+      sourcePath: getLumeConfigYamlPath()
+    }),
+    [LUME_CONFIG_IPC_CHANNELS.OPEN_SOURCE_FILE]: async () => {
+      openInSystem(getLumeConfigYamlPath());
+      return { ok: true };
+    },
+    [SYSTEM_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
+      const input = validateInput(
+        lumeConfigEffectiveInputSchema,
+        params ?? {},
+        SYSTEM_CONFIG_IPC_CHANNELS.GET_EFFECTIVE
+      );
+      return getEffectiveSystemConfig(input.workspaceSlug);
+    },
+    [SYSTEM_CONFIG_IPC_CHANNELS.UPDATE_SECTION]: async (params) => {
+      const input = validateInput(
+        systemConfigUpdateInputSchema,
+        params,
+        SYSTEM_CONFIG_IPC_CHANNELS.UPDATE_SECTION
+      );
+      return updatePrimarySystemConfigSection(input);
+    },
+    [SYSTEM_CONFIG_IPC_CHANNELS.NETWORK_DIAGNOSTIC]: async () => runNetworkDiagnostic(),
     [GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE]: async () => getLatestGitHubRelease(),
     [GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES]: async (params) =>
       listGitHubReleases((params ?? {}) as GitHubReleaseListOptions),

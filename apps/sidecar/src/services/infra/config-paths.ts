@@ -94,6 +94,30 @@ export function getSettingsPath(): string {
   return join(getConfigDir(), "settings.json");
 }
 
+export function getGlobalMetaPath(): string {
+  return ensureDir(join(getConfigDir(), ".meta"), "全局元数据目录");
+}
+
+export function getGlobalMemoryPath(): string {
+  return join(getConfigDir(), "MEMORY.md");
+}
+
+export function getGlobalMemoryDbPath(): string {
+  return join(getGlobalMetaPath(), "memory.sqlite");
+}
+
+export function getLumeConfigYamlPath(): string {
+  return join(getConfigDir(), "lume.yaml");
+}
+
+export function getLumeConfigAuditPath(): string {
+  return join(getConfigDir(), "lume.audit.jsonl");
+}
+
+export function getLumeJsonPath(): string {
+  return join(getConfigDir(), "lume.json");
+}
+
 export function getSystemPromptsPath(): string {
   return join(getConfigDir(), "system-prompts.json");
 }
@@ -141,8 +165,16 @@ export function getAgentWorkspacePath(slug: string): string {
   return ensureDir(join(getAgentWorkspacesDir(), safeSlug), "Agent 工作区");
 }
 
+export function getWorkspaceResourcesPath(workspaceSlug: string): string {
+  return ensureDir(join(getAgentWorkspacePath(workspaceSlug), "resources"), "工作区共享文件目录");
+}
+
+export function getWorkspaceMetaPath(workspaceSlug: string): string {
+  return ensureDir(join(getAgentWorkspacePath(workspaceSlug), ".meta"), "工作区元数据目录");
+}
+
 export function getWorkspaceMcpPath(slug: string): string {
-  return join(getAgentWorkspacePath(slug), "mcp.json");
+  return join(getWorkspaceMetaPath(slug), "mcp.json");
 }
 
 export function getWorkspaceSkillsDir(slug: string): string {
@@ -153,12 +185,29 @@ export function getDefaultSkillsDir(): string {
   return ensureDir(join(getConfigDir(), "default-skills"));
 }
 
+export function getAgentThreadRootPath(workspaceSlug: string, threadId: string): string {
+  const safeThreadId = assertSafeSegment(threadId, "agent thread id");
+  return ensureDir(join(getAgentWorkspacePath(workspaceSlug), "threads", safeThreadId), "Agent 线程根目录");
+}
+
+export function getAgentThreadFilesPath(workspaceSlug: string, threadId: string): string {
+  return ensureDir(join(getAgentThreadRootPath(workspaceSlug, threadId), "files"), "Agent 线程文件目录");
+}
+
+export function getAgentThreadPlansPath(workspaceSlug: string, threadId: string): string {
+  return ensureDir(join(getAgentThreadRootPath(workspaceSlug, threadId), "plans"), "Agent 线程计划目录");
+}
+
+export function getAgentThreadArtifactsPath(workspaceSlug: string, threadId: string): string {
+  return ensureDir(join(getAgentThreadRootPath(workspaceSlug, threadId), "artifacts"), "Agent 线程产物目录");
+}
+
+export function getAgentThreadSystemContextPath(workspaceSlug: string, threadId: string): string {
+  return ensureDir(join(getAgentThreadRootPath(workspaceSlug, threadId), ".context"), "Agent 线程上下文目录");
+}
+
 export function getAgentSessionWorkspacePath(workspaceSlug: string, sessionId: string): string {
-  const safeSessionId = assertSafeSegment(sessionId, "agent session id");
-  return ensureDir(
-    join(getAgentWorkspacePath(workspaceSlug), safeSessionId),
-    "Agent 会话工作目录"
-  );
+  return getAgentThreadRootPath(workspaceSlug, sessionId);
 }
 
 export function getWorkspaceMemoryDir(workspaceSlug: string): string {
@@ -170,8 +219,7 @@ export function getWorkspaceLongTermMemoryPath(workspaceSlug: string): string {
 }
 
 export function getWorkspaceMemoryDbPath(workspaceSlug: string): string {
-  const safeSlug = assertSafeSegment(workspaceSlug, "workspace slug");
-  return join(getAgentWorkspacePath(safeSlug), `${safeSlug}.sqlite`);
+  return join(getWorkspaceMetaPath(workspaceSlug), "memory.sqlite");
 }
 
 export function getMemoryConfigDir(): string {
@@ -205,4 +253,3 @@ export function getAutomationRunsDir(): string {
 export function getAutomationRunsPath(): string {
   return join(getAutomationRunsDir(), "all.jsonl");
 }
-
