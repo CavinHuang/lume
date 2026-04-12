@@ -27,9 +27,9 @@ import {
   type ToolResult
 } from "../../providers";
 import { isImageAttachment, readAttachmentAsBase64 } from "./attachment-service";
-import { decryptApiKey, listChannels } from "../channel/channel-manager";
+import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
 import { extractTextFromAttachment, isDocumentAttachment } from "./document-parser";
-import { getConversationMessages } from "./conversation-manager";
+import { getConversationMessages, getConversationMeta } from "./conversation-manager";
 import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
@@ -161,7 +161,14 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
   const previousAssistantAttachments = getLatestAttachmentsByRole(fullHistory, "assistant");
 
   const channels = listChannels();
-  const channel = channels.find((c) => c.id === channelId);
+  const conversationMeta = getConversationMeta(conversationId);
+  const boundModel = resolveChannelModelBinding(
+    input.modelRef ?? conversationMeta?.modelRef ?? "",
+    "chat"
+  );
+  const effectiveChannelId = boundModel?.channel.id ?? channelId;
+  const effectiveModelId = boundModel?.modelId ?? modelId;
+  const channel = boundModel?.channel ?? channels.find((c) => c.id === effectiveChannelId);
   if (!channel) {
     emitChatSendError({ conversationId, error: "渠道不存在", emit });
     return;
@@ -169,13 +176,13 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
 
   let apiKey: string;
   try {
-    apiKey = decryptApiKey(channelId);
+    apiKey = decryptApiKey(channel.id);
   } catch {
     emitChatSendError({ conversationId, error: "解密 API Key 失败", emit });
     return;
   }
 
-  const selectedModelId = resolveRequestedModelIdForChannel(channel, modelId) ?? modelId;
+  const selectedModelId = resolveRequestedModelIdForChannel(channel, effectiveModelId) ?? effectiveModelId;
   const modelSelection = resolveChannelModelSelection({
     channelProvider: channel.provider,
     baseUrl: channel.baseUrl,

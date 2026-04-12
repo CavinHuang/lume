@@ -63,6 +63,7 @@ export function ToolSettings(): React.ReactElement {
   const [tools, setTools] = useAtom(chatToolsAtom);
   const [loading, setLoading] = useState(false);
   const [testingWebSearch, setTestingWebSearch] = useState(false);
+  const [savingWebSearchCredentials, setSavingWebSearchCredentials] = useState(false);
   const [testingNanoBanana, setTestingNanoBanana] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [credentialsDialogOpen, setCredentialsDialogOpen] = useState(false);
@@ -108,6 +109,7 @@ export function ToolSettings(): React.ReactElement {
     braveApiKey: "",
     tavilyApiKey: ""
   });
+  const [webCredentialsDirty, setWebCredentialsDirty] = useState(false);
   const [nanoBananaCredentials, setNanoBananaCredentials] = useState<{
     apiKey: string;
     baseUrl: string;
@@ -129,7 +131,7 @@ export function ToolSettings(): React.ReactElement {
       .then(([toolInfos, web, nano]) => {
         if (cancelled) return;
         setTools(toolInfos);
-        setWebCredentials({
+        setWebCredentials((prev) => webCredentialsDirty ? prev : {
           braveApiKey: web.braveApiKey ?? "",
           tavilyApiKey: web.tavilyApiKey ?? ""
         });
@@ -151,7 +153,7 @@ export function ToolSettings(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [setTools]);
+  }, [setTools, webCredentialsDirty]);
 
   useEffect(() => {
     let disposed = false;
@@ -164,7 +166,7 @@ export function ToolSettings(): React.ReactElement {
       ]).then(([toolInfos, web, nano]) => {
         if (disposed) return;
         setTools(toolInfos);
-        setWebCredentials({
+        setWebCredentials((prev) => webCredentialsDirty ? prev : {
           braveApiKey: web.braveApiKey ?? "",
           tavilyApiKey: web.tavilyApiKey ?? ""
         });
@@ -192,7 +194,7 @@ export function ToolSettings(): React.ReactElement {
         void unlisten();
       }
     };
-  }, [setTools]);
+  }, [setTools, webCredentialsDirty]);
 
   const webSearchEnabled = useMemo(
     () => tools.find((item) => item.meta.id === "web_search")?.enabled ?? false,
@@ -212,6 +214,24 @@ export function ToolSettings(): React.ReactElement {
   const refreshTools = async (): Promise<void> => {
     const next = await getChatTools();
     setTools(next);
+  };
+
+  const saveWebSearchCredentials = async (): Promise<void> => {
+    setSavingWebSearchCredentials(true);
+    try {
+      await updateChatToolCredentials("web_search", webCredentials);
+      const next = await getChatToolCredentials("web_search");
+      setWebCredentials({
+        braveApiKey: next.braveApiKey ?? "",
+        tavilyApiKey: next.tavilyApiKey ?? ""
+      });
+      setWebCredentialsDirty(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingWebSearchCredentials(false);
+    }
   };
 
   const resetNewCustomTool = (): void => {
@@ -309,14 +329,8 @@ export function ToolSettings(): React.ReactElement {
             <Input
               value={webCredentials.braveApiKey}
               onChange={(event) => {
+                setWebCredentialsDirty(true);
                 setWebCredentials((prev) => ({ ...prev, braveApiKey: event.target.value }));
-              }}
-              onBlur={() => {
-                void updateChatToolCredentials("web_search", webCredentials)
-                  .then(() => setErrorMessage(null))
-                  .catch((error) => {
-                    setErrorMessage(error instanceof Error ? error.message : String(error));
-                  });
               }}
               placeholder="可选，留空则不使用 Brave"
               disabled={!webSearchEnabled}
@@ -327,20 +341,23 @@ export function ToolSettings(): React.ReactElement {
             <Input
               value={webCredentials.tavilyApiKey}
               onChange={(event) => {
+                setWebCredentialsDirty(true);
                 setWebCredentials((prev) => ({ ...prev, tavilyApiKey: event.target.value }));
-              }}
-              onBlur={() => {
-                void updateChatToolCredentials("web_search", webCredentials)
-                  .then(() => setErrorMessage(null))
-                  .catch((error) => {
-                    setErrorMessage(error instanceof Error ? error.message : String(error));
-                  });
               }}
               placeholder="可选，留空则不使用 Tavily"
               disabled={!webSearchEnabled}
             />
           </div>
           <div className="flex items-center gap-3 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={savingWebSearchCredentials || !webSearchEnabled}
+              onClick={() => { void saveWebSearchCredentials(); }}
+            >
+              {savingWebSearchCredentials ? "保存中..." : "保存搜索凭据"}
+            </Button>
             <Button
               type="button"
               variant="outline"

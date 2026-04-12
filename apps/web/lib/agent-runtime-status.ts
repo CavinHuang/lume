@@ -39,7 +39,7 @@ export function formatAgentRuntimeStatusHint(
     return joinRuntimeStatusHintParts([
       status.interactiveKind === "tool_permission" ? "等待工具权限确认" : "等待权限确认",
       status.toolName ? `工具: ${status.toolName}` : null,
-      status.originThreadId ? `来源线程: ${status.originThreadId}` : null,
+      status.originThreadId ? `来源会话: ${status.originThreadId}` : null,
       status.subagentRunId ? `Run: ${status.subagentRunId}` : null
     ]);
   }
@@ -47,7 +47,7 @@ export function formatAgentRuntimeStatusHint(
   if (status.phase === "awaiting_user_answer") {
     return joinRuntimeStatusHintParts([
       status.interactiveKind === "ask_user_question" ? "等待用户回答问题" : "等待用户输入",
-      status.originThreadId ? `来源线程: ${status.originThreadId}` : null,
+      status.originThreadId ? `来源会话: ${status.originThreadId}` : null,
       status.subagentRunId ? `Run: ${status.subagentRunId}` : null
     ]);
   }

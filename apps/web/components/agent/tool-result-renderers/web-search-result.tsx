@@ -13,17 +13,34 @@ interface SearchResult {
   snippet: string;
 }
 
-function parseSearchResults(text: string): SearchResult[] | null {
+function parseSearchPayload(text: string): { query?: string; results: SearchResult[] } | null {
   try {
     const parsed = JSON.parse(text);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      if (Array.isArray(record.results)) {
+        return {
+          query: typeof record.query === "string" ? record.query : undefined,
+          results: record.results
+            .filter((item: Record<string, unknown>) => item.title || item.url)
+            .map((item: Record<string, unknown>) => ({
+              title: String(item.title ?? ""),
+              url: String(item.url ?? item.link ?? ""),
+              snippet: String(item.snippet ?? item.description ?? item.content ?? ""),
+            })),
+        };
+      }
+    }
     if (Array.isArray(parsed)) {
-      return parsed
-        .filter((item: Record<string, unknown>) => item.title || item.url)
-        .map((item: Record<string, unknown>) => ({
-          title: String(item.title ?? ""),
-          url: String(item.url ?? item.link ?? ""),
-          snippet: String(item.snippet ?? item.description ?? item.content ?? ""),
-        }));
+      return {
+        results: parsed
+          .filter((item: Record<string, unknown>) => item.title || item.url)
+          .map((item: Record<string, unknown>) => ({
+            title: String(item.title ?? ""),
+            url: String(item.url ?? item.link ?? ""),
+            snippet: String(item.snippet ?? item.description ?? item.content ?? ""),
+          })),
+      };
     }
   } catch {
     // 非 JSON，尝试文本格式解析
@@ -52,7 +69,7 @@ function parseSearchResults(text: string): SearchResult[] | null {
     }
   }
 
-  return results.length > 0 ? results : null;
+  return results.length > 0 ? { results } : null;
 }
 
 export function WebSearchResultRenderer({ result, isError }: ToolResultContentProps): React.ReactElement {
@@ -60,9 +77,9 @@ export function WebSearchResultRenderer({ result, isError }: ToolResultContentPr
     return <ErrorResult result={result} />;
   }
 
-  const searchResults = React.useMemo(() => parseSearchResults(result), [result]);
+  const searchPayload = React.useMemo(() => parseSearchPayload(result), [result]);
 
-  if (!searchResults) {
+  if (!searchPayload) {
     return (
       <CollapsibleResult
         content={result}
@@ -75,6 +92,7 @@ export function WebSearchResultRenderer({ result, isError }: ToolResultContentPr
     );
   }
 
+  const searchResults = searchPayload.results;
   const [expanded, setExpanded] = React.useState(false);
   const previewCount = 5;
   const needsCollapse = searchResults.length > previewCount;
@@ -82,7 +100,15 @@ export function WebSearchResultRenderer({ result, isError }: ToolResultContentPr
 
   return (
     <div className="space-y-2">
-      <div className="text-[11px] text-muted-foreground/60">{searchResults.length} 条结果</div>
+      <div className="text-[11px] text-muted-foreground/60">
+        {searchPayload.query ? `查询: ${searchPayload.query} · ` : ""}
+        {searchResults.length} 条结果
+      </div>
+      {searchResults.length === 0 ? (
+        <div className="rounded-md bg-muted/20 px-3 py-3 text-[12px] text-muted-foreground/70">
+          未检索到结果
+        </div>
+      ) : null}
       <div className="space-y-2 transition-all duration-200 ease-out">
       {visibleResults.map((item, i) => (
         <div key={i} className="space-y-1 rounded-md bg-muted/20 p-2.5 animate-in fade-in slide-in-from-top-1 duration-200 transition-transform duration-150 hover:-translate-y-[1px]">

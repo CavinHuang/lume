@@ -49,6 +49,7 @@ export async function listConversations(): Promise<ConversationMeta[]> {
 
 export async function createConversation(params?: {
   title?: string;
+  modelRef?: string;
   modelId?: string;
   channelId?: string;
 }): Promise<ConversationMeta> {
@@ -80,12 +81,14 @@ export async function deleteConversationById(conversationId: string): Promise<{ 
 export async function updateConversationModel(
   conversationId: string,
   modelId?: string,
-  channelId?: string
+  channelId?: string,
+  modelRef?: string
 ): Promise<ConversationMeta> {
   return sidecarCall<ConversationMeta>(CHAT_IPC_CHANNELS.UPDATE_MODEL, {
     conversationId,
     modelId,
-    channelId
+    channelId,
+    modelRef
   });
 }
 

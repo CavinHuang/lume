@@ -4,15 +4,17 @@ import type {
   AutomationJob,
   AutomationListRunsInput,
   AutomationRun,
-  AutomationRunNowInput,
-  Channel
+  AutomationRunNowInput
 } from "@lume/shared";
-import { createAgentThread } from "../agent/agent-thread-manager";
+import { createAgentThreadWithModelRef } from "../agent/agent-thread-manager";
 import { getAgentThreadMeta } from "../agent/agent-thread-manager";
 import { sendAgentMessage } from "../agent/agent-service";
+import { getAgentWorkspace } from "../agent/agent-workspace-manager";
+import { runWorkspaceMemoryDistillation } from "../memory/memory-service";
 import { listAutomationJobs, updateAutomationJob } from "./automation-manager";
-import { listChannels } from "../channel/channel-manager";
+import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
+import { getEffectiveSystemConfig } from "../system/system-config-service";
 
 type JobDisposer = () => void;
 
@@ -89,32 +91,17 @@ function clearSchedules(): void {
   lastCronMinuteKeyByJob.clear();
 }
 
-function pickExecutionChannel(): { channelId: string; modelId: string } {
-  const channels = listChannels().filter((channel) => channel.enabled);
-  if (channels.length === 0) {
-    throw new Error("未找到可用渠道，请先在设置中配置并启用 Agent 渠道");
+function pickExecutionChannel(): { channelId: string; modelId: string; modelRef: string } {
+  const modelRef = getEffectiveSystemConfig().models?.agent?.defaultModelRef;
+  const binding = resolveChannelModelBinding(modelRef ?? "", "chat");
+  if (!binding || !modelRef) {
+    throw new Error("未找到可用的 Agent 默认模型，请先在通用设置中配置");
   }
-
-  const withModel = channels.find((channel) => pickModelId(channel) !== null);
-  if (!withModel) {
-    throw new Error("未找到可用模型，请先在渠道里启用至少一个模型");
-  }
-
-  const modelId = pickModelId(withModel);
-  if (!modelId) {
-    throw new Error("渠道缺少可用模型");
-  }
-  return { channelId: withModel.id, modelId };
-}
-
-function pickModelId(channel: Channel): string | null {
-  const enabledModels = channel.models.filter((model) => model.enabled);
-  if (enabledModels.length === 0) return null;
-  if (channel.defaultModelId) {
-    const hit = enabledModels.find((model) => model.id === channel.defaultModelId);
-    if (hit) return hit.id;
-  }
-  return enabledModels[0]?.id ?? null;
+  return {
+    channelId: binding.channel.id,
+    modelId: binding.modelId,
+    modelRef
+  };
 }
 
 async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): Promise<AutomationRun> {
@@ -140,12 +127,34 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
   let runMessage = "任务执行完成";
 
   try {
-    const { channelId, modelId } = pickExecutionChannel();
+    if (job.systemAction === "memory_distill_workspace") {
+      if (!job.workspaceId) {
+        throw new Error("记忆蒸馏任务缺少 workspaceId");
+      }
+      const workspace = getAgentWorkspace(job.workspaceId);
+      if (!workspace) {
+        throw new Error(`记忆蒸馏任务的工作区不存在: ${job.workspaceId}`);
+      }
+      const result = await runWorkspaceMemoryDistillation({ workspaceSlug: workspace.slug });
+      runMessage = [
+        `记忆蒸馏完成: ${workspace.name}`,
+        `updatedWorkspaceMemory=${result.updatedWorkspaceMemory}`,
+        `promotedToGlobal=${result.promotedToGlobal.length}`
+      ].join(" · ");
+    } else {
+    const { channelId, modelId, modelRef } = pickExecutionChannel();
     const boundThreadId = job.threadId?.trim();
     if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
       threadId = boundThreadId;
     } else {
-      const thread = createAgentThread(`[自动化] ${job.name}`, channelId, job.workspaceId);
+      const thread = createAgentThreadWithModelRef(
+        `[自动化] ${job.name}`,
+        modelRef,
+        channelId,
+        job.workspaceId,
+        undefined,
+        modelId
+      );
       threadId = thread.id;
     }
     if (!threadId) {
@@ -158,6 +167,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
         threadId,
         userMessage: job.prompt,
         workspaceId: job.workspaceId,
+        modelRef,
         channelId,
         modelId,
         permissionMode: "bypassPermissions",
@@ -188,6 +198,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     }
 
     runMessage = `任务执行完成，线程: ${threadId}`;
+    }
   } catch (error) {
     runStatus = "failed";
     runMessage = error instanceof Error ? error.message : String(error);

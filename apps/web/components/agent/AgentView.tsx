@@ -11,6 +11,7 @@ import type {
 } from "@lume/shared";
 import {
   activeViewAtom,
+  agentDraftByThreadIdAtom,
   agentContextStatusAtom,
   agentThreadsAtom,
   agentChannelIdAtom,
@@ -29,6 +30,7 @@ import {
   agentLiveSdkMessagesMapAtom,
   agentThreadContextCacheAtom,
   agentWorkspacesAtom,
+  workspaceFilesVersionAtom,
   currentAgentAllSdkMessagesAtom,
   currentAgentErrorAtom,
   currentAgentAskUserQuestionRequestAtom,
@@ -45,6 +47,8 @@ import {
 } from "@/atoms/plan-atoms";
 import {
   getAgentThreadMessages,
+  listAgentDirectory,
+  promoteFileToWorkspace,
   saveFilesToAgentThread,
   updateAgentThreadModelSelection,
 } from "@/lib/desktop-api/agent";
@@ -71,9 +75,10 @@ import { Button } from "@/components/ui/button";
 import { Popover,PopoverContent,PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip,TooltipContent,TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentSidePanel } from "./AgentSidePanel";
+import type { PromotionCandidate } from "./FilePromotionCard";
+import { buildPromotionCandidates } from "./file-promotion-candidates";
 import { extractLatestAssistantText } from "./agent-session-lifecycle";
 import { fileToBase64 } from "./agent-composer";
-import { findLatestTodoItems,resolveTodoPanelExpanded,type TodoItem } from "./agent-team-activity";
 import { useAgentInteractiveRequests } from "./hooks/useAgentInteractiveRequests";
 import { useAgentPlanFlow } from "./hooks/useAgentPlanFlow";
 import { useAgentComposer } from "./hooks/useAgentComposer";
@@ -167,12 +172,30 @@ export function AgentView(): React.ReactElement {
   const [agentThinkingLevel,setAgentThinkingLevel] = useAtom(agentThinkingLevelAtom);
   const [pendingFiles,setPendingFiles] = useAtom(agentPendingFilesAtom);
   const [pendingPrompt,setPendingPrompt] = useAtom(agentPendingPromptAtom);
-  const [inputContent,setInputContent] = useState("");
+  const [agentDraftByThreadId, setAgentDraftByThreadId] = useAtom(agentDraftByThreadIdAtom);
+  const [, bumpWorkspaceFilesVersion] = useAtom(workspaceFilesVersionAtom);
+  const inputContent = threadId ? agentDraftByThreadId.get(threadId) ?? "" : "";
   const [isDragOver,setIsDragOver] = useState(false);
   const [pendingFolderRefs,setPendingFolderRefs] = useState<AgentSavedFile[]>([]);
   const [inlineEditingMessageId,setInlineEditingMessageId] = useState<string | null>(null);
   const [thinkingOpen,setThinkingOpen] = useState(false);
   const [saveTaskDialogData,setSaveTaskDialogData] = useState<SaveAsTaskDialogData | null>(null);
+  const [promotionFiles, setPromotionFiles] = useState<PromotionCandidate[]>([]);
+
+  const setInputContent = useCallback((value: string | ((prev: string) => string)): void => {
+    if (!threadId) return;
+    setAgentDraftByThreadId((prev) => {
+      const map = new Map(prev);
+      const previousValue = map.get(threadId) ?? "";
+      const nextValue = typeof value === "function" ? value(previousValue) : value;
+      if (nextValue) {
+        map.set(threadId, nextValue);
+      } else {
+        map.delete(threadId);
+      }
+      return map;
+    });
+  }, [threadId, setAgentDraftByThreadId]);
 
   const [,setPlanState] = useAtom(planStateAtom);
   const {
@@ -195,8 +218,7 @@ export function AgentView(): React.ReactElement {
     sessionSwitching
   } = useAgentSessionLifecycle({
     setPendingFolderRefs,
-    setInlineEditingMessageId,
-    setInputContent
+    setInlineEditingMessageId
   });
   const hasSharedRuntimeStatus = currentRuntimeStatus !== null;
   const isAwaitingInteractiveInput = isAgentRuntimeAwaitingInput(currentRuntimeStatus);
@@ -215,27 +237,6 @@ export function AgentView(): React.ReactElement {
     setCurrentSidePanelOpen,
     handleToggleFileBrowser
   } = useAgentSidePanelState(threadId);
-
-  // --- Todo 面板逻辑 ---
-  const [todoPanelExpanded,setTodoPanelExpanded] = useState(true);
-  const prevTodoItemsRef = useRef<TodoItem[] | null>(null);
-  const latestTodoItems = useMemo(
-    () => findLatestTodoItems(toolActivities,allSdkMessages,messages),
-    [allSdkMessages,messages,toolActivities]
-  );
-  const todoProgressText = useMemo(() => {
-    if (!latestTodoItems || latestTodoItems.length === 0) return null;
-    const completed = latestTodoItems.filter((todo) => todo.status === "completed").length;
-    return `${completed}/${latestTodoItems.length}`;
-  },[latestTodoItems]);
-  useEffect(() => {
-    if (!latestTodoItems || latestTodoItems.length === 0) return;
-    const nextExpanded = resolveTodoPanelExpanded(prevTodoItemsRef.current,latestTodoItems);
-    if (typeof nextExpanded === "boolean") {
-      setTodoPanelExpanded(nextExpanded);
-    }
-    prevTodoItemsRef.current = latestTodoItems;
-  },[latestTodoItems]);
 
   const handleOpenSession = useCallback((targetSessionId: string): void => {
     startTransition(() => {
@@ -312,6 +313,7 @@ export function AgentView(): React.ReactElement {
     isAwaitingInteractiveInput,
     toolActivities,
     lastAgentEventAtRef,
+    setRuntimeStatuses,
     setMessages,
     setStreamErrors,
     setStreamingStates
@@ -392,7 +394,7 @@ export function AgentView(): React.ReactElement {
     setAgentChannelId(option.channelId);
     setAgentModelId(option.modelId);
     if (threadId) {
-      void updateAgentThreadModelSelection(threadId,option.modelId,option.channelId)
+      void updateAgentThreadModelSelection(threadId,option.modelId,option.channelId,option.modelRef)
         .then((updated: AgentThreadMeta) => {
           setSessions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
         })
@@ -413,6 +415,70 @@ export function AgentView(): React.ReactElement {
     && (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
     && backendReady
     && !isAgentBusy;
+
+  const previousBusyRef = useRef(isAgentBusy);
+  const threadFilesBaselineRef = useRef<Map<string, Set<string>>>(new Map());
+
+  useEffect(() => {
+    if (!threadId || !currentWorkspace?.slug || !sessionRootPath) return;
+    const filesRoot = `${sessionRootPath}${sessionRootPath.endsWith("\\") || sessionRootPath.endsWith("/") ? "" : "\\"}files`;
+    void listAgentDirectory(currentWorkspace.slug, threadId, filesRoot)
+      .then((entries) => {
+        threadFilesBaselineRef.current.set(
+          threadId,
+          new Set(entries.filter((entry) => !entry.isDirectory).map((entry) => entry.path))
+        );
+        setPromotionFiles([]);
+      })
+      .catch((error) => {
+        console.error("[AgentView] load thread baseline files failed", error);
+      });
+  }, [currentWorkspace?.slug, sessionRootPath, threadId]);
+
+  useEffect(() => {
+    const wasBusy = previousBusyRef.current;
+    previousBusyRef.current = isAgentBusy;
+    if (!threadId || !currentWorkspace?.slug || !sessionRootPath) return;
+    if (wasBusy && !isAgentBusy) {
+      const filesRoot = `${sessionRootPath}${sessionRootPath.endsWith("\\") || sessionRootPath.endsWith("/") ? "" : "\\"}files`;
+      void listAgentDirectory(currentWorkspace.slug, threadId, filesRoot)
+        .then((entries) => {
+          const previousPaths = threadFilesBaselineRef.current.get(threadId) ?? new Set<string>();
+          const nextPaths = new Set(entries.filter((entry) => !entry.isDirectory).map((entry) => entry.path));
+          const candidates = buildPromotionCandidates(entries, previousPaths);
+          setPromotionFiles(candidates);
+          threadFilesBaselineRef.current.set(threadId, nextPaths);
+        })
+        .catch((error) => {
+          console.error("[AgentView] load promotion candidates failed", error);
+        });
+    }
+  }, [currentWorkspace?.slug, isAgentBusy, sessionRootPath, threadId]);
+
+  const handlePromoteFile = useCallback(async (file: PromotionCandidate): Promise<void> => {
+    if (!threadId || !currentWorkspace?.slug) return;
+    await promoteFileToWorkspace({
+      workspaceSlug: currentWorkspace.slug,
+      threadId,
+      filePath: file.path
+    });
+    bumpWorkspaceFilesVersion((value) => value + 1);
+    setPromotionFiles((prev) => prev.map((item) => (
+      item.path === file.path ? { ...item, status: "promoted" } : item
+    )));
+  }, [bumpWorkspaceFilesVersion, currentWorkspace?.slug, threadId]);
+
+  const handlePromoteAllFiles = useCallback((): void => {
+    void Promise.all(
+      promotionFiles
+        .filter((file) => file.status === "suggested")
+        .map((file) => handlePromoteFile(file))
+    );
+  }, [handlePromoteFile, promotionFiles]);
+
+  const handleDismissPromotion = useCallback((): void => {
+    setPromotionFiles([]);
+  }, []);
 
   if (!threadId) {
     return (
@@ -442,6 +508,10 @@ export function AgentView(): React.ReactElement {
             isStreaming={isAgentBusy}
             isSwitching={sessionSwitching}
             inlineEditingMessageId={inlineEditingMessageId}
+            promotionFiles={promotionFiles}
+            onPromoteFile={(file) => { void handlePromoteFile(file); }}
+            onPromoteAllFiles={handlePromoteAllFiles}
+            onDismissPromotion={handleDismissPromotion}
             onDeleteMessage={handleDeleteMessage}
             onResendMessage={handleResendMessage}
             onSaveAsTask={handleSaveAsTask}
@@ -450,47 +520,6 @@ export function AgentView(): React.ReactElement {
             onCancelInlineEdit={handleCancelInlineEdit}
             onOpenSession={handleOpenSession}
           />
-
-          {latestTodoItems && latestTodoItems.length > 0 ? (
-            <div className="mb-2 ml-[72px] mr-4 inline-flex max-w-[calc(100%-5.5rem)] flex-col rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-              <button
-                type="button"
-                onClick={() => setTodoPanelExpanded((prev) => !prev)}
-                className="inline-flex items-center gap-2 text-left"
-              >
-                {todoPanelExpanded ? (
-                  <ChevronDown className="size-3.5 text-muted-foreground/70" />
-                ) : (
-                  <ChevronRight className="size-3.5 text-muted-foreground/70" />
-                )}
-                <span className="text-xs font-medium text-foreground/70">当前 Todo</span>
-                {todoProgressText ? (
-                  <span className="ml-2 text-[11px] tabular-nums text-foreground/50">{todoProgressText}</span>
-                ) : null}
-              </button>
-              {todoPanelExpanded ? (
-                <div className="mt-2 space-y-1">
-                  {latestTodoItems.map((todo,index) => (
-                    <div
-                      key={`${todo.content}-${index}`}
-                      className={cn(
-                        "flex items-center gap-2 text-[13px]",
-                        todo.status === "completed" && "opacity-60"
-                      )}
-                    >
-                      {todo.status === "pending" ? <Circle className="size-3 text-muted-foreground/60" /> : null}
-                      {todo.status === "in_progress" ? <Loader2 className="size-3 animate-spin text-blue-500" /> : null}
-                      {todo.status === "completed" ? <CheckCircle2 className="size-3 text-green-500" /> : null}
-                      <span className={cn("break-words",todo.status === "completed" && "line-through")}>
-                        {todo.status === "in_progress" && todo.activeForm ? todo.activeForm : todo.content}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
           {modeNotice ? (
             <div className="mx-4 mb-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-foreground/80">
               {modeNotice}
@@ -796,7 +825,6 @@ export function AgentView(): React.ReactElement {
             </div>
           </div>
         </div>
-
         <AgentSidePanel
           sessionId={threadId}
           sessionPath={sessionRootPath}
@@ -813,5 +841,3 @@ export function AgentView(): React.ReactElement {
     </div>
   );
 }
-
-

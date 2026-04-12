@@ -4,6 +4,7 @@ import type { KnownProvider } from "./model-types";
 const PROVIDER_ALIAS: Record<string, KnownProvider | null> = {
   anthropic: "anthropic",
   openai: "openai",
+  jina: "openai",
   openrouter: "openrouter",
   opencode: "opencode",
   google: "google",

@@ -34,10 +34,7 @@ export const streamingConversationIdsAtom = atom<Set<string>>((get) => {
   return ids;
 });
 
-export const selectedModelAtom = atomWithStorage<SelectedModel | null>(
-  "lume-selected-model",
-  null
-);
+export const selectedModelAtom = atom<SelectedModel | null>(null);
 
 export const parallelModeAtom = atomWithStorage<boolean>("lume-parallel-mode", false);
 
@@ -59,6 +56,7 @@ export interface PendingAttachment extends FileAttachment {
 }
 
 export const pendingAttachmentsAtom = atom<PendingAttachment[]>([]);
+export const chatDraftByConversationIdAtom = atom<Map<string, string>>(new Map());
 export const hasMoreMessagesAtom = atom<boolean>(false);
 export const chatStreamErrorsAtom = atom<Map<string, string>>(new Map());
 

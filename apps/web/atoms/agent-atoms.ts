@@ -27,8 +27,8 @@ export type { AgentStreamState, StreamContentBlock, ToolActivity } from "@/lib/a
 
 export const agentThreadsAtom = atom<AgentThreadMeta[]>([]);
 export const agentWorkspacesAtom = atom<AgentWorkspace[]>([]);
-export const agentChannelIdAtom = atomWithStorage<string | null>("lume-agent-channel-id", null);
-export const agentModelIdAtom = atomWithStorage<string | null>("lume-agent-model-id", null);
+export const agentChannelIdAtom = atom<string | null>(null);
+export const agentModelIdAtom = atom<string | null>(null);
 export const agentPermissionModeAtom = atomWithStorage<NonNullable<AgentSendInput["permissionMode"]>>(
   "lume-agent-permission-mode",
   "bypassPermissions"
@@ -38,6 +38,8 @@ export const agentPendingPromptAtom = atom<{ threadId: string; message: string }
 export const agentPendingFilesAtom = atom<AgentPendingFile[]>([]);
 export const workspaceCapabilitiesVersionAtom = atom<number>(0);
 export const workspaceFilesVersionAtom = atom<number>(0);
+export const agentSidePanelOpenMapAtom = atom<Map<string, boolean>>(new Map());
+export const agentDraftByThreadIdAtom = atom<Map<string, string>>(new Map());
 
 /** thread 级附加目录：threadId -> string[] */
 export const agentAttachedDirectoriesMapAtom = atom<Map<string, string[]>>(new Map());

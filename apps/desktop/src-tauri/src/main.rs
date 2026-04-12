@@ -477,7 +477,9 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
     let bun_bin = resolve_bun_binary();
     let dist_entry = sidecar_dir.join("dist/index.js");
     let src_entry = sidecar_dir.join("src/index.ts");
-    let sidecar_entry = if dist_entry.exists() {
+    let sidecar_entry = if cfg!(debug_assertions) {
+        src_entry.clone()
+    } else if dist_entry.exists() {
         dist_entry
     } else {
         src_entry

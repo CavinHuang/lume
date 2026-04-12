@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getLumeConfigYamlPath } from "../../../infra/config-paths";
 import {
   applyPiToolPolicies,
   getAgentRuntimeToolPolicyConfig,
@@ -91,6 +92,56 @@ describe("tool-policy", () => {
       expect(saved.tools?.byProvider?.anthropic?.allow).toEqual(["web_*"]);
       expect(saved.tools?.bySessionType?.subagent?.deny).toEqual(["group:web"]);
       expect(saved.tools?.subagent).toEqual({});
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
+  test("应按 workspace 的 lume.yaml permissions.toolPolicy 覆盖 runtime 全局策略", () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-policy-test-"));
+    try {
+      saveAgentRuntimeToolPolicyConfig({
+        version: 1,
+        tools: {
+          allow: ["read", "web_fetch"]
+        }
+      });
+
+      writeFileSync(
+        getLumeConfigYamlPath(),
+        [
+          "version: 1",
+          "permissions:",
+          "  toolPolicy:",
+          "    allow:",
+          "      - read",
+          "workspaces:",
+          "  demo:",
+          "    permissions:",
+          "      toolPolicy:",
+          "        allow:",
+          "          - write",
+          ""
+        ].join("\n"),
+        "utf-8"
+      );
+
+      const tools = [
+        { name: "read" },
+        { name: "write" },
+        { name: "web_fetch" }
+      ];
+
+      const noWorkspace = applyPiToolPolicies(tools, {});
+      expect(noWorkspace.map((tool) => tool.name)).toEqual(["read"]);
+
+      const withWorkspace = applyPiToolPolicies(tools, { workspaceSlug: "demo" });
+      expect(withWorkspace.map((tool) => tool.name)).toEqual(["write"]);
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.LUME_CONFIG_DIR;

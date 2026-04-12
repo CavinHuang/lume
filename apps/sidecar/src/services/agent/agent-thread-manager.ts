@@ -22,7 +22,12 @@ import { join } from "node:path";
 import type { AgentMessage, AgentRecentMessagesResult, AgentThreadMeta, SDKMessage } from "@lume/shared";
 import {
   getAgentSessionDataDir,
+  getAgentThreadArtifactsPath,
+  getAgentThreadFilesPath,
   getAgentThreadMessagesPath,
+  getAgentThreadPlansPath,
+  getAgentThreadRootPath,
+  getAgentThreadSystemContextPath,
   getAgentWorkspacesDir,
   getAgentWorkspacePath,
   getAgentSessionWorkspacePath,
@@ -48,6 +53,21 @@ interface AgentThreadsIndex {
 }
 
 const INDEX_VERSION = 1;
+
+function buildModelRef(channelId?: string, modelId?: string): string | undefined {
+  const trimmedChannelId = channelId?.trim();
+  const trimmedModelId = modelId?.trim();
+  if (!trimmedModelId) {
+    return undefined;
+  }
+  if (trimmedModelId.includes("/")) {
+    return trimmedModelId;
+  }
+  if (!trimmedChannelId) {
+    return undefined;
+  }
+  return `${trimmedChannelId}/${trimmedModelId}`;
+}
 
 interface RuntimeCoreContextMessage {
   role: string;
@@ -129,12 +149,24 @@ export function createAgentThread(
   parentThreadId?: string,
   modelId?: string
 ): AgentThreadMeta {
+  return createAgentThreadWithModelRef(title, undefined, channelId, workspaceId, parentThreadId, modelId);
+}
+
+export function createAgentThreadWithModelRef(
+  title?: string,
+  modelRef?: string,
+  channelId?: string,
+  workspaceId?: string,
+  parentThreadId?: string,
+  modelId?: string
+): AgentThreadMeta {
   const index = readIndex();
   const now = Date.now();
 
   const meta: AgentThreadMeta = {
     id: randomUUID(),
     title: title || "新 Agent 线程",
+    modelRef: modelRef ?? buildModelRef(channelId, modelId),
     channelId,
     modelId,
     workspaceId,
@@ -151,7 +183,14 @@ export function createAgentThread(
     const workspace = getAgentWorkspace(workspaceId);
     if (workspace) {
       ensureWorkspaceAgentAssets(workspace.slug, workspace.name);
-      getAgentSessionWorkspacePath(workspace.slug, meta.id);
+      const threadRoot = getAgentThreadRootPath(workspace.slug, meta.id);
+      getAgentThreadFilesPath(workspace.slug, meta.id);
+      getAgentThreadPlansPath(workspace.slug, meta.id);
+      getAgentThreadArtifactsPath(workspace.slug, meta.id);
+      getAgentThreadSystemContextPath(workspace.slug, meta.id);
+      if (!existsSync(threadRoot)) {
+        mkdirSync(threadRoot, { recursive: true });
+      }
     }
   }
 
@@ -305,7 +344,7 @@ export function updateAgentThreadMeta(
   updates: Partial<
     Pick<
       AgentThreadMeta,
-      "title" | "channelId" | "modelId" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "pinned" | "parentThreadId"
+      "title" | "modelRef" | "channelId" | "modelId" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "pinned" | "parentThreadId"
     >
   >
 ): AgentThreadMeta {
@@ -319,6 +358,10 @@ export function updateAgentThreadMeta(
   const updated: AgentThreadMeta = {
     ...existing,
     ...updates,
+    modelRef: updates.modelRef ?? buildModelRef(
+      updates.channelId ?? existing.channelId,
+      updates.modelId ?? existing.modelId
+    ) ?? existing.modelRef,
     updatedAt: Date.now()
   };
 
@@ -356,10 +399,10 @@ function moveThreadDir(sourceDir: string, targetDir: string): void {
 
 function resolveExistingThreadDir(threadId: string, preferredWorkspaceSlug?: string): string | null {
   if (preferredWorkspaceSlug) {
-    const preferredPath = join(getAgentWorkspacePath(preferredWorkspaceSlug), threadId);
-    if (existsSync(preferredPath)) {
-      return preferredPath;
-    }
+    const preferredRootPath = getAgentThreadRootPath(preferredWorkspaceSlug, threadId);
+    if (existsSync(preferredRootPath)) return preferredRootPath;
+    const legacyPreferredPath = join(getAgentWorkspacePath(preferredWorkspaceSlug), threadId);
+    if (existsSync(legacyPreferredPath)) return legacyPreferredPath;
   }
   const workspacesDir = getAgentWorkspacesDir();
   if (!existsSync(workspacesDir)) {
@@ -368,10 +411,10 @@ function resolveExistingThreadDir(threadId: string, preferredWorkspaceSlug?: str
   const entries = readdirSync(workspacesDir, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const candidate = join(workspacesDir, entry.name, threadId);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
+    const candidate = join(workspacesDir, entry.name, "threads", threadId);
+    if (existsSync(candidate)) return candidate;
+    const legacyCandidate = join(workspacesDir, entry.name, threadId);
+    if (existsSync(legacyCandidate)) return legacyCandidate;
   }
   return null;
 }
@@ -391,7 +434,7 @@ export function moveAgentThreadToWorkspace(id: string, workspaceId: string): Age
     ? getAgentWorkspace(currentMeta.workspaceId)
     : undefined;
   const sourceDir = resolveExistingThreadDir(id, currentWorkspace?.slug);
-  const targetDir = join(getAgentWorkspacePath(targetWorkspace.slug), id);
+  const targetDir = getAgentThreadRootPath(targetWorkspace.slug, id);
 
   if (sourceDir && sourceDir !== targetDir) {
     moveThreadDir(sourceDir, targetDir);

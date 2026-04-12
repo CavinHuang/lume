@@ -10,10 +10,13 @@ import {
 import { agentChannelIdAtom, agentModelIdAtom } from "@/atoms";
 import {
   deleteChannel,
+  getEffectiveSystemConfig,
   listChannels,
+  updateSystemConfigSection,
   updateChannel
 } from "@/lib/desktop-api/system";
 import { getChannelLogo } from "@/lib/model-logo";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ChannelForm } from "./ChannelForm";
@@ -23,16 +26,32 @@ type ViewMode = "list" | "create" | "edit";
 
 export function ChannelSettings(): React.ReactElement {
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [embeddingModelRef, setEmbeddingModelRef] = useState<string>("");
+  const [embeddingSaving, setEmbeddingSaving] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
   const [loading, setLoading] = useState(true);
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom);
   const [, setAgentModelId] = useAtom(agentModelIdAtom);
-
+  const embeddingModels = channels
+    .filter((channel) => channel.enabled)
+    .flatMap((channel) =>
+      channel.models
+        .filter((model) => model.enabled && model.capabilities?.embedding)
+        .map((model) => ({
+          channel,
+          model,
+          modelRef: `${channel.provider}/${model.id}`
+        }))
+    );
   const loadChannels = async (): Promise<void> => {
     try {
-      const list = await listChannels();
+      const [list, systemConfig] = await Promise.all([
+        listChannels(),
+        getEffectiveSystemConfig()
+      ]);
       setChannels(list);
+      setEmbeddingModelRef(systemConfig.models?.embedding?.defaultModelRef ?? "");
     } catch (error) {
       console.error("[ChannelSettings] load failed", error);
     } finally {
@@ -76,6 +95,18 @@ export function ChannelSettings(): React.ReactElement {
     setAgentModelId(null);
   };
 
+  const handleEmbeddingModelSelect = async (modelRef: string): Promise<void> => {
+    setEmbeddingSaving(true);
+    try {
+      await updateSystemConfigSection("models.embedding.defaultModelRef", modelRef);
+      setEmbeddingModelRef(modelRef);
+    } catch (error) {
+      console.error("[ChannelSettings] update embedding model failed", error);
+    } finally {
+      setEmbeddingSaving(false);
+    }
+  };
+
   if (viewMode === "create" || viewMode === "edit") {
     return (
       <ChannelForm
@@ -105,6 +136,38 @@ export function ChannelSettings(): React.ReactElement {
           </Button>
         }
       >
+        <SettingsCard>
+          <div className="px-4 py-3">
+            <div className="text-sm font-medium text-foreground">默认 Embedding 模型</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              用于记忆向量化与后续非对话 embedding 能力，最终保存为 provider/model。
+            </div>
+            <div className="mt-3 space-y-2">
+              {embeddingModels.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border/60 px-3 py-3 text-xs text-muted-foreground">
+                  当前没有可用的 Embedding 模型。请在渠道模型中启用带有 Embedding 能力的模型。
+                </div>
+              ) : embeddingModels.map(({ channel, model, modelRef }) => (
+                <button
+                  key={modelRef}
+                  type="button"
+                  disabled={embeddingSaving}
+                  onClick={() => { void handleEmbeddingModelSelect(modelRef); }}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                    embeddingModelRef === modelRef
+                      ? "border-primary bg-primary/5 text-foreground"
+                      : "border-border/60 hover:bg-muted/40"
+                  )}
+                >
+                  <span>{channel.name} · {model.name}</span>
+                  <span className="text-xs text-muted-foreground">{modelRef}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </SettingsCard>
+
         {loading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
         ) : channels.length === 0 ? (

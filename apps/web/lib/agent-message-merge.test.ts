@@ -228,4 +228,24 @@ describe("agent-message-merge", () => {
 
     expect(merged[0]).not.toBe(prevMessage);
   });
+
+  test("mergeServerMessagesWithPending 应保留本地固化的失败 assistant 消息", () => {
+    const prev: AgentMessage[] = [
+      {
+        id: "assistant-error-local",
+        role: "assistant",
+        content: "已经生成的一部分内容",
+        createdAt: 10,
+        metadata: {
+          streamErrorPreserved: true
+        }
+      }
+    ];
+
+    const merged = mergeServerMessagesWithPending(prev, []);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe("assistant-error-local");
+    expect((merged[0]?.metadata as Record<string, unknown> | undefined)?.streamErrorPreserved).toBe(true);
+  });
 });

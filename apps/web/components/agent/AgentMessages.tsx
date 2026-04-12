@@ -2,7 +2,7 @@ import * as React from "react";
 import { useSmoothStream } from "@lume/ui";
 import type { AgentMessage } from "@lume/shared";
 import { useAtom, useAtomValue } from "jotai";
-import { Bot, CalendarClock, ChevronLeft, ChevronRight, FileImage, FileText, Home, Loader2, Pencil, RotateCcw, Trash2, Wrench } from "lucide-react";
+import { Bot, CalendarClock, ChevronLeft, ChevronRight, FileImage, FileText, Loader2, Pencil, RotateCcw, Trash2, Wrench } from "lucide-react";
 import {
   agentIsCompactingAtom,
   agentMessageVersionsByGroupAtom,
@@ -59,6 +59,9 @@ import { ToolActivityTree } from "./ToolActivityItem";
 import { getAssistantContentBlocks, SDKContentBlockRenderer } from "./SDKContentBlock";
 import { ToolCard } from "./tool-activity/ToolCard";
 import type { SDKMessage } from "@lume/shared";
+import { TaskProgressCard } from "./TaskProgressCard";
+import type { PromotionCandidate } from "./FilePromotionCard";
+import { FilePromotionCard } from "./FilePromotionCard";
 
 
 // ─── StreamingOrderedBlocks ───
@@ -145,6 +148,10 @@ interface AgentMessagesProps {
   isStreaming?: boolean;
   isSwitching?: boolean;
   inlineEditingMessageId?: string | null;
+  promotionFiles?: PromotionCandidate[];
+  onPromoteFile?: (file: PromotionCandidate) => void;
+  onPromoteAllFiles?: () => void;
+  onDismissPromotion?: () => void;
   onDeleteMessage?: (message: AgentMessage) => Promise<void>;
   onResendMessage?: (message: AgentMessage) => Promise<void>;
   onSaveAsTask?: (message: AgentMessage) => void;
@@ -250,95 +257,6 @@ function VersionNavigator({
       >
         {loading ? <Loader2 className="size-3.5 animate-spin" /> : <ChevronRight className="size-3.5" />}
       </button>
-    </div>
-  );
-}
-
-function SubagentAnnounceMessage({
-  message,
-  onOpenSession
-}: {
-  message: AgentMessage;
-  onOpenSession?: (sessionId: string) => void;
-}): React.ReactElement {
-  const { label, status, outputText, errorText } = React.useMemo(
-    () => parseAnnounceContent(message.content),
-    [message.content]
-  );
-  const [expanded, setExpanded] = React.useState(false);
-  const metadata = message.metadata as Record<string, unknown>;
-  const childSessionId = typeof metadata?.childSessionId === "string" ? metadata.childSessionId : undefined;
-  const isCompleted = status === "completed";
-  const isFailed = status === "failed" || status === "stopped";
-
-  // 尝试从 metadata 获取工具计数
-  const toolUses = typeof metadata?.toolUses === "number" ? metadata.toolUses : undefined;
-
-  const finalToolUses = toolUses;
-  const taskId = childSessionId?.slice(0, 8) ?? "unknown";
-
-  return (
-    <div className="rounded-lg border border-border/60 bg-muted/20 overflow-hidden">
-      {/* 折叠行 */}
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30"
-      >
-        <Home className="size-3 shrink-0 text-muted-foreground/50" />
-        <span className="text-xs font-medium text-foreground/70">TaskOutput {taskId}</span>
-        <span
-          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-            isCompleted
-              ? "bg-green-500/10 text-green-600"
-              : "bg-destructive/10 text-destructive"
-          }`}
-        >
-          {isCompleted ? "Completed" : "Failed"}
-        </span>
-        {finalToolUses !== undefined ? (
-          <span className="flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            <Wrench className="size-2.5" />
-            {finalToolUses} tools
-          </span>
-        ) : null}
-        <div className="flex-1" />
-        <ChevronRight className={`size-3 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-90" : ""}`} />
-      </button>
-
-      {/* 展开详情 */}
-      {expanded ? (
-        <div className="border-t border-border/40 px-3 py-2.5 space-y-2">
-          <div className="flex items-center gap-2">
-            <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="text-xs font-medium flex-1 truncate">{label}</span>
-          </div>
-
-          {outputText ? (
-            <div className="rounded-md bg-muted/30 px-2.5 py-2">
-              <div className="text-[11px] leading-relaxed text-foreground/80">
-                <MessageResponse>{outputText}</MessageResponse>
-              </div>
-            </div>
-          ) : null}
-
-          {errorText ? (
-            <div className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
-              <span className="font-medium">错误: </span>{errorText}
-            </div>
-          ) : null}
-
-          {childSessionId && onOpenSession ? (
-            <button
-              type="button"
-              onClick={() => onOpenSession(childSessionId)}
-              className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-            >
-              查看子任务对话 →
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -547,6 +465,19 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     },
     [displayedMessage]
   );
+  const announceItem = React.useMemo(() => {
+    const metadata = displayedMessage.metadata as Record<string, unknown> | undefined;
+    if (metadata?.subagentAnnounce !== true) return null;
+    const announce = parseAnnounceContent(displayedMessage.content);
+    return {
+      id: displayedMessage.id,
+      label: announce.label,
+      status: announce.status === "completed" ? "completed" as const : "failed" as const,
+      outputText: announce.outputText,
+      errorText: announce.errorText,
+      childSessionId: typeof metadata?.childSessionId === "string" ? metadata.childSessionId : undefined
+    };
+  }, [displayedMessage.content, displayedMessage.id, displayedMessage.metadata]);
 
   const { attachedFiles, messageText } = React.useMemo(() => {
     if (displayedMessage.role !== "user") return { attachedFiles: [] as AttachedFileRef[], messageText: "" };
@@ -681,10 +612,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   }
 
   if (displayedMessage.role === "assistant") {
-    if ((displayedMessage.metadata as Record<string, unknown>)?.subagentAnnounce === true) {
-      return <SubagentAnnounceMessage message={displayedMessage} onOpenSession={onOpenSession} />;
-    }
-
     const assistantMessage = buildAssistantDisplayMessage({
       id: displayedMessage.id,
       content: displayedMessage.content,
@@ -704,6 +631,14 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
         />
 
         <MessageContent>
+          {announceItem ? (
+            <TaskProgressCard
+              activities={[]}
+              announcementItems={[announceItem]}
+              streamEnded
+              onOpenSession={onOpenSession}
+            />
+          ) : null}
           {isStreamingMessage && streamingContentBlocks && streamingContentBlocks.length > 0 ? (
             <StreamingOrderedBlocks
               contentBlocks={streamingContentBlocks}
@@ -713,6 +648,9 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             />
           ) : isStreamingMessage ? (
             <>
+              {streamingToolActivities && streamingToolActivities.length > 0 ? (
+                <TaskProgressCard activities={streamingToolActivities} animate streamEnded={false} />
+              ) : null}
               {assistantMessage.reasoning ? (
                 <Reasoning
                   isStreaming={!(assistantMessage.content ?? "").trim()}
@@ -730,9 +668,17 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
               ) : null}
             </>
           ) : displayedMessage.sdkMessages && displayedMessage.sdkMessages.length > 0 ? (
-            <PersistedOrderedBlocks sdkMessages={displayedMessage.sdkMessages} />
+            <>
+              {messageToolActivities.length > 0 ? (
+                <TaskProgressCard activities={messageToolActivities} streamEnded />
+              ) : null}
+              <PersistedOrderedBlocks sdkMessages={displayedMessage.sdkMessages} />
+            </>
           ) : (
             <>
+              {messageToolActivities.length > 0 ? (
+                <TaskProgressCard activities={messageToolActivities} streamEnded />
+              ) : null}
               {assistantMessage.reasoning ? (
                 <Reasoning
                   defaultOpen={Boolean((assistantMessage.metadata as Record<string, unknown>)?.reasoningExpanded)}
@@ -800,6 +746,10 @@ export function AgentMessages({
   isStreaming = false,
   isSwitching = false,
   inlineEditingMessageId = null,
+  promotionFiles = [],
+  onPromoteFile,
+  onPromoteAllFiles,
+  onDismissPromotion,
   onDeleteMessage,
   onResendMessage,
   onSaveAsTask,
@@ -1110,6 +1060,14 @@ export function AgentMessages({
                 </div>
               );
             })}
+            {promotionFiles.length > 0 && onPromoteFile && onPromoteAllFiles && onDismissPromotion ? (
+              <FilePromotionCard
+                files={promotionFiles}
+                onPromote={onPromoteFile}
+                onPromoteAll={onPromoteAllFiles}
+                onDismiss={onDismissPromotion}
+              />
+            ) : null}
             {/* 过渡锚点：流式结束瞬间，通过 min-height 补偿流式消息块被移除导致的高度缩减，
                 防止 StickToBottom 的 ResizeObserver 检测到负向 resize 而引起滚动跳变 */}
             <div ref={transitionAnchorRef} aria-hidden />

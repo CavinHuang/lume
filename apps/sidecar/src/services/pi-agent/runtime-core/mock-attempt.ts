@@ -85,7 +85,8 @@ export async function runRuntimeCoreMockSuccessAttempt(
     agentDir: prepared.agentDir,
     userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
+    modelRef: runtime.modelRef,
+    resolvedModelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
     apiKey: prepared.apiKey,
     workspaceId: runtime.workspaceId,
@@ -230,17 +231,18 @@ export async function maybeEmitMockSubagentAnnounce(threadId: string): Promise<v
   const runId = `mock-subagent-run:${threadId}`;
   const registry = getSubagentRunRegistry();
   if (!registry.get(runId)) {
-    registry.create({
-      runId,
-      parentThreadId: threadId,
-      rootThreadId: threadId,
-      childThreadId: `mock-child-session:${threadId}`,
-      label: "Mock Subagent",
-      task: "mock subagent completion",
-      cleanup: "keep",
-      status: "completed",
-      announceStatus: "pending"
-    });
+      registry.create({
+        runId,
+        parentThreadId: threadId,
+        rootThreadId: threadId,
+        childThreadId: `mock-child-session:${threadId}`,
+        label: "Mock Subagent",
+        task: "mock subagent completion",
+        cleanup: "keep",
+        status: "completed",
+        modelRef: "mock/mock-subagent",
+        announceStatus: "pending"
+      });
   }
 
   const result = await announceSubagentCompletion({
@@ -249,13 +251,14 @@ export async function maybeEmitMockSubagentAnnounce(threadId: string): Promise<v
       parentThreadId: threadId,
       rootThreadId: threadId,
       depth: 1,
-      childThreadId: `mock-child-session:${threadId}`,
-      label: "Mock Subagent",
-      task: "mock subagent completion",
-      status: "completed",
-      cleanup: "keep",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+        childThreadId: `mock-child-session:${threadId}`,
+        label: "Mock Subagent",
+        task: "mock subagent completion",
+        status: "completed",
+        cleanup: "keep",
+        modelRef: "mock/mock-subagent",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
       startedAt: Date.now() - 10,
       endedAt: Date.now(),
       outcome: {
@@ -286,7 +289,8 @@ export async function runRuntimeCoreMockCompactionAttempt(
     agentDir: prepared.agentDir,
     userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
+    modelRef: runtime.modelRef,
+    resolvedModelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
     apiKey: prepared.apiKey,
     workspaceId: runtime.workspaceId,
@@ -345,7 +349,8 @@ export async function runRuntimeCoreMockDelayedAttempt(
     cwd: prepared.agentCwd,
     agentDir: prepared.agentDir,
     provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
+    modelRef: runtime.modelRef,
+    resolvedModelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
     apiKey: prepared.apiKey,
     workspaceId: runtime.workspaceId,
@@ -495,8 +500,5 @@ export function logMockSessionPersistence(kind: string, threadId: string, sessio
     sessionFile: sessionManager.getSessionFile()
   });
 }
-
-
-
 
 

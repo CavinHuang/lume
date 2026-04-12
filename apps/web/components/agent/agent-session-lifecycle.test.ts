@@ -98,4 +98,60 @@ describe("agent-session-lifecycle", () => {
       modelId: "a-default"
     });
   });
+
+  test("resolvePreferredAgentSelection 在线程未绑定时应优先使用系统默认 model ref", () => {
+    const channels: Channel[] = [
+      {
+        id: "channel-a",
+        name: "A",
+        provider: "openai",
+        enabled: true,
+        models: [
+          { id: "gpt-4.1", name: "GPT-4.1", enabled: true, capabilities: { chat: true } }
+        ],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ] as Channel[];
+
+    expect(resolvePreferredAgentSelection({
+      channels,
+      thread: null,
+      currentChannelId: null,
+      currentModelId: null,
+      defaultModelRef: "openai/gpt-4.1"
+    })).toEqual({
+      channelId: "channel-a",
+      modelId: "gpt-4.1"
+    });
+  });
+
+  test("resolvePreferredAgentSelection 应优先使用线程上的 modelRef", () => {
+    const channels: Channel[] = [
+      {
+        id: "channel-a",
+        name: "A",
+        provider: "openai",
+        enabled: true,
+        models: [
+          { id: "gpt-4.1", name: "GPT-4.1", enabled: true, capabilities: { chat: true } }
+        ],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ] as Channel[];
+
+    expect(resolvePreferredAgentSelection({
+      channels,
+      thread: {
+        modelRef: "openai/gpt-4.1",
+      },
+      currentChannelId: null,
+      currentModelId: null,
+      defaultModelRef: "openai/other-model"
+    })).toEqual({
+      channelId: "channel-a",
+      modelId: "gpt-4.1"
+    });
+  });
 });

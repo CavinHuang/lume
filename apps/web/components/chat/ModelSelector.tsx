@@ -88,7 +88,7 @@ export function ModelSelector({
     setInternalSelectedModel({ channelId: option.channelId, modelId: option.modelId });
     setOpen(false);
     if (currentConversationId) {
-      void updateConversationModel(currentConversationId, option.modelId, option.channelId).then((updated) => {
+      void updateConversationModel(currentConversationId, option.modelId, option.channelId, option.modelRef).then((updated) => {
         setConversations((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       });
     }

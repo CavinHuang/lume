@@ -36,10 +36,12 @@ describe("automation-manager", () => {
     const created = createAutomationJob({
       name: "每日日报准备",
       schedule: { type: "cron", cronExpr: "30 8 * * 1-5", timezone: "Asia/Shanghai" },
-      prompt: "汇总昨日进展并生成日报草稿"
+      prompt: "汇总昨日进展并生成日报草稿",
+      systemAction: "memory_distill_workspace"
     });
     expect(created.id.length).toBeGreaterThan(0);
     expect(created.enabled).toBeTrue();
+    expect(created.systemAction).toBe("memory_distill_workspace");
 
     const listed = listAutomationJobs();
     expect(listed.length).toBe(1);
@@ -48,10 +50,12 @@ describe("automation-manager", () => {
     const updated = updateAutomationJob({
       id: created.id,
       enabled: false,
-      prompt: "汇总昨日进展并生成日报"
+      prompt: "汇总昨日进展并生成日报",
+      systemAction: "memory_distill_workspace"
     });
     expect(updated.enabled).toBeFalse();
     expect(updated.prompt).toBe("汇总昨日进展并生成日报");
+    expect(updated.systemAction).toBe("memory_distill_workspace");
 
     const deleted = deleteAutomationJob({ id: created.id });
     expect(deleted.ok).toBeTrue();

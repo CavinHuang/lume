@@ -9,6 +9,7 @@ import doubaoIcon from "@lobehub/icons-static-png/light/doubao-color.png";
 import geminiIcon from "@lobehub/icons-static-png/light/gemini-color.png";
 import grokIcon from "@lobehub/icons-static-png/light/grok.png";
 import hunyuanIcon from "@lobehub/icons-static-png/light/hunyuan-color.png";
+import jinaIcon from "@lobehub/icons-static-png/light/jina.png";
 import minimaxIcon from "@lobehub/icons-static-png/light/minimax-color.png";
 import moonshotIcon from "@lobehub/icons-static-png/light/moonshot.png";
 import openaiIcon from "@lobehub/icons-static-png/light/openai.png";
@@ -33,6 +34,7 @@ const MODEL_LOGO_MAP: Array<[RegExp, string]> = [
   [/yi-/i, yiIcon],
   [/ernie-|tao-/i, wenxinIcon],
   [/hunyuan/i, hunyuanIcon],
+  [/jina/i, jinaIcon],
   [/sparkdesk|generalv/i, sparkIcon],
   [/minimax/i, minimaxIcon],
   [/cohere|command/i, cohereIcon]
@@ -41,6 +43,7 @@ const MODEL_LOGO_MAP: Array<[RegExp, string]> = [
 const PROVIDER_LOGO_MAP: Record<ProviderType, string> = {
   anthropic: anthropicIcon,
   openai: openaiIcon,
+  jina: jinaIcon,
   openrouter: openaiIcon,
   deepseek: deepseekIcon,
   google: geminiIcon,
@@ -66,6 +69,7 @@ const URL_LOGO_MAP: Array<[RegExp, string]> = [
   [/deepseek/i, deepseekIcon],
   [/anthropic/i, anthropicIcon],
   [/openai\.com/i, openaiIcon],
+  [/api\.jina\.ai|jina\.ai/i, jinaIcon],
   [/googleapis|generativelanguage/i, geminiIcon],
   [/grok|x\.ai/i, grokIcon],
   [/spark-api|xfyun/i, sparkIcon],

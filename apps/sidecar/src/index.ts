@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory/memory-sync-watcher";
 import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat/chat-tools-watcher";
+import { syncSharedSearchToolCredentials } from "./services/chat/chat-tool-manager";
 import { seedDefaultSkills } from "./services/system/default-skills-seeder";
 import { initProxySettings } from "./services/system/proxy-settings-manager";
 import {
@@ -92,6 +93,10 @@ async function handleRpcLine(line: string): Promise<void> {
 
 function boot(): void {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
+  void initProxySettings().catch((error) => {
+    console.error(`[代理配置] 初始化失败: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  syncSharedSearchToolCredentials();
   if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
     void startAutomationRunner().catch((error) => {
       console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);

@@ -15,10 +15,12 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  getSuggestedProviderModels,
   PROVIDER_API_FAMILIES,
   PROVIDER_API_FAMILY_LABELS,
   PROVIDER_DEFAULT_URLS,
   PROVIDER_LABELS,
+  normalizeChannelModel,
   type Channel,
   type ChannelCreateInput,
   type ChannelModel,
@@ -50,6 +52,7 @@ type ChannelFormProps = {
 const PROVIDER_OPTIONS: ProviderType[] = [
   "anthropic",
   "openai",
+  "jina",
   "openrouter",
   "deepseek",
   "google",
@@ -73,6 +76,9 @@ const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((provider) => ({
 
 function buildPreviewUrl(baseUrl: string, provider: ProviderType): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (provider === "jina") {
+    return `${trimmed}/embeddings`;
+  }
   const family = PROVIDER_API_FAMILIES[provider];
   if (family === "anthropic") {
     if (trimmed.match(/\/v\d+$/)) {
@@ -133,12 +139,13 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
 
   const handleAddModel = (): void => {
     if (!newModelId.trim()) return;
-    const model: ChannelModel = {
+    const model: ChannelModel = normalizeChannelModel({
       id: newModelId.trim(),
       name: newModelName.trim() || newModelId.trim(),
       alias: newModelAlias.trim() || undefined,
-      enabled: true
-    };
+      enabled: true,
+      provider
+    });
     setModels((prev) => [...prev, model]);
     if (!defaultModelId) {
       setDefaultModelId(model.id);
@@ -191,10 +198,26 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
           setModels((prev) => [...prev, ...newModels]);
         }
       }
-    } catch {
-      setFetchResult({ success: false, message: "拉取模型请求失败", models: [] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setFetchResult({ success: false, message: `拉取模型请求失败: ${message}`, models: [] });
     } finally {
       setFetchingModels(false);
+    }
+  };
+
+  const handleApplySuggestedModels = (): void => {
+    const suggested = getSuggestedProviderModels(provider);
+    if (suggested.length === 0) return;
+    const existingIds = new Set(models.map((model) => model.id));
+    const merged = [
+      ...models,
+      ...suggested.filter((model) => !existingIds.has(model.id))
+    ];
+    setModels(merged);
+    if (!defaultModelId) {
+      const firstEnabled = merged.find((model) => model.enabled);
+      setDefaultModelId(firstEnabled?.id ?? null);
     }
   };
 
@@ -205,8 +228,9 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
     try {
       const result = await testChannelDirect({ provider, baseUrl, apiKey });
       setTestResult(result);
-    } catch {
-      setTestResult({ success: false, message: "测试请求失败" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTestResult({ success: false, message: `测试请求失败: ${message}` });
     } finally {
       setTesting(false);
     }
@@ -354,19 +378,37 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
         title="Model Policy"
         description="维护模型目录、别名、默认模型与回退链路。"
         action={
-          <Button
-            variant="outline"
-            size="sm"
-            type="button"
-            onClick={() => { void handleFetchModels(); }}
-            disabled={fetchingModels || !apiKey.trim() || !baseUrl.trim()}
-            className="h-7 text-xs"
-          >
-            {fetchingModels ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-            <span>从供应商获取</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            {getSuggestedProviderModels(provider).length > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={handleApplySuggestedModels}
+                className="h-7 text-xs"
+              >
+                <span>填入推荐模型</span>
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={() => { void handleFetchModels(); }}
+              disabled={fetchingModels || !apiKey.trim() || !baseUrl.trim()}
+              className="h-7 text-xs"
+            >
+              {fetchingModels ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+              <span>从供应商获取</span>
+            </Button>
+          </div>
         }
       >
+        {provider === "jina" ? (
+          <div className="px-1 text-xs text-muted-foreground">
+            Jina 是 embedding 优先渠道。若供应商未返回模型列表，可先使用“填入推荐模型”快速开始。
+          </div>
+        ) : null}
         {fetchResult ? (
           <div
             className={cn(
@@ -393,6 +435,16 @@ export function ChannelForm({ channel, onSaved, onCancel }: ChannelFormProps): R
                   {model.name}
                   {model.name !== model.id ? <span className="ml-1 text-muted-foreground">({model.id})</span> : null}
                   {model.alias ? <span className="ml-1 text-muted-foreground">#{model.alias}</span> : null}
+                  {model.capabilities?.chat ? (
+                    <span className="ml-2 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      Chat
+                    </span>
+                  ) : null}
+                  {model.capabilities?.embedding ? (
+                    <span className="ml-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                      Embedding
+                    </span>
+                  ) : null}
                 </span>
                 <label className="flex items-center gap-1 text-xs text-muted-foreground">
                   <input

@@ -38,12 +38,14 @@ describe("subagent-run-registry", () => {
       cleanup: "keep",
       requestedAgentId: "agent-alpha",
       resolvedAgentId: "agent-alpha",
+      modelRef: "openai/gpt-5.4",
       channelId: "channel-a",
       modelId: "model-a"
     });
 
     expect(created.runId).toBe(runId);
     expect(created.status).toBe("accepted");
+    expect(created.modelRef).toBe("openai/gpt-5.4");
     expect(created.startedAt).toBeUndefined();
     expect(created.endedAt).toBeUndefined();
 

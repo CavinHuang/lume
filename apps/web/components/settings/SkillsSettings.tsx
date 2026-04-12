@@ -4,7 +4,6 @@ import { FolderOpen, MessageSquare, Sparkles, Trash2 } from "lucide-react";
 import type { SkillMeta } from "@lume/shared";
 import {
   activeViewAtom,
-  agentChannelIdAtom,
   agentPendingPromptAtom,
   agentThreadsAtom,
   agentWorkspacesAtom,
@@ -20,12 +19,13 @@ import {
   listAgentThreads,
   listAgentWorkspaceSkills
 } from "@/lib/desktop-api/agent";
+import { getEffectiveSystemConfig, listChannels } from "@/lib/desktop-api/system";
+import { resolveChannelModelSelectionFromRef } from "@/lib/system-model-selection";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
 
 export function SkillsSettings(): React.ReactElement {
   const workspaces = useAtomValue(agentWorkspacesAtom);
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom);
-  const agentChannelId = useAtomValue(agentChannelIdAtom);
   const workspace = useMemo(
     () => workspaces.find((item) => item.id === currentWorkspaceId) ?? null,
     [workspaces, currentWorkspaceId]
@@ -71,11 +71,7 @@ export function SkillsSettings(): React.ReactElement {
   };
 
   const handleConfigViaChat = async (): Promise<void> => {
-    if (!agentChannelId) {
-      window.alert("请先在渠道设置中选择 Agent 供应商");
-      return;
-    }
-
+    const configPath = "~/.lume/lume.yaml";
     const skillsDir = `~/.lume/agent-workspaces/${workspaceSlug}/skills/`;
     const skillList = skills.length > 0
       ? skills.map((item) => `- ${item.name}: ${item.description ?? "无描述"}`).join("\n")
@@ -85,6 +81,8 @@ export function SkillsSettings(): React.ReactElement {
 
 ## 工作区信息
 - 工作区: ${workspace?.name}
+- 系统配置入口: ${configPath}
+- Skills 开关节点: workspaces.${workspaceSlug}.skills
 - Skills 目录: ${skillsDir}
 
 ## Skill 格式
@@ -103,11 +101,23 @@ Skill 的详细指令内容...
 ## 当前 Skills
 ${skillList}
 
-请查看 skills/ 目录了解现有配置，根据我的需求创建或编辑 Skill。`;
+请先查看 skills/ 目录了解现有 Skill 文件，再按我的需求修改 ${configPath} 中当前工作区的 skills.enabled / skills.disabled，并在需要时创建或编辑 Skill 文件。`;
 
     try {
+      const resolvedModel = await Promise.all([
+        listChannels(),
+        getEffectiveSystemConfig()
+      ]).then(([channels, systemConfig]) =>
+        resolveChannelModelSelectionFromRef(channels, systemConfig.models?.agent?.defaultModelRef, "chat")
+      );
+      if (!resolvedModel) {
+        window.alert("未找到可用的 Agent 默认模型");
+        return;
+      }
       const thread = await createAgentThread({
-        channelId: agentChannelId ?? undefined,
+        modelRef: resolvedModel.modelRef,
+        channelId: resolvedModel.channelId,
+        modelId: resolvedModel.modelId,
         workspaceId: currentWorkspaceId ?? undefined
       });
       const sessions = await listAgentThreads();
@@ -132,7 +142,10 @@ ${skillList}
 
   return (
     <div className="space-y-8">
-      <SettingsSection title="Skills" description={`工作区: ${workspace.name} · 将 SKILL.md 放入 skills/ 目录即可被 Agent 自动发现`}>
+      <SettingsSection
+        title="Skills"
+        description={`工作区: ${workspace.name} · Skill 文件仍放在 skills/ 目录；启用/禁用以 ~/.lume/lume.yaml 为准`}
+      >
         {loading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
         ) : skills.length === 0 ? (

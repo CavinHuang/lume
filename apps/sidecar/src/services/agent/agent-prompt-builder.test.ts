@@ -119,6 +119,8 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("不要落回客服腔或空洞开场");
     expect(prompt).toContain("直接从请求开始");
     expect(prompt).toContain("不要做 yes-machine");
+    expect(prompt).toContain("## 系统配置");
+    expect(prompt).toContain("~/.lume/lume.yaml");
   });
 
   test("minimal 模式仍应保留新的 counterpart 身份主句", () => {
@@ -171,7 +173,8 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("1. AGENTS.md");
     expect(prompt).toContain("2. SOUL.md");
     expect(prompt).toContain("6. memory/YYYY-MM-DD.md (today + yesterday)");
-    expect(prompt).toContain("7. MEMORY.md (or memory.md fallback, main/direct thread only)");
+    expect(prompt).toContain("7. MEMORY.md (workspace long-term memory, main/direct thread only)");
+    expect(prompt).toContain("8. ~/.lume/MEMORY.md (global long-term memory, main/direct thread only)");
     expect(prompt).toContain("工作区根目录下的 .context/ 目录");
     expect(prompt).not.toContain("workspace-files/.context/");
     expect(prompt).toContain("## Workspace Files (injected)");
@@ -208,11 +211,23 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Tooling");
     expect(prompt).toContain("- memory_search");
     expect(prompt).toContain("## Workspace");
+    expect(prompt).toContain("System config entry: ~/.lume/lume.yaml");
     expect(prompt).toContain("## Runtime");
     expect(prompt).not.toContain("## Agentic Execution");
     expect(prompt).not.toContain("## Delegation Policy");
     expect(prompt).not.toContain("## Thread Bootstrap (Mandatory)");
     expect(prompt).not.toContain("## Memory Recall");
+  });
+
+  test("buildSystemPromptAppend 在 workspace 上下文中应声明 runtime 暴露的配置目录", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "thread-xyz",
+      workspaceName: "Demo",
+      workspaceSlug: "demo",
+      availableTools: ["read", "write"]
+    });
+    expect(prompt).toContain("- 系统配置入口: ~/.lume/lume.yaml");
+    expect(prompt).toContain("Runtime 暴露配置目录: ~/.lume/agent-workspaces/demo/threads/thread-xyz/.lume-config/");
   });
 
   test("Tooling 段应按预设顺序输出并保留首次出现大小写", () => {
@@ -246,22 +261,6 @@ describe("agent-prompt-builder", () => {
     expect(shouldLoadLongTermMemory("direct")).toBeTrue();
     expect(shouldLoadLongTermMemory("group")).toBeFalse();
     expect(shouldLoadLongTermMemory("channel")).toBeFalse();
-  });
-
-  test("仅存在 memory.md 时，Project Context 应显示 memory.md", () => {
-    const workspaceSlug = `prompt-memory-alt-${Date.now()}`;
-    const workspacePath = getAgentWorkspacePath(workspaceSlug);
-    writeFileSync(join(workspacePath, "memory.md"), "# alt\nhello", "utf-8");
-
-    const prompt = buildSystemPromptAppend({
-      sessionId: "session-memory-alt",
-      workspaceSlug,
-      chatType: "direct",
-      availableTools: ["memory_search"]
-    });
-
-    expect(prompt).toContain("## memory.md");
-    expect(prompt).not.toContain("## MEMORY.md");
   });
 
   test("buildDynamicContext 应把已加载 skills 组织成可路由的 capability 提示", () => {

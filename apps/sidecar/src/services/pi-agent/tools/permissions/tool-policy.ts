@@ -6,6 +6,7 @@ import {
   type CompiledPattern
 } from "../../../infra/pattern-utils";
 import { getAgentRuntimeConfigPath } from "../../../infra/config-paths";
+import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
 import { applyMemoryToolPolicy } from "../../../memory/memory-policy";
 import type { MemoryToolPolicy } from "../../../memory/memory-policy";
 import {
@@ -69,6 +70,7 @@ export type ToolPolicy = AgentToolPolicy;
 
 export interface ResolveEffectiveToolPolicyInput {
   provider?: ProviderType | string;
+  workspaceSlug?: string;
   threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
@@ -247,6 +249,30 @@ function resolveMetadataPolicy(metadata?: Record<string, unknown>): ToolPolicy |
   return parsePolicyObject(metadata.toolPolicy);
 }
 
+function resolveWorkspaceSlug(input: ResolveEffectiveToolPolicyInput): string | undefined {
+  if (typeof input.workspaceSlug === "string" && input.workspaceSlug.trim().length > 0) {
+    return input.workspaceSlug;
+  }
+  const metadataWorkspaceSlug = input.messageMetadata?.workspaceSlug;
+  if (typeof metadataWorkspaceSlug === "string" && metadataWorkspaceSlug.trim().length > 0) {
+    return metadataWorkspaceSlug;
+  }
+  return undefined;
+}
+
+function resolveLumeToolPolicy(workspaceSlug?: string): ToolPolicy | undefined {
+  try {
+    const effectiveConfig = getEffectiveLumeConfig(workspaceSlug);
+    return parsePolicyObject(effectiveConfig.permissions?.toolPolicy);
+  } catch (error) {
+    log.warn("读取 lume.yaml toolPolicy 失败，回退 runtime policy", {
+      workspaceSlug,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return undefined;
+  }
+}
+
 function resolveProviderPolicy(
   byProvider: Record<string, ToolPolicy> | undefined,
   provider?: ProviderType | string
@@ -270,11 +296,13 @@ function resolveProviderPolicy(
 export function resolveEffectiveToolPolicies(input: ResolveEffectiveToolPolicyInput): ToolPolicy[] {
   const config = readRuntimeToolPolicyConfig();
   const cfgTools = config.tools ?? {};
+  const workspaceSlug = resolveWorkspaceSlug(input);
+  const lumeToolPolicy = resolveLumeToolPolicy(workspaceSlug);
 
   const policies: ToolPolicy[] = [];
   const globalPolicy = normalizePolicy({
-    allow: cfgTools.allow,
-    deny: cfgTools.deny
+    allow: lumeToolPolicy?.allow ?? cfgTools.allow,
+    deny: lumeToolPolicy?.deny ?? cfgTools.deny
   });
   if (globalPolicy) {
     policies.push(globalPolicy);

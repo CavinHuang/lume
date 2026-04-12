@@ -96,24 +96,25 @@ export function AgentHeader({ onToggleFileBrowser, fileBrowserOpen, onOpenSessio
           </button>
         )}
 
-        {onToggleFileBrowser ? (
+        {onToggleFileBrowser && !fileBrowserOpen ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className={cn("h-8 w-8 shrink-0", fileBrowserOpen && "bg-accent text-accent-foreground")}
+                className={cn("h-8 w-8 shrink-0")}
                 onClick={onToggleFileBrowser}
               >
                 <FolderOpen className="size-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              <p>{fileBrowserOpen ? "关闭文件浏览器" : "打开文件浏览器"}</p>
+              <p>打开文件面板</p>
             </TooltipContent>
           </Tooltip>
         ) : null}
+
       </div>
 
       {routeHint ? (

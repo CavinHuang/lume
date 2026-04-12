@@ -986,6 +986,10 @@ export interface AgentOptions {
   appendSystemPrompt?: string
   /** Available tools (ToolDefinition[] or string[] preset) */
   tools?: ToolDefinition[] | string[] | { type: 'preset'; preset: 'default' }
+  /** Explicit skill definitions provided by the host runtime */
+  skills?: import('./skills/types.js').SkillDefinition[]
+  /** Explicit filesystem roots to scan for skills */
+  skillsDirectories?: string[]
   /** Maximum number of agentic turns per query */
   maxTurns?: number
   /** Maximum USD budget per query */

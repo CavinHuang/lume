@@ -11,7 +11,7 @@ import type {
 } from "@lume/shared";
 import type { PlanState } from "@/atoms/plan-atoms";
 import type { AgentStreamState } from "@/atoms/agent-atoms";
-import { enrichAssistantMessages } from "@/lib/agent-display-message";
+import { buildAssistantDisplayMessage, enrichAssistantMessages } from "@/lib/agent-display-message";
 import { applySdkMessage } from "@/lib/agent-streaming";
 import {
   generateAgentThreadTitle,
@@ -146,8 +146,10 @@ export function useAgentStreamSubscriptions({
     const removeState = (targetSessionId: string): void => {
       lastAgentEventAtRef.current.delete(targetSessionId);
       setStreamingStates((prev) => {
+        const current = prev.get(targetSessionId);
+        if (!current) return prev;
         const map = new Map(prev);
-        map.delete(targetSessionId);
+        map.set(targetSessionId, { ...current, running: false });
         return map;
       });
       setLiveSdkMessagesMap((prev) => {
@@ -156,6 +158,46 @@ export function useAgentStreamSubscriptions({
         map.delete(targetSessionId);
         return map;
       });
+    };
+
+    const materializeStreamingAssistant = (
+      targetThreadId: string,
+      nextMessages: AgentMessage[],
+      sdkMessages: import("@lume/shared").SDKMessage[]
+    ): AgentMessage[] => {
+      const streamState = streamingStatesRef.current.get(targetThreadId);
+      if (!streamState) {
+        return nextMessages;
+      }
+      const hasVisibleContent = Boolean(
+        (streamState.content ?? "").trim()
+        || (streamState.reasoning ?? "").trim()
+        || (streamState.toolActivities ?? []).length > 0
+      );
+      if (!hasVisibleContent) {
+        return nextMessages;
+      }
+      const hasAssistantMessage = [...nextMessages]
+        .reverse()
+        .some((message) => message.role === "assistant" && ((message.content ?? "").trim() || (message.reasoning ?? "").trim()));
+      if (hasAssistantMessage) {
+        return nextMessages;
+      }
+      return [
+        ...nextMessages,
+        buildAssistantDisplayMessage({
+          id: `agent-error-stream-${targetThreadId}-${Date.now()}`,
+          content: streamState.content ?? "",
+          reasoning: streamState.reasoning,
+          createdAt: Date.now(),
+          model: streamState.model,
+          metadata: {
+            streamErrorPreserved: true
+          },
+          toolActivities: streamState.toolActivities,
+          sdkMessages: sdkMessages.length > 0 ? sdkMessages : streamState.sdkMessages
+        })
+      ];
     };
 
     const finalizeCompleted = (targetThreadId: string): void => {
@@ -393,29 +435,31 @@ export function useAgentStreamSubscriptions({
       };
 
       if (payload.threadId === currentSessionIdRef.current) {
-        void Promise.all([
-          getAgentThreadMessages(payload.threadId),
-          getAgentThreadSDKMessages(payload.threadId)
-        ])
-          .then(([next, sdkMessages]) => {
-            startTransition(() => {
-              setMessages((prev) => mergeServerMessagesWithPending(prev, next));
-              setSdkMessages(sdkMessages);
-              finalize();
-            });
-          })
-          .catch((error) => {
-            const message = error instanceof Error ? error.message : String(error);
-            // catch 路径也需要在 transition 内一起清除，避免抖动
-            startTransition(() => {
-              setStreamErrors((prev) => {
-                const map = new Map(prev);
-                map.set(payload.threadId, `流错误后读取消息失败: ${message}`);
-                return map;
+          void Promise.all([
+            getAgentThreadMessages(payload.threadId),
+            getAgentThreadSDKMessages(payload.threadId)
+          ])
+            .then(([next, sdkMessages]) => {
+              startTransition(() => {
+                const nextWithPreserved = materializeStreamingAssistant(payload.threadId, next, sdkMessages);
+                setMessages((prev) => mergeServerMessagesWithPending(prev, nextWithPreserved));
+                setSdkMessages(sdkMessages);
+                finalize();
               });
-              finalize();
+            })
+            .catch((error) => {
+              const message = error instanceof Error ? error.message : String(error);
+              // catch 路径也需要在 transition 内一起清除，避免抖动
+              startTransition(() => {
+                setStreamErrors((prev) => {
+                  const map = new Map(prev);
+                  map.set(payload.threadId, `流错误后读取消息失败: ${message}`);
+                  return map;
+                });
+                setMessages((prev) => materializeStreamingAssistant(payload.threadId, prev, []));
+                finalize();
+              });
             });
-          });
       } else {
         finalize();
       }

@@ -313,7 +313,11 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   );
   if (ctx.workspaceSlug) {
     lines.push(`Session path: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/`);
+    lines.push(
+      `Runtime-exposed config mirror: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/threads/${ctx.sessionId}/.lume-config/`
+    );
   }
+  lines.push("System config entry: ~/.lume/lume.yaml");
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
   if (ctx.automationExecution) {
@@ -419,10 +423,17 @@ CRITICAL - Skill 调用规则:
 
 - 用户名: ${userName}`);
 
+  sections.push(`## 系统配置
+
+- 全局配置入口: ~/.lume/lume.yaml
+- 修改此文件可调整系统配置；工作区可通过 workspaces.<slug> 覆盖默认值`);
+
   if (ctx.workspaceName && ctx.workspaceSlug) {
     sections.push(`## 工作区
 
 - 工作区名称: ${ctx.workspaceName}
+- 系统配置入口: ~/.lume/lume.yaml
+- Runtime 暴露配置目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/threads/${ctx.sessionId}/.lume-config/
 - MCP 配置: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/mcp.json
 - Skills 目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/skills/
 - 线程目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/
@@ -572,12 +583,13 @@ At the beginning of each thread, silently check workspace files in this order:
 1. AGENTS.md
 2. SOUL.md
 3. TOOLS.md
-4. IDENTITY.md
-5. USER.md
+  4. IDENTITY.md
+  5. USER.md
 6. memory/YYYY-MM-DD.md (today + yesterday)
-7. MEMORY.md (or memory.md fallback, main/direct thread only)
-8. 线程级 .context/ 目录，以及工作区根目录下的 .context/ 目录（note.md、todo.md）
-9. 工作区的 AGENTS.md（如 Thread Bootstrap 第 1 步未加载）
+7. MEMORY.md (workspace long-term memory, main/direct thread only)
+8. ~/.lume/MEMORY.md (global long-term memory, main/direct thread only)
+9. 线程级 .context/ 目录，以及工作区根目录下的 .context/ 目录（note.md、todo.md）
+10. 工作区的 AGENTS.md（如 Thread Bootstrap 第 1 步未加载）
 
 Do this before answering requests that depend on identity, continuity, prior decisions, or user preferences.`);
 
@@ -608,10 +620,10 @@ Do this before answering requests that depend on identity, continuity, prior dec
   }
 
   if (availableTools.has("memory_search") || availableTools.has("memory_get")) {
-    const lines = [
-      "## Memory Recall",
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md/memory.md + memory/*.md; then use memory_get to pull only the needed lines. Do not use generic read for memory files. If low confidence after search, say you checked."
-    ];
+      const lines = [
+        "## Memory Recall",
+        "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on thread note + workspace memory/YYYY-MM-DD.md + workspace MEMORY.md + ~/.lume/MEMORY.md; then use memory_get to pull only the needed lines. Do not use generic read for memory files. If low confidence after search, say you checked."
+      ];
     if (ctx.memoryCitationsMode === "off") {
       lines.push(
         "Citations are disabled: do not mention file paths or line numbers in replies unless the user explicitly asks."
@@ -677,6 +689,7 @@ export interface DynamicContext {
   parentSessionId?: string;
   workspaceId?: string;
   channelId?: string;
+  modelRef?: string;
   modelId?: string;
   workspaceName?: string;
   workspaceSlug?: string;
@@ -704,10 +717,11 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   if (ctx.sessionTitle) sessionLines.push(`title: ${ctx.sessionTitle}`);
   if (ctx.sessionType) sessionLines.push(`threadType: ${ctx.sessionType}`);
   if (ctx.chatType) sessionLines.push(`chatType: ${ctx.chatType}`);
-  if (ctx.parentSessionId) sessionLines.push(`parentThreadId: ${ctx.parentSessionId}`);
-  if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
-  if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
-  if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
+    if (ctx.parentSessionId) sessionLines.push(`parentThreadId: ${ctx.parentSessionId}`);
+    if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
+    if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
+    if (ctx.modelRef) sessionLines.push(`modelRef: ${ctx.modelRef}`);
+    if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
   if (sessionLines.length > 0) {
     sections.push(`<thread_state>\n${sessionLines.join("\n")}\n</thread_state>`);
   }

@@ -10,8 +10,8 @@ import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import { getAgentWorkspacesDir } from "../infra/config-paths";
+import { AGENT_IPC_CHANNELS, LUME_CONFIG_IPC_CHANNELS } from "@lume/shared";
+import { getAgentWorkspacesDir, getConfigDir, getLumeConfigYamlPath } from "../infra/config-paths";
 
 type NotificationEmitter = (method: string, params: unknown) => void;
 
@@ -25,6 +25,7 @@ const claudeSkillsPath = join(claudeRoot, "skills");
 let watchers: FSWatcher[] = [];
 let capabilitiesTimer: ReturnType<typeof setTimeout> | null = null;
 let filesTimer: ReturnType<typeof setTimeout> | null = null;
+let lumeConfigTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearTimers(): void {
   if (capabilitiesTimer) {
@@ -34,6 +35,10 @@ function clearTimers(): void {
   if (filesTimer) {
     clearTimeout(filesTimer);
     filesTimer = null;
+  }
+  if (lumeConfigTimer) {
+    clearTimeout(lumeConfigTimer);
+    lumeConfigTimer = null;
   }
 }
 
@@ -69,6 +74,14 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     }, DEBOUNCE_MS);
   };
 
+  const emitLumeConfigChanged = (): void => {
+    if (lumeConfigTimer) clearTimeout(lumeConfigTimer);
+    lumeConfigTimer = setTimeout(() => {
+      emit(LUME_CONFIG_IPC_CHANNELS.CHANGED, {});
+      lumeConfigTimer = null;
+    }, DEBOUNCE_MS);
+  };
+
   const safeWatch = (
     targetPath: string,
     options: { recursive?: boolean },
@@ -88,6 +101,14 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
   };
 
   safeWatch(watchDir, { recursive: true }, onWorkspaceChanged, "Lume 工作区");
+  safeWatch(getConfigDir(), { recursive: false }, (_eventType, filename) => {
+    if (!filename) return;
+    const normalized = String(filename).replace(/\\/g, "/").toLowerCase();
+    if (normalized === "lume.yaml" || normalized.endsWith("/lume.yaml")) {
+      emitLumeConfigChanged();
+    }
+  }, "Lume 全局配置目录");
+  safeWatch(getLumeConfigYamlPath(), {}, () => emitLumeConfigChanged(), "Lume 全局配置文件");
   safeWatch(claudeRoot, { recursive: true }, () => emitGlobalCapabilitiesChanged(), "Claude 全局目录");
   safeWatch(claudeJsonPath, {}, () => emitGlobalCapabilitiesChanged(), "Claude 全局配置");
   safeWatch(claudePluginPath, { recursive: true }, () => emitGlobalCapabilitiesChanged(), "Claude 插件目录");

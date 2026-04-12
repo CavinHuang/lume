@@ -13,6 +13,7 @@ interface ResolveAgentDynamicContextInput {
   availableTools?: string[];
   threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
+  fallbackModelRef?: string;
   fallbackModelId?: string;
 }
 
@@ -34,6 +35,7 @@ export function resolveAgentDynamicContextInput(
     parentSessionId: threadMeta?.parentThreadId,
     workspaceId: threadMeta?.workspaceId,
     channelId: threadMeta?.channelId,
+    modelRef: threadMeta?.modelRef ?? input.fallbackModelRef,
     modelId: threadMeta?.modelId ?? input.fallbackModelId,
     workspaceName: input.workspaceName,
     workspaceSlug: input.workspaceSlug,

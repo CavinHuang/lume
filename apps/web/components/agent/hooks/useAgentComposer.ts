@@ -161,8 +161,10 @@ export function useAgentComposer({
       }).catch((error) => {
         console.error("[AgentView] send pending prompt failed", error);
         setStreamingStates((prev) => {
+          const current = prev.get(threadId as string);
+          if (!current) return prev;
           const map = new Map(prev);
-          map.delete(threadId as string);
+          map.set(threadId as string, { ...current, running: false });
           return map;
         });
       });
@@ -370,9 +372,10 @@ export function useAgentComposer({
         return map;
       });
       setStreamingStates((prev) => {
-        if (!prev.has(threadId)) return prev;
+        const current = prev.get(threadId);
+        if (!current) return prev;
         const map = new Map(prev);
-        map.delete(threadId);
+        map.set(threadId, { ...current, running: false });
         return map;
       });
     });
@@ -536,9 +539,10 @@ export function useAgentComposer({
         return map;
       });
       setStreamingStates((prev) => {
-        if (!prev.has(threadId)) return prev;
+        const current = prev.get(threadId);
+        if (!current) return prev;
         const map = new Map(prev);
-        map.delete(threadId);
+        map.set(threadId, { ...current, running: false });
         return map;
       });
     });

@@ -178,6 +178,7 @@ export class Agent {
   private loadedPlugins: LoadedPlugin[] = []
   private claudeMdAppend = ''
   private pluginSkillNames = new Set<string>()
+  private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
   private loadedCommands: CommandDefinition[] = []
   private fileCheckpointState: FileCheckpointState = {}
@@ -349,6 +350,21 @@ export class Agent {
     }
   }
 
+  private unregisterExplicitSkills(): void {
+    for (const name of this.explicitSkillNames) {
+      unregisterSkill(name)
+    }
+    this.explicitSkillNames.clear()
+  }
+
+  private registerExplicitSkills(): void {
+    this.unregisterExplicitSkills()
+    for (const skill of this.cfg.skills || []) {
+      registerSkill(skill)
+      this.explicitSkillNames.add(skill.name)
+    }
+  }
+
   private unregisterFileSkills(): void {
     for (const name of this.fileSkillNames) {
       unregisterSkill(name)
@@ -356,9 +372,13 @@ export class Agent {
     this.fileSkillNames.clear()
   }
 
-  private async registerFilesystemSkills(cwd: string): Promise<void> {
+  private async registerFilesystemSkills(input: {
+    cwd: string
+    roots?: string[]
+    includeLegacyFallback?: boolean
+  }): Promise<void> {
     this.unregisterFileSkills()
-    const skills = await loadFilesystemSkills(cwd)
+    const skills = await loadFilesystemSkills(input)
     for (const skill of skills) {
       registerSkill(skill)
       this.fileSkillNames.add(skill.name)
@@ -563,7 +583,12 @@ export class Agent {
     this.refreshResolvedConfig()
     this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins)
     this.registerPluginSkills()
-    await this.registerFilesystemSkills(cwd)
+    this.registerExplicitSkills()
+    await this.registerFilesystemSkills({
+      cwd,
+      roots: this.cfg.skillsDirectories,
+      includeLegacyFallback: true,
+    })
     this.loadedCommands = [
       ...(await loadCommandDefinitions(cwd)),
       ...this.getPluginCommands(),
@@ -1228,7 +1253,12 @@ export class Agent {
 
     this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins)
     this.registerPluginSkills()
-    await this.registerFilesystemSkills(this.cfg.cwd || process.cwd())
+    this.registerExplicitSkills()
+    await this.registerFilesystemSkills({
+      cwd: this.cfg.cwd || process.cwd(),
+      roots: this.cfg.skillsDirectories,
+      includeLegacyFallback: true,
+    })
     this.loadedCommands = [
       ...(await loadCommandDefinitions(this.cfg.cwd || process.cwd())),
       ...this.getPluginCommands(),

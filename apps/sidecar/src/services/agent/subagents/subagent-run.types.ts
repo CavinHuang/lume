@@ -33,6 +33,7 @@ export interface SubagentRun {
   parentToolUseId?: string;
   requestedAgentId?: string;
   resolvedAgentId?: string;
+  modelRef?: string;
   channelId?: string;
   modelId?: string;
   announceStatus?: "pending" | "delivered" | "failed";
@@ -68,6 +69,7 @@ export interface CreateSubagentRunInput {
   parentToolUseId?: string;
   requestedAgentId?: string;
   resolvedAgentId?: string;
+  modelRef?: string;
   channelId?: string;
   modelId?: string;
   announceStatus?: "pending" | "delivered" | "failed";
@@ -80,6 +82,7 @@ export interface CreateSubagentRunInput {
 export interface UpdateSubagentRunInput {
   status?: SubagentRunStatus;
   cleanup?: "keep" | "delete";
+  modelRef?: string;
   channelId?: string;
   modelId?: string;
   deliveryThreadId?: string;

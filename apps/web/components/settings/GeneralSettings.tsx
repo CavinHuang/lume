@@ -3,11 +3,12 @@ import { useAtom } from "jotai";
 import { Camera, ImagePlus } from "lucide-react";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
-import type { AgentProxySettings, AgentProxyStatus } from "@lume/shared";
+import type { AgentProxySettings, AgentProxyStatus, Channel, NetworkDiagnosticResult } from "@lume/shared";
 import { userProfileAtom, themeModeAtom, type ThemeMode } from "@/atoms";
 import { UserAvatar } from "@/components/chat/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { getEffectiveSystemConfig, listChannels, runNetworkDiagnostic, updateSystemConfigSection } from "@/lib/desktop-api/system";
 import { cn } from "@/lib/utils";
 import { getAgentProxySettings, saveAgentProxySettings } from "@/lib/desktop-api/agent";
 import { SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSegmentedControl, SettingsSelect } from "./primitives";
@@ -43,8 +44,14 @@ export function GeneralSettings(): React.ReactElement {
     enabled: false,
     mode: "off"
   });
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [chatModelRef, setChatModelRef] = useState("");
+  const [agentModelRef, setAgentModelRef] = useState("");
+  const [modelSavingPath, setModelSavingPath] = useState<string | null>(null);
   const [savingProxy, setSavingProxy] = useState(false);
   const [proxyError, setProxyError] = useState<string | null>(null);
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
+  const [diagnosticResult, setDiagnosticResult] = useState<NetworkDiagnosticResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const commitProfile = (next: typeof userProfile): void => {
@@ -105,6 +112,48 @@ export function GeneralSettings(): React.ReactElement {
   useEffect(() => {
     void loadProxySettings();
   }, []);
+
+  useEffect(() => {
+    void Promise.all([listChannels(), getEffectiveSystemConfig()])
+      .then(([nextChannels, systemConfig]) => {
+        setChannels(nextChannels);
+        setChatModelRef(systemConfig.models?.chat?.defaultModelRef ?? "");
+        setAgentModelRef(systemConfig.models?.agent?.defaultModelRef ?? "");
+      })
+      .catch((error) => {
+        console.error("[GeneralSettings] load system models failed", error);
+      });
+  }, []);
+
+  const chatModels = channels
+    .filter((channel) => channel.enabled)
+    .flatMap((channel) =>
+      channel.models
+        .filter((model) => model.enabled && model.capabilities?.chat)
+        .map((model) => ({
+          label: `${channel.name} · ${model.name}`,
+          value: `${channel.provider}/${model.id}`
+        }))
+    );
+
+  const saveSystemModelRef = async (
+    path: "models.chat.defaultModelRef" | "models.agent.defaultModelRef",
+    value: string
+  ): Promise<void> => {
+    setModelSavingPath(path);
+    try {
+      await updateSystemConfigSection(path, value);
+      if (path === "models.chat.defaultModelRef") {
+        setChatModelRef(value);
+      } else {
+        setAgentModelRef(value);
+      }
+    } catch (error) {
+      console.error("[GeneralSettings] save system model failed", error);
+    } finally {
+      setModelSavingPath(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -215,6 +264,24 @@ export function GeneralSettings(): React.ReactElement {
             <span className="text-[13px] text-foreground/40">简体中文</span>
           </SettingsRow>
           <SettingsRow label="界面缩放" description={zoomHint} />
+          <SettingsSelect
+            label="默认 Chat 模型"
+            description="用于新对话的默认模型，格式为 provider/model。"
+            value={chatModelRef}
+            disabled={modelSavingPath === "models.chat.defaultModelRef"}
+            onValueChange={(value) => { void saveSystemModelRef("models.chat.defaultModelRef", value); }}
+            options={chatModels}
+            placeholder="选择默认 Chat 模型"
+          />
+          <SettingsSelect
+            label="默认 Agent 模型"
+            description="用于新 Agent 线程和配置对话的默认模型。"
+            value={agentModelRef}
+            disabled={modelSavingPath === "models.agent.defaultModelRef"}
+            onValueChange={(value) => { void saveSystemModelRef("models.agent.defaultModelRef", value); }}
+            options={chatModels}
+            placeholder="选择默认 Agent 模型"
+          />
         </SettingsCard>
       </SettingsSection>
 
@@ -301,9 +368,65 @@ export function GeneralSettings(): React.ReactElement {
           ) : null}
 
           {proxyStatus?.systemProxy ? (
+            <div className="px-4 pb-4">
+              <div className="text-xs font-medium text-foreground/80">当前 sidecar 读取到的系统代理</div>
+              <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+                <div>{`HTTP_PROXY: ${proxyStatus.systemProxy.httpProxy ?? "-"}`}</div>
+                <div>{`HTTPS_PROXY: ${proxyStatus.systemProxy.httpsProxy ?? "-"}`}</div>
+                <div>{`NO_PROXY: ${proxyStatus.systemProxy.noProxy ?? "-"}`}</div>
+              </div>
+            </div>
+          ) : null}
+          <div className="px-4 pb-4">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={diagnosticLoading}
+              onClick={() => {
+                setDiagnosticLoading(true);
+                void runNetworkDiagnostic()
+                  .then((result) => setDiagnosticResult(result))
+                  .catch((error) => {
+                    setDiagnosticResult({
+                      proxy: {
+                        httpProxy: proxyStatus?.systemProxy.httpProxy,
+                        httpsProxy: proxyStatus?.systemProxy.httpsProxy,
+                        noProxy: proxyStatus?.systemProxy.noProxy
+                      },
+                      checks: [{
+                        name: "diagnostic",
+                        url: "",
+                        ok: false,
+                        error: error instanceof Error ? error.message : String(error)
+                      }]
+                    });
+                  })
+                  .finally(() => setDiagnosticLoading(false));
+              }}
+            >
+              {diagnosticLoading ? "诊断中..." : "运行网络诊断"}
+            </Button>
+          </div>
+          {diagnosticResult ? (
             <div className="px-4 pb-4 text-xs text-muted-foreground">
-              系统代理
-              {`: http=${proxyStatus.systemProxy.httpProxy ?? "-"}, https=${proxyStatus.systemProxy.httpsProxy ?? "-"}, no_proxy=${proxyStatus.systemProxy.noProxy ?? "-"}`}
+              <div className="font-medium text-foreground/80">诊断结果</div>
+              {diagnosticResult.searchCredentials ? (
+                <div className="mt-2 space-y-1">
+                  <div>{`Brave Key: ${diagnosticResult.searchCredentials.braveConfigured ? "已配置" : "未配置"}`}</div>
+                  <div>{`Tavily Key: ${diagnosticResult.searchCredentials.tavilyConfigured ? "已配置" : "未配置"}`}</div>
+                </div>
+              ) : null}
+              <div className="mt-2 space-y-2">
+                {diagnosticResult.checks.map((item) => (
+                  <div key={`${item.name}:${item.url}`} className="rounded border border-border/50 px-2 py-2">
+                    <div className="text-foreground/80">{item.name}</div>
+                    <div className="break-all">{item.url}</div>
+                    <div>{item.ok ? `成功 (${item.statusCode ?? 200})` : `失败${item.statusCode ? ` (${item.statusCode})` : ""}`}</div>
+                    {item.error ? <div className="break-all text-destructive">{item.error}</div> : null}
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           {proxyError ? <div className="px-4 pb-4 text-xs text-destructive">{proxyError}</div> : null}

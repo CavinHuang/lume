@@ -4,7 +4,7 @@
 
 import type { GenerateTitleInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
-import { decryptApiKey, listChannels } from "../channel/channel-manager";
+import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
@@ -16,18 +16,19 @@ const MAX_TITLE_LENGTH = 20;
 
 export async function generateTitle(input: GenerateTitleInput): Promise<string | null> {
   const { userMessage, channelId, modelId } = input;
-  const channel = listChannels().find((item) => item.id === channelId);
+  const boundModel = resolveChannelModelBinding(input.modelRef ?? "", "chat");
+  const channel = boundModel?.channel ?? listChannels().find((item) => item.id === channelId);
   if (!channel) return null;
 
   let apiKey: string;
   try {
-    apiKey = decryptApiKey(channelId);
+    apiKey = decryptApiKey(channel.id);
   } catch {
     return null;
   }
 
   try {
-    const selectedModelId = resolveRequestedModelIdForChannel(channel, modelId) ?? modelId;
+    const selectedModelId = boundModel?.modelId ?? resolveRequestedModelIdForChannel(channel, modelId) ?? modelId;
     const modelSelection = resolveChannelModelSelection({
       channelProvider: channel.provider,
       baseUrl: channel.baseUrl,

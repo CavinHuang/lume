@@ -6,6 +6,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
+  chatDraftByConversationIdAtom,
+  currentConversationIdAtom,
   pendingAttachmentsAtom,
   selectedModelAtom,
   streamingAtom,
@@ -47,7 +49,8 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInputProps): React.ReactElement {
-  const [content, setContent] = useState("");
+  const [currentConversationId] = useAtom(currentConversationIdAtom);
+  const [chatDraftByConversationId, setChatDraftByConversationId] = useAtom(chatDraftByConversationIdAtom);
   const [selectedModel] = useAtom(selectedModelAtom);
   const [streaming] = useAtom(streamingAtom);
   const [thinkingEnabled, setThinkingEnabled] = useAtom(thinkingEnabledAtom);
@@ -56,6 +59,22 @@ export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInpu
   const [isDragOver, setIsDragOver] = useState(false);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const normalizedThinkingLevel = normalizeThinkingLevel(thinkingLevel, thinkingEnabled);
+  const content = currentConversationId ? chatDraftByConversationId.get(currentConversationId) ?? "" : "";
+
+  const setContent = useCallback((value: string | ((prev: string) => string)): void => {
+    if (!currentConversationId) return;
+    setChatDraftByConversationId((prev) => {
+      const map = new Map(prev);
+      const previousValue = map.get(currentConversationId) ?? "";
+      const nextValue = typeof value === "function" ? value(previousValue) : value;
+      if (nextValue) {
+        map.set(currentConversationId, nextValue);
+      } else {
+        map.delete(currentConversationId);
+      }
+      return map;
+    });
+  }, [currentConversationId, setChatDraftByConversationId]);
 
   const canSend =
     !disabled &&
@@ -133,7 +152,7 @@ export function ChatInput({ disabled, onSend, onStop, onClearContext }: ChatInpu
     const next = content.trim();
     setContent("");
     void onSend(next);
-  }, [canSend, content, onSend]);
+  }, [canSend, content, onSend, setContent]);
 
   const handleSpeechTranscript = useCallback((text: string): void => {
     setContent((prev) => prev + (prev ? " " : "") + text);

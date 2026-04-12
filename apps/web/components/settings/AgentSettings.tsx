@@ -7,7 +7,6 @@ import type {
 } from "@lume/shared";
 import {
   activeViewAtom,
-  agentChannelIdAtom,
   agentPendingPromptAtom,
   agentThreadsAtom,
   agentWorkspacesAtom,
@@ -24,6 +23,8 @@ import {
   listAgentThreads,
   saveAgentWorkspaceMcpConfig
 } from "@/lib/desktop-api/agent";
+import { getEffectiveSystemConfig, listChannels } from "@/lib/desktop-api/system";
+import { resolveChannelModelSelectionFromRef } from "@/lib/system-model-selection";
 import { McpServerForm } from "./McpServerForm";
 import { SettingsCard, SettingsRow, SettingsSection } from "./primitives";
 
@@ -43,7 +44,6 @@ const TRANSPORT_LABELS: Record<string, string> = {
 export function AgentSettings(): React.ReactElement {
   const workspaces = useAtomValue(agentWorkspacesAtom);
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom);
-  const agentChannelId = useAtomValue(agentChannelIdAtom);
   const workspace = useMemo(
     () => workspaces.find((item) => item.id === currentWorkspaceId) ?? null,
     [workspaces, currentWorkspaceId]
@@ -83,14 +83,15 @@ export function AgentSettings(): React.ReactElement {
   }, [workspaceSlug, capabilitiesVersion]);
 
   const buildMcpPrompt = (): string => {
-    const configPath = `~/.lume/agent-workspaces/${workspaceSlug}/mcp.json`;
+    const configPath = "~/.lume/lume.yaml";
     const currentConfig = JSON.stringify(mcpConfig, null, 2);
 
     return `请帮我配置当前工作区的 MCP 服务器，你要主动来帮我实现，你可以采用联网搜索深度研究来尝试，当前环境已经有 Claude Agent SDK 了，除非不确定的时候才来问我，否则默认将帮我完成安装，而不是指导我。
 
 ## 工作区信息
 - 工作区: ${workspace?.name}
-- MCP 配置文件: ${configPath}
+- 系统配置入口: ${configPath}
+- 目标配置节点: workspaces.${workspaceSlug}.mcp
 
 ## 当前配置
 \`\`\`json
@@ -98,36 +99,44 @@ ${currentConfig}
 \`\`\`
 
 ## 配置格式
-mcp.json 格式如下：
-\`\`\`json
-{
-  "servers": {
-    "服务器名称": {
-      "type": "stdio | http | sse",
-      "command": "可执行命令",
-      "args": ["参数1", "参数2"],
-      "env": { "KEY": "VALUE" },
-      "url": "http://...",
-      "headers": { "Key": "Value" },
-      "enabled": true
-    }
-  }
-}
+lume.yaml 中 MCP 配置示例：
+\`\`\`yaml
+workspaces:
+  ${workspaceSlug}:
+    mcp:
+      servers:
+        服务器名称:
+          type: stdio # 或 http / sse
+          command: 可执行命令
+          args: [参数1, 参数2]
+          env:
+            KEY: VALUE
+          url: http://...
+          headers:
+            Key: Value
+          enabled: true
 \`\`\`
 其中 stdio 类型使用 command/args/env，http/sse 类型使用 url/headers。
 
-请读取当前配置文件，根据我的需求添加或修改 MCP 服务器，然后写回文件。`;
+请读取 ${configPath}，根据我的需求添加或修改当前工作区的 MCP 服务器，并写回该文件。`;
   };
 
   const handleConfigViaChat = async (promptMessage: string): Promise<void> => {
-    if (!agentChannelId) {
-      window.alert("请先在渠道设置中选择 Agent 供应商");
-      return;
-    }
-
     try {
+      const resolvedModel = await Promise.all([
+        listChannels(),
+        getEffectiveSystemConfig()
+      ]).then(([channels, systemConfig]) =>
+        resolveChannelModelSelectionFromRef(channels, systemConfig.models?.agent?.defaultModelRef, "chat")
+      );
+      if (!resolvedModel) {
+        window.alert("未找到可用的 Agent 默认模型");
+        return;
+      }
       const thread = await createAgentThread({
-        channelId: agentChannelId ?? undefined,
+        modelRef: resolvedModel.modelRef,
+        channelId: resolvedModel.channelId,
+        modelId: resolvedModel.modelId,
         workspaceId: currentWorkspaceId ?? undefined
       });
 
@@ -202,7 +211,7 @@ mcp.json 格式如下：
     <div className="space-y-8">
       <SettingsSection
         title="MCP 服务器"
-        description={`当前工作区: ${workspace.name}`}
+        description={`当前工作区: ${workspace.name} · 系统配置入口: ~/.lume/lume.yaml`}
         action={
           <Button size="sm" type="button" onClick={() => setViewMode("create")}>
             <Plus size={16} />

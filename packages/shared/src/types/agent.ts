@@ -65,6 +65,8 @@ export interface AgentThreadMeta {
   id: string
   /** 线程标题 */
   title: string
+  /** 规范化模型引用（provider/model） */
+  modelRef?: string
   /** 使用的渠道 ID */
   channelId?: string
   /** 最近一次运行使用的模型 ID */
@@ -147,6 +149,8 @@ export interface AgentGenerateTitleInput {
   sourceText?: string
   /** 兼容旧字段：用户消息 */
   userMessage?: string
+  /** 规范化模型引用（provider/model），优先于 channelId/modelId */
+  modelRef?: string
   /** 渠道 ID（用于获取 API Key） */
   channelId: string
   /** 模型 ID */
@@ -425,6 +429,8 @@ export interface AgentSendInput {
   threadId: string
   /** 用户消息内容 */
   userMessage: string
+  /** 规范化模型引用（provider/model），优先于 channelId/modelId */
+  modelRef?: string
   /** 渠道 ID（用于解析 provider/baseUrl/api key） */
   channelId?: string
   /** 模型 ID */
@@ -641,6 +647,36 @@ export interface AgentCopyFolderInput {
   threadId: string
 }
 
+export interface PromoteFileToWorkspaceInput {
+  workspaceSlug: string
+  threadId: string
+  filePath: string
+  conflictMode?: "overwrite" | "rename"
+}
+
+export interface PromoteFileToWorkspaceResult {
+  ok: true
+  path: string
+}
+
+export interface WorkspaceFilePathInput {
+  workspaceSlug: string
+  path: string
+}
+
+export interface WorkspaceRenameFileInput extends WorkspaceFilePathInput {
+  newName: string
+}
+
+export interface WorkspaceMoveFileInput extends WorkspaceFilePathInput {
+  targetDir: string
+}
+
+export interface WorkspaceSaveFilesInput {
+  workspaceSlug: string
+  files: Array<{ filename: string; data?: string; sourcePath?: string }>
+}
+
 // ===== IPC 通道常量 =====
 
 /** 分叉线程的输入参数 */
@@ -798,6 +834,26 @@ export const AGENT_IPC_CHANNELS = {
   RENAME_ATTACHED_FILE: 'agent:rename-attached-file',
   /** 移动附加目录文件/目录（无工作区路径限制） */
   MOVE_ATTACHED_FILE: 'agent:move-attached-file',
+  /** 将当前任务文件提升到工作区共享文件层 */
+  PROMOTE_FILE_TO_WORKSPACE: 'agent:promote-file-to-workspace',
+  /** 获取工作区共享文件目录路径 */
+  GET_WORKSPACE_RESOURCES_PATH: 'agent:get-workspace-resources-path',
+  /** 列出工作区共享目录内容 */
+  LIST_WORKSPACE_DIRECTORY: 'agent:list-workspace-directory',
+  /** 删除工作区共享文件/目录 */
+  DELETE_WORKSPACE_FILE: 'agent:delete-workspace-file',
+  /** 用系统默认应用打开工作区共享文件 */
+  OPEN_WORKSPACE_FILE: 'agent:open-workspace-file',
+  /** 在系统文件管理器中显示工作区共享文件 */
+  SHOW_WORKSPACE_IN_FOLDER: 'agent:show-workspace-in-folder',
+  /** 预览工作区共享文件 */
+  PREVIEW_WORKSPACE_FILE: 'agent:preview-workspace-file',
+  /** 重命名工作区共享文件/目录 */
+  RENAME_WORKSPACE_FILE: 'agent:rename-workspace-file',
+  /** 移动工作区共享文件/目录 */
+  MOVE_WORKSPACE_FILE: 'agent:move-workspace-file',
+  /** 保存文件到工作区共享目录 */
+  SAVE_FILES_TO_WORKSPACE: 'agent:save-files-to-workspace',
   /** 搜索工作区文件（用于 @ 引用） */
   SEARCH_WORKSPACE_FILES: 'agent:search-workspace-files',
 

@@ -2,7 +2,6 @@ import { useCallback, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   activeViewAtom,
-  agentChannelIdAtom,
   agentPendingPromptAtom,
   agentThreadsAtom,
   appModeAtom,
@@ -12,6 +11,8 @@ import {
   settingsTabAtom
 } from "@/atoms";
 import { createAgentThread, listAgentThreads, migrateChatToAgentThread } from "@/lib/desktop-api/agent";
+import { getEffectiveSystemConfig, listChannels } from "@/lib/desktop-api/system";
+import { resolveChannelModelSelectionFromRef } from "@/lib/system-model-selection";
 
 interface MigrateOptions {
   suggestedPrompt?: string;
@@ -23,7 +24,6 @@ export function useMigrateChatToAgent(): {
   clearError: () => void;
   migrate: (options?: MigrateOptions) => Promise<boolean>;
 } {
-  const agentChannelId = useAtomValue(agentChannelIdAtom);
   const conversationId = useAtomValue(currentConversationIdAtom);
   const workspaceId = useAtomValue(currentAgentWorkspaceIdAtom);
   const setAgentSessions = useSetAtom(agentThreadsAtom);
@@ -39,14 +39,6 @@ export function useMigrateChatToAgent(): {
     if (busy) return false;
     setError(null);
 
-    if (!agentChannelId) {
-      setAppMode("agent");
-      setActiveView("settings");
-      setSettingsTab("agent");
-      setError("未设置 Agent 渠道，已跳转到配置页。");
-      return false;
-    }
-
     if (!conversationId) {
       setError("当前没有可迁移的 Chat 对话。");
       return false;
@@ -54,8 +46,23 @@ export function useMigrateChatToAgent(): {
 
     setBusy(true);
     try {
+      const resolvedModel = await Promise.all([
+        listChannels(),
+        getEffectiveSystemConfig()
+      ]).then(([channels, systemConfig]) =>
+        resolveChannelModelSelectionFromRef(channels, systemConfig.models?.agent?.defaultModelRef, "chat")
+      );
+      if (!resolvedModel) {
+        setAppMode("agent");
+        setActiveView("settings");
+        setSettingsTab("agent");
+        setError("未找到可用的 Agent 默认模型，已跳转到配置页。");
+        return false;
+      }
       const thread = await createAgentThread({
-        channelId: agentChannelId,
+        modelRef: resolvedModel.modelRef,
+        channelId: resolvedModel.channelId,
+        modelId: resolvedModel.modelId,
         workspaceId: workspaceId ?? undefined
       });
       await migrateChatToAgentThread(conversationId, thread.id);
@@ -77,7 +84,6 @@ export function useMigrateChatToAgent(): {
       setBusy(false);
     }
   }, [
-    agentChannelId,
     busy,
     conversationId,
     setActiveView,

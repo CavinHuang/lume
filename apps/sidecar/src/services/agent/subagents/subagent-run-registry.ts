@@ -124,6 +124,7 @@ class SubagentRunRegistry {
       parentToolUseId: input.parentToolUseId,
       requestedAgentId: input.requestedAgentId,
       resolvedAgentId: input.resolvedAgentId,
+      modelRef: input.modelRef,
       channelId: input.channelId,
       modelId: input.modelId,
       announceStatus: input.announceStatus,
@@ -349,6 +350,7 @@ function normalizeRun(raw: unknown): SubagentRun | null {
     parentToolUseId: typeof record.parentToolUseId === "string" ? record.parentToolUseId : undefined,
     requestedAgentId: typeof record.requestedAgentId === "string" ? record.requestedAgentId : undefined,
     resolvedAgentId: typeof record.resolvedAgentId === "string" ? record.resolvedAgentId : undefined,
+    modelRef: typeof record.modelRef === "string" ? record.modelRef : undefined,
     channelId: typeof record.channelId === "string" ? record.channelId : undefined,
     modelId: typeof record.modelId === "string" ? record.modelId : undefined,
     announceStatus: (

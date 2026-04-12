@@ -1,4 +1,5 @@
 import type { ChatToolTestResult } from "@lume/shared";
+import { fetchWithProxy } from "../infra/proxy-fetch";
 
 function decodeHtmlEntities(value: string): string {
   return value
@@ -59,7 +60,7 @@ async function searchWebByDuckDuckGo(query: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12_000);
   try {
-    const response = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+    const response = await fetchWithProxy(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
       method: "GET",
       signal: controller.signal,
       headers: {
@@ -86,7 +87,7 @@ async function searchWebByBrave(query: string, apiKey: string): Promise<string> 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12_000);
   try {
-    const response = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`, {
+    const response = await fetchWithProxy(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`, {
       method: "GET",
       signal: controller.signal,
       headers: {
@@ -117,7 +118,7 @@ async function searchWebByTavily(query: string, apiKey: string): Promise<string>
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12_000);
   try {
-    const response = await fetch("https://api.tavily.com/search", {
+    const response = await fetchWithProxy("https://api.tavily.com/search", {
       method: "POST",
       signal: controller.signal,
       headers: {

@@ -88,8 +88,8 @@ export function ToolCard({
   const summaryText = React.useMemo(() => {
     if (isBash && inputSummary) return inputSummary;
     if (intent && inputSummary) return `${intent} · ${inputSummary}`;
-    return intent ?? inputSummary ?? "";
-  }, [inputSummary, intent, isBash]);
+    return intent ?? inputSummary ?? resultSummary ?? errorSummary ?? "";
+  }, [errorSummary, inputSummary, intent, isBash, resultSummary]);
 
   const elapsedLabel = activity.elapsedMs !== undefined && activity.elapsedMs > 0
     ? formatElapsed(activity.elapsedMs, "ms")

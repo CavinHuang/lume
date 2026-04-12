@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatToolActivity, ChatMessage, ChatToolMeta, FileAttachment } from "@lume/shared";
 import type { ToolCall, ToolResult } from "../../providers";
 import { ensureDefaultWorkspace } from "../agent/agent-workspace-manager";
-import { searchWorkspaceMemory } from "../memory/memory-service";
+import { searchLayeredMemory } from "../memory/memory-service";
 import {
   buildAgentModeRecommendation,
   shouldSuggestAgentMode
@@ -102,7 +102,7 @@ export async function executeToolCallForChat(input: {
   try {
     if (toolCall.name === "memory_search") {
       const workspace = ensureDefaultWorkspace();
-      const results = await searchWorkspaceMemory({
+      const results = await searchLayeredMemory({
         workspaceSlug: workspace.slug,
         query,
         maxResults: 5
@@ -262,7 +262,7 @@ export async function runEnabledToolsForChat(input: {
     input.emitToolActivity({ type: "start", toolName: "memory_search", toolCallId });
     try {
       const workspace = ensureDefaultWorkspace();
-      const results = await searchWorkspaceMemory({
+      const results = await searchLayeredMemory({
         workspaceSlug: workspace.slug,
         query: input.userMessage,
         maxResults: 5

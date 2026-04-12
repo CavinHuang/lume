@@ -1,9 +1,10 @@
 import { startTransition, useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { AgentMessage } from "@lume/shared";
+import type { AgentMessage, AgentRuntimeStatus } from "@lume/shared";
 import type { AgentStreamState, ToolActivity } from "@/atoms/agent-atoms";
-import { getAgentThreadMessages } from "@/lib/desktop-api/agent";
+import { getAgentThreadMessages, getAgentThreadRuntimeStatus } from "@/lib/desktop-api/agent";
 import { mergeServerMessagesWithPending } from "@/lib/agent-message-merge";
+import { isAgentRuntimeStatusActive } from "@/lib/agent-runtime-status";
 import { resolveAgentWatchdogIdleTimeoutMs } from "../agent-runtime-guard";
 
 function isAgentDebugEnabled(): boolean {
@@ -20,6 +21,7 @@ interface UseAgentRuntimeGuardParams {
   isAwaitingInteractiveInput: boolean;
   toolActivities: ToolActivity[];
   lastAgentEventAtRef: MutableRefObject<Map<string, number>>;
+  setRuntimeStatuses: Dispatch<SetStateAction<Map<string, AgentRuntimeStatus>>>;
   setMessages: Dispatch<SetStateAction<AgentMessage[]>>;
   setStreamErrors: Dispatch<SetStateAction<Map<string, string>>>;
   setStreamingStates: Dispatch<SetStateAction<Map<string, AgentStreamState>>>;
@@ -31,6 +33,7 @@ export function useAgentRuntimeGuard({
   isAwaitingInteractiveInput,
   toolActivities,
   lastAgentEventAtRef,
+  setRuntimeStatuses,
   setMessages,
   setStreamErrors,
   setStreamingStates
@@ -50,17 +53,50 @@ export function useAgentRuntimeGuard({
       const idleTimeoutMs = resolveAgentWatchdogIdleTimeoutMs(activeTools);
 
       if (!isAwaitingInteractiveInput && Date.now() - lastActiveAt > idleTimeoutMs) {
-        setStreamErrors((prev) => {
-          const map = new Map(prev);
-          map.set(threadId, "Agent 长时间无响应，已自动停止本次生成，请重试。");
-          return map;
-        });
-        setStreamingStates((prev) => {
-          if (!prev.has(threadId)) return prev;
-          const map = new Map(prev);
-          map.delete(threadId);
-          return map;
-        });
+        pending = true;
+        void getAgentThreadRuntimeStatus(threadId)
+          .then((status) => {
+            if (disposed) return;
+            setRuntimeStatuses((prev) => {
+              const map = new Map(prev);
+              map.set(threadId, status);
+              return map;
+            });
+            if (isAgentRuntimeStatusActive(status)) {
+              lastAgentEventAtRef.current.set(threadId, Date.now());
+              return;
+            }
+            setStreamErrors((prev) => {
+              const map = new Map(prev);
+              map.set(threadId, "Agent 长时间无响应，已自动停止本次生成，请重试。");
+              return map;
+            });
+            setStreamingStates((prev) => {
+              const current = prev.get(threadId);
+              if (!current) return prev;
+              const map = new Map(prev);
+              map.set(threadId, { ...current, running: false });
+              return map;
+            });
+          })
+          .catch(() => {
+            if (disposed) return;
+            setStreamErrors((prev) => {
+              const map = new Map(prev);
+              map.set(threadId, "Agent 长时间无响应，已自动停止本次生成，请重试。");
+              return map;
+            });
+            setStreamingStates((prev) => {
+              const current = prev.get(threadId);
+              if (!current) return prev;
+              const map = new Map(prev);
+              map.set(threadId, { ...current, running: false });
+              return map;
+            });
+          })
+          .finally(() => {
+            pending = false;
+          });
         return;
       }
 
@@ -87,6 +123,7 @@ export function useAgentRuntimeGuard({
               count: next.length
             });
           }
+          lastAgentEventAtRef.current.set(threadId, Date.now());
         })
         .catch((error) => {
           if (isAgentDebugEnabled()) {
@@ -112,6 +149,7 @@ export function useAgentRuntimeGuard({
     isAgentBusy,
     isAwaitingInteractiveInput,
     lastAgentEventAtRef,
+    setRuntimeStatuses,
     threadId,
     setMessages,
     setStreamErrors,

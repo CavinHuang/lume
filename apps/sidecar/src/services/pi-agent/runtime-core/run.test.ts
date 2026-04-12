@@ -29,7 +29,7 @@ describe("runtime-core run", () => {
       cwd,
       agentDir,
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
       permissionMode: "plan"
     });
@@ -37,7 +37,7 @@ describe("runtime-core run", () => {
     expect(result.session.threadId).toBe(result.sessionManager.getSessionId());
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
-    expect(result.session.getActiveToolNames()).toContain("threads_list");
+    expect(result.session.getActiveToolNames()).toContain("ls");
     const init = await result.agent.getInitializationResult();
     expect(init.agents.map((agent) => agent.name)).toEqual([
       "explorer",
@@ -58,7 +58,7 @@ describe("runtime-core run", () => {
       cwd,
       agentDir,
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
       permissionMode: "acceptEdits"
     });
@@ -94,7 +94,7 @@ describe("runtime-core run", () => {
       cwd,
       agentDir,
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
       permissionMode: "acceptEdits"
     });
@@ -106,7 +106,7 @@ describe("runtime-core run", () => {
       cwd,
       agentDir,
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
       permissionMode: "acceptEdits",
       messageMetadata: {
@@ -137,7 +137,7 @@ describe("runtime-core run", () => {
       cwd,
       agentDir,
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
       permissionMode: "plan"
     });
@@ -174,7 +174,7 @@ describe("runtime-core run", () => {
       cwd,
       agentDir,
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
       permissionMode: "plan"
     });
@@ -208,7 +208,7 @@ describe("runtime-core run", () => {
       cwd,
       agentDir,
       provider: "openai",
-      modelId: "non-existent-catalog-model",
+      resolvedModelId: "non-existent-catalog-model",
       resolvedModel,
       apiKey: "test-key",
       permissionMode: "plan"
@@ -238,7 +238,7 @@ describe("runtime-core run", () => {
       agentDir,
       userMessage: "help me create an execution plan",
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
+      resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
       permissionMode: "plan",
       workspaceName: "Prompt Injection Workspace",
@@ -250,6 +250,9 @@ describe("runtime-core run", () => {
     const systemPrompt = result.session.agent.state.systemPrompt;
     expect(systemPrompt).toContain("You are Lume, a persistent counterpart running inside this workspace.");
     expect(systemPrompt).toContain("## Workspace Files (injected)");
+    expect(systemPrompt).toContain("## 系统配置");
+    expect(systemPrompt).toContain("~/.lume/lume.yaml");
+    expect(systemPrompt).toContain("Runtime 暴露配置目录");
     expect(systemPrompt).toContain("## Project Context");
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
@@ -260,6 +263,51 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("modelId: claude-sonnet-4-5");
     expect(systemPrompt).toContain("Preferred capability route: skills");
     expect(systemPrompt).toContain("<working_directory>");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("Lume runtime 应把 workspace skills 真正注册到 SDK", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-skills-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspaceSlug = "runtime-skill-registration";
+    const workspacePath = getAgentWorkspacePath(workspaceSlug);
+    const skillDir = join(workspacePath, "skills", "planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: planner",
+        "description: planning skill",
+        "---",
+        "# Planner",
+        "",
+        "Use this skill for structured planning.",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-skills-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "skill-runtime-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug,
+      workspaceName: "Runtime Skills Workspace"
+    });
+
+    const init = await result.agent.getInitializationResult();
+    expect(init.skills).toContain("planner");
 
     result.session.dispose();
     rmSync(configDir, { recursive: true, force: true });

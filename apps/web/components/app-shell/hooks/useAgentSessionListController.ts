@@ -10,6 +10,8 @@ import {
   togglePinAgentThread,
   updateAgentThreadTitle
 } from "@/lib/desktop-api/agent";
+import { getEffectiveSystemConfig, listChannels } from "@/lib/desktop-api/system";
+import { resolveChannelModelSelectionFromRef } from "@/lib/system-model-selection";
 import {
   buildChildThreadMap,
   deriveAgentGroups,
@@ -124,14 +126,26 @@ export function useAgentSessionListController({
   }, [agentThreads, editing, setAgentSessions, setEditing]);
 
   const createNewAgentThread = useCallback(async (): Promise<void> => {
+    const resolvedModel = agentChannelId && agentModelId
+      ? { channelId: agentChannelId, modelId: agentModelId }
+      : await Promise.all([
+        listChannels(),
+        getEffectiveSystemConfig()
+      ]).then(([channels, systemConfig]) =>
+        resolveChannelModelSelectionFromRef(channels, systemConfig.models?.agent?.defaultModelRef, "chat")
+      );
     const created = await createAgentThread({
       title: "新 Agent 线程",
-      channelId: agentChannelId ?? undefined,
-      modelId: agentModelId ?? undefined,
+      modelRef: resolvedModel && "modelRef" in resolvedModel ? resolvedModel.modelRef : undefined,
+      channelId: resolvedModel?.channelId,
+      modelId: resolvedModel?.modelId,
       workspaceId: currentWorkspaceId ?? undefined
     });
     setAgentSessions((prev) => [created, ...prev]);
     setCurrentAgentThreadId(created.id);
+    if (created.workspaceId) {
+      setCurrentWorkspaceId(created.workspaceId);
+    }
     setActiveView("conversations");
   }, [
     agentChannelId,
@@ -160,7 +174,7 @@ export function useAgentSessionListController({
     const next = await listAgentThreads();
     setAgentSessions(next);
     if (currentAgentThreadId === threadId) {
-      setCurrentAgentThreadId(next[0]?.id ?? null);
+      setCurrentAgentThreadId(null);
     }
   }, [currentAgentThreadId, setAgentSessions, setCurrentAgentThreadId]);
 

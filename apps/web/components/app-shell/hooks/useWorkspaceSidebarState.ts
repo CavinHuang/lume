@@ -34,7 +34,12 @@ export function useWorkspaceSidebarState({
         await ensureDefaultAgentWorkspace();
         const workspaces = await listAgentWorkspaces();
         setAgentWorkspaces(workspaces);
-        setCurrentWorkspaceId((prev) => prev ?? workspaces[0]?.id ?? null);
+        setCurrentWorkspaceId((prev) => {
+          if (prev && workspaces.some((item) => item.id === prev)) {
+            return prev;
+          }
+          return workspaces[0]?.id ?? null;
+        });
         setWorkspaceInitError(null);
       } catch (error) {
         console.error("[LeftSidebar] 初始化工作区失败:", error);

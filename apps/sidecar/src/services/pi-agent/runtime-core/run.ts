@@ -40,6 +40,7 @@ import {
   resolveAgentRuntimeRoutingTrace
 } from "../../agent/agent-runtime-context";
 import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
+import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
 import { createLumePiTools } from "../tools/create-lume-tools";
@@ -66,7 +67,8 @@ export interface CreateRuntimeCoreSessionInput {
   agentDir: string;
   userMessage?: string;
   provider: string;
-  modelId: string;
+  modelRef?: string;
+  resolvedModelId: string;
   resolvedModel?: RuntimeCoreResolvedModel;
   apiKey: string;
   workspaceId?: string;
@@ -287,10 +289,19 @@ function isAutomationExecution(messageMetadata?: Record<string, unknown>): boole
     || typeof messageMetadata.automationTrigger === "string";
 }
 
+function resolveSkillDirectories(workspaceSlug?: string): string[] {
+  const roots = [getDefaultSkillsDir()];
+  if (workspaceSlug) {
+    roots.push(getWorkspaceSkillsDir(workspaceSlug));
+  }
+  return roots;
+}
+
 function buildCombinedSystemPrompt(input: {
   lumeSessionId: string;
   cwd: string;
-  modelId: string;
+  modelRef?: string;
+  resolvedModelId: string;
   workspaceId?: string;
   workspaceName?: string;
   workspaceSlug?: string;
@@ -336,7 +347,8 @@ function buildCombinedSystemPrompt(input: {
       availableTools: input.availableTools,
       threadType: input.threadType,
       chatType: input.chatType,
-      fallbackModelId: input.modelId
+      fallbackModelRef: input.modelRef,
+      fallbackModelId: input.modelRef ?? input.resolvedModelId
     })
   ).trim();
 
@@ -368,7 +380,8 @@ export async function createRuntimeCoreSession(
   const systemPrompt = buildCombinedSystemPrompt({
     lumeSessionId: input.lumeSessionId,
     cwd: input.cwd,
-    modelId: input.resolvedModel?.id ?? input.modelId,
+    modelRef: input.modelRef,
+    resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
     workspaceId: input.workspaceId,
     workspaceName: input.workspaceName,
     workspaceSlug: input.workspaceSlug,
@@ -384,7 +397,7 @@ export async function createRuntimeCoreSession(
     apiType: resolveSdkApiType(input.provider),
     apiKey: input.apiKey,
     ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
-    model: input.resolvedModel?.id ?? input.modelId,
+    model: input.resolvedModel?.id ?? input.resolvedModelId,
     cwd: input.cwd,
     systemPrompt,
     tools: toolset.tools,
@@ -396,6 +409,7 @@ export async function createRuntimeCoreSession(
     agents: buildBuiltinAgents(),
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
+    skillsDirectories: resolveSkillDirectories(input.workspaceSlug),
     additionalDirectories: input.workspaceSlug ? [input.cwd] : undefined,
     persistSession: true
   };
@@ -408,7 +422,7 @@ export async function createRuntimeCoreSession(
     sessionId: input.lumeSessionId,
     threadId: input.lumeSessionId,
     model: input.resolvedModel ?? {
-      id: input.modelId,
+      id: input.resolvedModelId,
       provider: input.provider
     },
     messages: context.messages.map((message) => ({ role: message.role })),

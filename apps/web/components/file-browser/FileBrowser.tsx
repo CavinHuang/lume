@@ -2,19 +2,16 @@ import * as React from "react";
 import type { FileEntry } from "@lume/shared";
 import { useAtomValue } from "jotai";
 import {
-  ArrowRightLeft,
   ChevronRight,
-  Edit3,
-  Eye,
-  ExternalLink,
-  FolderOpen,
-  FolderSearch,
-  RefreshCw,
-  Search,
   Trash2,
-  X
+  RefreshCw,
+  ExternalLink,
+  FolderSearch,
+  MoreHorizontal,
+  ArrowRightLeft,
+  Pencil,
+  Eye
 } from "lucide-react";
-import { FileTypeIcon } from "./FileTypeIcon";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -28,405 +25,349 @@ import {
   AlertDialogTitle
 } from "@/components/ui/alert-dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import {
   deleteAgentFile,
+  deleteWorkspaceFile,
   listAgentDirectory,
+  listWorkspaceDirectory,
   moveAgentFile,
+  moveWorkspaceFile,
   openAgentFile,
+  openWorkspaceFile,
   previewAgentFile,
+  previewWorkspaceFile,
   renameAgentFile,
-  searchAgentWorkspaceFiles,
-  showAgentFileInFolder
+  renameWorkspaceFile,
+  showAgentFileInFolder,
+  showWorkspaceFileInFolder
 } from "@/lib/desktop-api/agent";
 import { cn } from "@/lib/utils";
 import { workspaceFilesVersionAtom } from "@/atoms";
+import { FileTypeIcon } from "./FileTypeIcon";
 
-interface ContextMenuState {
-  x: number;
-  y: number;
-  entry: FileEntry;
-}
-
-type FileBrowserProps = {
+interface FileBrowserProps {
   workspaceSlug: string;
-  threadId: string;
+  threadId?: string;
   rootPath: string;
-  onClose?: () => void;
-  /** 隐藏顶部路径栏和搜索栏 */
+  scope?: "thread" | "workspace";
   hideToolbar?: boolean;
-  /** 嵌入模式：去除背景色，更紧凑 */
   embedded?: boolean;
-};
-
-function trimTrailingSeparators(path: string): string {
-  return path.replace(/[\\/]+$/, "");
-}
-
-function joinPathFromRoot(rootPath: string, relativePath: string): string {
-  const separator = rootPath.includes("\\") ? "\\" : "/";
-  let rel = relativePath.trim();
-  while (rel.startsWith("/") || rel.startsWith("\\")) {
-    rel = rel.slice(1);
-  }
-  rel = rel.replace(/[\\/]+/g, separator);
-  if (!rel) return rootPath;
-  return `${trimTrailingSeparators(rootPath)}${separator}${rel}`;
-}
-
-function resolveTargetDir(rootPath: string, rawInput: string): string | null {
-  const input = rawInput.trim();
-  if (!input) return null;
-  const isAbsolute = /^([a-zA-Z]:[\\/]|\/)/.test(input);
-  if (isAbsolute) return input;
-  if (input === "." || input === "./" || input === ".\\") return rootPath;
-  return joinPathFromRoot(rootPath, input);
+  hideEmpty?: boolean;
 }
 
 export function FileBrowser({
   workspaceSlug,
   threadId,
   rootPath,
-  onClose,
+  scope = "thread",
   hideToolbar = false,
-  embedded = false
+  embedded = false,
+  hideEmpty = false
 }: FileBrowserProps): React.ReactElement {
-  const filesVersion = useAtomValue(workspaceFilesVersionAtom);
   const [entries, setEntries] = React.useState<FileEntry[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const filesVersion = useAtomValue(workspaceFilesVersionAtom);
+  const isWorkspaceScope = scope === "workspace";
+
+  const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = React.useState<FileEntry | null>(null);
-  const [contextMenu, setContextMenu] = React.useState<ContextMenuState | null>(null);
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const [searching, setSearching] = React.useState(false);
-  const [searchTotal, setSearchTotal] = React.useState(0);
-  const [searchEntries, setSearchEntries] = React.useState<FileEntry[]>([]);
+  const [deleteCount, setDeleteCount] = React.useState(1);
+  const [renamingPath, setRenamingPath] = React.useState<string | null>(null);
+  const [moving, setMoving] = React.useState(false);
+
+  const selectedCount = selectedPaths.size;
+
+  const loadDirectory = React.useCallback(async (path: string): Promise<FileEntry[]> => {
+    if (isWorkspaceScope) {
+      return listWorkspaceDirectory(workspaceSlug, path);
+    }
+    if (!threadId) {
+      throw new Error("缺少线程 ID");
+    }
+    return listAgentDirectory(workspaceSlug, threadId, path);
+  }, [isWorkspaceScope, threadId, workspaceSlug]);
+
+  const openPath = React.useCallback((path: string): Promise<{ ok: true }> => {
+    if (isWorkspaceScope) {
+      return openWorkspaceFile(workspaceSlug, path);
+    }
+    if (!threadId) {
+      return Promise.reject(new Error("缺少线程 ID"));
+    }
+    return openAgentFile(workspaceSlug, threadId, path);
+  }, [isWorkspaceScope, threadId, workspaceSlug]);
+
+  const previewPath = React.useCallback((path: string): Promise<{ ok: true }> => {
+    if (isWorkspaceScope) {
+      return previewWorkspaceFile(workspaceSlug, path);
+    }
+    if (!threadId) {
+      return Promise.reject(new Error("缺少线程 ID"));
+    }
+    return previewAgentFile(workspaceSlug, threadId, path);
+  }, [isWorkspaceScope, threadId, workspaceSlug]);
+
+  const showInFolder = React.useCallback((path: string): Promise<{ ok: true }> => {
+    if (isWorkspaceScope) {
+      return showWorkspaceFileInFolder(workspaceSlug, path);
+    }
+    if (!threadId) {
+      return Promise.reject(new Error("缺少线程 ID"));
+    }
+    return showAgentFileInFolder(workspaceSlug, threadId, path);
+  }, [isWorkspaceScope, threadId, workspaceSlug]);
+
+  const renamePath = React.useCallback((path: string, newName: string): Promise<{ ok: true; path: string }> => {
+    if (isWorkspaceScope) {
+      return renameWorkspaceFile(workspaceSlug, path, newName);
+    }
+    if (!threadId) {
+      return Promise.reject(new Error("缺少线程 ID"));
+    }
+    return renameAgentFile(workspaceSlug, threadId, path, newName);
+  }, [isWorkspaceScope, threadId, workspaceSlug]);
+
+  const deletePath = React.useCallback((path: string): Promise<{ ok: true }> => {
+    if (isWorkspaceScope) {
+      return deleteWorkspaceFile(workspaceSlug, path);
+    }
+    if (!threadId) {
+      return Promise.reject(new Error("缺少线程 ID"));
+    }
+    return deleteAgentFile(workspaceSlug, threadId, path);
+  }, [isWorkspaceScope, threadId, workspaceSlug]);
+
+  const movePath = React.useCallback((path: string, targetDir: string): Promise<{ ok: true; path: string }> => {
+    if (isWorkspaceScope) {
+      return moveWorkspaceFile(workspaceSlug, path, targetDir);
+    }
+    if (!threadId) {
+      return Promise.reject(new Error("缺少线程 ID"));
+    }
+    return moveAgentFile(workspaceSlug, threadId, path, targetDir);
+  }, [isWorkspaceScope, threadId, workspaceSlug]);
 
   const loadRoot = React.useCallback(async (): Promise<void> => {
-    if (!rootPath || !workspaceSlug || !threadId) return;
+    if (!rootPath || !workspaceSlug || (!isWorkspaceScope && !threadId)) return;
     setLoading(true);
     setError(null);
     try {
-      const items = await listAgentDirectory(workspaceSlug, threadId, rootPath);
+      const items = await loadDirectory(rootPath);
       setEntries(items);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载失败");
+      const message = err instanceof Error ? err.message : "加载失败";
+      setError(message);
       setEntries([]);
     } finally {
       setLoading(false);
     }
-  }, [rootPath, workspaceSlug, threadId]);
+  }, [isWorkspaceScope, loadDirectory, rootPath, threadId, workspaceSlug]);
 
   React.useEffect(() => {
     void loadRoot();
-  }, [loadRoot, filesVersion]);
+  }, [filesVersion, loadRoot]);
 
-  React.useEffect(() => {
-    const trimmed = searchQuery.trim();
-    if (!trimmed) {
-      setSearchEntries([]);
-      setSearchTotal(0);
-      return;
+  const handleSelect = React.useCallback((entry: FileEntry, event: React.MouseEvent) => {
+    const isMulti = event.metaKey || event.ctrlKey;
+    if (isMulti) {
+      setSelectedPaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(entry.path)) next.delete(entry.path);
+        else next.add(entry.path);
+        return next;
+      });
+    } else {
+      setSelectedPaths(new Set([entry.path]));
     }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setSearching(true);
-      void searchAgentWorkspaceFiles(workspaceSlug, threadId, trimmed, 100, rootPath)
-        .then((result) => {
-          if (cancelled) return;
-          setSearchTotal(result.total);
-          setSearchEntries(
-            result.entries.map((entry) => ({
-              name: entry.name,
-              path: joinPathFromRoot(rootPath, entry.path),
-              isDirectory: entry.type === "dir"
-            }))
-          );
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          console.error("[FileBrowser] search failed", err);
-          setSearchEntries([]);
-          setSearchTotal(0);
-        })
-        .finally(() => {
-          if (!cancelled) {
-            setSearching(false);
-          }
-        });
-    }, 240);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [rootPath, searchQuery, threadId, workspaceSlug]);
-
-  React.useEffect(() => {
-    if (!contextMenu) return;
-
-    const close = (): void => setContextMenu(null);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("contextmenu", close);
-    window.addEventListener("scroll", close, true);
-
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("contextmenu", close);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [contextMenu]);
-
-  const handleContextMenu = React.useCallback((event: React.MouseEvent, entry: FileEntry): void => {
-    event.preventDefault();
-    event.stopPropagation();
-    setContextMenu({ x: event.clientX, y: event.clientY, entry });
   }, []);
 
-  const handleMenuOpen = (): void => {
-    if (!contextMenu) return;
-    void openAgentFile(workspaceSlug, threadId, contextMenu.entry.path);
-    setContextMenu(null);
-  };
-
-  const handleMenuPreview = (): void => {
-    if (!contextMenu) return;
-    if (contextMenu.entry.isDirectory) return;
-    void previewAgentFile(workspaceSlug, threadId, contextMenu.entry.path);
-    setContextMenu(null);
-  };
-
-  const handleMenuShowInFolder = (): void => {
-    if (!contextMenu) return;
-    void showAgentFileInFolder(workspaceSlug, threadId, contextMenu.entry.path);
-    setContextMenu(null);
-  };
-
-  const handleMenuDelete = (): void => {
-    if (!contextMenu) return;
-    setDeleteTarget(contextMenu.entry);
-    setContextMenu(null);
-  };
-
-  const handleMenuRename = async (): Promise<void> => {
-    if (!contextMenu) return;
-    const target = contextMenu.entry;
-    const defaultName = target.name;
-    const nextName = window.prompt("请输入新名称", defaultName)?.trim();
-    setContextMenu(null);
-    if (!nextName || nextName === defaultName) return;
-    try {
-      await renameAgentFile(workspaceSlug, threadId, target.path, nextName);
-      await loadRoot();
-    } catch (err) {
-      console.error("[FileBrowser] rename failed", err);
-      setError(err instanceof Error ? err.message : "重命名失败");
+  const handleBackgroundClick = React.useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      setSelectedPaths(new Set());
     }
-  };
+  }, []);
 
-  const handleMenuMove = async (): Promise<void> => {
-    if (!contextMenu) return;
-    const target = contextMenu.entry;
-    const rawTarget = window.prompt("请输入目标目录（相对会话根目录或绝对路径）", ".")?.trim();
-    setContextMenu(null);
-    if (!rawTarget) return;
-    const targetDir = resolveTargetDir(rootPath, rawTarget);
-    if (!targetDir) return;
+  const handleShowInFolder = React.useCallback((entry: FileEntry) => {
+    void showInFolder(entry.path);
+  }, [showInFolder]);
+
+  const handleStartRename = React.useCallback((entry: FileEntry) => {
+    setRenamingPath(entry.path);
+  }, []);
+
+  const handleCancelRename = React.useCallback(() => {
+    setRenamingPath(null);
+  }, []);
+
+  const handleRename = React.useCallback(async (filePath: string, newName: string): Promise<string | null> => {
+    const parentDir = filePath.replace(/[/\\][^/\\]+$/, "");
     try {
-      await moveAgentFile(workspaceSlug, threadId, target.path, targetDir);
-      await loadRoot();
-    } catch (err) {
-      console.error("[FileBrowser] move failed", err);
-      setError(err instanceof Error ? err.message : "移动失败");
+      const siblings = await loadDirectory(parentDir);
+      const conflict = siblings.some((item) => item.name === newName && item.path !== filePath);
+      if (conflict) return "同名文件已存在";
+    } catch {
+      // ignore
     }
-  };
 
-  const handleDelete = async (): Promise<void> => {
+    try {
+      await renamePath(filePath, newName);
+      await loadRoot();
+      setRenamingPath(null);
+      setSelectedPaths(new Set());
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : "重命名失败";
+    }
+  }, [loadDirectory, loadRoot, renamePath]);
+
+  const handleRequestDelete = React.useCallback((entry: FileEntry) => {
+    setDeleteTarget(entry);
+    setDeleteCount(selectedCount > 1 ? selectedCount : 1);
+  }, [selectedCount]);
+
+  const handleDelete = React.useCallback(async () => {
     if (!deleteTarget) return;
     try {
-      await deleteAgentFile(workspaceSlug, threadId, deleteTarget.path);
+      if (selectedPaths.size > 1) {
+        for (const path of selectedPaths) {
+          await deletePath(path);
+        }
+      } else {
+        await deletePath(deleteTarget.path);
+      }
+      setSelectedPaths(new Set());
       await loadRoot();
     } catch (err) {
-      console.error("[FileBrowser] delete failed", err);
+      console.error("[FileBrowser] 删除失败:", err);
     }
     setDeleteTarget(null);
-  };
+  }, [deletePath, deleteTarget, loadRoot, selectedPaths]);
+
+  const handleMove = React.useCallback(async (entry: FileEntry) => {
+    setMoving(true);
+    try {
+      const promptText = isWorkspaceScope
+        ? "请输入目标目录（相对工作区共享根目录或绝对路径）"
+        : "请输入目标目录（相对会话根目录或绝对路径）";
+      const rawTarget = window.prompt(promptText, ".")?.trim();
+      if (!rawTarget) return;
+      const targetDir = resolveTargetDir(rootPath, rawTarget);
+      if (!targetDir) return;
+
+      if (selectedPaths.size > 1) {
+        for (const path of selectedPaths) {
+          await movePath(path, targetDir);
+        }
+      } else {
+        await movePath(entry.path, targetDir);
+      }
+      setSelectedPaths(new Set());
+      await loadRoot();
+    } catch (err) {
+      console.error("[FileBrowser] 移动失败:", err);
+    } finally {
+      setMoving(false);
+    }
+  }, [isWorkspaceScope, loadRoot, movePath, rootPath, selectedPaths]);
 
   const breadcrumb = React.useMemo(() => {
-    const normalized = rootPath.replace(/\\/g, "/");
-    const parts = normalized.split("/").filter(Boolean);
-    return parts.length > 2 ? `.../${parts.slice(-2).join("/")}` : normalized;
+    const parts = rootPath.replace(/\\/g, "/").split("/").filter(Boolean);
+    return parts.length > 2 ? `.../${parts.slice(-2).join("/")}` : rootPath;
   }, [rootPath]);
 
+  const fileTree = (
+    <div className="py-1" onClick={handleBackgroundClick}>
+      {error ? <div className="px-3 py-2 text-xs text-destructive">{error}</div> : null}
+      {!error && entries.length === 0 && !loading && !hideEmpty ? (
+        <div className="px-3 py-4 text-center text-xs text-muted-foreground">目录为空</div>
+      ) : null}
+      {entries.map((entry) => (
+        <FileTreeItem
+          key={entry.path}
+          entry={entry}
+          depth={0}
+          selectedPaths={selectedPaths}
+          selectedCount={selectedCount}
+          renamingPath={renamingPath}
+          moving={moving}
+          refreshVersion={filesVersion}
+          workspaceSlug={workspaceSlug}
+          threadId={threadId}
+          scope={scope}
+          loadDirectory={loadDirectory}
+          openPath={openPath}
+          previewPath={previewPath}
+          onSelect={handleSelect}
+          onShowInFolder={handleShowInFolder}
+          onStartRename={handleStartRename}
+          onCancelRename={handleCancelRename}
+          onRename={handleRename}
+          onDelete={handleRequestDelete}
+          onMove={handleMove}
+          onRefresh={loadRoot}
+        />
+      ))}
+    </div>
+  );
+
   return (
-    <div className={cn("flex h-full flex-col", embedded ? "" : "bg-background")}>
+    <div className={cn("flex flex-col", !embedded && "h-full")}>
       {!hideToolbar ? (
-        <>
-          <div className="flex h-[48px] flex-shrink-0 items-center gap-1 border-b px-3">
-            <span className="flex-1 truncate text-xs text-muted-foreground" title={rootPath}>
-              {breadcrumb}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 flex-shrink-0"
-              onClick={() => {
-                void openAgentFile(workspaceSlug, threadId, rootPath);
-              }}
-              title="打开目录"
-            >
-              <FolderOpen className="size-3.5" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 flex-shrink-0"
-              onClick={() => {
-                void loadRoot();
-              }}
-              disabled={loading}
-            >
-              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-            </Button>
-            {onClose ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 flex-shrink-0"
-                onClick={onClose}
-              >
-                <X className="size-3.5" />
-              </Button>
-            ) : null}
-          </div>
-
-          <div className="flex items-center gap-2 border-b px-3 py-2">
-            <Search className={cn("size-3.5 text-muted-foreground", searching && "animate-pulse")} />
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="搜索文件（名称/路径）"
-              className="h-7 w-full rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-            />
-            {searchQuery.trim() ? (
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {searching ? "搜索中..." : `${searchEntries.length}/${searchTotal}`}
-              </span>
-            ) : null}
-          </div>
-        </>
-      ) : null}
-
-      <ScrollArea className="flex-1">
-        <div className="py-1">
-          {error ? <div className="px-3 py-2 text-xs text-destructive">{error}</div> : null}
-          {!error && searchQuery.trim() && !searching && searchEntries.length === 0 ? (
-            <div className="px-3 py-4 text-center text-xs text-muted-foreground">未找到匹配文件</div>
-          ) : null}
-          {!error && !searchQuery.trim() && entries.length === 0 && !loading ? (
-            <div className="px-3 py-4 text-center text-xs text-muted-foreground">目录为空</div>
-          ) : null}
-          {(searchQuery.trim() ? searchEntries : entries).map((entry) => (
-            <FileTreeItem
-              key={entry.path}
-              entry={entry}
-              depth={searchQuery.trim() ? -1 : 0}
-              workspaceSlug={workspaceSlug}
-              threadId={threadId}
-              onContextMenu={handleContextMenu}
-              onRefresh={loadRoot}
-            />
-          ))}
-        </div>
-      </ScrollArea>
-
-      {contextMenu ? (
-        <div
-          className="fixed z-50 min-w-[12rem] animate-in fade-in-0 zoom-in-95 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          {contextMenu.entry.isDirectory ? (
-            <button
-              type="button"
-              className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-              onClick={handleMenuOpen}
-            >
-              <FolderOpen className="mr-2 size-3.5" />
-              打开目录
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-                onClick={handleMenuOpen}
-              >
-                <ExternalLink className="mr-2 size-3.5" />
-                打开
-              </button>
-              <button
-                type="button"
-                className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-                onClick={handleMenuPreview}
-              >
-                <Eye className="mr-2 size-3.5" />
-                预览
-              </button>
-            </>
-          )}
-          <button
+        <div className="flex items-center gap-1 px-3 pr-10 h-[48px] border-b flex-shrink-0">
+          <span className="text-xs text-muted-foreground truncate flex-1" title={rootPath}>
+            {breadcrumb}
+          </span>
+          <Button
             type="button"
-            className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-            onClick={() => { void handleMenuRename(); }}
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 flex-shrink-0"
+            onClick={() => { void openPath(rootPath); }}
+            title="在文件管理器中打开"
           >
-            <Edit3 className="mr-2 size-3.5" />
-            重命名
-          </button>
-          <button
+            <ExternalLink className="size-3.5" />
+          </Button>
+          <Button
             type="button"
-            className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-            onClick={() => { void handleMenuMove(); }}
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 flex-shrink-0"
+            onClick={() => { void loadRoot(); }}
+            disabled={loading}
           >
-            <ArrowRightLeft className="mr-2 size-3.5" />
-            移动到...
-          </button>
-          <button
-            type="button"
-            className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-            onClick={handleMenuShowInFolder}
-          >
-            <FolderSearch className="mr-2 size-3.5" />
-            在文件夹中显示
-          </button>
-          <div className="-mx-1 my-1 h-px bg-border" />
-          <button
-            type="button"
-            className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-destructive outline-none hover:bg-destructive/10 hover:text-destructive"
-            onClick={handleMenuDelete}
-          >
-            <Trash2 className="mr-2 size-3.5" />
-            删除
-          </button>
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+          </Button>
         </div>
       ) : null}
+
+      {embedded ? fileTree : <ScrollArea className="flex-1">{fileTree}</ScrollArea>}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除 <strong>{deleteTarget?.name}</strong> 吗？
-              {deleteTarget?.isDirectory ? "（包含所有子文件）" : ""}
+              {deleteCount > 1 ? (
+                <>确定要删除选中的 <strong>{deleteCount}</strong> 个项目吗？</>
+              ) : (
+                <>
+                  确定要删除 <strong>{deleteTarget?.name}</strong> 吗？
+                  {deleteTarget?.isDirectory ? "（包含所有子文件）" : ""}
+                </>
+              )}
               此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => { void handleDelete(); }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={() => { void handleDelete(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               删除
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -436,115 +377,275 @@ export function FileBrowser({
   );
 }
 
-interface FileTreeItemProps {
-  entry: FileEntry;
-  depth: number;
-  workspaceSlug: string;
-  threadId: string;
-  onContextMenu: (event: React.MouseEvent, entry: FileEntry) => void;
-  onRefresh: () => Promise<void>;
-}
-
 function FileTreeItem({
   entry,
   depth,
+  selectedPaths,
+  selectedCount,
+  renamingPath,
+  moving,
+  refreshVersion,
   workspaceSlug,
   threadId,
-  onContextMenu,
+  scope,
+  loadDirectory,
+  openPath,
+  previewPath,
+  onSelect,
+  onShowInFolder,
+  onStartRename,
+  onCancelRename,
+  onRename,
+  onDelete,
+  onMove,
   onRefresh
-}: FileTreeItemProps): React.ReactElement {
-  const isSearchResult = depth < 0;
+}: {
+  entry: FileEntry;
+  depth: number;
+  selectedPaths: Set<string>;
+  selectedCount: number;
+  renamingPath: string | null;
+  moving: boolean;
+  refreshVersion: number;
+  workspaceSlug: string;
+  threadId?: string;
+  scope: "thread" | "workspace";
+  loadDirectory: (path: string) => Promise<FileEntry[]>;
+  openPath: (path: string) => Promise<{ ok: true }>;
+  previewPath: (path: string) => Promise<{ ok: true }>;
+  onSelect: (entry: FileEntry, event: React.MouseEvent) => void;
+  onShowInFolder: (entry: FileEntry) => void;
+  onStartRename: (entry: FileEntry) => void;
+  onCancelRename: () => void;
+  onRename: (filePath: string, newName: string) => Promise<string | null>;
+  onDelete: (entry: FileEntry) => void;
+  onMove: (entry: FileEntry) => void;
+  onRefresh: () => Promise<void>;
+}): React.ReactElement {
   const [expanded, setExpanded] = React.useState(false);
   const [children, setChildren] = React.useState<FileEntry[]>([]);
   const [childrenLoaded, setChildrenLoaded] = React.useState(false);
+  const [editName, setEditName] = React.useState("");
+  const [renameError, setRenameError] = React.useState<string | null>(null);
+  const renameInputRef = React.useRef<HTMLInputElement>(null);
+  const justStartedEditing = React.useRef(false);
+
+  const isSelected = selectedPaths.has(entry.path);
+  const isRenaming = renamingPath === entry.path;
+
+  React.useEffect(() => {
+    if (expanded && childrenLoaded && entry.isDirectory) {
+      void loadDirectory(entry.path)
+        .then((items) => setChildren(items))
+        .catch((err) => console.error("[FileTreeItem] 刷新子目录失败:", err));
+    }
+  }, [childrenLoaded, entry.isDirectory, entry.path, expanded, loadDirectory, refreshVersion]);
+
+  React.useEffect(() => {
+    if (isRenaming) {
+      setEditName(entry.name);
+      setRenameError(null);
+      justStartedEditing.current = true;
+      const timer = setTimeout(() => {
+        justStartedEditing.current = false;
+        const input = renameInputRef.current;
+        if (!input) return;
+        input.focus();
+        const lastDotIndex = entry.name.lastIndexOf(".");
+        if (lastDotIndex > 0 && !entry.isDirectory) {
+          input.setSelectionRange(0, lastDotIndex);
+        } else {
+          input.select();
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [entry.isDirectory, entry.name, isRenaming]);
 
   const toggleDir = async (): Promise<void> => {
     if (!entry.isDirectory) return;
     if (!expanded && !childrenLoaded) {
       try {
-        const items = await listAgentDirectory(workspaceSlug, threadId, entry.path);
+        const items = await loadDirectory(entry.path);
         setChildren(items);
         setChildrenLoaded(true);
       } catch (err) {
-        console.error("[FileTreeItem] load children failed", err);
+        console.error("[FileTreeItem] 加载子目录失败:", err);
       }
     }
     setExpanded((prev) => !prev);
   };
 
-  const handleClick = (): void => {
-    if (isSearchResult) {
-      void openAgentFile(workspaceSlug, threadId, entry.path);
-      return;
-    }
-    if (entry.isDirectory) {
+  const handleClick = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    onSelect(entry, e);
+    if (entry.isDirectory && !e.metaKey && !e.ctrlKey) {
       void toggleDir();
-    } else {
-      void openAgentFile(workspaceSlug, threadId, entry.path);
+    }
+  };
+
+  const handleDoubleClick = (): void => {
+    if (!entry.isDirectory) {
+      void previewPath(entry.path);
     }
   };
 
   const handleRefreshAfterDelete = async (): Promise<void> => {
     if (childrenLoaded) {
       try {
-        const items = await listAgentDirectory(workspaceSlug, threadId, entry.path);
+        const items = await loadDirectory(entry.path);
         setChildren(items);
-        return;
       } catch {
         await onRefresh();
       }
     }
   };
 
-  const paddingLeft = isSearchResult ? 8 : 8 + depth * 16;
+  const saveRename = async (): Promise<void> => {
+    if (justStartedEditing.current) return;
+    const trimmed = editName.trim();
+    if (!trimmed || trimmed === entry.name) {
+      onCancelRename();
+      return;
+    }
+    const error = await onRename(entry.path, trimmed);
+    if (error) {
+      setRenameError(error);
+    }
+  };
+
+  const paddingLeft = 8 + depth * 16;
+  const showMenu = isSelected && selectedCount > 0 && !isRenaming;
+  void workspaceSlug;
+  void threadId;
+  void scope;
 
   return (
     <>
       <div
-        className="group flex cursor-pointer items-center gap-1 py-1 pr-2 text-sm hover:bg-accent/50"
+        className={cn(
+          "flex items-center gap-1 py-1 pr-2 text-sm cursor-pointer group mx-2 rounded-lg",
+          isSelected ? "bg-accent" : "hover:bg-accent/50"
+        )}
         style={{ paddingLeft }}
         onClick={handleClick}
-        onContextMenu={(event) => onContextMenu(event, entry)}
+        onDoubleClick={handleDoubleClick}
       >
-        {!isSearchResult && entry.isDirectory ? (
-          <ChevronRight
-            className={cn(
-              "size-3.5 flex-shrink-0 text-muted-foreground transition-transform duration-150",
-              expanded && "rotate-90"
-            )}
-          />
+        {entry.isDirectory ? (
+          <ChevronRight className={cn("size-3.5 text-muted-foreground flex-shrink-0 transition-transform duration-150", expanded && "rotate-90")} />
         ) : (
           <span className="w-3.5 flex-shrink-0" />
         )}
-
-        <FileTypeIcon
-          name={entry.name}
-          isDirectory={entry.isDirectory}
-          isOpen={expanded}
-          size={14}
-          className={cn(
-            "flex-shrink-0",
-            entry.isDirectory ? "text-amber-500" : "text-muted-foreground"
-          )}
-        />
-
-        <span className="flex-1 truncate text-xs">{entry.name}</span>
-      </div>
-
-      {!isSearchResult && expanded
-        ? children.map((child) => (
-            <FileTreeItem
-              key={child.path}
-              entry={child}
-              depth={depth + 1}
-              workspaceSlug={workspaceSlug}
-              threadId={threadId}
-              onContextMenu={onContextMenu}
-              onRefresh={handleRefreshAfterDelete}
+        <FileTypeIcon name={entry.name} isDirectory={entry.isDirectory} isOpen={expanded} />
+        {isRenaming ? (
+          <div className="flex-1 min-w-0">
+            <input
+              ref={renameInputRef}
+              value={editName}
+              onChange={(e) => { setEditName(e.target.value); setRenameError(null); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveRename();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCancelRename();
+                }
+              }}
+              onBlur={() => { void saveRename(); }}
+              onClick={(e) => e.stopPropagation()}
+              className={cn("w-full bg-transparent text-xs border-b outline-none py-0.5", renameError ? "border-destructive" : "border-primary/50")}
+              maxLength={255}
             />
-          ))
-        : null}
+            {renameError ? <div className="text-[10px] text-destructive mt-0.5">{renameError}</div> : null}
+          </div>
+        ) : (
+          <span className="truncate text-xs flex-1">{entry.name}</span>
+        )}
+        <div className={cn("flex-shrink-0", !showMenu && "invisible")} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="h-6 w-6 rounded flex items-center justify-center hover:bg-accent/70">
+                <MoreHorizontal className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            {showMenu ? (
+              <DropdownMenuContent align="start" className="w-40 z-[9999] min-w-0 p-0.5">
+                {selectedCount === 1 ? (
+                  <DropdownMenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onShowInFolder(entry)}>
+                    <FolderSearch />
+                    在文件夹中显示
+                  </DropdownMenuItem>
+                ) : null}
+                {selectedCount === 1 && !entry.isDirectory ? (
+                  <DropdownMenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => { void openPath(entry.path); }}>
+                    <Eye />
+                    打开
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem className="text-xs py-1 [&>svg]:size-3.5" disabled={moving} onSelect={() => { void onMove(entry); }}>
+                  <ArrowRightLeft />
+                  {selectedCount > 1 ? `移动选中 (${selectedCount})` : "移动到..."}
+                </DropdownMenuItem>
+                {selectedCount === 1 ? (
+                  <DropdownMenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onStartRename(entry)}>
+                    <Pencil />
+                    重命名
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuSeparator className="my-0.5" />
+                <DropdownMenuItem className="text-xs py-1 [&>svg]:size-3.5 text-destructive" onSelect={() => onDelete(entry)}>
+                  <Trash2 />
+                  {selectedCount > 1 ? `删除选中 (${selectedCount})` : "删除"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            ) : null}
+          </DropdownMenu>
+        </div>
+      </div>
+      {expanded && children.length === 0 && childrenLoaded ? (
+        <div className="text-[11px] text-muted-foreground/50 py-1" style={{ paddingLeft: paddingLeft + 24 }}>
+          空文件夹
+        </div>
+      ) : null}
+      {expanded ? children.map((child) => (
+        <FileTreeItem
+          key={child.path}
+          entry={child}
+          depth={depth + 1}
+          selectedPaths={selectedPaths}
+          selectedCount={selectedCount}
+          renamingPath={renamingPath}
+          moving={moving}
+          refreshVersion={refreshVersion}
+          workspaceSlug={workspaceSlug}
+          threadId={threadId}
+          scope={scope}
+          loadDirectory={loadDirectory}
+          openPath={openPath}
+          previewPath={previewPath}
+          onSelect={onSelect}
+          onShowInFolder={onShowInFolder}
+          onStartRename={onStartRename}
+          onCancelRename={onCancelRename}
+          onRename={onRename}
+          onDelete={onDelete}
+          onMove={onMove}
+          onRefresh={handleRefreshAfterDelete}
+        />
+      )) : null}
     </>
   );
 }
 
+function resolveTargetDir(rootPath: string, rawInput: string): string | null {
+  const input = rawInput.trim();
+  if (!input) return null;
+  const isAbsolute = /^([a-zA-Z]:[\\/]|\/)/.test(input);
+  if (isAbsolute) return input;
+  const separator = rootPath.includes("\\") ? "\\" : "/";
+  let rel = input;
+  while (rel.startsWith("/") || rel.startsWith("\\")) rel = rel.slice(1);
+  if (!rel || rel === "." || rel === "./" || rel === ".\\") return rootPath;
+  return `${rootPath.replace(/[\\/]+$/, "")}${separator}${rel.replace(/[\\/]+/g, separator)}`;
+}

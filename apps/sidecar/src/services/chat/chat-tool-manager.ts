@@ -15,6 +15,22 @@ import {
 } from "./chat-tool-config-store";
 import { testChatTool } from "./chat-tool-test-service";
 
+function setOptionalEnv(key: string, value: string | undefined): void {
+  if (value && value.trim()) {
+    process.env[key] = value.trim();
+  } else {
+    delete process.env[key];
+  }
+}
+
+export function syncSharedSearchToolCredentials(): void {
+  const credentials = getChatToolCredentials("web_search");
+  setOptionalEnv("LUME_BRAVE_API_KEY", credentials.braveApiKey);
+  setOptionalEnv("BRAVE_API_KEY", credentials.braveApiKey);
+  setOptionalEnv("LUME_TAVILY_API_KEY", credentials.tavilyApiKey);
+  setOptionalEnv("TAVILY_API_KEY", credentials.tavilyApiKey);
+}
+
 export function getAllChatToolInfos(): ChatToolInfo[] {
   const config = readChatToolConfig();
   return getAllChatToolInfosFromConfig(config);
@@ -62,6 +78,9 @@ export function updateChatToolCredentials(toolId: string, credentials: Record<st
     .filter((entry) => entry[1].length > 0);
   config.toolCredentials[toolId] = Object.fromEntries(next);
   updateChatToolConfig(config);
+  if (toolId === "web_search") {
+    syncSharedSearchToolCredentials();
+  }
 }
 
 export function createCustomChatTool(meta: ChatToolMeta): void {

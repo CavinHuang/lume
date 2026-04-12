@@ -100,9 +100,26 @@ export function mergeServerMessagesWithPending(
     }
     return !persistedUserContents.has(message.content);
   });
+  const preservedAssistantMessages = prev.filter((message) => {
+    if (message.role !== "assistant") {
+      return false;
+    }
+    const metadata = message.metadata as Record<string, unknown> | undefined;
+    if (metadata?.streamErrorPreserved !== true) {
+      return false;
+    }
+    return !next.some((serverMessage) => (
+      serverMessage.role === "assistant"
+      && (
+        serverMessage.id === message.id
+        || (message.versionGroupId && serverMessage.versionGroupId === message.versionGroupId)
+        || (((serverMessage.content ?? "").trim() || (serverMessage.reasoning ?? "").trim()) && serverMessage.content === message.content && serverMessage.reasoning === message.reasoning)
+      )
+    ));
+  });
   const stabilizedNext = next.map((message) => {
     const previous = prevById.get(message.id);
     return previous && isSameAgentMessage(previous, message) ? previous : message;
   });
-  return [...stabilizedNext, ...pendingTempMessages];
+  return [...stabilizedNext, ...preservedAssistantMessages, ...pendingTempMessages];
 }

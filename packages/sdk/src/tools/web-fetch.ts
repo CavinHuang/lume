@@ -4,6 +4,7 @@
 
 import { defineTool } from './types.js'
 import { ensureNetworkAllowed } from '../utils/pathing.js'
+import { sdkFetch } from './web-request.js'
 
 export const WebFetchTool = defineTool({
   name: 'WebFetch',
@@ -32,7 +33,7 @@ export const WebFetchTool = defineTool({
     }
 
     try {
-      const response = await fetch(url, {
+      const response = await sdkFetch(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)',
           ...headers,

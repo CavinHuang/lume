@@ -128,6 +128,8 @@ export interface ConversationMeta {
   id: string
   /** 对话标题 */
   title: string
+  /** 规范化模型引用（provider/model） */
+  modelRef?: string
   /** 默认使用的模型 ID */
   modelId?: string
   /** 使用的渠道 ID */
@@ -156,6 +158,8 @@ export interface ChatSendInput {
   userMessage: string
   /** 消息历史（用于上下文） */
   messageHistory: ChatMessage[]
+  /** 规范化模型引用（provider/model），优先于 channelId/modelId */
+  modelRef?: string
   /** 渠道 ID */
   channelId: string
   /** 模型 ID */
@@ -184,6 +188,8 @@ export interface ChatSendInput {
 export interface GenerateTitleInput {
   /** 用户消息内容（用于生成标题） */
   userMessage: string
+  /** 规范化模型引用（provider/model），优先于 channelId/modelId */
+  modelRef?: string
   /** 渠道 ID */
   channelId: string
   /** 模型 ID */

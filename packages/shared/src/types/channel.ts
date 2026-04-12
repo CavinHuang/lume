@@ -18,6 +18,7 @@
 export type ProviderType =
   | 'anthropic'
   | 'openai'
+  | 'jina'
   | 'openrouter'
   | 'deepseek'
   | 'google'
@@ -36,12 +37,18 @@ export type ProviderType =
 /** Provider 协议家族（决定请求格式） */
 export type ProviderApiFamily = 'anthropic' | 'openai' | 'google'
 
+export interface ChannelModelCapabilities {
+  chat?: boolean
+  embedding?: boolean
+}
+
 /**
  * 各供应商的默认 Base URL
  */
 export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
+  jina: 'https://api.jina.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   deepseek: 'https://api.deepseek.com',
   google: 'https://generativelanguage.googleapis.com',
@@ -64,6 +71,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
 export const PROVIDER_LABELS: Record<ProviderType, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  jina: 'Jina AI',
   openrouter: 'OpenRouter',
   deepseek: 'DeepSeek',
   google: 'Google',
@@ -84,6 +92,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
 export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   anthropic: 'anthropic',
   openai: 'openai',
+  jina: 'openai',
   openrouter: 'openai',
   deepseek: 'openai',
   google: 'google',
@@ -117,8 +126,84 @@ export interface ChannelModel {
   name: string
   /** 可选别名（用于 provider/model 之外的短名称切换） */
   alias?: string
+  /** 模型能力标签 */
+  capabilities?: ChannelModelCapabilities
   /** 是否启用 */
   enabled: boolean
+}
+
+function includesEmbeddingKeyword(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase() ?? ''
+  if (!normalized) return false
+  return normalized.includes('embedding') || normalized.includes('embed')
+}
+
+export function inferChannelModelCapabilities(input: {
+  provider: ProviderType
+  modelId: string
+  modelName?: string
+  supportedGenerationMethods?: string[]
+}): ChannelModelCapabilities {
+  const family = PROVIDER_API_FAMILIES[input.provider]
+  const hasEmbeddingKeyword =
+    includesEmbeddingKeyword(input.modelId) || includesEmbeddingKeyword(input.modelName)
+
+  if (family === 'anthropic') {
+    return { chat: true }
+  }
+
+  if (family === 'google') {
+    const methods = new Set((input.supportedGenerationMethods ?? []).map((item) => item.trim()))
+    return {
+      chat: methods.has('generateContent'),
+      embedding: methods.has('embedContent') || hasEmbeddingKeyword,
+    }
+  }
+
+  return {
+    chat: !hasEmbeddingKeyword,
+    embedding: hasEmbeddingKeyword,
+  }
+}
+
+export function normalizeChannelModel(input: ChannelModel & {
+  provider: ProviderType
+  supportedGenerationMethods?: string[]
+}): ChannelModel {
+  const trimmedId = input.id.trim()
+  const trimmedName = input.name.trim() || trimmedId
+  const trimmedAlias = input.alias?.trim()
+  const hasAlias = typeof trimmedAlias === 'string' && trimmedAlias.length > 0
+  const inferred = inferChannelModelCapabilities({
+    provider: input.provider,
+    modelId: trimmedId,
+    modelName: trimmedName,
+    supportedGenerationMethods: input.supportedGenerationMethods,
+  })
+  const capabilities = {
+    ...inferred,
+    ...(input.capabilities ?? {}),
+  }
+
+  return {
+    id: trimmedId,
+    name: trimmedName,
+    ...(hasAlias ? { alias: trimmedAlias } : { alias: undefined }),
+    capabilities,
+    enabled: input.enabled,
+  }
+}
+
+export function getSuggestedProviderModels(provider: ProviderType): ChannelModel[] {
+  if (provider === 'jina') {
+    return [
+      { id: 'jina-embeddings-v5-text-small', name: 'jina-embeddings-v5-text-small', enabled: true },
+      { id: 'jina-embeddings-v5-text-nano', name: 'jina-embeddings-v5-text-nano', enabled: true },
+      { id: 'jina-embeddings-v4', name: 'jina-embeddings-v4', enabled: true },
+      { id: 'jina-embeddings-v3', name: 'jina-embeddings-v3', enabled: true },
+    ].map((model) => normalizeChannelModel({ ...model, provider }))
+  }
+  return []
 }
 
 /**

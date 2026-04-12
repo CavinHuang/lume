@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ConversationMeta, SystemPromptConfig } from "@lume/shared";
 import { createConversation } from "@/lib/desktop-api/chat";
+import { getEffectiveSystemConfig, listChannels } from "@/lib/desktop-api/system";
+import { resolveChannelModelSelectionFromRef } from "@/lib/system-model-selection";
 import {
   resolveWelcomeConversationPromptId,
   shouldShowChatOnboardingView,
@@ -63,12 +65,24 @@ export function useChatOnboardingFlow({
   );
 
   const handleCreateWelcomeConversation = useCallback(async (): Promise<void> => {
-    if (!selectedModel || creatingWelcomeConversation) return;
+    if (creatingWelcomeConversation) return;
     setCreatingWelcomeConversation(true);
     try {
+      const resolvedModel = selectedModel ?? await Promise.all([
+        listChannels(),
+        getEffectiveSystemConfig()
+      ]).then(([channels, systemConfig]) =>
+        resolveChannelModelSelectionFromRef(channels, systemConfig.models?.chat?.defaultModelRef, "chat")
+      );
+      if (!resolvedModel) return;
+      const resolvedModelRef =
+        "modelRef" in resolvedModel && typeof resolvedModel.modelRef === "string"
+          ? resolvedModel.modelRef
+          : undefined;
       const created = await createConversation({
-        modelId: selectedModel.modelId,
-        channelId: selectedModel.channelId
+        modelRef: resolvedModelRef,
+        modelId: resolvedModel.modelId,
+        channelId: resolvedModel.channelId
       });
       setConversations((prev) => [created, ...prev]);
       const nextPromptId = resolveWelcomeConversationPromptId({
@@ -80,7 +94,7 @@ export function useChatOnboardingFlow({
         next.set(created.id, nextPromptId);
         return next;
       });
-      setSelectedModel({ channelId: selectedModel.channelId, modelId: selectedModel.modelId });
+      setSelectedModel({ channelId: resolvedModel.channelId, modelId: resolvedModel.modelId });
       setCurrentConversationId(created.id);
       setOnboardingCompleted(true);
       setOnboardingDismissed(true);

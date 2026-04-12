@@ -19,7 +19,7 @@ import {
   toggleAgentThreadPin
 } from "./agent-thread-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
-import { getAgentWorkspacePath } from "../infra/config-paths";
+import { getAgentThreadArtifactsPath, getAgentThreadFilesPath, getAgentThreadPlansPath, getAgentThreadRootPath, getAgentWorkspacePath } from "../infra/config-paths";
 import { appendMessage, createConversation } from "../chat/conversation-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
@@ -66,7 +66,23 @@ describe("agent-thread-manager advanced ops", () => {
 
     expect(created.channelId).toBe("channel-1");
     expect(created.modelId).toBe("provider/model-1");
+    expect(created.modelRef).toBe("provider/model-1");
     expect(getAgentThreadMeta(created.id)?.modelId).toBe("provider/model-1");
+    expect(getAgentThreadMeta(created.id)?.modelRef).toBe("provider/model-1");
+  });
+
+  test("createAgentThread 应创建 files plans artifacts 与 .context 子目录，且不再创建 .claude", () => {
+    const workspace = createAgentWorkspace("结构工作区");
+    const created = createAgentThread("结构线程", undefined, workspace.id);
+
+    const threadRoot = getAgentThreadRootPath(workspace.slug, created.id);
+
+    expect(existsSync(threadRoot)).toBeTrue();
+    expect(existsSync(getAgentThreadFilesPath(workspace.slug, created.id))).toBeTrue();
+    expect(existsSync(getAgentThreadPlansPath(workspace.slug, created.id))).toBeTrue();
+    expect(existsSync(getAgentThreadArtifactsPath(workspace.slug, created.id))).toBeTrue();
+    expect(existsSync(join(threadRoot, ".context"))).toBeTrue();
+    expect(existsSync(join(threadRoot, ".claude"))).toBeFalse();
   });
 
   test("moveAgentThreadToWorkspace 应迁移 session 工作目录并更新 workspaceId", () => {
@@ -74,8 +90,8 @@ describe("agent-thread-manager advanced ops", () => {
     const targetWorkspace = createAgentWorkspace("目标工作区");
     const created = createAgentThread("迁移会话", undefined, sourceWorkspace.id);
 
-    const sourceSessionDir = join(getAgentWorkspacePath(sourceWorkspace.slug), created.id);
-    const targetSessionDir = join(getAgentWorkspacePath(targetWorkspace.slug), created.id);
+    const sourceSessionDir = getAgentThreadRootPath(sourceWorkspace.slug, created.id);
+    const targetSessionDir = getAgentThreadRootPath(targetWorkspace.slug, created.id);
     writeFileSync(join(sourceSessionDir, "note.txt"), "hello", "utf-8");
     updateAgentThreadMeta(created.id, {
       sdkThreadId: "sdk-session",
@@ -97,7 +113,7 @@ describe("agent-thread-manager advanced ops", () => {
     const created = createAgentThread("新会话");
 
     const moved = moveAgentThreadToWorkspace(created.id, targetWorkspace.id);
-    const targetSessionDir = join(getAgentWorkspacePath(targetWorkspace.slug), created.id);
+    const targetSessionDir = getAgentThreadRootPath(targetWorkspace.slug, created.id);
 
     expect(moved.workspaceId).toBe(targetWorkspace.id);
     expect(existsSync(targetSessionDir)).toBeTrue();
@@ -109,8 +125,8 @@ describe("agent-thread-manager advanced ops", () => {
     const targetWorkspace = createAgentWorkspace("目标工作区");
     const created = createAgentThread("覆盖迁移会话", undefined, sourceWorkspace.id);
 
-    const sourceSessionDir = join(getAgentWorkspacePath(sourceWorkspace.slug), created.id);
-    const targetSessionDir = join(getAgentWorkspacePath(targetWorkspace.slug), created.id);
+    const sourceSessionDir = getAgentThreadRootPath(sourceWorkspace.slug, created.id);
+    const targetSessionDir = getAgentThreadRootPath(targetWorkspace.slug, created.id);
     writeFileSync(join(sourceSessionDir, "source.txt"), "source", "utf-8");
     mkdirSync(targetSessionDir, { recursive: true });
     writeFileSync(join(targetSessionDir, "target.txt"), "target", "utf-8");

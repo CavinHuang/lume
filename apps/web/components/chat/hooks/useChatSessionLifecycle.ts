@@ -6,6 +6,11 @@ import type {
   SystemPromptConfig
 } from "@lume/shared";
 import {
+  getEffectiveSystemConfig,
+  listChannels as listSystemChannels
+} from "@/lib/desktop-api/system";
+import { resolveChannelModelSelectionFromRef } from "@/lib/system-model-selection";
+import {
   getChatTools,
   getRecentConversationMessages,
   getSystemPromptConfig,
@@ -155,6 +160,18 @@ export function useChatSessionLifecycle({
       setCurrentMessages([]);
       setContextDividers([]);
       setHasMoreMessages(false);
+      void Promise.all([listSystemChannels(), getEffectiveSystemConfig()])
+        .then(([channels, systemConfig]) => {
+          const resolved = resolveChannelModelSelectionFromRef(
+            channels,
+            systemConfig.models?.chat?.defaultModelRef,
+            "chat"
+          );
+          setSelectedModel(resolved);
+        })
+        .catch((error) => {
+          console.error("[ChatView] 加载默认 Chat 模型失败:", error);
+        });
       return;
     }
 
@@ -168,7 +185,18 @@ export function useChatSessionLifecycle({
       setHasMoreMessages(result.hasMore);
     });
     setContextDividers(currentConversation?.contextDividers ?? []);
-    if (currentConversation?.modelId && currentConversation?.channelId) {
+    if (currentConversation?.modelRef) {
+      void listSystemChannels()
+        .then((channels) => {
+          const resolved = resolveChannelModelSelectionFromRef(channels, currentConversation.modelRef, "chat");
+          if (resolved) {
+            setSelectedModel(resolved);
+          }
+        })
+        .catch((error) => {
+          console.error("[ChatView] 解析会话 modelRef 失败:", error);
+        });
+    } else if (currentConversation?.modelId && currentConversation?.channelId) {
       setSelectedModel({
         channelId: currentConversation.channelId,
         modelId: currentConversation.modelId
@@ -176,6 +204,7 @@ export function useChatSessionLifecycle({
     }
   }, [
     currentConversation?.contextDividers,
+    currentConversation?.modelRef,
     currentConversation?.modelId,
     currentConversation?.channelId,
     currentConversationId,

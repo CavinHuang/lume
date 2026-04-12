@@ -9,7 +9,9 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { getChannelsPath } from "../infra/config-paths";
-import { PROVIDER_API_FAMILIES } from "@lume/shared";
+import { fetchWithProxy } from "../infra/proxy-fetch";
+import { getSuggestedProviderModels, normalizeChannelModel, PROVIDER_API_FAMILIES } from "@lume/shared";
+import { parseModelRef } from "./model-selection";
 import type {
   Channel,
   ChannelCreateInput,
@@ -22,7 +24,7 @@ import type {
   ProviderApiFamily
 } from "@lume/shared";
 
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3;
 const AES_ALGO = "aes-256-gcm";
 
 function getEncryptionKey(): Buffer {
@@ -83,25 +85,21 @@ function normalizeChannelsConfig(config: ChannelsConfig): { config: ChannelsConf
     const normalizedProvider = normalizeProviderForStorage(channel.provider);
     const normalizedBaseUrl = channel.baseUrl.trim().replace(/\/+$/, "");
     const normalizedModels = channel.models.map((model) => {
-      const trimmedId = model.id.trim();
-      const trimmedName = model.name.trim() || trimmedId;
-      const trimmedAlias = model.alias?.trim();
-      const hasAlias = typeof trimmedAlias === "string" && trimmedAlias.length > 0;
+      const normalizedModel = normalizeChannelModel({
+        ...model,
+        provider: normalizedProvider
+      });
       if (
-        trimmedId !== model.id ||
-        trimmedName !== model.name ||
+        normalizedModel.id !== model.id ||
+        normalizedModel.name !== model.name ||
         normalizedProvider !== channel.provider ||
         normalizedBaseUrl !== channel.baseUrl ||
-        model.alias !== (hasAlias ? trimmedAlias : undefined)
+        model.alias !== normalizedModel.alias ||
+        JSON.stringify(model.capabilities ?? {}) !== JSON.stringify(normalizedModel.capabilities ?? {})
       ) {
         changed = true;
       }
-      return {
-        ...model,
-        id: trimmedId,
-        name: trimmedName,
-        ...(hasAlias ? { alias: trimmedAlias } : { alias: undefined })
-      };
+      return normalizedModel;
     });
     const normalizedDefaultModelId = channel.defaultModelId?.trim() || undefined;
     const normalizedFallbackModelIds = (channel.fallbackModelIds ?? [])
@@ -159,12 +157,7 @@ export function createChannel(input: ChannelCreateInput): Channel {
     provider: normalizedProvider,
     baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
     apiKey: encryptApiKey(input.apiKey),
-    models: input.models.map((model) => ({
-      ...model,
-      id: model.id.trim(),
-      name: model.name.trim() || model.id.trim(),
-      alias: model.alias?.trim() || undefined
-    })),
+    models: input.models.map((model) => normalizeChannelModel({ ...model, provider: normalizedProvider })),
     defaultModelId: normalizedDefaultModelId,
     fallbackModelIds: normalizedFallbackModelIds,
     enabled: input.enabled,
@@ -189,11 +182,9 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
     apiKey: input.apiKey ? encryptApiKey(input.apiKey) : existing.apiKey,
     ...(input.models
       ? {
-          models: input.models.map((model) => ({
+          models: input.models.map((model) => normalizeChannelModel({
             ...model,
-            id: model.id.trim(),
-            name: model.name.trim() || model.id.trim(),
-            alias: model.alias?.trim() || undefined
+            provider: input.provider ? normalizeProviderForStorage(input.provider) : existing.provider
           }))
         }
       : {}),
@@ -228,6 +219,79 @@ export function decryptApiKey(channelId: string): string {
   return decryptKey(channel.apiKey);
 }
 
+export function resolveChannelEmbeddingBinding(modelRef: string): {
+  channel: Channel;
+  modelId: string;
+  apiKey: string;
+  family: ProviderApiFamily;
+} | null {
+  const parsed = parseModelRef(modelRef, "");
+  if (!parsed) {
+    return null;
+  }
+
+  const channel = listChannels().find((item) => {
+    if (!item.enabled || item.provider !== parsed.provider) {
+      return false;
+    }
+    return item.models.some((model) =>
+      model.id === parsed.model &&
+      model.enabled &&
+      model.capabilities?.embedding === true
+    );
+  });
+
+  if (!channel) {
+    return null;
+  }
+
+  return {
+    channel,
+    modelId: parsed.model,
+    apiKey: decryptKey(channel.apiKey),
+    family: resolveProviderApiFamily(channel.provider, channel.baseUrl)
+  };
+}
+
+export function resolveChannelModelBinding(
+  modelRef: string,
+  capability?: "chat" | "embedding"
+): {
+  channel: Channel;
+  modelId: string;
+  family: ProviderApiFamily;
+} | null {
+  const parsed = parseModelRef(modelRef, "");
+  if (!parsed) {
+    return null;
+  }
+
+  const channel = listChannels().find((item) => {
+    if (!item.enabled || item.provider !== parsed.provider) {
+      return false;
+    }
+    return item.models.some((model) => {
+      if (!model.enabled || model.id !== parsed.model) {
+        return false;
+      }
+      if (!capability) {
+        return true;
+      }
+      return model.capabilities?.[capability] === true;
+    });
+  });
+
+  if (!channel) {
+    return null;
+  }
+
+  return {
+    channel,
+    modelId: parsed.model,
+    family: resolveProviderApiFamily(channel.provider, channel.baseUrl)
+  };
+}
+
 function normalizeAnthropicBaseUrl(baseUrl: string): string {
   let url = baseUrl.trim().replace(/\/+$/, "");
   if (!url.match(/\/v\d+$/)) url = `${url}/v1`;
@@ -249,7 +313,7 @@ function resolveProviderApiFamily(provider: Channel["provider"], baseUrl: string
 
 async function testAnthropic(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
   const url = normalizeAnthropicBaseUrl(baseUrl);
-  const response = await fetch(`${url}/messages`, {
+  const response = await fetchWithProxy(`${url}/messages`, {
     method: "POST",
     headers: {
       "x-api-key": apiKey,
@@ -270,7 +334,7 @@ async function testAnthropic(baseUrl: string, apiKey: string): Promise<ChannelTe
 
 async function testOpenAICompatible(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetch(`${url}/models`, {
+  const response = await fetchWithProxy(`${url}/models`, {
     method: "GET",
     headers: { Authorization: `Bearer ${apiKey}` }
   });
@@ -279,9 +343,57 @@ async function testOpenAICompatible(baseUrl: string, apiKey: string): Promise<Ch
   return { success: false, message: `请求失败 (${response.status})` };
 }
 
+async function testJina(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
+  const url = normalizeBaseUrl(baseUrl);
+  const candidateModels = [
+    "jina-embeddings-v5-text-small",
+    "jina-embeddings-v5-text-nano",
+    "jina-embeddings-v4",
+    "jina-embeddings-v3"
+  ];
+
+  let lastStatus = 0;
+  let lastDetail = "";
+
+  for (const model of candidateModels) {
+    const response = await fetchWithProxy(`${url}/embeddings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        input: [
+          "hello lume",
+          "test embedding request"
+        ]
+      })
+    });
+
+    if (response.ok) {
+      return { success: true, message: `连接成功 (${model})` };
+    }
+
+    lastStatus = response.status;
+    lastDetail = await response.text().catch(() => "");
+    if (response.status === 401) {
+      return { success: false, message: "API Key 无效" };
+    }
+  }
+
+  const detail = lastDetail.trim().replace(/\s+/g, " ").slice(0, 160);
+  return {
+    success: false,
+    message: detail
+      ? `请求失败 (${lastStatus}): ${detail}`
+      : `请求失败 (${lastStatus})`
+  };
+}
+
 async function testGoogle(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetch(`${url}/v1beta/models?key=${apiKey}`, { method: "GET" });
+  const response = await fetchWithProxy(`${url}/v1beta/models?key=${apiKey}`, { method: "GET" });
   if (response.ok) return { success: true, message: "连接成功" };
   if (response.status === 400 || response.status === 403) return { success: false, message: "API Key 无效" };
   return { success: false, message: `请求失败 (${response.status})` };
@@ -291,6 +403,7 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
   const channel = getChannelById(channelId);
   if (!channel) return { success: false, message: "渠道不存在" };
   const apiKey = decryptKey(channel.apiKey);
+  if (channel.provider === "jina") return testJina(channel.baseUrl, apiKey);
   const family = resolveProviderApiFamily(channel.provider, channel.baseUrl);
   if (family === "anthropic") return testAnthropic(channel.baseUrl, apiKey);
   if (family === "google") return testGoogle(channel.baseUrl, apiKey);
@@ -298,6 +411,7 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
 }
 
 export async function testChannelDirect(input: FetchModelsInput): Promise<ChannelTestResult> {
+  if (input.provider === "jina") return testJina(input.baseUrl, input.apiKey);
   const family = resolveProviderApiFamily(input.provider, input.baseUrl);
   if (family === "anthropic") return testAnthropic(input.baseUrl, input.apiKey);
   if (family === "google") return testGoogle(input.baseUrl, input.apiKey);
@@ -319,18 +433,47 @@ interface GoogleModelItem {
   supportedGenerationMethods?: string[];
 }
 
-async function fetchOpenAICompatibleModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult> {
+async function fetchOpenAICompatibleModels(
+  provider: Channel["provider"],
+  baseUrl: string,
+  apiKey: string
+): Promise<FetchModelsResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetch(`${url}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
-  if (!response.ok) return { success: false, message: `请求失败 (${response.status})`, models: [] };
+  const response = await fetchWithProxy(`${url}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (!response.ok) {
+    const suggested = getSuggestedProviderModels(provider);
+    if (provider === "jina" && suggested.length > 0) {
+      return {
+        success: true,
+        message: `Jina 模型列表接口不可用，已回退到 ${suggested.length} 个推荐模型`,
+        models: suggested
+      };
+    }
+    return { success: false, message: `请求失败 (${response.status})`, models: [] };
+  }
   const data = (await response.json()) as { data?: OpenAIModelItem[] };
-  const models: ChannelModel[] = (data.data ?? []).map((item) => ({ id: item.id, name: item.id, enabled: true }));
+  const models: ChannelModel[] = (data.data ?? []).map((item) => normalizeChannelModel({
+    id: item.id,
+    name: item.id,
+    enabled: true,
+    provider
+  }));
+  if (provider === "jina" && models.length === 0) {
+    const suggested = getSuggestedProviderModels(provider);
+    if (suggested.length > 0) {
+      return {
+        success: true,
+        message: `Jina 返回空模型列表，已回退到 ${suggested.length} 个推荐模型`,
+        models: suggested
+      };
+    }
+  }
   return { success: true, message: `成功获取 ${models.length} 个模型`, models };
 }
 
 async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult> {
   const url = normalizeAnthropicBaseUrl(baseUrl);
-  const response = await fetch(`${url}/models`, {
+  const response = await fetchWithProxy(`${url}/models`, {
     headers: {
       "x-api-key": apiKey,
       Authorization: `Bearer ${apiKey}`,
@@ -340,23 +483,31 @@ async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<Fe
   if (!response.ok) return { success: false, message: `请求失败 (${response.status})`, models: [] };
   const data = (await response.json()) as { data?: AnthropicModelItem[] };
   const models: ChannelModel[] = (data.data ?? []).map((item) => ({
-    id: item.id,
-    name: item.display_name ?? item.id,
-    enabled: true
+    ...normalizeChannelModel({
+      id: item.id,
+      name: item.display_name ?? item.id,
+      enabled: true,
+      provider: "anthropic"
+    })
   }));
   return { success: true, message: `成功获取 ${models.length} 个模型`, models };
 }
 
 async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetch(`${url}/v1beta/models?key=${apiKey}`);
+  const response = await fetchWithProxy(`${url}/v1beta/models?key=${apiKey}`);
   if (!response.ok) return { success: false, message: `请求失败 (${response.status})`, models: [] };
   const data = (await response.json()) as { models?: GoogleModelItem[] };
   const models: ChannelModel[] = (data.models ?? [])
-    .filter((item) => item.supportedGenerationMethods?.includes("generateContent"))
     .map((item) => {
       const id = item.name.replace(/^models\//, "");
-      return { id, name: item.displayName ?? id, enabled: true };
+      return normalizeChannelModel({
+        id,
+        name: item.displayName ?? id,
+        enabled: true,
+        provider: "google",
+        supportedGenerationMethods: item.supportedGenerationMethods
+      });
     });
   return { success: true, message: `成功获取 ${models.length} 个模型`, models };
 }
@@ -365,5 +516,5 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
   const family = resolveProviderApiFamily(input.provider, input.baseUrl);
   if (family === "anthropic") return fetchAnthropicModels(input.baseUrl, input.apiKey);
   if (family === "google") return fetchGoogleModels(input.baseUrl, input.apiKey);
-  return fetchOpenAICompatibleModels(input.baseUrl, input.apiKey);
+  return fetchOpenAICompatibleModels(input.provider, input.baseUrl, input.apiKey);
 }

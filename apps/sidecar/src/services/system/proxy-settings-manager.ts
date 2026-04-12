@@ -24,6 +24,14 @@ const startupEnvProxy = {
   noProxy: process.env.NO_PROXY ?? process.env.no_proxy
 };
 
+export interface ActiveProxyConfig {
+  mode: AgentProxySettings["mode"];
+  enabled: boolean;
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+}
+
 function readStoredSettings(): StoredSettings {
   const path = getSettingsPath();
   if (!existsSync(path)) {
@@ -155,6 +163,29 @@ export function getAgentProxyStatus(): AgentProxyStatus {
       httpsProxy: startupEnvProxy.httpsProxy,
       noProxy: startupEnvProxy.noProxy
     }
+  };
+}
+
+export function getActiveProxyConfig(): ActiveProxyConfig {
+  const stored = readStoredSettings().proxy;
+  if (!stored.enabled || stored.mode === "off") {
+    return { mode: "off", enabled: false };
+  }
+  if (stored.mode === "system") {
+    return {
+      mode: "system",
+      enabled: true,
+      httpProxy: startupEnvProxy.httpProxy,
+      httpsProxy: startupEnvProxy.httpsProxy,
+      noProxy: startupEnvProxy.noProxy
+    };
+  }
+  return {
+    mode: "custom",
+    enabled: true,
+    httpProxy: stored.httpProxy,
+    httpsProxy: stored.httpsProxy ?? stored.httpProxy,
+    noProxy: stored.noProxy
   };
 }
 

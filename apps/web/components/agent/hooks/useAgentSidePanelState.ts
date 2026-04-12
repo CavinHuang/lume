@@ -1,4 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
+import { useAtom } from "jotai";
+import { agentSidePanelOpenMapAtom } from "@/atoms";
 
 export function useAgentSidePanelState(sessionId: string | null): {
   currentSidePanelOpen: boolean;
@@ -6,7 +8,7 @@ export function useAgentSidePanelState(sessionId: string | null): {
   setCurrentSidePanelOpen: (open: boolean) => void;
   handleToggleFileBrowser: () => void;
 } {
-  const [sidePanelOpenMap, setSidePanelOpenMap] = useState<Map<string, boolean>>(new Map());
+  const [sidePanelOpenMap, setSidePanelOpenMap] = useAtom(agentSidePanelOpenMapAtom);
 
   const currentSidePanelOpen = sessionId ? sidePanelOpenMap.get(sessionId) ?? true : true;
   const fileBrowserOpen = currentSidePanelOpen;
@@ -18,7 +20,7 @@ export function useAgentSidePanelState(sessionId: string | null): {
       map.set(sessionId, open);
       return map;
     });
-  }, [sessionId]);
+  }, [sessionId, setSidePanelOpenMap]);
 
   const handleToggleFileBrowser = useCallback((): void => {
     if (!sessionId) return;

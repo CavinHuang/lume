@@ -8,7 +8,7 @@ describe("runtime-core model", () => {
         models: [{ id: "zai/non-existent-model", name: "custom", enabled: true }]
       },
       channelProvider: "zai",
-      modelId: "zai/non-existent-model",
+      requestedModelRefOrId: "zai/non-existent-model",
       baseUrl: "https://open.bigmodel.cn/api/anthropic"
     });
 
@@ -23,7 +23,7 @@ describe("runtime-core model", () => {
         models: [{ id: "glm-4.5", name: "GLM", enabled: true }]
       },
       channelProvider: "custom",
-      modelId: "glm-4.5",
+      requestedModelRefOrId: "glm-4.5",
       baseUrl: "https://open.bigmodel.cn/api/anthropic"
     });
 
@@ -38,7 +38,7 @@ describe("runtime-core model", () => {
         models: [{ id: "claude-sonnet-4-5-20250929", name: "Claude", enabled: true }]
       },
       channelProvider: "anthropic",
-      modelId: "claude-sonnet-4-5-20250929",
+      requestedModelRefOrId: "claude-sonnet-4-5-20250929",
       baseUrl: "https://api.anthropic.com"
     });
 

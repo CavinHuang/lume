@@ -64,6 +64,7 @@ function coerceKnownProvider(provider: string): ProviderType {
   return ([
     "anthropic",
     "openai",
+    "jina",
     "openrouter",
     "deepseek",
     "google",

@@ -30,6 +30,7 @@ export const chatSendInputSchema = z.object({
   conversationId: z.string().min(1),
   userMessage: z.string(),
   messageHistory: z.array(chatMessageSchema),
+  modelRef: z.string().optional(),
   channelId: z.string().min(1),
   modelId: z.string().min(1),
   systemMessage: z.string().optional(),
@@ -52,6 +53,7 @@ export const chatUpdateTitleInputSchema = z.object({
 
 export const chatUpdateModelInputSchema = z.object({
   conversationId: idSchema,
+  modelRef: z.string().optional(),
   modelId: z.string().optional(),
   channelId: z.string().optional()
 });
@@ -163,6 +165,7 @@ export const chatToolCreateCustomInputSchema = z.object({
 export const agentSendInputSchema = z.object({
   threadId: z.string().min(1),
   userMessage: z.string(),
+  modelRef: z.string().optional(),
   channelId: z.string().optional(),
   modelId: z.string().optional(),
   workspaceId: z.string().optional(),
@@ -178,6 +181,10 @@ export const agentSendInputSchema = z.object({
 export const memoryIndexWorkspaceInputSchema = z.object({
   workspaceSlug: idSchema,
   force: z.boolean().optional()
+});
+
+export const memoryDistillInputSchema = z.object({
+  workspaceSlug: idSchema
 });
 
 export const memoryIndexFileInputSchema = z.object({
@@ -209,6 +216,7 @@ export const memorySaveInputSchema = z.object({
 
 export const agentCreateThreadInputSchema = z.object({
   title: z.string().optional(),
+  modelRef: z.string().optional(),
   channelId: z.string().optional(),
   modelId: z.string().optional(),
   workspaceId: z.string().optional(),
@@ -236,6 +244,7 @@ export const agentUpdateThreadTitleInputSchema = z.object({
 
 export const agentUpdateThreadModelSelectionInputSchema = z.object({
   threadId: idSchema,
+  modelRef: z.string().optional(),
   channelId: z.string().optional(),
   modelId: z.string().optional()
 });
@@ -264,6 +273,33 @@ export const agentListSubagentRunsInputSchema = z.object({
 
 export const workspaceSlugInputSchema = z.object({
   workspaceSlug: idSchema
+});
+
+export const systemConfigUpdateInputSchema = z.object({
+  path: z.string().min(1),
+  value: z.unknown()
+});
+
+export const workspacePathInputSchema = z.object({
+  workspaceSlug: idSchema,
+  path: z.string().optional()
+});
+
+export const workspaceRequiredPathInputSchema = z.object({
+  workspaceSlug: idSchema,
+  path: idSchema
+});
+
+export const workspaceRenameFileInputSchema = z.object({
+  workspaceSlug: idSchema,
+  path: idSchema,
+  newName: z.string().min(1)
+});
+
+export const workspaceMoveFileInputSchema = z.object({
+  workspaceSlug: idSchema,
+  path: idSchema,
+  targetDir: idSchema
 });
 
 export const workspaceCreateInputSchema = z.object({
@@ -350,6 +386,13 @@ export const moveAttachedFileInputSchema = z.object({
   targetDir: idSchema
 });
 
+export const promoteFileToWorkspaceInputSchema = z.object({
+  workspaceSlug: idSchema,
+  threadId: idSchema,
+  filePath: idSchema,
+  conflictMode: z.enum(["overwrite", "rename"]).optional()
+});
+
 export const searchWorkspaceFilesInputSchema = z.object({
   workspaceSlug: idSchema,
   threadId: idSchema,
@@ -372,6 +415,17 @@ export const plansListInputSchema = z.object({
 export const saveFilesToThreadInputSchema = z.object({
   workspaceSlug: idSchema,
   threadId: idSchema,
+  files: z.array(z.object({
+    filename: z.string().min(1),
+    data: z.string().optional(),
+    sourcePath: z.string().min(1).optional()
+  }).refine((file) => !!file.data || !!file.sourcePath, {
+    message: "文件必须提供 data 或 sourcePath"
+  }))
+});
+
+export const saveFilesToWorkspaceInputSchema = z.object({
+  workspaceSlug: idSchema,
   files: z.array(z.object({
     filename: z.string().min(1),
     data: z.string().optional(),
@@ -456,13 +510,16 @@ const automationScheduleSchema = z.object({
   timezone: z.string().optional()
 });
 
+const automationSystemActionSchema = z.enum(["memory_distill_workspace"]);
+
 export const automationCreateInputSchema = z.object({
   name: z.string().min(1),
   enabled: z.boolean().optional(),
   workspaceId: z.string().optional(),
   threadId: z.string().optional(),
   schedule: automationScheduleSchema,
-  prompt: z.string().min(1)
+  prompt: z.string().min(1),
+  systemAction: automationSystemActionSchema.optional()
 });
 
 export const automationUpdateInputSchema = z.object({
@@ -472,7 +529,8 @@ export const automationUpdateInputSchema = z.object({
   workspaceId: z.string().optional(),
   threadId: z.string().optional(),
   schedule: automationScheduleSchema.optional(),
-  prompt: z.string().min(1).optional()
+  prompt: z.string().min(1).optional(),
+  systemAction: automationSystemActionSchema.optional()
 });
 
 export const automationDeleteInputSchema = z.object({
@@ -490,4 +548,20 @@ export const automationRunNowInputSchema = z.object({
 
 export const githubReleaseByTagInputSchema = z.object({
   tag: z.string().min(1)
+});
+
+export const updateUiStateInputSchema = z.object({
+  appMode: z.enum(["chat", "agent"]).optional(),
+  activeView: z.enum(["conversations", "settings"]).optional(),
+  currentConversationId: z.string().nullable().optional(),
+  currentAgentThreadId: z.string().nullable().optional(),
+  currentAgentWorkspaceId: z.string().nullable().optional(),
+  promptSidebarOpen: z.boolean().optional(),
+  agentSidePanelOpenByThreadId: z.record(z.string(), z.boolean()).optional(),
+  chatDraftByConversationId: z.record(z.string(), z.string()).optional(),
+  agentDraftByThreadId: z.record(z.string(), z.string()).optional()
+});
+
+export const lumeConfigEffectiveInputSchema = z.object({
+  workspaceSlug: optionalIdSchema
 });

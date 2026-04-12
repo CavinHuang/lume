@@ -109,6 +109,7 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     threadId: input.threadId?.trim() || undefined,
     schedule: input.schedule,
     prompt: normalizePrompt(input.prompt),
+    ...(input.systemAction ? { systemAction: input.systemAction } : {}),
     createdAt: now,
     updatedAt: now
   };
@@ -135,6 +136,7 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
     ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
     ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
+    ...(input.systemAction !== undefined ? { systemAction: input.systemAction } : {}),
     updatedAt: Date.now()
   };
   index.jobs[targetIndex] = updated;

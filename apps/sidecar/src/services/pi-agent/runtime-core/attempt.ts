@@ -1,13 +1,16 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
+import { lstat, symlink } from "node:fs/promises";
+import { join } from "node:path";
 import { updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
-import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
+import { getAgentSessionWorkspacePath, getConfigDir } from "../../infra/config-paths";
 import { decryptApiKey, listChannels } from "../../channel/channel-manager";
-import { ensurePluginManifest, getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { resolveChannelModelBinding } from "../../channel/channel-manager";
+import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../infra/logger";
 import { resolveMockAttempt } from "./mock-attempt";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
@@ -41,6 +44,8 @@ interface PreparedRuntimeCoreAttempt {
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   apiKey: string;
 }
+
+const LUME_CONFIG_MIRROR_DIRNAME = ".lume-config";
 
 const log = createLogger("pi-agent-runtime-core-attempt");
 
@@ -250,7 +255,7 @@ export async function runRuntimeCoreAttempt(
   const { input, runtime } = params;
 
   const mockHandler = resolveMockAttempt(input);
-  const prepared = prepareRuntimeCoreAttempt(params);
+  const prepared = await prepareRuntimeCoreAttempt(params);
   if (mockHandler) {
     if ("status" in prepared) {
       return prepared;
@@ -267,7 +272,8 @@ export async function runRuntimeCoreAttempt(
     agentDir: prepared.agentDir,
     userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
+    modelRef: runtime.modelRef,
+    resolvedModelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: {
       id: prepared.modelResolution.model.id,
       provider: prepared.modelResolution.model.provider,
@@ -399,9 +405,10 @@ export async function runRuntimeCoreAttempt(
 function getLastError(message: import("@lume/agent-sdk").SDKMessage): string | null {
   if (message.type === "result" && message.is_error) {
     const firstError = Array.isArray(message.errors) ? message.errors[0] : undefined;
+    const detailedResult = typeof message.result === "string" ? message.result.trim() : "";
     return typeof firstError === "string" && firstError.trim()
       ? firstError
-      : message.result?.trim() || "Agent SDK 执行失败";
+      : detailedResult || "Agent SDK 执行失败";
   }
   if (message.type === "assistant" && message.error) {
     const text = (message.message?.content ?? [])
@@ -419,11 +426,12 @@ function getLastError(message: import("@lume/agent-sdk").SDKMessage): string | n
   return null;
 }
 
-function prepareRuntimeCoreAttempt(
+async function prepareRuntimeCoreAttempt(
   params: PiAgentRunParams
-): PreparedRuntimeCoreAttempt | PiAgentRunResult {
+): Promise<PreparedRuntimeCoreAttempt | PiAgentRunResult> {
   const { runtime } = params;
-  const channel = listChannels().find((item) => item.id === runtime.channelId);
+  const boundModel = resolveChannelModelBinding(runtime.modelRef ?? "", "chat");
+  const channel = boundModel?.channel ?? listChannels().find((item) => item.id === runtime.channelId);
   if (!channel) {
     return { status: "errored", errorMessage: "runtime-core 未找到可用渠道。" };
   }
@@ -438,13 +446,13 @@ function prepareRuntimeCoreAttempt(
   const modelResolution = resolveRuntimeCoreChannelModel({
     channel,
     channelProvider: channel.provider,
-    modelId: runtime.modelId,
+    requestedModelRefOrId: runtime.modelRef ?? boundModel?.modelId ?? runtime.resolvedModelId,
     baseUrl: channel.baseUrl
   });
   if (!modelResolution) {
     return {
       status: "errored",
-      errorMessage: `runtime-core 未找到模型: ${channel.provider}/${runtime.modelId}`
+      errorMessage: `runtime-core 未找到模型: ${runtime.modelRef ?? `${channel.provider}/${runtime.resolvedModelId}`}`
     };
   }
 
@@ -457,9 +465,10 @@ function prepareRuntimeCoreAttempt(
       workspaceName = workspace.name;
       workspaceSlug = workspace.slug;
       agentCwd = getAgentSessionWorkspacePath(workspace.slug, runtime.sessionId);
-      ensurePluginManifest(workspace.slug, workspace.name);
     }
   }
+
+  await ensureConfigDirMirror(agentCwd);
 
   return {
     agentCwd,
@@ -469,6 +478,38 @@ function prepareRuntimeCoreAttempt(
     modelResolution,
     apiKey
   };
+}
+
+async function ensureConfigDirMirror(agentCwd: string): Promise<void> {
+  const configDir = getConfigDir();
+  const mirrorPath = join(agentCwd, LUME_CONFIG_MIRROR_DIRNAME);
+  try {
+    const existing = await lstat(mirrorPath);
+    if (existing.isSymbolicLink() || existing.isDirectory()) {
+      return;
+    }
+    log.warn("runtime-core 配置目录映射路径已被占用，跳过映射", {
+      agentCwd,
+      mirrorPath
+    });
+    return;
+  } catch {
+    // no-op: mirror path does not exist
+  }
+
+  try {
+    await symlink(
+      configDir,
+      mirrorPath,
+      process.platform === "win32" ? "junction" : "dir"
+    );
+  } catch (error) {
+    log.warn("runtime-core 配置目录映射失败，继续使用绝对路径访问", {
+      agentCwd,
+      mirrorPath,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 // ─── Pi Agent runner (migrated from runner/run.ts) ───
@@ -574,5 +615,3 @@ export async function stopAllPiAgents(): Promise<void> {
     activePiSessions.delete(sessionId);
   }
 }
-
-

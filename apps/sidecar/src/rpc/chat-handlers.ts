@@ -10,7 +10,7 @@ import type {
   SystemPromptUpdateInput
 } from "@lume/shared";
 import {
-  createConversation,
+  createConversationWithModelRef,
   deleteConversation,
   deleteMessage,
   getConversationMessages,
@@ -74,8 +74,9 @@ export function createChatHandlers(writeNotification: NotificationWriter): Recor
     [CHAT_IPC_CHANNELS.LIST_CONVERSATIONS]: async () => listConversations(),
     [CHAT_IPC_CHANNELS.CREATE_CONVERSATION]: async (params) => {
       const payload = asObject(params);
-      return createConversation(
+      return createConversationWithModelRef(
         asString(payload.title),
+        asString(payload.modelRef),
         asString(payload.modelId),
         asString(payload.channelId)
       );
@@ -100,6 +101,7 @@ export function createChatHandlers(writeNotification: NotificationWriter): Recor
     [CHAT_IPC_CHANNELS.UPDATE_MODEL]: async (params) => {
       const input = validateInput(chatUpdateModelInputSchema, params, CHAT_IPC_CHANNELS.UPDATE_MODEL);
       return updateConversationMeta(input.conversationId, {
+        modelRef: input.modelRef,
         modelId: input.modelId,
         channelId: input.channelId
       });

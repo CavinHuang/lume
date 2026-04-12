@@ -44,7 +44,8 @@ export function computeDiffStats(toolName: string, input: Record<string, unknown
 }
 
 export function getInputSummary(toolName: string, input: Record<string, unknown>): string | null {
-  if (toolName === "Bash") {
+  const normalized = toolName.trim().toLowerCase();
+  if (normalized === "bash") {
     const cmd = input.command;
     if (typeof cmd !== "string") return null;
     const firstLine = cmd.split("\n")[0]?.trim() ?? "";
@@ -57,19 +58,19 @@ export function getInputSummary(toolName: string, input: Record<string, unknown>
     const truncatedArgs = argsPart.length > 60 ? `…${argsPart.slice(-60)}` : argsPart;
     return `${cmdPart} ${truncatedArgs}`;
   }
-  if (toolName === "Grep") {
+  if (normalized === "grep") {
     const pattern = input.pattern;
     if (typeof pattern === "string") return `/${pattern}/`;
   }
-  if (toolName === "Glob") {
+  if (normalized === "glob") {
     const pattern = input.pattern;
     if (typeof pattern === "string") return pattern;
   }
-  if (toolName === "WebFetch" || toolName === "WebSearch") {
+  if (normalized === "webfetch" || normalized === "websearch" || normalized === "web_fetch" || normalized === "web_search") {
     const url = input.url ?? input.query;
     if (typeof url === "string") return url.length > 60 ? `${url.slice(0, 60)}…` : url;
   }
-  if (toolName === "Skill") {
+  if (normalized === "skill") {
     const skill = input.skill;
     if (typeof skill === "string") return skill;
   }
@@ -78,27 +79,42 @@ export function getInputSummary(toolName: string, input: Record<string, unknown>
 
 export function getResultSummary(toolName: string, result: string): string | null {
   if (!result || !result.trim()) return null;
-  if (toolName === "Edit" || toolName === "Write") return null;
+  const normalized = toolName.trim().toLowerCase();
+  if (normalized === "edit" || normalized === "write" || normalized === "multiedit") return null;
   const trimmed = result.trim();
-  if (toolName === "Bash") {
+  if (normalized === "bash") {
     const lines = trimmed.split("\n").filter((l) => l.trim());
     if (lines.length === 0) return null;
     const first = lines[0]!;
     return first.length > 50 ? `${first.slice(0, 50)}…` : first;
   }
-  if (toolName === "Read") {
+  if (normalized === "read") {
     const count = trimmed.split("\n").length;
     return `${count} 行`;
   }
-  if (toolName === "Grep") {
+  if (normalized === "grep") {
     const matches = trimmed.split("\n").filter((l) => l.trim()).length;
     return matches > 0 ? `${matches} 个匹配` : "无匹配";
   }
-  if (toolName === "Glob") {
+  if (normalized === "glob") {
     const files = trimmed.split("\n").filter((l) => l.trim()).length;
     return files > 0 ? `${files} 个文件` : "无结果";
   }
-  if (toolName === "WebFetch" || toolName === "WebSearch") {
+  if (normalized === "websearch" || normalized === "web_search") {
+    try {
+      const parsed = JSON.parse(trimmed) as { query?: unknown; results?: unknown[] };
+      const query = typeof parsed.query === "string" ? parsed.query.trim() : "";
+      const count = Array.isArray(parsed.results) ? parsed.results.length : 0;
+      if (query) {
+        return `${query}${count >= 0 ? ` · ${count} 条结果` : ""}`;
+      }
+    } catch {
+      // ignore
+    }
+    const first = trimmed.split("\n")[0] ?? "";
+    return first.length > 50 ? `${first.slice(0, 50)}…` : first || null;
+  }
+  if (normalized === "webfetch" || normalized === "web_fetch") {
     const first = trimmed.split("\n")[0] ?? "";
     return first.length > 50 ? `${first.slice(0, 50)}…` : first || null;
   }
@@ -194,4 +210,3 @@ export function groupActivities(activities: ToolActivity[]): Array<ToolActivity 
 export function isActivityGroup(item: ToolActivity | ActivityGroup): item is ActivityGroup {
   return (item as ActivityGroup).parent !== undefined;
 }
-

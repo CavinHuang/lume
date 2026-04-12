@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
-import { FolderOpen, Trash2 } from "lucide-react";
+import { FolderOpen, Sparkles, Trash2 } from "lucide-react";
 import type { AutomationJob, AutomationRun } from "@lume/shared";
 import {
   agentWorkspacesAtom,
@@ -129,6 +129,44 @@ export function AutomationSettings(): React.ReactElement {
     }
   };
 
+  const handleEnsureMemoryDistillationJob = async (): Promise<void> => {
+    if (!workspace || !currentWorkspaceId) {
+      setAutomationMessage("当前没有可用工作区");
+      return;
+    }
+    setAutomationBusy(true);
+    setAutomationMessage("");
+    try {
+      const existing = automationJobs.find(
+        (job) => job.workspaceId === currentWorkspaceId && job.systemAction === "memory_distill_workspace"
+      );
+      if (existing) {
+        await updateAutomationJob({
+          id: existing.id,
+          enabled: true,
+          schedule: { type: "cron", cronExpr: "30 2 * * *" },
+          prompt: existing.prompt,
+          systemAction: "memory_distill_workspace"
+        });
+        setAutomationMessage("已同步记忆蒸馏任务");
+      } else {
+        await createAutomationJob({
+          name: `记忆蒸馏 · ${workspace.name}`,
+          workspaceId: currentWorkspaceId,
+          schedule: { type: "cron", cronExpr: "30 2 * * *" },
+          prompt: `distill workspace memory for ${workspace.slug}`,
+          systemAction: "memory_distill_workspace"
+        });
+        setAutomationMessage("已创建记忆蒸馏任务");
+      }
+      await loadAutomationData();
+    } catch (error) {
+      setAutomationMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
   if (!workspace) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -144,12 +182,59 @@ export function AutomationSettings(): React.ReactElement {
   const workspaceAutomationRuns = automationRuns.filter((run) =>
     workspaceAutomationJobs.some((job) => job.id === run.jobId)
   );
+  const memoryDistillationJob = workspaceAutomationJobs.find(
+    (job) => job.systemAction === "memory_distill_workspace"
+  ) ?? null;
+  const memoryDistillationRun = memoryDistillationJob
+    ? workspaceAutomationRuns.find((run) => run.jobId === memoryDistillationJob.id) ?? null
+    : null;
 
   return (
     <div className="space-y-8">
       <SettingsSection title="自动化任务" description={`工作区: ${workspace.name} · 支持 Cron 定时任务的创建、启停与执行`}>
         <SettingsCard divided={false}>
           <div className="space-y-3 p-3 text-sm">
+            <div className="rounded-md border bg-muted/20 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">记忆蒸馏任务</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    定期提炼当前 workspace 的短期记忆并沉淀到长期记忆，必要时上浮到全局记忆。
+                  </p>
+                  {memoryDistillationJob ? (
+                    <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                      <p>状态: {memoryDistillationJob.enabled ? "已启用" : "已禁用"}</p>
+                      <p>Cron: {memoryDistillationJob.schedule.cronExpr ?? "-"}</p>
+                      {memoryDistillationRun ? (
+                        <p>
+                          最近运行: {memoryDistillationRun.status} · {new Date(memoryDistillationRun.startedAt).toLocaleString()}
+                        </p>
+                      ) : (
+                        <p>最近运行: 暂无记录</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-muted-foreground">当前工作区尚未创建记忆蒸馏任务</p>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button size="sm" type="button" variant="secondary" disabled={automationBusy} onClick={() => { void handleEnsureMemoryDistillationJob(); }}>
+                    <Sparkles size={14} />
+                    {memoryDistillationJob ? "同步任务" : "创建任务"}
+                  </Button>
+                  {memoryDistillationJob ? (
+                    <Button
+                      size="sm"
+                      type="button"
+                      disabled={automationBusy}
+                      onClick={() => { void handleRunAutomationJobNow(memoryDistillationJob); }}
+                    >
+                      立即蒸馏
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
             <div className="grid gap-2">
               <Input
                 value={automationName}
@@ -188,6 +273,9 @@ export function AutomationSettings(): React.ReactElement {
                       <p className="text-xs text-muted-foreground">
                         Cron: {job.schedule.cronExpr ?? "-"} · 更新时间: {new Date(job.updatedAt).toLocaleString()}
                       </p>
+                      {job.systemAction === "memory_distill_workspace" ? (
+                        <p className="mt-1 text-[11px] text-foreground/70">系统动作：记忆蒸馏</p>
+                      ) : null}
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{job.prompt}</p>
                       <div className="mt-2 flex items-center justify-end gap-2">
                         <Switch checked={job.enabled} onCheckedChange={() => { void handleToggleAutomationJob(job); }} />

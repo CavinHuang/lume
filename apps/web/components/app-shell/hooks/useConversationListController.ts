@@ -9,6 +9,8 @@ import {
   togglePinConversation,
   updateConversationTitle
 } from "@/lib/desktop-api/chat";
+import { getEffectiveSystemConfig, listChannels } from "@/lib/desktop-api/system";
+import { resolveChannelModelSelectionFromRef } from "@/lib/system-model-selection";
 import {
   groupConversationsByDate,
   resolveNewConversationPromptId,
@@ -53,7 +55,12 @@ export function useConversationListController({
   useEffect(() => {
     void listConversations().then((items) => {
       setConversations(items);
-      setCurrentConversationId((prev) => prev ?? items[0]?.id ?? null);
+      setCurrentConversationId((prev) => {
+        if (prev && items.some((item) => item.id === prev)) {
+          return prev;
+        }
+        return items[0]?.id ?? null;
+      });
     }).catch((error) => {
       console.error("[LeftSidebar] 加载对话列表失败:", error);
       setInitError(`加载对话失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -95,9 +102,20 @@ export function useConversationListController({
   }, [conversations, editing, setConversations, setEditing]);
 
   const createNewConversation = useCallback(async (): Promise<void> => {
+    const resolvedModel = selectedModel ?? await Promise.all([
+      listChannels(),
+      getEffectiveSystemConfig()
+    ]).then(([channels, systemConfig]) =>
+      resolveChannelModelSelectionFromRef(channels, systemConfig.models?.chat?.defaultModelRef, "chat")
+    );
+    const resolvedModelRef =
+      resolvedModel && "modelRef" in resolvedModel && typeof resolvedModel.modelRef === "string"
+        ? resolvedModel.modelRef
+        : undefined;
     const created = await createConversation({
-      modelId: selectedModel?.modelId,
-      channelId: selectedModel?.channelId
+      modelRef: resolvedModelRef,
+      modelId: resolvedModel?.modelId,
+      channelId: resolvedModel?.channelId
     });
     setConversations((prev) => [created, ...prev]);
     const nextPromptId = resolveNewConversationPromptId(defaultPromptId);

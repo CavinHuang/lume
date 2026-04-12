@@ -24,14 +24,13 @@ import {
   getAgentThreadMessages,
   getAgentThreadPath
 } from "@/lib/desktop-api/agent";
-import { listChannels } from "@/lib/desktop-api/system";
+import { getEffectiveSystemConfig, listChannels } from "@/lib/desktop-api/system";
 import { resolveAgentSessionWorkspace } from "../workspace-selection";
 import { resolvePreferredAgentSelection } from "../agent-session-lifecycle";
 
 interface UseAgentSessionLifecycleParams {
   setPendingFolderRefs: React.Dispatch<React.SetStateAction<AgentSavedFile[]>>;
   setInlineEditingMessageId: React.Dispatch<React.SetStateAction<string | null>>;
-  setInputContent: React.Dispatch<React.SetStateAction<string>>;
 }
 
 interface UseAgentSessionLifecycleResult {
@@ -42,8 +41,7 @@ interface UseAgentSessionLifecycleResult {
 
 export function useAgentSessionLifecycle({
   setPendingFolderRefs,
-  setInlineEditingMessageId,
-  setInputContent
+  setInlineEditingMessageId
 }: UseAgentSessionLifecycleParams): UseAgentSessionLifecycleResult {
   const [sessionId] = useAtom(currentAgentThreadIdAtom);
   const session = useAtomValue(currentAgentThreadAtom);
@@ -62,6 +60,7 @@ export function useAgentSessionLifecycle({
   const resetPlan = useSetAtom(resetPlanStateAtom);
 
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [agentDefaultModelRef, setAgentDefaultModelRef] = useState<string>("");
   const [sessionRootPath, setSessionRootPath] = useState<string | null>(null);
   const [sessionSwitching, setSessionSwitching] = useState(false);
 
@@ -71,7 +70,11 @@ export function useAgentSessionLifecycle({
   );
 
   useEffect(() => {
-    void listChannels().then((next) => setChannels(next));
+    void Promise.all([listChannels(), getEffectiveSystemConfig()])
+      .then(([next, systemConfig]) => {
+        setChannels(next);
+        setAgentDefaultModelRef(systemConfig.models?.agent?.defaultModelRef ?? "");
+      });
   }, []);
 
   useEffect(() => {
@@ -81,7 +84,8 @@ export function useAgentSessionLifecycle({
       channels,
       thread: session,
       currentChannelId: agentChannelId,
-      currentModelId: agentModelId
+      currentModelId: agentModelId,
+      defaultModelRef: agentDefaultModelRef
     });
 
     if (preferred.channelId !== agentChannelId) {
@@ -95,6 +99,7 @@ export function useAgentSessionLifecycle({
     agentChannelId,
     agentModelId,
     channels,
+    agentDefaultModelRef,
     session,
     setAgentChannelId,
     setAgentModelId
@@ -117,7 +122,6 @@ export function useAgentSessionLifecycle({
     setPendingFiles([]);
     setPendingFolderRefs([]);
     setInlineEditingMessageId(null);
-    setInputContent("");
     setMessageVersionsByGroup({});
     setSelectedVersionIndexByGroup({});
     setLiveSdkMessagesMap((prev) => {
@@ -157,7 +161,6 @@ export function useAgentSessionLifecycle({
   }, [
     resetPlan,
     sessionId,
-    setInputContent,
     setInlineEditingMessageId,
     setLiveSdkMessagesMap,
     setMessages,

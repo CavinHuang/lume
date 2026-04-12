@@ -18,7 +18,7 @@ import type {
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
-import { decryptApiKey, listChannels } from "../channel/channel-manager";
+import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
   appendAgentThreadSDKMessages,
   getAgentThreadMessages,
@@ -291,8 +291,22 @@ export async function sendAgentMessage(
   const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const threadMeta = getAgentThreadMeta(threadId);
-  const resolvedChannelId = input.channelId ?? threadMeta?.channelId;
-  const resolvedModelId = pickModelId(resolvedChannelId, input.modelId);
+  const boundModel = resolveChannelModelBinding(
+    input.modelRef ?? threadMeta?.modelRef ?? "",
+    "chat"
+  );
+  const resolvedChannelId = boundModel?.channel.id ?? input.channelId ?? threadMeta?.channelId;
+  const resolvedModelId = boundModel?.modelId ?? pickModelId(resolvedChannelId, input.modelId ?? threadMeta?.modelId);
+  const resolvedChannel = resolvedChannelId
+    ? listChannels().find((item) => item.id === resolvedChannelId)
+    : undefined;
+  const canonicalModelRef = resolvedChannel
+    ? resolveChannelModelSelection({
+      channelProvider: resolvedChannel.provider,
+      baseUrl: resolvedChannel.baseUrl,
+      modelId: boundModel?.modelId ?? input.modelId ?? threadMeta?.modelId ?? resolvedModelId
+    }).modelRef
+    : (input.modelRef ?? threadMeta?.modelRef);
 
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
@@ -354,6 +368,7 @@ export async function sendAgentMessage(
   sessionStateManager.getOrCreate(threadId);
 
   updateAgentThreadMeta(threadId, {
+    modelRef: canonicalModelRef,
     channelId: resolvedChannelId,
     modelId: resolvedModelId
   });
@@ -376,8 +391,9 @@ export async function sendAgentMessage(
     },
     runtime: {
       sessionId: threadId,
+      modelRef: canonicalModelRef,
       channelId: resolvedChannelId,
-      modelId: resolvedModelId,
+      resolvedModelId,
       workspaceId: input.workspaceId,
       threadType: input.threadType
     }
@@ -472,7 +488,8 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
   if (!sourceText) {
     return null;
   }
-  const channel = listChannels().find((item) => item.id === input.channelId);
+  const boundModel = resolveChannelModelBinding(input.modelRef ?? "", "chat");
+  const channel = boundModel?.channel ?? listChannels().find((item) => item.id === input.channelId);
   if (!channel) {
     log.warn("自动标题生成失败：渠道不存在", {
       channelId: input.channelId
@@ -482,7 +499,7 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
 
   let apiKey: string;
   try {
-    apiKey = decryptApiKey(input.channelId);
+    apiKey = decryptApiKey(channel.id);
   } catch (error) {
     log.warn("自动标题生成失败：解密 API Key 失败", {
       channelId: input.channelId,
@@ -495,7 +512,7 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
     const modelSelection = resolveChannelModelSelection({
       channelProvider: channel.provider,
       baseUrl: channel.baseUrl,
-      modelId: input.modelId
+      modelId: boundModel?.modelId ?? input.modelId
     });
     const adapter = getAdapter(modelSelection.adapterProvider);
     const request = adapter.buildTitleRequest({

@@ -2,9 +2,9 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@lume/agent-sdk";
 import type { MemorySearchResult } from "@lume/shared";
 import {
-  getWorkspaceMemoryFile,
-  saveWorkspaceMemory,
-  searchWorkspaceMemory
+  readLayeredMemoryFile,
+  searchLayeredMemory,
+  writeWorkspaceMemory
 } from "../../../memory/memory-service";
 import {
   MEMORY_GET_TOOL_NAME,
@@ -39,7 +39,7 @@ export function createSdkMemoryTools(params: {
     tools.push(createSdkJsonResultTool({
       name: MEMORY_SEARCH_TOOL_NAME,
       description:
-        "Mandatory recall step: search MEMORY.md/memory.md + memory/*.md before answering questions about prior work, decisions, dates, preferences, or todos.",
+        "Mandatory recall step: search thread note + workspace memory/YYYY-MM-DD.md + workspace MEMORY.md + global ~/.lume/MEMORY.md before answering questions about prior work, decisions, dates, preferences, or todos.",
       inputSchema: {
         type: "object",
         properties: {
@@ -52,7 +52,7 @@ export function createSdkMemoryTools(params: {
       isReadOnly: true,
       isConcurrencySafe: true,
       async call(input) {
-        const results = await searchWorkspaceMemory({
+        const results = await searchLayeredMemory({
           workspaceSlug: params.workspaceSlug,
           query: String(input.query ?? ""),
           maxResults: typeof input.maxResults === "number" ? input.maxResults : undefined,
@@ -68,7 +68,7 @@ export function createSdkMemoryTools(params: {
   if (params.enabledTools.has(MEMORY_GET_TOOL_NAME)) {
     tools.push(createSdkJsonResultTool({
       name: MEMORY_GET_TOOL_NAME,
-      description: "Read a bounded snippet from MEMORY.md/memory.md or memory/*.md. Use after memory_search.",
+      description: "Read a bounded snippet from workspace MEMORY.md, workspace memory/YYYY-MM-DD.md, sessions/*, or global ~/.lume/MEMORY.md. Use after memory_search.",
       inputSchema: {
         type: "object",
         properties: {
@@ -81,7 +81,7 @@ export function createSdkMemoryTools(params: {
       isReadOnly: true,
       isConcurrencySafe: true,
       async call(input) {
-        return getWorkspaceMemoryFile({
+        return readLayeredMemoryFile({
           workspaceSlug: params.workspaceSlug,
           path: String(input.path ?? ""),
           from: typeof input.from === "number" ? input.from : undefined,
@@ -105,7 +105,7 @@ export function createSdkMemoryTools(params: {
         required: ["content"]
       },
       async call(input) {
-        return saveWorkspaceMemory({
+        return writeWorkspaceMemory({
           workspaceSlug: params.workspaceSlug,
           content: String(input.content ?? ""),
           path: typeof input.path === "string" ? input.path : undefined,

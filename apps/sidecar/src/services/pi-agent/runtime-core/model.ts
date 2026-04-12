@@ -17,10 +17,10 @@ export function resolvePiChannelModel(params: {
     fallbackModelIds?: string[];
   };
   channelProvider?: string;
-  modelId: string;
+  requestedModelRefOrId: string;
   baseUrl?: string;
 }): ResolvedPiChannelModel | null {
-  const candidateModelIds = resolveModelCandidatesForChannel(params.channel, params.modelId);
+  const candidateModelIds = resolveModelCandidatesForChannel(params.channel, params.requestedModelRefOrId);
   for (const candidateModelId of candidateModelIds) {
     const { modelId, candidates } = resolvePiProviderCandidates({
       channelProvider: params.channelProvider,

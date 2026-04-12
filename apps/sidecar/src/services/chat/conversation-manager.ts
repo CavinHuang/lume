@@ -20,6 +20,21 @@ interface ConversationsIndex {
 
 const INDEX_VERSION = 1;
 
+function buildModelRef(channelId?: string, modelId?: string): string | undefined {
+  const trimmedChannelId = channelId?.trim();
+  const trimmedModelId = modelId?.trim();
+  if (!trimmedModelId) {
+    return undefined;
+  }
+  if (trimmedModelId.includes("/")) {
+    return trimmedModelId;
+  }
+  if (!trimmedChannelId) {
+    return undefined;
+  }
+  return `${trimmedChannelId}/${trimmedModelId}`;
+}
+
 function writeTextAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpPath, payload, "utf-8");
@@ -74,13 +89,27 @@ export function listConversations(): ConversationMeta[] {
   return readIndex().conversations.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+export function getConversationMeta(id: string): ConversationMeta | undefined {
+  return readIndex().conversations.find((conversation) => conversation.id === id);
+}
+
 export function createConversation(title?: string, modelId?: string, channelId?: string): ConversationMeta {
+  return createConversationWithModelRef(title, buildModelRef(channelId, modelId), modelId, channelId);
+}
+
+export function createConversationWithModelRef(
+  title?: string,
+  modelRef?: string,
+  modelId?: string,
+  channelId?: string
+): ConversationMeta {
   return withIndexLock(() => {
     const index = readIndex();
     const now = Date.now();
     const meta: ConversationMeta = {
       id: randomUUID(),
       title: title || "新对话",
+      modelRef: modelRef ?? buildModelRef(channelId, modelId),
       modelId,
       channelId,
       createdAt: now,
@@ -137,14 +166,22 @@ export function saveConversationMessages(id: string, messages: ChatMessage[]): v
 
 export function updateConversationMeta(
   id: string,
-  updates: Partial<Pick<ConversationMeta, "title" | "modelId" | "channelId" | "contextDividers" | "contextLength" | "pinned">>
+  updates: Partial<Pick<ConversationMeta, "title" | "modelRef" | "modelId" | "channelId" | "contextDividers" | "contextLength" | "pinned">>
 ): ConversationMeta {
   return withIndexLock(() => {
     const index = readIndex();
     const idx = index.conversations.findIndex((c) => c.id === id);
     if (idx === -1) throw new Error(`对话不存在: ${id}`);
     const existing = index.conversations[idx] as ConversationMeta;
-    const updated: ConversationMeta = { ...existing, ...updates, updatedAt: Date.now() };
+    const updated: ConversationMeta = {
+      ...existing,
+      ...updates,
+      modelRef: updates.modelRef ?? buildModelRef(
+        updates.channelId ?? existing.channelId,
+        updates.modelId ?? existing.modelId
+      ) ?? existing.modelRef,
+      updatedAt: Date.now()
+    };
     index.conversations[idx] = updated;
     writeIndex(index);
     return updated;
