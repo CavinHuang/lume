@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { existsSync, realpathSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,6 +55,7 @@ addIfExists(candidates, path.join(repoRoot, "release"));
 addIfExists(candidates, path.join(repoRoot, "out"));
 addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "src-tauri", "target"));
 addIfExists(candidates, path.join(repoRoot, "apps", "sidecar", "dist"));
+addIfExists(candidates, path.join(repoRoot, "packages", "sdk", "dist"));
 addIfExists(candidates, path.join(repoRoot, "apps", "web", "dist"));
 addIfExists(candidates, path.join(repoRoot, "apps", "web", ".next"));
 addIfExists(candidates, path.join(repoRoot, "apps", "web", "out"));
