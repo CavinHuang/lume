@@ -12,12 +12,13 @@ import { decryptApiKey, listChannels } from "../../channel/channel-manager";
 import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLogger } from "../../infra/logger";
+import { buildRuntimeAttemptLogData } from "../../agent/agent-log-summary";
 import { resolveMockAttempt } from "./mock-attempt";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
 import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { createRuntimeCoreSession } from "./run";
-import { getRuntimeCoreAgentDir } from "./session-store";
+import { getRuntimeCoreAgentDir, hasRuntimeCoreSessionTranscript } from "./session-store";
 import {
   isToolAlwaysAllowed,
   markToolAlwaysAllowed,
@@ -266,6 +267,17 @@ export async function runRuntimeCoreAttempt(
     return prepared;
   }
 
+  const resumeExistingSession = hasRuntimeCoreSessionTranscript(runtime.sessionId, prepared.agentDir);
+  log.info("[Agent 编排] 准备启动 runtime", buildRuntimeAttemptLogData({
+    sessionId: runtime.sessionId,
+    workspaceSlug: prepared.workspaceSlug,
+    provider: prepared.modelResolution.provider,
+    modelId: prepared.modelResolution.resolvedModelId,
+    resume: resumeExistingSession,
+    permissionMode: input.permissionMode,
+    cwd: prepared.agentCwd
+  }));
+
   const runtimeSession = await createRuntimeCoreSession({
     lumeSessionId: runtime.sessionId,
     cwd: prepared.agentCwd,
@@ -296,6 +308,16 @@ export async function runRuntimeCoreAttempt(
   });
 
   const { agent, session } = runtimeSession;
+  log.info("[Agent 编排] runtime session 已建立", buildRuntimeAttemptLogData({
+    sessionId: runtime.sessionId,
+    workspaceSlug: prepared.workspaceSlug,
+    provider: prepared.modelResolution.provider,
+    modelId: prepared.modelResolution.resolvedModelId,
+    resume: resumeExistingSession,
+    permissionMode: input.permissionMode,
+    cwd: prepared.agentCwd,
+    toolCount: runtimeSession.tools.length
+  }));
   const accumulator = createAgentStreamAccumulatorState();
   let finalResult: PiAgentRunResult = { status: "completed" };
   let finalError = "";
@@ -336,6 +358,13 @@ export async function runRuntimeCoreAttempt(
     } else if (thinkingLevel === "off") {
       await agent.setMaxThinkingTokens(null);
     }
+
+    log.info("[Agent 编排] 开始遍历事件流", {
+      sessionId: runtime.sessionId.slice(0, 8),
+      modelId: prepared.modelResolution.resolvedModelId,
+      thinkingLevel,
+      permissionMode: input.permissionMode ?? "default"
+    });
 
     const query = agent.query(input.userMessage, {
       canUseTool: createCanUseToolHandler(params, emit, askUserAbortController.signal),
@@ -381,14 +410,30 @@ export async function runRuntimeCoreAttempt(
       runtimeThreadId: session.threadId ?? session.sessionId
     });
 
+    log.info("[Agent 编排] 事件流结束", {
+      sessionId: runtime.sessionId.slice(0, 8),
+      status: "completed",
+      sdkSessionId: (session.threadId ?? session.sessionId)?.slice(0, 8),
+      hasRenderableOutput: true
+    });
     emit.onComplete();
     return { status: "completed" };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (/abort|interrupted/i.test(errorMessage)) {
+      log.warn("[Agent 编排] 事件流中止", {
+        sessionId: runtime.sessionId.slice(0, 8),
+        status: "aborted",
+        errorMessage
+      });
       emit.onComplete();
       return { status: "aborted" };
     }
+    log.error("[Agent 编排] 事件流失败", {
+      sessionId: runtime.sessionId.slice(0, 8),
+      status: "errored",
+      errorMessage: finalError || errorMessage
+    });
     emit.onError(finalError || errorMessage);
     return {
       status: "errored",
@@ -528,6 +573,11 @@ export async function runPiAgent(
 
   while (attempt < maxAttempts) {
     attempt += 1;
+    log.info("[Agent 编排] 开始执行 attempt", {
+      threadId: params.runtime.sessionId.slice(0, 8),
+      attempt,
+      maxAttempts
+    });
     const result = await runRuntimeCoreAttempt(params, emit, {
       registerAbort: (sessionId, abort) => {
         activePiSessions.set(sessionId, { abort });
@@ -537,6 +587,12 @@ export async function runPiAgent(
       }
     });
     lastResult = result;
+    log.info("[Agent 编排] attempt 结束", {
+      threadId: params.runtime.sessionId.slice(0, 8),
+      attempt,
+      status: result.status,
+      errorMessage: result.status === "errored" ? result.errorMessage : undefined
+    });
     if (result.status !== "errored") {
       return result;
     }

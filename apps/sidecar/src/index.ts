@@ -1,4 +1,4 @@
-import { argv, stdin, stdout } from "node:process";
+import { argv, stdin, stdout, stderr } from "node:process";
 import { createInterface } from "node:readline";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory/memory-sync-watcher";
@@ -15,11 +15,18 @@ import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subag
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { closeMemoryManagers } from "./rpc/memory-handlers";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
+import { formatConsoleArgs } from "./services/infra/log-format";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
-console.log = (...args: unknown[]) => {
-  console.error(...args);
-};
+for (const level of ["log", "info", "warn", "error", "debug"] as const) {
+  console[level] = (...args: unknown[]) => {
+    stderr.write(`${formatConsoleArgs({
+      source: "sidecar",
+      context: "app",
+      args
+    })}\n`);
+  };
+}
 
 function writeResponse(response: JsonRpcResponse): void {
   stdout.write(`${JSON.stringify(response)}\n`);

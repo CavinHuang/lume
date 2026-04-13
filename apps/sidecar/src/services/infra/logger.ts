@@ -8,7 +8,9 @@ import { mkdirSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { stderr } from "node:process";
 import { getConfigDir } from "./config-paths";
+import { formatStructuredLogLine } from "./log-format";
 
 function resolveLogsDir(): string {
   const candidates = [
@@ -59,18 +61,13 @@ interface LoggerBackend {
   fatal(data: Record<string, unknown>, msg: string): void;
 }
 
+const LOG_SOURCE = "sidecar";
+
 const require = createRequire(import.meta.url);
 let baseLogger: LoggerBackend | null = null;
 let didWarnPinoUnavailable = false;
 
 function createConsoleBackend(bindings: { context?: string; sessionId?: string } = {}): LoggerBackend {
-  const withBindings = (data: Record<string, unknown>, msg: string) => ({
-    ...bindings,
-    ...data,
-    msg,
-    time: new Date().toISOString()
-  });
-
   return {
     child(nextBindings) {
       return createConsoleBackend({
@@ -78,25 +75,17 @@ function createConsoleBackend(bindings: { context?: string; sessionId?: string }
         ...nextBindings
       });
     },
-    trace(data, msg) {
-      console.debug(withBindings(data, msg));
-    },
-    debug(data, msg) {
-      console.debug(withBindings(data, msg));
-    },
-    info(data, msg) {
-      console.info(withBindings(data, msg));
-    },
-    warn(data, msg) {
-      console.warn(withBindings(data, msg));
-    },
-    error(data, msg) {
-      console.error(withBindings(data, msg));
-    },
-    fatal(data, msg) {
-      console.error(withBindings(data, msg));
-    }
+    trace() {},
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+    fatal() {}
   };
+}
+
+function emitConsoleLine(line: string): void {
+  stderr.write(`${line}\n`);
 }
 
 function getBaseLogger(): LoggerBackend {
@@ -113,17 +102,6 @@ function getBaseLogger(): LoggerBackend {
       }
     }
   ];
-
-  if (CONSOLE_ENABLED) {
-    transports.push({
-      target: "pino-pretty",
-      options: {
-        colorize: true,
-        translateTime: "SYS:standard",
-        ignore: "pid,hostname"
-      }
-    });
-  }
 
   try {
     const pinoModule = require("pino") as {
@@ -167,14 +145,30 @@ export interface Logger {
 // 创建带上下文的日志器
 export function createLogger(context: string, sessionId?: string): Logger {
   const getChild = () => getBaseLogger().child({ context, sessionId });
+  const write = (
+    level: "trace" | "debug" | "info" | "warn" | "error" | "fatal",
+    msg: string,
+    data?: Record<string, unknown>
+  ): void => {
+    const payload = data ?? {};
+    if (CONSOLE_ENABLED) {
+      emitConsoleLine(formatStructuredLogLine({
+        source: LOG_SOURCE,
+        context,
+        message: msg,
+        data: payload
+      }));
+    }
+    getChild()[level](payload, msg);
+  };
 
   return {
-    trace: (msg: string, data?: Record<string, unknown>) => getChild().trace(data ?? {}, msg),
-    debug: (msg: string, data?: Record<string, unknown>) => getChild().debug(data ?? {}, msg),
-    info: (msg: string, data?: Record<string, unknown>) => getChild().info(data ?? {}, msg),
-    warn: (msg: string, data?: Record<string, unknown>) => getChild().warn(data ?? {}, msg),
-    error: (msg: string, data?: Record<string, unknown>) => getChild().error(data ?? {}, msg),
-    fatal: (msg: string, data?: Record<string, unknown>) => getChild().fatal(data ?? {}, msg),
+    trace: (msg: string, data?: Record<string, unknown>) => write("trace", msg, data),
+    debug: (msg: string, data?: Record<string, unknown>) => write("debug", msg, data),
+    info: (msg: string, data?: Record<string, unknown>) => write("info", msg, data),
+    warn: (msg: string, data?: Record<string, unknown>) => write("warn", msg, data),
+    error: (msg: string, data?: Record<string, unknown>) => write("error", msg, data),
+    fatal: (msg: string, data?: Record<string, unknown>) => write("fatal", msg, data),
     child: (bindings) => createLogger(bindings.context ?? context, bindings.sessionId ?? sessionId)
   };
 }

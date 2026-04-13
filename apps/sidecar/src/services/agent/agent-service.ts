@@ -52,6 +52,7 @@ import {
   shouldAutoGenerateThreadTitle
 } from "./session-title-summarizer";
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
+import { buildAgentSendStartLogData } from "./agent-log-summary";
 
 type AgentStreamEmitter = {
   onSdkMessage: (message: SDKMessage) => void;
@@ -337,6 +338,18 @@ export async function sendAgentMessage(
     toolPolicy: mergeToolPolicies(existingToolPolicy, routingToolPolicy)
   };
 
+  log.info("[Agent 会话] 开始发送消息", buildAgentSendStartLogData({
+    threadId,
+    workspaceId,
+    channelId: resolvedChannelId,
+    modelId: resolvedModelId,
+    modelRef: canonicalModelRef,
+    appendUserMessage: shouldAppendUserMessage,
+    preferredCapabilityRoute: routingTrace.preferredCapabilityRoute ?? undefined,
+    capabilityLanes: routingTrace.capabilityLanes,
+    userMessage
+  }));
+
   if (shouldAppendUserMessage) {
     const sourceMessageId = input.editFromMessageId ?? input.resendFromMessageId;
     userSdkMessage = ensureSdkMessageCreatedAt(buildUserSdkMessage({
@@ -377,6 +390,11 @@ export async function sendAgentMessage(
 
   if (!resolvedChannelId || !resolvedModelId) {
     const msg = "Pi Agent runtime 缺少 channelId/modelId。";
+    log.error("[Agent 会话] 启动失败：缺少模型或渠道", {
+      threadId: threadId.slice(0, 8),
+      channelId: resolvedChannelId,
+      modelId: resolvedModelId
+    });
     runtimeStatusManager.markErrored(threadId, msg);
     emit.onError(msg);
     return;
@@ -459,8 +477,27 @@ export async function sendAgentMessage(
     }
   }
   if (runtimeCompleted && piResult.status === "completed") {
+    log.info("[Agent 会话] 运行完成", {
+      threadId: threadId.slice(0, 8),
+      persistedSdkMessageCount: persistedSdkMessages.length,
+      visibleAssistantTurnCreated: activeTurnId !== null,
+      autoTitlePending: shouldTryAutoTitle
+    });
     runtimeStatusManager.markCompleted(threadId);
     emit.onComplete();
+  }
+  if (piResult.status === "aborted") {
+    log.warn("[Agent 会话] 运行中止", {
+      threadId: threadId.slice(0, 8),
+      persistedSdkMessageCount: persistedSdkMessages.length
+    });
+  }
+  if (piResult.status === "errored") {
+    log.error("[Agent 会话] 运行失败", {
+      threadId: threadId.slice(0, 8),
+      persistedSdkMessageCount: persistedSdkMessages.length,
+      errorMessage: piResult.errorMessage
+    });
   }
   if (piResult.status === "completed" && shouldTryAutoTitle) {
     void autoGenerateAgentTitle(threadId, userMessage, emit);
