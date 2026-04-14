@@ -52,8 +52,10 @@ const candidates = [];
 
 addIfExists(candidates, path.join(repoRoot, "node_modules"));
 addIfExists(candidates, path.join(repoRoot, "release"));
+addIfExists(candidates, path.join(repoRoot, ".spec-workflow"));
 addIfExists(candidates, path.join(repoRoot, "out"));
 addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "src-tauri", "target"));
+addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "src-tauri", "gen"));
 addIfExists(candidates, path.join(repoRoot, "apps", "sidecar", "dist"));
 addIfExists(candidates, path.join(repoRoot, "packages", "sdk", "dist"));
 addIfExists(candidates, path.join(repoRoot, "apps", "web", "dist"));
