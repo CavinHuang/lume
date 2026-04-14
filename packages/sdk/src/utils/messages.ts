@@ -58,13 +58,13 @@ export function normalizeMessagesForAPI(
 ): Array<{ role: string; content: any }> {
   const normalized: Array<{ role: string; content: any }> = []
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]
+  for (const msg of messages) {
+    if (!msg) continue
 
     // Ensure alternating user/assistant messages
     if (normalized.length > 0) {
       const last = normalized[normalized.length - 1]
-      if (last.role === msg.role) {
+      if (last && last.role === msg.role) {
         // Merge same-role messages
         if (msg.role === 'user') {
           // Combine content
@@ -99,8 +99,8 @@ function fixToolResultPairing(
 ): Array<{ role: string; content: any }> {
   const result: Array<{ role: string; content: any }> = []
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]
+  for (const msg of messages) {
+    if (!msg) continue
 
     if (msg.role === 'user' && Array.isArray(msg.content)) {
       // Check for tool_result blocks
@@ -111,7 +111,7 @@ function fixToolResultPairing(
       if (toolResults.length > 0 && result.length > 0) {
         // Find the previous assistant message
         const prevAssistant = result[result.length - 1]
-        if (prevAssistant.role === 'assistant' && Array.isArray(prevAssistant.content)) {
+        if (prevAssistant && prevAssistant.role === 'assistant' && Array.isArray(prevAssistant.content)) {
           const toolUseIds = new Set(
             (prevAssistant.content as any[])
               .filter((b: any) => b.type === 'tool_use')

@@ -20,6 +20,7 @@ export function parseMarkdownFrontmatter(
 
   for (let index = 1; index < lines.length; index++) {
     const line = lines[index]
+    if (line === undefined) continue
     if (line === '---') {
       endIndex = index
       break

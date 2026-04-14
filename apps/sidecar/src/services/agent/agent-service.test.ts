@@ -34,6 +34,45 @@ function emitSuccessfulRun(emit: {
   emit.onComplete();
 }
 
+function emitRunWithSubagentTranscript(emit: {
+  onSdkMessage: (message: SDKMessage) => void;
+  onComplete: () => void;
+}): void {
+  emit.onSdkMessage({
+    type: "assistant",
+    subagent_run_id: "subagent-run-1",
+    message: {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: "subagent assistant output"
+      }]
+    }
+  } as SDKMessage);
+  emit.onSdkMessage({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: "parent assistant output"
+      }]
+    }
+  } as SDKMessage);
+  emit.onSdkMessage({
+    type: "result",
+    subtype: "success",
+    duration_ms: 12,
+    usage: {
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0
+    }
+  } as SDKMessage);
+  emit.onComplete();
+}
+
 async function waitForQueuedRunRelease(userMessage: string): Promise<void> {
   for (let i = 0; i < 50; i += 1) {
     const resolver = heldRunResolvers.get(userMessage);
@@ -64,6 +103,10 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
     }
   ) => {
     const userMessage = (params as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    if (userMessage === "subagent-projection") {
+      emitRunWithSubagentTranscript(emit);
+      return { status: "completed" as const };
+    }
     if (userMessage.startsWith("hold:")) {
       await new Promise<void>((resolve) => {
         heldRunResolvers.set(userMessage, () => {
@@ -187,5 +230,39 @@ describe("agent-service", () => {
       "hold:first",
       "second"
     ]);
+  });
+
+  test("sendAgentMessage 不应把 subagent assistant 正文投影进主 assistant 可见消息", async () => {
+    const { createAgentThread, getAgentThreadMessages, getAgentThreadSDKMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("subagent projection", "channel-test");
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "subagent-projection",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onSdkMessage: () => undefined,
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const visibleMessages = getAgentThreadMessages(thread.id);
+    const sdkMessages = getAgentThreadSDKMessages(thread.id);
+    const assistant = visibleMessages.find((message) => message.role === "assistant");
+
+    expect(assistant?.content).toBe("parent assistant output");
+    expect(assistant?.content).not.toContain("subagent assistant output");
+    expect(
+      sdkMessages.some((message) => (
+        message.type === "assistant"
+        && (message as SDKMessage & { subagent_run_id?: string }).subagent_run_id === "subagent-run-1"
+      ))
+    ).toBe(true);
   });
 });

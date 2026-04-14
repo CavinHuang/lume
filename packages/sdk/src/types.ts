@@ -95,6 +95,7 @@ export interface SDKAssistantMessage {
   type: 'assistant'
   uuid?: string
   session_id?: string
+  subagent_run_id?: string
   message: {
     role: 'assistant'
     content: ContentBlock[]
@@ -106,6 +107,7 @@ export interface SDKAssistantMessage {
 
 export interface SDKToolResultMessage {
   type: 'tool_result'
+  subagent_run_id?: string
   result: {
     tool_use_id: string
     tool_name: string
@@ -157,6 +159,7 @@ export interface SDKResultMessage {
  */
 export interface SDKStreamEventMessage {
   type: 'stream_event'
+  subagent_run_id?: string
   event: {
     type: string
     [key: string]: unknown
@@ -254,6 +257,7 @@ export interface SDKStatusMessage {
 export interface SDKTaskNotificationMessage {
   type: 'system'
   subtype: 'task_notification'
+  subagent_run_id?: string
   task_id: string
   status: string
   message?: string
@@ -363,6 +367,7 @@ export interface SDKFilesPersistedMessage {
 export interface SDKTaskStartedMessage {
   type: 'system'
   subtype: 'task_started'
+  subagent_run_id?: string
   task_id: string
   tool_use_id?: string
   description: string
@@ -376,6 +381,7 @@ export interface SDKTaskStartedMessage {
 export interface SDKTaskProgressMessage {
   type: 'system'
   subtype: 'task_progress'
+  subagent_run_id?: string
   task_id: string
   tool_use_id?: string
   description: string

@@ -2,9 +2,18 @@ import * as React from "react";
 import { CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
 import type { ToolActivity } from "@/atoms";
 import type { TaskGroup } from "@/lib/agent-tool-activity";
+import type { AgentStreamState } from "@/lib/agent-streaming";
 import { cn } from "@/lib/utils";
+import { normalizeSubagentResultText } from "@/lib/subagent-rendering";
 import { getActivityStatus, getToolIcon } from "./tool-activity/meta";
 import { formatElapsed } from "./tool-activity/utils";
+import {
+  MessageResponse,
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai-elements";
+import { ToolActivityTree } from "./ToolActivityItem";
 
 function SubActivityRow({ activity }: { activity: ToolActivity }) {
   const status = getActivityStatus(activity);
@@ -23,9 +32,11 @@ function SubActivityRow({ activity }: { activity: ToolActivity }) {
 
 export function TaskContainerCard({
   group,
+  subagentStream,
   defaultExpanded = false,
 }: {
   group: TaskGroup;
+  subagentStream?: AgentStreamState;
   defaultExpanded?: boolean;
 }) {
   const { parent, children } = group;
@@ -39,7 +50,12 @@ export function TaskContainerCard({
     if (!isDone) setExpanded(true);
   }, [isDone]);
 
-  const hasContent = children.length > 0 || !!parent.result;
+  const normalizedParentResult = normalizeSubagentResultText(parent.result);
+  const hasSubagentReasoning = Boolean((subagentStream?.reasoning ?? "").trim());
+  const normalizedSubagentContent = normalizeSubagentResultText(subagentStream?.content);
+  const hasSubagentContent = Boolean(normalizedSubagentContent);
+  const hasSubagentActivities = (subagentStream?.toolActivities?.length ?? 0) > 0;
+  const hasContent = children.length > 0 || !!normalizedParentResult || hasSubagentReasoning || hasSubagentContent || hasSubagentActivities;
 
   return (
     <div className="my-1.5 max-w-[630px] rounded-lg border border-border/60 bg-muted/25">
@@ -56,11 +72,31 @@ export function TaskContainerCard({
         {elapsed ? <span className="shrink-0 text-[11px] text-muted-foreground/50">{elapsed}</span> : null}
         <span className="shrink-0 text-[11px] text-muted-foreground/40">{children.length} 步</span>
       </button>
-      {expanded && (children.length > 0 || parent.result) ? (
+      {expanded && hasContent ? (
         <div className="border-t border-border/40 px-3.5 py-2">
           {children.map(child => <SubActivityRow key={child.toolUseId} activity={child} />)}
-          {children.length === 0 && parent.result ? (
-            <p className="text-[12px] text-muted-foreground whitespace-pre-wrap break-words">{parent.result}</p>
+          {hasSubagentActivities ? (
+            <div className="mt-2">
+              <div className="mb-1 text-[11px] font-medium text-muted-foreground/70">子 Agent 工具过程</div>
+              <ToolActivityTree activities={subagentStream?.toolActivities ?? []} />
+            </div>
+          ) : null}
+          {hasSubagentReasoning ? (
+            <div className="mt-2">
+              <Reasoning defaultOpen={false}>
+                <ReasoningTrigger />
+                <ReasoningContent>{subagentStream?.reasoning ?? ""}</ReasoningContent>
+              </Reasoning>
+            </div>
+          ) : null}
+          {hasSubagentContent ? (
+            <div className="mt-2">
+              <div className="mb-1 text-[11px] font-medium text-muted-foreground/70">子 Agent 输出</div>
+              <MessageResponse>{normalizedSubagentContent ?? ""}</MessageResponse>
+            </div>
+          ) : null}
+          {children.length === 0 && normalizedParentResult ? (
+            <p className="mt-2 text-[12px] text-muted-foreground whitespace-pre-wrap break-words">{normalizedParentResult}</p>
           ) : null}
         </div>
       ) : null}

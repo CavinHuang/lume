@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { AgentWorkspace } from "@lume/shared";
-import { ensureDefaultAgentWorkspace, getAgentWorkspaceCapabilities, listAgentWorkspaces } from "@/lib/desktop-api/agent";
+import { getAgentWorkspaceCapabilities } from "@/lib/desktop-api/agent";
+import { loadWorkspaceSidebarSnapshot } from "./workspace-sidebar-loader";
 
 interface CapabilityCounts {
   mcp: number;
@@ -28,25 +29,31 @@ export function useWorkspaceSidebarState({
   const [capabilities, setCapabilities] = useState<CapabilityCounts | null>(null);
   const [workspaceInitError, setWorkspaceInitError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        await ensureDefaultAgentWorkspace();
-        const workspaces = await listAgentWorkspaces();
-        setAgentWorkspaces(workspaces);
-        setCurrentWorkspaceId((prev) => {
-          if (prev && workspaces.some((item) => item.id === prev)) {
-            return prev;
-          }
-          return workspaces[0]?.id ?? null;
-        });
-        setWorkspaceInitError(null);
-      } catch (error) {
-        console.error("[LeftSidebar] 初始化工作区失败:", error);
-        setWorkspaceInitError(`初始化工作区失败: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    })();
+  const loadWorkspaceState = useCallback(async (): Promise<void> => {
+    try {
+      const { workspaces } = await loadWorkspaceSidebarSnapshot();
+      setAgentWorkspaces(workspaces);
+      setCurrentWorkspaceId((prev) => {
+        if (prev && workspaces.some((item) => item.id === prev)) {
+          return prev;
+        }
+        return workspaces[0]?.id ?? null;
+      });
+      setWorkspaceInitError(null);
+    } catch (error) {
+      console.error("[LeftSidebar] 初始化工作区失败:", error);
+      setWorkspaceInitError(`初始化工作区失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }, [setAgentWorkspaces, setCurrentWorkspaceId]);
+
+  const retryWorkspaceState = useCallback(async (): Promise<void> => {
+    setWorkspaceInitError(null);
+    await loadWorkspaceState();
+  }, [loadWorkspaceState]);
+
+  useEffect(() => {
+    void loadWorkspaceState();
+  }, [loadWorkspaceState]);
 
   useEffect(() => {
     if (mode !== "agent" || !currentWorkspaceId) {
@@ -70,6 +77,7 @@ export function useWorkspaceSidebarState({
   return {
     capabilities,
     workspaceInitError,
+    retryWorkspaceState,
     setWorkspaceInitError,
   };
 }

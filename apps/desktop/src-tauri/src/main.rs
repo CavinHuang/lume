@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -83,6 +83,11 @@ fn spawn_managed_sidecar(
         spawn_sidecar_stdout_reader(stdout, Arc::clone(&state.pending), app.clone());
     } else {
         warn!("[desktop] sidecar stdout unavailable after spawn");
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_sidecar_stderr_reader(stderr);
+    } else {
+        warn!("[desktop] sidecar stderr unavailable after spawn");
     }
 
     let mut slot = state
@@ -312,9 +317,15 @@ async fn sidecar_call_internal(
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             remove_pending_request(state, request_id);
+            warn!(
+                "[desktop] sidecar response timeout: id={request_id} method={method}"
+            );
             Err(format!("sidecar response timeout for method: {method}"))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
+            warn!(
+                "[desktop] sidecar response disconnected: id={request_id} method={method}"
+            );
             Err("sidecar response channel disconnected".to_string())
         }
     }
@@ -354,7 +365,12 @@ fn spawn_sidecar_stdout_reader(
 
             let parsed = match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(value) => value,
-                Err(_) => continue,
+                Err(error) => {
+                    warn!(
+                        "[desktop] ignored non-json sidecar stdout line: {error}; line={trimmed}"
+                    );
+                    continue;
+                }
             };
 
             if let Some(response_id) = parsed.get("id").and_then(serde_json::Value::as_u64) {
@@ -396,6 +412,35 @@ fn spawn_sidecar_stdout_reader(
                 let _ = tx.send(Err(close_reason.clone()));
             }
         }
+        warn!("[desktop] sidecar stdout reader stopped: {close_reason}");
+    });
+}
+
+fn spawn_sidecar_stderr_reader(stderr: ChildStderr) {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    info!("[desktop] sidecar stderr reader stopped: EOF");
+                    break;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    warn!("[desktop] read sidecar stderr failed: {error}");
+                    break;
+                }
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            info!("[sidecar] {trimmed}");
+        }
     });
 }
 
@@ -418,7 +463,7 @@ fn spawn_sidecar_from_env() -> Option<Child> {
     process
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
 
     match process.spawn() {
         Ok(child) => {
@@ -440,6 +485,41 @@ fn resolve_bun_binary() -> String {
         }
     }
     "bun".to_string()
+}
+
+fn resolve_node_binary() -> String {
+    if let Ok(configured) = std::env::var("LUME_SIDECAR_NODE") {
+        if !configured.trim().is_empty() {
+            return configured;
+        }
+    }
+    "node".to_string()
+}
+
+fn resolve_mac_sidecar_bridge_path() -> Option<PathBuf> {
+    let bridge_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../scripts/sidecar-node-bridge.mjs");
+    if bridge_path.exists() {
+        return Some(bridge_path);
+    }
+    None
+}
+
+fn build_mac_sidecar_bridge_args(
+    bridge_path: &PathBuf,
+    bun_bin: &str,
+    sidecar_dir: &PathBuf,
+    sidecar_entry: &PathBuf,
+) -> Vec<String> {
+    vec![
+        bridge_path.to_string_lossy().to_string(),
+        "--bun".to_string(),
+        bun_bin.to_string(),
+        "--cwd".to_string(),
+        sidecar_dir.to_string_lossy().to_string(),
+        "--entry".to_string(),
+        sidecar_entry.to_string_lossy().to_string(),
+    ]
 }
 
 fn resolve_default_skills_dir(app: &tauri::AppHandle, sidecar_dir: &PathBuf) -> Option<String> {
@@ -484,14 +564,56 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
     } else {
         src_entry
     };
-    let mut process = Command::new(&bun_bin);
     let default_skills_dir = resolve_default_skills_dir(app, &sidecar_dir);
+    let use_mac_node_bridge = cfg!(target_os = "macos");
+
+    if use_mac_node_bridge {
+        if let Some(bridge_path) = resolve_mac_sidecar_bridge_path() {
+            let node_bin = resolve_node_binary();
+            let bridge_args =
+                build_mac_sidecar_bridge_args(&bridge_path, &bun_bin, &sidecar_dir, &sidecar_entry);
+            let mut process = Command::new(&node_bin);
+            process
+                .args(&bridge_args)
+                .current_dir(&sidecar_dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if let Some(skills_dir) = default_skills_dir.as_ref() {
+                process.env("LUME_DEFAULT_SKILLS_DIR", skills_dir);
+            }
+
+            match process.spawn() {
+                Ok(child) => {
+                    info!(
+                        "[desktop] sidecar process booted from default path: {} (runtime=node-bridge-macos, entry={}, bun={}, node={}, bridge={}, default-skills={})",
+                        sidecar_dir.display(),
+                        sidecar_entry.display(),
+                        bun_bin,
+                        node_bin,
+                        bridge_path.display(),
+                        default_skills_dir.as_deref().unwrap_or("not-found")
+                    );
+                    return Some(child);
+                }
+                Err(error) => {
+                    error!(
+                        "[desktop] failed to spawn macOS node bridge sidecar: {error}; fallback to bun-direct"
+                    );
+                }
+            }
+        } else {
+            warn!("[desktop] macOS sidecar node bridge script not found; fallback to bun-direct");
+        }
+    }
+
+    let mut process = Command::new(&bun_bin);
     process
         .arg(sidecar_entry.to_string_lossy().to_string())
         .current_dir(&sidecar_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
     if let Some(skills_dir) = default_skills_dir.as_ref() {
         process.env("LUME_DEFAULT_SKILLS_DIR", skills_dir);
     }
@@ -511,6 +633,35 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
             error!("[desktop] failed to spawn default sidecar: {error}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_mac_sidecar_bridge_args;
+    use std::path::PathBuf;
+
+    #[test]
+    fn build_mac_sidecar_bridge_args_should_match_node_bridge_contract() {
+        let args = build_mac_sidecar_bridge_args(
+            &PathBuf::from("/repo/apps/desktop/scripts/sidecar-node-bridge.mjs"),
+            "/bun",
+            &PathBuf::from("/repo/apps/sidecar"),
+            &PathBuf::from("/repo/apps/sidecar/src/index.ts"),
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "/repo/apps/desktop/scripts/sidecar-node-bridge.mjs",
+                "--bun",
+                "/bun",
+                "--cwd",
+                "/repo/apps/sidecar",
+                "--entry",
+                "/repo/apps/sidecar/src/index.ts",
+            ]
+        );
     }
 }
 

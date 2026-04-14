@@ -19,7 +19,15 @@ export interface TaskAnnouncementItem {
   childSessionId?: string;
 }
 
-const TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TodoWrite"]);
+const TASK_TOOL_NAMES = new Set([
+  "TaskCreate",
+  "TaskUpdate",
+  "TodoWrite",
+  "threads_spawn",
+  "subagents_send",
+  "subagents_steer",
+  "subagents_kill"
+]);
 const MAX_VISIBLE = 8;
 
 export function aggregateTaskProgressItems(
@@ -73,6 +81,31 @@ export function aggregateTaskProgressItems(
         activeForm: typeof activity.input.activeForm === "string"
           ? activity.input.activeForm
           : existing?.activeForm
+      });
+    }
+
+    if (
+      activity.toolName === "threads_spawn"
+      || activity.toolName === "subagents_send"
+      || activity.toolName === "subagents_steer"
+      || activity.toolName === "subagents_kill"
+    ) {
+      const taskId = activity.toolUseId;
+      const subject = typeof activity.input.task === "string"
+        ? activity.input.task
+        : typeof activity.input.message === "string"
+          ? activity.input.message
+          : `子任务 ${taskId}`;
+      const status = activity.isError
+        ? "failed"
+        : activity.done
+          ? "completed"
+          : "in_progress";
+      taskMap.set(taskId, {
+        id: taskId,
+        subject,
+        status,
+        activeForm: activity.progressDescription ?? subject
       });
     }
   }

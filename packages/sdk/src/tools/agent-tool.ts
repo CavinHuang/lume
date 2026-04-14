@@ -5,13 +5,14 @@
  * Agents run as nested query loops with their own context and tool sets.
  */
 
-import type { ToolDefinition, ToolContext, ToolResult, AgentDefinition } from '../types.js'
+import type { ToolDefinition, ToolContext, ToolResult, AgentDefinition, SDKMessage } from '../types.js'
 import { QueryEngine } from '../engine.js'
 import { getAllBaseTools, filterTools } from './index.js'
 import { createProvider, type ApiType } from '../providers/index.js'
 import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { loadSession } from '../session.js'
 import { finalizeSubagentOutput, summarizeSubagentAssistantEvent } from './subagent-output.js'
+import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
 
 // Store for registered agent definitions
 let registeredAgents: Record<string, AgentDefinition> = {}
@@ -102,6 +103,10 @@ export const AgentTool: ToolDefinition = {
         type: 'boolean',
         description: 'Whether to run in background',
       },
+      subagent_run_id: {
+        type: 'string',
+        description: 'Internal run id injected by the host runtime. Reused across task events and finalization.',
+      },
     },
     required: ['prompt', 'description'],
   },
@@ -141,7 +146,9 @@ export const AgentTool: ToolDefinition = {
       },
     )
 
-    const agentId = crypto.randomUUID()
+    const agentId = typeof input.subagent_run_id === 'string' && input.subagent_run_id.trim().length > 0
+      ? input.subagent_run_id.trim()
+      : crypto.randomUUID()
 
     context.onSubagentStart?.({
       runId: agentId,
@@ -205,6 +212,13 @@ export const AgentTool: ToolDefinition = {
       const toolCalls: string[] = []
 
       for await (const event of engine.submitMessage(input.prompt)) {
+        const taggedEvent = annotateSubagentStreamingEvent(event as SDKMessage, {
+          subagentRunId: agentId,
+          parentSessionId: context.sessionId,
+        })
+        if (taggedEvent) {
+          context.emitEvent?.(taggedEvent)
+        }
         if (event.type === 'assistant') {
           const summary = summarizeSubagentAssistantEvent(
             event.message.content as Array<Record<string, unknown>>,
@@ -312,6 +326,7 @@ export const AgentTool: ToolDefinition = {
             summary: task.subject,
             output_file: task.outputFile || '',
             session_id: context.sessionId || '',
+            subagent_run_id: agentId,
           })
         })
         .catch((err: any) => {
@@ -341,6 +356,7 @@ export const AgentTool: ToolDefinition = {
             summary: task.subject,
             output_file: task.outputFile || '',
             session_id: context.sessionId || '',
+            subagent_run_id: agentId,
           })
         })
 

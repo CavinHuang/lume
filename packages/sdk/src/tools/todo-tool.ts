@@ -163,6 +163,9 @@ export const TodoWriteTool: ToolDefinition = {
           return { type: 'tool_result', tool_use_id: '', content: `Todo ${input.id} not found`, is_error: true }
         }
         const [removed] = todoList.splice(idx, 1)
+        if (!removed) {
+          return { type: 'tool_result', tool_use_id: '', content: `Todo ${input.id} not found`, is_error: true }
+        }
         return { type: 'tool_result', tool_use_id: '', content: `Todo removed: ${removed.id}` }
       }
       case 'clear': {

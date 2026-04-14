@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
-import { createRuntimeCoreSession } from "./run";
+import { buildSidecarSubagentRunContext, createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentWorkspacePath } from "../../infra/config-paths";
 
@@ -311,6 +311,33 @@ describe("runtime-core run", () => {
 
     result.session.dispose();
     rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("buildSidecarSubagentRunContext 应统一 registry 与 SDK 使用的 subagent_run_id", () => {
+    const result = buildSidecarSubagentRunContext({
+      parentThreadId: "parent-thread",
+      toolInput: {
+        prompt: "执行子任务",
+        description: "测试子任务",
+        subagent_type: "explorer"
+      },
+      policy: {
+        depth: 2,
+        rootThreadId: "root-thread",
+        parentRunId: "parent-run"
+      },
+      createRunId: () => "run-fixed",
+      createChildThreadId: () => "child-fixed"
+    });
+
+    expect(result.runId).toBe("run-fixed");
+    expect(result.childThreadId).toBe("child-fixed");
+    expect(result.forwardedToolInput.subagent_run_id).toBe("run-fixed");
+    expect(result.registryInput.runId).toBe("run-fixed");
+    expect(result.registryInput.childThreadId).toBe("child-fixed");
+    expect(result.registryInput.parentThreadId).toBe("parent-thread");
+    expect(result.registryInput.rootThreadId).toBe("root-thread");
+    expect(result.registryInput.parentRunId).toBe("parent-run");
   });
 });
 

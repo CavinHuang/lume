@@ -228,9 +228,17 @@ function shouldPersistAssistantTurnSdkMessage(message: SDKMessage): boolean {
   );
 }
 
+function isSubagentAssistantSdkMessage(message: SDKMessage): boolean {
+  return message.type === "assistant"
+    && typeof (message as SDKMessage & { subagent_run_id?: unknown }).subagent_run_id === "string"
+    && ((message as SDKMessage & { subagent_run_id?: string }).subagent_run_id?.trim().length ?? 0) > 0;
+}
+
 function extractAssistantTextFromSdkMessages(messages: SDKMessage[]): string {
   return messages
-    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => message.type === "assistant")
+    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => (
+      message.type === "assistant" && !isSubagentAssistantSdkMessage(message)
+    ))
     .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
     .filter((block): block is { type: "text"; text: string } => !!block && typeof block === "object" && block.type === "text" && typeof (block as { text?: string }).text === "string")
     .map((block) => block.text)
@@ -240,7 +248,9 @@ function extractAssistantTextFromSdkMessages(messages: SDKMessage[]): string {
 
 function extractAssistantReasoningFromSdkMessages(messages: SDKMessage[]): string | undefined {
   const reasoning = messages
-    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => message.type === "assistant")
+    .filter((message): message is Extract<SDKMessage, { type: "assistant" }> => (
+      message.type === "assistant" && !isSubagentAssistantSdkMessage(message)
+    ))
     .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
     .filter((block) => !!block && typeof block === "object" && block.type === "thinking")
     .map((block) => {
@@ -276,7 +286,9 @@ function projectAssistantMessageFromSdkMessages(input: {
   model: string;
   sdkMessages: SDKMessage[];
 } | null {
-  const assistantMessages = input.sdkMessages.filter((message) => message.type === "assistant");
+  const assistantMessages = input.sdkMessages.filter((message) => (
+    message.type === "assistant" && !isSubagentAssistantSdkMessage(message)
+  ));
   if (assistantMessages.length === 0) {
     return null;
   }

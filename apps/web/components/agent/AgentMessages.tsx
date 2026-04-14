@@ -50,6 +50,8 @@ import {
 } from "@/lib/agent-message-versions";
 import { buildAssistantDisplayMessage } from "@/lib/agent-display-message";
 import { extractToolActivitiesFromMessages, separateActivities } from "@/lib/agent-tool-activity";
+import { filterOrderedSdkBlocksForTaskGroups, resolveTaskTerminalVisualState } from "@/lib/subagent-rendering";
+import { extractSubagentStreamsFromSdkMessages } from "@/lib/agent-streaming";
 import { TaskContainerCard } from "./TaskContainerCard";
 import { getAgentThreadMessageVersions } from "@/lib/desktop-api/agent";
 import { getModelLogo } from "@/lib/model-logo";
@@ -70,18 +72,21 @@ import { FilePromotionCard } from "./FilePromotionCard";
 function StreamingOrderedBlocks({
   contentBlocks,
   toolActivities,
+  taskGroups,
   expandedCards,
   onExpandedChange,
 }: {
   contentBlocks: StreamContentBlock[];
   toolActivities: ToolActivity[];
+  taskGroups: ReturnType<typeof separateActivities>["taskGroups"];
   expandedCards: Record<string, boolean>;
   onExpandedChange: (id: string, open: boolean) => void;
 }): React.ReactElement | null {
-  if (contentBlocks.length === 0) return null;
+  const visibleBlocks = filterOrderedSdkBlocksForTaskGroups(contentBlocks as never[], taskGroups) as StreamContentBlock[];
+  if (visibleBlocks.length === 0) return null;
   return (
     <div className="space-y-2">
-      {contentBlocks.map((block, i) => {
+      {visibleBlocks.map((block, i) => {
         if (block.type === "thinking") {
           if (!block.thinking) return null;
           return (
@@ -119,13 +124,18 @@ function StreamingOrderedBlocks({
 
 function PersistedOrderedBlocks({
   sdkMessages,
+  taskGroups,
 }: {
   sdkMessages: SDKMessage[];
+  taskGroups: ReturnType<typeof separateActivities>["taskGroups"];
 }): React.ReactElement | null {
   const assistantMessages = sdkMessages.filter(
-    (m): m is Extract<SDKMessage, { type: "assistant" }> => m.type === "assistant"
+    (m): m is Extract<SDKMessage, { type: "assistant" }> => (
+      m.type === "assistant"
+      && typeof (m as SDKMessage & { subagent_run_id?: unknown }).subagent_run_id !== "string"
+    )
   );
-  const blocks = getAssistantContentBlocks(assistantMessages);
+  const blocks = filterOrderedSdkBlocksForTaskGroups(getAssistantContentBlocks(assistantMessages) as never[], taskGroups) as ReturnType<typeof getAssistantContentBlocks>;
   if (blocks.length === 0) return null;
   return (
     <div className="space-y-2">
@@ -391,6 +401,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   isStreamingMessage = false,
   streamingContentBlocks,
   streamingToolActivities,
+  streamingSubagentStreams,
   streamingExpandedCards,
   onStreamingExpandedChange,
 }: {
@@ -413,6 +424,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
   isStreamingMessage?: boolean;
   streamingContentBlocks?: StreamContentBlock[];
   streamingToolActivities?: ToolActivity[];
+  streamingSubagentStreams?: Record<string, import("@/lib/agent-streaming").AgentStreamState>;
   streamingExpandedCards?: Record<string, boolean>;
   onStreamingExpandedChange?: (id: string, open: boolean) => void;
 }): React.ReactElement | null {
@@ -466,14 +478,31 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
     },
     [displayedMessage]
   );
+  const persistedSubagentStreams = React.useMemo(() => {
+    if (displayedMessage.role !== "assistant" || !displayedMessage.sdkMessages?.length) {
+      return {};
+    }
+    return extractSubagentStreamsFromSdkMessages(displayedMessage.sdkMessages);
+  }, [displayedMessage]);
+
+  const resolvedSubagentStreams = isStreamingMessage
+    ? (streamingSubagentStreams ?? {})
+    : persistedSubagentStreams;
+  const separatedMessageActivities = React.useMemo(() => separateActivities(messageToolActivities), [messageToolActivities]);
+  const separatedStreamingActivities = React.useMemo(
+    () => separateActivities(streamingToolActivities ?? []),
+    [streamingToolActivities]
+  );
   const announceItem = React.useMemo(() => {
     const metadata = displayedMessage.metadata as Record<string, unknown> | undefined;
     if (metadata?.subagentAnnounce !== true) return null;
     const announce = parseAnnounceContent(displayedMessage.content);
+    const visualState = resolveTaskTerminalVisualState(announce.status);
+    if (!visualState.done) return null;
     return {
       id: displayedMessage.id,
       label: announce.label,
-      status: announce.status === "completed" ? "completed" as const : "failed" as const,
+      status: visualState.isError ? "failed" as const : "completed" as const,
       outputText: announce.outputText,
       errorText: announce.errorText,
       childSessionId: typeof metadata?.childSessionId === "string" ? metadata.childSessionId : undefined
@@ -636,6 +665,7 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             <StreamingOrderedBlocks
               contentBlocks={streamingContentBlocks}
               toolActivities={streamingToolActivities ?? []}
+              taskGroups={separatedStreamingActivities.taskGroups}
               expandedCards={streamingExpandedCards ?? {}}
               onExpandedChange={onStreamingExpandedChange ?? (() => undefined)}
             />
@@ -657,17 +687,31 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
                 <MessageResponse streaming>{assistantMessage.content}</MessageResponse>
               ) : null}
               {streamingToolActivities && streamingToolActivities.length > 0 ? (() => {
-                const { taskGroups } = separateActivities(streamingToolActivities);
-                return taskGroups.map(g => <TaskContainerCard key={g.parent.toolUseId} group={g} defaultExpanded />);
+                const { taskGroups } = separatedStreamingActivities;
+                return taskGroups.map((g) => (
+                  <TaskContainerCard
+                    key={g.parent.toolUseId}
+                    group={g}
+                    subagentStream={resolvedSubagentStreams[g.parent.toolUseId]}
+                    defaultExpanded
+                  />
+                ));
               })() : null}
             </>
           ) : displayedMessage.sdkMessages && displayedMessage.sdkMessages.length > 0 ? (
             <>
-              <PersistedOrderedBlocks sdkMessages={displayedMessage.sdkMessages} />
+              {!announceItem ? (
+                <PersistedOrderedBlocks sdkMessages={displayedMessage.sdkMessages} taskGroups={separatedMessageActivities.taskGroups} />
+              ) : null}
               {messageToolActivities.length > 0 && !announceItem ? (() => {
-                const { taskGroups } = separateActivities(messageToolActivities);
+                const { taskGroups } = separatedMessageActivities;
                 return taskGroups.map((g, i) => (
-                  <TaskContainerCard key={g.parent.toolUseId} group={g} defaultExpanded={i === taskGroups.length - 1} />
+                  <TaskContainerCard
+                    key={g.parent.toolUseId}
+                    group={g}
+                    subagentStream={resolvedSubagentStreams[g.parent.toolUseId]}
+                    defaultExpanded={i === taskGroups.length - 1}
+                  />
                 ));
               })() : null}
             </>
@@ -685,11 +729,16 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
                 </Reasoning>
               ) : null}
               {messageToolActivities.length > 0 ? (() => {
-                const { mainActivities, taskGroups } = separateActivities(messageToolActivities);
+                const { mainActivities, taskGroups } = separatedMessageActivities;
                 return <>
                   {mainActivities.length > 0 ? <ToolActivityTree activities={mainActivities} /> : null}
                   {!announceItem && taskGroups.map((g, i) => (
-                    <TaskContainerCard key={g.parent.toolUseId} group={g} defaultExpanded={i === taskGroups.length - 1} />
+                    <TaskContainerCard
+                      key={g.parent.toolUseId}
+                      group={g}
+                      subagentStream={resolvedSubagentStreams[g.parent.toolUseId]}
+                      defaultExpanded={i === taskGroups.length - 1}
+                    />
                   ))}
                 </>;
               })() : null}
@@ -1028,6 +1077,7 @@ export function AgentMessages({
                     {...(item.isStreamingMessage ? {
                       streamingContentBlocks,
                       streamingToolActivities,
+                      streamingSubagentStreams: streamState?.subagentStreams,
                       streamingExpandedCards,
                       onStreamingExpandedChange: (id: string, open: boolean) =>
                         setStreamingExpandedCards((prev) => ({ ...prev, [id]: open })),

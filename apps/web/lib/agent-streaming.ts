@@ -1,4 +1,5 @@
 import type { SDKMessage } from "@lume/shared";
+import { resolveTaskTerminalVisualState } from "./subagent-rendering";
 
 export interface ToolActivity {
   toolUseId: string;
@@ -49,6 +50,24 @@ export interface AgentStreamState {
   toolBlockIndexMap?: Record<number, string>;
   /** 按流式到达顺序排列的内容块 */
   contentBlocks?: StreamContentBlock[];
+  /** 按 subagent_run_id 聚合的子流状态 */
+  subagentStreams?: Record<string, AgentStreamState>;
+}
+
+function createEmptyStreamState(): AgentStreamState {
+  return {
+    running: true,
+    content: "",
+    reasoning: "",
+    toolActivities: []
+  };
+}
+
+function resolveSubagentRunId(message: SDKMessage): string | null {
+  const value = (message as SDKMessage & { subagent_run_id?: unknown }).subagent_run_id;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function extractTextFromAssistantMessage(message: Extract<SDKMessage, { type: "assistant" }>): string {
@@ -96,7 +115,7 @@ function resolveLatestRunningToolUseId(activities: ToolActivity[]): string | nul
   return null;
 }
 
-export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): AgentStreamState {
+function applySdkMessageInternal(prev: AgentStreamState, message: SDKMessage, routeSubagentMessages: boolean): AgentStreamState {
   const now = Date.now();
   const streamStartedAt = prev.streamStartedAt ?? now;
   let next: AgentStreamState = {
@@ -104,6 +123,24 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
     streamStartedAt,
     sdkMessages: [...(prev.sdkMessages ?? []), message],
   };
+
+  const subagentRunId = routeSubagentMessages ? resolveSubagentRunId(message) : null;
+  if (subagentRunId && (
+    message.type === "assistant"
+    || message.type === "stream_event"
+    || message.type === "tool_result"
+    || message.type === "user"
+  )) {
+    const currentSubagentState = prev.subagentStreams?.[subagentRunId] ?? createEmptyStreamState();
+    const nextSubagentState = applySdkMessageInternal(currentSubagentState, message, false);
+    return {
+      ...next,
+      subagentStreams: {
+        ...(prev.subagentStreams ?? {}),
+        [subagentRunId]: nextSubagentState
+      }
+    };
+  }
 
   if (message.type === "stream_event") {
     const event = message.event as {
@@ -369,13 +406,14 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
       );
     } else if (message.subtype === "task_notification") {
       const toolUseId = (message as any).subagent_run_id ?? message.tool_use_id ?? message.task_id;
+      const terminalState = resolveTaskTerminalVisualState(message.status);
       next.toolActivities = next.toolActivities.map((activity) =>
         activity.toolUseId === toolUseId
           ? {
               ...activity,
               taskId: message.task_id,
-              done: true,
-              isError: message.status !== "completed",
+              done: terminalState.done,
+              isError: terminalState.isError,
               result: message.summary ?? message.message ?? activity.result,
               elapsedMs: message.usage?.duration_ms ?? activity.elapsedMs,
             }
@@ -400,6 +438,18 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
   }
 
   return next;
+}
+
+export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): AgentStreamState {
+  return applySdkMessageInternal(prev, message, true);
+}
+
+export function extractSubagentStreamsFromSdkMessages(messages: SDKMessage[]): Record<string, AgentStreamState> {
+  let state = createEmptyStreamState();
+  for (const message of messages) {
+    state = applySdkMessage(state, message);
+  }
+  return state.subagentStreams ?? {};
 }
 
 export function mergeStreamingText(current: string, next: string): string {

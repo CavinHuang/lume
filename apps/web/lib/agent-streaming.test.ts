@@ -246,4 +246,63 @@ describe("agent-streaming", () => {
       result: "读取完成"
     }]);
   });
+
+  test("带 subagent_run_id 的 assistant 应写入子流，不应污染主 assistant content", () => {
+    const afterTaskStart = applySdkMessage(createState(), {
+      type: "system",
+      subtype: "task_started",
+      task_id: "task-1",
+      description: "子任务",
+      session_id: "session-1",
+      subagent_run_id: "run-1"
+    } as unknown as SDKMessage);
+
+    const afterSubagentAssistant = applySdkMessage(afterTaskStart, {
+      type: "assistant",
+      subagent_run_id: "run-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "subagent output" }]
+      }
+    } as unknown as SDKMessage);
+
+    expect(afterSubagentAssistant.content).toBe("");
+    expect(afterSubagentAssistant.toolActivities[0]?.toolUseId).toBe("run-1");
+    expect(afterSubagentAssistant.subagentStreams?.["run-1"]?.content).toBe("subagent output");
+  });
+
+  test("多个 subagent 并发时应按 subagent_run_id 分开聚合", () => {
+    let state = createState();
+
+    state = applySdkMessage(state, {
+      type: "assistant",
+      subagent_run_id: "run-a",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "A" }]
+      }
+    } as unknown as SDKMessage);
+
+    state = applySdkMessage(state, {
+      type: "assistant",
+      subagent_run_id: "run-b",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "B" }]
+      }
+    } as unknown as SDKMessage);
+
+    state = applySdkMessage(state, {
+      type: "assistant",
+      subagent_run_id: "run-a",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "A2" }]
+      }
+    } as unknown as SDKMessage);
+
+    expect(state.subagentStreams?.["run-a"]?.content).toBe("A2");
+    expect(state.subagentStreams?.["run-b"]?.content).toBe("B");
+    expect(state.content).toBe("");
+  });
 });

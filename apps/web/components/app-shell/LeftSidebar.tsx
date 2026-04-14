@@ -139,7 +139,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   });
   const {
     capabilities,
-    workspaceInitError
+    workspaceInitError,
+    retryWorkspaceState
   } = useWorkspaceSidebarState({
     mode,
     currentWorkspaceId,
@@ -218,7 +219,13 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
           <button
             type="button"
             className="mt-1 text-[11px] underline underline-offset-2"
-            onClick={retryLoadConversations}
+            onClick={() => {
+              if (workspaceInitError) {
+                void retryWorkspaceState();
+                return;
+              }
+              retryLoadConversations();
+            }}
           >
             重试
           </button>
@@ -342,4 +349,3 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     </div>
   );
 }
-

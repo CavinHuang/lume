@@ -135,7 +135,9 @@ async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: 
 
   while ((match = resultRegex.exec(html)) !== null) {
     const href = decodeDuckDuckGoRedirectUrl(match[1] ?? '')
-    const title = match[2].replace(/<[^>]+>/g, '').trim()
+    const rawTitle = match[2]
+    if (!rawTitle) continue
+    const title = rawTitle.replace(/<[^>]+>/g, '').trim()
     if (href && title) {
       links.push({ title, url: href })
     }
@@ -143,7 +145,9 @@ async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: 
 
   const snippets: string[] = []
   while ((match = snippetRegex.exec(html)) !== null) {
-    snippets.push(match[1].replace(/<[^>]+>/g, '').trim())
+    const rawSnippet = match[1]
+    if (!rawSnippet) continue
+    snippets.push(rawSnippet.replace(/<[^>]+>/g, '').trim())
   }
 
   const results: SearchResult[] = []

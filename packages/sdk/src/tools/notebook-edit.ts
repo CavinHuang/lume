@@ -25,8 +25,10 @@ type NotebookCell = {
 
 function ensureCellIds(cells: NotebookCell[]): void {
   for (let i = 0; i < cells.length; i++) {
-    if (!cells[i].id) {
-      cells[i].id = `cell-${i + 1}`
+    const cell = cells[i]
+    if (!cell) continue
+    if (!cell.id) {
+      cell.id = `cell-${i + 1}`
     }
   }
 }
@@ -159,9 +161,13 @@ export const NotebookEditTool = defineTool({
         if (targetIndex < 0 || targetIndex >= cells.length) {
           return { data: `Error: Cell ${input.cell_id ?? input.cell_number} does not exist`, is_error: true }
         }
-        cells[targetIndex].source = toSourceLines(newSource)
+        const targetCell = cells[targetIndex]
+        if (!targetCell) {
+          return { data: `Error: Cell ${input.cell_id ?? input.cell_number} does not exist`, is_error: true }
+        }
+        targetCell.source = toSourceLines(newSource)
         if (input.cell_type) {
-          cells[targetIndex].cell_type = input.cell_type
+          targetCell.cell_type = input.cell_type
         }
       } else if (editMode === 'delete') {
         if (targetIndex < 0 || targetIndex >= cells.length) {

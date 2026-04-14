@@ -219,10 +219,6 @@ export default function App(): React.ReactElement {
     restoreReady
   ]);
 
-  if (!restoreReady) {
-    return <div className="h-screen w-screen bg-background" />;
-  }
-
   return (
     <TooltipProvider delayDuration={200}>
       <AppShell />

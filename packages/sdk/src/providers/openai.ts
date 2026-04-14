@@ -343,8 +343,17 @@ export class OpenAIProvider implements LLMProvider {
       return events
     }
 
-    for await (const chunk of response.body) {
-      buffer += decoder.decode(chunk, { stream: true })
+    const stream = response.body
+    if (!stream) {
+      throw new Error('OpenAI streaming response body is empty')
+    }
+
+    const reader = stream.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      buffer += decoder.decode(value, { stream: true })
       const events = await processBuffer(false)
       for (const event of events) {
         yield event

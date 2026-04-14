@@ -1,5 +1,6 @@
 import type { SDKMessage, AgentMessage, SubagentRunRecord } from "@lume/shared";
 import type { ToolActivity } from "./agent-streaming";
+import { resolveTaskTerminalVisualState } from "./subagent-rendering";
 
 export type ToolActivityStatus = "running" | "completed" | "error" | "backgrounded";
 
@@ -25,6 +26,11 @@ function stringifyToolResultContent(content: unknown): string {
   } catch {
     return String(content);
   }
+}
+
+function hasSubagentRunId(message: SDKMessage): boolean {
+  return typeof (message as SDKMessage & { subagent_run_id?: unknown }).subagent_run_id === "string"
+    && (((message as SDKMessage & { subagent_run_id?: string }).subagent_run_id?.trim().length) ?? 0) > 0;
 }
 
 export function getToolActivityStatus(activity: ToolActivity): ToolActivityStatus {
@@ -55,6 +61,7 @@ function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[
 
   for (const message of messages) {
     if (message.type === "assistant") {
+      if (hasSubagentRunId(message)) continue;
       for (const block of message.message?.content ?? []) {
         if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
         const toolBlock = block as {
@@ -77,6 +84,7 @@ function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[
     }
 
     if (message.type === "user") {
+      if (hasSubagentRunId(message)) continue;
       for (const block of message.message?.content ?? []) {
         if (!block || typeof block !== "object" || block.type !== "tool_result") continue;
         const resultBlock = block as {
@@ -96,6 +104,7 @@ function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[
     }
 
     if (message.type === "tool_result") {
+      if (hasSubagentRunId(message)) continue;
       const current = ensureActivity(message.result.tool_use_id, message.result.tool_name || "Unknown");
       map.set(message.result.tool_use_id, {
         ...current,
@@ -112,12 +121,12 @@ function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[
     }
 
     if (message.subtype === "task_started") {
-      const toolUseId = message.tool_use_id ?? message.task_id;
+      const toolUseId = (message as SDKMessage & { subagent_run_id?: string }).subagent_run_id ?? message.tool_use_id ?? message.task_id;
       taskActivityById.set(message.task_id, toolUseId);
       const current = ensureActivity(toolUseId, "Task");
       map.set(toolUseId, {
         ...current,
-        toolName: current.toolName === "Unknown" ? "Task" : current.toolName,
+        toolName: (message as SDKMessage & { subagent_run_id?: string }).subagent_run_id ? "Agent" : (current.toolName === "Unknown" ? "Task" : current.toolName),
         taskId: message.task_id,
         intent: message.description ?? current.intent,
         displayName: message.workflow_name ?? current.displayName,
@@ -128,7 +137,10 @@ function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[
     }
 
     if (message.subtype === "task_progress") {
-      const toolUseId = taskActivityById.get(message.task_id) ?? message.tool_use_id ?? message.task_id;
+      const toolUseId = taskActivityById.get(message.task_id)
+        ?? (message as SDKMessage & { subagent_run_id?: string }).subagent_run_id
+        ?? message.tool_use_id
+        ?? message.task_id;
       const current = ensureActivity(toolUseId, "Task");
       map.set(toolUseId, {
         ...current,
@@ -142,15 +154,19 @@ function collectActivitiesFromSdkMessages(messages: SDKMessage[]): ToolActivity[
     }
 
     if (message.subtype === "task_notification") {
-      const toolUseId = taskActivityById.get(message.task_id) ?? message.tool_use_id ?? message.task_id;
+      const toolUseId = taskActivityById.get(message.task_id)
+        ?? (message as SDKMessage & { subagent_run_id?: string }).subagent_run_id
+        ?? message.tool_use_id
+        ?? message.task_id;
       const current = ensureActivity(toolUseId, "Task");
+      const terminalState = resolveTaskTerminalVisualState(message.status);
       map.set(toolUseId, {
         ...current,
         taskId: message.task_id,
         result: message.summary ?? message.message ?? current.result,
-        isError: message.status !== "completed",
+        isError: terminalState.isError,
         elapsedMs: message.usage?.duration_ms ?? current.elapsedMs,
-        done: true,
+        done: terminalState.done,
       });
     }
   }

@@ -117,6 +117,65 @@ interface RuntimeCoreToolset {
   availableToolNames: string[];
 }
 
+export function buildSidecarSubagentRunContext(input: {
+  parentThreadId: string;
+  toolInput: Record<string, unknown>;
+  policy: {
+    depth: number;
+    rootThreadId: string;
+    parentRunId?: string;
+  };
+  createRunId?: () => string;
+  createChildThreadId?: () => string;
+}): {
+  runId: string;
+  childThreadId: string;
+  forwardedToolInput: Record<string, unknown>;
+  registryInput: {
+    runId: string;
+    parentThreadId: string;
+    parentRunId?: string;
+    rootThreadId: string;
+    depth: number;
+    childThreadId: string;
+    task: string;
+    label?: string;
+    cleanup: "keep";
+    requestedAgentId?: string;
+    resolvedAgentId?: string;
+    status: "running";
+  };
+} {
+  const runId = input.createRunId?.() ?? crypto.randomUUID();
+  const childThreadId = input.createChildThreadId?.() ?? crypto.randomUUID();
+  const task = typeof input.toolInput.prompt === "string" ? input.toolInput.prompt : "";
+  const label = typeof input.toolInput.description === "string" ? input.toolInput.description : undefined;
+  const agentId = typeof input.toolInput.subagent_type === "string" ? input.toolInput.subagent_type : undefined;
+
+  return {
+    runId,
+    childThreadId,
+    forwardedToolInput: {
+      ...input.toolInput,
+      subagent_run_id: runId
+    },
+    registryInput: {
+      runId,
+      parentThreadId: input.parentThreadId,
+      parentRunId: input.policy.parentRunId,
+      rootThreadId: input.policy.rootThreadId,
+      depth: input.policy.depth,
+      childThreadId,
+      task,
+      label,
+      cleanup: "keep",
+      requestedAgentId: agentId,
+      resolvedAgentId: agentId,
+      status: "running"
+    }
+  };
+}
+
 const ListDirectoryTool = defineTool({
   name: "ls",
   description: "List files and directories in a path.",
@@ -252,34 +311,24 @@ function buildRuntimeCoreTools(input: {
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
       }
-      const runId = crypto.randomUUID();
-      const childThreadId = crypto.randomUUID();
-      getSubagentRunRegistry().create({
-        runId,
+      const subagentRun = buildSidecarSubagentRunContext({
         parentThreadId: context.sessionId ?? "",
-        parentRunId: policy.parentRunId,
-        rootThreadId: policy.rootThreadId,
-        depth: policy.depth,
-        childThreadId,
-        task: toolInput.prompt,
-        label: toolInput.description,
-        cleanup: "keep",
-        requestedAgentId: toolInput.subagent_type,
-        resolvedAgentId: toolInput.subagent_type,
-        status: "running"
+        toolInput,
+        policy
       });
+      getSubagentRunRegistry().create(subagentRun.registryInput);
       const enrichedContext = {
         ...context,
         onSubagentEnd: async ({ status, output, error }: { status: "completed" | "errored" | "aborted"; output?: string; error?: string }) => {
-          getSubagentRunRegistry().update(runId, { status, outcome: { output, error } });
-          const run = getSubagentRunRegistry().get(runId);
+          getSubagentRunRegistry().update(subagentRun.runId, { status, outcome: { output, error } });
+          const run = getSubagentRunRegistry().get(subagentRun.runId);
           if (run) await announceSubagentCompletion({ run });
         }
       };
       try {
-        return await AgentTool.call(toolInput, enrichedContext);
+        return await AgentTool.call(subagentRun.forwardedToolInput, enrichedContext);
       } catch (err: any) {
-        getSubagentRunRegistry().update(runId, { status: "errored", outcome: { error: err.message } });
+        getSubagentRunRegistry().update(subagentRun.runId, { status: "errored", outcome: { error: err.message } });
         throw err;
       }
     }

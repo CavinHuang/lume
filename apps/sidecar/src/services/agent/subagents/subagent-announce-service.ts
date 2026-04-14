@@ -16,6 +16,7 @@ const ANNOUNCE_MAX_RETRIES = 3;
 const ANNOUNCE_RETRY_DELAYS_MS = [40, 120, 320] as const;
 const log = createLogger("subagent-announce");
 const listeners = new Set<(event: { threadId: string; message: AgentMessage }) => void>();
+const ANNOUNCE_OUTPUT_SUMMARY_MAX_CHARS = 280;
 
 export interface SubagentAnnounceResult {
   delivered: boolean;
@@ -60,7 +61,7 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
     `childThreadId: ${run.childThreadId}`
   ];
   if (output) {
-    bodyLines.push("", "输出摘要:", truncateText(output, 1200));
+    bodyLines.push("", "输出摘要:", truncateText(output, ANNOUNCE_OUTPUT_SUMMARY_MAX_CHARS));
   }
   if (error) {
     bodyLines.push("", `错误: ${truncateText(error, 600)}`);
@@ -98,7 +99,7 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
             runId: run.runId,
             status,
             childThreadId: run.childThreadId,
-            output: output ? truncateText(output, 1200) : undefined,
+            output: output ? truncateText(output, ANNOUNCE_OUTPUT_SUMMARY_MAX_CHARS) : undefined,
             error: error || undefined
           }, null, 2),
           is_error: run.status !== "completed"
