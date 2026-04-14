@@ -258,6 +258,47 @@ export function buildTeamActivitiesFromRuns(runs: SubagentRunRecord[]): ToolActi
   });
 }
 
+export const AGENT_TASK_TOOL_NAMES = new Set([
+  "task", "agent", "threads_spawn", "subagents_send", "subagents_steer", "subagents_kill"
+]);
+
+export interface TaskGroup {
+  parent: ToolActivity;
+  children: ToolActivity[];
+}
+
+export interface SeparatedActivities {
+  mainActivities: ToolActivity[];
+  taskGroups: TaskGroup[];
+}
+
+export function separateActivities(activities: ToolActivity[]): SeparatedActivities {
+  const containerIds = new Set<string>();
+  const groupMap = new Map<string, TaskGroup>();
+
+  for (const a of activities) {
+    if (AGENT_TASK_TOOL_NAMES.has(a.toolName.toLowerCase())) {
+      containerIds.add(a.toolUseId);
+      groupMap.set(a.toolUseId, { parent: a, children: [] });
+    }
+  }
+
+  const childIds = new Set<string>();
+  for (const a of activities) {
+    if (containerIds.has(a.toolUseId)) continue;
+    if (a.parentToolUseId && containerIds.has(a.parentToolUseId)) {
+      groupMap.get(a.parentToolUseId)!.children.push(a);
+      childIds.add(a.toolUseId);
+    }
+  }
+
+  const mainActivities = activities.filter(
+    a => !containerIds.has(a.toolUseId) && !childIds.has(a.toolUseId)
+  );
+
+  return { mainActivities, taskGroups: [...groupMap.values()] };
+}
+
 export function selectTeamActivities(activities: ToolActivity[]): ToolActivity[] {
   const includedIds = new Set<string>();
 

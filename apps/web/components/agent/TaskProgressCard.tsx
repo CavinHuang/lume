@@ -20,7 +20,6 @@ export interface TaskAnnouncementItem {
 }
 
 const TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TodoWrite"]);
-const AGENT_TASK_TOOL_NAMES = new Set(["task", "agent", "threads_spawn", "subagents_send", "subagents_steer", "subagents_kill"]);
 const MAX_VISIBLE = 8;
 
 export function aggregateTaskProgressItems(
@@ -78,20 +77,6 @@ export function aggregateTaskProgressItems(
     }
   }
 
-  for (const activity of activities) {
-    const normalizedName = activity.toolName.toLowerCase();
-    if (!AGENT_TASK_TOOL_NAMES.has(normalizedName)) continue;
-
-    const existing = taskMap.get(activity.toolUseId);
-    const subject = readAgentTaskSubject(activity) ?? existing?.subject ?? "子任务";
-    taskMap.set(activity.toolUseId, {
-      id: activity.toolUseId,
-      subject,
-      status: resolveAgentTaskStatus(activity),
-      activeForm: activity.progressDescription ?? existing?.activeForm ?? subject
-    });
-  }
-
   let items = Array.from(taskMap.values()).filter((item) => item.status !== "deleted");
   if (streamEnded) {
     items = items.map((item) => (
@@ -127,36 +112,6 @@ function readTaskSubject(input: Record<string, unknown>): string | null {
   return null;
 }
 
-function readAgentTaskSubject(activity: ToolActivity): string | null {
-  const input = activity.input;
-  const candidates = [
-    input.task,
-    input.message,
-    input.prompt,
-    input.description,
-    input.content,
-    input.label,
-    input.title
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
-    }
-  }
-  if (typeof activity.displayName === "string" && activity.displayName.trim().length > 0) {
-    return activity.displayName.trim();
-  }
-  if (typeof activity.intent === "string" && activity.intent.trim().length > 0) {
-    return activity.intent.trim();
-  }
-  return null;
-}
-
-function resolveAgentTaskStatus(activity: ToolActivity): TaskProgressItem["status"] {
-  if (activity.isError) return "failed";
-  if (activity.done) return "completed";
-  return "in_progress";
-}
 
 function readTaskStatus(input: Record<string, unknown>): TaskProgressItem["status"] | null {
   if (typeof input.status !== "string") return null;

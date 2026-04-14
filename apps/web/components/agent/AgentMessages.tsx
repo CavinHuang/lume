@@ -49,7 +49,8 @@ import {
   getVersionLabel
 } from "@/lib/agent-message-versions";
 import { buildAssistantDisplayMessage } from "@/lib/agent-display-message";
-import { extractToolActivitiesFromMessages } from "@/lib/agent-tool-activity";
+import { extractToolActivitiesFromMessages, separateActivities } from "@/lib/agent-tool-activity";
+import { TaskContainerCard } from "./TaskContainerCard";
 import { getAgentThreadMessageVersions } from "@/lib/desktop-api/agent";
 import { getModelLogo } from "@/lib/model-logo";
 import { cn } from "@/lib/utils";
@@ -631,14 +632,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
         />
 
         <MessageContent>
-          {announceItem ? (
-            <TaskProgressCard
-              activities={[]}
-              announcementItems={[announceItem]}
-              streamEnded
-              onOpenSession={onOpenSession}
-            />
-          ) : null}
           {isStreamingMessage && streamingContentBlocks && streamingContentBlocks.length > 0 ? (
             <StreamingOrderedBlocks
               contentBlocks={streamingContentBlocks}
@@ -648,9 +641,6 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             />
           ) : isStreamingMessage ? (
             <>
-              {streamingToolActivities && streamingToolActivities.length > 0 ? (
-                <TaskProgressCard activities={streamingToolActivities} animate streamEnded={false} />
-              ) : null}
               {assistantMessage.reasoning ? (
                 <Reasoning
                   isStreaming={!(assistantMessage.content ?? "").trim()}
@@ -661,24 +651,28 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
                 </Reasoning>
               ) : null}
               {messageToolActivities.length > 0 ? (
-                <ToolActivityTree activities={messageToolActivities} />
+                <ToolActivityTree activities={separateActivities(messageToolActivities).mainActivities} />
               ) : null}
               {assistantMessage.content ? (
                 <MessageResponse streaming>{assistantMessage.content}</MessageResponse>
               ) : null}
+              {streamingToolActivities && streamingToolActivities.length > 0 ? (() => {
+                const { taskGroups } = separateActivities(streamingToolActivities);
+                return taskGroups.map(g => <TaskContainerCard key={g.parent.toolUseId} group={g} defaultExpanded />);
+              })() : null}
             </>
           ) : displayedMessage.sdkMessages && displayedMessage.sdkMessages.length > 0 ? (
             <>
-              {messageToolActivities.length > 0 && !announceItem ? (
-                <TaskProgressCard activities={messageToolActivities} streamEnded />
-              ) : null}
               <PersistedOrderedBlocks sdkMessages={displayedMessage.sdkMessages} />
+              {messageToolActivities.length > 0 && !announceItem ? (() => {
+                const { taskGroups } = separateActivities(messageToolActivities);
+                return taskGroups.map((g, i) => (
+                  <TaskContainerCard key={g.parent.toolUseId} group={g} defaultExpanded={i === taskGroups.length - 1} />
+                ));
+              })() : null}
             </>
           ) : (
             <>
-              {messageToolActivities.length > 0 && !announceItem ? (
-                <TaskProgressCard activities={messageToolActivities} streamEnded />
-              ) : null}
               {assistantMessage.reasoning ? (
                 <Reasoning
                   defaultOpen={Boolean((assistantMessage.metadata as Record<string, unknown>)?.reasoningExpanded)}
@@ -690,14 +684,28 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
                   <ReasoningContent>{assistantMessage.reasoning}</ReasoningContent>
                 </Reasoning>
               ) : null}
-              {messageToolActivities.length > 0 ? (
-                <ToolActivityTree activities={messageToolActivities} />
-              ) : null}
+              {messageToolActivities.length > 0 ? (() => {
+                const { mainActivities, taskGroups } = separateActivities(messageToolActivities);
+                return <>
+                  {mainActivities.length > 0 ? <ToolActivityTree activities={mainActivities} /> : null}
+                  {!announceItem && taskGroups.map((g, i) => (
+                    <TaskContainerCard key={g.parent.toolUseId} group={g} defaultExpanded={i === taskGroups.length - 1} />
+                  ))}
+                </>;
+              })() : null}
               {assistantMessage.content ? (
                 <MessageResponse>{assistantMessage.content}</MessageResponse>
               ) : null}
             </>
           )}
+          {announceItem ? (
+            <TaskProgressCard
+              activities={[]}
+              announcementItems={[announceItem]}
+              streamEnded
+              onOpenSession={onOpenSession}
+            />
+          ) : null}
         </MessageContent>
         {(assistantMessage.content ?? "").trim().length > 0 ? (
           <MessageActions
