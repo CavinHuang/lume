@@ -11,6 +11,7 @@ import { getAllBaseTools, filterTools } from './index.js'
 import { createProvider, type ApiType } from '../providers/index.js'
 import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { loadSession } from '../session.js'
+import { finalizeSubagentOutput, summarizeSubagentAssistantEvent } from './subagent-output.js'
 
 // Store for registered agent definitions
 let registeredAgents: Record<string, AgentDefinition> = {}
@@ -200,19 +201,21 @@ export const AgentTool: ToolDefinition = {
       }
 
       let resultText = ''
+      let lastAssistantMessage = ''
       const toolCalls: string[] = []
 
       for await (const event of engine.submitMessage(input.prompt)) {
         if (event.type === 'assistant') {
-          for (const block of event.message.content) {
-            if ('text' in block && block.text) {
-              resultText = block.text
-            }
-            if ('name' in block) {
-              toolCalls.push(block.name as string)
-              toolUseCount += 1
-            }
-          }
+          const summary = summarizeSubagentAssistantEvent(
+            event.message.content as Array<Record<string, unknown>>,
+            resultText,
+            toolCalls,
+          )
+          resultText = summary.textOutput
+          lastAssistantMessage = summary.lastAssistantMessage || lastAssistantMessage
+          toolCalls.length = 0
+          toolCalls.push(...summary.toolCalls)
+          toolUseCount += summary.toolUseCount
           if (progress) {
             context.emitEvent?.({
               type: 'system',
@@ -233,10 +236,7 @@ export const AgentTool: ToolDefinition = {
         }
       }
 
-      const output = resultText || '(Subagent completed with no text output)'
-      const toolSummary = toolCalls.length > 0
-        ? `\n[Tools used: ${toolCalls.join(', ')}]`
-        : ''
+      const finalized = finalizeSubagentOutput(resultText, toolCalls)
 
       // Fire SubagentStop hook on the parent's hook registry
       if (context.hookRegistry) {
@@ -246,7 +246,7 @@ export const AgentTool: ToolDefinition = {
           agent_type: agentType,
           agent_transcript_path: '',
           stop_hook_active: false,
-          last_assistant_message: resultText.slice(0, 500) || undefined,
+          last_assistant_message: finalized.lastAssistantMessage || lastAssistantMessage.slice(0, 500) || undefined,
           sessionId: context.sessionId,
         })
         for (const evt of hookResult.events) {
@@ -254,7 +254,7 @@ export const AgentTool: ToolDefinition = {
         }
       }
 
-      return output + toolSummary
+      return finalized.output
     }
 
     if (input.run_in_background || input.isolation === 'remote') {

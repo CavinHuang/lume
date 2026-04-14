@@ -1,27 +1,12 @@
 {
   "name": "@lume/agent-sdk",
-  "author": {
-    "name": "CodeAny",
-    "url": "https://codeany.ai"
-  },
-  "homepage": "https://github.com/codeany-ai/open-agent-sdk-typescript",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/codeany-ai/open-agent-sdk-typescript.git"
-  },
-  "bugs": {
-    "url": "https://github.com/codeany-ai/open-agent-sdk-typescript/issues"
-  },
-  "version": "0.2.0",
+  "version": "0.0.0",
   "description": "Open-source Agent SDK. Runs the full agent loop in-process — no local CLI required. Deploy anywhere: cloud, serverless, Docker, CI/CD.",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   },
   "scripts": {
     "build": "tsc",
