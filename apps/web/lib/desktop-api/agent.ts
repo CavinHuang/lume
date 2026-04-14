@@ -15,6 +15,7 @@ import type {
   AgentRecentMessagesResult,
   AgentRuntimeStatus,
   AgentThreadMeta,
+  AgentThreadMessageDispatchResult,
   AgentRuntimeStatusChangedEvent,
   AgentRuntimeToolPolicyConfig,
   AgentSaveFilesInput,
@@ -265,8 +266,17 @@ export async function importGlobalSkillToWorkspace(
 
 export async function sendAgentThreadMessage(
   input: AgentSendInput & { threadId: string }
-): Promise<{ ok: true }> {
-  return sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE, {
+): Promise<AgentThreadMessageDispatchResult> {
+  return sidecarCall<AgentThreadMessageDispatchResult>(AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE, {
+    ...input,
+    threadId: input.threadId
+  });
+}
+
+export async function appendAgentThreadMessage(
+  input: AgentSendInput & { threadId: string }
+): Promise<AgentThreadMessageDispatchResult> {
+  return sidecarCall<AgentThreadMessageDispatchResult>(AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE, {
     ...input,
     threadId: input.threadId
   });

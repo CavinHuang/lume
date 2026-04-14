@@ -4,6 +4,49 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentMessageAppendedEvent, SDKMessage } from "@lume/shared";
 
+const heldRunResolvers = new Map<string, () => void>();
+
+function emitSuccessfulRun(emit: {
+  onSdkMessage: (message: SDKMessage) => void;
+  onComplete: () => void;
+}): void {
+  emit.onSdkMessage({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: "mock assistant output"
+      }]
+    }
+  } as SDKMessage);
+  emit.onSdkMessage({
+    type: "result",
+    subtype: "success",
+    duration_ms: 12,
+    usage: {
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0
+    }
+  } as SDKMessage);
+  emit.onComplete();
+}
+
+async function waitForQueuedRunRelease(userMessage: string): Promise<void> {
+  for (let i = 0; i < 50; i += 1) {
+    const resolver = heldRunResolvers.get(userMessage);
+    if (resolver) {
+      resolver();
+      heldRunResolvers.delete(userMessage);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`queued run resolver not found: ${userMessage}`);
+}
+
 mock.module("../../providers", () => ({
   fetchTitle: async () => null,
   getAdapter: () => ({
@@ -13,35 +56,24 @@ mock.module("../../providers", () => ({
 
 mock.module("../pi-agent/runtime-core/attempt", () => ({
   runPiAgent: async (
-    _params: unknown,
+    params: unknown,
     emit: {
       onSdkMessage: (message: SDKMessage) => void;
       onComplete: () => void;
       onError: (error: string) => void;
     }
   ) => {
-    emit.onSdkMessage({
-      type: "assistant",
-      message: {
-        role: "assistant",
-        content: [{
-          type: "text",
-          text: "mock assistant output"
-        }]
-      }
-    } as SDKMessage);
-    emit.onSdkMessage({
-      type: "result",
-      subtype: "success",
-      duration_ms: 12,
-      usage: {
-        input_tokens: 10,
-        output_tokens: 5,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0
-      }
-    } as SDKMessage);
-    emit.onComplete();
+    const userMessage = (params as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    if (userMessage.startsWith("hold:")) {
+      await new Promise<void>((resolve) => {
+        heldRunResolvers.set(userMessage, () => {
+          emitSuccessfulRun(emit);
+          resolve();
+        });
+      });
+      return { status: "completed" as const };
+    }
+    emitSuccessfulRun(emit);
     return { status: "completed" as const };
   },
   stopPiAgent: () => undefined
@@ -60,6 +92,7 @@ describe("agent-service", () => {
   afterEach(async () => {
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
     resetAgentRuntimeStatusManagerForTest();
+    heldRunResolvers.clear();
     if (previousConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -107,5 +140,52 @@ describe("agent-service", () => {
     expect(visibleMessages[0]?.sdkMessages?.[0]?.type).toBe("user");
     expect(visibleMessages[1]?.content).toBe("mock assistant output");
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
+  });
+
+  test("appendAgentMessage 应在运行中排队并在完成后自动发送下一条", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { appendAgentMessage } = await import("./agent-service");
+    const { getAgentRuntimeStatusManager } = await import("./agent-runtime-status-manager");
+    const thread = createAgentThread("queue lifecycle", "channel-test");
+    const appended: AgentMessageAppendedEvent[] = [];
+    const createEmit = () => ({
+      onSdkMessage: () => undefined,
+      onMessageAppended: (event: AgentMessageAppendedEvent) => {
+        appended.push(event);
+      },
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const first = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:first",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+
+    const second = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "second",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+
+    expect(first.mode).toBe("sent");
+    expect(second.mode).toBe("queued");
+    expect(second.queuedCount).toBe(1);
+    expect(getAgentRuntimeStatusManager().get(thread.id)?.queuedCount).toBe(1);
+
+    await waitForQueuedRunRelease("hold:first");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(getAgentRuntimeStatusManager().get(thread.id)?.queuedCount).toBe(0);
+    expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
+      "hold:first",
+      "second"
+    ]);
   });
 });

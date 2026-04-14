@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentSavedFile } from "@lume/shared";
 import {
   buildAttachedFilesReferenceBlock,
+  canSubmitAgentComposerInput,
   shouldDispatchPendingPrompt,
   shouldQueueAgentTitleGeneration
 } from "./agent-composer";
@@ -74,6 +75,35 @@ describe("agent-composer", () => {
       threadId: "session-1",
       backendReady: false,
       isAgentBusy: false
+    })).toBe(false);
+  });
+
+  test("canSubmitAgentComposerInput 在 streaming/审批前置之外只校验发送基本条件", () => {
+    expect(canSubmitAgentComposerInput({
+      backendReady: true,
+      channelId: "channel-1",
+      modelId: "model-1",
+      text: "继续执行",
+      pendingFileCount: 0,
+      pendingFolderRefCount: 0
+    })).toBe(true);
+
+    expect(canSubmitAgentComposerInput({
+      backendReady: true,
+      channelId: "channel-1",
+      modelId: "model-1",
+      text: "   ",
+      pendingFileCount: 1,
+      pendingFolderRefCount: 0
+    })).toBe(true);
+
+    expect(canSubmitAgentComposerInput({
+      backendReady: true,
+      channelId: "channel-1",
+      modelId: "model-1",
+      text: "   ",
+      pendingFileCount: 0,
+      pendingFolderRefCount: 0
     })).toBe(false);
   });
 });

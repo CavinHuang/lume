@@ -4,6 +4,7 @@ type AgentRuntimeStatusListener = (status: AgentRuntimeStatus) => void;
 
 interface RuntimeStatusPatch {
   phase: AgentRuntimePhase;
+  queuedCount?: number;
   interactiveKind?: "tool_permission" | "ask_user_question";
   requestId?: string;
   toolUseId?: string;
@@ -82,14 +83,31 @@ export class AgentRuntimeStatusManager {
     return this.update(sessionId, { phase: "idle" });
   }
 
+  setQueuedCount(threadId: string, queuedCount: number): AgentRuntimeStatus {
+    const current = this.statuses.get(threadId);
+    return this.update(threadId, {
+      phase: current?.phase ?? "idle",
+      queuedCount: Math.max(0, queuedCount),
+      interactiveKind: current?.interactiveKind,
+      requestId: current?.requestId,
+      toolUseId: current?.toolUseId,
+      toolName: current?.toolName,
+      originThreadId: current?.originThreadId,
+      subagentRunId: current?.subagentRunId,
+      error: current?.error
+    });
+  }
+
   clearSession(sessionId: string): void {
     this.statuses.delete(sessionId);
   }
 
   private update(threadId: string, patch: RuntimeStatusPatch): AgentRuntimeStatus {
+    const previous = this.statuses.get(threadId);
     const next: AgentRuntimeStatus = {
       threadId,
       phase: patch.phase,
+      queuedCount: patch.queuedCount ?? previous?.queuedCount ?? 0,
       ...(patch.interactiveKind ? { interactiveKind: patch.interactiveKind } : {}),
       ...(patch.requestId ? { requestId: patch.requestId } : {}),
       ...(patch.toolUseId ? { toolUseId: patch.toolUseId } : {}),

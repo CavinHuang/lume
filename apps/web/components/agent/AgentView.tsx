@@ -79,6 +79,7 @@ import type { PromotionCandidate } from "./FilePromotionCard";
 import { buildPromotionCandidates } from "./file-promotion-candidates";
 import { extractLatestAssistantText } from "./agent-session-lifecycle";
 import { fileToBase64 } from "./agent-composer";
+import { canSubmitAgentComposerInput } from "./agent-composer";
 import { useAgentInteractiveRequests } from "./hooks/useAgentInteractiveRequests";
 import { useAgentPlanFlow } from "./hooks/useAgentPlanFlow";
 import { useAgentComposer } from "./hooks/useAgentComposer";
@@ -410,11 +411,15 @@ export function AgentView(): React.ReactElement {
     return { channelId: agentChannelId,modelId: agentModelId };
   },[agentChannelId,agentModelId]);
 
-  const canSend = !!agentChannelId
-    && !!outgoingModelId
-    && (inputContent.trim().length > 0 || pendingFiles.length > 0 || pendingFolderRefs.length > 0)
-    && backendReady
-    && !isAgentBusy;
+  const canSend = canSubmitAgentComposerInput({
+    backendReady,
+    channelId: agentChannelId,
+    modelId: outgoingModelId,
+    text: inputContent,
+    pendingFileCount: pendingFiles.length,
+    pendingFolderRefCount: pendingFolderRefs.length
+  });
+  const queuedCount = currentRuntimeStatus?.queuedCount ?? 0;
 
   const previousBusyRef = useRef(isAgentBusy);
   const threadFilesBaselineRef = useRef<Map<string, Set<string>>>(new Map());
@@ -695,6 +700,12 @@ export function AgentView(): React.ReactElement {
                 disabled={!backendReady}
               />
 
+              {queuedCount > 0 ? (
+                <div className="px-4 pb-1 text-xs text-foreground/60">
+                  已排队 {queuedCount} 条追加消息，当前回合结束后会自动发送。
+                </div>
+              ) : null}
+
               <div className="flex h-[40px] items-center justify-between gap-4 px-2 py-[5px]">
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                   {backendReady ? (
@@ -805,21 +816,20 @@ export function AgentView(): React.ReactElement {
                     >
                       <Square className="size-[22px]" />
                     </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        "size-[30px] rounded-full",
-                        canSend ? "text-primary hover:bg-primary/10" : "cursor-not-allowed text-foreground/30"
-                      )}
-                      onClick={() => { void handleSend(); }}
-                      disabled={!canSend}
-                    >
-                      <CornerDownLeft className="size-[22px]" />
-                    </Button>
-                  )}
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      "size-[30px] rounded-full",
+                      canSend ? "text-primary hover:bg-primary/10" : "cursor-not-allowed text-foreground/30"
+                    )}
+                    onClick={() => { void handleSend(); }}
+                    disabled={!canSend}
+                  >
+                    <CornerDownLeft className="size-[22px]" />
+                  </Button>
                 </div>
               </div>
             </div>

@@ -42,6 +42,7 @@ export type AgentRuntimePhase =
 export interface AgentRuntimeStatus {
   threadId: string
   phase: AgentRuntimePhase
+  queuedCount?: number
   interactiveKind?: 'tool_permission' | 'ask_user_question'
   requestId?: string
   toolUseId?: string
@@ -453,6 +454,12 @@ export interface AgentSendInput {
   editFromMessageId?: string
 }
 
+export interface AgentThreadMessageDispatchResult {
+  ok: true
+  mode: 'sent' | 'queued'
+  queuedCount: number
+}
+
 export interface AgentGetMessageVersionsInput {
   threadId: string
   versionGroupId: string
@@ -741,6 +748,8 @@ export const AGENT_IPC_CHANNELS = {
   // 消息发送
   /** 发送线程消息（触发 Agent 流式响应） */
   SEND_THREAD_MESSAGE: 'agent:send-thread-message',
+  /** 追加线程消息（忙碌时进入队列，空闲时立即发送） */
+  APPEND_THREAD_MESSAGE: 'agent:append-thread-message',
   /** 中止 Agent 线程执行 */
   STOP_THREAD: 'agent:stop-thread',
   // 工作区能力（MCP + Skill）

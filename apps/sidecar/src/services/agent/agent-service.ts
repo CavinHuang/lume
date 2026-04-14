@@ -10,6 +10,7 @@ import type { SDKMessage } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
+  AgentThreadMessageDispatchResult,
   AgentMessageAppendedEvent,
   AgentToolPolicy,
   AgentToolPermissionRequest,
@@ -82,6 +83,15 @@ const ROUTING_HEURISTIC_TOOLS = [
   "memory_get",
   "memory_save"
 ];
+
+interface QueuedAgentDispatch {
+  input: AgentSendInput;
+  emit: AgentStreamEmitter;
+  onExecutionStarted?: () => void;
+}
+
+const activeAgentDispatches = new Set<string>();
+const queuedAgentDispatches = new Map<string, QueuedAgentDispatch[]>();
 
 function mergeToolPolicies(
   base: AgentToolPolicy | undefined,
@@ -503,6 +513,67 @@ export async function sendAgentMessage(
     void autoGenerateAgentTitle(threadId, userMessage, emit);
   }
   return;
+}
+
+function getQueuedDispatchCount(threadId: string): number {
+  return queuedAgentDispatches.get(threadId)?.length ?? 0;
+}
+
+function syncQueuedCount(threadId: string): void {
+  getAgentRuntimeStatusManager().setQueuedCount(threadId, getQueuedDispatchCount(threadId));
+}
+
+async function processQueuedAgentDispatch(dispatch: QueuedAgentDispatch): Promise<void> {
+  const { threadId } = dispatch.input;
+  activeAgentDispatches.add(threadId);
+  syncQueuedCount(threadId);
+  try {
+    dispatch.onExecutionStarted?.();
+    await sendAgentMessage(dispatch.input, dispatch.emit);
+  } catch (error) {
+    dispatch.emit.onError(error instanceof Error ? error.message : String(error));
+  } finally {
+    activeAgentDispatches.delete(threadId);
+    const queue = queuedAgentDispatches.get(threadId) ?? [];
+    const next = queue.shift();
+    if (queue.length === 0) {
+      queuedAgentDispatches.delete(threadId);
+    } else {
+      queuedAgentDispatches.set(threadId, queue);
+    }
+    syncQueuedCount(threadId);
+    if (next) {
+      void processQueuedAgentDispatch(next);
+    }
+  }
+}
+
+export function appendAgentMessage(
+  input: AgentSendInput,
+  emit: AgentStreamEmitter,
+  options?: {
+    onExecutionStarted?: () => void;
+  }
+): AgentThreadMessageDispatchResult {
+  const threadId = input.threadId;
+  if (activeAgentDispatches.has(threadId)) {
+    const nextQueue = queuedAgentDispatches.get(threadId) ?? [];
+    nextQueue.push({ input, emit, onExecutionStarted: options?.onExecutionStarted });
+    queuedAgentDispatches.set(threadId, nextQueue);
+    syncQueuedCount(threadId);
+    return {
+      ok: true,
+      mode: "queued",
+      queuedCount: nextQueue.length
+    };
+  }
+
+  void processQueuedAgentDispatch({ input, emit, onExecutionStarted: options?.onExecutionStarted });
+  return {
+    ok: true,
+    mode: "sent",
+    queuedCount: getQueuedDispatchCount(threadId)
+  };
 }
 
 export function stopAgent(threadId: string): void {

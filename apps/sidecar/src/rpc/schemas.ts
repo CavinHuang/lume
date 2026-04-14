@@ -178,6 +178,8 @@ export const agentSendInputSchema = z.object({
   editFromMessageId: z.string().optional()
 });
 
+export const agentAppendInputSchema = agentSendInputSchema;
+
 export const memoryIndexWorkspaceInputSchema = z.object({
   workspaceSlug: idSchema,
   force: z.boolean().optional()

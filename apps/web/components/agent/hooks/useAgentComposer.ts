@@ -9,6 +9,7 @@ import type {
 } from "@lume/shared";
 import type { AgentStreamState } from "@/atoms/agent-atoms";
 import {
+  appendAgentThreadMessage,
   copyFolderToAgentThread,
   saveFilesToAgentThread,
   sendAgentThreadMessage,
@@ -432,7 +433,7 @@ export function useAgentComposer({
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputContent.trim();
-    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !threadId || !backendReady || isAgentBusy) {
+    if ((!text && pendingFiles.length === 0 && pendingFolderRefs.length === 0) || !threadId || !backendReady) {
       return;
     }
 
@@ -491,22 +492,6 @@ export function useAgentComposer({
       });
     }
 
-    planStreamCaptureRef.current = agentPermissionMode === "plan";
-    if (agentPermissionMode === "plan") {
-      enterPlan();
-    }
-
-    setStreamingStates((prev) => {
-      const map = new Map(prev);
-      map.set(threadId, {
-        running: true,
-        content: "",
-        toolActivities: [],
-        model: outgoingModelId
-      });
-      return map;
-    });
-
     const tempMessage: AgentMessage = {
       id: `temp-${Date.now()}`,
       role: "user",
@@ -519,7 +504,7 @@ export function useAgentComposer({
     setMessages((prev) => [...prev, tempMessage]);
     setInputContent("");
 
-    void sendAgentThreadMessage({
+    void appendAgentThreadMessage({
       threadId,
       userMessage: finalMessage,
       messageMetadata: tempMessage.metadata,
@@ -530,6 +515,24 @@ export function useAgentComposer({
       threadType: "main",
       chatType: "direct",
       permissionMode: agentPermissionMode
+    }).then((result) => {
+      if (result.mode === "sent") {
+        planStreamCaptureRef.current = agentPermissionMode === "plan";
+        if (agentPermissionMode === "plan") {
+          enterPlan();
+        }
+
+        setStreamingStates((prev) => {
+          const map = new Map(prev);
+          map.set(threadId, {
+            running: true,
+            content: "",
+            toolActivities: [],
+            model: outgoingModelId
+          });
+          return map;
+        });
+      }
     }).catch((error) => {
       console.error("[AgentView] send failed", error);
       const message = error instanceof Error ? error.message : String(error);

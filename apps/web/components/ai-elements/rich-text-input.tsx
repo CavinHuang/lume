@@ -11,6 +11,35 @@ type RichTextInputProps = {
   onSubmit: () => void;
 };
 
+type EnterSubmitGuardInput = {
+  key: string;
+  shiftKey: boolean;
+  isComposing: boolean;
+  nativeIsComposing?: boolean;
+  nativeKeyCode?: number;
+};
+
+export function shouldSubmitOnEnter(input: EnterSubmitGuardInput): boolean {
+  if (input.key === "Process") {
+    return false;
+  }
+
+  if (input.key !== "Enter" || input.shiftKey) {
+    return false;
+  }
+
+  if (input.isComposing || input.nativeIsComposing) {
+    return false;
+  }
+
+  // Windows/Chromium IME may emit Enter while selecting candidates with keyCode 229 or key "Process".
+  if (input.nativeKeyCode === 229) {
+    return false;
+  }
+
+  return true;
+}
+
 export function RichTextInput({
   value,
   onChange,
@@ -49,7 +78,13 @@ export function RichTextInput({
           }
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !isComposing && !event.nativeEvent.isComposing) {
+          if (shouldSubmitOnEnter({
+            key: event.key,
+            shiftKey: event.shiftKey,
+            isComposing,
+            nativeIsComposing: event.nativeEvent.isComposing,
+            nativeKeyCode: event.nativeEvent.keyCode
+          })) {
             event.preventDefault();
             onSubmit();
           }

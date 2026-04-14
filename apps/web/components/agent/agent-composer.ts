@@ -49,3 +49,21 @@ export function shouldDispatchPendingPrompt(input: {
     && !input.isAgentBusy;
 }
 
+export function canSubmitAgentComposerInput(input: {
+  backendReady: boolean;
+  channelId: string | null;
+  modelId: string | undefined;
+  text: string;
+  pendingFileCount: number;
+  pendingFolderRefCount: number;
+}): boolean {
+  return input.backendReady
+    && !!input.channelId
+    && !!input.modelId
+    && (
+      input.text.trim().length > 0
+      || input.pendingFileCount > 0
+      || input.pendingFolderRefCount > 0
+    );
+}
+

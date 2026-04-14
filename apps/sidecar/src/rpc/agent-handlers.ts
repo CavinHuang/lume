@@ -27,8 +27,8 @@ import {
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import {
+  appendAgentMessage,
   generateAgentTitle,
-  sendAgentMessage,
   stopAgent,
   submitAgentToolPermission,
   submitAskUserQuestionAnswers
@@ -99,6 +99,7 @@ import {
 } from "../services/system/proxy-settings-manager";
 import { readBootstrapFile, writeBootstrapFile } from "../services/system/workspace-bootstrap-service";
 import {
+  agentAppendInputSchema,
   agentCreateThreadInputSchema,
   agentGetThreadMessageVersionsInputSchema,
   agentListSubagentRunsInputSchema,
@@ -157,6 +158,54 @@ interface AgentHandlersContext {
 }
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
+  const createExecutionStartCallback = (input: { threadId: string; userMessage: string }) => () => {
+    if (!context.planStateTracker.isLikelyExecutionRequest(input)) {
+      return;
+    }
+    const steps = context.planStateTracker.syncExecutionFromUserMessage(input.threadId, input.userMessage);
+    context.notifyPlanStateChange(input.threadId, "executing", steps ? { steps } : undefined);
+  };
+
+  const createAgentStreamEmitter = (threadId: string) => ({
+    onSdkMessage: (message: unknown) => {
+      context.writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
+        threadId,
+        message
+      });
+    },
+    onMessageAppended: (event: unknown) => {
+      context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+    },
+    onComplete: () => {
+      context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
+        threadId
+      });
+      if (context.planStateTracker.getPhase(threadId) === "executing") {
+        const steps = context.planStateTracker.markCurrentStepCompleted(threadId);
+        context.notifyPlanStateChange(threadId, "executed", steps ? { steps } : undefined);
+      }
+    },
+    onError: (error: string) => {
+      context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
+        threadId,
+        error
+      });
+      if (context.planStateTracker.getPhase(threadId) === "executing") {
+        const steps = context.planStateTracker.markCurrentStepFailed(threadId, error);
+        context.notifyPlanStateChange(threadId, "review", steps ? { steps } : undefined);
+      }
+    },
+    onTitleUpdated: (title: string) =>
+      context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
+        threadId,
+        title
+      }),
+    onAskUserQuestion: (request: unknown) =>
+      context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request),
+    onToolPermissionRequest: (request: unknown) =>
+      context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request)
+  });
+
   const handlers: Record<string, RpcHandler> = {
     [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),
     [AGENT_IPC_CHANNELS.CREATE_THREAD]: async (params) => {
@@ -548,80 +597,15 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
-      if (context.planStateTracker.isLikelyExecutionRequest(input)) {
-        const steps = context.planStateTracker.syncExecutionFromUserMessage(input.threadId, input.userMessage);
-        context.notifyPlanStateChange(input.threadId, "executing", steps ? { steps } : undefined);
-      }
-      void sendAgentMessage(input, {
-        onSdkMessage: (message) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
-            threadId: input.threadId,
-            message
-          });
-        },
-        onMessageAppended: (event) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
-        },
-        onComplete: () => {
-          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
-            threadId: input.threadId
-          });
-          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, {
-            status: {
-              threadId: input.threadId,
-              phase: "completed",
-              updatedAt: Date.now()
-            }
-          });
-          if (context.planStateTracker.getPhase(input.threadId) === "executing") {
-            const steps = context.planStateTracker.markCurrentStepCompleted(input.threadId);
-            context.notifyPlanStateChange(input.threadId, "executed", steps ? { steps } : undefined);
-          }
-        },
-        onError: (error) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
-            threadId: input.threadId,
-            error
-          });
-          if (context.planStateTracker.getPhase(input.threadId) === "executing") {
-            const steps = context.planStateTracker.markCurrentStepFailed(input.threadId, error);
-            context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
-          }
-        },
-        onTitleUpdated: (title) =>
-          context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-            threadId: input.threadId,
-            title
-          }),
-        onAskUserQuestion: (request) =>
-          context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request),
-        onToolPermissionRequest: (request) =>
-          context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request)
-      }).catch((error) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
-          threadId: input.threadId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        if (context.planStateTracker.getPhase(input.threadId) === "executing") {
-          const steps = context.planStateTracker.markCurrentStepFailed(
-            input.threadId,
-            error instanceof Error ? error.message : String(error)
-          );
-          context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
-        }
-      }).then(() => {
-        context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
-          threadId: input.threadId
-        });
-        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, {
-          status: {
-            threadId: input.threadId,
-            phase: "completed",
-            updatedAt: Date.now()
-          }
-        });
+      return appendAgentMessage(input, createAgentStreamEmitter(input.threadId), {
+        onExecutionStarted: createExecutionStartCallback(input)
       });
-      return { ok: true };
+    },
+    [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
+      const input = validateInput(agentAppendInputSchema, params, AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE);
+      return appendAgentMessage(input, createAgentStreamEmitter(input.threadId), {
+        onExecutionStarted: createExecutionStartCallback(input)
+      });
     },
     [AGENT_IPC_CHANNELS.WRITE_LOG]: async (params) => {
       const payload = asObject(params);
