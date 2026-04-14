@@ -401,7 +401,8 @@ export function useAgentStreamSubscriptions({
       }
       startTransition(() => {
         setMessages((prev) => replaceVisibleMessage(prev, payload.message));
-        if (Array.isArray(payload.message.sdkMessages) && payload.message.sdkMessages.length > 0) {
+        const isAnnounce = (payload.message.metadata as Record<string, unknown> | undefined)?.subagentAnnounce === true;
+        if (!isAnnounce && Array.isArray(payload.message.sdkMessages) && payload.message.sdkMessages.length > 0) {
           setSdkMessages((prev) => [...prev, ...payload.message.sdkMessages!]);
         }
       });

@@ -142,6 +142,13 @@ export const AgentTool: ToolDefinition = {
 
     const agentId = crypto.randomUUID()
 
+    context.onSubagentStart?.({
+      runId: agentId,
+      parentThreadId: context.sessionId ?? '',
+      agentType: agentType,
+      task: input.prompt,
+    })
+
     const runSubagent = async (
       progress?: {
         taskId: string
@@ -220,7 +227,8 @@ export const AgentTool: ToolDefinition = {
               },
               summary: resultText.slice(0, 200) || undefined,
               session_id: context.sessionId || '',
-            })
+              subagent_run_id: agentId,
+            } as any)
           }
         }
       }
@@ -273,7 +281,8 @@ export const AgentTool: ToolDefinition = {
         task_type: 'subagent',
         prompt: input.prompt,
         session_id: context.sessionId || '',
-      })
+        subagent_run_id: agentId,
+      } as any)
 
       void runSubagent({
         taskId: task.id,
@@ -352,6 +361,7 @@ export const AgentTool: ToolDefinition = {
         }
       }
       const output = await runSubagent()
+      await context.onSubagentEnd?.({ runId: agentId, status: 'completed', output })
       return {
         type: 'tool_result',
         tool_use_id: '',
@@ -367,6 +377,7 @@ export const AgentTool: ToolDefinition = {
         ),
       }
     } catch (err: any) {
+      await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
       return {
         type: 'tool_result',
         tool_use_id: '',

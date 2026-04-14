@@ -48,12 +48,12 @@ export function AboutSettings(): React.ReactElement {
           </SettingsRow>
           <SettingsRow label="项目地址">
             <a
-              href="https://github.com/ErlichLiu/Lume.git"
+              href="https://github.com/CavinHuang/Lume.git"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-primary hover:underline"
             >
-              github.com/ErlichLiu/Lume
+              github.com/CavinHuang/Lume
             </a>
           </SettingsRow>
           <SettingsRow label="Lume 状态" description={`desktop: ${health.desktop} · sidecar: ${health.sidecar}`} />

@@ -18,6 +18,9 @@ import {
 } from "../system/workspace-bootstrap-service";
 import { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-content";
 import type { SessionType as ThreadType } from "@lume/shared";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, basename } from "node:path";
+import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths";
 
 export const LUME_AGENT_IDENTITY_LINE =
   "You are Lume, a persistent counterpart running inside this workspace.";
@@ -79,6 +82,60 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
       model: "haiku"
     }
   };
+}
+
+function parseAgentFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  if (!match) return { frontmatter: {}, body: content.trim() };
+  const body = match[2]!.trim();
+  const frontmatter: Record<string, unknown> = {};
+  for (const line of match[1]!.split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    const key = line.slice(0, idx).trim();
+    const val = line.slice(idx + 1).trim();
+    if (val.startsWith("[") && val.endsWith("]")) {
+      frontmatter[key] = val.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+    } else if (!Number.isNaN(Number(val))) {
+      frontmatter[key] = Number(val);
+    } else {
+      frontmatter[key] = val;
+    }
+  }
+  return { frontmatter, body };
+}
+
+export function loadCustomAgents(workspaceSlug?: string): Record<string, AgentDefinition> {
+  const dirs: string[] = [join(getAgentConfigDir(), "agents")];
+  if (workspaceSlug) {
+    try {
+      dirs.push(join(getAgentWorkspacePath(workspaceSlug), ".lume", "agents"));
+    } catch {
+      // invalid slug, skip
+    }
+  }
+  const result: Record<string, AgentDefinition> = {};
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".md")) continue;
+      try {
+        const content = readFileSync(join(dir, file), "utf-8");
+        const { frontmatter, body } = parseAgentFrontmatter(content);
+        const id = basename(file, ".md");
+        result[id] = {
+          description: typeof frontmatter.description === "string" ? frontmatter.description : id,
+          prompt: body,
+          tools: Array.isArray(frontmatter.tools) ? frontmatter.tools as string[] : undefined,
+          model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
+          maxTurns: typeof frontmatter.maxTurns === "number" ? frontmatter.maxTurns : undefined
+        };
+      } catch {
+        // skip malformed files
+      }
+    }
+  }
+  return result;
 }
 
 const CLAUDE_PLAN_MODE_SECTION = `## Planning Protocol

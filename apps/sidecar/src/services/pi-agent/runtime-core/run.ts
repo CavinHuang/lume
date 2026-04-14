@@ -1,5 +1,6 @@
 import {
   AskUserQuestionTool,
+  AgentTool,
   BashTool,
   createAgent,
   EnterPlanModeTool,
@@ -11,6 +12,7 @@ import {
   GrepTool,
   LSPTool,
   NotebookEditTool,
+  registerAgents,
   type SDKMessage,
   type Agent,
   type AgentOptions,
@@ -33,7 +35,8 @@ import { resolve } from "node:path";
 import {
   buildBuiltinAgents,
   buildDynamicContext,
-  buildSystemPromptAppend
+  buildSystemPromptAppend,
+  loadCustomAgents
 } from "../../agent/agent-prompt-builder";
 import {
   resolveAgentDynamicContextInput,
@@ -45,6 +48,9 @@ import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
 import { createLumePiTools } from "../tools/create-lume-tools";
 import { applyPiToolPolicies } from "../tools/permissions/tool-policy";
+import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
+import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
+import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
 import {
   createOrResumeRuntimeCoreSessionManager,
   hasRuntimeCoreSessionTranscript,
@@ -235,7 +241,51 @@ function buildRuntimeCoreTools(input: {
 
   const customTools = applyPiToolPolicies(lumeTools.customTools as unknown as any[], policyInput) as unknown as ToolDefinition[];
   const filteredBaseTools = applyPiToolPolicies(baseTools as unknown as any[], policyInput) as unknown as ToolDefinition[];
-  const tools = [...filteredBaseTools, ...customTools];
+
+  const sidecarAgentTool: ToolDefinition = {
+    ...AgentTool,
+    async call(toolInput: any, context: any) {
+      const policy = resolveSubagentSpawnPolicy({
+        parentThreadId: context.sessionId ?? "",
+        parentPermissionMode: toolInput.mode
+      });
+      if (!policy.ok) {
+        return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
+      }
+      const runId = crypto.randomUUID();
+      const childThreadId = crypto.randomUUID();
+      getSubagentRunRegistry().create({
+        runId,
+        parentThreadId: context.sessionId ?? "",
+        parentRunId: policy.parentRunId,
+        rootThreadId: policy.rootThreadId,
+        depth: policy.depth,
+        childThreadId,
+        task: toolInput.prompt,
+        label: toolInput.description,
+        cleanup: "keep",
+        requestedAgentId: toolInput.subagent_type,
+        resolvedAgentId: toolInput.subagent_type,
+        status: "running"
+      });
+      const enrichedContext = {
+        ...context,
+        onSubagentEnd: async ({ status, output, error }: { status: "completed" | "errored" | "aborted"; output?: string; error?: string }) => {
+          getSubagentRunRegistry().update(runId, { status, outcome: { output, error } });
+          const run = getSubagentRunRegistry().get(runId);
+          if (run) await announceSubagentCompletion({ run });
+        }
+      };
+      try {
+        return await AgentTool.call(toolInput, enrichedContext);
+      } catch (err: any) {
+        getSubagentRunRegistry().update(runId, { status: "errored", outcome: { error: err.message } });
+        throw err;
+      }
+    }
+  };
+
+  const tools = [...filteredBaseTools, ...customTools, sidecarAgentTool];
 
   return {
     tools,
@@ -406,7 +456,7 @@ export async function createRuntimeCoreSession(
       ? { resume: input.lumeSessionId }
       : {}),
     ...(buildMcpServers(input.workspaceSlug) ? { mcpServers: buildMcpServers(input.workspaceSlug) } : {}),
-    agents: buildBuiltinAgents(),
+    agents: { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) },
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.workspaceSlug),

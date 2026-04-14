@@ -546,6 +546,8 @@ export interface ToolContext {
   emitEvent?: (event: SDKMessage) => void
   /** Hook registry for firing lifecycle hooks (e.g. SubagentStart/Stop). */
   hookRegistry?: import('./hooks.js').HookRegistry
+  onSubagentStart?: (params: { runId: string; parentThreadId: string; agentType: string; task: string }) => void
+  onSubagentEnd?: (params: { runId: string; status: 'completed' | 'errored' | 'aborted'; output?: string; error?: string }) => Promise<void> | void
 }
 
 export interface ToolResult {

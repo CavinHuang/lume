@@ -669,14 +669,14 @@ const AgentMessageItem = React.memo(function AgentMessageItem({
             </>
           ) : displayedMessage.sdkMessages && displayedMessage.sdkMessages.length > 0 ? (
             <>
-              {messageToolActivities.length > 0 ? (
+              {messageToolActivities.length > 0 && !announceItem ? (
                 <TaskProgressCard activities={messageToolActivities} streamEnded />
               ) : null}
               <PersistedOrderedBlocks sdkMessages={displayedMessage.sdkMessages} />
             </>
           ) : (
             <>
-              {messageToolActivities.length > 0 ? (
+              {messageToolActivities.length > 0 && !announceItem ? (
                 <TaskProgressCard activities={messageToolActivities} streamEnded />
               ) : null}
               {assistantMessage.reasoning ? (

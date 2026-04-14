@@ -307,6 +307,7 @@ export function TaskProgressCard({
   const [expanded, setExpanded] = React.useState(false);
 
   const hasAnnouncements = announcementItems.length > 0;
+  const onlyAnnouncements = items.length === 0 && hasAnnouncements;
   if (items.length === 0 && !hasAnnouncements) return null;
 
   const completed = items.filter((item) => item.status === "completed").length;
@@ -316,13 +317,15 @@ export function TaskProgressCard({
   return (
     <div className={cn("my-2 max-w-[630px]", animate && "animate-in fade-in duration-200")}>
       <div className="rounded-lg border border-border/60 bg-muted/25 px-3.5 py-3">
-        <div className="mb-1.5 flex items-center gap-1.5">
-          <ListTodo className="size-3.5 text-muted-foreground" />
-          <span className="text-[13px] font-medium text-foreground/75">任务进度</span>
-          <span className="text-[11px] tabular-nums text-muted-foreground/60">{completed}/{items.length}</span>
-        </div>
+        {!onlyAnnouncements ? (
+          <div className="mb-1.5 flex items-center gap-1.5">
+            <ListTodo className="size-3.5 text-muted-foreground" />
+            <span className="text-[13px] font-medium text-foreground/75">任务进度</span>
+            <span className="text-[11px] tabular-nums text-muted-foreground/60">{completed}/{items.length}</span>
+          </div>
+        ) : null}
 
-        <ProgressBar completed={completed} total={items.length} />
+        {!onlyAnnouncements ? <ProgressBar completed={completed} total={items.length} /> : null}
 
         <div className="space-y-0.5">
           {visibleItems.map((item) => <TaskRow key={item.id} item={item} />)}

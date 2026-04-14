@@ -344,9 +344,10 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
 
   if (message.type === "system") {
     if (message.subtype === "task_started") {
+      const toolUseId = (message as any).subagent_run_id ?? message.tool_use_id ?? message.task_id;
       next.toolActivities = upsertToolActivity(next.toolActivities, {
-        toolUseId: message.tool_use_id ?? message.task_id,
-        toolName: "Task",
+        toolUseId,
+        toolName: (message as any).subagent_run_id ? "Agent" : "Task",
         input: {},
         taskId: message.task_id,
         startedAt: now,
@@ -354,8 +355,9 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
         intent: message.description,
       });
     } else if (message.subtype === "task_progress") {
+      const toolUseId = (message as any).subagent_run_id ?? message.tool_use_id ?? message.task_id;
       next.toolActivities = next.toolActivities.map((activity) =>
-        activity.toolUseId === (message.tool_use_id ?? message.task_id)
+        activity.toolUseId === toolUseId
           ? {
               ...activity,
               taskId: message.task_id,
@@ -366,8 +368,9 @@ export function applySdkMessage(prev: AgentStreamState, message: SDKMessage): Ag
           : activity
       );
     } else if (message.subtype === "task_notification") {
+      const toolUseId = (message as any).subagent_run_id ?? message.tool_use_id ?? message.task_id;
       next.toolActivities = next.toolActivities.map((activity) =>
-        activity.toolUseId === (message.tool_use_id ?? message.task_id)
+        activity.toolUseId === toolUseId
           ? {
               ...activity,
               taskId: message.task_id,

@@ -1,7 +1,7 @@
 import type { GitHubRelease, GitHubReleaseListOptions } from "@lume/shared";
 
 const GITHUB_API_BASE = "https://api.github.com";
-const GITHUB_REPO_OWNER = process.env.LUME_GITHUB_RELEASE_OWNER?.trim() || "ErlichLiu";
+const GITHUB_REPO_OWNER = process.env.LUME_GITHUB_RELEASE_OWNER?.trim() || "CavinHUang";
 const GITHUB_REPO_NAME = process.env.LUME_GITHUB_RELEASE_REPO?.trim() || "Lume";
 const CACHE_TTL_MS = 5 * 60 * 1000;
 

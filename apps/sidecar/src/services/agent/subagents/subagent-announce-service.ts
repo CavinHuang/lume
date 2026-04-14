@@ -52,7 +52,7 @@ function buildAnnounceMessage(run: SubagentRun): AgentMessage {
   const output = typeof run.outcome?.output === "string" ? run.outcome.output.trim() : "";
   const error = typeof run.outcome?.error === "string" ? run.outcome.error.trim() : "";
   const status = formatStatusLabel(run.status);
-  const label = run.label?.trim() || "子任务";
+  const label = (run.requestedAgentId?.trim() || run.label?.trim() || "子任务").slice(0, 60);
   const headline = `子任务完成通知: ${label} (${status})`;
   const bodyLines = [
     headline,
