@@ -616,6 +616,7 @@ export function replaceAgentThreadTranscript(threadId: string, messages: AgentMe
   resetAgentMessageVersionStore(threadId);
   rebuildRuntimeCoreTranscript(threadId, messages);
   rebuildThreadSDKTranscript(threadId, messages);
+  syncVersionStoreFromMessages(threadId, messages);
   updateAgentThreadMeta(threadId, {
     sdkThreadId: undefined,
     runtimeThreadId: undefined

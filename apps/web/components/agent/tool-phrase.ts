@@ -19,7 +19,7 @@ const PHRASES: Record<string, PhraseEntry> = {
     active: "读取文件",
     done: "已读取文件",
     describe: (input) => {
-      const fp = asString(input.file_path ?? input.filePath);
+      const fp = asString(input.file_path ?? input.filePath ?? input.path);
       return fp ? `读取 ${basename(fp)}` : null;
     },
   },
@@ -27,7 +27,7 @@ const PHRASES: Record<string, PhraseEntry> = {
     active: "写入文件",
     done: "已写入文件",
     describe: (input) => {
-      const fp = asString(input.file_path ?? input.filePath);
+      const fp = asString(input.file_path ?? input.filePath ?? input.path);
       return fp ? `写入 ${basename(fp)}` : null;
     },
   },
@@ -35,7 +35,7 @@ const PHRASES: Record<string, PhraseEntry> = {
     active: "编辑文件",
     done: "已编辑文件",
     describe: (input) => {
-      const fp = asString(input.file_path ?? input.filePath);
+      const fp = asString(input.file_path ?? input.filePath ?? input.path);
       return fp ? `编辑 ${basename(fp)}` : null;
     },
   },
@@ -135,7 +135,8 @@ export function getToolActivePhrase(toolName: string, input: Record<string, unkn
 export function getToolDonePhrase(toolName: string, input: Record<string, unknown> = {}): string {
   const entry = PHRASES[toolName.toLowerCase()];
   if (!entry) return toolName;
-  return entry.done;
+  const dynamic = entry.describe?.(input);
+  return dynamic ?? entry.done;
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   agentToolActivitiesAtom,
   agentStreamingReasoningAtom,
   currentAgentThreadMessagesAtom,
+  currentAgentThreadSdkMessagesAtom,
   currentAgentThreadIdAtom,
   currentAgentLiveSdkMessagesAtom,
   currentAgentStreamStateAtom,
@@ -60,6 +61,7 @@ import { AgentRunningIndicator } from "./AgentRunningIndicator";
 import { AgentStatusLine } from "./AgentStatusLine";
 import { ToolActivityTree } from "./ToolActivityItem";
 import { getAssistantContentBlocks, SDKContentBlockRenderer } from "./SDKContentBlock";
+import { getGroupId, groupIntoTurns, MessageGroupRenderer } from "./SDKMessageRenderer";
 import { ToolCard } from "./tool-activity/ToolCard";
 import type { SDKMessage } from "@lume/shared";
 import { TaskProgressCard } from "./TaskProgressCard";
@@ -827,6 +829,7 @@ export function AgentMessages({
   }
 
   const messages = useAtomValue(currentAgentThreadMessagesAtom);
+  const threadSdkMessages = useAtomValue(currentAgentThreadSdkMessagesAtom);
   const liveSdkMessages = useAtomValue(currentAgentLiveSdkMessagesAtom);
   const sessionId = useAtomValue(currentAgentThreadIdAtom);
   const [messageVersionsByGroup, setMessageVersionsByGroup] = useAtom(agentMessageVersionsByGroupAtom);
@@ -858,6 +861,21 @@ export function AgentMessages({
     && !streamingReasoning
     && streamingToolActivities.length === 0;
   const [loadingGroupIds, setLoadingGroupIds] = React.useState<Record<string, boolean>>({});
+
+  const useSdkRenderer = threadSdkMessages.length > 0;
+  const persistedGroups = React.useMemo(
+    () => useSdkRenderer ? groupIntoTurns(threadSdkMessages) : [],
+    [threadSdkMessages, useSdkRenderer]
+  );
+  const liveGroups = React.useMemo(
+    () => liveSdkMessages.length > 0 ? groupIntoTurns(liveSdkMessages) : [],
+    [liveSdkMessages]
+  );
+  const hasLiveAssistantContent = liveGroups.some((group) => group.type === "assistant-turn");
+  const allSdkMessages = React.useMemo(
+    () => [...threadSdkMessages, ...liveSdkMessages],
+    [threadSdkMessages, liveSdkMessages]
+  );
 
   // --- 流式 → 持久化切换的高度锁定，防止列表抖动 ---
   // 流式消息结束时，DOM 子树整体替换（不同 key → unmount/remount），
@@ -1045,11 +1063,102 @@ export function AgentMessages({
               <div className="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
             </div>
           </div>
-        ) : messages.length === 0 && !streaming ? (
+        ) : messages.length === 0 && threadSdkMessages.length === 0 && !streaming ? (
           <EmptyState />
         ) : (
           <>
-            {renderedMessagesWithStreaming.map((item) => {
+            {useSdkRenderer ? (
+              <>
+                {persistedGroups.map((group) => (
+                  <MessageGroupRenderer
+                    key={getGroupId(group)}
+                    group={group}
+                    allMessages={allSdkMessages}
+                  />
+                ))}
+
+                {liveGroups.map((group) => (
+                  <div
+                    key={`live-${getGroupId(group)}`}
+                    ref={group.type === "assistant-turn" ? streamingBlockRef : undefined}
+                  >
+                    <MessageGroupRenderer
+                      group={group}
+                      allMessages={allSdkMessages}
+                      isStreaming
+                    />
+                  </div>
+                ))}
+
+                {hasLiveAssistantContent ? (
+                  <>
+                    {isCompacting ? (
+                      <div className="pl-[46px]">
+                        <div className="mb-2 flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground/60">
+                          <Loader2 className="size-3 shrink-0 animate-spin" />
+                          上下文压缩中...
+                        </div>
+                      </div>
+                    ) : null}
+                    {!showSmoothContent && showLoadingDots ? (
+                      <div className="pl-[46px]">
+                        <AgentStatusLine text={statusLine ?? "正在处理..."} />
+                      </div>
+                    ) : null}
+                    {!showSmoothContent && !showLoadingDots && streaming && statusLine ? (
+                      <div className="pl-[46px]">
+                        <AgentStatusLine text={statusLine} />
+                      </div>
+                    ) : null}
+                    {streaming ? (
+                      <div className="pl-[46px]">
+                        <AgentRunningIndicator startedAt={streamStartedAt} />
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {!hasLiveAssistantContent && (streaming || showSmoothContent) ? (
+                  <div ref={streamingBlockRef}>
+                    <Message from="assistant">
+                      <MessageHeader
+                        model={agentModelId ?? undefined}
+                        time={formatMessageTime(Date.now())}
+                        logo={<AssistantLogo model={agentModelId ?? undefined} />}
+                      />
+                      <MessageContent>
+                        {showSmoothContent ? (
+                          <MessageResponse streaming>{smoothContent}</MessageResponse>
+                        ) : null}
+                      </MessageContent>
+                    </Message>
+                    {isCompacting ? (
+                      <div className="pl-[46px]">
+                        <div className="mb-2 flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground/60">
+                          <Loader2 className="size-3 shrink-0 animate-spin" />
+                          上下文压缩中...
+                        </div>
+                      </div>
+                    ) : null}
+                    {!showSmoothContent && showLoadingDots ? (
+                      <div className="pl-[46px]">
+                        <AgentStatusLine text={statusLine ?? "正在处理..."} />
+                      </div>
+                    ) : null}
+                    {!showSmoothContent && !showLoadingDots && streaming && statusLine ? (
+                      <div className="pl-[46px]">
+                        <AgentStatusLine text={statusLine} />
+                      </div>
+                    ) : null}
+                    {streaming ? (
+                      <div className="pl-[46px]">
+                        <AgentRunningIndicator startedAt={streamStartedAt} />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : renderedMessagesWithStreaming.map((item) => {
               return (
                 <div
                   key={item.renderKey}

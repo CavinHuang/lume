@@ -9,6 +9,10 @@ const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
 const REPO_ROOT = resolve(SCRIPT_DIR, "../../..");
 
+function normalizePathForAssert(value) {
+  return typeof value === "string" ? value.replace(/\\/g, "/") : "";
+}
+
 function ensureAgentSdkBuilt() {
   const sdkDistEntry = resolve(REPO_ROOT, "packages/sdk/dist/index.js");
   if (existsSync(sdkDistEntry)) {
@@ -118,11 +122,19 @@ async function run() {
     assert(typeof workspace?.id === "string", "default workspace missing");
     assert(typeof workspace?.slug === "string" && workspace.slug.length > 0, "default workspace slug missing");
     const workspaceRoot = await sidecar.call(AGENT_GET_WORKSPACE_ROOT_PATH, { workspaceSlug: workspace.slug });
-    assert(typeof workspaceRoot === "string" && workspaceRoot.includes("\\agent-workspaces\\default"), "workspace root missing");
+    assert(
+      typeof workspaceRoot === "string"
+      && normalizePathForAssert(workspaceRoot).includes("/agent-workspaces/default"),
+      "workspace root missing"
+    );
 
     const initialLumeConfig = await sidecar.call(LUME_CONFIG_GET_EFFECTIVE, { workspaceSlug: workspace.slug });
     assert(initialLumeConfig?.version === 1, "lume-config:get-effective unavailable");
-    assert(typeof initialLumeConfig?.sourcePath === "string" && initialLumeConfig.sourcePath.endsWith("\\.lume\\lume.yaml"), "lume-config sourcePath invalid");
+    assert(
+      typeof initialLumeConfig?.sourcePath === "string"
+      && normalizePathForAssert(initialLumeConfig.sourcePath).endsWith("/.lume/lume.yaml"),
+      "lume-config sourcePath invalid"
+    );
 
     writeSmokeLumeConfig(configHome, workspace.slug);
     const effectiveLumeConfig = await sidecar.call(LUME_CONFIG_GET_EFFECTIVE, { workspaceSlug: workspace.slug });

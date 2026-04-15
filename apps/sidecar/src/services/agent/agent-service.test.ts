@@ -103,8 +103,32 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
     }
   ) => {
     const userMessage = (params as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    const threadId = (params as { runtime?: { sessionId?: string } })?.runtime?.sessionId ?? "";
     if (userMessage === "subagent-projection") {
       emitRunWithSubagentTranscript(emit);
+      return { status: "completed" as const };
+    }
+    if (userMessage === "subagent-announce-during-run") {
+      const { announceSubagentCompletion } = await import("./subagents/subagent-announce-service");
+      await announceSubagentCompletion({
+        run: {
+          runId: `mock-subagent-run:${threadId}`,
+          parentThreadId: threadId,
+          rootThreadId: threadId,
+          depth: 1,
+          childThreadId: `mock-child-thread:${threadId}`,
+          label: "Mock Subagent",
+          task: "mock subagent completion",
+          status: "completed",
+          cleanup: "keep",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          outcome: {
+            output: "mock subagent announce output"
+          }
+        }
+      });
+      emitSuccessfulRun(emit);
       return { status: "completed" as const };
     }
     if (userMessage.startsWith("hold:")) {
@@ -264,5 +288,41 @@ describe("agent-service", () => {
         && (message as SDKMessage & { subagent_run_id?: string }).subagent_run_id === "subagent-run-1"
       ))
     ).toBe(true);
+  });
+
+  test("sendAgentMessage 遇到 subagent announce 插入 transcript 时仍应完成并保留 announce 消息", async () => {
+    const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("subagent announce during run", "channel-test");
+    const events = {
+      completed: 0,
+      errors: [] as string[]
+    };
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "subagent-announce-during-run",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onSdkMessage: () => undefined,
+      onMessageAppended: () => undefined,
+      onComplete: () => {
+        events.completed += 1;
+      },
+      onError: (error) => {
+        events.errors.push(error);
+      },
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const visibleMessages = getAgentThreadMessages(thread.id);
+
+    expect(events.errors).toEqual([]);
+    expect(events.completed).toBe(1);
+    expect(visibleMessages.some((message) => message.metadata?.subagentAnnounce === true)).toBe(true);
+    expect(visibleMessages.some((message) => message.role === "assistant" && message.content === "mock assistant output")).toBe(true);
   });
 });
