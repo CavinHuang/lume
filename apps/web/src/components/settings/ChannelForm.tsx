@@ -1,0 +1,129 @@
+import { useState } from 'react'
+import { Loader2 } from 'lucide-react'
+import type { ChannelCreateInput, ProviderType, ChannelModel } from '@lume/shared'
+import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS } from '@lume/shared'
+import { fetchChannelModels } from '@/lib/desktop-api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+
+interface Props {
+  onSubmit: (input: ChannelCreateInput) => Promise<void>
+  onCancel: () => void
+}
+
+const PROVIDERS = Object.entries(PROVIDER_LABELS) as [ProviderType, string][]
+
+export function ChannelForm({ onSubmit, onCancel }: Props) {
+  const [provider, setProvider] = useState<ProviderType>('anthropic')
+  const [name, setName] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [baseUrl, setBaseUrl] = useState(PROVIDER_DEFAULT_URLS['anthropic'])
+  const [models, setModels] = useState<ChannelModel[]>([])
+  const [fetching, setFetching] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [fetchMsg, setFetchMsg] = useState('')
+
+  const handleProviderChange = (p: ProviderType) => {
+    setProvider(p)
+    setBaseUrl(PROVIDER_DEFAULT_URLS[p])
+    setModels([])
+    setFetchMsg('')
+  }
+
+  const handleFetchModels = async () => {
+    setFetching(true)
+    setFetchMsg('')
+    try {
+      const r = await fetchChannelModels({ provider, baseUrl, apiKey })
+      if (r.success) {
+        setModels(r.models)
+        setFetchMsg(`获取到 ${r.models.length} 个模型`)
+      } else {
+        setFetchMsg(r.message)
+      }
+    } catch (e: any) {
+      setFetchMsg(e?.message ?? '请求失败')
+    } finally {
+      setFetching(false)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await onSubmit({ name: name || PROVIDER_LABELS[provider], provider, baseUrl, apiKey, models, enabled: true })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-5 max-w-lg">
+      <div>
+        <h2 className="text-[15px] font-semibold">添加渠道</h2>
+        <p className="text-[12px] text-muted-foreground mt-0.5">配置 AI 供应商连接</p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>供应商</Label>
+        <Select value={provider} onValueChange={(v) => handleProviderChange(v as ProviderType)}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {PROVIDERS.map(([id, label]) => (
+              <SelectItem key={id} value={id}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>名称</Label>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={PROVIDER_LABELS[provider]} />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Base URL</Label>
+        <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="font-mono text-[12px]" />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>API Key</Label>
+        <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="font-mono text-[12px]" />
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label>模型</Label>
+          <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={fetching || !apiKey}>
+            {fetching && <Loader2 size={11} className="animate-spin mr-1" />}
+            拉取模型列表
+          </Button>
+        </div>
+        {fetchMsg && <p className="text-[11px] text-muted-foreground">{fetchMsg}</p>}
+        {models.length > 0 && (
+          <div className="rounded-lg border divide-y max-h-48 overflow-y-auto">
+            {models.map((m) => (
+              <label key={m.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/50">
+                <input type="checkbox" checked={m.enabled}
+                  onChange={(e) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: e.target.checked } : x))}
+                />
+                <span className="text-[12px] font-mono truncate">{m.id}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 pt-2">
+        <Button type="submit" disabled={saving || !apiKey}>
+          {saving && <Loader2 size={13} className="animate-spin mr-1" />}
+          保存
+        </Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>取消</Button>
+      </div>
+    </form>
+  )
+}

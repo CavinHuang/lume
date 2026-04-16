@@ -1,0 +1,194 @@
+import { useState, useMemo } from 'react'
+import { ChevronRight, Bot } from 'lucide-react'
+import { XMarkdown } from '@ant-design/x-markdown'
+import { useSmoothStream } from '@lume/ui'
+import { cn } from '@/lib/utils'
+import { ToolResultRenderer } from './tool-result-renderers'
+import type { SDKMessage } from '@lume/shared'
+
+/** 从消息流中构建 tool_use_id → tool_result 映射 */
+function buildToolResultMap(messages: SDKMessage[]): Map<string, { output: string; toolName: string }> {
+  const map = new Map<string, { output: string; toolName: string }>()
+  for (const msg of messages) {
+    if (msg.type === 'tool_result' && msg.result) {
+      map.set(msg.result.tool_use_id, {
+        output: msg.result.output,
+        toolName: msg.result.tool_name,
+      })
+    }
+  }
+  return map
+}
+
+interface SDKContentBlockProps {
+  message: SDKMessage
+  index: number
+  animate?: boolean
+  /** 完整消息列表，用于关联 tool_result */
+  allMessages?: SDKMessage[]
+  /** 是否正在流式输出 */
+  isStreaming?: boolean
+}
+
+export function SDKContentBlock({ message, index, animate, allMessages, isStreaming }: SDKContentBlockProps) {
+  const style = animate ? { animationDelay: `${index * 30}ms` } : undefined
+  const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
+
+  const toolResultMap = useMemo(
+    () => allMessages ? buildToolResultMap(allMessages) : new Map(),
+    [allMessages]
+  )
+
+  if (message.type === 'user') {
+    const content = message.message?.content
+    const text = typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? (content.find((b: { type: string; text?: string }) => b.type === 'text') as { text: string } | undefined)?.text ?? ''
+        : ''
+    if (!text) return null
+    return (
+      <div className={cn('flex justify-end', cls)} style={style}>
+        <div className="max-w-[80%] bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap">
+          {text}
+        </div>
+      </div>
+    )
+  }
+
+  if (message.type === 'assistant') {
+    const blocks = (message.message?.content ?? []) as Array<
+      { type: 'text'; text: string } |
+      { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } |
+      { type: 'thinking'; thinking: string }
+    >
+    return (
+      <div className={cn('flex gap-3', cls)} style={style}>
+        <div className="size-7 rounded-full bg-foreground/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <Bot size={14} className="text-foreground/60" />
+        </div>
+        <div className="flex-1 min-w-0 space-y-2">
+          {blocks.map((block, i) => (
+            <ContentBlockItem
+              key={`${block.type}-${i}`}
+              block={block}
+              toolResultMap={toolResultMap}
+              isStreaming={animate && isStreaming}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (message.type === 'tool_result') {
+    return null
+  }
+
+  if (message.type === 'system') {
+    const subtype = (message as SDKMessage & { subtype?: string }).subtype
+    if (subtype === 'compact_boundary') {
+      return (
+        <div className="flex items-center gap-3 my-4">
+          <div className="flex-1 h-px bg-border/40" />
+          <span className="text-[11px] text-muted-foreground/60 px-2 py-0.5 rounded-full border border-border/30 bg-muted/20">上下文已压缩</span>
+          <div className="flex-1 h-px bg-border/40" />
+        </div>
+      )
+    }
+    return null
+  }
+
+  return null
+}
+
+type ContentBlockType =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'thinking'; thinking: string }
+
+function ContentBlockItem({
+  block,
+  toolResultMap,
+  isStreaming,
+}: {
+  block: ContentBlockType
+  toolResultMap: Map<string, { output: string; toolName: string }>
+  isStreaming?: boolean
+}) {
+  const [collapsed, setCollapsed] = useState(true)
+
+  if (block.type === 'text') {
+    return <SmoothText text={block.text} isStreaming={isStreaming} />
+  }
+
+  if (block.type === 'thinking') {
+    return (
+      <div className="border-l-2 border-dashed border-foreground/20 pl-3">
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          className="flex items-center gap-1 text-[12px] text-foreground/40 hover:text-foreground/60 transition-colors"
+        >
+          <ChevronRight size={12} className={cn('transition-transform', !collapsed && 'rotate-90')} />
+          思考过程
+        </button>
+        {!collapsed && (
+          <p className="mt-1 text-[12px] text-foreground/50 whitespace-pre-wrap leading-relaxed">{block.thinking}</p>
+        )}
+      </div>
+    )
+  }
+
+  if (block.type === 'tool_use') {
+    const toolResult = toolResultMap.get(block.id)
+    const hasResult = toolResult !== undefined
+
+    let resultData: unknown = undefined
+    if (toolResult) {
+      try {
+        resultData = JSON.parse(toolResult.output)
+      } catch {
+        resultData = toolResult.output
+      }
+    }
+
+    return (
+      <div className="rounded-xl border border-border/50 overflow-hidden bg-muted/20">
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-foreground/60 hover:bg-muted/30 transition-colors"
+        >
+          <ChevronRight size={12} className={cn('transition-transform', !collapsed && 'rotate-90')} />
+          <span className="font-mono font-medium text-foreground/70">{block.name}</span>
+          {hasResult && (
+            <span className="ml-auto text-[10px] text-green-500/70">完成</span>
+          )}
+          {!hasResult && (
+            <span className="ml-auto text-[10px] text-blue-500/70 animate-pulse">运行中...</span>
+          )}
+        </button>
+        {!collapsed && (
+          <div className="border-t border-border/30 p-3">
+            <ToolResultRenderer toolName={block.name} input={block.input} result={resultData} />
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return null
+}
+
+/** 流式文本平滑渲染组件 */
+function SmoothText({ text, isStreaming }: { text: string; isStreaming?: boolean }) {
+  const { displayedContent } = useSmoothStream({
+    content: text,
+    isStreaming: !!isStreaming,
+  })
+
+  return (
+    <XMarkdown className="x-markdown text-[14px] leading-relaxed">
+      {displayedContent}
+    </XMarkdown>
+  )
+}

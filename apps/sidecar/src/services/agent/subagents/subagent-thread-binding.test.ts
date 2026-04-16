@@ -1,0 +1,43 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createAgentThread } from "../../agent/agent-thread-manager";
+import { resolveSubagentThreadBinding } from "./subagent-thread-binding";
+
+describe("subagent-thread-binding", () => {
+  test("应在请求 thread 时标记 threadBound 并解析 delivery thread", () => {
+    const prev = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-subagent-thread-"));
+    try {
+      const parent = createAgentThread("父线程");
+      const inbox = createAgentThread("收件线程");
+      const resolved = resolveSubagentThreadBinding({
+        parentThreadId: parent.id,
+        childThreadId: "child-x",
+        threadRequested: true,
+        requestedDeliverySessionId: inbox.id
+      });
+      expect(resolved.threadRequested).toBe(true);
+      expect(resolved.threadBound).toBe(true);
+      expect(resolved.deliveryThreadId).toBe(inbox.id);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = prev;
+      }
+    }
+  });
+
+  test("delivery thread 不存在时应回退到 parent thread", () => {
+    const resolved = resolveSubagentThreadBinding({
+      parentThreadId: "parent-a",
+      childThreadId: "child-a",
+      threadRequested: false,
+      requestedDeliverySessionId: "missing-session"
+    });
+    expect(resolved.deliveryThreadId).toBe("parent-a");
+    expect(resolved.threadBound).toBe(false);
+  });
+});

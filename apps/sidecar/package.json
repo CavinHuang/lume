@@ -1,0 +1,30 @@
+{
+  "name": "@lume/sidecar",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke:rpc": "bun scripts/smoke-rpc.mjs",
+    "smoke:agent-new-runtime": "bun scripts/smoke-agent-new-runtime.mjs",
+    "smoke:agent-new-runtime:bridges": "bun scripts/smoke-agent-new-runtime-bridges.mjs",
+    "smoke:agent-new-runtime:compact": "bun scripts/smoke-agent-new-runtime-compact.mjs",
+    "smoke:agent-new-runtime:error": "bun scripts/smoke-agent-new-runtime-error.mjs",
+    "smoke:agent-new-runtime:provider-matrix": "bun scripts/smoke-agent-new-runtime-provider-matrix.mjs",
+    "smoke:agent-new-runtime:provider-switch": "bun scripts/smoke-agent-new-runtime-provider-switch.mjs",
+    "smoke:agent-new-runtime:stop": "bun scripts/smoke-agent-new-runtime-stop.mjs",
+    "smoke:chat-stream": "bun scripts/smoke-chat-stream.mjs",
+    "smoke:chat-provider-switch": "bun scripts/smoke-chat-provider-switch.mjs",
+    "smoke:restart-restore": "bun scripts/smoke-restart-restore.mjs"
+  },
+  "dependencies": {
+    "@lume/agent-sdk": "workspace:*",
+    "@lume/shared": "workspace:*",
+    "@sinclair/typebox": "^0.34.41",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3",
+    "yaml": "^2.8.1",
+    "zod": "^4.3.6"
+  }
+}

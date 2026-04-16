@@ -1,0 +1,20 @@
+[package]
+name = "lume_desktop"
+version = "0.1.0"
+description = "Lume desktop shell"
+authors = ["Lume Team"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-log = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+rfd = "0.15"
+webbrowser = "1"
+log = "0.4"
+dirs = "5"

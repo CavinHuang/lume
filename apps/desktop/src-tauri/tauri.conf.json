@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Lume",
+  "version": "0.1.0",
+  "identifier": "com.lume.desktop",
+  "build": {
+    "devUrl": "http://127.0.0.1:3000",
+    "frontendDist": "../../web/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Lume",
+        "width": 1440,
+        "height": 900
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

@@ -1,0 +1,252 @@
+import { describe, expect, test } from "bun:test";
+import type { ProviderAdapter, StreamEvent, StreamRequestInput, TitleRequestInput } from "./types";
+import { streamSSE } from "./sse-reader";
+
+function createMockAdapter(): ProviderAdapter {
+  return {
+    providerType: "openai",
+    buildStreamRequest(_input: StreamRequestInput) {
+      throw new Error("not implemented");
+    },
+    parseSSELine(jsonLine: string): StreamEvent[] {
+      const payload = JSON.parse(jsonLine) as {
+        event: "start" | "delta" | "done";
+        id?: string;
+      name?: string;
+      args?: string;
+      stop?: string;
+      index?: number;
+    };
+      if (payload.event === "start") {
+        return [{
+          type: "tool_call_start",
+          toolCallId: payload.id ?? "",
+          toolName: payload.name ?? "",
+          metadata: typeof payload.index === "number"
+            ? { blockIndex: payload.index }
+            : undefined
+        }];
+      }
+      if (payload.event === "delta") {
+        return [({
+          type: "tool_call_delta",
+          toolCallId: payload.id ?? "",
+          argumentsDelta: payload.args ?? "",
+          metadata: typeof payload.index === "number"
+            ? { blockIndex: payload.index }
+            : undefined
+        }) as StreamEvent];
+      }
+      if (payload.event === "done") {
+        return [{
+          type: "done",
+          stopReason: payload.stop
+        }];
+      }
+      return [];
+    },
+    buildTitleRequest(_input: TitleRequestInput) {
+      throw new Error("not implemented");
+    },
+    parseTitleResponse(_responseBody: unknown) {
+      return null;
+    }
+  };
+}
+
+describe("sse-reader", () => {
+  test("同名 tool_call 应生成唯一 ID 并分别保留参数", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"start\",\"id\":\"web_search\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"delta\",\"id\":\"web_search\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\"}",
+      "data: {\"event\":\"start\",\"id\":\"web_search\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"delta\",\"id\":\"web_search\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(2);
+    expect(result.toolCalls[0]?.id).toBe("web_search");
+    expect(result.toolCalls[1]?.id).toBe("web_search__2");
+    expect(result.toolCalls[0]?.arguments.query).toBe("q1");
+    expect(result.toolCalls[1]?.arguments.query).toBe("q2");
+  });
+
+  test("delta 早于 start 到达时也应保留参数", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"delta\",\"id\":\"tc_0\",\"args\":\"{\\\"query\\\":\\\"late\\\"}\"}",
+      "data: {\"event\":\"start\",\"id\":\"tc_0\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.id).toBe("tc_0");
+    expect(result.toolCalls[0]?.arguments.query).toBe("late");
+  });
+
+  test("匿名 delta 早于 start 到达时应回填到首个 tool_call", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"anonymous\\\"}\"}",
+      "data: {\"event\":\"start\",\"id\":\"tc_anon\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.id).toBe("tc_anon");
+    expect(result.toolCalls[0]?.arguments.query).toBe("anonymous");
+  });
+
+  test("带 blockIndex 的交错 delta 应归属到对应 tool_call", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+      "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+      "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"first\\\"}\",\"index\":0}",
+      "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"second\\\"}\",\"index\":1}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(2);
+    expect(result.toolCalls[0]?.id).toBe("toolu_1");
+    expect(result.toolCalls[1]?.id).toBe("toolu_2");
+    expect(result.toolCalls[0]?.arguments.query).toBe("first");
+    expect(result.toolCalls[1]?.arguments.query).toBe("second");
+  });
+
+  test("工具参数被 markdown code fence 包裹时应解析出 JSON", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"start\",\"id\":\"tc_fenced\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"delta\",\"id\":\"tc_fenced\",\"args\":\"```json\\n{\\\"query\\\":\\\"fenced query\\\"}\\n```\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.arguments.query).toBe("fenced query");
+  });
+
+  test("网络抖动导致重复 delta 重放时应仍能恢复参数 JSON", async () => {
+    const adapter = createMockAdapter();
+    const body = [
+      "data: {\"event\":\"start\",\"id\":\"tc_replay\",\"name\":\"web_search\"}",
+      "data: {\"event\":\"delta\",\"id\":\"tc_replay\",\"args\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}",
+      "data: {\"event\":\"delta\",\"id\":\"tc_replay\",\"args\":\"{\\\"query\\\":\\\"latest ai news\\\"}\"}",
+      "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+      "data: [DONE]"
+    ].join("\n");
+
+    const result = await streamSSE({
+      request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+      adapter,
+      onEvent: () => {},
+      fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    });
+
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.arguments.query).toBe("latest ai news");
+  });
+
+  test("随机顺序 fuzz 样本下双 tool_call 参数归属应保持稳定", async () => {
+    const adapter = createMockAdapter();
+    const scenarios: Array<{ name: string; lines: string[] }> = [
+      {
+        name: "normal-order",
+        lines: [
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}"
+        ]
+      },
+      {
+        name: "delta-before-first-start",
+        lines: [
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}"
+        ]
+      },
+      {
+        name: "reverse-start-order",
+        lines: [
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}"
+        ]
+      },
+      {
+        name: "delta-interleaved-replay",
+        lines: [
+          "data: {\"event\":\"start\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"index\":0}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q1\\\"}\",\"index\":0}",
+          "data: {\"event\":\"start\",\"id\":\"toolu_2\",\"name\":\"web_search\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}",
+          "data: {\"event\":\"delta\",\"args\":\"{\\\"query\\\":\\\"q2\\\"}\",\"index\":1}"
+        ]
+      }
+    ];
+
+    for (const scenario of scenarios) {
+      const body = [
+        ...scenario.lines,
+        "data: {\"event\":\"done\",\"stop\":\"tool_use\"}",
+        "data: [DONE]"
+      ].join("\n");
+
+      const result = await streamSSE({
+        request: { url: "https://example.test/sse", headers: {}, body: "{}" },
+        adapter,
+        onEvent: () => {},
+        fetchFn: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+      });
+
+      const byId = new Map(result.toolCalls.map((toolCall) => [toolCall.id, toolCall.arguments.query]));
+      expect(byId.get("toolu_1")).toBe("q1");
+      expect(byId.get("toolu_2")).toBe("q2");
+    }
+  });
+});

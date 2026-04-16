@@ -1,0 +1,66 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import {
+  appendAgentTranscriptMessage,
+  createAgentThread,
+  getAgentThreadMessages
+} from "./agent-thread-manager";
+
+describe("agent-thread-manager transcript projection", () => {
+  let previousConfigDir: string | undefined;
+  let tempConfigDir = "";
+
+  beforeEach(() => {
+    previousConfigDir = process.env.LUME_CONFIG_DIR;
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-agent-session-append-"));
+    process.env.LUME_CONFIG_DIR = tempConfigDir;
+  });
+
+  afterEach(() => {
+    if (previousConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = previousConfigDir;
+    }
+    if (tempConfigDir) {
+      rmSync(tempConfigDir, { recursive: true, force: true });
+      tempConfigDir = "";
+    }
+  });
+
+  test("appendAgentTranscriptMessage 应保留普通 assistant transcript 文本", () => {
+    const session = createAgentThread("append transcript");
+    appendAgentTranscriptMessage(session.id, {
+      id: "announce-1",
+      role: "assistant",
+      content: "子任务完成通知: 测试子任务 (completed)\nrunId: run-123\nchildThreadId: child-456",
+      createdAt: 200,
+      model: "subagent/announce"
+    });
+
+    const messages = getAgentThreadMessages(session.id);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toContain("子任务完成通知");
+    expect(messages[0]?.model).toBe("subagent/announce");
+    expect(messages[0]?.metadata).toBeUndefined();
+  });
+
+  test("appendAgentTranscriptMessage 应保留 reasoning", () => {
+    const session = createAgentThread("append reasoning");
+    appendAgentTranscriptMessage(session.id, {
+      id: "assistant-1",
+      role: "assistant",
+      content: "正式回答",
+      reasoning: "先检查配置再回答",
+      createdAt: 300,
+      model: "zai/glm-5-turbo"
+    });
+
+    const messages = getAgentThreadMessages(session.id);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toBe("正式回答");
+    expect(messages[0]?.reasoning).toBe("先检查配置再回答");
+  });
+});
