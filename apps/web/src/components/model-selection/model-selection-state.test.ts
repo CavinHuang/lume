@@ -75,8 +75,12 @@ describe('buildModelSelectionGroups', () => {
           modelRef: 'openai/gpt-4.1-mini',
           label: 'GPT-4.1 mini',
           active: false,
-          meta: undefined,
-          inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
+          meta: expect.objectContaining({
+            id: 'gpt-4.1-mini',
+            displayName: 'GPT-4.1 mini',
+            contextWindow: 1_000_000,
+          }),
+          inferredCapabilities: undefined,
         },
       ],
     })
@@ -95,8 +99,12 @@ describe('buildModelSelectionGroups', () => {
       modelRef: 'openai/gpt-4.1-mini',
       label: 'GPT-4.1 mini',
       active: false,
-      meta: undefined,
-      inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
+      meta: expect.objectContaining({
+        id: 'gpt-4.1-mini',
+        displayName: 'GPT-4.1 mini',
+        contextWindow: 1_000_000,
+      }),
+      inferredCapabilities: undefined,
     })
     expect(result[1]?.options[0]).toEqual({
       channelId: 'channel-openrouter',

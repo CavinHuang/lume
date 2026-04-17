@@ -154,6 +154,221 @@ const MODEL_META_REGISTRY: ModelMeta[] = [
     capabilities: { vision: false, toolUse: true, reasoning: false },
     pricing: { input: 0.27, output: 1.1 },
   },
+
+  // ── Z.AI / 智谱 ──
+  {
+    id: 'glm-4-plus',
+    displayName: 'GLM-4 Plus',
+    contextWindow: 128_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-4-air',
+    displayName: 'GLM-4 Air',
+    contextWindow: 128_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-4-airx',
+    displayName: 'GLM-4 AirX',
+    contextWindow: 8_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-4-long',
+    displayName: 'GLM-4 Long',
+    contextWindow: 1_000_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-4-flash',
+    aliases: ['glm-4-flash-250414'],
+    displayName: 'GLM-4 Flash',
+    contextWindow: 128_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-4-flashx',
+    displayName: 'GLM-4 FlashX',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-4v',
+    aliases: ['glm-4v-plus', 'glm-4v-flash'],
+    displayName: 'GLM-4V',
+    contextWindow: 128_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-5-turbo',
+    displayName: 'GLM-5 Turbo',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'glm-z1-air',
+    displayName: 'GLM-Z1 Air',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+  {
+    id: 'glm-z1-airx',
+    displayName: 'GLM-Z1 AirX',
+    contextWindow: 8_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+  {
+    id: 'glm-z1-flash',
+    displayName: 'GLM-Z1 Flash',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+
+  // ── Moonshot / Kimi ──
+  {
+    id: 'moonshot-v1-8k',
+    displayName: 'Moonshot V1 8K',
+    contextWindow: 8_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'moonshot-v1-32k',
+    displayName: 'Moonshot V1 32K',
+    contextWindow: 32_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'moonshot-v1-128k',
+    displayName: 'Moonshot V1 128K',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'kimi-latest',
+    aliases: ['kimi'],
+    displayName: 'Kimi Latest',
+    contextWindow: 128_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+  },
+
+  // ── Qwen / 通义千问 ──
+  {
+    id: 'qwen-max',
+    displayName: 'Qwen Max',
+    contextWindow: 32_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'qwen-plus',
+    displayName: 'Qwen Plus',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'qwen-turbo',
+    displayName: 'Qwen Turbo',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'qwen-vl-max',
+    displayName: 'Qwen VL Max',
+    contextWindow: 32_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'qwen-long',
+    displayName: 'Qwen Long',
+    contextWindow: 1_000_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'qwq-32b',
+    aliases: ['qwq'],
+    displayName: 'QwQ 32B',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+
+  // ── 豆包 / 字节 ──
+  {
+    id: 'doubao-pro-32k',
+    displayName: 'Doubao Pro 32K',
+    contextWindow: 32_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'doubao-pro-128k',
+    displayName: 'Doubao Pro 128K',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'doubao-lite-32k',
+    displayName: 'Doubao Lite 32K',
+    contextWindow: 32_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+  {
+    id: 'doubao-1.5-pro',
+    displayName: 'Doubao 1.5 Pro',
+    contextWindow: 128_000,
+    capabilities: { vision: true, toolUse: true, reasoning: true },
+  },
+  {
+    id: 'doubao-1.5-lite',
+    displayName: 'Doubao 1.5 Lite',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+
+  // ── MiniMax ──
+  {
+    id: 'minimax-text-01',
+    displayName: 'MiniMax Text 01',
+    contextWindow: 1_000_000,
+    capabilities: { vision: false, toolUse: true, reasoning: false },
+  },
+
+  // ── OpenRouter common passthrough models ──
+  {
+    id: 'claude-sonnet-4-5',
+    aliases: ['claude-3-5-sonnet-20241022'],
+    displayName: 'Claude Sonnet 4.5',
+    contextWindow: 200_000,
+    capabilities: { vision: true, toolUse: true, reasoning: true },
+    pricing: { input: 3, output: 15 },
+  },
+  {
+    id: 'claude-opus-4-5',
+    displayName: 'Claude Opus 4.5',
+    contextWindow: 200_000,
+    capabilities: { vision: true, toolUse: true, reasoning: true },
+    pricing: { input: 15, output: 75 },
+  },
+  {
+    id: 'gpt-4.1',
+    displayName: 'GPT-4.1',
+    contextWindow: 1_000_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+    pricing: { input: 2, output: 8 },
+  },
+  {
+    id: 'gpt-4.1-mini',
+    aliases: ['openai/gpt-4.1-mini'],
+    displayName: 'GPT-4.1 mini',
+    contextWindow: 1_000_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+    pricing: { input: 0.4, output: 1.6 },
+  },
+  {
+    id: 'gpt-4.1-nano',
+    displayName: 'GPT-4.1 nano',
+    contextWindow: 1_000_000,
+    capabilities: { vision: true, toolUse: true, reasoning: false },
+    pricing: { input: 0.1, output: 0.4 },
+  },
 ]
 
 function buildLookupMap(): Map<string, ModelMeta> {
