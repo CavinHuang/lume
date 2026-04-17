@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { findModelMeta } from './model-meta'
+import { findModelMeta, formatContextWindow, formatPricing } from './model-meta'
 
 describe('findModelMeta', () => {
   test('matches by exact model id', () => {
@@ -45,5 +45,41 @@ describe('findModelMeta', () => {
     expect(meta).toBeDefined()
     expect(meta!.displayName).toBe('Gemini 2.5 Pro')
     expect(meta!.contextWindow).toBe(1_000_000)
+  })
+
+  test('case-insensitive matching', () => {
+    const meta = findModelMeta('CLAUDE-SONNET-4-20250514')
+    expect(meta).toBeDefined()
+    expect(meta!.displayName).toBe('Claude Sonnet 4')
+  })
+
+  test('prefix matching', () => {
+    const meta = findModelMeta('claude-sonnet-4')
+    expect(meta).toBeDefined()
+    expect(meta!.displayName).toBe('Claude Sonnet 4')
+  })
+})
+
+describe('formatContextWindow', () => {
+  test('formats thousands as K', () => {
+    expect(formatContextWindow(128_000)).toBe('128K')
+  })
+
+  test('formats millions as M', () => {
+    expect(formatContextWindow(1_000_000)).toBe('1M')
+  })
+
+  test('formats 200K', () => {
+    expect(formatContextWindow(200_000)).toBe('200K')
+  })
+})
+
+describe('formatPricing', () => {
+  test('formats pricing as $input/$output', () => {
+    expect(formatPricing({ input: 3, output: 15 })).toBe('$3/$15')
+  })
+
+  test('formats decimal pricing', () => {
+    expect(formatPricing({ input: 0.8, output: 4 })).toBe('$0.8/$4')
   })
 })
