@@ -171,25 +171,53 @@ function buildLookupMap(): Map<string, ModelMeta> {
 
 const lookupMap = buildLookupMap()
 
+/** Strip provider prefix (e.g., "anthropic/claude-sonnet-4-5" → "claude-sonnet-4-5") */
+function stripProviderPrefix(id: string): string {
+  const slashIndex = id.indexOf('/')
+  if (slashIndex > 0 && slashIndex < id.length - 1) {
+    return id.slice(slashIndex + 1)
+  }
+  return id
+}
+
 /**
  * Find model metadata by model ID.
+ * Handles: exact match, alias match, case-insensitive, provider-prefixed IDs, prefix match.
  * Returns undefined for unknown models.
  */
 export function findModelMeta(modelId: string): ModelMeta | undefined {
-  const exact = lookupMap.get(modelId)
-  if (exact) return exact
+  const candidates = [modelId, stripProviderPrefix(modelId)]
 
-  const lower = modelId.toLowerCase()
-  for (const [key, meta] of lookupMap) {
-    if (key.toLowerCase() === lower) return meta
-  }
+  for (const candidate of candidates) {
+    const exact = lookupMap.get(candidate)
+    if (exact) return exact
 
-  for (const meta of MODEL_META_REGISTRY) {
-    if (modelId.startsWith(meta.id) || meta.id.startsWith(modelId)) return meta
-    if (meta.aliases?.some((alias) => modelId.startsWith(alias) || alias.startsWith(modelId))) return meta
+    const lower = candidate.toLowerCase()
+    for (const [key, meta] of lookupMap) {
+      if (key.toLowerCase() === lower) return meta
+    }
+
+    for (const meta of MODEL_META_REGISTRY) {
+      if (candidate.startsWith(meta.id) || meta.id.startsWith(candidate)) return meta
+      if (meta.aliases?.some((alias) => candidate.startsWith(alias) || alias.startsWith(candidate))) return meta
+    }
   }
 
   return undefined
+}
+
+/**
+ * Infer basic capabilities from model ID/name for models not in the registry.
+ * Uses keyword heuristics.
+ */
+export function inferCapabilities(modelId: string, modelName?: string): ModelCapabilities {
+  const text = `${modelId} ${modelName ?? ''}`.toLowerCase()
+
+  return {
+    vision: /vision|image|gpt-4o|gpt-4-turbo|claude-3|claude-4|gemini|glm-4v|qwen-vl/.test(text),
+    toolUse: !/embed/.test(text),
+    reasoning: /reason|think|o1|o3|o4|r1|deepthink/.test(text),
+  }
 }
 
 /** Format context window size for display */

@@ -1,6 +1,6 @@
 import { Brain, Check, Eye, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatContextWindow, formatPricing, type ModelMeta } from '@lume/shared'
+import { formatContextWindow, formatPricing, type ModelCapabilities, type ModelMeta } from '@lume/shared'
 import { ChannelProviderIcon } from './provider-icon-map'
 import type { ModelOptionGroup, ModelSelectionOption } from './model-selection-state'
 
@@ -16,6 +16,16 @@ function CapabilityIcon({ capability }: { capability: 'vision' | 'toolUse' | 're
     <span className="inline-flex items-center justify-center">
       <Icon className="h-2.5 w-2.5 opacity-50" />
     </span>
+  )
+}
+
+function CapabilityRow({ capabilities }: { capabilities: ModelCapabilities }) {
+  return (
+    <div className="flex items-center gap-2 text-muted-foreground/80 scale-[0.75] origin-left">
+      {capabilities.vision && <CapabilityIcon capability="vision" />}
+      {capabilities.toolUse && <CapabilityIcon capability="toolUse" />}
+      {capabilities.reasoning && <CapabilityIcon capability="reasoning" />}
+    </div>
   )
 }
 
@@ -73,6 +83,8 @@ export function ModelOptionList({ groups, onSelect }: ModelOptionListProps) {
                 <div className="flex items-center justify-between">
                   {option.meta ? (
                     <ModelMetaRow meta={option.meta} />
+                  ) : option.inferredCapabilities ? (
+                    <CapabilityRow capabilities={option.inferredCapabilities} />
                   ) : (
                     <span className="text-muted-foreground/50 font-mono text-[10px] scale-[0.75] origin-left">
                       {option.modelId}

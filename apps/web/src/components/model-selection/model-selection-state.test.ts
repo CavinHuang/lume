@@ -58,6 +58,7 @@ describe('buildModelSelectionGroups', () => {
           label: 'GPT-5',
           active: true,
           meta: undefined,
+          inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
         },
         {
           channelId: 'channel-openai',
@@ -66,6 +67,7 @@ describe('buildModelSelectionGroups', () => {
           label: 'GPT-5 mini',
           active: false,
           meta: undefined,
+          inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
         },
         {
           channelId: 'channel-openai',
@@ -74,6 +76,7 @@ describe('buildModelSelectionGroups', () => {
           label: 'GPT-4.1 mini',
           active: false,
           meta: undefined,
+          inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
         },
       ],
     })
@@ -93,6 +96,7 @@ describe('buildModelSelectionGroups', () => {
       label: 'GPT-4.1 mini',
       active: false,
       meta: undefined,
+      inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
     })
     expect(result[1]?.options[0]).toEqual({
       channelId: 'channel-openrouter',
@@ -104,6 +108,7 @@ describe('buildModelSelectionGroups', () => {
         id: 'claude-sonnet-4-20250514',
         displayName: 'Claude Sonnet 4',
       }),
+      inferredCapabilities: undefined,
     })
   })
 })

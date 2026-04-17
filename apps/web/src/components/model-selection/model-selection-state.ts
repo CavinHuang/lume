@@ -1,5 +1,5 @@
-import type { AgentThreadMeta, Channel, ChannelModel, ModelMeta } from '@lume/shared'
-import { findModelMeta } from '@lume/shared'
+import type { AgentThreadMeta, Channel, ChannelModel, ModelCapabilities, ModelMeta } from '@lume/shared'
+import { findModelMeta, inferCapabilities } from '@lume/shared'
 
 export interface ModelSelectionOption {
   channelId: string
@@ -8,6 +8,8 @@ export interface ModelSelectionOption {
   label: string
   active: boolean
   meta?: ModelMeta
+  /** Inferred capabilities when no registry match exists */
+  inferredCapabilities?: ModelCapabilities
 }
 
 export interface ModelOptionGroup {
@@ -117,6 +119,7 @@ export function buildModelSelectionGroups(input: {
         .filter((model) => model.enabled)
         .map((model) => {
           const meta = findModelMeta(model.id) ?? findModelMeta(model.name)
+          const inferredCapabilities = !meta ? inferCapabilities(model.id, model.name) : undefined
           return {
             channelId: channel.id,
             modelId: model.id,
@@ -129,6 +132,7 @@ export function buildModelSelectionGroups(input: {
               activeModelRef: input.activeModelRef,
             }),
             meta,
+            inferredCapabilities,
           }
         }),
     }))
