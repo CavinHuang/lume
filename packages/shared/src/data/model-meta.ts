@@ -36,7 +36,13 @@ const MODEL_META_REGISTRY: ModelMeta[] = [
   // ── Anthropic ──
   {
     id: 'claude-sonnet-4-20250514',
-    aliases: ['claude-sonnet-4', 'claude-3-5-sonnet', 'claude-3-5-sonnet-20241022', 'claude-3.5-sonnet'],
+    aliases: [
+      'claude-sonnet-4',
+      'claude-3-5-sonnet',
+      'claude-3-5-sonnet-20241022',
+      'claude-3.5-sonnet',
+      'anthropic/claude-sonnet-4-5',
+    ],
     displayName: 'Claude Sonnet 4',
     contextWindow: 200_000,
     capabilities: { vision: true, toolUse: true, reasoning: true },
