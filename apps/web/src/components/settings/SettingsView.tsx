@@ -9,7 +9,7 @@ import { AboutSettings } from './AboutSettings'
 type SettingsTab = 'channels' | 'agent' | 'mcp' | 'about'
 
 const NAV: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
-  { id: 'channels', label: '渠道', icon: <Radio size={15} /> },
+  { id: 'channels', label: '供应商配置', icon: <Radio size={15} /> },
   { id: 'agent', label: 'Agent', icon: <Cpu size={15} /> },
   { id: 'mcp', label: 'MCP', icon: <Puzzle size={15} /> },
   { id: 'about', label: '关于', icon: <Info size={15} /> },
@@ -41,7 +41,7 @@ export function SettingsView() {
       </div>
 
       {/* 右侧内容 */}
-      <div className="flex-1 min-w-0 overflow-y-auto">
+      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
         {tab === 'channels' && <ChannelSettings />}
         {tab === 'agent' && <AgentSettings />}
         {tab === 'mcp' && <McpSettings />}

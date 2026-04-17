@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { inferChannelModelCapabilities, normalizeChannelModel } from "./channel";
+import {
+  inferChannelModelCapabilities,
+  normalizeChannelModel,
+  PROVIDER_API_FAMILIES,
+  PROVIDER_DEFAULT_URLS,
+  PROVIDER_LABELS,
+} from "./channel";
 
 describe("channel model capabilities", () => {
   test("OpenAI embedding 模型应识别 embedding 能力", () => {
@@ -44,6 +50,18 @@ describe("channel model capabilities", () => {
   test("Anthropic 模型默认只标记 chat 能力", () => {
     expect(inferChannelModelCapabilities({
       provider: "anthropic",
+      modelId: "claude-sonnet-4-5"
+    })).toEqual({
+      chat: true
+    });
+  });
+
+  test("Anthropic 兼容模式应沿用 anthropic 协议族与默认地址", () => {
+    expect(PROVIDER_API_FAMILIES["anthropic-compatible"]).toBe("anthropic");
+    expect(PROVIDER_DEFAULT_URLS["anthropic-compatible"]).toBe("https://api.anthropic.com");
+    expect(PROVIDER_LABELS["anthropic-compatible"]).toBe("Anthropic 兼容模式");
+    expect(inferChannelModelCapabilities({
+      provider: "anthropic-compatible",
       modelId: "claude-sonnet-4-5"
     })).toEqual({
       chat: true

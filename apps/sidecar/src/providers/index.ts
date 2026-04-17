@@ -31,6 +31,7 @@ export { GoogleAdapter } from './google-adapter'
 /** 供应商适配器注册表 */
 const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
   ['anthropic', new AnthropicAdapter()],
+  ['anthropic-compatible', new AnthropicAdapter()],
   ['openai', new OpenAIAdapter()],
   ['openrouter', new OpenAIAdapter()],    // OpenRouter 使用 OpenAI 兼容协议
   ['deepseek', new OpenAIAdapter()],      // DeepSeek 使用 OpenAI 兼容协议

@@ -49,7 +49,7 @@ function resolveProviderApiFamilyFromBaseUrl(baseUrl: string): ProviderApiFamily
 }
 
 function resolveProviderApiFamilyFromId(provider: string): ProviderApiFamily {
-  if (provider === "anthropic") return "anthropic";
+  if (provider === "anthropic" || provider === "anthropic-compatible") return "anthropic";
   if (provider === "google" || provider === "gemini") return "google";
   return "openai";
 }
@@ -63,6 +63,7 @@ function resolveAdapterProviderByFamily(family: ProviderApiFamily): ProviderType
 function coerceKnownProvider(provider: string): ProviderType {
   return ([
     "anthropic",
+    "anthropic-compatible",
     "openai",
     "jina",
     "openrouter",

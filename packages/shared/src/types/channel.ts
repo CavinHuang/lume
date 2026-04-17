@@ -17,6 +17,7 @@
  */
 export type ProviderType =
   | 'anthropic'
+  | 'anthropic-compatible'
   | 'openai'
   | 'jina'
   | 'openrouter'
@@ -47,6 +48,7 @@ export interface ChannelModelCapabilities {
  */
 export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com',
+  'anthropic-compatible': 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
   jina: 'https://api.jina.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
@@ -70,6 +72,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
  */
 export const PROVIDER_LABELS: Record<ProviderType, string> = {
   anthropic: 'Anthropic',
+  'anthropic-compatible': 'Anthropic 兼容模式',
   openai: 'OpenAI',
   jina: 'Jina AI',
   openrouter: 'OpenRouter',
@@ -91,6 +94,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
 /** Provider 对应协议家族 */
 export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   anthropic: 'anthropic',
+  'anthropic-compatible': 'anthropic',
   openai: 'openai',
   jina: 'openai',
   openrouter: 'openai',

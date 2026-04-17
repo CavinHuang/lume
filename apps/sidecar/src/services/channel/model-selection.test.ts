@@ -58,6 +58,16 @@ describe("model-selection", () => {
     expect(resolved.resolvedModelId).toBe("glm-4.7");
   });
 
+  test("anthropic-compatible provider 应走 anthropic 适配器", () => {
+    const resolved = resolveChannelModelSelection({
+      channelProvider: "anthropic-compatible",
+      baseUrl: "https://api.anthropic.com",
+      modelId: "claude-sonnet-4-5"
+    });
+    expect(resolved.adapterProvider).toBe("anthropic");
+    expect(resolved.modelRef).toBe("anthropic-compatible/claude-sonnet-4-5");
+  });
+
   test("resolveRequestedModelIdForChannel 应支持 alias/name/default", () => {
     const channel = {
       models: [

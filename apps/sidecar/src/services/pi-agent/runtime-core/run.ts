@@ -343,7 +343,8 @@ function buildRuntimeCoreTools(input: {
 }
 
 function resolveSdkApiType(provider: string): "anthropic-messages" | "openai-completions" {
-  return provider.trim().toLowerCase() === "anthropic"
+  const normalized = provider.trim().toLowerCase();
+  return normalized === "anthropic" || normalized === "anthropic-compatible"
     ? "anthropic-messages"
     : "openai-completions";
 }

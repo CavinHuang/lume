@@ -9,6 +9,7 @@ describe("provider-resolution", () => {
   test("应将 Lume provider 映射到 Pi provider", () => {
     expect(mapLumeProviderToPiProvider("zhipu")).toBe("zai");
     expect(mapLumeProviderToPiProvider("anthropic")).toBe("anthropic");
+    expect(mapLumeProviderToPiProvider("anthropic-compatible")).toBe("anthropic");
     expect(mapLumeProviderToPiProvider("custom")).toBe("openai");
   });
 

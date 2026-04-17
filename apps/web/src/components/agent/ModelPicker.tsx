@@ -33,7 +33,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
 
   useEffect(() => {
     listChannels()
-      .then((r) => setChannels((r.channels ?? []).filter((c) => c.enabled)))
+      .then((items) => setChannels(items.filter((c) => c.enabled)))
       .catch(console.error)
   }, [])
 
