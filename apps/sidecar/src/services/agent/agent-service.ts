@@ -41,6 +41,7 @@ import { getSessionStateManager } from "../runtime/session-state-manager";
 import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/bridges/ask-user-question-bridge";
 import { submitToolPermissionDecision } from "../pi-agent/tools/bridges/tool-permission-bridge";
 import {
+  resolveAgentDefaultStrategy,
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
 } from "../channel/model-selection";
@@ -54,6 +55,7 @@ import {
 } from "./session-title-summarizer";
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { buildAgentSendStartLogData } from "./agent-log-summary";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
 
 type AgentStreamEmitter = {
   onSdkMessage: (message: SDKMessage) => void;
@@ -314,11 +316,21 @@ export async function sendAgentMessage(
   const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const threadMeta = getAgentThreadMeta(threadId);
-  const boundModel = resolveChannelModelBinding(
-    input.modelRef ?? threadMeta?.modelRef ?? "",
-    "chat"
-  );
-  const resolvedChannelId = boundModel?.channel.id ?? input.channelId ?? threadMeta?.channelId;
+  const effectiveWorkspace = getAgentWorkspace(input.workspaceId ?? threadMeta?.workspaceId ?? "");
+  const shouldRecomputeInheritedSelection = threadMeta?.modelSelectionSource === "inherited"
+    && input.channelId === undefined
+    && input.modelRef === undefined;
+  const effectiveSelection = resolveAgentDefaultStrategy({
+    thread: shouldRecomputeInheritedSelection
+      ? {}
+      : {
+          channelId: input.channelId ?? threadMeta?.channelId,
+          modelRef: input.modelRef ?? threadMeta?.modelRef
+        },
+    globalDefault: getEffectiveLumeConfig(effectiveWorkspace?.slug).models?.agent
+  });
+  const boundModel = resolveChannelModelBinding(effectiveSelection.modelRef ?? "", "chat");
+  const resolvedChannelId = boundModel?.channel.id ?? effectiveSelection.channelId;
   const resolvedModelId = boundModel?.modelId ?? pickModelId(resolvedChannelId, input.modelId ?? threadMeta?.modelId);
   const resolvedChannel = resolvedChannelId
     ? listChannels().find((item) => item.id === resolvedChannelId)
@@ -329,7 +341,8 @@ export async function sendAgentMessage(
       baseUrl: resolvedChannel.baseUrl,
       modelId: boundModel?.modelId ?? input.modelId ?? threadMeta?.modelId ?? resolvedModelId
     }).modelRef
-    : (input.modelRef ?? threadMeta?.modelRef);
+    : effectiveSelection.modelRef;
+  const hasExplicitSendSelection = input.modelRef !== undefined || input.channelId !== undefined || input.modelId !== undefined;
 
   const shouldAppendUserMessage = options.appendUserMessage ?? true;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
@@ -402,11 +415,14 @@ export async function sendAgentMessage(
   const runtimeStatusManager = getAgentRuntimeStatusManager();
   sessionStateManager.getOrCreate(threadId);
 
-  updateAgentThreadMeta(threadId, {
-    modelRef: canonicalModelRef,
-    channelId: resolvedChannelId,
-    modelId: resolvedModelId
-  });
+  if (hasExplicitSendSelection) {
+    updateAgentThreadMeta(threadId, {
+      ...(canonicalModelRef !== undefined ? { modelRef: canonicalModelRef } : {}),
+      ...(resolvedChannelId !== undefined ? { channelId: resolvedChannelId } : {}),
+      ...(resolvedModelId !== undefined ? { modelId: resolvedModelId } : {}),
+      modelSelectionSource: "thread-override"
+    });
+  }
   runtimeStatusManager.markStreaming(threadId);
   let runtimeCompleted = false;
 

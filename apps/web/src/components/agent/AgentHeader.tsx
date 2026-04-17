@@ -1,7 +1,7 @@
 import { useAtom, useAtomValue } from 'jotai'
 import { FolderOpen, ListTodo } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, type SidePanelView } from '@/atoms'
+import { agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, agentSDKMessagesAtom, type SidePanelView } from '@/atoms'
 import { WorkspacePicker } from './WorkspacePicker'
 import type { AgentRuntimePhase } from '@lume/shared'
 
@@ -23,13 +23,13 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const thread = threads.find((t) => t.id === threadId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusAtom)[threadId]
+  const sdkMessages = useAtomValue(agentSDKMessagesAtom)[threadId] ?? []
   const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
   const currentView = sidePanelViews[threadId] ?? null
 
   const toggle = (view: SidePanelView) => {
     setSidePanelViews((prev) => {
       const next = { ...prev }
-      // 保留最近 50 个
       const keys = Object.keys(next)
       if (keys.length > 50) delete next[keys[0]]
       next[threadId] = next[threadId] === view ? null : view
@@ -39,6 +39,16 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
 
   const phase = runtimeStatus?.phase
   const phaseStyle = phase && phase !== 'idle' ? PHASE_STYLE[phase] : null
+
+  // 当前步骤数 = 已完成的 tool_use 块数量
+  const toolStepCount = sdkMessages.reduce((n, msg) => {
+    if (msg.type !== 'assistant') return n
+    const blocks = (msg.message?.content ?? []) as Array<{ type: string }>
+    return n + blocks.filter((b) => b.type === 'tool_use').length
+  }, 0)
+
+  const isStreaming = phase === 'streaming'
+  const toolName = runtimeStatus?.toolName
 
   return (
     <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 gap-3">
@@ -53,10 +63,11 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
               'flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-foreground/[0.04] text-[11px] font-medium flex-shrink-0',
               phaseStyle.text
             )}
-            title={runtimeStatus?.toolName ? `工具: ${runtimeStatus.toolName}` : undefined}
           >
             <span className={cn('size-1.5 rounded-full', phaseStyle.dot)} />
-            {phaseStyle.label}
+            {isStreaming && toolName
+              ? `第 ${toolStepCount} 步 · ${toolName}`
+              : phaseStyle.label}
             {runtimeStatus?.queuedCount ? ` · 队列 ${runtimeStatus.queuedCount}` : ''}
           </span>
         )}

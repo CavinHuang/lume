@@ -2,6 +2,12 @@ export type LumeConfigPermissionMode = "default" | "acceptEdits" | "bypassPermis
 
 export type LumeConfigThinkingLevel = "off" | "low" | "medium" | "high" | "max"
 
+export interface LumeConfigAgentDefaultStrategy {
+  defaultChannelId?: string
+  defaultModelRef?: string
+  fallbackModelRefs?: string[]
+}
+
 export interface LumeConfigAgentSection {
   permissionMode?: LumeConfigPermissionMode
   thinkingLevel?: LumeConfigThinkingLevel
@@ -16,9 +22,7 @@ export interface LumeConfigModelsSection {
   chat?: {
     defaultModelRef?: string
   }
-  agent?: {
-    defaultModelRef?: string
-  }
+  agent?: LumeConfigAgentDefaultStrategy
   embedding?: {
     defaultModelRef?: string
   }
@@ -64,6 +68,7 @@ export interface LumeConfigAuditEntry {
 
 export const LUME_CONFIG_IPC_CHANNELS = {
   GET_EFFECTIVE: "lume-config:get-effective",
+  UPDATE_SECTION: "lume-config:update-section",
   GET_SOURCE_PATH: "lume-config:get-source-path",
   OPEN_SOURCE_FILE: "lume-config:open-source-file",
   CHANGED: "lume-config:changed"

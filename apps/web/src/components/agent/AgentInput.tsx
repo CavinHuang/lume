@@ -225,7 +225,7 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
           <EditorContent editor={editor} />
         </div>
         <div className="flex items-center justify-between px-3 pb-2 gap-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 min-w-0 flex-wrap">
             <button
               onClick={handleAttach}
               className="p-1.5 rounded-lg text-foreground/40 hover:text-foreground/70 hover:bg-muted/50 transition-colors"

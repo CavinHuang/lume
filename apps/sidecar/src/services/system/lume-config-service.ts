@@ -47,6 +47,34 @@ function normalizeStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeUniqueStringArray(value: unknown): string[] {
+  const normalized: string[] = [];
+  for (const item of normalizeStringArray(value)) {
+    const trimmed = item.trim();
+    if (!trimmed || normalized.includes(trimmed)) {
+      continue;
+    }
+    normalized.push(trimmed);
+  }
+  return normalized;
+}
+
+function normalizeFallbackModelRefs(
+  value: unknown,
+  defaultModelRef?: string
+): string[] {
+  const blocked = defaultModelRef?.trim();
+  return normalizeUniqueStringArray(value).filter((item) => item !== blocked);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -61,6 +89,8 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     const chat = isPlainObject(value.models.chat) ? value.models.chat : {};
     const agent = isPlainObject(value.models.agent) ? value.models.agent : {};
     const embedding = isPlainObject(value.models.embedding) ? value.models.embedding : {};
+    const agentDefaultChannelId = normalizeOptionalString(agent.defaultChannelId);
+    const agentDefaultModelRef = normalizeOptionalString(agent.defaultModelRef);
     next.models = {
       chat: {
         ...(typeof chat.defaultModelRef === "string"
@@ -68,8 +98,14 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
           : {})
       },
       agent: {
-        ...(typeof agent.defaultModelRef === "string"
-          ? { defaultModelRef: agent.defaultModelRef }
+        ...(agentDefaultChannelId
+          ? { defaultChannelId: agentDefaultChannelId }
+          : {}),
+        ...(agentDefaultModelRef
+          ? { defaultModelRef: agentDefaultModelRef }
+          : {}),
+        ...(Array.isArray(agent.fallbackModelRefs)
+          ? { fallbackModelRefs: normalizeFallbackModelRefs(agent.fallbackModelRefs, agentDefaultModelRef) }
           : {})
       },
       embedding: {
@@ -158,7 +194,10 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
       },
       agent: {
         ...(fallback.models?.agent ?? {}),
-        ...(base.models?.agent ?? {})
+        ...(base.models?.agent ?? {}),
+        ...(base.models?.agent?.fallbackModelRefs !== undefined
+          ? { fallbackModelRefs: base.models?.agent?.fallbackModelRefs }
+          : {})
       },
       embedding: {
         ...(fallback.models?.embedding ?? {}),
@@ -293,7 +332,12 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       },
       agent: {
         ...(file.models?.agent ?? {}),
-        ...(overlay?.models?.agent ?? {})
+        ...(overlay?.models?.agent ?? {}),
+        ...(overlay?.models?.agent?.fallbackModelRefs !== undefined
+          ? { fallbackModelRefs: overlay?.models?.agent?.fallbackModelRefs }
+          : file.models?.agent?.fallbackModelRefs !== undefined
+            ? { fallbackModelRefs: file.models?.agent?.fallbackModelRefs }
+            : {})
       },
       embedding: {
         ...(file.models?.embedding ?? {}),

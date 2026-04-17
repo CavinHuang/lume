@@ -1,8 +1,17 @@
-import type { Channel, ProviderType } from "@lume/shared";
+import type { Channel, LumeConfigAgentDefaultStrategy, ProviderType } from "@lume/shared";
 
 export interface ModelRef {
   provider: string;
   model: string;
+}
+
+export type AgentDefaultStrategySource = "thread-override" | "global-default" | "empty";
+
+export interface ResolvedAgentDefaultStrategy {
+  source: AgentDefaultStrategySource;
+  channelId?: string;
+  modelRef?: string;
+  fallbackModelRefs: string[];
 }
 
 const PROVIDER_ALIAS: Record<string, string> = {
@@ -117,6 +126,62 @@ export function resolveChannelModelSelection(input: {
 
 function normalizeLookupKey(value?: string): string {
   return (value ?? "").trim().toLowerCase();
+}
+
+function normalizeOptionalValue(value?: string): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeFallbackModelRefs(values?: string[]): string[] {
+  const normalized: string[] = [];
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (!trimmed || normalized.includes(trimmed)) {
+      continue;
+    }
+    normalized.push(trimmed);
+  }
+  return normalized;
+}
+
+export function resolveAgentDefaultStrategy(input: {
+  thread?: {
+    channelId?: string;
+    modelRef?: string;
+  };
+  globalDefault?: LumeConfigAgentDefaultStrategy;
+}): ResolvedAgentDefaultStrategy {
+  const threadChannelId = normalizeOptionalValue(input.thread?.channelId);
+  const threadModelRef = normalizeOptionalValue(input.thread?.modelRef);
+  const globalChannelId = normalizeOptionalValue(input.globalDefault?.defaultChannelId);
+  const globalModelRef = normalizeOptionalValue(input.globalDefault?.defaultModelRef);
+  const fallbackModelRefs = normalizeFallbackModelRefs(input.globalDefault?.fallbackModelRefs);
+
+  if (threadChannelId || threadModelRef) {
+    return {
+      source: "thread-override",
+      channelId: threadChannelId ?? globalChannelId,
+      modelRef: threadModelRef ?? globalModelRef,
+      fallbackModelRefs
+    };
+  }
+
+  if (globalChannelId || globalModelRef || fallbackModelRefs.length > 0) {
+    return {
+      source: "global-default",
+      channelId: globalChannelId,
+      modelRef: globalModelRef,
+      fallbackModelRefs
+    };
+  }
+
+  return {
+    source: "empty",
+    channelId: undefined,
+    modelRef: undefined,
+    fallbackModelRefs: []
+  };
 }
 
 export function resolveChannelDefaultModelId(channel: Pick<Channel, "models">): string | null {
