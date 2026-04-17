@@ -1,44 +1,55 @@
 /**
- * Maps ProviderType to @lobehub/icons provider names.
- * Falls back to a generic Cpu icon for unknown providers.
+ * Maps ProviderType to @lobehub/icons brand components.
+ * Uses direct imports for reliability instead of dynamic ProviderIcon.
  */
 import { Cpu } from 'lucide-react'
-import { ProviderIcon } from '@lobehub/icons'
+import {
+  Anthropic,
+  DeepSeek,
+  Doubao,
+  Google,
+  Minimax,
+  Moonshot,
+  OpenAI,
+  OpenRouter,
+  Qwen,
+  ZAI,
+  Zhipu,
+} from '@lobehub/icons'
 import type { ProviderType } from '@lume/shared'
+import type { FC, SVGProps } from 'react'
 
-const PROVIDER_ICON_MAP: Partial<Record<ProviderType, string>> = {
-  anthropic: 'anthropic',
-  'anthropic-compatible': 'anthropic',
-  openai: 'openai',
-  google: 'google',
-  deepseek: 'deepseek',
-  openrouter: 'openrouter',
-  minimax: 'minimax',
-  'minimax-cn': 'minimax',
-  moonshot: 'moonshot',
-  zhipu: 'zhipu',
-  zai: 'zhipu',
-  qwen: 'qwen',
-  'qwen-portal': 'qwen',
-  doubao: 'doubao',
+type BrandIcon = FC<SVGProps<SVGSVGElement> & { size?: number; className?: string }>
+
+const PROVIDER_ICON_MAP: Partial<Record<ProviderType, BrandIcon>> = {
+  anthropic: Anthropic as BrandIcon,
+  'anthropic-compatible': Anthropic as BrandIcon,
+  openai: OpenAI as BrandIcon,
+  google: Google as BrandIcon,
+  deepseek: DeepSeek as BrandIcon,
+  openrouter: OpenRouter as BrandIcon,
+  minimax: Minimax as BrandIcon,
+  'minimax-cn': Minimax as BrandIcon,
+  moonshot: Moonshot as BrandIcon,
+  zhipu: Zhipu as BrandIcon,
+  zai: ZAI as BrandIcon,
+  qwen: Qwen as BrandIcon,
+  'qwen-portal': Qwen as BrandIcon,
+  doubao: Doubao as BrandIcon,
 }
 
 interface ChannelProviderIconProps {
-  provider: ProviderType
+  provider: ProviderType | string
   size?: number
   className?: string
 }
 
 export function ChannelProviderIcon({ provider, size = 14, className }: ChannelProviderIconProps) {
-  const iconProvider = PROVIDER_ICON_MAP[provider]
+  const IconComponent = PROVIDER_ICON_MAP[provider as ProviderType]
 
-  if (iconProvider) {
-    return <ProviderIcon provider={iconProvider} size={size} type="avatar" shape="square" className={className} />
+  if (IconComponent) {
+    return <IconComponent size={size} className={className} />
   }
 
   return <Cpu size={size} className={className} />
-}
-
-export function getProviderIconName(provider: ProviderType): string | null {
-  return PROVIDER_ICON_MAP[provider] ?? null
 }

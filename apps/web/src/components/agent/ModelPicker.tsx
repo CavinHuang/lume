@@ -92,6 +92,10 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     }
   }, [open])
 
+  const activeChannel = thread?.channelId
+    ? channels.find(c => c.id === thread.channelId)
+    : undefined
+
   const groups = useMemo(() => buildModelSelectionGroups({
     channels,
     activeChannelId: thread?.channelId,
@@ -150,21 +154,16 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
 
   return (
     <div className="relative flex items-center gap-1.5">
-      {/* Trigger button with provider icon */}
+      {/* Trigger button */}
       <button
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] text-foreground/60 hover:bg-muted/50 hover:text-foreground/80 transition-colors"
         title={summary.isUnavailable ? '当前线程模型不可用，点击重新选择' : '切换模型'}
       >
-        {thread?.channelId && (
-          <ChannelProviderIcon
-            provider={channels.find(c => c.id === thread.channelId)?.provider ?? 'custom'}
-            size={11}
-          />
+        {activeChannel && (
+          <ChannelProviderIcon provider={activeChannel.provider} size={11} />
         )}
-        <span className="truncate max-w-[160px]">
-          {summary.label}
-        </span>
+        <span className="truncate max-w-[160px]">{summary.label}</span>
         <ChevronDown size={10} className="text-foreground/40" />
       </button>
 
@@ -185,7 +184,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
           ref={menuRef}
           className="absolute bottom-full mb-1 left-0 z-50 min-w-[260px] max-h-[360px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg"
         >
-          {/* Search input */}
+          {/* Search */}
           <div className="p-1.5 border-b border-border/40">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50">
               <Search size={13} className="text-muted-foreground/50 shrink-0" />
@@ -200,7 +199,6 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
             </div>
           </div>
 
-          {/* Filtered model list or empty state */}
           {filteredGroups.length > 0 ? (
             <ModelOptionList groups={filteredGroups} onSelect={handleSelect} />
           ) : (
@@ -209,7 +207,6 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
             </div>
           )}
 
-          {/* Footer: restore default */}
           {canRestoreDefault && (
             <div className="border-t border-border/50 p-1">
               <button
