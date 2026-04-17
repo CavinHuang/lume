@@ -201,10 +201,40 @@ const MODEL_META_REGISTRY: ModelMeta[] = [
     capabilities: { vision: true, toolUse: true, reasoning: false },
   },
   {
+    id: 'glm-4.5',
+    displayName: 'GLM-4.5',
+    contextWindow: 128_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+  {
+    id: 'glm-4.6',
+    displayName: 'GLM-4.6',
+    contextWindow: 200_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+  {
+    id: 'glm-4.7',
+    displayName: 'GLM-4.7',
+    contextWindow: 200_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+  {
+    id: 'glm-5',
+    displayName: 'GLM-5',
+    contextWindow: 200_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+  {
     id: 'glm-5-turbo',
     displayName: 'GLM-5 Turbo',
-    contextWindow: 128_000,
-    capabilities: { vision: false, toolUse: true, reasoning: false },
+    contextWindow: 200_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+  },
+  {
+    id: 'glm-5.1',
+    displayName: 'GLM-5.1',
+    contextWindow: 200_000,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
   },
   {
     id: 'glm-z1-air',
