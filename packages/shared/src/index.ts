@@ -5,6 +5,7 @@
 export * from "./types";
 export * from "./agent";
 export * from "./tool-names";
+export * from "./data/model-meta";
 
 // Bootstrap-level compatibility types used by MIG-001 scaffold.
 export type AppMode = "chat" | "agent";
