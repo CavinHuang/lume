@@ -1,132 +1,228 @@
 /**
- * ModelPicker - 模型/渠道选择器
+ * ModelPicker - 线程模型覆盖选择器
  *
- * 在 AgentInput 底部显示当前线程使用的模型，点击弹出下拉菜单切换。
- * 调用 agent:update-thread-model-selection 保存到后端。
+ * 展示当前线程的有效模型，并允许对当前线程设置或清除覆盖。
+ * 支持搜索过滤。
  */
 
-import { useState, useEffect, useRef } from 'react'
-import { Cpu, ChevronDown, Check } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, Search } from 'lucide-react'
 import { useAtom } from 'jotai'
 import { agentThreadsAtom } from '@/atoms'
-import { listChannels } from '@/lib/desktop-api/channel'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { Channel, ChannelModel } from '@lume/shared'
-
-interface ModelOption {
-  channelId: string
-  channelName: string
-  model: ChannelModel
-}
+import { listChannels } from '@/lib/desktop-api/channel'
+import { cn } from '@/lib/utils'
+import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
+import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
+import {
+  buildModelSelectionGroups,
+  getThreadSelectionSummary,
+} from '@/components/model-selection/model-selection-state'
+import type { ModelOptionGroup, ModelSelectionOption } from '@/components/model-selection/model-selection-state'
+import type { AgentThreadMeta, Channel } from '@lume/shared'
 
 interface ModelPickerProps {
   threadId: string
 }
 
+function mergeUpdatedThread(
+  threads: AgentThreadMeta[],
+  updatedThread: AgentThreadMeta
+): AgentThreadMeta[] {
+  return threads.map((thread) => (
+    thread.id === updatedThread.id
+      ? { ...thread, ...updatedThread }
+      : thread
+  ))
+}
+
+function filterGroups(
+  groups: ModelOptionGroup[],
+  searchTerm: string
+): ModelOptionGroup[] {
+  if (!searchTerm.trim()) return groups
+
+  const lower = searchTerm.toLowerCase()
+  return groups
+    .map((group) => ({
+      ...group,
+      options: group.options.filter(
+        (opt: ModelSelectionOption) =>
+          opt.label.toLowerCase().includes(lower) ||
+          opt.modelId.toLowerCase().includes(lower)
+      ),
+    }))
+    .filter((group) => group.options.length > 0)
+}
+
 export function ModelPicker({ threadId }: ModelPickerProps) {
   const [threads, setThreads] = useAtom(agentThreadsAtom)
-  const thread = threads.find((t) => t.id === threadId)
+  const thread = threads.find((item) => item.id === threadId)
   const [channels, setChannels] = useState<Channel[]>([])
+  const [channelsLoaded, setChannelsLoaded] = useState(false)
   const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     listChannels()
-      .then((items) => setChannels(items.filter((c) => c.enabled)))
+      .then((items) => setChannels(items))
       .catch(console.error)
+      .finally(() => setChannelsLoaded(true))
   }, [])
 
   useEffect(() => {
     if (!open) return
-    const handle = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false)
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
     }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [open])
 
-  const options: ModelOption[] = channels.flatMap((c) =>
-    c.models.filter((m) => m.enabled).map((model) => ({
-      channelId: c.id,
-      channelName: c.name,
-      model,
-    }))
-  )
+  useEffect(() => {
+    if (open) {
+      setSearch('')
+      requestAnimationFrame(() => searchInputRef.current?.focus())
+    }
+  }, [open])
 
-  const current = options.find(
-    (o) => o.channelId === thread?.channelId && o.model.id === thread?.modelRef
-  ) ?? options[0]
+  const groups = useMemo(() => buildModelSelectionGroups({
+    channels,
+    activeChannelId: thread?.channelId,
+    activeModelRef: thread?.modelRef,
+  }), [channels, thread?.channelId, thread?.modelRef])
 
-  const handleSelect = async (opt: ModelOption) => {
+  const filteredGroups = useMemo(() => filterGroups(groups, search), [groups, search])
+
+  const summary = useMemo(() => getThreadSelectionSummary({
+    channels,
+    channelsLoaded,
+    thread,
+  }), [channels, channelsLoaded, thread])
+
+  const canRestoreDefault = thread?.modelSelectionSource === 'thread-override'
+
+  const handleSelect = async (input: {
+    channelId: string
+    modelRef: string
+    modelId: string
+  }) => {
     setOpen(false)
+
     try {
-      await sidecarCall('agent:update-thread-model-selection', {
+      const updatedThread = await sidecarCall<AgentThreadMeta>('agent:update-thread-model-selection', {
         threadId,
-        channelId: opt.channelId,
-        modelRef: opt.model.id,
+        channelId: input.channelId,
+        modelRef: input.modelRef,
+        modelId: input.modelId,
       })
-      setThreads((prev) =>
-        prev.map((t) =>
-          t.id === threadId
-            ? { ...t, channelId: opt.channelId, modelRef: opt.model.id }
-            : t
-        )
-      )
-    } catch (err) {
-      console.error('[ModelPicker] 切换模型失败:', err)
+      setThreads((prev) => mergeUpdatedThread(prev, updatedThread))
+    } catch (error) {
+      console.error('[ModelPicker] 切换模型失败:', error)
     }
   }
 
-  if (options.length === 0) return null
+  const handleRestoreDefault = async () => {
+    setOpen(false)
+
+    try {
+      const updatedThread = await sidecarCall<AgentThreadMeta>('agent:update-thread-model-selection', {
+        threadId,
+        channelId: null,
+        modelRef: null,
+        modelId: null,
+      })
+      setThreads((prev) => mergeUpdatedThread(prev, updatedThread))
+    } catch (error) {
+      console.error('[ModelPicker] 恢复默认策略失败:', error)
+    }
+  }
+
+  if (groups.length === 0 && !summary.label) {
+    return null
+  }
 
   return (
-    <div className="relative">
+    <div className="relative flex items-center gap-1.5">
+      {/* Trigger button with provider icon */}
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((value) => !value)}
         className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] text-foreground/60 hover:bg-muted/50 hover:text-foreground/80 transition-colors"
-        title="切换模型"
+        title={summary.isUnavailable ? '当前线程模型不可用，点击重新选择' : '切换模型'}
       >
-        <Cpu size={11} />
+        {thread?.channelId && (
+          <ChannelProviderIcon
+            provider={channels.find(c => c.id === thread.channelId)?.provider ?? 'custom'}
+            size={11}
+          />
+        )}
         <span className="truncate max-w-[160px]">
-          {current ? `${current.model.name}` : '选择模型'}
+          {summary.label}
         </span>
         <ChevronDown size={10} className="text-foreground/40" />
       </button>
+
+      {canRestoreDefault && (
+        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+          已覆盖默认
+        </span>
+      )}
+      {summary.hasLoadedChannels && summary.isUnavailable && (
+        <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-400">
+          当前模型不可用
+        </span>
+      )}
+
+      {/* Dropdown */}
       {open && (
         <div
           ref={menuRef}
-          className="absolute bottom-full mb-1 left-0 z-50 min-w-[220px] max-h-[320px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg py-1"
+          className="absolute bottom-full mb-1 left-0 z-50 min-w-[260px] max-h-[360px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg"
         >
-          {channels.map((c) => {
-            const enabledModels = c.models.filter((m) => m.enabled)
-            if (enabledModels.length === 0) return null
-            return (
-              <div key={c.id} className="py-0.5">
-                <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-medium text-foreground/40 uppercase tracking-wider">
-                  {c.name}
-                </div>
-                {enabledModels.map((model) => {
-                  const isActive = current?.channelId === c.id && current.model.id === model.id
-                  return (
-                    <button
-                      key={`${c.id}-${model.id}`}
-                      onClick={() => handleSelect({ channelId: c.id, channelName: c.name, model })}
-                      className={cn(
-                        'w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left transition-colors',
-                        isActive
-                          ? 'bg-accent text-accent-foreground'
-                          : 'text-foreground/70 hover:bg-muted/50'
-                      )}
-                    >
-                      <span className="flex-1 truncate">{model.name}</span>
-                      {isActive && <Check size={12} className="text-primary" />}
-                    </button>
-                  )
-                })}
-              </div>
-            )
-          })}
+          {/* Search input */}
+          <div className="p-1.5 border-b border-border/40">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50">
+              <Search size={13} className="text-muted-foreground/50 shrink-0" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索模型..."
+                className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Filtered model list or empty state */}
+          {filteredGroups.length > 0 ? (
+            <ModelOptionList groups={filteredGroups} onSelect={handleSelect} />
+          ) : (
+            <div className="py-6 text-center text-xs text-muted-foreground/50">
+              没有匹配的模型
+            </div>
+          )}
+
+          {/* Footer: restore default */}
+          {canRestoreDefault && (
+            <div className="border-t border-border/50 p-1">
+              <button
+                onClick={handleRestoreDefault}
+                className={cn(
+                  'w-full rounded-md px-3 py-1.5 text-left text-[12px] transition-colors',
+                  'text-foreground/70 hover:bg-muted/50 hover:text-foreground'
+                )}
+              >
+                恢复默认策略
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
