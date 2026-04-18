@@ -1,13 +1,13 @@
-import { useRef, useEffect, useMemo, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useLayoutEffect } from 'react'
 import type { SDKMessage } from '@lume/shared'
 import { SDKContentBlock } from './SDKContentBlock'
-import { SubagentCard } from './SubagentCard'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useSetAtom } from 'jotai'
 import { agentSubagentRunsAtom, agentSDKMessagesAtom } from '@/atoms'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { useScrollPositionMemory } from '@/hooks/useScrollPositionMemory'
 import { getThreadSDKMessages } from '@/lib/desktop-api'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { SubagentRunRecord, AgentListSubagentRunsResult } from '@lume/shared'
+import type { AgentListSubagentRunsResult } from '@lume/shared'
 
 interface AgentMessagesProps {
   threadId: string
@@ -15,36 +15,25 @@ interface AgentMessagesProps {
   streaming: boolean
 }
 
-function buildSubagentToolMap(runs: SubagentRunRecord[]): Map<string, SubagentRunRecord[]> {
-  const map = new Map<string, SubagentRunRecord[]>()
-  for (const run of runs) {
-    if (run.parentToolUseId) {
-      const list = map.get(run.parentToolUseId) ?? []
-      list.push(run)
-      map.set(run.parentToolUseId, list)
-    }
-  }
-  return map
-}
-
-function getOrphanRuns(runs: SubagentRunRecord[], toolMap: Map<string, SubagentRunRecord[]>): SubagentRunRecord[] {
-  const mapped = new Set<string>()
-  for (const list of toolMap.values()) {
-    for (const r of list) mapped.add(r.runId)
-  }
-  return runs.filter((r) => !mapped.has(r.runId))
+function isNearBottom(el: HTMLElement | null): boolean {
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 100
 }
 
 export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessagesProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const subagentRuns = useAtomValue(agentSubagentRunsAtom)[threadId] ?? []
   const prevThreadIdRef = useRef(threadId)
   const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
+  const wasNearBottomRef = useRef(true)
 
   const { save, restore } = useScrollPositionMemory()
+  const getScrollElement = useCallback(() => {
+    const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
+    return viewport instanceof HTMLDivElement ? viewport : null
+  }, [])
 
   // 首次访问线程时拉取历史 SDK 消息 + subagent runs
   useEffect(() => {
@@ -73,31 +62,42 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
       .catch((err) => console.error('[AgentMessages] 加载 subagent runs 失败:', err))
   }, [threadId, sdkMessages.length, setSDKMessages, setSubagentRuns])
 
-  const subagentToolMap = useMemo(() => buildSubagentToolMap(subagentRuns), [subagentRuns])
-  const orphanRuns = useMemo(() => getOrphanRuns(subagentRuns, subagentToolMap), [subagentRuns, subagentToolMap])
+  useEffect(() => {
+    const scrollElement = getScrollElement()
+    if (!scrollElement) return
+
+    const updateNearBottom = () => {
+      wasNearBottomRef.current = isNearBottom(scrollElement)
+    }
+
+    updateNearBottom()
+    scrollElement.addEventListener('scroll', updateNearBottom, { passive: true })
+    return () => {
+      scrollElement.removeEventListener('scroll', updateNearBottom)
+    }
+  }, [getScrollElement, sdkMessages.length, threadId])
 
   // 切换 thread 时保存/恢复滚动位置
   useEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
-      save(prevThreadIdRef.current, containerRef.current)
+      save(prevThreadIdRef.current, getScrollElement())
       prevThreadIdRef.current = threadId
       // 延迟恢复，等渲染完成
-      requestAnimationFrame(() => restore(threadId, containerRef.current))
+      requestAnimationFrame(() => {
+        const scrollElement = getScrollElement()
+        restore(threadId, scrollElement)
+        wasNearBottomRef.current = isNearBottom(scrollElement)
+      })
     }
-  }, [threadId, save, restore])
+  }, [getScrollElement, restore, save, threadId])
 
-  // 流式输出时自动滚动到底部
-  const isNearBottom = useCallback(() => {
-    const el = containerRef.current
-    if (!el) return true
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 100
-  }, [])
-
-  useEffect(() => {
-    if (streaming && isNearBottom()) {
+  // 流式输出时根据更新前的滚动状态决定是否继续跟随到底部
+  useLayoutEffect(() => {
+    if (streaming && wasNearBottomRef.current) {
+      wasNearBottomRef.current = true
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [sdkMessages.length, subagentRuns.length, streaming, isNearBottom])
+  }, [sdkMessages.length, streaming])
 
   if (sdkMessages.length === 0) {
     return (
@@ -121,31 +121,17 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         animate={streaming && i === sdkMessages.length - 1}
         allMessages={sdkMessages}
         isStreaming={streaming}
+        threadId={threadId}
       />
     )
-
-    if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
-      for (const block of msg.message.content as Array<{ type: string; id?: string }>) {
-        if (block.type === 'tool_use' && block.id) {
-          const runs = subagentToolMap.get(block.id)
-          if (runs) {
-            for (const run of runs) {
-              items.push(<SubagentCard key={`sa-${run.runId}`} run={run} />)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  for (const run of orphanRuns) {
-    items.push(<SubagentCard key={`sa-${run.runId}`} run={run} />)
   }
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-2 scrollbar-none">
-      {items}
-      <div ref={bottomRef} />
-    </div>
+    <ScrollArea className="flex-1 min-h-0">
+      <div ref={containerRef} className="space-y-2 px-4 py-4">
+        {items}
+        <div ref={bottomRef} />
+      </div>
+    </ScrollArea>
   )
 }
