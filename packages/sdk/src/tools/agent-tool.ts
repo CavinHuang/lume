@@ -331,8 +331,9 @@ export const AgentTool: ToolDefinition = {
         taskId: task.id,
         description: task.subject,
       })
-        .then((output) => {
+        .then(async (output) => {
           updateTaskRecord(task.id, { status: 'completed', output })
+          await context.onSubagentEnd?.({ runId: agentId, status: 'completed', output })
           context.emitEvent?.({
             type: 'system',
             subtype: 'task_progress',
@@ -358,11 +359,12 @@ export const AgentTool: ToolDefinition = {
             subagent_run_id: agentId,
           })
         })
-        .catch((err: any) => {
+        .catch(async (err: any) => {
           updateTaskRecord(task.id, {
             status: 'failed',
             output: `Subagent error: ${err.message}`,
           })
+          await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
           context.emitEvent?.({
             type: 'system',
             subtype: 'task_progress',
