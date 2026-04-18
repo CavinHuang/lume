@@ -290,6 +290,10 @@ const lumeConfigAgentStrategySchema = z.object({
   fallbackModelRefs: z.array(nonEmptyTrimmedStringSchema).optional()
 }).strict();
 
+const lumeConfigSubagentStrategySchema = z.object({
+  defaultModelRef: nonEmptyTrimmedStringSchema.optional()
+}).strict();
+
 const lumeConfigUpdateBaseSchema = z.object({
   source: z.enum(["user", "agent", "system"]),
   workspaceSlug: optionalIdSchema,
@@ -302,6 +306,10 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: lumeConfigAgentStrategySchema
   }),
   lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.subagent"),
+    value: lumeConfigSubagentStrategySchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.agent.defaultChannelId"),
     value: nonEmptyTrimmedStringSchema
   }),
@@ -312,6 +320,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.agent.fallbackModelRefs"),
     value: z.array(nonEmptyTrimmedStringSchema)
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.subagent.defaultModelRef"),
+    value: nonEmptyTrimmedStringSchema
   })
 ]);
 

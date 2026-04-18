@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
-import { buildSidecarSubagentRunContext, createRuntimeCoreSession } from "./run";
+import { buildSidecarSubagentRunContext, createRuntimeCoreSession, resolveSubagentModelOverride } from "./run";
 import { runRuntimeCoreAttempt } from "./attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
+import { updateLumeConfigSection } from "../../system/lume-config-service";
 
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
@@ -221,6 +222,74 @@ describe("runtime-core run", () => {
     expect(result.session.model?.id).toBe("custom-runtime-model");
     expect(result.session.model?.baseUrl).toBe("https://example.invalid/v1");
     result.session.dispose();
+  });
+
+  test("resolveSubagentModelOverride 应优先显式 model，其次使用子 Agent 默认模型，否则继承父对话模型", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-subagent-model-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const anthropicChannel = createChannel({
+      name: "anthropic-main",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "anthropic-key",
+      enabled: true,
+      defaultModelId: "claude-sonnet-4-5",
+      models: [
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", enabled: true, capabilities: { chat: true } },
+      ]
+    });
+    const openaiChannel = createChannel({
+      name: "openai-subagent",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "openai-key",
+      enabled: true,
+      defaultModelId: "gpt-5.4-mini",
+      models: [
+        { id: "gpt-5.4-mini", name: "GPT-5.4 mini", enabled: true, capabilities: { chat: true } },
+      ]
+    });
+
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.subagent",
+      value: { defaultModelRef: "openai/gpt-5.4-mini" }
+    });
+
+    const explicit = resolveSubagentModelOverride({
+      toolInput: { model: "anthropic/claude-sonnet-4-5" },
+      workspaceSlug: undefined,
+    });
+    expect(explicit.source).toBe("input");
+    expect(explicit.resolvedModelId).toBe("claude-sonnet-4-5");
+    expect(explicit.apiType).toBe("anthropic-messages");
+
+    const configured = resolveSubagentModelOverride({
+      toolInput: {},
+      workspaceSlug: undefined,
+    });
+    expect(configured.source).toBe("config");
+    expect(configured.resolvedModelId).toBe("gpt-5.4-mini");
+    expect(configured.apiType).toBe("openai-completions");
+
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.subagent",
+      value: {}
+    });
+
+    const inherited = resolveSubagentModelOverride({
+      toolInput: {},
+      workspaceSlug: undefined,
+    });
+    expect(inherited.source).toBe("inherit");
+    expect(inherited.resolvedModelId).toBeUndefined();
+    expect(inherited.apiType).toBeUndefined();
+
+    void anthropicChannel;
+    void openaiChannel;
+    rmSync(configDir, { recursive: true, force: true });
   });
 
   test("应将 Lume prompt builder 的系统提示和动态上下文注入 runtime session", async () => {

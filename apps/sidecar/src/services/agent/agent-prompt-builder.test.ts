@@ -77,11 +77,21 @@ describe("agent-prompt-builder", () => {
     const agents = buildBuiltinAgents();
 
     expect(Object.keys(agents)).toEqual(["explorer", "researcher", "code-reviewer"]);
-    expect(agents.explorer?.model).toBe("haiku");
+    expect(agents.explorer?.model).toBe("inherit");
     expect(agents.researcher?.tools).toContain("WebSearch");
     expect(agents.researcher?.tools).toContain("WebFetch");
     expect(agents["code-reviewer"]?.tools).toContain("Read");
     expect(agents["code-reviewer"]?.tools).toContain("Bash");
+  });
+
+  test("buildSystemPromptAppend 应说明子 Agent 默认模型可继承当前对话模型", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-subagent-model",
+      availableTools: ["task", "read"]
+    });
+
+    expect(prompt).toContain("未显式指定时遵循设置中的子 Agent 默认模型，未设置则继承当前对话模型");
+    expect(prompt).not.toContain("指定 model: \"haiku\" 降低成本");
   });
 
   test("buildSystemPromptAppend 应注入 skills-first capability routing", () => {

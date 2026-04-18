@@ -3,6 +3,7 @@ import {
   AgentTool,
   BashTool,
   createAgent,
+  createProvider,
   EnterPlanModeTool,
   ExitPlanModeTool,
   FileEditTool,
@@ -16,6 +17,7 @@ import {
   type SDKMessage,
   type Agent,
   type AgentOptions,
+  type ApiType,
   type McpServerConfig,
   SkillTool,
   TodoWriteTool,
@@ -46,6 +48,8 @@ import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
 import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
+import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
+import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createLumePiTools } from "../tools/create-lume-tools";
 import { applyPiToolPolicies } from "../tools/permissions/tool-policy";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
@@ -115,6 +119,59 @@ export interface CreateRuntimeCoreSessionResult {
 interface RuntimeCoreToolset {
   tools: ToolDefinition[];
   availableToolNames: string[];
+}
+
+interface ResolvedSubagentModelOverride {
+  source: "input" | "config" | "inherit";
+  resolvedModelId?: string;
+  apiType?: ApiType;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+function normalizeSubagentModelValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "inherit") {
+    return undefined;
+  }
+  return trimmed;
+}
+
+export function resolveSubagentModelOverride(input: {
+  toolInput: Record<string, unknown>;
+  workspaceSlug?: string;
+}): ResolvedSubagentModelOverride {
+  const requestedModel = normalizeSubagentModelValue(input.toolInput.model);
+  const configuredModel = normalizeSubagentModelValue(
+    getEffectiveLumeConfig(input.workspaceSlug).models?.subagent?.defaultModelRef
+  );
+
+  const candidate = requestedModel ?? configuredModel;
+  const source: ResolvedSubagentModelOverride["source"] = requestedModel
+    ? "input"
+    : configuredModel
+      ? "config"
+      : "inherit";
+
+  if (!candidate) {
+    return { source: "inherit" };
+  }
+
+  const binding = resolveChannelModelBinding(candidate, "chat");
+  if (!binding) {
+    return { source };
+  }
+
+  return {
+    source,
+    resolvedModelId: binding.modelId,
+    apiType: binding.family === "anthropic" ? "anthropic-messages" : "openai-completions",
+    baseUrl: binding.channel.baseUrl,
+    apiKey: decryptApiKey(binding.channel.id)
+  };
 }
 
 export function buildSidecarSubagentRunContext(input: {
@@ -316,17 +373,44 @@ function buildRuntimeCoreTools(input: {
         toolInput,
         policy
       });
+      const modelOverride = resolveSubagentModelOverride({
+        toolInput,
+        workspaceSlug: input.workspaceSlug
+      });
       getSubagentRunRegistry().create(subagentRun.registryInput);
       const enrichedContext = {
         ...context,
+        ...(modelOverride.apiType && modelOverride.apiKey
+          ? {
+              provider: createProvider(modelOverride.apiType, {
+                apiKey: modelOverride.apiKey,
+                ...(modelOverride.baseUrl ? { baseURL: modelOverride.baseUrl } : {})
+              }),
+              apiType: modelOverride.apiType,
+              model: modelOverride.resolvedModelId ?? context.model
+            }
+          : {}),
+        // 实时转发 subagent 事件，绕过引擎的局部 events 缓冲
+        emitEvent: input.emitSdkMessage
+          ? (event: SDKMessage) => { input.emitSdkMessage!(event); }
+          : context.emitEvent,
         onSubagentEnd: async ({ status, output, error }: { status: "completed" | "errored" | "aborted"; output?: string; error?: string }) => {
           getSubagentRunRegistry().update(subagentRun.runId, { status, outcome: { output, error } });
           const run = getSubagentRunRegistry().get(subagentRun.runId);
           if (run) await announceSubagentCompletion({ run });
         }
       };
+      // Sidecar 强制前台执行：覆盖 run_in_background / isolation，
+      // 确保主 agent 等待 subagent 实际完成并返回真正结果，
+      // 而不是拿到 "Background subagent started" 占位文本后继续。
+      const forcedForegroundInput = {
+        ...subagentRun.forwardedToolInput,
+        run_in_background: false as const,
+        isolation: undefined,
+        ...(modelOverride.resolvedModelId ? { model: modelOverride.resolvedModelId } : {})
+      };
       try {
-        return await AgentTool.call(subagentRun.forwardedToolInput, enrichedContext);
+        return await AgentTool.call(forcedForegroundInput, enrichedContext);
       } catch (err: any) {
         getSubagentRunRegistry().update(subagentRun.runId, { status: "errored", outcome: { error: err.message } });
         throw err;

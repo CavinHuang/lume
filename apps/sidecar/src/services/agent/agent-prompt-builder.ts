@@ -45,7 +45,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 
 输出应尽量结构化，方便主线程直接整合。`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      model: "haiku"
+      model: "inherit"
     },
     researcher: {
       description: "技术调研子代理。用于方案对比、依赖评估和架构分析，输出结构化结论与风险提示。",
@@ -60,7 +60,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 
 保持客观，不要空泛表态。`,
       tools: ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"],
-      model: "haiku"
+      model: "inherit"
     },
     "code-reviewer": {
       description: "代码审查子代理。用于在变更完成后复核逻辑、边界、命名与规范一致性。",
@@ -79,7 +79,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 
 保持客观、具体，不要泛泛而谈。`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      model: "haiku"
+      model: "inherit"
     }
   };
 }
@@ -184,15 +184,15 @@ const SUBAGENT_DELEGATION_SECTION = `## SubAgent 委派策略
 
 **核心原则：先探索再行动，用 SubAgent 保持主上下文干净。**
 
-Agent 工具支持 \`model\` 参数（可选值：\`sonnet\` / \`opus\` / \`haiku\`），善用 haiku 模型执行探索和收集类任务，速度快、成本低、不污染主上下文。
+Agent 工具支持显式 \`model\` 参数。未显式指定时遵循设置中的子 Agent 默认模型，未设置则继承当前对话模型。
 
 ### 推荐的 SubAgent 角色
 
 系统已预定义以下内置子代理，可直接通过 Agent 工具按名称调用：
 
-- **explorer**（haiku）：代码库探索。快速搜索文件、理解项目结构、收集相关上下文。动手修改前优先调用
-- **researcher**（haiku）：技术调研。方案对比、依赖评估、架构分析，输出结构化调研报告
-- **code-reviewer**（haiku）：代码审查。任务完成后调用，检查代码质量和规范一致性
+- **explorer**：代码库探索。快速搜索文件、理解项目结构、收集相关上下文。动手修改前优先调用
+- **researcher**：技术调研。方案对比、依赖评估、架构分析，输出结构化调研报告
+- **code-reviewer**：代码审查。任务完成后调用，检查代码质量和规范一致性
 
 ### 何时委派 SubAgent
 
@@ -200,7 +200,7 @@ Agent 工具支持 \`model\` 参数（可选值：\`sonnet\` / \`opus\` / \`haik
 - 需要调研技术方案、对比多个选项时 → 委派 researcher 角色
 - 代码修改完成后做质量检查 → 委派 code-reviewer 角色
 - 需要并行处理多个独立子任务时 → 同时委派多个 SubAgent
-- 以上角色不满足需求时，也可以自行定义临时 SubAgent（指定 model: "haiku" 降低成本）
+- 以上角色不满足需求时，也可以自行定义临时 SubAgent；若要覆盖默认继承行为，再显式指定 \`model\`
 
 ### 不需要委派的场景
 

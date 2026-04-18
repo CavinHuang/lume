@@ -88,9 +88,11 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (isPlainObject(value.models)) {
     const chat = isPlainObject(value.models.chat) ? value.models.chat : {};
     const agent = isPlainObject(value.models.agent) ? value.models.agent : {};
+    const subagent = isPlainObject(value.models.subagent) ? value.models.subagent : {};
     const embedding = isPlainObject(value.models.embedding) ? value.models.embedding : {};
     const agentDefaultChannelId = normalizeOptionalString(agent.defaultChannelId);
     const agentDefaultModelRef = normalizeOptionalString(agent.defaultModelRef);
+    const subagentDefaultModelRef = normalizeOptionalString(subagent.defaultModelRef);
     next.models = {
       chat: {
         ...(typeof chat.defaultModelRef === "string"
@@ -106,6 +108,11 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
           : {}),
         ...(Array.isArray(agent.fallbackModelRefs)
           ? { fallbackModelRefs: normalizeFallbackModelRefs(agent.fallbackModelRefs, agentDefaultModelRef) }
+          : {})
+      },
+      subagent: {
+        ...(subagentDefaultModelRef
+          ? { defaultModelRef: subagentDefaultModelRef }
           : {})
       },
       embedding: {
@@ -198,6 +205,10 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
         ...(base.models?.agent?.fallbackModelRefs !== undefined
           ? { fallbackModelRefs: base.models?.agent?.fallbackModelRefs }
           : {})
+      },
+      subagent: {
+        ...(fallback.models?.subagent ?? {}),
+        ...(base.models?.subagent ?? {})
       },
       embedding: {
         ...(fallback.models?.embedding ?? {}),
@@ -338,6 +349,10 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
           : file.models?.agent?.fallbackModelRefs !== undefined
             ? { fallbackModelRefs: file.models?.agent?.fallbackModelRefs }
             : {})
+      },
+      subagent: {
+        ...(file.models?.subagent ?? {}),
+        ...(overlay?.models?.subagent ?? {})
       },
       embedding: {
         ...(file.models?.embedding ?? {}),
