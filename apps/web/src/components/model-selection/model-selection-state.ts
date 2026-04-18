@@ -1,4 +1,4 @@
-import type { AgentThreadMeta, Channel, ChannelModel, ModelCapabilities, ModelMeta } from '@lume/shared'
+import type { AgentThreadMeta, Channel, ChannelModel, LumeConfigAgentDefaultStrategy, ModelCapabilities, ModelMeta } from '@lume/shared'
 import { findModelMeta, inferCapabilities } from '@lume/shared'
 
 export interface ModelSelectionOption {
@@ -143,12 +143,17 @@ export function getThreadSelectionSummary(input: {
   channels: Channel[]
   channelsLoaded?: boolean
   thread?: Pick<AgentThreadMeta, 'channelId' | 'modelRef' | 'modelSelectionSource'> | null
+  defaultStrategy?: LumeConfigAgentDefaultStrategy
 }): ThreadSelectionSummary {
   const hasLoadedChannels = input.channelsLoaded ?? false
-  const modelRef = normalizeOptional(input.thread?.modelRef)
+
+  // 线程覆盖优先，否则回退到全局默认策略
+  const channelId = normalizeOptional(input.thread?.channelId) ?? normalizeOptional(input.defaultStrategy?.defaultChannelId)
+  const modelRef = normalizeOptional(input.thread?.modelRef) ?? normalizeOptional(input.defaultStrategy?.defaultModelRef)
+
   const match = findSelectionMatch({
     channels: input.channels,
-    channelId: input.thread?.channelId,
+    channelId,
     modelRef,
   })
 

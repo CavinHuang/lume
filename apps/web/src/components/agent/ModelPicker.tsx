@@ -19,7 +19,8 @@ import {
   getThreadSelectionSummary,
 } from '@/components/model-selection/model-selection-state'
 import type { ModelOptionGroup, ModelSelectionOption } from '@/components/model-selection/model-selection-state'
-import type { AgentThreadMeta, Channel } from '@lume/shared'
+import type { AgentThreadMeta, Channel, LumeConfigAgentDefaultStrategy } from '@lume/shared'
+import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 
 interface ModelPickerProps {
   threadId: string
@@ -60,6 +61,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
   const thread = threads.find((item) => item.id === threadId)
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelsLoaded, setChannelsLoaded] = useState(false)
+  const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
@@ -70,6 +72,10 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
       .then((items) => setChannels(items))
       .catch(console.error)
       .finally(() => setChannelsLoaded(true))
+
+    getEffectiveLumeConfig()
+      .then((config) => setDefaultStrategy(config.models?.agent ?? {}))
+      .catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -92,15 +98,19 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     }
   }, [open])
 
-  const activeChannel = thread?.channelId
-    ? channels.find(c => c.id === thread.channelId)
+  /** 计算有效模型选择：线程覆盖优先，否则回退到全局默认策略 */
+  const effectiveChannelId = thread?.channelId ?? defaultStrategy.defaultChannelId
+  const effectiveModelRef = thread?.modelRef ?? defaultStrategy.defaultModelRef
+
+  const activeChannel = effectiveChannelId
+    ? channels.find(c => c.id === effectiveChannelId)
     : undefined
 
   const groups = useMemo(() => buildModelSelectionGroups({
     channels,
-    activeChannelId: thread?.channelId,
-    activeModelRef: thread?.modelRef,
-  }), [channels, thread?.channelId, thread?.modelRef])
+    activeChannelId: effectiveChannelId,
+    activeModelRef: effectiveModelRef,
+  }), [channels, effectiveChannelId, effectiveModelRef])
 
   const filteredGroups = useMemo(() => filterGroups(groups, search), [groups, search])
 
@@ -108,7 +118,8 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     channels,
     channelsLoaded,
     thread,
-  }), [channels, channelsLoaded, thread])
+    defaultStrategy,
+  }), [channels, channelsLoaded, thread, defaultStrategy])
 
   const canRestoreDefault = thread?.modelSelectionSource === 'thread-override'
 

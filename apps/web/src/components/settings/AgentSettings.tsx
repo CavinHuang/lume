@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { DefaultModelStrategyPanel } from './DefaultModelStrategyPanel'
 
 /** 思考模式选项 */
 const THINKING_OPTIONS = [
@@ -109,8 +110,12 @@ export function AgentSettings() {
     <div className="p-6 space-y-6">
       <div>
         <h2 className="text-[15px] font-semibold">Agent 设置</h2>
-        <p className="text-[12px] text-muted-foreground mt-0.5">配置 Agent 运行行为</p>
+        <p className="text-[12px] text-muted-foreground mt-0.5">配置 Agent 运行行为和默认模型策略</p>
       </div>
+
+      <DefaultModelStrategyPanel />
+
+      <Separator />
 
       {/* 权限模式 */}
       <SettingsBlock title="权限模式" desc="控制 Agent 执行工具时的权限确认策略">
