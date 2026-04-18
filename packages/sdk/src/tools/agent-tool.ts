@@ -7,7 +7,6 @@
 
 import type { ToolDefinition, ToolContext, ToolResult, AgentDefinition, SDKMessage } from '../types.js'
 import { QueryEngine } from '../engine.js'
-import { getAllBaseTools, filterTools } from './index.js'
 import { createProvider, type ApiType } from '../providers/index.js'
 import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { loadSession } from '../session.js'
@@ -111,12 +110,13 @@ export const AgentTool: ToolDefinition = {
     required: ['prompt', 'description'],
   },
   isReadOnly: () => false,
-  isConcurrencySafe: () => false,
+  isConcurrencySafe: () => true,
   isEnabled: () => true,
   async prompt() {
     return 'Launch a subagent to handle complex tasks autonomously.'
   },
   async call(input: any, context: ToolContext): Promise<ToolResult> {
+    const { getAllBaseTools, filterTools } = await import('./index.js')
     const agentType = input.subagent_type || 'general-purpose'
     const effectiveCwd = input.cwd || context.cwd
 

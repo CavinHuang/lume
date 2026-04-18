@@ -938,6 +938,10 @@ export class QueryEngine {
   }> {
     const events: SDKMessage[] = []
     const toolsUsed: string[] = []
+    const toolContext: ToolContext = {
+      ...context,
+      toolUseId: block.id,
+    }
     if (!tool) {
       return {
         result: {
@@ -1054,7 +1058,7 @@ export class QueryEngine {
     try {
       if (this.config.fileCheckpointState && this.config.currentUserMessageId) {
         const checkpointPaths = collectCheckpointPaths(block.name, block.input)
-          .map((path) => resolve(context.cwd, path))
+          .map((path) => resolve(toolContext.cwd, path))
         await captureFileSnapshots(
           this.config.fileCheckpointState,
           this.config.currentUserMessageId,
@@ -1064,7 +1068,7 @@ export class QueryEngine {
 
       const startedAt = performance.now()
       const eventStartIndex = events.length
-      const result = await tool.call(block.input, context)
+      const result = await tool.call(block.input, toolContext)
       const elapsedTimeSeconds = Math.max(0, (performance.now() - startedAt) / 1000)
       toolsUsed.push(block.name)
       events.push({
