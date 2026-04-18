@@ -38,6 +38,8 @@ impl SidecarProcess {
 struct DesktopShellState {
     is_quitting: AtomicBool,
     tray_icon: Mutex<Option<tauri::tray::TrayIcon<tauri::Wry>>>,
+    tray_available: AtomicBool,
+    window_behavior: Mutex<WindowBehavior>,
 }
 
 impl DesktopShellState {
@@ -45,6 +47,8 @@ impl DesktopShellState {
         Self {
             is_quitting: AtomicBool::new(false),
             tray_icon: Mutex::new(None),
+            tray_available: AtomicBool::new(false),
+            window_behavior: Mutex::new(WindowBehavior::default()),
         }
     }
 }
@@ -154,11 +158,60 @@ fn read_window_behavior() -> WindowBehavior {
 }
 
 fn next_window_action(event: WindowBehaviorEvent, behavior: WindowBehavior) -> WindowAction {
-    match event {
-        WindowBehaviorEvent::Minimize if behavior.minimize_to_tray => WindowAction::HideToTray,
-        WindowBehaviorEvent::CloseRequest if behavior.close_to_tray => WindowAction::HideToTray,
-        _ => WindowAction::Allow,
+    if event == WindowBehaviorEvent::Minimize && !behavior.minimize_to_tray {
+        return WindowAction::Allow;
     }
+    if event == WindowBehaviorEvent::CloseRequest && !behavior.close_to_tray {
+        return WindowAction::Allow;
+    }
+
+    WindowAction::HideToTray
+}
+
+fn resolve_runtime_window_action(
+    event: WindowBehaviorEvent,
+    behavior: WindowBehavior,
+    tray_available: bool,
+    is_quitting: bool,
+) -> WindowAction {
+    if is_quitting || !tray_available {
+        return WindowAction::Allow;
+    }
+
+    next_window_action(event, behavior)
+}
+
+fn get_cached_window_behavior(app: &tauri::AppHandle) -> WindowBehavior {
+    app.try_state::<DesktopShellState>()
+        .and_then(|state| state.window_behavior.lock().ok().map(|guard| *guard))
+        .unwrap_or_default()
+}
+
+fn tray_is_available(app: &tauri::AppHandle) -> bool {
+    app.try_state::<DesktopShellState>()
+        .map(|state| state.tray_available.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+fn set_cached_window_behavior(app: &tauri::AppHandle, behavior: WindowBehavior) {
+    if let Some(state) = app.try_state::<DesktopShellState>() {
+        if let Ok(mut guard) = state.window_behavior.lock() {
+            *guard = behavior;
+        }
+    }
+}
+
+#[tauri::command]
+fn desktop_sync_window_behavior(
+    window_behavior: WindowBehavior,
+    state: tauri::State<'_, DesktopShellState>,
+) -> Result<(), String> {
+    let mut guard = state
+        .window_behavior
+        .lock()
+        .map_err(|_| "desktop shell state poisoned".to_string())?;
+    *guard = window_behavior;
+    Ok(())
 }
 
 fn hide_window_to_tray(window: &tauri::WebviewWindow) {
@@ -806,7 +859,8 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
 mod tests {
     use super::{
         build_mac_sidecar_bridge_args, next_window_action, parse_window_behavior_from_settings_str,
-        resolve_settings_path, WindowAction, WindowBehavior, WindowBehaviorEvent,
+        resolve_runtime_window_action, resolve_settings_path, WindowAction, WindowBehavior,
+        WindowBehaviorEvent,
     };
     use std::path::PathBuf;
 
@@ -913,6 +967,35 @@ mod tests {
             WindowAction::HideToTray
         );
     }
+
+    #[test]
+    fn resolve_runtime_window_action_allows_default_behavior_when_tray_is_unavailable_or_app_is_quitting()
+    {
+        let behavior = WindowBehavior {
+            minimize_to_tray: true,
+            close_to_tray: true,
+        };
+
+        assert_eq!(
+            resolve_runtime_window_action(
+                WindowBehaviorEvent::Minimize,
+                behavior,
+                false,
+                false
+            ),
+            WindowAction::Allow
+        );
+
+        assert_eq!(
+            resolve_runtime_window_action(
+                WindowBehaviorEvent::CloseRequest,
+                behavior,
+                true,
+                true
+            ),
+            WindowAction::Allow
+        );
+    }
 }
 
 fn get_logs_dir() -> PathBuf {
@@ -967,9 +1050,18 @@ fn main() {
             }
 
             let tray_state = app.state::<DesktopShellState>();
-            let tray_icon = build_tray_icon(&app.handle())?;
-            if let Ok(mut slot) = tray_state.tray_icon.lock() {
-                *slot = Some(tray_icon);
+            set_cached_window_behavior(&app.handle(), read_window_behavior());
+            match build_tray_icon(&app.handle()) {
+                Ok(tray_icon) => {
+                    tray_state.tray_available.store(true, Ordering::Relaxed);
+                    if let Ok(mut slot) = tray_state.tray_icon.lock() {
+                        *slot = Some(tray_icon);
+                    }
+                }
+                Err(error) => {
+                    tray_state.tray_available.store(false, Ordering::Relaxed);
+                    warn!("[desktop] tray initialization unavailable, continuing without tray support: {error}");
+                }
             }
 
             Ok(())
@@ -978,6 +1070,7 @@ fn main() {
             healthcheck,
             sidecar_healthcheck,
             sidecar_call,
+            desktop_sync_window_behavior,
             open_file_dialog,
             open_folder_dialog,
             open_external
@@ -995,10 +1088,12 @@ fn main() {
                         if !is_quitting {
                             match event {
                                 tauri::WindowEvent::CloseRequested { api, .. } => {
-                                    let behavior = read_window_behavior();
-                                    if next_window_action(
+                                    let behavior = get_cached_window_behavior(&app);
+                                    if resolve_runtime_window_action(
                                         WindowBehaviorEvent::CloseRequest,
                                         behavior,
+                                        tray_is_available(&app),
+                                        is_quitting,
                                     ) == WindowAction::HideToTray
                                     {
                                         api.prevent_close();
@@ -1010,10 +1105,12 @@ fn main() {
                                     }
                                 }
                                 tauri::WindowEvent::Resized(_) => {
-                                    let behavior = read_window_behavior();
-                                    if next_window_action(
+                                    let behavior = get_cached_window_behavior(&app);
+                                    if resolve_runtime_window_action(
                                         WindowBehaviorEvent::Minimize,
                                         behavior,
+                                        tray_is_available(&app),
+                                        is_quitting,
                                     ) == WindowAction::HideToTray
                                     {
                                         if let Some(window) =
