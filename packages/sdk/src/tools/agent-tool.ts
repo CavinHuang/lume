@@ -11,7 +11,7 @@ import { getAllBaseTools, filterTools } from './index.js'
 import { createProvider, type ApiType } from '../providers/index.js'
 import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { loadSession } from '../session.js'
-import { finalizeSubagentOutput, summarizeSubagentAssistantEvent } from './subagent-output.js'
+import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from './subagent-output.js'
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
 
 // Store for registered agent definitions
@@ -210,6 +210,8 @@ export const AgentTool: ToolDefinition = {
       let resultText = ''
       let lastAssistantMessage = ''
       const toolCalls: string[] = []
+      let subagentStatus: 'completed' | 'errored' | 'aborted' = 'completed'
+      let subagentErrorMessage = ''
 
       for await (const event of engine.submitMessage(input.prompt)) {
         const taggedEvent = annotateSubagentStreamingEvent(event as SDKMessage, {
@@ -247,10 +249,37 @@ export const AgentTool: ToolDefinition = {
               subagent_run_id: agentId,
             } as any)
           }
+          continue
+        }
+
+        if (event.type === 'result') {
+          if (typeof event.result === 'string' && event.result.trim()) {
+            resultText = resultText
+              ? `${resultText}\n\n${event.result.trim()}`
+              : event.result.trim()
+            lastAssistantMessage = event.result.trim()
+          }
+          const errorText = [
+            ...(Array.isArray(event.errors) ? event.errors : []),
+            typeof event.result === 'string' ? event.result : '',
+          ]
+            .find((value) => typeof value === 'string' && value.trim().length > 0)
+          if (event.is_error || (typeof event.subtype === 'string' && event.subtype !== 'success')) {
+            subagentStatus = 'errored'
+            if (errorText) {
+              subagentErrorMessage = errorText.trim()
+            }
+          }
         }
       }
 
-      const finalized = finalizeSubagentOutput(resultText, toolCalls)
+      const finalized = finalizeSubagentOutputFromState({
+        textOutput: resultText,
+        toolCalls,
+        lastAssistantMessage,
+        errorMessage: subagentErrorMessage,
+        status: subagentStatus,
+      })
 
       // Fire SubagentStop hook on the parent's hook registry
       if (context.hookRegistry) {

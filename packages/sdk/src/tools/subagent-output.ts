@@ -5,6 +5,14 @@ export interface SubagentResultSummary {
   toolUseCount: number
 }
 
+export interface FinalizeSubagentOutputState {
+  textOutput: string
+  toolCalls: string[]
+  lastAssistantMessage?: string
+  errorMessage?: string
+  status?: 'completed' | 'errored' | 'aborted'
+}
+
 function buildToolSummary(toolCalls: string[]): string {
   if (toolCalls.length === 0) return ''
   return `\n[Tools used: ${toolCalls.join(', ')}]`
@@ -71,4 +79,39 @@ export function finalizeSubagentOutput(
   return {
     output: '(Subagent completed with no text output)',
   }
+}
+
+export function finalizeSubagentOutputFromState(
+  state: FinalizeSubagentOutputState,
+): { output: string; lastAssistantMessage?: string } {
+  const normalizedError = state.errorMessage?.trim()
+  if (normalizedError) {
+    const summary = `Subagent error: ${normalizedError}`
+    return {
+      output: summary,
+      lastAssistantMessage: summary,
+    }
+  }
+
+  const finalized = finalizeSubagentOutput(state.textOutput, state.toolCalls)
+  if (finalized.lastAssistantMessage) {
+    return finalized
+  }
+
+  const fallback = state.lastAssistantMessage?.trim()
+  if (fallback) {
+    return {
+      output: fallback,
+      lastAssistantMessage: fallback,
+    }
+  }
+
+  if (state.status === 'aborted') {
+    return {
+      output: 'Subagent aborted before producing output.',
+      lastAssistantMessage: 'Subagent aborted before producing output.',
+    }
+  }
+
+  return finalized
 }
