@@ -7,6 +7,7 @@ import {
   agentRuntimeStatusAtom,
   agentPendingInteractiveAtom,
   agentSubagentRunsAtom,
+  agentSubagentMessagesAtom,
   agentPlanStateAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
@@ -53,17 +54,81 @@ function upsertStreamingMessage(
   return { ...prev, [threadId]: [...existing, syntheticMsg] }
 }
 
+function appendSubagentMessage(
+  prev: Record<string, Record<string, SDKMessage[]>>,
+  threadId: string,
+  runId: string,
+  msg: SDKMessage,
+): Record<string, Record<string, SDKMessage[]>> {
+  const threadMap = prev[threadId] ?? {}
+  const messages = threadMap[runId] ?? []
+  return {
+    ...prev,
+    [threadId]: { ...threadMap, [runId]: [...messages, msg] },
+  }
+}
+
+function upsertSubagentStreaming(
+  prev: Record<string, Record<string, SDKMessage[]>>,
+  threadId: string,
+  runId: string,
+  ref: StreamingRef,
+): Record<string, Record<string, SDKMessage[]>> {
+  const syntheticMsg = {
+    type: 'assistant',
+    uuid: ref.uuid,
+    message: {
+      role: 'assistant',
+      content: [
+        ...(ref.thinking ? [{ type: 'thinking', thinking: ref.thinking }] : []),
+        ...(ref.text ? [{ type: 'text', text: ref.text }] : []),
+      ],
+    },
+  } as unknown as SDKMessage
+  const threadMap = prev[threadId] ?? {}
+  const messages = threadMap[runId] ?? []
+  const idx = messages.findIndex((m) => (m as { uuid?: string }).uuid === ref.uuid)
+  if (idx >= 0) {
+    const updated = [...messages]
+    updated[idx] = syntheticMsg
+    return { ...prev, [threadId]: { ...threadMap, [runId]: updated } }
+  }
+  return { ...prev, [threadId]: { ...threadMap, [runId]: [...messages, syntheticMsg] } }
+}
+
+function replaceSubagentStreaming(
+  prev: Record<string, Record<string, SDKMessage[]>>,
+  threadId: string,
+  runId: string,
+  ref: StreamingRef | undefined,
+  msg: SDKMessage,
+): Record<string, Record<string, SDKMessage[]>> {
+  const threadMap = prev[threadId] ?? {}
+  const messages = threadMap[runId] ?? []
+  if (ref) {
+    const idx = messages.findIndex((m) => (m as { uuid?: string }).uuid === ref.uuid)
+    if (idx >= 0) {
+      const updated = [...messages]
+      updated[idx] = msg
+      return { ...prev, [threadId]: { ...threadMap, [runId]: updated } }
+    }
+  }
+  return { ...prev, [threadId]: { ...threadMap, [runId]: [...messages, msg] } }
+}
+
 export function useGlobalAgentListeners() {
   const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setRuntimeStatus = useSetAtom(agentRuntimeStatusAtom)
   const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
+  const setSubagentMessages = useSetAtom(agentSubagentMessagesAtom)
   const setPlanState = useSetAtom(agentPlanStateAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
 
   const streamingRef = useRef<Record<string, StreamingRef>>({})
+  const subagentStreamingRef = useRef<Record<string, StreamingRef>>({})
 
   useEffect(() => {
     const unlisten = onSidecarEvent((method, params) => {
@@ -72,6 +137,50 @@ export function useGlobalAgentListeners() {
           const e = params as AgentStreamEvent
           const msg = e.message
           const streamKey = e.threadId
+          const runId = (msg as { subagent_run_id?: string }).subagent_run_id
+
+          // === Subagent message routing ===
+          if (runId) {
+            const subStreamKey = `${streamKey}:${runId}`
+
+            if (msg.type === 'stream_event') {
+              const event = (msg as unknown as Record<string, unknown>).event as Record<string, unknown> | undefined
+              const delta = event?.delta as Record<string, unknown> | undefined
+              if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+                const ref = subagentStreamingRef.current[subStreamKey] ?? { uuid: `sub-streaming:${subStreamKey}:${Date.now()}`, text: '', thinking: '' }
+                ref.text += delta.text as string
+                subagentStreamingRef.current[subStreamKey] = ref
+                setSubagentMessages((prev) => upsertSubagentStreaming(prev, streamKey, runId, ref))
+              }
+              if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+                const ref = subagentStreamingRef.current[subStreamKey] ?? { uuid: `sub-streaming:${subStreamKey}:${Date.now()}`, text: '', thinking: '' }
+                ref.thinking += delta.thinking as string
+                subagentStreamingRef.current[subStreamKey] = ref
+                setSubagentMessages((prev) => upsertSubagentStreaming(prev, streamKey, runId, ref))
+              }
+              setStreamingStates((prev) => ({ ...prev, [streamKey]: 'streaming' }))
+              break
+            }
+
+            if (msg.type === 'assistant') {
+              const ref = subagentStreamingRef.current[subStreamKey]
+              setSubagentMessages((prev) => replaceSubagentStreaming(prev, streamKey, runId, ref, msg))
+              delete subagentStreamingRef.current[subStreamKey]
+              setStreamingStates((prev) => ({ ...prev, [streamKey]: 'streaming' }))
+              break
+            }
+
+            if (msg.type === 'tool_result') {
+              setSubagentMessages((prev) => appendSubagentMessage(prev, streamKey, runId, msg))
+              setStreamingStates((prev) => ({ ...prev, [streamKey]: 'streaming' }))
+              break
+            }
+
+            // partial_message and other types → skip for subagent
+            break
+          }
+
+          // === Main thread messages (no subagent_run_id) ===
 
           // Streaming text/thinking deltas → accumulate into synthetic assistant message
           if (msg.type === 'stream_event') {
@@ -134,6 +243,12 @@ export function useGlobalAgentListeners() {
         case 'agent:stream:complete': {
           const { threadId } = params as { threadId: string }
           delete streamingRef.current[threadId]
+          // Clean up subagent streaming refs for this thread
+          for (const key of Object.keys(subagentStreamingRef.current)) {
+            if (key.startsWith(`${threadId}:`)) {
+              delete subagentStreamingRef.current[key]
+            }
+          }
           setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
           break
         }
@@ -221,5 +336,5 @@ export function useGlobalAgentListeners() {
       }
     })
     return () => { unlisten.then((fn) => fn()) }
-  }, [setSDKMessages, setStreamingStates, setRuntimeStatus, setPendingInteractive, setSubagentRuns, setPlanState, setThreads, setErrorMessages])
+  }, [setSDKMessages, setStreamingStates, setRuntimeStatus, setPendingInteractive, setSubagentRuns, setSubagentMessages, setPlanState, setThreads, setErrorMessages])
 }
