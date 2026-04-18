@@ -53,6 +53,8 @@ export interface AgentRuntimeStatus {
   updatedAt: number
 }
 
+export type AgentModelSelectionSource = 'inherited' | 'thread-override'
+
 // ===== Agent 线程管理 =====
 
 /**
@@ -72,6 +74,8 @@ export interface AgentThreadMeta {
   channelId?: string
   /** 最近一次运行使用的模型 ID */
   modelId?: string
+  /** 模型选择来源：继承全局默认或线程显式覆盖 */
+  modelSelectionSource?: AgentModelSelectionSource
   /** SDK 内部线程 ID（用于 resume 衔接上下文） */
   sdkThreadId?: string
   /** Runtime 线程 ID（用于显式恢复） */
@@ -452,6 +456,13 @@ export interface AgentSendInput {
   resendFromMessageId?: string
   /** 编辑后重发目标消息 ID */
   editFromMessageId?: string
+}
+
+export interface AgentUpdateThreadModelSelectionInput {
+  threadId: string
+  modelRef?: string | null
+  channelId?: string | null
+  modelId?: string | null
 }
 
 export interface AgentThreadMessageDispatchResult {
