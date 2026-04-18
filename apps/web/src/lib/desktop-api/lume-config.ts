@@ -1,4 +1,8 @@
-import type { LumeConfigAgentDefaultStrategy, LumeEffectiveConfig } from '@lume/shared'
+import type {
+  LumeConfigAgentDefaultStrategy,
+  LumeConfigSubagentModelStrategy,
+  LumeEffectiveConfig,
+} from '@lume/shared'
 import { sidecarCall } from './system'
 
 export const getEffectiveLumeConfig = (workspaceSlug?: string) =>
@@ -11,4 +15,13 @@ export const updateAgentModelStrategy = (value: LumeConfigAgentDefaultStrategy, 
     path: 'models.agent',
     value,
     summary: 'update agent default model strategy',
+  })
+
+export const updateSubagentModelStrategy = (value: LumeConfigSubagentModelStrategy, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'models.subagent',
+    value,
+    summary: 'update subagent default model strategy',
   })

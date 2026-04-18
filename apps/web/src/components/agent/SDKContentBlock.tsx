@@ -11,13 +11,39 @@ import { agentSubagentRunsAtom } from '@/atoms'
 import type { SDKMessage } from '@lume/shared'
 
 /** 从消息流中构建 tool_use_id → tool_result 映射 */
-function buildToolResultMap(messages: SDKMessage[]): Map<string, { output: string; toolName: string }> {
+export function buildToolResultMap(messages: SDKMessage[]): Map<string, { output: string; toolName: string }> {
   const map = new Map<string, { output: string; toolName: string }>()
+  const toolNameById = new Map<string, string>()
+
+  for (const msg of messages) {
+    if (msg.type !== 'assistant') continue
+    const content = (msg as { message?: { content?: unknown[] } }).message?.content
+    if (!Array.isArray(content)) continue
+    for (const block of content as Array<{ type?: string; id?: string; name?: string }>) {
+      if (block.type === 'tool_use' && block.id && block.name) {
+        toolNameById.set(block.id, block.name)
+      }
+    }
+  }
+
   for (const msg of messages) {
     if (msg.type === 'tool_result' && msg.result) {
       map.set(msg.result.tool_use_id, {
         output: msg.result.output,
         toolName: msg.result.tool_name,
+      })
+      continue
+    }
+
+    if (msg.type !== 'user') continue
+    const content = (msg as { message?: { content?: unknown[] } }).message?.content
+    if (!Array.isArray(content)) continue
+
+    for (const block of content as Array<{ type?: string; tool_use_id?: string; content?: unknown }>) {
+      if (block.type !== 'tool_result' || !block.tool_use_id) continue
+      map.set(block.tool_use_id, {
+        output: typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+        toolName: toolNameById.get(block.tool_use_id) ?? '',
       })
     }
   }
@@ -192,19 +218,22 @@ function ToolUseBlock({
     return () => clearInterval(id)
   }, [hasResult])
 
-  // Agent tool_use → SubagentInlinePanel
+  // Agent tool_use → SubagentInlinePanel (always, handles own loading state)
   if (block.name === 'Agent' && threadId) {
     const runs = subagentRunsMap[threadId] ?? []
     const run = runs.find(r => r.parentToolUseId === block.id)
-    if (run) {
-      return <SubagentInlinePanel runId={run.runId} threadId={threadId} />
-    }
     const description = (block.input.description ?? block.input.prompt ?? '') as string
+    const agentType = (block.input as Record<string, unknown>).subagent_type as string | undefined
+    const prompt = (block.input as Record<string, unknown>).prompt as string | undefined
     return (
-      <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2 flex items-center gap-2">
-        <Loader2 size={12} className="animate-spin text-blue-500" />
-        <span className="text-[12px] text-foreground/60 truncate">{description || '启动 subagent...'}</span>
-      </div>
+      <SubagentInlinePanel
+        runId={run?.runId}
+        threadId={threadId}
+        toolUseId={block.id}
+        description={description}
+        agentType={agentType}
+        prompt={prompt}
+      />
     )
   }
 

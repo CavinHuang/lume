@@ -13,6 +13,15 @@ export const agentRuntimeStatusAtom = atom<Record<string, AgentRuntimeStatus>>({
 export const agentPendingInteractiveAtom = atom<Record<string, AgentPendingInteractiveState>>({})
 export const agentSubagentRunsAtom = atom<Record<string, SubagentRunRecord[]>>({})
 export const agentSubagentMessagesAtom = atom<Record<string, Record<string, SDKMessage[]>>>({})
+
+export interface SubagentToolProgress {
+  toolName: string
+  toolUseId: string
+  elapsedSeconds: number
+}
+/** 当前每个 subagent run 正在执行的工具 */
+export const agentSubagentToolProgressAtom = atom<Record<string, Record<string, SubagentToolProgress>>>({})
+
 export const agentPlanStateAtom = atom<Record<string, PlanStateChangedEvent>>({})
 export const agentErrorMessagesAtom = atom<Record<string, string>>({})
 

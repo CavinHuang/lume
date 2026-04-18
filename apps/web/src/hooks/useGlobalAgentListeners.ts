@@ -8,6 +8,7 @@ import {
   agentPendingInteractiveAtom,
   agentSubagentRunsAtom,
   agentSubagentMessagesAtom,
+  agentSubagentToolProgressAtom,
   agentPlanStateAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
@@ -126,10 +127,12 @@ export function useGlobalAgentListeners() {
   const setPlanState = useSetAtom(agentPlanStateAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
+  const setSubagentToolProgress = useSetAtom(agentSubagentToolProgressAtom)
 
   const streamingRef = useRef<Record<string, StreamingRef>>({})
   const subagentStreamingRef = useRef<Record<string, StreamingRef>>({})
   const pendingAgentToolUseRef = useRef<Record<string, string[]>>({})
+  const linkedSubagentRunIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const unlisten = onSidecarEvent((method, params) => {
@@ -142,37 +145,41 @@ export function useGlobalAgentListeners() {
 
           // === Subagent message routing ===
           if (runId) {
-            // First event for this runId → link to pending Agent tool_use
-            const pending = pendingAgentToolUseRef.current[streamKey]
-            if (pending && pending.length > 0) {
-              const toolUseId = pending.shift()!
-              setSubagentRuns((prev) => {
-                const runs = prev[streamKey] ?? []
-                const exists = runs.findIndex((r) => r.runId === runId)
-                if (exists >= 0) {
-                  if (!runs[exists].parentToolUseId) {
-                    const updated = [...runs]
-                    updated[exists] = { ...updated[exists], parentToolUseId: toolUseId }
-                    return { ...prev, [streamKey]: updated }
+            // Only consume pending tool_use ID on first event for this runId
+            const linkKey = `${streamKey}:${runId}`
+            if (!linkedSubagentRunIds.current.has(linkKey)) {
+              linkedSubagentRunIds.current.add(linkKey)
+              const pending = pendingAgentToolUseRef.current[streamKey]
+              if (pending && pending.length > 0) {
+                const toolUseId = pending.shift()!
+                setSubagentRuns((prev) => {
+                  const runs = prev[streamKey] ?? []
+                  const exists = runs.findIndex((r) => r.runId === runId)
+                  if (exists >= 0) {
+                    if (!runs[exists].parentToolUseId) {
+                      const updated = [...runs]
+                      updated[exists] = { ...updated[exists], parentToolUseId: toolUseId }
+                      return { ...prev, [streamKey]: updated }
+                    }
+                    return prev
                   }
-                  return prev
-                }
-                const now = Date.now()
-                const record = {
-                  runId,
-                  parentThreadId: streamKey,
-                  rootThreadId: streamKey,
-                  depth: 0,
-                  childThreadId: '',
-                  task: '',
-                  status: 'running' as const,
-                  cleanup: 'keep' as const,
-                  parentToolUseId: toolUseId,
-                  createdAt: now,
-                  updatedAt: now,
-                }
-                return { ...prev, [streamKey]: [...runs, record] }
-              })
+                  const now = Date.now()
+                  const record = {
+                    runId,
+                    parentThreadId: streamKey,
+                    rootThreadId: streamKey,
+                    depth: 0,
+                    childThreadId: '',
+                    task: '',
+                    status: 'running' as const,
+                    cleanup: 'keep' as const,
+                    parentToolUseId: toolUseId,
+                    createdAt: now,
+                    updatedAt: now,
+                  }
+                  return { ...prev, [streamKey]: [...runs, record] }
+                })
+              }
             }
 
             const subStreamKey = `${streamKey}:${runId}`
@@ -206,6 +213,26 @@ export function useGlobalAgentListeners() {
 
             if (msg.type === 'tool_result') {
               setSubagentMessages((prev) => appendSubagentMessage(prev, streamKey, runId, msg))
+              setStreamingStates((prev) => ({ ...prev, [streamKey]: 'streaming' }))
+              break
+            }
+
+            // tool_progress → 更新当前工具执行状态
+            if (msg.type === 'tool_progress') {
+              const tp = msg as { tool_name?: string; tool_use_id?: string; elapsed_time_seconds?: number }
+              if (tp.tool_name) {
+                setSubagentToolProgress((prev) => ({
+                  ...prev,
+                  [streamKey]: {
+                    ...(prev[streamKey] ?? {}),
+                    [runId]: {
+                      toolName: tp.tool_name!,
+                      toolUseId: tp.tool_use_id ?? '',
+                      elapsedSeconds: tp.elapsed_time_seconds ?? 0,
+                    },
+                  },
+                }))
+              }
               setStreamingStates((prev) => ({ ...prev, [streamKey]: 'streaming' }))
               break
             }
@@ -295,6 +322,12 @@ export function useGlobalAgentListeners() {
               delete subagentStreamingRef.current[key]
             }
           }
+          // Clean up linked run IDs for this thread
+          for (const key of linkedSubagentRunIds.current) {
+            if (key.startsWith(`${threadId}:`)) {
+              linkedSubagentRunIds.current.delete(key)
+            }
+          }
           setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
           break
         }
@@ -348,7 +381,9 @@ export function useGlobalAgentListeners() {
               }
               return { ...prev, [e.threadId]: updated }
             }
-            // 未见过的 run：补齐一条最小化记录
+            // 未见过的 run：补齐一条最小化记录，尝试关联 pending tool_use
+            const pending = pendingAgentToolUseRef.current[e.threadId]
+            const toolUseId = pending && pending.length > 0 ? pending.shift()! : undefined
             const now = Date.now()
             const record = {
               runId: e.runId,
@@ -360,6 +395,7 @@ export function useGlobalAgentListeners() {
               task: e.label ?? '',
               status: e.status,
               cleanup: 'keep' as const,
+              parentToolUseId: toolUseId,
               outcome: { output: e.outputText, error: e.errorText },
               createdAt: now,
               updatedAt: now,
@@ -382,5 +418,5 @@ export function useGlobalAgentListeners() {
       }
     })
     return () => { unlisten.then((fn) => fn()) }
-  }, [setSDKMessages, setStreamingStates, setRuntimeStatus, setPendingInteractive, setSubagentRuns, setSubagentMessages, setPlanState, setThreads, setErrorMessages])
+  }, [setSDKMessages, setStreamingStates, setRuntimeStatus, setPendingInteractive, setSubagentRuns, setSubagentMessages, setSubagentToolProgress, setPlanState, setThreads, setErrorMessages])
 }
