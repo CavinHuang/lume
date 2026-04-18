@@ -2,19 +2,24 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use log::{error, info, warn};
+use serde::Deserialize;
 use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_log::{Target, TargetKind};
 
 type PendingResponseMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
 const SIDECAR_RESPONSE_TIMEOUT_SECS: u64 = 45;
+const MAIN_WINDOW_LABEL: &str = "main";
+const TRAY_ID: &str = "main-tray";
+const TRAY_MENU_SHOW_ID: &str = "tray-show-main-window";
+const TRAY_MENU_QUIT_ID: &str = "tray-quit-app";
 
 struct SidecarProcess {
     child: Mutex<Option<Child>>,
@@ -28,6 +33,52 @@ impl SidecarProcess {
             pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+}
+
+struct DesktopShellState {
+    is_quitting: AtomicBool,
+    tray_icon: Mutex<Option<tauri::tray::TrayIcon<tauri::Wry>>>,
+}
+
+impl DesktopShellState {
+    fn new() -> Self {
+        Self {
+            is_quitting: AtomicBool::new(false),
+            tray_icon: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+struct WindowBehavior {
+    #[serde(default, rename = "minimizeToTray")]
+    minimize_to_tray: bool,
+    #[serde(default, rename = "closeToTray")]
+    close_to_tray: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowBehaviorEvent {
+    Minimize,
+    CloseRequest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowAction {
+    Allow,
+    HideToTray,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PersistedGeneralSettings {
+    #[serde(default, rename = "windowBehavior")]
+    window_behavior: WindowBehavior,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PersistedSettingsFile {
+    #[serde(default, rename = "generalSettings")]
+    general_settings: PersistedGeneralSettings,
 }
 
 static NEXT_RPC_ID: AtomicU64 = AtomicU64::new(1);
@@ -50,15 +101,134 @@ fn has_env_sidecar_cmd() -> bool {
         .unwrap_or(false)
 }
 
+fn resolve_settings_path(config_dir: Option<&Path>, home_dir: Option<&Path>) -> PathBuf {
+    if let Some(config_dir) = config_dir {
+        return config_dir.join("settings.json");
+    }
+
+    if let Some(home_dir) = home_dir {
+        return home_dir.join(".lume").join("settings.json");
+    }
+
+    PathBuf::from(".lume").join("settings.json")
+}
+
+fn current_settings_path() -> PathBuf {
+    if let Ok(config_dir) = std::env::var("LUME_CONFIG_DIR") {
+        let trimmed = config_dir.trim();
+        if !trimmed.is_empty() {
+            let path = PathBuf::from(trimmed);
+            let resolved = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(path)
+            };
+            return resolve_settings_path(Some(resolved.as_path()), None);
+        }
+    }
+
+    resolve_settings_path(None, dirs::home_dir().as_deref())
+}
+
+fn parse_window_behavior_from_settings_str(raw: &str) -> WindowBehavior {
+    serde_json::from_str::<PersistedSettingsFile>(raw)
+        .map(|settings| settings.general_settings.window_behavior)
+        .unwrap_or_default()
+}
+
+fn read_window_behavior() -> WindowBehavior {
+    let path = current_settings_path();
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => parse_window_behavior_from_settings_str(&raw),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => WindowBehavior::default(),
+        Err(error) => {
+            warn!(
+                "[desktop] failed to read settings.json for window behavior ({}): {error}",
+                path.display()
+            );
+            WindowBehavior::default()
+        }
+    }
+}
+
+fn next_window_action(event: WindowBehaviorEvent, behavior: WindowBehavior) -> WindowAction {
+    match event {
+        WindowBehaviorEvent::Minimize if behavior.minimize_to_tray => WindowAction::HideToTray,
+        WindowBehaviorEvent::CloseRequest if behavior.close_to_tray => WindowAction::HideToTray,
+        _ => WindowAction::Allow,
+    }
+}
+
+fn hide_window_to_tray(window: &tauri::WebviewWindow) {
+    if let Err(error) = window.hide() {
+        warn!("[desktop] failed to hide window to tray: {error}");
+    }
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        if let Err(error) = window.unminimize() {
+            warn!("[desktop] failed to unminimize main window: {error}");
+        }
+        if let Err(error) = window.show() {
+            warn!("[desktop] failed to show main window: {error}");
+            return;
+        }
+        if let Err(error) = window.set_focus() {
+            warn!("[desktop] failed to focus main window: {error}");
+        }
+    } else {
+        warn!("[desktop] main window not found when restoring from tray");
+    }
+}
+
+fn build_tray_icon(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIcon<tauri::Wry>> {
+    let menu = tauri::menu::MenuBuilder::new(app)
+        .text(TRAY_MENU_SHOW_ID, "Show Lume")
+        .separator()
+        .text(TRAY_MENU_QUIT_ID, "Quit")
+        .build()?;
+
+    let mut builder = tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event: tauri::menu::MenuEvent| {
+            if event.id() == TRAY_MENU_SHOW_ID {
+                show_main_window(app);
+            } else if event.id() == TRAY_MENU_QUIT_ID {
+                if let Some(state) = app.try_state::<DesktopShellState>() {
+                    state.is_quitting.store(true, Ordering::Relaxed);
+                }
+                app.exit(0);
+            }
+        })
+        .on_tray_icon_event(|tray: &tauri::tray::TrayIcon<tauri::Wry>, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Down,
+                ..
+            } = event
+            {
+                show_main_window(&tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+
+    builder.build(app)
+}
+
 fn spawn_sidecar_with_strategy(app: &tauri::AppHandle) -> Option<Child> {
     let prefer_env = env_flag_enabled("LUME_SIDECAR_PREFER_ENV");
     if prefer_env {
         return spawn_sidecar_from_env().or_else(|| spawn_sidecar_default(app));
     }
 
-    if has_env_sidecar_cmd()
-        && !LOGGED_ENV_CMD_IGNORED.swap(true, Ordering::Relaxed)
-    {
+    if has_env_sidecar_cmd() && !LOGGED_ENV_CMD_IGNORED.swap(true, Ordering::Relaxed) {
         warn!(
             "[desktop] LUME_SIDECAR_CMD detected but ignored by default; set LUME_SIDECAR_PREFER_ENV=1 to prefer env sidecar command"
         );
@@ -76,8 +246,8 @@ fn spawn_managed_sidecar(
     state: &tauri::State<'_, SidecarProcess>,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut child = spawn_sidecar_with_strategy(app)
-        .ok_or_else(|| "sidecar spawn failed".to_string())?;
+    let mut child =
+        spawn_sidecar_with_strategy(app).ok_or_else(|| "sidecar spawn failed".to_string())?;
 
     if let Some(stdout) = child.stdout.take() {
         spawn_sidecar_stdout_reader(stdout, Arc::clone(&state.pending), app.clone());
@@ -317,15 +487,11 @@ async fn sidecar_call_internal(
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             remove_pending_request(state, request_id);
-            warn!(
-                "[desktop] sidecar response timeout: id={request_id} method={method}"
-            );
+            warn!("[desktop] sidecar response timeout: id={request_id} method={method}");
             Err(format!("sidecar response timeout for method: {method}"))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            warn!(
-                "[desktop] sidecar response disconnected: id={request_id} method={method}"
-            );
+            warn!("[desktop] sidecar response disconnected: id={request_id} method={method}");
             Err("sidecar response channel disconnected".to_string())
         }
     }
@@ -497,8 +663,8 @@ fn resolve_node_binary() -> String {
 }
 
 fn resolve_mac_sidecar_bridge_path() -> Option<PathBuf> {
-    let bridge_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../scripts/sidecar-node-bridge.mjs");
+    let bridge_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/sidecar-node-bridge.mjs");
     if bridge_path.exists() {
         return Some(bridge_path);
     }
@@ -638,7 +804,10 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
 
 #[cfg(test)]
 mod tests {
-    use super::build_mac_sidecar_bridge_args;
+    use super::{
+        build_mac_sidecar_bridge_args, next_window_action, parse_window_behavior_from_settings_str,
+        resolve_settings_path, WindowAction, WindowBehavior, WindowBehaviorEvent,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -661,6 +830,87 @@ mod tests {
                 "--entry",
                 "/repo/apps/sidecar/src/index.ts",
             ]
+        );
+    }
+
+    #[test]
+    fn parse_window_behavior_from_settings_str_reads_general_settings_namespace() {
+        let behavior = parse_window_behavior_from_settings_str(
+            r#"{
+                "uiState": {
+                    "currentConversationId": "conversation-1"
+                },
+                "generalSettings": {
+                    "themeMode": "system",
+                    "windowBehavior": {
+                        "minimizeToTray": true,
+                        "closeToTray": false
+                    }
+                }
+            }"#,
+        );
+
+        assert_eq!(
+            behavior,
+            WindowBehavior {
+                minimize_to_tray: true,
+                close_to_tray: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_window_behavior_from_settings_str_defaults_when_missing_or_invalid() {
+        assert_eq!(
+            parse_window_behavior_from_settings_str("{}"),
+            WindowBehavior::default()
+        );
+        assert_eq!(
+            parse_window_behavior_from_settings_str("{ invalid json"),
+            WindowBehavior::default()
+        );
+    }
+
+    #[test]
+    fn resolve_settings_path_matches_sidecar_convention() {
+        assert_eq!(
+            resolve_settings_path(
+                Some(PathBuf::from("/tmp/custom-lume").as_path()),
+                Some(PathBuf::from("/Users/demo").as_path()),
+            ),
+            PathBuf::from("/tmp/custom-lume/settings.json")
+        );
+
+        assert_eq!(
+            resolve_settings_path(None, Some(PathBuf::from("/Users/demo").as_path())),
+            PathBuf::from("/Users/demo/.lume/settings.json")
+        );
+    }
+
+    #[test]
+    fn next_window_action_uses_behavior_toggles_per_event() {
+        let behavior = WindowBehavior {
+            minimize_to_tray: true,
+            close_to_tray: false,
+        };
+
+        assert_eq!(
+            next_window_action(WindowBehaviorEvent::Minimize, behavior),
+            WindowAction::HideToTray
+        );
+        assert_eq!(
+            next_window_action(WindowBehaviorEvent::CloseRequest, behavior),
+            WindowAction::Allow
+        );
+
+        let behavior = WindowBehavior {
+            minimize_to_tray: false,
+            close_to_tray: true,
+        };
+
+        assert_eq!(
+            next_window_action(WindowBehaviorEvent::CloseRequest, behavior),
+            WindowAction::HideToTray
         );
     }
 }
@@ -692,31 +942,36 @@ fn main() {
                 .build(),
         )
         .manage(SidecarProcess::new())
+        .manage(DesktopShellState::new())
         .setup(|app| {
             let state = app.state::<SidecarProcess>();
-            let mut child = match spawn_sidecar_with_strategy(&app.handle()) {
-                Some(child) => child,
-                None => return Ok(()),
-            };
+            if let Some(mut child) = spawn_sidecar_with_strategy(&app.handle()) {
+                if let Some(stdout) = child.stdout.take() {
+                    spawn_sidecar_stdout_reader(
+                        stdout,
+                        Arc::clone(&state.pending),
+                        app.handle().clone(),
+                    );
+                } else {
+                    error!("[desktop] sidecar stdout unavailable after spawn");
+                }
 
-            if let Some(stdout) = child.stdout.take() {
-                spawn_sidecar_stdout_reader(
-                    stdout,
-                    Arc::clone(&state.pending),
-                    app.handle().clone(),
-                );
-            } else {
-                error!("[desktop] sidecar stdout unavailable after spawn");
-            }
-
-            if let Ok(mut slot) = state.child.lock() {
-                *slot = Some(child);
+                if let Ok(mut slot) = state.child.lock() {
+                    *slot = Some(child);
+                }
             }
 
             #[cfg(debug_assertions)]
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 window.open_devtools();
             }
+
+            let tray_state = app.state::<DesktopShellState>();
+            let tray_icon = build_tray_icon(&app.handle())?;
+            if let Ok(mut slot) = tray_state.tray_icon.lock() {
+                *slot = Some(tray_icon);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -730,16 +985,67 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                if let Some(state) = app.try_state::<SidecarProcess>() {
-                    if let Ok(mut slot) = state.child.lock() {
-                        if let Some(child) = slot.as_mut() {
-                            let _ = child.kill();
-                            info!("[desktop] sidecar process terminated");
+            match event {
+                tauri::RunEvent::WindowEvent { label, event, .. } => {
+                    if label == MAIN_WINDOW_LABEL {
+                        let is_quitting = app
+                            .try_state::<DesktopShellState>()
+                            .map(|state| state.is_quitting.load(Ordering::Relaxed))
+                            .unwrap_or(false);
+                        if !is_quitting {
+                            match event {
+                                tauri::WindowEvent::CloseRequested { api, .. } => {
+                                    let behavior = read_window_behavior();
+                                    if next_window_action(
+                                        WindowBehaviorEvent::CloseRequest,
+                                        behavior,
+                                    ) == WindowAction::HideToTray
+                                    {
+                                        api.prevent_close();
+                                        if let Some(window) =
+                                            app.get_webview_window(MAIN_WINDOW_LABEL)
+                                        {
+                                            hide_window_to_tray(&window);
+                                        }
+                                    }
+                                }
+                                tauri::WindowEvent::Resized(_) => {
+                                    let behavior = read_window_behavior();
+                                    if next_window_action(
+                                        WindowBehaviorEvent::Minimize,
+                                        behavior,
+                                    ) == WindowAction::HideToTray
+                                    {
+                                        if let Some(window) =
+                                            app.get_webview_window(MAIN_WINDOW_LABEL)
+                                        {
+                                            match window.is_minimized() {
+                                                Ok(true) => hide_window_to_tray(&window),
+                                                Ok(false) => {}
+                                                Err(error) => warn!(
+                                                    "[desktop] failed to inspect main window minimized state: {error}"
+                                                ),
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                        *slot = None;
                     }
                 }
+                tauri::RunEvent::Exit => {
+                    if let Some(state) = app.try_state::<SidecarProcess>() {
+                        if let Ok(mut slot) = state.child.lock() {
+                            if let Some(child) = slot.as_mut() {
+                                let _ = child.kill();
+                                info!("[desktop] sidecar process terminated");
+                            }
+                            *slot = None;
+                        }
+                    }
+                }
+                _ => {}
             }
         });
 }
