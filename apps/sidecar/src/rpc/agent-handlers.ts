@@ -367,12 +367,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const result: AgentPendingInteractiveState[] = [];
       for (const threadId of threadIds) {
         if (input.threadId && input.threadId !== threadId) continue;
-        const askUserQuestion = askRequests.find((request) => request.threadId === threadId);
-        const toolPermission = toolRequests.find((request) => request.threadId === threadId);
+        const askUserQuestions = askRequests.filter((request) => request.threadId === threadId);
+        const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
-          ...(askUserQuestion ? { askUserQuestion } : {}),
-          ...(toolPermission ? { toolPermission } : {})
+          ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
+          ...(toolPermissions.length > 0 ? { toolPermissions } : {})
         });
       }
       return result;

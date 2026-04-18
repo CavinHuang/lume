@@ -121,7 +121,14 @@ export function cancelPendingToolPermissionBySession(threadId: string): void {
 }
 
 export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[] {
-  return Array.from(pendingToolPermissionResolvers.values()).map((pending) => pending.request);
+  return Array.from(pendingToolPermissionResolvers.values()).map((pending) => ({
+    ...pending.request,
+    threadId: pending.approvalSessionId,
+    ...(pending.request.originThreadId ? {} : (
+      pending.threadId !== pending.approvalSessionId
+        ? { originThreadId: pending.threadId }
+        : {}
+    ))
+  }));
 }
-
 

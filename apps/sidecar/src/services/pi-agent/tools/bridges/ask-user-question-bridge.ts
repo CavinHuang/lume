@@ -44,7 +44,8 @@ export function waitForPiAskUserQuestionAnswers(
   toolUseId: string,
   questions: AgentAskUserQuestionQuestion[],
   signal: AbortSignal,
-  emit: (request: AgentAskUserQuestionRequest) => void
+  emit: (request: AgentAskUserQuestionRequest) => void,
+  requestMeta?: Pick<AgentAskUserQuestionRequest, "originThreadId" | "subagentRunId">
 ): Promise<AskUserQuestionWaitResult> {
   return new Promise((resolve) => {
     const done = (result: AskUserQuestionWaitResult): void => {
@@ -80,6 +81,8 @@ export function waitForPiAskUserQuestionAnswers(
     }
     const request: AgentAskUserQuestionRequest = {
       threadId,
+      ...(requestMeta?.originThreadId ? { originThreadId: requestMeta.originThreadId } : {}),
+      ...(requestMeta?.subagentRunId ? { subagentRunId: requestMeta.subagentRunId } : {}),
       toolUseId,
       questions
     };
@@ -122,7 +125,14 @@ export function cancelPendingPiAskUserQuestionBySession(threadId: string): void 
 }
 
 export function listPendingPiAskUserQuestionRequests(): AgentAskUserQuestionRequest[] {
-  return Array.from(pendingPiAskUserQuestionResolvers.values()).map((pending) => pending.request);
+  return Array.from(pendingPiAskUserQuestionResolvers.values()).map((pending) => ({
+    ...pending.request,
+    threadId: pending.approvalSessionId,
+    ...(pending.request.originThreadId ? {} : (
+      pending.threadId !== pending.approvalSessionId
+        ? { originThreadId: pending.threadId }
+        : {}
+    ))
+  }));
 }
-
 

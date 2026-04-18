@@ -19,10 +19,15 @@ import {
   type AgentOptions,
   type ApiType,
   type McpServerConfig,
+  type ToolContext,
+  type ToolResult,
   SkillTool,
   TodoWriteTool,
   defineTool,
+  finalizeSubagentOutputFromState,
+  summarizeSubagentAssistantEvent,
   type ToolDefinition,
+  annotateSubagentStreamingEvent,
   WebFetchTool,
   WebSearchTool
 } from "@lume/agent-sdk";
@@ -123,6 +128,8 @@ interface RuntimeCoreToolset {
 
 interface ResolvedSubagentModelOverride {
   source: "input" | "config" | "inherit";
+  modelRef?: string;
+  channelId?: string;
   resolvedModelId?: string;
   apiType?: ApiType;
   baseUrl?: string;
@@ -167,6 +174,8 @@ export function resolveSubagentModelOverride(input: {
 
   return {
     source,
+    modelRef: candidate,
+    channelId: binding.channel.id,
     resolvedModelId: binding.modelId,
     apiType: binding.family === "anthropic" ? "anthropic-messages" : "openai-completions",
     baseUrl: binding.channel.baseUrl,
@@ -176,6 +185,7 @@ export function resolveSubagentModelOverride(input: {
 
 export function buildSidecarSubagentRunContext(input: {
   parentThreadId: string;
+  parentToolUseId?: string;
   toolInput: Record<string, unknown>;
   policy: {
     depth: number;
@@ -195,6 +205,7 @@ export function buildSidecarSubagentRunContext(input: {
     rootThreadId: string;
     depth: number;
     childThreadId: string;
+    parentToolUseId?: string;
     task: string;
     label?: string;
     cleanup: "keep";
@@ -223,12 +234,168 @@ export function buildSidecarSubagentRunContext(input: {
       rootThreadId: input.policy.rootThreadId,
       depth: input.policy.depth,
       childThreadId,
+      parentToolUseId: input.parentToolUseId,
       task,
       label,
       cleanup: "keep",
       requestedAgentId: agentId,
       resolvedAgentId: agentId,
       status: "running"
+    }
+  };
+}
+
+async function runSidecarSubagent(input: {
+  toolInput: Record<string, unknown>;
+  context: ToolContext;
+  runId: string;
+  childThreadId: string;
+  parentThreadId: string;
+  deliveryThreadId: string;
+  parentToolUseId?: string;
+  modelOverride: ResolvedSubagentModelOverride;
+  channelId?: string;
+  workspaceId?: string;
+  chatType?: AgentSendInput["chatType"];
+  messageMetadata?: Record<string, unknown>;
+  permissionMode?: AgentSendInput["permissionMode"];
+  emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+}): Promise<{
+  result: ToolResult;
+  status: "completed" | "errored" | "aborted";
+  output?: string;
+  error?: string;
+}> {
+  const prompt = typeof input.toolInput.prompt === "string" ? input.toolInput.prompt : "";
+  const resolvedChannelId = input.modelOverride.channelId ?? input.channelId;
+  const resolvedModelId = input.modelOverride.resolvedModelId ?? input.context.model;
+  if (!resolvedChannelId || !resolvedModelId) {
+    return {
+      status: "errored",
+      error: "subagent 缺少 channelId/modelId",
+      result: {
+        type: "tool_result",
+        tool_use_id: "",
+        content: "Subagent error: subagent 缺少 channelId/modelId",
+        is_error: true
+      }
+    };
+  }
+
+  const { runPiAgent } = await import("./attempt");
+  const forwardEvent = input.context.emitEvent ?? (() => undefined);
+  const childPermissionMode = (
+    typeof input.toolInput.mode === "string"
+      ? input.toolInput.mode
+      : input.permissionMode
+  ) as AgentSendInput["permissionMode"] | undefined;
+  let textOutput = "";
+  let lastAssistantMessage = "";
+  const toolCalls: string[] = [];
+  let subagentStatus: "completed" | "errored" | "aborted" = "completed";
+  let subagentErrorMessage = "";
+
+  const piResult = await runPiAgent({
+    input: {
+      threadId: input.childThreadId,
+      userMessage: prompt,
+      ...(input.modelOverride.modelRef ? { modelRef: input.modelOverride.modelRef } : {}),
+      channelId: resolvedChannelId,
+      modelId: resolvedModelId,
+      workspaceId: input.workspaceId,
+      chatType: input.chatType,
+      threadType: "subagent",
+      permissionMode: childPermissionMode,
+      messageMetadata: input.messageMetadata
+    },
+    runtime: {
+      sessionId: input.childThreadId,
+      deliveryThreadId: input.deliveryThreadId,
+      subagentRunId: input.runId,
+      ...(input.modelOverride.modelRef ? { modelRef: input.modelOverride.modelRef } : {}),
+      channelId: resolvedChannelId,
+      resolvedModelId,
+      workspaceId: input.workspaceId,
+      threadType: "subagent"
+    }
+  }, {
+    onSdkMessage: (message) => {
+      if (message.type === "assistant") {
+        const summary = summarizeSubagentAssistantEvent(
+          message.message.content as Array<Record<string, unknown>>,
+          textOutput,
+          toolCalls
+        );
+        textOutput = summary.textOutput;
+        lastAssistantMessage = summary.lastAssistantMessage || lastAssistantMessage;
+        toolCalls.length = 0;
+        toolCalls.push(...summary.toolCalls);
+      }
+      if (message.type === "result") {
+        if (typeof message.result === "string" && message.result.trim()) {
+          textOutput = textOutput
+            ? `${textOutput}\n\n${message.result.trim()}`
+            : message.result.trim();
+          lastAssistantMessage = message.result.trim();
+        }
+        const errorText = [
+          ...(Array.isArray(message.errors) ? message.errors : []),
+          typeof message.result === "string" ? message.result : "",
+        ].find((value) => typeof value === "string" && value.trim().length > 0);
+        if (message.is_error || (typeof message.subtype === "string" && message.subtype !== "success")) {
+          subagentStatus = "errored";
+          if (errorText) {
+            subagentErrorMessage = errorText.trim();
+          }
+        }
+      }
+
+      const taggedEvent = annotateSubagentStreamingEvent(message as SDKMessage, {
+        subagentRunId: input.runId,
+        parentSessionId: input.deliveryThreadId,
+        parentToolUseId: input.parentToolUseId
+      });
+      if (taggedEvent) {
+        forwardEvent(taggedEvent);
+      }
+    },
+    onComplete: () => undefined,
+    onError: (error) => {
+      subagentStatus = "errored";
+      subagentErrorMessage = error;
+    },
+    onAskUserQuestion: input.emitAskUserQuestion ?? (() => undefined),
+    onToolPermissionRequest: input.emitToolPermissionRequest ?? (() => undefined)
+  });
+
+  if (piResult.status === "errored") {
+    subagentStatus = "errored";
+    if (piResult.errorMessage) {
+      subagentErrorMessage = piResult.errorMessage;
+    }
+  }
+  if (piResult.status === "aborted") {
+    subagentStatus = "aborted";
+  }
+
+  const finalized = finalizeSubagentOutputFromState({
+    textOutput,
+    toolCalls,
+    lastAssistantMessage,
+    errorMessage: subagentErrorMessage,
+    status: subagentStatus
+  });
+
+  return {
+    status: subagentStatus,
+    output: finalized.output,
+    ...(subagentErrorMessage ? { error: subagentErrorMessage } : {}),
+    result: {
+      type: "tool_result",
+      tool_use_id: "",
+      content: finalized.output,
+      ...(subagentStatus !== "completed" ? { is_error: true } : {})
     }
   };
 }
@@ -362,15 +529,17 @@ function buildRuntimeCoreTools(input: {
     ...AgentTool,
     isConcurrencySafe: () => true,
     async call(toolInput: any, context: any) {
+      const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
-        parentThreadId: context.sessionId ?? "",
+        parentThreadId,
         parentPermissionMode: toolInput.mode
       });
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
       }
       const subagentRun = buildSidecarSubagentRunContext({
-        parentThreadId: context.sessionId ?? "",
+        parentThreadId,
+        parentToolUseId: context.toolUseId,
         toolInput,
         policy
       });
@@ -378,20 +547,8 @@ function buildRuntimeCoreTools(input: {
         toolInput,
         workspaceSlug: input.workspaceSlug
       });
-      getSubagentRunRegistry().create(subagentRun.registryInput);
       const enrichedContext = {
         ...context,
-        ...(modelOverride.apiType && modelOverride.apiKey
-          ? {
-              provider: createProvider(modelOverride.apiType, {
-                apiKey: modelOverride.apiKey,
-                ...(modelOverride.baseUrl ? { baseURL: modelOverride.baseUrl } : {})
-              }),
-              apiType: modelOverride.apiType,
-              model: modelOverride.resolvedModelId ?? context.model
-            }
-          : {}),
-        // 实时转发 subagent 事件，绕过引擎的局部 events 缓冲
         emitEvent: input.emitSdkMessage
           ? (event: SDKMessage) => { input.emitSdkMessage!(event); }
           : context.emitEvent,
@@ -401,17 +558,45 @@ function buildRuntimeCoreTools(input: {
           if (run) await announceSubagentCompletion({ run });
         }
       };
-      // Sidecar 强制前台执行：覆盖 run_in_background / isolation，
-      // 确保主 agent 等待 subagent 实际完成并返回真正结果，
-      // 而不是拿到 "Background subagent started" 占位文本后继续。
       const forcedForegroundInput = {
         ...subagentRun.forwardedToolInput,
         run_in_background: false as const,
         isolation: undefined,
         ...(modelOverride.resolvedModelId ? { model: modelOverride.resolvedModelId } : {})
       };
+      getSubagentRunRegistry().create({
+        ...subagentRun.registryInput,
+        deliveryThreadId: parentThreadId,
+        parentToolUseId: context.toolUseId,
+        ...(modelOverride.modelRef ? { modelRef: modelOverride.modelRef } : {}),
+        ...(modelOverride.channelId ? { channelId: modelOverride.channelId } : input.channelId ? { channelId: input.channelId } : {}),
+        ...(modelOverride.resolvedModelId ? { modelId: modelOverride.resolvedModelId } : context.model ? { modelId: context.model } : {})
+      });
       try {
-        return await AgentTool.call(forcedForegroundInput, enrichedContext);
+        const execution = await runSidecarSubagent({
+          toolInput: forcedForegroundInput,
+          context: enrichedContext,
+          runId: subagentRun.runId,
+          childThreadId: subagentRun.childThreadId,
+          parentThreadId,
+          deliveryThreadId: parentThreadId,
+          parentToolUseId: context.toolUseId,
+          modelOverride,
+          channelId: input.channelId,
+          workspaceId: input.workspaceId,
+          chatType: input.chatType,
+          messageMetadata: input.messageMetadata,
+          permissionMode,
+          emitAskUserQuestion: input.emitAskUserQuestion,
+          emitToolPermissionRequest: input.emitToolPermissionRequest
+        });
+        await enrichedContext.onSubagentEnd?.({
+          runId: subagentRun.runId,
+          status: execution.status,
+          output: execution.output,
+          error: execution.error
+        });
+        return execution.result;
       } catch (err: any) {
         getSubagentRunRegistry().update(subagentRun.runId, { status: "errored", outcome: { error: err.message } });
         throw err;

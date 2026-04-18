@@ -1,5 +1,4 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
-import { updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
@@ -17,9 +16,11 @@ import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { createRuntimeCoreSession } from "./run";
 import { getRuntimeCoreAgentDir, hasRuntimeCoreSessionTranscript } from "./session-store";
+import { updateRuntimeThreadMetaIfPresent } from "./thread-meta-target";
 import {
   isToolAlwaysAllowed,
   markToolAlwaysAllowed,
+  setToolPermissionApprovalSession,
   waitForToolPermissionDecision
 } from "../tools/bridges/tool-permission-bridge";
 import {
@@ -27,7 +28,10 @@ import {
   inferToolMetadata,
   isToolAllowedInPlanMode
 } from "../tools/permissions/tool-metadata";
-import { waitForPiAskUserQuestionAnswers } from "../tools/bridges/ask-user-question-bridge";
+import {
+  setAskUserQuestionApprovalSession,
+  waitForPiAskUserQuestionAnswers
+} from "../tools/bridges/ask-user-question-bridge";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 
 interface RunRuntimeCoreAttemptOptions {
@@ -156,6 +160,11 @@ function createCanUseToolHandler(
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
     const mode = params.input.permissionMode ?? "default";
+    const approvalThreadId = params.runtime.deliveryThreadId ?? params.runtime.sessionId;
+    const originThreadId = params.runtime.deliveryThreadId
+      ? params.runtime.sessionId
+      : undefined;
+    const subagentRunId = params.runtime.subagentRunId;
     if (mode === "plan" && !isToolAllowedInPlanMode(toolName)) {
       return {
         behavior: "deny",
@@ -187,7 +196,21 @@ function createCanUseToolHandler(
         metadata?.toolUseId ?? toolName,
         questions,
         askUserSignal,
-        emit.onAskUserQuestion
+        (request) => {
+          if (approvalThreadId !== request.threadId) {
+            setAskUserQuestionApprovalSession(request.toolUseId, approvalThreadId);
+          }
+          emit.onAskUserQuestion({
+            ...request,
+            threadId: approvalThreadId,
+            ...(originThreadId ? { originThreadId } : {}),
+            ...(subagentRunId ? { subagentRunId } : {})
+          });
+        },
+        {
+          originThreadId,
+          subagentRunId
+        }
       );
       if (askResult.status !== "answered" || !askResult.answers) {
         if (askResult.status === "timeout") {
@@ -218,6 +241,8 @@ function createCanUseToolHandler(
 
     const request = {
       threadId: params.runtime.sessionId,
+      ...(originThreadId ? { originThreadId } : {}),
+      ...(subagentRunId ? { subagentRunId } : {}),
       requestId: metadata?.toolUseId ?? toolName,
       toolUseId: metadata?.toolUseId ?? toolName,
       toolName,
@@ -228,7 +253,17 @@ function createCanUseToolHandler(
     const decision = await waitForToolPermissionDecision(
       request,
       new AbortController().signal,
-      emit.onToolPermissionRequest
+      (permissionRequest) => {
+        if (approvalThreadId !== permissionRequest.threadId) {
+          setToolPermissionApprovalSession(permissionRequest.requestId, approvalThreadId);
+        }
+        emit.onToolPermissionRequest({
+          ...permissionRequest,
+          threadId: approvalThreadId,
+          ...(originThreadId ? { originThreadId } : {}),
+          ...(subagentRunId ? { subagentRunId } : {})
+        });
+      }
     );
     if (decision === "allow_always") {
       markToolAlwaysAllowed(params.runtime.sessionId, toolName);
@@ -401,7 +436,7 @@ export async function runRuntimeCoreAttempt(
       };
     }
 
-    updateAgentThreadMeta(runtime.sessionId, {
+    updateRuntimeThreadMetaIfPresent(runtime, {
       sdkThreadId: session.threadId ?? session.sessionId,
       runtimeThreadId: session.threadId ?? session.sessionId
     });

@@ -22,6 +22,8 @@ export interface PiAgentRunParams {
   input: AgentSendInput;
   runtime: {
     sessionId: string;
+    deliveryThreadId?: string;
+    subagentRunId?: string;
     modelRef?: string;
     channelId: string;
     resolvedModelId: string;
@@ -29,4 +31,3 @@ export interface PiAgentRunParams {
     threadType?: AgentSendInput["threadType"];
   };
 }
-
