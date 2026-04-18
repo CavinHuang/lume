@@ -49,7 +49,7 @@ const BUILTIN_AGENTS: Record<string, AgentDefinition> = {
 
 export const AgentTool: ToolDefinition = {
   name: 'Agent',
-  description: 'Launch a subagent to handle complex, multi-step tasks autonomously. Subagents have their own context and can run specialized tool sets.',
+  description: 'Launch a new agent to handle complex, multi-step tasks. Each agent has its own context and tool set. IMPORTANT: When tasks are independent, produce MULTIPLE Agent tool_use calls in a single response — they will execute in parallel automatically. Do not use run_in_background.',
   inputSchema: {
     type: 'object',
     properties: {

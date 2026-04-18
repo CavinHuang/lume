@@ -360,6 +360,7 @@ function buildRuntimeCoreTools(input: {
 
   const sidecarAgentTool: ToolDefinition = {
     ...AgentTool,
+    isConcurrencySafe: () => true,
     async call(toolInput: any, context: any) {
       const policy = resolveSubagentSpawnPolicy({
         parentThreadId: context.sessionId ?? "",

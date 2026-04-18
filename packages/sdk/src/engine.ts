@@ -883,24 +883,24 @@ export class QueryEngine {
       process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY || '10',
     )
 
-    // Partition into read-only (concurrent) and mutation (serial)
-    const readOnly: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
-    const mutations: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
+    // Partition into concurrent (read-only or concurrency-safe) and serial (mutations)
+    const concurrent: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
+    const serial: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
 
     for (const block of toolUseBlocks) {
       const tool = this.config.tools.find((t) => t.name === block.name)
-      if (tool?.isReadOnly?.()) {
-        readOnly.push({ block, tool })
+      if (tool?.isReadOnly?.() || tool?.isConcurrencySafe?.()) {
+        concurrent.push({ block, tool })
       } else {
-        mutations.push({ block, tool })
+        serial.push({ block, tool })
       }
     }
 
     const results: (ToolResult & { tool_name?: string })[] = []
 
-    // Execute read-only tools concurrently (batched by MAX_CONCURRENCY)
-    for (let i = 0; i < readOnly.length; i += MAX_CONCURRENCY) {
-      const batch = readOnly.slice(i, i + MAX_CONCURRENCY)
+    // Execute concurrent tools (batched by MAX_CONCURRENCY)
+    for (let i = 0; i < concurrent.length; i += MAX_CONCURRENCY) {
+      const batch = concurrent.slice(i, i + MAX_CONCURRENCY)
       const batchResults = await Promise.all(
         batch.map((item) =>
           this.executeSingleTool(item.block, item.tool, context),
@@ -913,8 +913,8 @@ export class QueryEngine {
       }
     }
 
-    // Execute mutation tools sequentially
-    for (const item of mutations) {
+    // Execute serial tools sequentially
+    for (const item of serial) {
       const result = await this.executeSingleTool(item.block, item.tool, context)
       results.push(result.result)
       events.push(...result.events)

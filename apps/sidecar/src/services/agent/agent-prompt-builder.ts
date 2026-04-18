@@ -467,6 +467,11 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 - 终端操作（Bash 等）
 - 公共网页检索（WebSearch / WebFetch）
 
+CRITICAL - 并行 Agent 调度:
+当你需要同时执行多个独立任务时，在同一个响应中产出多个 Agent tool_use 块。它们会被自动并行执行。
+不要使用 run_in_background，所有 Agent 调用都是前台执行，会等待结果返回。
+例如：需要同时搜索代码库的 3 个不同方面时，发出 3 个 Agent tool_use，而不是逐个等待。
+
 CRITICAL - Skill 调用规则:
 调用 Skill 工具时，skill 参数必须使用带命名空间前缀的完整名称，如 \`lume-workspace-${ctx.workspaceSlug ?? "default"}:skill-name\`。
 不要使用不带前缀的短名称。`);
