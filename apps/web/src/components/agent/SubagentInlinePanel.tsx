@@ -119,18 +119,19 @@ export function SubagentInlinePanel({ runId, threadId, label, status, startedAt,
         expanded={expanded}
         onClick={() => setExpanded(v => !v)}
       />
-      {!expanded && messages.length > 0 && (
+      {!expanded && (
         <SubagentCollapsedPreview
           messages={messages}
           isRunning={isRunning}
+          error={isError ? runRecord?.outcome?.error : undefined}
         />
       )}
       {expanded && (
         <SubagentExpandedContent
           messages={messages}
-          threadId={threadId}
           depth={depth}
           isRunning={isRunning}
+          error={isError ? runRecord?.outcome?.error : undefined}
         />
       )}
     </div>
@@ -176,16 +177,19 @@ function SubagentHeader({
   )
 }
 
-function SubagentCollapsedPreview({ messages, isRunning }: { messages: SDKMessage[]; isRunning: boolean }) {
+function SubagentCollapsedPreview({ messages, isRunning, error }: { messages: SDKMessage[]; isRunning: boolean; error?: string }) {
   const { tools, lastText } = useMemo(() => deriveCollapsedData(messages), [messages])
   const visibleTools = tools.slice(0, MAX_VISIBLE_TOOLS)
   const extraCount = tools.length - visibleTools.length
 
-  if (!lastText && tools.length === 0) return null
+  if (!lastText && tools.length === 0 && !error) return null
 
   return (
     <div className="px-3 pb-2 space-y-1.5">
-      {lastText && (
+      {error && (
+        <p className="text-[12px] text-destructive leading-relaxed line-clamp-2 whitespace-pre-wrap">{error}</p>
+      )}
+      {!error && lastText && (
         <p className="text-[12px] text-foreground/60 leading-relaxed line-clamp-2 whitespace-pre-wrap">
           {lastText}
           {isRunning && <span className="inline-block w-[2px] h-[14px] bg-blue-500 animate-pulse ml-0.5 align-middle" />}
@@ -216,14 +220,14 @@ function SubagentCollapsedPreview({ messages, isRunning }: { messages: SDKMessag
 }
 
 function SubagentExpandedContent({
-  messages, depth, isRunning,
+  messages, depth, isRunning, error,
 }: {
   messages: SDKMessage[]
-  threadId: string
   depth: number
   isRunning: boolean
+  error?: string
 }) {
-  if (messages.length === 0) {
+  if (messages.length === 0 && !error) {
     return (
       <div className="px-3 pb-2">
         <p className="text-[12px] text-muted-foreground/50">等待 subagent 输出...</p>
@@ -243,6 +247,11 @@ function SubagentExpandedContent({
           isStreaming={isRunning}
         />
       ))}
+      {error && (
+        <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2">
+          <p className="text-[12px] text-destructive whitespace-pre-wrap leading-relaxed">{error}</p>
+        </div>
+      )}
     </div>
   )
 }
