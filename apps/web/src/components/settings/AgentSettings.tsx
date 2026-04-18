@@ -7,14 +7,26 @@
  */
 
 import * as React from 'react'
-import { ChevronDown, ChevronRight, Cpu } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  Cpu,
+  Map,
+  PencilLine,
+  Shield,
+  ShieldOff,
+  type LucideIcon,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { sidecarCall } from '@/lib/desktop-api'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { DefaultModelStrategyPanel } from './DefaultModelStrategyPanel'
+import { SubagentDefaultModelPanel } from './SubagentDefaultModelPanel'
+import { PERMISSION_OPTIONS, type PermissionModeIconKey, type PermissionModeTone } from './agent-settings-state'
 
 /** 思考模式选项 */
 const THINKING_OPTIONS = [
@@ -32,13 +44,19 @@ const EFFORT_OPTIONS = [
   { value: 'max', label: '最大' },
 ]
 
-/** 权限模式选项 */
-const PERMISSION_OPTIONS = [
-  { value: 'default', label: '默认', desc: '每次确认高风险操作' },
-  { value: 'acceptEdits', label: '允许编辑', desc: '自动接受文件编辑，确认其他操作' },
-  { value: 'bypassPermissions', label: '全部允许', desc: '跳过所有权限确认（谨慎使用）' },
-  { value: 'plan', label: 'Plan 模式', desc: '先规划再执行，每步确认' },
-]
+const PERMISSION_ICON_MAP: Record<PermissionModeIconKey, LucideIcon> = {
+  shield: Shield,
+  pencil: PencilLine,
+  'shield-off': ShieldOff,
+  map: Map,
+}
+
+const PERMISSION_TONE_CLASS: Record<PermissionModeTone, string> = {
+  sky: 'bg-sky-500/10 text-sky-600 border-sky-500/15 dark:text-sky-400',
+  emerald: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/15 dark:text-emerald-400',
+  amber: 'bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-300',
+  violet: 'bg-violet-500/10 text-violet-600 border-violet-500/15 dark:text-violet-400',
+}
 
 export function AgentSettings() {
   const [thinking, setThinking] = React.useState('default')
@@ -115,34 +133,20 @@ export function AgentSettings() {
 
       <DefaultModelStrategyPanel />
 
+      <SubagentDefaultModelPanel />
+
       <Separator />
 
       {/* 权限模式 */}
       <SettingsBlock title="权限模式" desc="控制 Agent 执行工具时的权限确认策略">
         <div className="space-y-2">
           {PERMISSION_OPTIONS.map((opt) => (
-            <label
+            <PermissionModeCard
               key={opt.value}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors border',
-                permissionMode === opt.value
-                  ? 'border-primary/30 bg-primary/5'
-                  : 'border-transparent hover:bg-muted/30'
-              )}
-            >
-              <input
-                type="radio"
-                name="permission"
-                value={opt.value}
-                checked={permissionMode === opt.value}
-                onChange={() => handlePermissionChange(opt.value)}
-                className="accent-primary"
-              />
-              <div>
-                <div className="text-[13px] font-medium">{opt.label}</div>
-                <div className="text-[11px] text-muted-foreground">{opt.desc}</div>
-              </div>
-            </label>
+              option={opt}
+              selected={permissionMode === opt.value}
+              onSelect={() => handlePermissionChange(opt.value)}
+            />
           ))}
         </div>
       </SettingsBlock>
@@ -213,6 +217,64 @@ export function AgentSettings() {
         )}
       </div>
     </div>
+  )
+}
+
+function PermissionModeCard({
+  option,
+  selected,
+  onSelect,
+}: {
+  option: (typeof PERMISSION_OPTIONS)[number]
+  selected: boolean
+  onSelect: () => void
+}) {
+  const Icon = PERMISSION_ICON_MAP[option.icon]
+
+  return (
+    <label
+      className={cn(
+        'group flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer transition-all border',
+        selected
+          ? 'border-primary/30 bg-primary/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+          : 'border-transparent hover:bg-muted/30'
+      )}
+    >
+      <input
+        type="radio"
+        name="permission"
+        value={option.value}
+        checked={selected}
+        onChange={onSelect}
+        className="accent-primary"
+      />
+
+      <Icon
+        size={16}
+        className={cn(
+          'shrink-0 transition-colors',
+          PERMISSION_TONE_CLASS[option.tone]
+        )}
+      />
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <div className={cn('text-[13px] font-medium', selected && 'text-foreground')}>
+            {option.label}
+          </div>
+          <Badge
+            variant="outline"
+            className={cn(
+              'h-5 rounded-full border px-2 text-[10px] font-medium',
+              PERMISSION_TONE_CLASS[option.tone]
+            )}
+          >
+            {option.emphasis}
+          </Badge>
+        </div>
+        <div className="text-[11px] text-muted-foreground mt-0.5">{option.desc}</div>
+      </div>
+    </label>
   )
 }
 
