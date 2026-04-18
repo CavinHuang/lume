@@ -3,8 +3,11 @@ import { ChevronRight, Bot, Terminal, FileText, FilePlus, Pencil, FolderSearch, 
 import type { LucideIcon } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
+import { useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
 import { ToolResultRenderer } from './tool-result-renderers'
+import { SubagentInlinePanel } from './SubagentInlinePanel'
+import { agentSubagentRunsAtom } from '@/atoms'
 import type { SDKMessage } from '@lume/shared'
 
 /** 从消息流中构建 tool_use_id → tool_result 映射 */
@@ -29,9 +32,10 @@ interface SDKContentBlockProps {
   allMessages?: SDKMessage[]
   /** 是否正在流式输出 */
   isStreaming?: boolean
+  threadId?: string
 }
 
-export function SDKContentBlock({ message, index, animate, allMessages, isStreaming }: SDKContentBlockProps) {
+export function SDKContentBlock({ message, index, animate, allMessages, isStreaming, threadId }: SDKContentBlockProps) {
   const style = animate ? { animationDelay: `${index * 30}ms` } : undefined
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
@@ -75,6 +79,7 @@ export function SDKContentBlock({ message, index, animate, allMessages, isStream
               block={block}
               toolResultMap={toolResultMap}
               isStreaming={animate && isStreaming}
+              threadId={threadId}
             />
           ))}
         </div>
@@ -112,10 +117,12 @@ function ContentBlockItem({
   block,
   toolResultMap,
   isStreaming,
+  threadId,
 }: {
   block: ContentBlockType
   toolResultMap: Map<string, { output: string; toolName: string }>
   isStreaming?: boolean
+  threadId?: string
 }) {
   const [collapsed, setCollapsed] = useState(true)
 
@@ -152,6 +159,7 @@ function ContentBlockItem({
         block={block}
         hasResult={toolResult !== undefined}
         resultData={resultData}
+        threadId={threadId}
       />
     )
   }
@@ -166,21 +174,39 @@ const TOOL_ICONS: Partial<Record<string, LucideIcon>> = {
 }
 
 function ToolUseBlock({
-  block, hasResult, resultData,
+  block, hasResult, resultData, threadId,
 }: {
   block: { id: string; name: string; input: Record<string, unknown> }
   hasResult: boolean
   resultData: unknown
+  threadId?: string
 }) {
   const [collapsed, setCollapsed] = useState(true)
   const startedAtRef = useRef(Date.now())
   const [elapsed, setElapsed] = useState(0)
+  const subagentRunsMap = useAtomValue(agentSubagentRunsAtom)
 
   useEffect(() => {
     if (hasResult) return
     const id = setInterval(() => setElapsed(Date.now() - startedAtRef.current), 200)
     return () => clearInterval(id)
   }, [hasResult])
+
+  // Agent tool_use → SubagentInlinePanel
+  if (block.name === 'Agent' && threadId) {
+    const runs = subagentRunsMap[threadId] ?? []
+    const run = runs.find(r => r.parentToolUseId === block.id)
+    if (run) {
+      return <SubagentInlinePanel runId={run.runId} threadId={threadId} />
+    }
+    const description = (block.input.description ?? block.input.prompt ?? '') as string
+    return (
+      <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2 flex items-center gap-2">
+        <Loader2 size={12} className="animate-spin text-blue-500" />
+        <span className="text-[12px] text-foreground/60 truncate">{description || '启动 subagent...'}</span>
+      </div>
+    )
+  }
 
   const ToolIcon = TOOL_ICONS[block.name] ?? Wrench
   const elapsedSec = (elapsed / 1000).toFixed(1)
