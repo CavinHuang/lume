@@ -1,0 +1,218 @@
+<h2>模型选择器重设计方案对比</h2>
+<p class="subtitle">两种增强下拉菜单的视觉方向</p>
+
+<div class="split">
+  <!-- 方案 A: 渠道分组 + 内联标签 -->
+  <div class="mockup">
+    <div class="mockup-header">方案 A — 渠道分组 + 内联标签</div>
+    <div class="mockup-body">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);margin-bottom:8px;width:fit-content">
+        <span style="color:var(--accent)">◆</span>
+        <span style="font-weight:600;font-size:14px">Claude Sonnet 4</span>
+        <span style="color:var(--text-muted);font-size:11px">200K</span>
+        <span style="color:var(--text-muted)">▾</span>
+      </div>
+
+      <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:0 8px 24px rgba(0,0,0,0.15);width:320px">
+        <!-- 搜索框 -->
+        <div style="padding:8px;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-secondary);border-radius:6px">
+            <span style="color:var(--text-muted);font-size:13px">⌕</span>
+            <span style="color:var(--text-muted);font-size:13px">搜索模型...</span>
+          </div>
+        </div>
+
+        <!-- Anthropic 分组 -->
+        <div style="padding:6px 0">
+          <div style="padding:4px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Anthropic</div>
+          <!-- Sonnet - 选中 -->
+          <div style="padding:8px 12px;background:var(--accent-bg);display:flex;align-items:center;gap:10px;cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-weight:600;font-size:13px">Claude Sonnet 4</span>
+                <span style="font-size:11px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#3b82f620;color:#3b82f6">视觉</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#8b5cf620;color:#8b5cf6">工具</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f59e0b20;color:#f59e0b">推理</span>
+              </div>
+            </div>
+            <span style="color:var(--accent);font-size:14px">✓</span>
+          </div>
+          <!-- Opus -->
+          <div style="padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-weight:600;font-size:13px">Claude Opus 4.6</span>
+                <span style="font-size:11px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#3b82f620;color:#3b82f6">视觉</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#8b5cf620;color:#8b5cf6">工具</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f59e0b20;color:#f59e0b">推理</span>
+              </div>
+            </div>
+          </div>
+          <!-- Haiku -->
+          <div style="padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-weight:600;font-size:13px">Claude Haiku 4.5</span>
+                <span style="font-size:11px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#3b82f620;color:#3b82f6">视觉</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#8b5cf620;color:#8b5cf6">工具</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-top:1px solid var(--border);padding:6px 0">
+          <div style="padding:4px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">OpenAI</div>
+          <div style="padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-weight:600;font-size:13px">GPT-4o</span>
+                <span style="font-size:11px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">128K</span>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#3b82f620;color:#3b82f6">视觉</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#8b5cf620;color:#8b5cf6">工具</span>
+              </div>
+            </div>
+          </div>
+          <div style="padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-weight:600;font-size:13px">o3-mini</span>
+                <span style="font-size:11px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f59e0b20;color:#f59e0b">推理</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部 -->
+        <div style="border-top:1px solid var(--border);padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:11px;color:var(--text-muted)">已覆盖默认策略</span>
+          <span style="font-size:12px;color:var(--accent);cursor:pointer">恢复默认</span>
+        </div>
+      </div>
+
+      <div class="pros-cons" style="margin-top:12px">
+        <div class="pros"><h4>优势</h4><ul><li>与现有架构兼容，改动最小</li><li>按渠道分组清晰</li><li>能力标签一目了然</li></ul></div>
+        <div class="cons"><h4>不足</h4><ul><li>模型多时列表较长</li><li>价格信息需要额外空间</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 方案 B: 平铺 + 悬浮详情 -->
+  <div class="mockup">
+    <div class="mockup-header">方案 B — 平铺列表 + 悬浮详情卡片</div>
+    <div class="mockup-body">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);margin-bottom:8px;width:fit-content">
+        <span style="color:var(--accent)">◆</span>
+        <span style="font-weight:600;font-size:14px">Claude Sonnet 4</span>
+        <span style="color:var(--text-muted);font-size:11px">200K</span>
+        <span style="color:var(--text-muted)">▾</span>
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:0 8px 24px rgba(0,0,0,0.15);width:240px">
+          <!-- 搜索框 -->
+          <div style="padding:8px;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-secondary);border-radius:6px">
+              <span style="color:var(--text-muted);font-size:13px">⌕</span>
+              <span style="color:var(--text-muted);font-size:13px">搜索模型...</span>
+            </div>
+          </div>
+
+          <!-- 扁平列表，无分组 -->
+          <div style="padding:4px 0">
+            <div style="padding:8px 12px;background:var(--accent-bg);display:flex;align-items:center;gap:8px;cursor:pointer">
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:13px">Claude Sonnet 4</div>
+                <div style="font-size:11px;color:var(--text-muted)">Anthropic · 200K</div>
+              </div>
+              <span style="color:var(--accent);font-size:14px">✓</span>
+            </div>
+            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;outline:2px solid var(--accent);outline-offset:-2px;border-radius:4px;margin:2px 4px">
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:13px">Claude Opus 4.6</div>
+                <div style="font-size:11px;color:var(--text-muted)">Anthropic · 200K</div>
+              </div>
+            </div>
+            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer">
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:13px">Claude Haiku 4.5</div>
+                <div style="font-size:11px;color:var(--text-muted)">Anthropic · 200K</div>
+              </div>
+            </div>
+            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer">
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:13px">GPT-4o</div>
+                <div style="font-size:11px;color:var(--text-muted)">OpenAI · 128K</div>
+              </div>
+            </div>
+            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer">
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:13px">o3-mini</div>
+                <div style="font-size:11px;color:var(--text-muted)">OpenAI · 200K</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="border-top:1px solid var(--border);padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;color:var(--text-muted)">已覆盖默认</span>
+            <span style="font-size:12px;color:var(--accent);cursor:pointer">恢复</span>
+          </div>
+        </div>
+
+        <!-- 悬浮详情卡片 -->
+        <div style="border:1px solid var(--border);border-radius:12px;background:var(--bg);box-shadow:0 4px 16px rgba(0,0,0,0.1);width:200px;padding:16px;align-self:flex-start">
+          <div style="font-weight:700;font-size:15px;margin-bottom:2px">Claude Opus 4.6</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Anthropic</div>
+
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.5">
+            最强的推理能力，适合复杂分析、创意写作和高难度编程任务。
+          </div>
+
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">
+            <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#3b82f620;color:#3b82f6">视觉</span>
+            <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#8b5cf620;color:#8b5cf6">工具</span>
+            <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#f59e0b20;color:#f59e0b">推理</span>
+          </div>
+
+          <div style="border-top:1px solid var(--border);padding-top:10px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
+              <span style="color:var(--text-muted)">上下文窗口</span>
+              <span>200K tokens</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
+              <span style="color:var(--text-muted)">输入价格</span>
+              <span>$15 / 1M tokens</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px">
+              <span style="color:var(--text-muted)">输出价格</span>
+              <span>$75 / 1M tokens</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pros-cons" style="margin-top:12px">
+        <div class="pros"><h4>优势</h4><ul><li>列表紧凑，浏览效率高</li><li>悬浮卡片展示完整信息</li><li>列表和详情空间分离</li></ul></div>
+        <div class="cons"><h4>不足</h4><ul><li>需要额外横向空间</li><li>悬浮交互在移动端不友好</li><li>改动比方案 A 更大</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <h3>我的推荐：方案 A</h3>
+  <p>方案 A 与现有代码架构兼容性最好（已按渠道分组的 ModelOptionList），改动范围可控。能力标签内联展示，不需要悬浮操作，列表中直接展示关键信息（上下文窗口 + 能力标签），价格信息可以通过下方的详情展开行来显示。</p>
+</div>

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(bunx tsc:*)",
+      "Bash(bash \"C:/Users/KSO/.claude/plugins/cache/superpowers-marketplace/superpowers-dev/5.0.6/skills/brainstorming/scripts/start-server.sh\" --project-dir \"E:/projects/ai-projects/lume\")",
+      "Bash(cat \"E:/projects/ai-projects/lume/.superpowers/brainstorm/\"*/state/server-info)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(find . -name vitest.config.* -o -name bun.config.*)",
+      "Bash(bun add:*)",
+      "Bash(bun test:*)",
+      "Bash(bun run:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
