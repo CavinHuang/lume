@@ -25,18 +25,33 @@ interface UseSmoothStreamOptions {
 }
 
 interface UseSmoothStreamReturn {
-  /** 平滑后的显示内容 */
+/** 平滑后的显示内容 */
   displayedContent: string
 }
 
+interface SegmenterLike {
+  segment: (input: string) => Iterable<{ segment: string }>
+}
+
+type IntlWithOptionalSegmenter = typeof Intl & {
+  Segmenter?: new (locales?: string | string[]) => SegmenterLike
+}
+
+const SegmenterCtor = (Intl as IntlWithOptionalSegmenter).Segmenter
+
 /** 多语言字符分割器（正确处理中文、日文等多字节字符） */
-const segmenter = new Intl.Segmenter(
-  ['en-US', 'zh-CN', 'zh-TW', 'ja-JP', 'ko-KR', 'de-DE', 'fr-FR', 'es-ES', 'pt-PT', 'ru-RU'],
-)
+const segmenter = SegmenterCtor
+  ? new SegmenterCtor(
+      ['en-US', 'zh-CN', 'zh-TW', 'ja-JP', 'ko-KR', 'de-DE', 'fr-FR', 'es-ES', 'pt-PT', 'ru-RU'],
+    )
+  : null
 
 /** 用 Intl.Segmenter 将文本拆分为字符数组 */
 function segmentText(text: string): string[] {
-  return Array.from(segmenter.segment(text)).map((s) => s.segment)
+  if (!segmenter) {
+    return Array.from(text)
+  }
+  return Array.from(segmenter.segment(text)).map((part) => part.segment)
 }
 
 /**
