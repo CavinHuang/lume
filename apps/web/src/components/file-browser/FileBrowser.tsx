@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronRight, Folder, RefreshCw } from 'lucide-react'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { FileTypeIcon } from './FileTypeIcon'
 import { cn } from '@/lib/utils'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -37,8 +38,8 @@ export function FileBrowser({ threadId, refreshToken = 0 }: FileBrowserProps) {
   }
 
   return (
-    <div className="min-h-full">
-      <div className="sticky top-0 z-10 px-3 py-2.5 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75 flex items-center justify-between">
+    <div className="flex flex-col h-full">
+      <div className="px-3 py-2.5 border-b border-border/50 flex items-center justify-between">
         <span className="text-[12px] font-medium text-foreground/60">文件浏览器</span>
         <button
           onClick={handleRefresh}
@@ -48,20 +49,22 @@ export function FileBrowser({ threadId, refreshToken = 0 }: FileBrowserProps) {
           <RefreshCw size={12} className={cn(loading && 'animate-spin')} />
         </button>
       </div>
-      <div className="px-2 py-2">
-        {entries.map((entry) => (
-          <FileTreeItem
-            key={entry.path}
-            entry={entry}
-            depth={0}
-            threadId={threadId}
-            parentRefreshTick={rootTick}
-          />
-        ))}
-        {!loading && entries.length === 0 && (
-          <p className="px-3 py-6 text-center text-[11px] text-foreground/30">目录为空</p>
-        )}
-      </div>
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="px-2 py-2">
+          {entries.map((entry) => (
+            <FileTreeItem
+              key={entry.path}
+              entry={entry}
+              depth={0}
+              threadId={threadId}
+              parentRefreshTick={rootTick}
+            />
+          ))}
+          {!loading && entries.length === 0 && (
+            <p className="px-3 py-6 text-center text-[11px] text-foreground/30">目录为空</p>
+          )}
+        </div>
+      </ScrollArea>
     </div>
   )
 }

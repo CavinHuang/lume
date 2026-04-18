@@ -36,14 +36,11 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
     const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
     return viewport instanceof HTMLDivElement ? viewport : null
   }, [])
-  const restoreCurrentThread = useCallback((persist: boolean) => {
+  const restoreCurrentThread = useCallback(() => {
     const scrollElement = getScrollElement()
     restore(threadId, scrollElement)
     wasNearBottomRef.current = isNearBottom(scrollElement)
-    if (persist) {
-      save(threadId, scrollElement)
-    }
-  }, [getScrollElement, restore, save, threadId])
+  }, [getScrollElement, restore, threadId])
 
   // 首次访问线程时拉取历史 SDK 消息 + subagent runs
   useEffect(() => {
@@ -95,7 +92,7 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
       pendingRestoreThreadIdRef.current = threadId
       requestAnimationFrame(() => {
         const hasMessages = sdkMessages.length > 0
-        restoreCurrentThread(hasMessages)
+        restoreCurrentThread()
         if (hasMessages) {
           pendingRestoreThreadIdRef.current = null
         }
@@ -107,7 +104,7 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
     if (pendingRestoreThreadIdRef.current !== threadId || sdkMessages.length === 0) return
 
     requestAnimationFrame(() => {
-      restoreCurrentThread(true)
+      restoreCurrentThread()
       pendingRestoreThreadIdRef.current = null
     })
   }, [restoreCurrentThread, sdkMessages.length, threadId])
