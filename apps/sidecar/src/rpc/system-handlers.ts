@@ -7,7 +7,6 @@ import {
   UI_STATE_IPC_CHANNELS
 } from "@lume/shared";
 import type {
-  ClearCacheInput,
   GitHubReleaseListOptions,
   NetworkDiagnosticResult,
   UpdateGeneralSettingsInput,
@@ -145,7 +144,7 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
           clearCacheInputSchema,
           params ?? {},
           GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE
-        ) as ClearCacheInput
+        )
       ),
     [LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
       const input = validateInput(

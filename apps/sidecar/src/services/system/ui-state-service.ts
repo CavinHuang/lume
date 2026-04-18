@@ -1,11 +1,13 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import type { PersistedUiState, UpdateUiStateInput } from "@lume/shared";
-import { getSettingsPath } from "../infra/config-paths";
+import {
+  PersistedSettingsReadError,
+  readPersistedSettings,
+  writePersistedSettings,
+  type SidecarSettingsStore
+} from "./settings-store";
 
-interface SidecarSettings {
+interface SidecarSettings extends SidecarSettingsStore {
   uiState?: PersistedUiState;
-  [key: string]: unknown;
 }
 
 const DEFAULT_UI_STATE: PersistedUiState = {
@@ -21,44 +23,6 @@ const DEFAULT_UI_STATE: PersistedUiState = {
   agentDraftByThreadId: {},
   updatedAt: 0
 };
-
-function readSettings(): SidecarSettings {
-  const path = getSettingsPath();
-  if (!existsSync(path)) {
-    return {};
-  }
-
-  try {
-    const raw = JSON.parse(readFileSync(path, "utf-8")) as SidecarSettings;
-    return typeof raw === "object" && raw !== null ? raw : {};
-  } catch (error) {
-    console.warn("[UI State] 读取 settings.json 失败，回退默认值:", error);
-    return {};
-  }
-}
-
-function writeSettings(settings: SidecarSettings): void {
-  const path = getSettingsPath();
-  const tempPath = join(dirname(path), "settings.json.tmp");
-  const backupPath = join(dirname(path), "settings.json.bak");
-  writeFileSync(tempPath, JSON.stringify(settings, null, 2), "utf-8");
-  if (existsSync(path)) {
-    rmSync(backupPath, { force: true });
-    renameSync(path, backupPath);
-  }
-  try {
-    renameSync(tempPath, path);
-    rmSync(backupPath, { force: true });
-  } catch (error) {
-    if (existsSync(backupPath)) {
-      renameSync(backupPath, path);
-    }
-    if (existsSync(tempPath)) {
-      rmSync(tempPath, { force: true });
-    }
-    throw error;
-  }
-}
 
 function sanitizeUiState(input: unknown): PersistedUiState {
   if (typeof input !== "object" || input === null) {
@@ -110,12 +74,20 @@ function sanitizeStringMap(input: unknown): Record<string, string> {
 }
 
 export function getPersistedUiState(): PersistedUiState {
-  const settings = readSettings();
-  return sanitizeUiState(settings.uiState);
+  try {
+    const settings = readPersistedSettings() as SidecarSettings;
+    return sanitizeUiState(settings.uiState);
+  } catch (error) {
+    if (error instanceof PersistedSettingsReadError) {
+      console.warn("[UI State] 读取 settings.json 失败，回退默认值:", error.cause ?? error);
+      return DEFAULT_UI_STATE;
+    }
+    throw error;
+  }
 }
 
 export function updatePersistedUiState(input: UpdateUiStateInput): PersistedUiState {
-  const settings = readSettings();
+  const settings = readPersistedSettings() as SidecarSettings;
   const current = sanitizeUiState(settings.uiState);
   const next: PersistedUiState = {
     ...current,
@@ -124,6 +96,6 @@ export function updatePersistedUiState(input: UpdateUiStateInput): PersistedUiSt
     updatedAt: Date.now()
   };
   settings.uiState = next;
-  writeSettings(settings);
+  writePersistedSettings(settings);
   return next;
 }

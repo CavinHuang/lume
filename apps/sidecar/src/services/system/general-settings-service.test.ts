@@ -148,9 +148,25 @@ describe("general-settings-service", () => {
     expect(raw.generalSettings?.themeMode).toBe("light");
   });
 
+  test("settings.json 解析失败时读取回退默认值，但写入会显式失败以避免覆盖其他段", () => {
+    const settingsPath = getSettingsPath();
+    writeFileSync(settingsPath, "{ invalid json", "utf-8");
+
+    expect(getPersistedGeneralSettings()).toEqual({
+      themeMode: "system",
+      windowBehavior: {
+        minimizeToTray: false,
+        closeToTray: false
+      }
+    });
+
+    expect(() => updatePersistedGeneralSettings({
+      themeMode: "dark"
+    })).toThrow();
+    expect(readFileSync(settingsPath, "utf-8")).toBe("{ invalid json");
+  });
+
   test("清理缓存仅删除安全缓存目录并保留会话线程工作区与配置", () => {
-    const frontendTempFile = writeConfigFile(["cache", "frontend-temp", "frontend.tmp"], "temp");
-    const previewRenderFile = writeConfigFile(["cache", "preview-render", "preview.png"], "preview");
     const logsFile = writeConfigFile(["logs", "today.log"], "log");
     const conversationFile = writeConfigFile(["conversations", "conversation-1.jsonl"], "conversation");
     const threadFile = writeConfigFile(["agent", "sessions", "thread-1.jsonl"], "thread");
@@ -159,18 +175,12 @@ describe("general-settings-service", () => {
     const channelsFile = writeConfigFile(["channels.json"], "{\"items\":[]}");
     const mcpConfigFile = writeConfigFile(["agent-workspaces", "workspace-1", ".meta", "mcp.json"], "{}");
 
-    const result = clearGeneralSettingsCaches({
-      frontendTemp: true,
-      previewRender: true,
-      logs: true
-    });
+    const result = clearGeneralSettingsCaches({ logs: true });
 
     expect(result).toEqual({
-      cleared: ["frontendTemp", "previewRender", "logs"],
+      cleared: ["logs"],
       skipped: []
     });
-    expect(existsSync(frontendTempFile)).toBeFalse();
-    expect(existsSync(previewRenderFile)).toBeFalse();
     expect(existsSync(logsFile)).toBeFalse();
     expect(existsSync(conversationFile)).toBeTrue();
     expect(existsSync(threadFile)).toBeTrue();
@@ -181,14 +191,11 @@ describe("general-settings-service", () => {
   });
 
   test("缺失的缓存目标返回 skipped 而不是失败", () => {
-    const result = clearGeneralSettingsCaches({
-      frontendTemp: true,
-      logs: true
-    });
+    const result = clearGeneralSettingsCaches({ logs: true });
 
     expect(result).toEqual({
       cleared: [],
-      skipped: ["frontendTemp", "logs"]
+      skipped: ["logs"]
     });
   });
 

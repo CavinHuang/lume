@@ -622,10 +622,8 @@ export const updateGeneralSettingsInputSchema = z.object({
 });
 
 export const clearCacheInputSchema = z.object({
-  frontendTemp: z.boolean().optional(),
-  previewRender: z.boolean().optional(),
   logs: z.boolean().optional()
-});
+}).strict();
 
 export const lumeConfigEffectiveInputSchema = z.object({
   workspaceSlug: optionalIdSchema
