@@ -12,6 +12,7 @@ export const agentStreamingStatesAtom = atom<Record<string, StreamingState>>({})
 export const agentRuntimeStatusAtom = atom<Record<string, AgentRuntimeStatus>>({})
 export const agentPendingInteractiveAtom = atom<Record<string, AgentPendingInteractiveState>>({})
 export const agentSubagentRunsAtom = atom<Record<string, SubagentRunRecord[]>>({})
+export const agentSubagentMessagesAtom = atom<Record<string, Record<string, SDKMessage[]>>>({})
 export const agentPlanStateAtom = atom<Record<string, PlanStateChangedEvent>>({})
 export const agentErrorMessagesAtom = atom<Record<string, string>>({})
 
