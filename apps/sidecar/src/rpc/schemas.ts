@@ -613,6 +613,20 @@ export const updateUiStateInputSchema = z.object({
   agentDraftByThreadId: z.record(z.string(), z.string()).optional()
 });
 
+export const updateGeneralSettingsInputSchema = z.object({
+  themeMode: z.enum(["system", "light", "dark"]).optional(),
+  windowBehavior: z.object({
+    minimizeToTray: z.boolean().optional(),
+    closeToTray: z.boolean().optional()
+  }).optional()
+});
+
+export const clearCacheInputSchema = z.object({
+  frontendTemp: z.boolean().optional(),
+  previewRender: z.boolean().optional(),
+  logs: z.boolean().optional()
+});
+
 export const lumeConfigEffectiveInputSchema = z.object({
   workspaceSlug: optionalIdSchema
 });

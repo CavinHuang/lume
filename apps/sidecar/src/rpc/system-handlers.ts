@@ -1,11 +1,18 @@
 import {
+  GENERAL_SETTINGS_IPC_CHANNELS,
   GITHUB_RELEASE_IPC_CHANNELS,
   IPC_PROTOCOL_VERSION,
   LUME_CONFIG_IPC_CHANNELS,
   SYSTEM_CONFIG_IPC_CHANNELS,
   UI_STATE_IPC_CHANNELS
 } from "@lume/shared";
-import type { GitHubReleaseListOptions, NetworkDiagnosticResult, UpdateUiStateInput } from "@lume/shared";
+import type {
+  ClearCacheInput,
+  GitHubReleaseListOptions,
+  NetworkDiagnosticResult,
+  UpdateGeneralSettingsInput,
+  UpdateUiStateInput
+} from "@lume/shared";
 import { spawn } from "node:child_process";
 import {
   getGitHubReleaseByTag,
@@ -13,12 +20,26 @@ import {
   listGitHubReleases
 } from "../services/system/github-release-service";
 import { fetchWithProxy } from "../services/infra/proxy-fetch";
+import { getLogsDir } from "../services/infra/logger";
 import { getChatToolCredentials } from "../services/chat/chat-tool-manager";
 import { getLumeConfigYamlPath } from "../services/infra/config-paths";
 import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/system/lume-config-service";
 import { getEffectiveSystemConfig, updatePrimarySystemConfigSection } from "../services/system/system-config-service";
+import {
+  clearGeneralSettingsCaches,
+  getPersistedGeneralSettings,
+  updatePersistedGeneralSettings
+} from "../services/system/general-settings-service";
 import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
-import { githubReleaseByTagInputSchema, lumeConfigEffectiveInputSchema, lumeConfigUpdateInputSchema, systemConfigUpdateInputSchema, updateUiStateInputSchema } from "./schemas";
+import {
+  clearCacheInputSchema,
+  githubReleaseByTagInputSchema,
+  lumeConfigEffectiveInputSchema,
+  lumeConfigUpdateInputSchema,
+  systemConfigUpdateInputSchema,
+  updateGeneralSettingsInputSchema,
+  updateUiStateInputSchema
+} from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
 
@@ -104,6 +125,27 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
     [UI_STATE_IPC_CHANNELS.UPDATE]: async (params) =>
       updatePersistedUiState(
         validateInput(updateUiStateInputSchema, params, UI_STATE_IPC_CHANNELS.UPDATE) as UpdateUiStateInput
+      ),
+    [GENERAL_SETTINGS_IPC_CHANNELS.GET]: async () => getPersistedGeneralSettings(),
+    [GENERAL_SETTINGS_IPC_CHANNELS.UPDATE]: async (params) =>
+      updatePersistedGeneralSettings(
+        validateInput(
+          updateGeneralSettingsInputSchema,
+          params ?? {},
+          GENERAL_SETTINGS_IPC_CHANNELS.UPDATE
+        ) as UpdateGeneralSettingsInput
+      ),
+    [GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR]: async () => {
+      openInSystem(getLogsDir());
+      return { ok: true };
+    },
+    [GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE]: async (params) =>
+      clearGeneralSettingsCaches(
+        validateInput(
+          clearCacheInputSchema,
+          params ?? {},
+          GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE
+        ) as ClearCacheInput
       ),
     [LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
       const input = validateInput(
