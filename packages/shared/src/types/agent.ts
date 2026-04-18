@@ -537,8 +537,8 @@ export interface AgentToolPermissionResponseInput {
 
 export interface AgentPendingInteractiveState {
   threadId: string
-  askUserQuestion?: AgentAskUserQuestionRequest
-  toolPermission?: AgentToolPermissionRequest
+  askUserQuestions?: AgentAskUserQuestionRequest[]
+  toolPermissions?: AgentToolPermissionRequest[]
 }
 
 // ===== Plan 模式 =====

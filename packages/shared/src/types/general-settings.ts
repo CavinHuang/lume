@@ -15,19 +15,6 @@ export interface UpdateGeneralSettingsInput {
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
 }
 
-export type GeneralSettingsCacheKey = "frontendTemp" | "previewRender" | "logs"
-
-export interface ClearCacheInput {
-  frontendTemp?: boolean
-  previewRender?: boolean
-  logs?: boolean
-}
-
-export interface ClearCacheResult {
-  cleared: GeneralSettingsCacheKey[]
-  skipped: GeneralSettingsCacheKey[]
-}
-
 export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
   windowBehavior: {
