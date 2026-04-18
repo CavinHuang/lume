@@ -4,12 +4,13 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
 import { Send, Square, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
-import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, agentSDKMessagesAtom } from '@/atoms'
+import type { SDKMessage } from '@lume/shared'
 import { MentionList } from './MentionList'
 import { ModelPicker } from './ModelPicker'
 import type { MentionItem, MentionListRef } from './MentionList'
@@ -133,6 +134,7 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const workspaceSlugRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -185,6 +187,22 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
     const text = editor.getText().trim()
     if (!text) return
     editor.commands.clearContent()
+    const now = Date.now()
+    const userMsg = {
+      type: 'user' as const,
+      uuid: `user:${threadId}:${now}`,
+      session_id: threadId,
+      timestamp: new Date(now).toISOString(),
+      parent_tool_use_id: null,
+      message: {
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text }]
+      }
+    } as unknown as SDKMessage
+    setSDKMessages((prev) => ({
+      ...prev,
+      [threadId]: [...(prev[threadId] ?? []), userMsg],
+    }))
     await agentSend({ threadId, userMessage: text })
   }
 
@@ -225,7 +243,7 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
           <EditorContent editor={editor} />
         </div>
         <div className="flex items-center justify-between px-3 pb-2 gap-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 min-w-0 flex-wrap">
             <button
               onClick={handleAttach}
               className="p-1.5 rounded-lg text-foreground/40 hover:text-foreground/70 hover:bg-muted/50 transition-colors"
