@@ -8,6 +8,7 @@ import { useScrollPositionMemory } from '@/hooks/useScrollPositionMemory'
 import { getThreadSDKMessages } from '@/lib/desktop-api'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { AgentListSubagentRunsResult } from '@lume/shared'
+import { cn } from '@/lib/utils'
 
 interface AgentMessagesProps {
   threadId: string
@@ -28,12 +29,21 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const wasNearBottomRef = useRef(true)
+  const pendingRestoreThreadIdRef = useRef<string | null>(threadId)
 
   const { save, restore } = useScrollPositionMemory()
   const getScrollElement = useCallback(() => {
     const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
     return viewport instanceof HTMLDivElement ? viewport : null
   }, [])
+  const restoreCurrentThread = useCallback((persist: boolean) => {
+    const scrollElement = getScrollElement()
+    restore(threadId, scrollElement)
+    wasNearBottomRef.current = isNearBottom(scrollElement)
+    if (persist) {
+      save(threadId, scrollElement)
+    }
+  }, [getScrollElement, restore, save, threadId])
 
   // 首次访问线程时拉取历史 SDK 消息 + subagent runs
   useEffect(() => {
@@ -66,49 +76,48 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
     const scrollElement = getScrollElement()
     if (!scrollElement) return
 
-    const updateNearBottom = () => {
+    const handleScroll = () => {
       wasNearBottomRef.current = isNearBottom(scrollElement)
+      save(threadId, scrollElement)
     }
 
-    updateNearBottom()
-    scrollElement.addEventListener('scroll', updateNearBottom, { passive: true })
+    wasNearBottomRef.current = isNearBottom(scrollElement)
+    scrollElement.addEventListener('scroll', handleScroll, { passive: true })
     return () => {
-      scrollElement.removeEventListener('scroll', updateNearBottom)
+      scrollElement.removeEventListener('scroll', handleScroll)
     }
-  }, [getScrollElement, sdkMessages.length, threadId])
+  }, [getScrollElement, save, threadId])
 
   // 切换 thread 时保存/恢复滚动位置
   useEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
-      save(prevThreadIdRef.current, getScrollElement())
       prevThreadIdRef.current = threadId
-      // 延迟恢复，等渲染完成
+      pendingRestoreThreadIdRef.current = threadId
       requestAnimationFrame(() => {
-        const scrollElement = getScrollElement()
-        restore(threadId, scrollElement)
-        wasNearBottomRef.current = isNearBottom(scrollElement)
+        const hasMessages = sdkMessages.length > 0
+        restoreCurrentThread(hasMessages)
+        if (hasMessages) {
+          pendingRestoreThreadIdRef.current = null
+        }
       })
     }
-  }, [getScrollElement, restore, save, threadId])
+  }, [restoreCurrentThread, sdkMessages.length, threadId])
+
+  useLayoutEffect(() => {
+    if (pendingRestoreThreadIdRef.current !== threadId || sdkMessages.length === 0) return
+
+    requestAnimationFrame(() => {
+      restoreCurrentThread(true)
+      pendingRestoreThreadIdRef.current = null
+    })
+  }, [restoreCurrentThread, sdkMessages.length, threadId])
 
   // 流式输出时根据更新前的滚动状态决定是否继续跟随到底部
   useLayoutEffect(() => {
     if (streaming && wasNearBottomRef.current) {
-      wasNearBottomRef.current = true
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
   }, [sdkMessages.length, streaming])
-
-  if (sdkMessages.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center space-y-1">
-          <p className="text-foreground/50 text-sm font-medium">Agent 已就绪</p>
-          <p className="text-foreground/30 text-xs">输入任务开始</p>
-        </div>
-      </div>
-    )
-  }
 
   const items: React.ReactNode[] = []
   for (let i = 0; i < sdkMessages.length; i++) {
@@ -128,9 +137,24 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
 
   return (
     <ScrollArea className="flex-1 min-h-0">
-      <div ref={containerRef} className="space-y-2 px-4 py-4">
-        {items}
-        <div ref={bottomRef} />
+      <div
+        ref={containerRef}
+        className={cn(
+          'min-h-full px-4 py-4',
+          sdkMessages.length === 0 ? 'flex items-center justify-center' : 'space-y-2'
+        )}
+      >
+        {sdkMessages.length === 0 ? (
+          <div className="text-center space-y-1">
+            <p className="text-foreground/50 text-sm font-medium">Agent 已就绪</p>
+            <p className="text-foreground/30 text-xs">输入任务开始</p>
+          </div>
+        ) : (
+          <>
+            {items}
+            <div ref={bottomRef} />
+          </>
+        )}
       </div>
     </ScrollArea>
   )

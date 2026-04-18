@@ -1,5 +1,6 @@
 import { useAtom, useAtomValue } from 'jotai'
 import { Plus, Settings, PanelLeftClose, PanelLeftOpen, FolderOpen, MoreHorizontal, Pin, PinOff, Pencil, Trash2, Check, X } from 'lucide-react'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import {
   agentThreadsAtom,
@@ -164,25 +165,27 @@ export function LeftSidebar() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pt-2 pb-3 scrollbar-none">
-        {groups.map((group) => (
-          <div key={group.label} className="mb-1">
-            <div className="px-3 pt-2 pb-1 text-[11px] font-medium text-foreground/40 select-none">{group.label}</div>
-            {group.items.map((thread) => (
-              <ThreadItem
-                key={thread.id}
-                thread={thread}
-                isActive={activeTabId === thread.id}
-                isRunning={streamingStates[thread.id] === 'streaming'}
-                onOpen={openThread}
-                onTogglePin={togglePin}
-                onDelete={deleteThread}
-                onRename={renameThread}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="px-3 pt-2 pb-3">
+          {groups.map((group) => (
+            <div key={group.label} className="mb-1">
+              <div className="px-3 pt-2 pb-1 text-[11px] font-medium text-foreground/40 select-none">{group.label}</div>
+              {group.items.map((thread) => (
+                <ThreadItem
+                  key={thread.id}
+                  thread={thread}
+                  isActive={activeTabId === thread.id}
+                  isRunning={streamingStates[thread.id] === 'streaming'}
+                  onOpen={openThread}
+                  onTogglePin={togglePin}
+                  onDelete={deleteThread}
+                  onRename={renameThread}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </ScrollArea>
 
       <div className="px-3 pb-3">
         <button

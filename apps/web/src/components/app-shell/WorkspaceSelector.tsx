@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { useAtom, useAtomValue } from 'jotai'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom, agentWorkspaceCapabilitiesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { AgentWorkspace, WorkspaceCapabilities } from '@lume/shared'
+import type { AgentWorkspace } from '@lume/shared'
 import { toast } from 'sonner'
 
 export function WorkspaceSelector() {
