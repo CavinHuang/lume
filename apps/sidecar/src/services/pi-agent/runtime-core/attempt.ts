@@ -1,13 +1,11 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
-import { lstat, symlink } from "node:fs/promises";
-import { join } from "node:path";
 import { updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
-import { getAgentSessionWorkspacePath, getConfigDir } from "../../infra/config-paths";
+import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { decryptApiKey, listChannels } from "../../channel/channel-manager";
 import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
@@ -45,8 +43,6 @@ interface PreparedRuntimeCoreAttempt {
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   apiKey: string;
 }
-
-const LUME_CONFIG_MIRROR_DIRNAME = ".lume-config";
 
 const log = createLogger("pi-agent-runtime-core-attempt");
 
@@ -513,8 +509,6 @@ async function prepareRuntimeCoreAttempt(
     }
   }
 
-  await ensureConfigDirMirror(agentCwd);
-
   return {
     agentCwd,
     agentDir: getRuntimeCoreAgentDir(),
@@ -523,38 +517,6 @@ async function prepareRuntimeCoreAttempt(
     modelResolution,
     apiKey
   };
-}
-
-async function ensureConfigDirMirror(agentCwd: string): Promise<void> {
-  const configDir = getConfigDir();
-  const mirrorPath = join(agentCwd, LUME_CONFIG_MIRROR_DIRNAME);
-  try {
-    const existing = await lstat(mirrorPath);
-    if (existing.isSymbolicLink() || existing.isDirectory()) {
-      return;
-    }
-    log.warn("runtime-core 配置目录映射路径已被占用，跳过映射", {
-      agentCwd,
-      mirrorPath
-    });
-    return;
-  } catch {
-    // no-op: mirror path does not exist
-  }
-
-  try {
-    await symlink(
-      configDir,
-      mirrorPath,
-      process.platform === "win32" ? "junction" : "dir"
-    );
-  } catch (error) {
-    log.warn("runtime-core 配置目录映射失败，继续使用绝对路径访问", {
-      agentCwd,
-      mirrorPath,
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
 }
 
 // ─── Pi Agent runner (migrated from runner/run.ts) ───

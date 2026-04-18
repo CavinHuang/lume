@@ -5,8 +5,12 @@ import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
 import { buildSidecarSubagentRunContext, createRuntimeCoreSession } from "./run";
+import { runRuntimeCoreAttempt } from "./attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { getAgentWorkspacePath } from "../../infra/config-paths";
+import { getAgentSessionWorkspacePath, getAgentWorkspacePath } from "../../infra/config-paths";
+import { createAgentThread } from "../../agent/agent-thread-manager";
+import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { createChannel } from "../../channel/channel-manager";
 
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
@@ -252,7 +256,7 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("## Workspace Files (injected)");
     expect(systemPrompt).toContain("## 系统配置");
     expect(systemPrompt).toContain("~/.lume/lume.yaml");
-    expect(systemPrompt).toContain("Runtime 暴露配置目录");
+    expect(systemPrompt).not.toContain(".lume-config");
     expect(systemPrompt).toContain("## Project Context");
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
@@ -265,6 +269,72 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("<working_directory>");
 
     result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("runRuntimeCoreAttempt 不应在工作区线程目录创建 .lume-config 映射", async () => {
+    const prevMockSuccess = process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-attempt-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    process.env.LUME_PI_AGENT_MOCK_SUCCESS = "1";
+
+    const workspace = createAgentWorkspace("No Mirror Workspace");
+    const channel = createChannel({
+      name: "mock-openai",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      enabled: true,
+      defaultModelId: "gpt-5.4-mini",
+      models: [
+        {
+          id: "gpt-5.4-mini",
+          name: "gpt-5.4-mini",
+          provider: "openai"
+        }
+      ]
+    });
+
+    const thread = createAgentThread("runtime attempt no mirror", channel.id, workspace.id, undefined, "gpt-5.4-mini");
+    const sessionId = thread.id;
+    const threadDir = getAgentSessionWorkspacePath(workspace.slug, sessionId);
+
+    const result = await runRuntimeCoreAttempt(
+      {
+        input: {
+          userMessage: "hello",
+          permissionMode: "plan",
+          chatType: "direct"
+        },
+        runtime: {
+          sessionId,
+          channelId: channel.id,
+          resolvedModelId: "gpt-5.4-mini",
+          workspaceId: workspace.id,
+          threadType: "main"
+        }
+      },
+      {
+        onSdkMessage: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onAskUserQuestion: () => {},
+        onToolPermissionRequest: () => {}
+      },
+      {
+        registerAbort: () => {},
+        unregisterAbort: () => {}
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(existsSync(join(threadDir, ".lume-config"))).toBeFalse();
+
+    if (prevMockSuccess === undefined) {
+      delete process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    } else {
+      process.env.LUME_PI_AGENT_MOCK_SUCCESS = prevMockSuccess;
+    }
     rmSync(configDir, { recursive: true, force: true });
   });
 
@@ -340,5 +410,3 @@ describe("runtime-core run", () => {
     expect(result.registryInput.parentRunId).toBe("parent-run");
   });
 });
-
-

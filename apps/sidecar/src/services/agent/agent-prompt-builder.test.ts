@@ -212,6 +212,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("- memory_search");
     expect(prompt).toContain("## Workspace");
     expect(prompt).toContain("System config entry: ~/.lume/lume.yaml");
+    expect(prompt).not.toContain(".lume-config");
     expect(prompt).toContain("## Runtime");
     expect(prompt).not.toContain("## Agentic Execution");
     expect(prompt).not.toContain("## Delegation Policy");
@@ -219,7 +220,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).not.toContain("## Memory Recall");
   });
 
-  test("buildSystemPromptAppend 在 workspace 上下文中应声明 runtime 暴露的配置目录", () => {
+  test("buildSystemPromptAppend 在 workspace 上下文中应仅声明真实系统配置路径", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "thread-xyz",
       workspaceName: "Demo",
@@ -227,7 +228,7 @@ describe("agent-prompt-builder", () => {
       availableTools: ["read", "write"]
     });
     expect(prompt).toContain("- 系统配置入口: ~/.lume/lume.yaml");
-    expect(prompt).toContain("Runtime 暴露配置目录: ~/.lume/agent-workspaces/demo/threads/thread-xyz/.lume-config/");
+    expect(prompt).not.toContain(".lume-config");
   });
 
   test("Tooling 段应按预设顺序输出并保留首次出现大小写", () => {

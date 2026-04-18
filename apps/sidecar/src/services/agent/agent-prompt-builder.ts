@@ -370,9 +370,6 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   );
   if (ctx.workspaceSlug) {
     lines.push(`Session path: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/`);
-    lines.push(
-      `Runtime-exposed config mirror: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/threads/${ctx.sessionId}/.lume-config/`
-    );
   }
   lines.push("System config entry: ~/.lume/lume.yaml");
 
@@ -490,7 +487,6 @@ CRITICAL - Skill 调用规则:
 
 - 工作区名称: ${ctx.workspaceName}
 - 系统配置入口: ~/.lume/lume.yaml
-- Runtime 暴露配置目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/threads/${ctx.sessionId}/.lume-config/
 - MCP 配置: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/mcp.json
 - Skills 目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/skills/
 - 线程目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/

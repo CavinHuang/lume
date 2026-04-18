@@ -14,6 +14,7 @@ import type {
 import {
   createAgentThreadWithModelRef,
   deleteAgentThread,
+  getAgentThreadMeta,
   getAgentThreadMessages,
   getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
@@ -34,6 +35,7 @@ import {
   submitAgentToolPermission,
   submitAskUserQuestionAnswers
 } from "../services/agent/agent-service";
+import { resolveAgentDefaultStrategy } from "../services/channel/model-selection";
 import {
   copyFolderToSession,
   deleteAgentFile,
@@ -71,6 +73,7 @@ import {
   deleteAgentWorkspace,
   deleteWorkspaceSkill,
   ensureDefaultWorkspace,
+  getAgentWorkspace,
   getWorkspaceCapabilities,
   getWorkspaceMcpConfig,
   getWorkspaceSkills,
@@ -85,6 +88,7 @@ import {
   importGlobalSkillToWorkspace,
   installGlobalPlugin
 } from "../services/system/global-discovery-service";
+import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
@@ -284,10 +288,39 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION
       );
+      const raw = asObject(params);
+      const isClearRequest = input.modelRef === null && input.channelId === null && input.modelId === null;
+      if (isClearRequest) {
+        const thread = getAgentThreadMeta(input.threadId);
+        const workspaceSlug = thread?.workspaceId
+          ? getAgentWorkspace(thread.workspaceId)?.slug
+          : undefined;
+        const inheritedSelection = resolveAgentDefaultStrategy({
+          globalDefault: getEffectiveLumeConfig(workspaceSlug).models?.agent
+        });
+        return updateAgentThreadMeta(input.threadId, {
+          channelId: inheritedSelection.channelId ?? null,
+          modelRef: inheritedSelection.modelRef ?? null,
+          modelId: null,
+          modelSelectionSource: "inherited"
+        });
+      }
+      const hasProvidedSelectionKey = "modelRef" in raw || "channelId" in raw || "modelId" in raw;
+      const updates: Parameters<typeof updateAgentThreadMeta>[1] = {};
+      if ("modelRef" in raw) {
+        updates.modelRef = input.modelRef;
+      }
+      if ("channelId" in raw) {
+        updates.channelId = input.channelId;
+      }
+      if ("modelId" in raw) {
+        updates.modelId = input.modelId;
+      }
+      if (hasProvidedSelectionKey) {
+        updates.modelSelectionSource = "thread-override";
+      }
       return updateAgentThreadMeta(input.threadId, {
-        modelRef: input.modelRef,
-        channelId: input.channelId,
-        modelId: input.modelId
+        ...updates
       });
     },
     [AGENT_IPC_CHANNELS.TOGGLE_PIN_THREAD]: async (params) => {

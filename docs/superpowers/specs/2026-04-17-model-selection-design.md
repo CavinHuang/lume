@@ -102,8 +102,8 @@ Two concepts must remain distinct in both code and UI:
 Stored globally as:
 
 - `defaultChannelId`
-- `defaultModelId`
-- `fallbackModelIds[]`
+- `defaultModelRef`
+- `fallbackModelRefs[]`
 
 ### Thread override
 

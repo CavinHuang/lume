@@ -246,9 +246,9 @@ export const agentUpdateThreadTitleInputSchema = z.object({
 
 export const agentUpdateThreadModelSelectionInputSchema = z.object({
   threadId: idSchema,
-  modelRef: z.string().optional(),
-  channelId: z.string().optional(),
-  modelId: z.string().optional()
+  modelRef: z.string().nullable().optional(),
+  channelId: z.string().nullable().optional(),
+  modelId: z.string().nullable().optional()
 });
 
 export const agentMigrateChatInputSchema = z.object({
@@ -281,6 +281,39 @@ export const systemConfigUpdateInputSchema = z.object({
   path: z.string().min(1),
   value: z.unknown()
 });
+
+const nonEmptyTrimmedStringSchema = z.string().trim().min(1);
+
+const lumeConfigAgentStrategySchema = z.object({
+  defaultChannelId: nonEmptyTrimmedStringSchema.optional(),
+  defaultModelRef: nonEmptyTrimmedStringSchema.optional(),
+  fallbackModelRefs: z.array(nonEmptyTrimmedStringSchema).optional()
+}).strict();
+
+const lumeConfigUpdateBaseSchema = z.object({
+  source: z.enum(["user", "agent", "system"]),
+  workspaceSlug: optionalIdSchema,
+  summary: z.string().optional()
+});
+
+export const lumeConfigUpdateInputSchema = z.union([
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.agent"),
+    value: lumeConfigAgentStrategySchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.agent.defaultChannelId"),
+    value: nonEmptyTrimmedStringSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.agent.defaultModelRef"),
+    value: nonEmptyTrimmedStringSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.agent.fallbackModelRefs"),
+    value: z.array(nonEmptyTrimmedStringSchema)
+  })
+]);
 
 export const workspacePathInputSchema = z.object({
   workspaceSlug: idSchema,

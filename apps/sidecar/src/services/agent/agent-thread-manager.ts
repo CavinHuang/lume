@@ -19,7 +19,13 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { AgentMessage, AgentRecentMessagesResult, AgentThreadMeta, SDKMessage } from "@lume/shared";
+import type {
+  AgentMessage,
+  AgentModelSelectionSource,
+  AgentRecentMessagesResult,
+  AgentThreadMeta,
+  SDKMessage
+} from "@lume/shared";
 import {
   getAgentSessionDataDir,
   getAgentThreadArtifactsPath,
@@ -40,12 +46,14 @@ import {
 } from "./agent-message-versioning-service";
 import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./agent-message-version-store";
 import { getConversationMessages } from "../chat/conversation-manager";
+import { resolveAgentDefaultStrategy } from "../channel/model-selection";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "../pi-agent/content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath,
   hasRuntimeCoreSessionTranscript
 } from "../pi-agent/runtime-core/session-store";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
 
 interface AgentThreadsIndex {
   version: number;
@@ -67,6 +75,24 @@ function buildModelRef(channelId?: string, modelId?: string): string | undefined
     return undefined;
   }
   return `${trimmedChannelId}/${trimmedModelId}`;
+}
+
+function hasOwn<T extends object>(value: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function resolveInheritedThreadSelection(workspaceId?: string): {
+  channelId?: string;
+  modelRef?: string;
+} {
+  const workspaceSlug = workspaceId ? getAgentWorkspace(workspaceId)?.slug : undefined;
+  const resolvedSelection = resolveAgentDefaultStrategy({
+    globalDefault: getEffectiveLumeConfig(workspaceSlug).models?.agent
+  });
+  return {
+    channelId: resolvedSelection.channelId,
+    modelRef: resolvedSelection.modelRef
+  };
 }
 
 interface RuntimeCoreContextMessage {
@@ -162,13 +188,23 @@ export function createAgentThreadWithModelRef(
 ): AgentThreadMeta {
   const index = readIndex();
   const now = Date.now();
+  const explicitSelectionProvided = [modelRef, channelId, modelId]
+    .some((value) => typeof value === "string" && value.trim().length > 0);
+  const inheritedSelection = explicitSelectionProvided
+    ? null
+    : resolveInheritedThreadSelection(workspaceId);
 
   const meta: AgentThreadMeta = {
     id: randomUUID(),
     title: title || "新 Agent 线程",
-    modelRef: modelRef ?? buildModelRef(channelId, modelId),
-    channelId,
+    modelRef: explicitSelectionProvided
+      ? modelRef ?? buildModelRef(channelId, modelId)
+      : inheritedSelection?.modelRef,
+    channelId: explicitSelectionProvided
+      ? channelId
+      : inheritedSelection?.channelId,
     modelId,
+    modelSelectionSource: explicitSelectionProvided ? "thread-override" : "inherited",
     workspaceId,
     parentThreadId,
     pinned: false,
@@ -344,9 +380,13 @@ export function updateAgentThreadMeta(
   updates: Partial<
     Pick<
       AgentThreadMeta,
-      "title" | "modelRef" | "channelId" | "modelId" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "pinned" | "parentThreadId"
+      "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "pinned" | "parentThreadId" | "modelSelectionSource"
     >
-  >
+  > & {
+    modelRef?: string | null;
+    channelId?: string | null;
+    modelId?: string | null;
+  }
 ): AgentThreadMeta {
   const index = readIndex();
   const idx = index.threads.findIndex((thread) => thread.id === id);
@@ -355,13 +395,27 @@ export function updateAgentThreadMeta(
   }
 
   const existing = index.threads[idx] as AgentThreadMeta;
+  const nextChannelId = hasOwn(updates, "channelId")
+    ? updates.channelId ?? undefined
+    : existing.channelId;
+  const nextModelId = hasOwn(updates, "modelId")
+    ? updates.modelId ?? undefined
+    : existing.modelId;
+  const touchedSelection = hasOwn(updates, "modelRef") || hasOwn(updates, "channelId") || hasOwn(updates, "modelId");
+  const nextModelRef = touchedSelection
+    ? hasOwn(updates, "modelRef")
+      ? updates.modelRef ?? undefined
+      : buildModelRef(nextChannelId, nextModelId)
+    : existing.modelRef;
   const updated: AgentThreadMeta = {
     ...existing,
     ...updates,
-    modelRef: updates.modelRef ?? buildModelRef(
-      updates.channelId ?? existing.channelId,
-      updates.modelId ?? existing.modelId
-    ) ?? existing.modelRef,
+    channelId: nextChannelId,
+    modelId: nextModelId,
+    modelRef: nextModelRef,
+    modelSelectionSource: hasOwn(updates, "modelSelectionSource")
+      ? updates.modelSelectionSource ?? undefined
+      : existing.modelSelectionSource,
     updatedAt: Date.now()
   };
 

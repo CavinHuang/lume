@@ -15,10 +15,10 @@ import {
 import { fetchWithProxy } from "../services/infra/proxy-fetch";
 import { getChatToolCredentials } from "../services/chat/chat-tool-manager";
 import { getLumeConfigYamlPath } from "../services/infra/config-paths";
-import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
+import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/system/lume-config-service";
 import { getEffectiveSystemConfig, updatePrimarySystemConfigSection } from "../services/system/system-config-service";
 import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
-import { githubReleaseByTagInputSchema, lumeConfigEffectiveInputSchema, systemConfigUpdateInputSchema, updateUiStateInputSchema } from "./schemas";
+import { githubReleaseByTagInputSchema, lumeConfigEffectiveInputSchema, lumeConfigUpdateInputSchema, systemConfigUpdateInputSchema, updateUiStateInputSchema } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
 
@@ -112,6 +112,14 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
         LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE
       );
       return getEffectiveLumeConfig(input.workspaceSlug);
+    },
+    [LUME_CONFIG_IPC_CHANNELS.UPDATE_SECTION]: async (params) => {
+      const input = validateInput(
+        lumeConfigUpdateInputSchema,
+        params,
+        LUME_CONFIG_IPC_CHANNELS.UPDATE_SECTION
+      );
+      return updateLumeConfigSection(input);
     },
     [LUME_CONFIG_IPC_CHANNELS.GET_SOURCE_PATH]: async () => ({
       sourcePath: getLumeConfigYamlPath()
