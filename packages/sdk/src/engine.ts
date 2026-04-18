@@ -33,7 +33,6 @@ import {
   estimateMessagesTokens,
   estimateCost,
   estimateSystemPromptTokens,
-  getAutoCompactThreshold,
   getContextWindowSize,
 } from './utils/tokens.js'
 import {
@@ -49,7 +48,7 @@ import {
 } from './utils/retry.js'
 import { getSystemContext, getUserContext } from './utils/context.js'
 import { normalizeMessagesForAPI } from './utils/messages.js'
-import type { HookRegistry, HookInput, HookOutput, HookExecutionResult } from './hooks.js'
+import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
 import { captureFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'

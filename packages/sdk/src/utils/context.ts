@@ -10,7 +10,7 @@
 
 import { execSync } from 'child_process'
 import { readFile, stat } from 'fs/promises'
-import { join, resolve } from 'path'
+import { join } from 'path'
 
 // Memoization cache
 let cachedGitStatus: string | null = null

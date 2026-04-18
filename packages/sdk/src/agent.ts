@@ -74,10 +74,6 @@ import { isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
-function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
-  return !!value && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === 'function'
-}
-
 function toSessionMessage(
   role: SessionMessage['role'],
   content: unknown,
@@ -667,7 +663,7 @@ export class Agent {
       'RemoteTrigger',
     ])
 
-    return async (tool, input, metadata) => {
+    return async (tool, _input, metadata) => {
       const base = {
         title: metadata?.title,
         displayName: metadata?.displayName,

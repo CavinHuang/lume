@@ -53,11 +53,6 @@ function getTranscriptJsonlPath(dir: string): string {
   return join(dir, 'transcript.jsonl')
 }
 
-function getSessionsDir(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || '/tmp'
-  return join(home, '.open-agent-sdk', 'sessions')
-}
-
 function getSessionDirCandidates(): string[] {
   const candidates: string[] = []
   const override = process.env.OPEN_AGENT_SDK_HOME || process.env.CODEANY_HOME
@@ -72,10 +67,6 @@ function getSessionDirCandidates(): string[] {
 
   candidates.push(join(process.cwd(), '.open-agent-sdk', 'sessions'))
   return [...new Set(candidates)]
-}
-
-function getSessionPath(sessionId: string): string {
-  return join(getSessionsDir(), sessionId)
 }
 
 async function resolveExistingSessionPath(sessionId: string): Promise<string | null> {

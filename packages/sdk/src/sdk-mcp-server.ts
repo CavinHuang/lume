@@ -25,7 +25,7 @@
 
 import type { SdkMcpToolDefinition } from './tool-helper.js'
 import { sdkToolToToolDefinition } from './tool-helper.js'
-import type { ToolDefinition, McpServerConfig } from './types.js'
+import type { ToolDefinition } from './types.js'
 
 /**
  * SDK MCP server config that includes the in-process server instance.

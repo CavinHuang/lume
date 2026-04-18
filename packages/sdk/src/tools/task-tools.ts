@@ -7,7 +7,7 @@
  * Tasks persist across turns within a session.
  */
 
-import type { ToolDefinition, ToolContext, ToolResult } from '../types.js'
+import type { ToolDefinition, ToolResult } from '../types.js'
 
 /**
  * Task status.

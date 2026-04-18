@@ -201,7 +201,7 @@ export function filterDisallowedTools(
 export function assembleToolPool(
   baseTools: ToolDefinition[],
   mcpTools: ToolDefinition[] = [],
-  allowedTools?: string[],
+  _allowedTools?: string[],
   disallowedTools?: string[],
 ): ToolDefinition[] {
   const combined = [...baseTools, ...mcpTools]

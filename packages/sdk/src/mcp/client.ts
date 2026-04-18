@@ -5,7 +5,6 @@
 import type {
   ToolDefinition,
   McpServerConfig,
-  ToolContext,
   ToolResult,
 } from '../types.js'
 
