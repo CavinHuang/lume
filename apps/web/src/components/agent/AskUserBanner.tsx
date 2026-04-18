@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { AgentAskUserQuestionRequest } from '@lume/shared'
+import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 
 interface AskUserBannerProps {
   threadId: string
@@ -23,8 +24,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     await sidecarCall('agent:submit-ask-user-question', { threadId, toolUseId: request.toolUseId, answers })
     setPending((prev) => {
       const next = { ...prev }
-      if (next[threadId]) next[threadId] = { ...next[threadId], askUserQuestion: undefined }
-      return next
+      return removePendingAskUserQuestion(next, threadId, request.toolUseId)
     })
   }
 
@@ -35,6 +35,9 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
         <MessageCircle size={14} className="text-foreground/50" />
         <span className="text-[13px] font-medium text-foreground">需要你的输入</span>
+        {request.subagentRunId && (
+          <span className="text-[11px] text-foreground/45">Subagent {request.subagentRunId}</span>
+        )}
       </div>
       <div className="px-3 pb-3 space-y-3">
         {request.questions.map((q) => (

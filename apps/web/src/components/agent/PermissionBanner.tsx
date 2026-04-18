@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { AgentToolPermissionRequest } from '@lume/shared'
+import { removePendingToolPermission } from '@/hooks/pending-interactive-state'
 
 interface PermissionBannerProps {
   threadId: string
@@ -24,8 +25,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
     await sidecarCall('agent:submit-tool-permission', { threadId, requestId: request.requestId, decision })
     setPending((prev) => {
       const next = { ...prev }
-      if (next[threadId]) next[threadId] = { ...next[threadId], toolPermission: undefined }
-      return next
+      return removePendingToolPermission(next, threadId, request.requestId)
     })
   }
 
@@ -37,6 +37,9 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
         <Icon size={16} className="mt-0.5 flex-shrink-0 text-foreground/60" />
         <div className="flex-1 min-w-0">
           <p className="text-[13px] font-medium text-foreground">{request.toolName}</p>
+          {request.subagentRunId && (
+            <p className="text-[11px] text-foreground/45 mt-0.5">Subagent {request.subagentRunId}</p>
+          )}
           <p className="text-[12px] text-foreground/60 mt-0.5">{request.reason}</p>
         </div>
       </div>

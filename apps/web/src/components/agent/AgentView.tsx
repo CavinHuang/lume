@@ -22,6 +22,8 @@ export function AgentView({ threadId }: AgentViewProps) {
   const sdkMessages = useAtomValue(agentSDKMessagesAtom)[threadId] ?? []
   const streamingState = useAtomValue(agentStreamingStatesAtom)[threadId] ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
+  const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
+  const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
 
   const sidePanelViews = useAtomValue(agentSidePanelViewAtom)
   const sidePanelView = sidePanelViews[threadId] ?? null
@@ -98,12 +100,12 @@ export function AgentView({ threadId }: AgentViewProps) {
         <AgentMessages threadId={threadId} sdkMessages={sdkMessages} streaming={streamingState === 'streaming'} />
         {isReview && <ExitPlanModeBanner threadId={threadId} />}
         {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
-        {pendingInteractive?.toolPermission && (
-          <PermissionBanner threadId={threadId} request={pendingInteractive.toolPermission} />
-        )}
-        {pendingInteractive?.askUserQuestion && (
-          <AskUserBanner threadId={threadId} request={pendingInteractive.askUserQuestion} />
-        )}
+        {pendingToolPermissions.map((request) => (
+          <PermissionBanner key={request.requestId} threadId={threadId} request={request} />
+        ))}
+        {pendingAskUserQuestions.map((request) => (
+          <AskUserBanner key={request.toolUseId} threadId={threadId} request={request} />
+        ))}
         <AgentInput threadId={threadId} disabled={streamingState === 'streaming'} />
       </div>
 

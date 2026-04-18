@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useSetAtom } from 'jotai'
-import { onSidecarEvent } from '@/lib/desktop-api'
+import { onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import {
   agentSDKMessagesAtom,
   agentStreamingStatesAtom,
@@ -20,8 +20,14 @@ import type {
   AgentToolPermissionRequest,
   AgentSubagentCompletionEvent,
   PlanStateChangedEvent,
+  AgentPendingInteractiveState,
   SDKMessage,
 } from '@lume/shared'
+import {
+  upsertPendingAskUserQuestion,
+  upsertPendingToolPermission,
+} from './pending-interactive-state'
+import { upsertRunFromSubagentStreamMessage } from './subagent-run-state'
 
 interface StreamingRef {
   uuid: string
@@ -131,10 +137,27 @@ export function useGlobalAgentListeners() {
 
   const streamingRef = useRef<Record<string, StreamingRef>>({})
   const subagentStreamingRef = useRef<Record<string, StreamingRef>>({})
-  const pendingAgentToolUseRef = useRef<Record<string, string[]>>({})
-  const linkedSubagentRunIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
+    sidecarCall<AgentPendingInteractiveState[]>('agent:get-pending-interactive')
+      .then((states) => {
+        setPendingInteractive((prev) => {
+          let next = prev
+          for (const state of states ?? []) {
+            for (const request of state.askUserQuestions ?? []) {
+              next = upsertPendingAskUserQuestion(next, request)
+            }
+            for (const request of state.toolPermissions ?? []) {
+              next = upsertPendingToolPermission(next, request)
+            }
+          }
+          return next
+        })
+      })
+      .catch((error) => {
+        console.error('[useGlobalAgentListeners] 恢复 pending interactive 失败:', error)
+      })
+
     const unlisten = onSidecarEvent((method, params) => {
       switch (method) {
         case 'agent:stream:event': {
@@ -145,42 +168,7 @@ export function useGlobalAgentListeners() {
 
           // === Subagent message routing ===
           if (runId) {
-            // Only consume pending tool_use ID on first event for this runId
-            const linkKey = `${streamKey}:${runId}`
-            if (!linkedSubagentRunIds.current.has(linkKey)) {
-              linkedSubagentRunIds.current.add(linkKey)
-              const pending = pendingAgentToolUseRef.current[streamKey]
-              if (pending && pending.length > 0) {
-                const toolUseId = pending.shift()!
-                setSubagentRuns((prev) => {
-                  const runs = prev[streamKey] ?? []
-                  const exists = runs.findIndex((r) => r.runId === runId)
-                  if (exists >= 0) {
-                    if (!runs[exists].parentToolUseId) {
-                      const updated = [...runs]
-                      updated[exists] = { ...updated[exists], parentToolUseId: toolUseId }
-                      return { ...prev, [streamKey]: updated }
-                    }
-                    return prev
-                  }
-                  const now = Date.now()
-                  const record = {
-                    runId,
-                    parentThreadId: streamKey,
-                    rootThreadId: streamKey,
-                    depth: 0,
-                    childThreadId: '',
-                    task: '',
-                    status: 'running' as const,
-                    cleanup: 'keep' as const,
-                    parentToolUseId: toolUseId,
-                    createdAt: now,
-                    updatedAt: now,
-                  }
-                  return { ...prev, [streamKey]: [...runs, record] }
-                })
-              }
-            }
+            setSubagentRuns((prev) => upsertRunFromSubagentStreamMessage(prev, streamKey, msg))
 
             const subStreamKey = `${streamKey}:${runId}`
 
@@ -265,18 +253,6 @@ export function useGlobalAgentListeners() {
 
           // Full assistant message → replace synthetic streaming message
           if (msg.type === 'assistant') {
-            // Track Agent tool_use blocks for subagent mapping
-            const content = (msg as { message?: { content?: unknown[] } }).message?.content
-            if (Array.isArray(content)) {
-              for (const block of content as Array<{ type: string; name?: string; id?: string }>) {
-                if (block.type === 'tool_use' && block.name === 'Agent' && block.id) {
-                  const queue = pendingAgentToolUseRef.current[streamKey] ?? []
-                  queue.push(block.id)
-                  pendingAgentToolUseRef.current[streamKey] = queue
-                }
-              }
-            }
-
             const ref = streamingRef.current[streamKey]
             if (ref) {
               setSDKMessages((prev) => {
@@ -322,12 +298,6 @@ export function useGlobalAgentListeners() {
               delete subagentStreamingRef.current[key]
             }
           }
-          // Clean up linked run IDs for this thread
-          for (const key of linkedSubagentRunIds.current) {
-            if (key.startsWith(`${threadId}:`)) {
-              linkedSubagentRunIds.current.delete(key)
-            }
-          }
           setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
           break
         }
@@ -347,18 +317,12 @@ export function useGlobalAgentListeners() {
         }
         case 'agent:ask-user-question': {
           const req = params as AgentAskUserQuestionRequest
-          setPendingInteractive((prev) => ({
-            ...prev,
-            [req.threadId]: { ...prev[req.threadId], threadId: req.threadId, askUserQuestion: req },
-          }))
+          setPendingInteractive((prev) => upsertPendingAskUserQuestion(prev, req))
           break
         }
         case 'agent:tool-permission-request': {
           const req = params as AgentToolPermissionRequest
-          setPendingInteractive((prev) => ({
-            ...prev,
-            [req.threadId]: { ...prev[req.threadId], threadId: req.threadId, toolPermission: req },
-          }))
+          setPendingInteractive((prev) => upsertPendingToolPermission(prev, req))
           break
         }
         case 'agent:subagent-completed': {
@@ -382,8 +346,6 @@ export function useGlobalAgentListeners() {
               return { ...prev, [e.threadId]: updated }
             }
             // 未见过的 run：补齐一条最小化记录，尝试关联 pending tool_use
-            const pending = pendingAgentToolUseRef.current[e.threadId]
-            const toolUseId = pending && pending.length > 0 ? pending.shift()! : undefined
             const now = Date.now()
             const record = {
               runId: e.runId,
@@ -395,7 +357,6 @@ export function useGlobalAgentListeners() {
               task: e.label ?? '',
               status: e.status,
               cleanup: 'keep' as const,
-              parentToolUseId: toolUseId,
               outcome: { output: e.outputText, error: e.errorText },
               createdAt: now,
               updatedAt: now,
