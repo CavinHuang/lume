@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react'
-import { ChevronRight, Bot } from 'lucide-react'
+import { useState, useMemo, useRef, useEffect } from 'react'
+import { ChevronRight, Bot, Terminal, FileText, FilePlus, Pencil, FolderSearch, Search, Globe, Cpu, Wrench, Loader2 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { cn } from '@/lib/utils'
@@ -141,42 +142,74 @@ function ContentBlockItem({
 
   if (block.type === 'tool_use') {
     const toolResult = toolResultMap.get(block.id)
-    const hasResult = toolResult !== undefined
-
     let resultData: unknown = undefined
     if (toolResult) {
-      try {
-        resultData = JSON.parse(toolResult.output)
-      } catch {
-        resultData = toolResult.output
-      }
+      try { resultData = JSON.parse(toolResult.output) }
+      catch { resultData = toolResult.output }
     }
-
     return (
-      <div className="rounded-xl border border-border/50 overflow-hidden bg-muted/20">
-        <button
-          onClick={() => setCollapsed((v) => !v)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-foreground/60 hover:bg-muted/30 transition-colors"
-        >
-          <ChevronRight size={12} className={cn('transition-transform', !collapsed && 'rotate-90')} />
-          <span className="font-mono font-medium text-foreground/70">{block.name}</span>
-          {hasResult && (
-            <span className="ml-auto text-[10px] text-green-500/70">完成</span>
-          )}
-          {!hasResult && (
-            <span className="ml-auto text-[10px] text-blue-500/70 animate-pulse">运行中...</span>
-          )}
-        </button>
-        {!collapsed && (
-          <div className="border-t border-border/30 p-3">
-            <ToolResultRenderer toolName={block.name} input={block.input} result={resultData} />
-          </div>
-        )}
-      </div>
+      <ToolUseBlock
+        block={block}
+        hasResult={toolResult !== undefined}
+        resultData={resultData}
+      />
     )
   }
 
   return null
+}
+
+const TOOL_ICONS: Partial<Record<string, LucideIcon>> = {
+  Bash: Terminal, Read: FileText, Write: FilePlus, Edit: Pencil,
+  Glob: FolderSearch, Grep: Search, WebSearch: Globe, WebFetch: Globe,
+  Agent: Bot, Task: Cpu,
+}
+
+function ToolUseBlock({
+  block, hasResult, resultData,
+}: {
+  block: { id: string; name: string; input: Record<string, unknown> }
+  hasResult: boolean
+  resultData: unknown
+}) {
+  const [collapsed, setCollapsed] = useState(true)
+  const startedAtRef = useRef(Date.now())
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    if (hasResult) return
+    const id = setInterval(() => setElapsed(Date.now() - startedAtRef.current), 200)
+    return () => clearInterval(id)
+  }, [hasResult])
+
+  const ToolIcon = TOOL_ICONS[block.name] ?? Wrench
+  const elapsedSec = (elapsed / 1000).toFixed(1)
+
+  return (
+    <div className="rounded-xl border border-border/50 overflow-hidden bg-muted/20">
+      <button
+        onClick={() => setCollapsed((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-foreground/60 hover:bg-muted/30 transition-colors"
+      >
+        <ChevronRight size={12} className={cn('transition-transform', !collapsed && 'rotate-90')} />
+        <ToolIcon size={12} className="text-foreground/50 shrink-0" />
+        <span className="font-mono font-medium text-foreground/70">{block.name}</span>
+        {hasResult ? (
+          <span className="ml-auto text-[10px] text-muted-foreground/50">{elapsedSec}s</span>
+        ) : (
+          <span className="ml-auto flex items-center gap-1.5 text-[10px] text-blue-500/80">
+            <Loader2 size={10} className="animate-spin" />
+            {elapsedSec}s
+          </span>
+        )}
+      </button>
+      {!collapsed && (
+        <div className="border-t border-border/30 p-3">
+          <ToolResultRenderer toolName={block.name} input={block.input} result={resultData} />
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** 流式文本平滑渲染组件 */
