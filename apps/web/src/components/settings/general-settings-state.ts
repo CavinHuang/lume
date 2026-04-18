@@ -1,4 +1,9 @@
-import type { GeneralSettings, GeneralSettingsUpdate, ThemeMode } from '@/lib/desktop-api/system'
+import type {
+  GeneralSettings,
+  UpdateGeneralSettingsInput,
+  ThemeMode,
+} from '@lume/shared'
+import { GENERAL_SETTINGS_DEFAULTS as SHARED_GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 
 export type SettingsTab = 'general' | 'channels' | 'agent' | 'mcp' | 'about'
 
@@ -31,13 +36,7 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   { id: 'about', label: '关于' },
 ]
 
-export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
-  themeMode: 'system',
-  windowBehavior: {
-    minimizeToTray: false,
-    closeToTray: false,
-  },
-}
+export const GENERAL_SETTINGS_DEFAULTS = SHARED_GENERAL_SETTINGS_DEFAULTS
 
 export const THEME_MODE_OPTIONS: ThemeModeOption[] = [
   {
@@ -77,7 +76,7 @@ export const CACHE_CLEANUP_OPTIONS: CacheCleanupOption[] = [
 
 export function mergeGeneralSettings(
   current: GeneralSettings | null | undefined,
-  updates: GeneralSettingsUpdate
+  updates: UpdateGeneralSettingsInput
 ): GeneralSettings {
   const base = current ?? GENERAL_SETTINGS_DEFAULTS
 

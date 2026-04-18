@@ -27,6 +27,7 @@ import {
   THEME_MODE_OPTIONS,
   mergeGeneralSettings,
 } from './general-settings-state'
+import { getThemeMode, setThemeMode } from '@/lib/theme-mode'
 
 const THEME_MODE_ICONS: Record<ThemeMode, LucideIcon> = {
   system: Laptop,
@@ -35,36 +36,15 @@ const THEME_MODE_ICONS: Record<ThemeMode, LucideIcon> = {
 }
 
 export function GeneralSettings() {
-  const [settings, setSettings] = React.useState<GeneralSettingsValue>(GENERAL_SETTINGS_DEFAULTS)
+  const [settings, setSettings] = React.useState<GeneralSettingsValue>({
+    ...GENERAL_SETTINGS_DEFAULTS,
+    themeMode: getThemeMode(),
+  })
   const [loading, setLoading] = React.useState(true)
   const [themeSaving, setThemeSaving] = React.useState<ThemeMode | null>(null)
   const [windowSaving, setWindowSaving] = React.useState<Partial<Record<keyof GeneralSettingsValue['windowBehavior'], boolean>>>({})
   const [maintenanceLoading, setMaintenanceLoading] = React.useState<{ logs: boolean }>({ logs: false })
   const [clearCacheOpen, setClearCacheOpen] = React.useState(false)
-  const themeModeRef = React.useRef<ThemeMode>(GENERAL_SETTINGS_DEFAULTS.themeMode)
-
-  const applyThemeMode = React.useCallback((themeMode: ThemeMode) => {
-    themeModeRef.current = themeMode
-
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    const shouldUseDark = themeMode === 'dark' || (themeMode === 'system' && prefersDark)
-    document.documentElement.classList.toggle('dark', shouldUseDark)
-  }, [])
-
-  React.useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handleChange = (event: MediaQueryListEvent) => {
-      if (themeModeRef.current === 'system') {
-        document.documentElement.classList.toggle('dark', event.matches)
-        return
-      }
-
-      document.documentElement.classList.toggle('dark', themeModeRef.current === 'dark')
-    }
-
-    mediaQuery.addEventListener('change', handleChange)
-    return () => mediaQuery.removeEventListener('change', handleChange)
-  }, [])
 
   React.useEffect(() => {
     let cancelled = false
@@ -77,12 +57,15 @@ export function GeneralSettings() {
 
         const nextSettings = mergeGeneralSettings(undefined, value)
         setSettings(nextSettings)
-        applyThemeMode(nextSettings.themeMode)
+        setThemeMode(nextSettings.themeMode)
       })
       .catch((error) => {
         console.error('[GeneralSettings] 加载常规设置失败:', error)
+        setSettings((current) => ({
+          ...current,
+          themeMode: getThemeMode(),
+        }))
         toast.error('加载常规设置失败')
-        applyThemeMode(GENERAL_SETTINGS_DEFAULTS.themeMode)
       })
       .finally(() => {
         if (!cancelled) {
@@ -93,7 +76,7 @@ export function GeneralSettings() {
     return () => {
       cancelled = true
     }
-  }, [applyThemeMode])
+  }, [])
 
   const handleThemeModeChange = async (themeMode: ThemeMode) => {
     if (themeSaving || settings.themeMode === themeMode) {
@@ -103,18 +86,18 @@ export function GeneralSettings() {
     const previous = settings
     const optimistic = mergeGeneralSettings(previous, { themeMode })
     setSettings(optimistic)
-    applyThemeMode(themeMode)
+    setThemeMode(themeMode)
     setThemeSaving(themeMode)
 
     try {
       const persisted = mergeGeneralSettings(undefined, await updateGeneralSettings({ themeMode }))
       setSettings(persisted)
-      applyThemeMode(persisted.themeMode)
+      setThemeMode(persisted.themeMode)
       toast.success('主题已更新')
     } catch (error) {
       console.error('[GeneralSettings] 更新主题失败:', error)
       setSettings(previous)
-      applyThemeMode(previous.themeMode)
+      setThemeMode(previous.themeMode)
       toast.error('主题更新失败')
     } finally {
       setThemeSaving(null)
