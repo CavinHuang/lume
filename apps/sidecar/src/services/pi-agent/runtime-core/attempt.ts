@@ -15,6 +15,7 @@ import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "
 import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { createRuntimeCoreSession } from "./run";
+import { resolveSubagentInteractiveLabel } from "./subagent-interactive-display";
 import { getRuntimeCoreAgentDir, hasRuntimeCoreSessionTranscript } from "./session-store";
 import { updateRuntimeThreadMetaIfPresent } from "./thread-meta-target";
 import {
@@ -165,6 +166,7 @@ function createCanUseToolHandler(
       ? params.runtime.sessionId
       : undefined;
     const subagentRunId = params.runtime.subagentRunId;
+    const subagentLabel = resolveSubagentInteractiveLabel(subagentRunId);
     if (mode === "plan" && !isToolAllowedInPlanMode(toolName)) {
       return {
         behavior: "deny",
@@ -204,7 +206,8 @@ function createCanUseToolHandler(
             ...request,
             threadId: approvalThreadId,
             ...(originThreadId ? { originThreadId } : {}),
-            ...(subagentRunId ? { subagentRunId } : {})
+            ...(subagentRunId ? { subagentRunId } : {}),
+            ...(subagentLabel ? { subagentLabel } : {})
           });
         },
         {
@@ -261,7 +264,8 @@ function createCanUseToolHandler(
           ...permissionRequest,
           threadId: approvalThreadId,
           ...(originThreadId ? { originThreadId } : {}),
-          ...(subagentRunId ? { subagentRunId } : {})
+          ...(subagentRunId ? { subagentRunId } : {}),
+          ...(subagentLabel ? { subagentLabel } : {})
         });
       }
     );

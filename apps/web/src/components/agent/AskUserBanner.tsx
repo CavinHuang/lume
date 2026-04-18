@@ -6,6 +6,7 @@ import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { AgentAskUserQuestionRequest } from '@lume/shared'
 import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
+import { getSubagentDisplayLabel } from './subagent-label'
 
 interface AskUserBannerProps {
   threadId: string
@@ -15,6 +16,7 @@ interface AskUserBannerProps {
 export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const subagentDisplayLabel = getSubagentDisplayLabel(request)
 
   const select = (question: string, label: string) => {
     setAnswers((prev) => ({ ...prev, [question]: label }))
@@ -35,8 +37,8 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
         <MessageCircle size={14} className="text-foreground/50" />
         <span className="text-[13px] font-medium text-foreground">需要你的输入</span>
-        {request.subagentRunId && (
-          <span className="text-[11px] text-foreground/45">Subagent {request.subagentRunId}</span>
+        {subagentDisplayLabel && (
+          <span className="text-[11px] text-foreground/45">{subagentDisplayLabel}</span>
         )}
       </div>
       <div className="px-3 pb-3 space-y-3">
