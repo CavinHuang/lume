@@ -359,7 +359,7 @@ describe("runtime-core run", () => {
         {
           id: "gpt-5.4-mini",
           name: "gpt-5.4-mini",
-          provider: "openai"
+          enabled: true
         }
       ]
     });
@@ -371,6 +371,7 @@ describe("runtime-core run", () => {
     const result = await runRuntimeCoreAttempt(
       {
         input: {
+          threadId: sessionId,
           userMessage: "hello",
           permissionMode: "plan",
           chatType: "direct"
@@ -398,6 +399,73 @@ describe("runtime-core run", () => {
 
     expect(result.status).toBe("completed");
     expect(existsSync(join(threadDir, ".lume-config"))).toBeFalse();
+
+    if (prevMockSuccess === undefined) {
+      delete process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    } else {
+      process.env.LUME_PI_AGENT_MOCK_SUCCESS = prevMockSuccess;
+    }
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("subagent runtime 使用 child sessionId 时，不应因更新不存在的子线程 meta 而失败", async () => {
+    const prevMockSuccess = process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-subagent-thread-meta-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    process.env.LUME_PI_AGENT_MOCK_SUCCESS = "1";
+
+    const workspace = createAgentWorkspace("Subagent Parent Workspace");
+    const channel = createChannel({
+      name: "mock-subagent-thread-meta",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      enabled: true,
+      defaultModelId: "gpt-5.4-mini",
+      models: [
+        {
+          id: "gpt-5.4-mini",
+          name: "gpt-5.4-mini",
+          enabled: true
+        }
+      ]
+    });
+
+    const parentThread = createAgentThread("subagent parent thread", channel.id, workspace.id, undefined, "gpt-5.4-mini");
+    const childSessionId = "child-runtime-session";
+
+    const result = await runRuntimeCoreAttempt(
+      {
+        input: {
+          threadId: childSessionId,
+          userMessage: "hello child runtime",
+          permissionMode: "plan",
+          chatType: "direct"
+        },
+        runtime: {
+          sessionId: childSessionId,
+          deliveryThreadId: parentThread.id,
+          subagentRunId: "subagent-run-fixed",
+          channelId: channel.id,
+          resolvedModelId: "gpt-5.4-mini",
+          workspaceId: workspace.id,
+          threadType: "subagent"
+        }
+      },
+      {
+        onSdkMessage: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onAskUserQuestion: () => {},
+        onToolPermissionRequest: () => {}
+      },
+      {
+        registerAbort: () => {},
+        unregisterAbort: () => {}
+      }
+    );
+
+    expect(result.status).toBe("completed");
 
     if (prevMockSuccess === undefined) {
       delete process.env.LUME_PI_AGENT_MOCK_SUCCESS;
@@ -455,6 +523,7 @@ describe("runtime-core run", () => {
   test("buildSidecarSubagentRunContext 应统一 registry 与 SDK 使用的 subagent_run_id", () => {
     const result = buildSidecarSubagentRunContext({
       parentThreadId: "parent-thread",
+      parentToolUseId: "agent-tool-use-1",
       toolInput: {
         prompt: "执行子任务",
         description: "测试子任务",
@@ -474,6 +543,7 @@ describe("runtime-core run", () => {
     expect(result.forwardedToolInput.subagent_run_id).toBe("run-fixed");
     expect(result.registryInput.runId).toBe("run-fixed");
     expect(result.registryInput.childThreadId).toBe("child-fixed");
+    expect(result.registryInput.parentToolUseId).toBe("agent-tool-use-1");
     expect(result.registryInput.parentThreadId).toBe("parent-thread");
     expect(result.registryInput.rootThreadId).toBe("root-thread");
     expect(result.registryInput.parentRunId).toBe("parent-run");

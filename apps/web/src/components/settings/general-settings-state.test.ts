@@ -5,6 +5,8 @@ import {
   SETTINGS_NAV_ITEMS,
   THEME_MODE_OPTIONS,
   createDefaultCacheCleanupSelection,
+  hasSelectedCacheCleanup,
+  mergeGeneralSettings,
 } from './general-settings-state'
 
 describe('general settings state', () => {
@@ -44,5 +46,27 @@ describe('general settings state', () => {
         closeToTray: false,
       },
     })
+  })
+
+  test('mergeGeneralSettings applies partial window behavior updates without losing sibling flags', () => {
+    expect(mergeGeneralSettings(GENERAL_SETTINGS_DEFAULTS, {
+      windowBehavior: {
+        closeToTray: true,
+      },
+    })).toEqual({
+      themeMode: 'system',
+      windowBehavior: {
+        minimizeToTray: false,
+        closeToTray: true,
+      },
+    })
+  })
+
+  test('hasSelectedCacheCleanup returns false when every safe cache option is deselected', () => {
+    expect(hasSelectedCacheCleanup({
+      frontendTemp: false,
+      previewRender: false,
+      logs: false,
+    })).toBe(false)
   })
 })
