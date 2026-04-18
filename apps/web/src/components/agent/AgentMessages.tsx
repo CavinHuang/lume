@@ -21,6 +21,18 @@ function isNearBottom(el: HTMLElement | null): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 100
 }
 
+function getFollowSignal(messages: SDKMessage[]): string {
+  const lastMessage = messages.at(-1)
+  if (!lastMessage) return 'empty'
+
+  return JSON.stringify({
+    length: messages.length,
+    type: lastMessage.type,
+    uuid: (lastMessage as { uuid?: string }).uuid ?? null,
+    message: 'message' in lastMessage ? lastMessage.message : null,
+  })
+}
+
 export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessagesProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -30,11 +42,25 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const wasNearBottomRef = useRef(true)
   const pendingRestoreThreadIdRef = useRef<string | null>(threadId)
+  const restoreVersionRef = useRef(0)
+  const threadRestoreRafRef = useRef<number | null>(null)
+  const contentRestoreRafRef = useRef<number | null>(null)
 
   const { save, restore } = useScrollPositionMemory()
+  const followSignal = getFollowSignal(sdkMessages)
   const getScrollElement = useCallback(() => {
     const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
     return viewport instanceof HTMLDivElement ? viewport : null
+  }, [])
+  const cancelScheduledRestores = useCallback(() => {
+    if (threadRestoreRafRef.current !== null) {
+      cancelAnimationFrame(threadRestoreRafRef.current)
+      threadRestoreRafRef.current = null
+    }
+    if (contentRestoreRafRef.current !== null) {
+      cancelAnimationFrame(contentRestoreRafRef.current)
+      contentRestoreRafRef.current = null
+    }
   }, [])
   const restoreCurrentThread = useCallback(() => {
     const scrollElement = getScrollElement()
@@ -88,9 +114,19 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   // 切换 thread 时保存/恢复滚动位置
   useEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
+      cancelScheduledRestores()
+      restoreVersionRef.current += 1
+      const restoreVersion = restoreVersionRef.current
       prevThreadIdRef.current = threadId
       pendingRestoreThreadIdRef.current = threadId
-      requestAnimationFrame(() => {
+      threadRestoreRafRef.current = requestAnimationFrame(() => {
+        threadRestoreRafRef.current = null
+        if (
+          restoreVersionRef.current !== restoreVersion ||
+          pendingRestoreThreadIdRef.current !== threadId
+        ) {
+          return
+        }
         const hasMessages = sdkMessages.length > 0
         restoreCurrentThread()
         if (hasMessages) {
@@ -98,23 +134,37 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         }
       })
     }
-  }, [restoreCurrentThread, sdkMessages.length, threadId])
+  }, [cancelScheduledRestores, restoreCurrentThread, sdkMessages.length, threadId])
 
   useLayoutEffect(() => {
     if (pendingRestoreThreadIdRef.current !== threadId || sdkMessages.length === 0) return
 
-    requestAnimationFrame(() => {
+    if (contentRestoreRafRef.current !== null) {
+      cancelAnimationFrame(contentRestoreRafRef.current)
+    }
+
+    const restoreVersion = restoreVersionRef.current
+    contentRestoreRafRef.current = requestAnimationFrame(() => {
+      contentRestoreRafRef.current = null
+      if (
+        restoreVersionRef.current !== restoreVersion ||
+        pendingRestoreThreadIdRef.current !== threadId
+      ) {
+        return
+      }
       restoreCurrentThread()
       pendingRestoreThreadIdRef.current = null
     })
   }, [restoreCurrentThread, sdkMessages.length, threadId])
+
+  useEffect(() => cancelScheduledRestores, [cancelScheduledRestores])
 
   // 流式输出时根据更新前的滚动状态决定是否继续跟随到底部
   useLayoutEffect(() => {
     if (streaming && wasNearBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [sdkMessages.length, streaming])
+  }, [followSignal, streaming])
 
   const items: React.ReactNode[] = []
   for (let i = 0; i < sdkMessages.length; i++) {

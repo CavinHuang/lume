@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Radio, Cpu, Puzzle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { ChannelSettings } from './ChannelSettings'
 import { AgentSettings } from './AgentSettings'
 import { McpSettings } from './McpSettings'
@@ -41,12 +42,14 @@ export function SettingsView() {
       </div>
 
       {/* 右侧内容 */}
-      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
-        {tab === 'channels' && <ChannelSettings />}
-        {tab === 'agent' && <AgentSettings />}
-        {tab === 'mcp' && <McpSettings />}
-        {tab === 'about' && <AboutSettings />}
-      </div>
+      <ScrollArea className="flex-1 min-w-0 min-h-0">
+        <div className="min-h-full">
+          {tab === 'channels' && <ChannelSettings />}
+          {tab === 'agent' && <AgentSettings />}
+          {tab === 'mcp' && <McpSettings />}
+          {tab === 'about' && <AboutSettings />}
+        </div>
+      </ScrollArea>
     </div>
   )
 }

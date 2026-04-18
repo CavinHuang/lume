@@ -5,11 +5,16 @@ import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area"
 
 import { cn } from "@/lib/utils"
 
+type ScrollAreaProps = ScrollAreaPrimitive.Root.Props & {
+  orientation?: "vertical" | "horizontal" | "both"
+}
+
 function ScrollArea({
   className,
   children,
+  orientation = "vertical",
   ...props
-}: ScrollAreaPrimitive.Root.Props) {
+}: ScrollAreaProps) {
   const [scrolling, setScrolling] = React.useState(false)
   const idleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const viewportRef = React.useRef<HTMLDivElement | null>(null)
@@ -49,17 +54,22 @@ function ScrollArea({
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
       data-scrolling={scrolling ? "true" : "false"}
-      className={cn("group/scrollarea relative", className)}
+      className={cn("group/scrollarea relative overflow-hidden", className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
         ref={viewportRef}
         data-slot="scroll-area-viewport"
-        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        className="h-full w-full max-h-[inherit] max-w-[inherit] rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
+      {(orientation === "vertical" || orientation === "both") && (
+        <ScrollBar orientation="vertical" />
+      )}
+      {(orientation === "horizontal" || orientation === "both") && (
+        <ScrollBar orientation="horizontal" />
+      )}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )

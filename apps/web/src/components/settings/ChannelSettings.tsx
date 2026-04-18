@@ -188,42 +188,44 @@ export function ChannelSettings() {
           </div>
         </ScrollArea>
 
-        <div className="min-h-0 rounded-2xl border bg-background/70 p-5 space-y-5 overflow-y-auto">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <h3 className="text-[15px] font-semibold">{PROVIDER_LABELS[activeProvider]}</h3>
-              <p className="text-[12px] text-muted-foreground">
-                {activeChannel ? '已存在该供应商配置，开启后可编辑并保存。' : '尚未配置该供应商，开启后即可填写连接信息。'}
-              </p>
+        <ScrollArea className="min-h-0 rounded-2xl border bg-background/70">
+          <div className="space-y-5 p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 className="text-[15px] font-semibold">{PROVIDER_LABELS[activeProvider]}</h3>
+                <p className="text-[12px] text-muted-foreground">
+                  {activeChannel ? '已存在该供应商配置，开启后可编辑并保存。' : '尚未配置该供应商，开启后即可填写连接信息。'}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {savingEnabled && <Loader2 size={13} className="animate-spin text-muted-foreground" />}
+                <span className="text-[12px] text-muted-foreground">开启</span>
+                <Switch checked={enabled} onCheckedChange={handleEnabledChange} />
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              {savingEnabled && <Loader2 size={13} className="animate-spin text-muted-foreground" />}
-              <span className="text-[12px] text-muted-foreground">开启</span>
-              <Switch checked={enabled} onCheckedChange={handleEnabledChange} />
-            </div>
+
+            {apiKeyLoading ? (
+              <div className="flex items-center gap-2 text-muted-foreground text-[13px]">
+                <Loader2 size={14} className="animate-spin" />加载渠道详情...
+              </div>
+            ) : (
+              <ChannelForm
+                mode={activeChannel ? 'edit' : 'create'}
+                initialValue={formInitialValue}
+                providerLocked
+                disabled={!enabled}
+                onSubmit={handlePersist}
+              />
+            )}
+
+            {enabled && (
+              <div className="rounded-xl border border-dashed px-4 py-3 text-[12px] text-muted-foreground flex items-center gap-2">
+                <Save size={13} />
+                填好配置后点击下方保存，未开启时不会提交该供应商配置。
+              </div>
+            )}
           </div>
-
-          {apiKeyLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground text-[13px]">
-              <Loader2 size={14} className="animate-spin" />加载渠道详情...
-            </div>
-          ) : (
-            <ChannelForm
-              mode={activeChannel ? 'edit' : 'create'}
-              initialValue={formInitialValue}
-              providerLocked
-              disabled={!enabled}
-              onSubmit={handlePersist}
-            />
-          )}
-
-          {enabled && (
-            <div className="rounded-xl border border-dashed px-4 py-3 text-[12px] text-muted-foreground flex items-center gap-2">
-              <Save size={13} />
-              填好配置后点击下方保存，未开启时不会提交该供应商配置。
-            </div>
-          )}
-        </div>
+        </ScrollArea>
       </div>
     </div>
   )
