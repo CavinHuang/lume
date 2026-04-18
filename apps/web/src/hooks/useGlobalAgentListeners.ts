@@ -129,6 +129,7 @@ export function useGlobalAgentListeners() {
 
   const streamingRef = useRef<Record<string, StreamingRef>>({})
   const subagentStreamingRef = useRef<Record<string, StreamingRef>>({})
+  const pendingAgentToolUseRef = useRef<Record<string, string[]>>({})
 
   useEffect(() => {
     const unlisten = onSidecarEvent((method, params) => {
@@ -141,6 +142,39 @@ export function useGlobalAgentListeners() {
 
           // === Subagent message routing ===
           if (runId) {
+            // First event for this runId → link to pending Agent tool_use
+            const pending = pendingAgentToolUseRef.current[streamKey]
+            if (pending && pending.length > 0) {
+              const toolUseId = pending.shift()!
+              setSubagentRuns((prev) => {
+                const runs = prev[streamKey] ?? []
+                const exists = runs.findIndex((r) => r.runId === runId)
+                if (exists >= 0) {
+                  if (!runs[exists].parentToolUseId) {
+                    const updated = [...runs]
+                    updated[exists] = { ...updated[exists], parentToolUseId: toolUseId }
+                    return { ...prev, [streamKey]: updated }
+                  }
+                  return prev
+                }
+                const now = Date.now()
+                const record = {
+                  runId,
+                  parentThreadId: streamKey,
+                  rootThreadId: streamKey,
+                  depth: 0,
+                  childThreadId: '',
+                  task: '',
+                  status: 'running' as const,
+                  cleanup: 'keep' as const,
+                  parentToolUseId: toolUseId,
+                  createdAt: now,
+                  updatedAt: now,
+                }
+                return { ...prev, [streamKey]: [...runs, record] }
+              })
+            }
+
             const subStreamKey = `${streamKey}:${runId}`
 
             if (msg.type === 'stream_event') {
@@ -204,6 +238,18 @@ export function useGlobalAgentListeners() {
 
           // Full assistant message → replace synthetic streaming message
           if (msg.type === 'assistant') {
+            // Track Agent tool_use blocks for subagent mapping
+            const content = (msg as { message?: { content?: unknown[] } }).message?.content
+            if (Array.isArray(content)) {
+              for (const block of content as Array<{ type: string; name?: string; id?: string }>) {
+                if (block.type === 'tool_use' && block.name === 'Agent' && block.id) {
+                  const queue = pendingAgentToolUseRef.current[streamKey] ?? []
+                  queue.push(block.id)
+                  pendingAgentToolUseRef.current[streamKey] = queue
+                }
+              }
+            }
+
             const ref = streamingRef.current[streamKey]
             if (ref) {
               setSDKMessages((prev) => {
