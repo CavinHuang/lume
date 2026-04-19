@@ -16,6 +16,7 @@
     "@lobehub/icons": "^5.4.0",
     "@lume/shared": "workspace:*",
     "@lume/ui": "workspace:*",
+    "@radix-ui/react-select": "^2.2.6",
     "@tauri-apps/api": "^2.0.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-mention": "^3.22.3",

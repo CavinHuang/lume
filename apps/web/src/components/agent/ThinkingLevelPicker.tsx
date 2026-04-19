@@ -1,0 +1,149 @@
+/**
+ * ThinkingLevelPicker - 思考等级选择器
+ *
+ * 两种模式：
+ * - Popover 模式（默认）：点击按钮弹出浮层，适用于输入框工具栏
+ * - 内嵌模式（inline）：直接展示卡片列表，适用于设置页
+ */
+
+import { useEffect, useRef, useState } from 'react'
+import { Brain, ChevronDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
+import {
+  THINKING_LEVEL_OPTIONS,
+  TONE_CLASS,
+  type ThinkingLevelOption,
+} from '@/components/settings/agent-settings-state'
+import type { LumeConfigThinkingLevel } from '@lume/shared'
+
+export interface ThinkingLevelPickerProps {
+  value: LumeConfigThinkingLevel
+  onChange: (value: LumeConfigThinkingLevel) => void
+  /** 内嵌模式，不使用 popover 包装 */
+  inline?: boolean
+}
+
+export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPickerProps) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open || inline) return
+    const handlePointerDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [open, inline])
+
+  const handleSelect = (v: LumeConfigThinkingLevel) => {
+    onChange(v)
+    setOpen(false)
+  }
+
+  if (inline) {
+    return (
+      <ThinkingLevelCards value={value} onSelect={handleSelect} />
+    )
+  }
+
+  const current = THINKING_LEVEL_OPTIONS.find((o) => o.value === value) ?? THINKING_LEVEL_OPTIONS[0]
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] text-foreground/60 hover:bg-muted/50 hover:text-foreground/80 transition-colors"
+      >
+        <Brain size={13} />
+        <span>思考: {current.label}</span>
+        <ChevronDown size={12} className="text-muted-foreground/50" />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full mb-1 left-0 z-50 min-w-[240px] rounded-lg border border-border/60 bg-popover shadow-lg p-1.5">
+          <ThinkingLevelCards value={value} onSelect={handleSelect} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ThinkingLevelCards({
+  value,
+  onSelect,
+}: {
+  value: LumeConfigThinkingLevel
+  onSelect: (v: LumeConfigThinkingLevel) => void
+}) {
+  return (
+    <div className="space-y-1">
+      {THINKING_LEVEL_OPTIONS.map((opt) => (
+        <ThinkingLevelCard
+          key={opt.value}
+          option={opt}
+          selected={value === opt.value}
+          onSelect={() => onSelect(opt.value)}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ThinkingLevelCard({
+  option,
+  selected,
+  onSelect,
+}: {
+  option: ThinkingLevelOption
+  selected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <label
+      className={cn(
+        'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all border',
+        selected
+          ? 'border-primary/30 bg-primary/5'
+          : 'border-transparent hover:bg-muted/30',
+      )}
+    >
+      <input
+        type="radio"
+        name="thinkingLevel"
+        value={option.value}
+        checked={selected}
+        onChange={onSelect}
+        className="accent-primary shrink-0"
+      />
+      <Brain
+        size={15}
+        className={cn(
+          'shrink-0 transition-colors',
+          TONE_CLASS[option.tone],
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className={cn('text-[12.5px] font-medium', selected && 'text-foreground')}>
+            {option.label}
+          </span>
+          <Badge
+            variant="outline"
+            className={cn(
+              'h-[18px] rounded-full border px-1.5 text-[9.5px] font-medium',
+              TONE_CLASS[option.tone],
+            )}
+          >
+            {option.emphasis}
+          </Badge>
+        </div>
+        <div className="text-[10.5px] text-muted-foreground mt-0.5">{option.desc}</div>
+      </div>
+    </label>
+  )
+}

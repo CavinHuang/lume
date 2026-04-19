@@ -5,17 +5,19 @@ import Mention from '@tiptap/extension-mention'
 import { Send, Square, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
 import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, agentSDKMessagesAtom } from '@/atoms'
-import type { SDKMessage } from '@lume/shared'
+import type { SDKMessage, LumeConfigThinkingLevel } from '@lume/shared'
 import { MentionList } from './MentionList'
 import { ModelPicker } from './ModelPicker'
+import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 import type { MentionItem, MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { SkillMeta, WorkspaceMcpConfig } from '@lume/shared'
+import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 
 interface AgentInputProps {
   threadId: string
@@ -136,6 +138,17 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const workspaceSlugRef = useRef<string | null>(null)
+  const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+
+  useEffect(() => {
+    getEffectiveLumeConfig()
+      .then((config) => {
+        if (config.agent?.thinkingLevel) {
+          setThinkingLevel(config.agent.thinkingLevel)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const thread = threads.find((t) => t.id === threadId)
@@ -203,7 +216,7 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
       ...prev,
       [threadId]: [...(prev[threadId] ?? []), userMsg],
     }))
-    await agentSend({ threadId, userMessage: text })
+    await agentSend({ threadId, userMessage: text, thinkingLevel })
   }
 
   const handleStop = async () => {
@@ -252,6 +265,7 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
               <Paperclip size={15} />
             </button>
             <ModelPicker threadId={threadId} />
+            <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
           </div>
           {disabled ? (
             <button
