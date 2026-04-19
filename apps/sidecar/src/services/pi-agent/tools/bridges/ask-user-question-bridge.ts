@@ -45,7 +45,7 @@ export function waitForPiAskUserQuestionAnswers(
   questions: AgentAskUserQuestionQuestion[],
   signal: AbortSignal,
   emit: (request: AgentAskUserQuestionRequest) => void,
-  requestMeta?: Pick<AgentAskUserQuestionRequest, "originThreadId" | "subagentRunId">
+  requestMeta?: Pick<AgentAskUserQuestionRequest, "originThreadId" | "subagentRunId" | "subagentLabel">
 ): Promise<AskUserQuestionWaitResult> {
   return new Promise((resolve) => {
     const done = (result: AskUserQuestionWaitResult): void => {
@@ -83,6 +83,7 @@ export function waitForPiAskUserQuestionAnswers(
       threadId,
       ...(requestMeta?.originThreadId ? { originThreadId: requestMeta.originThreadId } : {}),
       ...(requestMeta?.subagentRunId ? { subagentRunId: requestMeta.subagentRunId } : {}),
+      ...(requestMeta?.subagentLabel ? { subagentLabel: requestMeta.subagentLabel } : {}),
       toolUseId,
       questions
     };
@@ -135,4 +136,3 @@ export function listPendingPiAskUserQuestionRequests(): AgentAskUserQuestionRequ
     ))
   }));
 }
-

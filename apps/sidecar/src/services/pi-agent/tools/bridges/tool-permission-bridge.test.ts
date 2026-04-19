@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   isToolAlwaysAllowed,
+  listPendingToolPermissionRequests,
   markToolAlwaysAllowed,
   setToolPermissionApprovalSession,
   submitToolPermissionDecision,
@@ -62,5 +63,35 @@ describe("tool-permission-bridge", () => {
     const decision = await waitPromise;
     expect(decision).toBe("allow_once");
   });
-});
 
+  test("listPending 应保留 subagentLabel，供 UI 展示子代理名称", async () => {
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "child-session",
+        originThreadId: "child-session",
+        subagentRunId: "run-1",
+        subagentLabel: "探索工具能力边界",
+        requestId: "req-label",
+        toolUseId: "tool-label",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        input: { command: "echo hi" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+
+    setToolPermissionApprovalSession("req-label", "parent-session");
+    const pending = listPendingToolPermissionRequests();
+    expect(pending[0]?.threadId).toBe("parent-session");
+    expect(pending[0]?.subagentLabel).toBe("探索工具能力边界");
+
+    submitToolPermissionDecision({
+      threadId: "parent-session",
+      requestId: "req-label",
+      decision: "deny"
+    });
+    await waitPromise;
+  });
+});

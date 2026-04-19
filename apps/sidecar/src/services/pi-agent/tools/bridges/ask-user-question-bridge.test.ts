@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  listPendingPiAskUserQuestionRequests,
   setAskUserQuestionApprovalSession,
   submitPiAskUserQuestionAnswers,
   waitForPiAskUserQuestionAnswers
@@ -103,5 +104,41 @@ describe("ask-user-question-bridge", () => {
     expect(result.status).toBe("answered");
     expect(result.answers).toEqual({ "问题1": "B" });
   });
-});
 
+  test("listPending 应保留 subagentLabel，供 UI 展示子代理名称", async () => {
+    const toolUseId = "tool-use-label";
+    const signal = new AbortController().signal;
+    const waitPromise = waitForPiAskUserQuestionAnswers(
+      "child-session",
+      toolUseId,
+      [{
+        header: "问题1",
+        question: "请选择",
+        options: [
+          { label: "A", description: "选项A" },
+          { label: "B", description: "选项B" }
+        ],
+        multiSelect: false
+      }],
+      signal,
+      () => {},
+      {
+        originThreadId: "child-session",
+        subagentRunId: "run-1",
+        subagentLabel: "探索网络和搜索能力"
+      }
+    );
+
+    setAskUserQuestionApprovalSession(toolUseId, "parent-session");
+    const pending = listPendingPiAskUserQuestionRequests();
+    expect(pending[0]?.threadId).toBe("parent-session");
+    expect(pending[0]?.subagentLabel).toBe("探索网络和搜索能力");
+
+    submitPiAskUserQuestionAnswers({
+      threadId: "parent-session",
+      toolUseId,
+      canceled: true
+    });
+    await waitPromise;
+  });
+});

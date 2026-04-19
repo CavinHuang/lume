@@ -212,7 +212,8 @@ function createCanUseToolHandler(
         },
         {
           originThreadId,
-          subagentRunId
+          subagentRunId,
+          subagentLabel
         }
       );
       if (askResult.status !== "answered" || !askResult.answers) {
@@ -246,6 +247,7 @@ function createCanUseToolHandler(
       threadId: params.runtime.sessionId,
       ...(originThreadId ? { originThreadId } : {}),
       ...(subagentRunId ? { subagentRunId } : {}),
+      ...(subagentLabel ? { subagentLabel } : {}),
       requestId: metadata?.toolUseId ?? toolName,
       toolUseId: metadata?.toolUseId ?? toolName,
       toolName,
