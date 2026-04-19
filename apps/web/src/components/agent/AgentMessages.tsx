@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback, useLayoutEffect } from 'react'
 import type { SDKMessage } from '@lume/shared'
 import { SDKContentBlock } from './SDKContentBlock'
 import { useSetAtom } from 'jotai'
-import { agentSubagentRunsAtom, agentSDKMessagesAtom } from '@/atoms'
+import { agentSubagentRunsAtom, agentSDKMessagesAtom, agentSubagentMessagesAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useScrollPositionMemory } from '@/hooks/useScrollPositionMemory'
 import { getThreadSDKMessages } from '@/lib/desktop-api'
@@ -39,6 +39,7 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   const prevThreadIdRef = useRef(threadId)
   const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
+  const setSubagentMessages = useSetAtom(agentSubagentMessagesAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const wasNearBottomRef = useRef(true)
   const pendingRestoreThreadIdRef = useRef<string | null>(threadId)
@@ -80,7 +81,26 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
       .then((r) => {
         const list = r.messages ?? []
         if (list.length === 0) return
-        setSDKMessages((prev) => ({ ...prev, [threadId]: [...list, ...(prev[threadId] ?? [])] }))
+        const mainMessages: SDKMessage[] = []
+        const subagentByRun: Record<string, SDKMessage[]> = {}
+        for (const msg of list) {
+          const runId = (msg as { subagent_run_id?: string }).subagent_run_id
+          if (runId) {
+            ;(subagentByRun[runId] ??= []).push(msg)
+          } else {
+            mainMessages.push(msg)
+          }
+        }
+        setSDKMessages((prev) => ({ ...prev, [threadId]: [...mainMessages, ...(prev[threadId] ?? [])] }))
+        if (Object.keys(subagentByRun).length > 0) {
+          setSubagentMessages((prev) => {
+            const threadMap = { ...(prev[threadId] ?? {}) }
+            for (const [runId, msgs] of Object.entries(subagentByRun)) {
+              threadMap[runId] = [...(threadMap[runId] ?? []), ...msgs]
+            }
+            return { ...prev, [threadId]: threadMap }
+          })
+        }
       })
       .catch((err) => {
         console.error('[AgentMessages] 加载历史失败:', err)

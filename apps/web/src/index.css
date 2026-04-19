@@ -62,8 +62,17 @@
 }
 .input:focus { border-color: var(--color-foreground); }
 
-/* x-markdown dark mode */
-.dark .x-markdown { --heading-color: rgba(255,255,255,0.85); --text-color: rgba(255,255,255,0.85); --border-color: rgba(48,48,48,1); --line-color: rgba(253,253,253,0.12); --dark-bg: rgba(255,255,255,0.1); --table-head-bg: rgba(29,29,29,1); --table-body-bg: rgba(20,20,20,1); }
+/* x-markdown dark mode — 变量由 dark.css 的 .x-markdown-dark 选择器提供 */
+
+/* x-markdown 宽度约束 — 表格和代码块不超出父容器 */
+.x-markdown table:not(pre) {
+  width: 100%;
+  max-width: 100%;
+}
+.x-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
 
 @theme inline {
   --font-heading: var(--font-sans);

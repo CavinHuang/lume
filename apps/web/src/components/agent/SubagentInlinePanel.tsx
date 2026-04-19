@@ -71,15 +71,49 @@ function deriveCollapsedData(messages: SDKMessage[]) {
   return { tools, lastText }
 }
 
-function deriveErrorFromMessages(messages: SDKMessage[]): string | undefined {
+interface SubagentErrorDetail {
+  message: string
+  lastTool?: string
+  lastOutput?: string
+}
+
+function deriveErrorFromMessages(messages: SDKMessage[]): SubagentErrorDetail | undefined {
+  let errorOutput: string | undefined
+  let lastToolName: string | undefined
+  let lastAssistantText: string | undefined
+
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
-    if (m.type === 'tool_result') {
+    // 1. 查找 tool_result is_error
+    if (!errorOutput && m.type === 'tool_result') {
       const r = m as { is_error?: boolean; result?: { output?: string } }
-      if (r.is_error && r.result?.output) return r.result.output
+      if (r.is_error && r.result?.output) errorOutput = r.result.output
     }
+    // 2. 查找最后一个 tool_use 名称
+    if (!lastToolName && m.type === 'assistant') {
+      const content = (m as { message?: { content?: unknown[] } }).message?.content
+      if (Array.isArray(content)) {
+        for (const block of content as Array<{ type?: string; name?: string }>) {
+          if (block.type === 'tool_use' && block.name) { lastToolName = block.name; break }
+        }
+      }
+    }
+    // 3. 查找最后一段 assistant 文本
+    if (!lastAssistantText && m.type === 'assistant') {
+      const content = (m as { message?: { content?: unknown[] } }).message?.content
+      if (Array.isArray(content)) {
+        for (let j = content.length - 1; j >= 0; j--) {
+          const block = (content as Array<{ type?: string; text?: string }>)[j]
+          if (block.type === 'text' && block.text?.trim()) { lastAssistantText = block.text.trim(); break }
+        }
+      }
+    }
+    if (errorOutput && lastToolName && lastAssistantText) break
   }
-  return undefined
+
+  const message = errorOutput || lastAssistantText || undefined
+  if (!message && !lastToolName) return undefined
+  return { message: message ?? '', lastTool: lastToolName, lastOutput: errorOutput }
 }
 
 function countToolUses(messages: SDKMessage[]): number {
@@ -153,7 +187,9 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
   const hasOutcomeError = !!runRecord?.outcome?.error
   const hasMessageError = messages.some(m => m.type === 'tool_result' && (m as { is_error?: boolean }).is_error)
   const isError = hasStatusError || hasOutcomeError || hasMessageError
-  const errorMessage = runRecord?.outcome?.error ?? deriveErrorFromMessages(messages)
+  const errorDetail = deriveErrorFromMessages(messages)
+  // 优先使用消息流中的具体错误，其次用 outcome 中的错误
+  const errorMessage = errorDetail?.lastOutput || errorDetail?.message || runRecord?.outcome?.error
   const isPending = !runRecord && !effectiveStatus
   const elapsed = useElapsedTime(effectiveStartedAt, isRunning || isPending)
   const toolCount = useMemo(() => countToolUses(messages), [messages])
@@ -173,7 +209,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
         isPending ? 'border-blue-500/20 bg-blue-500/5' :
         isRunning ? 'border-blue-500/30 bg-blue-500/5' :
         isError ? 'border-destructive/30 bg-destructive/5' :
-        'border-border/50 bg-muted/20',
+        'border-border/50 bg-black/[0.03] dark:bg-white/[0.04]',
       )}
     >
       {expanded && <div ref={sentinelRef} className="h-0" />}
@@ -212,7 +248,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
         />
       )}
       {!expanded && !isPending && isError && (
-        <SubagentErrorPreview error={errorMessage} />
+        <SubagentErrorPreview error={errorMessage} lastTool={errorDetail?.lastTool} />
       )}
       {expanded && (
         <SubagentExpandedContent
@@ -344,11 +380,18 @@ function SubagentCompletedPreview({ output, messages }: { output?: string; messa
   )
 }
 
-function SubagentErrorPreview({ error }: { error?: string }) {
-  if (!error) return null
+function SubagentErrorPreview({ error, lastTool }: { error?: string; lastTool?: string }) {
+  if (!error && !lastTool) return null
   return (
     <div className="px-3 pb-2">
-      <p className="text-[12px] text-destructive leading-relaxed line-clamp-2 whitespace-pre-wrap">{error}</p>
+      <p className="text-[12px] text-destructive leading-relaxed line-clamp-3 whitespace-pre-wrap">
+        {error || '执行失败'}
+      </p>
+      {lastTool && (
+        <p className="text-[11px] text-muted-foreground/50 mt-1">
+          最后执行: <span className="font-mono">{lastTool}</span>
+        </p>
+      )}
     </div>
   )
 }
@@ -386,7 +429,7 @@ function SubagentExpandedContent({
         </div>
       )}
       {/* 消息流 */}
-      <div className="p-3 space-y-2">
+      <div className="p-3 space-y-2 overflow-hidden">
         {messages.length === 0 && !error && (
           <p className="text-[12px] text-muted-foreground/50">等待 subagent 输出...</p>
         )}

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useSyncExternalStore } from 'react'
 import { ChevronRight, Bot, Terminal, FileText, FilePlus, Pencil, FolderSearch, Search, Globe, Cpu, Wrench, Loader2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
@@ -9,6 +9,18 @@ import { ToolResultRenderer } from './tool-result-renderers'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSubagentRunsAtom } from '@/atoms'
 import type { SDKMessage } from '@lume/shared'
+
+/** 监听 document.documentElement 的 dark 类变化 */
+function useIsDark(): boolean {
+  return useSyncExternalStore(
+    (callback) => {
+      const observer = new MutationObserver(callback)
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+      return () => observer.disconnect()
+    },
+    () => document.documentElement.classList.contains('dark'),
+  )
+}
 
 /** 从消息流中构建 tool_use_id → tool_result 映射 */
 export function buildToolResultMap(messages: SDKMessage[]): Map<string, { output: string; toolName: string }> {
@@ -94,7 +106,7 @@ export function SDKContentBlock({ message, index, animate, allMessages, isStream
       { type: 'thinking'; thinking: string }
     >
     return (
-      <div className={cn('flex gap-3', cls)} style={style}>
+      <div className={cn('flex gap-3 min-w-0', cls)} style={style}>
         <div className="size-7 rounded-full bg-foreground/10 flex items-center justify-center flex-shrink-0 mt-0.5">
           <Bot size={14} className="text-foreground/60" />
         </div>
@@ -267,16 +279,74 @@ function ToolUseBlock({
   )
 }
 
-/** 流式文本平滑渲染组件 */
+// ── 不完整 Markdown 语法骨架组件 ──
+
+function IncompleteLink() {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-muted/30 animate-pulse text-muted-foreground/50 text-[13px]">
+      <span className="inline-block w-16 h-3 rounded bg-muted/50" />
+    </span>
+  )
+}
+
+function IncompleteImage() {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-muted/30 animate-pulse text-muted-foreground/40 text-[12px]">
+      <span className="inline-block w-4 h-4 rounded bg-muted/50" />
+      <span className="inline-block w-12 h-3 rounded bg-muted/50" />
+    </span>
+  )
+}
+
+function IncompleteTable() {
+  return (
+    <div className="my-1 rounded border border-border/20 overflow-hidden animate-pulse">
+      <div className="flex gap-px bg-muted/20">
+        <span className="flex-1 h-4 bg-muted/30" />
+        <span className="flex-1 h-4 bg-muted/30" />
+        <span className="flex-1 h-4 bg-muted/30" />
+      </div>
+      <div className="flex gap-px bg-muted/10">
+        <span className="flex-1 h-4 bg-muted/20" />
+        <span className="flex-1 h-4 bg-muted/20" />
+        <span className="flex-1 h-4 bg-muted/20" />
+      </div>
+    </div>
+  )
+}
+
+// ── 流式文本平滑渲染组件 ──
+
 function SmoothText({ text, isStreaming }: { text: string; isStreaming?: boolean }) {
   const { displayedContent } = useSmoothStream({
     content: text,
     isStreaming: !!isStreaming,
   })
+  const isDark = useIsDark()
 
   return (
-    <XMarkdown className="x-markdown text-[14px] leading-relaxed">
+    <div className="min-w-0 w-full">
+      <XMarkdown
+        className="x-markdown text-[14px] leading-relaxed"
+        rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
+      streaming={{
+        hasNextChunk: !!isStreaming,
+        enableAnimation: true,
+        tail: true,
+        incompleteMarkdownComponentMap: {
+          link: 'incomplete-link',
+          image: 'incomplete-image',
+          table: 'incomplete-table',
+        },
+      }}
+      components={{
+        'incomplete-link': IncompleteLink,
+        'incomplete-image': IncompleteImage,
+        'incomplete-table': IncompleteTable,
+      }}
+    >
       {displayedContent}
     </XMarkdown>
+    </div>
   )
 }
