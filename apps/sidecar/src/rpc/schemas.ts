@@ -324,6 +324,14 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.subagent.defaultModelRef"),
     value: nonEmptyTrimmedStringSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("agent.thinkingLevel"),
+    value: z.enum(["off", "low", "medium", "high", "max"]).nullable()
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("agent.permissionMode"),
+    value: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).nullable()
   })
 ]);
 
@@ -389,31 +397,31 @@ export const marketplaceDetailInputSchema = z.object({
 });
 
 export const threadPathInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema
 });
 
 export const listDirectoryInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: z.string().optional()
 });
 
 export const pathFileInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: idSchema
 });
 
 export const renameFileInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: idSchema,
   newName: z.string().min(1)
 });
 
 export const moveFileInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: idSchema,
   targetDir: idSchema
@@ -441,7 +449,7 @@ export const promoteFileToWorkspaceInputSchema = z.object({
 });
 
 export const searchWorkspaceFilesInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   query: z.string().default(""),
   limit: z.number().int().min(1).max(200).optional(),
@@ -460,7 +468,7 @@ export const plansListInputSchema = z.object({
 });
 
 export const saveFilesToThreadInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   files: z.array(z.object({
     filename: z.string().min(1),
@@ -484,7 +492,7 @@ export const saveFilesToWorkspaceInputSchema = z.object({
 
 export const copyFolderToThreadInputSchema = z.object({
   sourcePath: idSchema,
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema
 });
 

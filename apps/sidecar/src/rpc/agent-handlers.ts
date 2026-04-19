@@ -166,6 +166,14 @@ interface AgentHandlersContext {
 }
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
+  const resolveRequiredWorkspaceSlug = (threadId: string, workspaceSlug?: string) => {
+    const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugByThreadId(threadId);
+    if (!resolvedWorkspaceSlug) {
+      throw new Error("未找到线程对应的 workspace");
+    }
+    return resolvedWorkspaceSlug;
+  };
+
   const createExecutionStartCallback = (input: { threadId: string; userMessage: string }) => () => {
     if (!context.planStateTracker.isLikelyExecutionRequest(input)) {
       return;
@@ -448,11 +456,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       importGlobalSkillToWorkspace(params as ImportGlobalSkillToWorkspaceInput),
     [AGENT_IPC_CHANNELS.GET_THREAD_PATH]: async (params) => {
       const input = validateInput(threadPathInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_PATH);
-      return getAgentThreadPath(input.workspaceSlug, input.threadId);
+      return getAgentThreadPath(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId
+      );
     },
     [AGENT_IPC_CHANNELS.LIST_DIRECTORY]: async (params) => {
       const input = validateInput(listDirectoryInputSchema, params, AGENT_IPC_CHANNELS.LIST_DIRECTORY);
-      return listAgentDirectory(input.workspaceSlug, input.threadId, input.path);
+      return {
+        entries: listAgentDirectory(
+          resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+          input.threadId,
+          input.path
+        )
+      };
     },
     [AGENT_IPC_CHANNELS.LIST_WORKSPACE_DIRECTORY]: async (params) => {
       const input = validateInput(
@@ -464,7 +481,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.DELETE_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.DELETE_FILE);
-      return deleteAgentFile(input.workspaceSlug, input.threadId, input.path);
+      return deleteAgentFile(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path
+      );
     },
     [AGENT_IPC_CHANNELS.DELETE_WORKSPACE_FILE]: async (params) => {
       const input = validateInput(
@@ -476,7 +497,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.OPEN_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.OPEN_FILE);
-      return openAgentPath(input.workspaceSlug, input.threadId, input.path);
+      return openAgentPath(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path
+      );
     },
     [AGENT_IPC_CHANNELS.OPEN_WORKSPACE_FILE]: async (params) => {
       const input = validateInput(
@@ -488,7 +513,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.SHOW_IN_FOLDER]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.SHOW_IN_FOLDER);
-      return showAgentPathInFolder(input.workspaceSlug, input.threadId, input.path);
+      return showAgentPathInFolder(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path
+      );
     },
     [AGENT_IPC_CHANNELS.SHOW_WORKSPACE_IN_FOLDER]: async (params) => {
       const input = validateInput(
@@ -500,7 +529,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.PREVIEW_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.PREVIEW_FILE);
-      return previewAgentPath(input.workspaceSlug, input.threadId, input.path);
+      return previewAgentPath(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path
+      );
     },
     [AGENT_IPC_CHANNELS.PREVIEW_WORKSPACE_FILE]: async (params) => {
       const input = validateInput(
@@ -512,7 +545,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.RENAME_FILE]: async (params) => {
       const input = validateInput(renameFileInputSchema, params, AGENT_IPC_CHANNELS.RENAME_FILE);
-      return renameAgentFile(input.workspaceSlug, input.threadId, input.path, input.newName);
+      return renameAgentFile(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path,
+        input.newName
+      );
     },
     [AGENT_IPC_CHANNELS.RENAME_WORKSPACE_FILE]: async (params) => {
       const input = validateInput(
@@ -524,7 +562,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.MOVE_FILE]: async (params) => {
       const input = validateInput(moveFileInputSchema, params, AGENT_IPC_CHANNELS.MOVE_FILE);
-      return moveAgentFile(input.workspaceSlug, input.threadId, input.path, input.targetDir);
+      return moveAgentFile(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path,
+        input.targetDir
+      );
     },
     [AGENT_IPC_CHANNELS.MOVE_WORKSPACE_FILE]: async (params) => {
       const input = validateInput(
@@ -568,8 +611,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.SEARCH_WORKSPACE_FILES
       );
+      const workspaceSlug = resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug);
       return searchAgentWorkspaceFiles(
-        input.workspaceSlug,
+        workspaceSlug,
         input.threadId,
         input.query,
         input.limit ?? 20,
@@ -602,11 +646,23 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]: async (params) =>
       saveFilesToAgentThread(
-        validateInput(saveFilesToThreadInputSchema, params, AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD)
+        (() => {
+          const input = validateInput(saveFilesToThreadInputSchema, params, AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD);
+          return {
+            ...input,
+            workspaceSlug: resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug)
+          };
+        })()
       ),
     [AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD]: async (params) =>
       copyFolderToSession(
-        validateInput(copyFolderToThreadInputSchema, params, AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD)
+        (() => {
+          const input = validateInput(copyFolderToThreadInputSchema, params, AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD);
+          return {
+            ...input,
+            workspaceSlug: resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug)
+          };
+        })()
       ),
     [AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE]: async (params) =>
       saveFilesToWorkspace(
