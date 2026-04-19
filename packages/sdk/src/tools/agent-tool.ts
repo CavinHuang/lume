@@ -157,6 +157,9 @@ export const AgentTool: ToolDefinition = {
       task: input.prompt,
     })
 
+    let subagentStatus: 'completed' | 'errored' | 'aborted' = 'completed'
+    let subagentErrorMessage = ''
+
     const runSubagent = async (
       progress?: {
         taskId: string
@@ -198,6 +201,7 @@ export const AgentTool: ToolDefinition = {
         includePartialMessages: false,
         sessionId: context.sessionId,
         permissionMode: input.mode,
+        abortSignal: context.abortSignal,
       })
 
       if (input.resume) {
@@ -210,10 +214,12 @@ export const AgentTool: ToolDefinition = {
       let resultText = ''
       let lastAssistantMessage = ''
       const toolCalls: string[] = []
-      let subagentStatus: 'completed' | 'errored' | 'aborted' = 'completed'
-      let subagentErrorMessage = ''
 
       for await (const event of engine.submitMessage(input.prompt)) {
+        if (context.abortSignal?.aborted) {
+          subagentStatus = 'aborted'
+          break
+        }
         const taggedEvent = annotateSubagentStreamingEvent(event as SDKMessage, {
           subagentRunId: agentId,
           parentSessionId: context.sessionId,
@@ -408,7 +414,8 @@ export const AgentTool: ToolDefinition = {
         }
       }
       const output = await runSubagent()
-      await context.onSubagentEnd?.({ runId: agentId, status: 'completed', output })
+      const errored = (subagentStatus as string) === 'errored'
+      await context.onSubagentEnd?.({ runId: agentId, status: errored ? 'errored' : 'completed', output, error: errored ? subagentErrorMessage : undefined })
       return {
         type: 'tool_result',
         tool_use_id: '',
@@ -422,6 +429,7 @@ export const AgentTool: ToolDefinition = {
               ].filter(Boolean).join(', ')}]`
             : ''
         ),
+        ...(errored ? { is_error: true } : {}),
       }
     } catch (err: any) {
       await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
