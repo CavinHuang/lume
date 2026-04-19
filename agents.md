@@ -65,47 +65,56 @@ Commits are not just labels on diffs; they are the atomic unit of institutional 
 ### Format
 
 ```
-<intent line: why the change was made, not what changed>
+<emoji> <type>(<scope>): <中文描述>
 
 <body: narrative context — constraints, approach rationale>
-
-Constraint: <external constraint that shaped the decision>
-Rejected: <alternative considered> | <reason for rejection>
-Confidence: <low|medium|high>
-Scope-risk: <narrow|moderate|broad>
-Directive: <forward-looking warning for future modifiers>
-Tested: <what was verified (unit, integration, manual)>
-Not-tested: <known gaps in verification>
 ```
+
+- **scope**: 受影响的模块，如 `web`, `sidecar`, `sdk`, `shared`
+- **描述**: 使用中文，简明扼要说明改了什么
+
+### Gitmoji Reference
+
+| Emoji | Type | Example |
+|-------|------|---------|
+| ✨ | `feat` | ✨ feat(web): 添加流式工具执行器 |
+| 🐛 | `fix` | 🐛 fix(sidecar): 修复子代理串行执行问题 |
+| ♻️ | `refactor` | ♻️ refactor(sdk): 重构 provider 类型定义 |
+| 📝 | `docs` | 📝 docs: 更新提交协议文档 |
+| ✅ | `test` | ✅ test(sdk): 添加流式执行测试 |
+| 🎨 | `style` | 🎨 style(web): 统一代码格式 |
+| ⚡️ | `perf` | ⚡️ perf(sidecar): 优化消息解析性能 |
+| 🔒 | `security` | 🔒 fix(sdk): 修复 token 泄露风险 |
+| 🔧 | `chore` | 🔧 chore: 更新依赖版本 |
+| ⬆️ | `deps` | ⬆️ deps: 升级 anthropic sdk |
+| ⏪️ | `revert` | ⏪️ revert(sdk): 回退并行代理改动 |
+| 🚀 | `release` | 🚀 release: v1.2.0 |
+| 💄 | `ui` | 💄 ui(web): 优化模型选择器样式 |
+| 🏗️ | `arch` | 🏗️ arch(sdk): 引入 StreamingToolExecutor 架构 |
+| 🔥 | `remove` | 🔥 remove(web): 移除废弃组件 |
 
 ### Rules
 
-1. **Intent line first.** The first line describes *why*, not *what*. The diff already shows what changed.
-2. **Trailers are optional but encouraged.** Use the ones that add value; skip the ones that don't.
-3. **`Rejected:` prevents re-exploration.** If you considered and rejected an alternative, record it so future agents don't waste cycles re-discovering the same dead end.
-4. **`Directive:` is a message to the future.** Use it for "do not change X without checking Y" warnings.
-5. **`Constraint:` captures external forces.** API limitations, policy requirements, upstream bugs — things not visible in the code.
-6. **`Not-tested:` is honest.** Declaring known verification gaps is more valuable than pretending everything is covered.
-7. **All trailers use git-native trailer format** (key-value after a blank line). No custom parsing required.
+1. **Gitmoji + type(scope) + 中文描述。** 首行格式 `<emoji> <type>(<scope>): <中文描述>`。
+2. **scope 必填。** 标明受影响的模块：`web`, `sidecar`, `sdk`, `shared`，跨模块用 `,` 分隔如 `feat(web,sdk)`。
+3. **描述用中文。** 简明说明改了什么，不超过 72 字符。
+4. **Body 可选。** 需要补充上下文时写 body，说明原因和约束。
+5. **Trailer 可选。** 使用 git-native 格式，常用：`Constraint:`, `Rejected:`, `Tested:`, `Not-tested:`。
 
 ### Example
 
 ```
-Prevent silent session drops during long-running operations
+🐛 fix(sidecar): 修复长时间运行时静默断开会话
 
-The auth service returns inconsistent status codes on token
-expiry, so the interceptor catches all 4xx responses and
-triggers an inline refresh.
+Auth 服务在 token 过期时返回不一致的状态码，
+因此拦截器捕获所有 4xx 响应并触发内联刷新。
 
-Constraint: Auth service does not support token introspection
-Constraint: Must not add latency to non-expired-token paths
-Rejected: Extend token TTL to 24h | security policy violation
-Rejected: Background refresh on timer | race condition with concurrent requests
-Confidence: high
-Scope-risk: narrow
-Directive: Error handling is intentionally broad (all 4xx) — do not narrow without verifying upstream behavior
-Tested: Single expired token refresh (unit)
-Not-tested: Auth service cold-start > 500ms behavior
+Constraint: Auth 服务不支持 token 内省
+Constraint: 不能给非过期 token 路径增加延迟
+Rejected: 延长 TTL 到 24h | 违反安全策略
+Rejected: 定时后台刷新 | 并发请求竞态条件
+Tested: 单个过期 token 刷新（单元测试）
+Not-tested: Auth 服务冷启动 > 500ms 场景
 ```
 
 ### Trailer Vocabulary
