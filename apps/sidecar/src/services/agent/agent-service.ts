@@ -320,6 +320,7 @@ export async function sendAgentMessage(
   const shouldRecomputeInheritedSelection = threadMeta?.modelSelectionSource === "inherited"
     && input.channelId === undefined
     && input.modelRef === undefined;
+  const effectiveLumeConfig = getEffectiveLumeConfig(effectiveWorkspace?.slug);
   const effectiveSelection = resolveAgentDefaultStrategy({
     thread: shouldRecomputeInheritedSelection
       ? {}
@@ -327,7 +328,7 @@ export async function sendAgentMessage(
           channelId: input.channelId ?? threadMeta?.channelId,
           modelRef: input.modelRef ?? threadMeta?.modelRef
         },
-    globalDefault: getEffectiveLumeConfig(effectiveWorkspace?.slug).models?.agent
+    globalDefault: effectiveLumeConfig.models?.agent
   });
   const boundModel = resolveChannelModelBinding(effectiveSelection.modelRef ?? "", "chat");
   const resolvedChannelId = boundModel?.channel.id ?? effectiveSelection.channelId;
@@ -438,12 +439,20 @@ export async function sendAgentMessage(
     return;
   }
   const { runPiAgent } = await import("../pi-agent/runtime-core/attempt");
+  const configThinkingLevel = effectiveLumeConfig.agent?.thinkingLevel;
+  const configPermissionMode = effectiveLumeConfig.agent?.permissionMode;
   const piResult = await runPiAgent({
     input: {
       ...input,
       messageMetadata: effectiveMessageMetadata,
       channelId: resolvedChannelId,
-      modelId: resolvedModelId
+      modelId: resolvedModelId,
+      ...(input.thinkingLevel === undefined && configThinkingLevel
+        ? { thinkingLevel: configThinkingLevel }
+        : {}),
+      ...(input.permissionMode === undefined && configPermissionMode
+        ? { permissionMode: configPermissionMode }
+        : {}),
     },
     runtime: {
       sessionId: threadId,
