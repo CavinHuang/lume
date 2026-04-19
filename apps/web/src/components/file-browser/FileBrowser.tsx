@@ -8,10 +8,20 @@ import type { FileEntry } from '@lume/shared'
 
 interface FileBrowserProps {
   threadId: string
+  workspaceSlug?: string
   refreshToken?: number
 }
 
-export function FileBrowser({ threadId, refreshToken = 0 }: FileBrowserProps) {
+export function normalizeDirectoryEntriesResponse(
+  response: { entries?: FileEntry[] } | FileEntry[] | undefined | null
+): FileEntry[] {
+  if (Array.isArray(response)) {
+    return response
+  }
+  return response?.entries ?? []
+}
+
+export function FileBrowser({ threadId, workspaceSlug, refreshToken = 0 }: FileBrowserProps) {
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [rootTick, setRootTick] = useState(0)
@@ -19,14 +29,17 @@ export function FileBrowser({ threadId, refreshToken = 0 }: FileBrowserProps) {
   const loadRoot = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await sidecarCall<{ entries: FileEntry[] }>('agent:list-directory', { threadId, path: '.' })
-      setEntries(r.entries ?? [])
+      const r = await sidecarCall<{ entries: FileEntry[] }>('agent:list-directory', {
+        ...(workspaceSlug ? { workspaceSlug } : {}),
+        threadId,
+      })
+      setEntries(normalizeDirectoryEntriesResponse(r))
     } catch (err) {
       console.error('[FileBrowser] 加载失败:', err)
     } finally {
       setLoading(false)
     }
-  }, [threadId])
+  }, [workspaceSlug, threadId])
 
   useEffect(() => {
     loadRoot()
@@ -57,6 +70,7 @@ export function FileBrowser({ threadId, refreshToken = 0 }: FileBrowserProps) {
               entry={entry}
               depth={0}
               threadId={threadId}
+              workspaceSlug={workspaceSlug}
               parentRefreshTick={rootTick}
             />
           ))}
@@ -73,18 +87,19 @@ function FileTreeItem({
   entry,
   depth,
   threadId,
+  workspaceSlug,
   parentRefreshTick,
 }: {
   entry: FileEntry
   depth: number
   threadId: string
+  workspaceSlug?: string
   parentRefreshTick: number
 }) {
   const [open, setOpen] = useState(false)
   const [children, setChildren] = useState<FileEntry[]>([])
   const [childrenLoaded, setChildrenLoaded] = useState(false)
 
-  // 父级刷新时折叠并清空子节点缓存
   useEffect(() => {
     setOpen(false)
     setChildren([])
@@ -95,8 +110,12 @@ function FileTreeItem({
     if (!entry.isDirectory) return
     if (!open && !childrenLoaded) {
       try {
-        const r = await sidecarCall<{ entries: FileEntry[] }>('agent:list-directory', { threadId, path: entry.path })
-        setChildren(r.entries ?? [])
+        const r = await sidecarCall<{ entries: FileEntry[] }>('agent:list-directory', {
+          ...(workspaceSlug ? { workspaceSlug } : {}),
+          threadId,
+          path: entry.path,
+        })
+        setChildren(normalizeDirectoryEntriesResponse(r))
         setChildrenLoaded(true)
       } catch (err) {
         console.error('[FileBrowser] 加载子目录失败:', err)
@@ -128,6 +147,7 @@ function FileTreeItem({
           entry={child}
           depth={depth + 1}
           threadId={threadId}
+          workspaceSlug={workspaceSlug}
           parentRefreshTick={parentRefreshTick}
         />
       ))}

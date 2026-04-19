@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useAtomValue } from 'jotai'
-import { agentSDKMessagesAtom, agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentPlanStateAtom } from '@/atoms'
+import { agentSDKMessagesAtom, agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentPlanStateAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput } from './AgentInput'
@@ -30,6 +30,15 @@ export function AgentView({ threadId }: AgentViewProps) {
 
   const planState = useAtomValue(agentPlanStateAtom)[threadId]
   const isReview = planState?.phase === 'review'
+
+  const threads = useAtomValue(agentThreadsAtom)
+  const workspaces = useAtomValue(agentWorkspacesAtom)
+  const currentWsId = useAtomValue(currentWorkspaceIdAtom)
+  const workspaceSlug = useMemo(() => {
+    const thread = threads.find((t) => t.id === threadId)
+    const targetId = thread?.workspaceId ?? currentWsId
+    return workspaces.find((w) => w.id === targetId)?.slug
+  }, [threads, workspaces, currentWsId, threadId])
 
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
@@ -78,13 +87,17 @@ export function AgentView({ threadId }: AgentViewProps) {
         })
         fileEntries.push({ filename: file.name, data })
       }
-      await sidecarCall('agent:save-files-to-thread', { threadId, files: fileEntries })
+      await sidecarCall('agent:save-files-to-thread', {
+        ...(workspaceSlug ? { workspaceSlug } : {}),
+        threadId,
+        files: fileEntries
+      })
       toast.success(`已添加 ${files.length} 个文件`)
     } catch (error) {
       console.error('[AgentView] 文件拖拽上传失败:', error)
       toast.error('文件上传失败')
     }
-  }, [threadId, dragCounter])
+  }, [threadId, workspaceSlug, dragCounter])
 
   return (
     <div
@@ -111,7 +124,7 @@ export function AgentView({ threadId }: AgentViewProps) {
 
       {/* 右侧面板 */}
       {sidePanelView && (
-        <SidePanel threadId={threadId} view={sidePanelView} />
+        <SidePanel threadId={threadId} view={sidePanelView} workspaceSlug={workspaceSlug} />
       )}
 
       {/* 拖拽覆盖层 */}

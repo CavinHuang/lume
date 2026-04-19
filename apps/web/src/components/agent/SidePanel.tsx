@@ -7,9 +7,10 @@ import type { SidePanelView } from '@/atoms'
 interface SidePanelProps {
   threadId: string
   view: SidePanelView
+  workspaceSlug?: string
 }
 
-export function SidePanel({ threadId, view }: SidePanelProps) {
+export function SidePanel({ threadId, view, workspaceSlug }: SidePanelProps) {
   const [refreshToken, setRefreshToken] = useState(0)
 
   return (
@@ -17,10 +18,11 @@ export function SidePanel({ threadId, view }: SidePanelProps) {
       {view === 'files' && (
         <>
           <div className="flex-1 min-h-0">
-            <FileBrowser threadId={threadId} refreshToken={refreshToken} />
+            <FileBrowser threadId={threadId} workspaceSlug={workspaceSlug} refreshToken={refreshToken} />
           </div>
           <FileDropZone
             threadId={threadId}
+            workspaceSlug={workspaceSlug}
             onFilesUploaded={() => setRefreshToken((t) => t + 1)}
           />
         </>
