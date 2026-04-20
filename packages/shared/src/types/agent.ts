@@ -686,13 +686,6 @@ export interface ExternalAttachmentMeta {
   absoluteSourcePath: string
 }
 
-/** sidecar 持久化外部附加来源时使用的完整元信息 */
-export interface PersistedExternalAttachmentMeta {
-  absoluteSourcePath: string
-  attachedAt: number
-  attachedFrom: "thread" | "workspace"
-}
-
 /** Agent 复制文件夹到 thread 的输入 */
 export interface AgentCopyFolderInput {
   sourcePath: string
