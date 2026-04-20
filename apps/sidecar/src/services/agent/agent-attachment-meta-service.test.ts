@@ -1,0 +1,146 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import {
+  deleteAttachmentMeta,
+  getAttachmentMeta,
+  moveAttachmentMeta,
+  readThreadAttachmentMeta,
+  readWorkspaceAttachmentMeta,
+  upsertAttachmentMeta
+} from "./agent-attachment-meta-service";
+import { getAgentThreadFilesPath, getWorkspaceResourcesPath } from "../infra/config-paths";
+
+const createdDirs: string[] = [];
+const originalConfigDir = process.env.LUME_CONFIG_DIR;
+
+function createTempConfigDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "lume-agent-attachment-meta-"));
+  createdDirs.push(dir);
+  process.env.LUME_CONFIG_DIR = dir;
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of createdDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  process.env.LUME_CONFIG_DIR = originalConfigDir;
+});
+
+describe("agent-attachment-meta-service", () => {
+  test("records external attachment metadata for a thread target path", () => {
+    createTempConfigDir();
+    const scope = { kind: "thread" as const, workspaceSlug: "ws", threadId: "thread-a" };
+    const threadRoot = getAgentThreadFilesPath(scope.workspaceSlug, scope.threadId);
+    const targetPath = join(threadRoot, "notes.txt");
+    writeFileSync(targetPath, "hello", "utf-8");
+
+    upsertAttachmentMeta(scope, targetPath, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/notes.txt"
+    });
+
+    expect(getAttachmentMeta(scope, targetPath)).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/notes.txt"
+    });
+    expect(readThreadAttachmentMeta(scope.workspaceSlug, scope.threadId)).toEqual({
+      "notes.txt": {
+        label: "外部附加",
+        absoluteSourcePath: "/tmp/source/notes.txt"
+      }
+    });
+  });
+
+  test("records external attachment metadata for a workspace target path", () => {
+    createTempConfigDir();
+    const scope = { kind: "workspace" as const, workspaceSlug: "ws" };
+    const resourcesRoot = getWorkspaceResourcesPath(scope.workspaceSlug);
+    const targetPath = join(resourcesRoot, "docs", "brief.md");
+    mkdirSync(join(resourcesRoot, "docs"), { recursive: true });
+    writeFileSync(targetPath, "# brief", "utf-8");
+
+    upsertAttachmentMeta(scope, targetPath, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/brief.md"
+    });
+
+    expect(getAttachmentMeta(scope, targetPath)).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/brief.md"
+    });
+    expect(readWorkspaceAttachmentMeta(scope.workspaceSlug)).toEqual({
+      "docs/brief.md": {
+        label: "外部附加",
+        absoluteSourcePath: "/tmp/source/brief.md"
+      }
+    });
+  });
+
+  test("rename and move keep metadata aligned with the new target path", () => {
+    createTempConfigDir();
+    const scope = { kind: "thread" as const, workspaceSlug: "ws", threadId: "thread-b" };
+    const threadRoot = getAgentThreadFilesPath(scope.workspaceSlug, scope.threadId);
+    const sourceDir = join(threadRoot, "docs");
+    const sourceFile = join(sourceDir, "note.txt");
+    const renamedDir = join(threadRoot, "docs-renamed");
+    const movedDir = join(threadRoot, "archive");
+    mkdirSync(sourceDir, { recursive: true });
+    mkdirSync(movedDir, { recursive: true });
+    writeFileSync(sourceFile, "note", "utf-8");
+
+    upsertAttachmentMeta(scope, sourceDir, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/docs"
+    });
+    upsertAttachmentMeta(scope, sourceFile, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/docs/note.txt"
+    });
+
+    moveAttachmentMeta(scope, sourceDir, renamedDir);
+    expect(getAttachmentMeta(scope, join(renamedDir, "note.txt"))).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/docs/note.txt"
+    });
+
+    moveAttachmentMeta(scope, renamedDir, join(movedDir, "docs-renamed"));
+    expect(readThreadAttachmentMeta(scope.workspaceSlug, scope.threadId)).toEqual({
+      "archive/docs-renamed": {
+        label: "外部附加",
+        absoluteSourcePath: "/tmp/source/docs"
+      },
+      "archive/docs-renamed/note.txt": {
+        label: "外部附加",
+        absoluteSourcePath: "/tmp/source/docs/note.txt"
+      }
+    });
+  });
+
+  test("delete removes stale metadata entry", () => {
+    createTempConfigDir();
+    const scope = { kind: "workspace" as const, workspaceSlug: "ws" };
+    const resourcesRoot = getWorkspaceResourcesPath(scope.workspaceSlug);
+    const dirPath = join(resourcesRoot, "assets");
+    const filePath = join(dirPath, "logo.svg");
+    mkdirSync(dirPath, { recursive: true });
+    writeFileSync(filePath, "<svg />", "utf-8");
+
+    upsertAttachmentMeta(scope, dirPath, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/assets"
+    });
+    upsertAttachmentMeta(scope, filePath, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/assets/logo.svg"
+    });
+
+    deleteAttachmentMeta(scope, dirPath);
+
+    expect(readWorkspaceAttachmentMeta(scope.workspaceSlug)).toEqual({});
+    expect(getAttachmentMeta(scope, filePath)).toBeUndefined();
+    expect(existsSync(resourcesRoot)).toBeTrue();
+  });
+});
