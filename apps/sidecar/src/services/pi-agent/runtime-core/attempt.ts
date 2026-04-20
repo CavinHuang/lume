@@ -1,13 +1,10 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
-import { lstat, symlink } from "node:fs/promises";
-import { join } from "node:path";
-import { updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
-import { getAgentSessionWorkspacePath, getConfigDir } from "../../infra/config-paths";
+import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { decryptApiKey, listChannels } from "../../channel/channel-manager";
 import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
@@ -18,10 +15,13 @@ import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "
 import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { createRuntimeCoreSession } from "./run";
+import { resolveSubagentInteractiveLabel } from "./subagent-interactive-display";
 import { getRuntimeCoreAgentDir, hasRuntimeCoreSessionTranscript } from "./session-store";
+import { updateRuntimeThreadMetaIfPresent } from "./thread-meta-target";
 import {
   isToolAlwaysAllowed,
   markToolAlwaysAllowed,
+  setToolPermissionApprovalSession,
   waitForToolPermissionDecision
 } from "../tools/bridges/tool-permission-bridge";
 import {
@@ -29,7 +29,10 @@ import {
   inferToolMetadata,
   isToolAllowedInPlanMode
 } from "../tools/permissions/tool-metadata";
-import { waitForPiAskUserQuestionAnswers } from "../tools/bridges/ask-user-question-bridge";
+import {
+  setAskUserQuestionApprovalSession,
+  waitForPiAskUserQuestionAnswers
+} from "../tools/bridges/ask-user-question-bridge";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 
 interface RunRuntimeCoreAttemptOptions {
@@ -45,8 +48,6 @@ interface PreparedRuntimeCoreAttempt {
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   apiKey: string;
 }
-
-const LUME_CONFIG_MIRROR_DIRNAME = ".lume-config";
 
 const log = createLogger("pi-agent-runtime-core-attempt");
 
@@ -160,6 +161,12 @@ function createCanUseToolHandler(
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
     const mode = params.input.permissionMode ?? "default";
+    const approvalThreadId = params.runtime.deliveryThreadId ?? params.runtime.sessionId;
+    const originThreadId = params.runtime.deliveryThreadId
+      ? params.runtime.sessionId
+      : undefined;
+    const subagentRunId = params.runtime.subagentRunId;
+    const subagentLabel = resolveSubagentInteractiveLabel(subagentRunId);
     if (mode === "plan" && !isToolAllowedInPlanMode(toolName)) {
       return {
         behavior: "deny",
@@ -191,7 +198,23 @@ function createCanUseToolHandler(
         metadata?.toolUseId ?? toolName,
         questions,
         askUserSignal,
-        emit.onAskUserQuestion
+        (request) => {
+          if (approvalThreadId !== request.threadId) {
+            setAskUserQuestionApprovalSession(request.toolUseId, approvalThreadId);
+          }
+          emit.onAskUserQuestion({
+            ...request,
+            threadId: approvalThreadId,
+            ...(originThreadId ? { originThreadId } : {}),
+            ...(subagentRunId ? { subagentRunId } : {}),
+            ...(subagentLabel ? { subagentLabel } : {})
+          });
+        },
+        {
+          originThreadId,
+          subagentRunId,
+          subagentLabel
+        }
       );
       if (askResult.status !== "answered" || !askResult.answers) {
         if (askResult.status === "timeout") {
@@ -222,6 +245,9 @@ function createCanUseToolHandler(
 
     const request = {
       threadId: params.runtime.sessionId,
+      ...(originThreadId ? { originThreadId } : {}),
+      ...(subagentRunId ? { subagentRunId } : {}),
+      ...(subagentLabel ? { subagentLabel } : {}),
       requestId: metadata?.toolUseId ?? toolName,
       toolUseId: metadata?.toolUseId ?? toolName,
       toolName,
@@ -232,7 +258,18 @@ function createCanUseToolHandler(
     const decision = await waitForToolPermissionDecision(
       request,
       new AbortController().signal,
-      emit.onToolPermissionRequest
+      (permissionRequest) => {
+        if (approvalThreadId !== permissionRequest.threadId) {
+          setToolPermissionApprovalSession(permissionRequest.requestId, approvalThreadId);
+        }
+        emit.onToolPermissionRequest({
+          ...permissionRequest,
+          threadId: approvalThreadId,
+          ...(originThreadId ? { originThreadId } : {}),
+          ...(subagentRunId ? { subagentRunId } : {}),
+          ...(subagentLabel ? { subagentLabel } : {})
+        });
+      }
     );
     if (decision === "allow_always") {
       markToolAlwaysAllowed(params.runtime.sessionId, toolName);
@@ -405,7 +442,7 @@ export async function runRuntimeCoreAttempt(
       };
     }
 
-    updateAgentThreadMeta(runtime.sessionId, {
+    updateRuntimeThreadMetaIfPresent(runtime, {
       sdkThreadId: session.threadId ?? session.sessionId,
       runtimeThreadId: session.threadId ?? session.sessionId
     });
@@ -513,8 +550,6 @@ async function prepareRuntimeCoreAttempt(
     }
   }
 
-  await ensureConfigDirMirror(agentCwd);
-
   return {
     agentCwd,
     agentDir: getRuntimeCoreAgentDir(),
@@ -523,38 +558,6 @@ async function prepareRuntimeCoreAttempt(
     modelResolution,
     apiKey
   };
-}
-
-async function ensureConfigDirMirror(agentCwd: string): Promise<void> {
-  const configDir = getConfigDir();
-  const mirrorPath = join(agentCwd, LUME_CONFIG_MIRROR_DIRNAME);
-  try {
-    const existing = await lstat(mirrorPath);
-    if (existing.isSymbolicLink() || existing.isDirectory()) {
-      return;
-    }
-    log.warn("runtime-core 配置目录映射路径已被占用，跳过映射", {
-      agentCwd,
-      mirrorPath
-    });
-    return;
-  } catch {
-    // no-op: mirror path does not exist
-  }
-
-  try {
-    await symlink(
-      configDir,
-      mirrorPath,
-      process.platform === "win32" ? "junction" : "dir"
-    );
-  } catch (error) {
-    log.warn("runtime-core 配置目录映射失败，继续使用绝对路径访问", {
-      agentCwd,
-      mirrorPath,
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
 }
 
 // ─── Pi Agent runner (migrated from runner/run.ts) ───

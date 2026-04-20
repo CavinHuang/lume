@@ -4,9 +4,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
-import { buildSidecarSubagentRunContext, createRuntimeCoreSession } from "./run";
+import { buildSidecarSubagentRunContext, createRuntimeCoreSession, resolveSubagentModelOverride } from "./run";
+import { runRuntimeCoreAttempt } from "./attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { getAgentWorkspacePath } from "../../infra/config-paths";
+import { getAgentSessionWorkspacePath, getAgentWorkspacePath } from "../../infra/config-paths";
+import { createAgentThread } from "../../agent/agent-thread-manager";
+import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { createChannel } from "../../channel/channel-manager";
+import { updateLumeConfigSection } from "../../system/lume-config-service";
 
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
@@ -219,6 +224,74 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("resolveSubagentModelOverride 应优先显式 model，其次使用子 Agent 默认模型，否则继承父对话模型", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-subagent-model-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const anthropicChannel = createChannel({
+      name: "anthropic-main",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "anthropic-key",
+      enabled: true,
+      defaultModelId: "claude-sonnet-4-5",
+      models: [
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", enabled: true, capabilities: { chat: true } },
+      ]
+    });
+    const openaiChannel = createChannel({
+      name: "openai-subagent",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "openai-key",
+      enabled: true,
+      defaultModelId: "gpt-5.4-mini",
+      models: [
+        { id: "gpt-5.4-mini", name: "GPT-5.4 mini", enabled: true, capabilities: { chat: true } },
+      ]
+    });
+
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.subagent",
+      value: { defaultModelRef: "openai/gpt-5.4-mini" }
+    });
+
+    const explicit = resolveSubagentModelOverride({
+      toolInput: { model: "anthropic/claude-sonnet-4-5" },
+      workspaceSlug: undefined,
+    });
+    expect(explicit.source).toBe("input");
+    expect(explicit.resolvedModelId).toBe("claude-sonnet-4-5");
+    expect(explicit.apiType).toBe("anthropic-messages");
+
+    const configured = resolveSubagentModelOverride({
+      toolInput: {},
+      workspaceSlug: undefined,
+    });
+    expect(configured.source).toBe("config");
+    expect(configured.resolvedModelId).toBe("gpt-5.4-mini");
+    expect(configured.apiType).toBe("openai-completions");
+
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.subagent",
+      value: {}
+    });
+
+    const inherited = resolveSubagentModelOverride({
+      toolInput: {},
+      workspaceSlug: undefined,
+    });
+    expect(inherited.source).toBe("inherit");
+    expect(inherited.resolvedModelId).toBeUndefined();
+    expect(inherited.apiType).toBeUndefined();
+
+    void anthropicChannel;
+    void openaiChannel;
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
   test("应将 Lume prompt builder 的系统提示和动态上下文注入 runtime session", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-config-"));
     process.env.LUME_CONFIG_DIR = configDir;
@@ -252,7 +325,7 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("## Workspace Files (injected)");
     expect(systemPrompt).toContain("## 系统配置");
     expect(systemPrompt).toContain("~/.lume/lume.yaml");
-    expect(systemPrompt).toContain("Runtime 暴露配置目录");
+    expect(systemPrompt).not.toContain(".lume-config");
     expect(systemPrompt).toContain("## Project Context");
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
@@ -265,6 +338,140 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("<working_directory>");
 
     result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("runRuntimeCoreAttempt 不应在工作区线程目录创建 .lume-config 映射", async () => {
+    const prevMockSuccess = process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-attempt-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    process.env.LUME_PI_AGENT_MOCK_SUCCESS = "1";
+
+    const workspace = createAgentWorkspace("No Mirror Workspace");
+    const channel = createChannel({
+      name: "mock-openai",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      enabled: true,
+      defaultModelId: "gpt-5.4-mini",
+      models: [
+        {
+          id: "gpt-5.4-mini",
+          name: "gpt-5.4-mini",
+          enabled: true
+        }
+      ]
+    });
+
+    const thread = createAgentThread("runtime attempt no mirror", channel.id, workspace.id, undefined, "gpt-5.4-mini");
+    const sessionId = thread.id;
+    const threadDir = getAgentSessionWorkspacePath(workspace.slug, sessionId);
+
+    const result = await runRuntimeCoreAttempt(
+      {
+        input: {
+          threadId: sessionId,
+          userMessage: "hello",
+          permissionMode: "plan",
+          chatType: "direct"
+        },
+        runtime: {
+          sessionId,
+          channelId: channel.id,
+          resolvedModelId: "gpt-5.4-mini",
+          workspaceId: workspace.id,
+          threadType: "main"
+        }
+      },
+      {
+        onSdkMessage: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onAskUserQuestion: () => {},
+        onToolPermissionRequest: () => {}
+      },
+      {
+        registerAbort: () => {},
+        unregisterAbort: () => {}
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(existsSync(join(threadDir, ".lume-config"))).toBeFalse();
+
+    if (prevMockSuccess === undefined) {
+      delete process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    } else {
+      process.env.LUME_PI_AGENT_MOCK_SUCCESS = prevMockSuccess;
+    }
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("subagent runtime 使用 child sessionId 时，不应因更新不存在的子线程 meta 而失败", async () => {
+    const prevMockSuccess = process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-subagent-thread-meta-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    process.env.LUME_PI_AGENT_MOCK_SUCCESS = "1";
+
+    const workspace = createAgentWorkspace("Subagent Parent Workspace");
+    const channel = createChannel({
+      name: "mock-subagent-thread-meta",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      enabled: true,
+      defaultModelId: "gpt-5.4-mini",
+      models: [
+        {
+          id: "gpt-5.4-mini",
+          name: "gpt-5.4-mini",
+          enabled: true
+        }
+      ]
+    });
+
+    const parentThread = createAgentThread("subagent parent thread", channel.id, workspace.id, undefined, "gpt-5.4-mini");
+    const childSessionId = "child-runtime-session";
+
+    const result = await runRuntimeCoreAttempt(
+      {
+        input: {
+          threadId: childSessionId,
+          userMessage: "hello child runtime",
+          permissionMode: "plan",
+          chatType: "direct"
+        },
+        runtime: {
+          sessionId: childSessionId,
+          deliveryThreadId: parentThread.id,
+          subagentRunId: "subagent-run-fixed",
+          channelId: channel.id,
+          resolvedModelId: "gpt-5.4-mini",
+          workspaceId: workspace.id,
+          threadType: "subagent"
+        }
+      },
+      {
+        onSdkMessage: () => {},
+        onComplete: () => {},
+        onError: () => {},
+        onAskUserQuestion: () => {},
+        onToolPermissionRequest: () => {}
+      },
+      {
+        registerAbort: () => {},
+        unregisterAbort: () => {}
+      }
+    );
+
+    expect(result.status).toBe("completed");
+
+    if (prevMockSuccess === undefined) {
+      delete process.env.LUME_PI_AGENT_MOCK_SUCCESS;
+    } else {
+      process.env.LUME_PI_AGENT_MOCK_SUCCESS = prevMockSuccess;
+    }
     rmSync(configDir, { recursive: true, force: true });
   });
 
@@ -316,6 +523,7 @@ describe("runtime-core run", () => {
   test("buildSidecarSubagentRunContext 应统一 registry 与 SDK 使用的 subagent_run_id", () => {
     const result = buildSidecarSubagentRunContext({
       parentThreadId: "parent-thread",
+      parentToolUseId: "agent-tool-use-1",
       toolInput: {
         prompt: "执行子任务",
         description: "测试子任务",
@@ -335,10 +543,9 @@ describe("runtime-core run", () => {
     expect(result.forwardedToolInput.subagent_run_id).toBe("run-fixed");
     expect(result.registryInput.runId).toBe("run-fixed");
     expect(result.registryInput.childThreadId).toBe("child-fixed");
+    expect(result.registryInput.parentToolUseId).toBe("agent-tool-use-1");
     expect(result.registryInput.parentThreadId).toBe("parent-thread");
     expect(result.registryInput.rootThreadId).toBe("root-thread");
     expect(result.registryInput.parentRunId).toBe("parent-run");
   });
 });
-
-

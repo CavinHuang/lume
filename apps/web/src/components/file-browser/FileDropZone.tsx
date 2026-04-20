@@ -14,10 +14,11 @@ import { Button } from '@/components/ui/button'
 
 interface FileDropZoneProps {
   threadId: string
+  workspaceSlug?: string
   onFilesUploaded?: () => void
 }
 
-export function FileDropZone({ threadId, onFilesUploaded }: FileDropZoneProps) {
+export function FileDropZone({ threadId, workspaceSlug, onFilesUploaded }: FileDropZoneProps) {
   const [isDragOver, setIsDragOver] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
 
@@ -40,7 +41,11 @@ export function FileDropZone({ threadId, onFilesUploaded }: FileDropZoneProps) {
         fileEntries.push({ filename: file.name, data })
       }
 
-      await sidecarCall('agent:save-files-to-thread', { threadId, files: fileEntries })
+      await sidecarCall('agent:save-files-to-thread', {
+        ...(workspaceSlug ? { workspaceSlug } : {}),
+        threadId,
+        files: fileEntries
+      })
       onFilesUploaded?.()
       toast.success(`已添加 ${files.length} 个文件`)
     } catch (error) {
@@ -78,6 +83,7 @@ export function FileDropZone({ threadId, onFilesUploaded }: FileDropZoneProps) {
 
       setIsUploading(true)
       await sidecarCall('agent:save-files-to-thread', {
+        ...(workspaceSlug ? { workspaceSlug } : {}),
         threadId,
         files: result.files.map((f) => ({ filename: f.filename, sourcePath: f.sourcePath })),
       })
@@ -89,7 +95,7 @@ export function FileDropZone({ threadId, onFilesUploaded }: FileDropZoneProps) {
     } finally {
       setIsUploading(false)
     }
-  }, [threadId, onFilesUploaded])
+  }, [threadId, workspaceSlug, onFilesUploaded])
 
   return (
     <div className="flex-shrink-0 px-3 pt-3 pb-1">

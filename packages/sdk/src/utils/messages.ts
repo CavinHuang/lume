@@ -5,7 +5,7 @@
  * synthetic placeholders, and content processing.
  */
 
-import type { Message, UserMessage, AssistantMessage, TokenUsage } from '../types.js'
+import type { UserMessage, AssistantMessage, TokenUsage } from '../types.js'
 
 /**
  * Create a user message.

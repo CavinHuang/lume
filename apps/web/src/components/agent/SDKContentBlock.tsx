@@ -1,20 +1,61 @@
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useSyncExternalStore } from 'react'
 import { ChevronRight, Bot, Terminal, FileText, FilePlus, Pencil, FolderSearch, Search, Globe, Cpu, Wrench, Loader2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
+import { useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
 import { ToolResultRenderer } from './tool-result-renderers'
+import { SubagentInlinePanel } from './SubagentInlinePanel'
+import { agentSubagentRunsAtom } from '@/atoms'
 import type { SDKMessage } from '@lume/shared'
 
+/** 监听 document.documentElement 的 dark 类变化 */
+function useIsDark(): boolean {
+  return useSyncExternalStore(
+    (callback) => {
+      const observer = new MutationObserver(callback)
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+      return () => observer.disconnect()
+    },
+    () => document.documentElement.classList.contains('dark'),
+  )
+}
+
 /** 从消息流中构建 tool_use_id → tool_result 映射 */
-function buildToolResultMap(messages: SDKMessage[]): Map<string, { output: string; toolName: string }> {
+export function buildToolResultMap(messages: SDKMessage[]): Map<string, { output: string; toolName: string }> {
   const map = new Map<string, { output: string; toolName: string }>()
+  const toolNameById = new Map<string, string>()
+
+  for (const msg of messages) {
+    if (msg.type !== 'assistant') continue
+    const content = (msg as { message?: { content?: unknown[] } }).message?.content
+    if (!Array.isArray(content)) continue
+    for (const block of content as Array<{ type?: string; id?: string; name?: string }>) {
+      if (block.type === 'tool_use' && block.id && block.name) {
+        toolNameById.set(block.id, block.name)
+      }
+    }
+  }
+
   for (const msg of messages) {
     if (msg.type === 'tool_result' && msg.result) {
       map.set(msg.result.tool_use_id, {
         output: msg.result.output,
         toolName: msg.result.tool_name,
+      })
+      continue
+    }
+
+    if (msg.type !== 'user') continue
+    const content = (msg as { message?: { content?: unknown[] } }).message?.content
+    if (!Array.isArray(content)) continue
+
+    for (const block of content as Array<{ type?: string; tool_use_id?: string; content?: unknown }>) {
+      if (block.type !== 'tool_result' || !block.tool_use_id) continue
+      map.set(block.tool_use_id, {
+        output: typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+        toolName: toolNameById.get(block.tool_use_id) ?? '',
       })
     }
   }
@@ -29,9 +70,10 @@ interface SDKContentBlockProps {
   allMessages?: SDKMessage[]
   /** 是否正在流式输出 */
   isStreaming?: boolean
+  threadId?: string
 }
 
-export function SDKContentBlock({ message, index, animate, allMessages, isStreaming }: SDKContentBlockProps) {
+export function SDKContentBlock({ message, index, animate, allMessages, isStreaming, threadId }: SDKContentBlockProps) {
   const style = animate ? { animationDelay: `${index * 30}ms` } : undefined
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
@@ -64,7 +106,7 @@ export function SDKContentBlock({ message, index, animate, allMessages, isStream
       { type: 'thinking'; thinking: string }
     >
     return (
-      <div className={cn('flex gap-3', cls)} style={style}>
+      <div className={cn('flex gap-3 min-w-0', cls)} style={style}>
         <div className="size-7 rounded-full bg-foreground/10 flex items-center justify-center flex-shrink-0 mt-0.5">
           <Bot size={14} className="text-foreground/60" />
         </div>
@@ -75,6 +117,7 @@ export function SDKContentBlock({ message, index, animate, allMessages, isStream
               block={block}
               toolResultMap={toolResultMap}
               isStreaming={animate && isStreaming}
+              threadId={threadId}
             />
           ))}
         </div>
@@ -112,10 +155,12 @@ function ContentBlockItem({
   block,
   toolResultMap,
   isStreaming,
+  threadId,
 }: {
   block: ContentBlockType
   toolResultMap: Map<string, { output: string; toolName: string }>
   isStreaming?: boolean
+  threadId?: string
 }) {
   const [collapsed, setCollapsed] = useState(true)
 
@@ -152,6 +197,7 @@ function ContentBlockItem({
         block={block}
         hasResult={toolResult !== undefined}
         resultData={resultData}
+        threadId={threadId}
       />
     )
   }
@@ -166,21 +212,42 @@ const TOOL_ICONS: Partial<Record<string, LucideIcon>> = {
 }
 
 function ToolUseBlock({
-  block, hasResult, resultData,
+  block, hasResult, resultData, threadId,
 }: {
   block: { id: string; name: string; input: Record<string, unknown> }
   hasResult: boolean
   resultData: unknown
+  threadId?: string
 }) {
   const [collapsed, setCollapsed] = useState(true)
   const startedAtRef = useRef(Date.now())
   const [elapsed, setElapsed] = useState(0)
+  const subagentRunsMap = useAtomValue(agentSubagentRunsAtom)
 
   useEffect(() => {
     if (hasResult) return
     const id = setInterval(() => setElapsed(Date.now() - startedAtRef.current), 200)
     return () => clearInterval(id)
   }, [hasResult])
+
+  // Agent tool_use → SubagentInlinePanel (always, handles own loading state)
+  if (block.name === 'Agent' && threadId) {
+    const runs = subagentRunsMap[threadId] ?? []
+    const run = runs.find(r => r.parentToolUseId === block.id)
+    const description = (block.input.description ?? block.input.prompt ?? '') as string
+    const agentType = (block.input as Record<string, unknown>).subagent_type as string | undefined
+    const prompt = (block.input as Record<string, unknown>).prompt as string | undefined
+    return (
+      <SubagentInlinePanel
+        runId={run?.runId}
+        threadId={threadId}
+        toolUseId={block.id}
+        description={description}
+        agentType={agentType}
+        prompt={prompt}
+      />
+    )
+  }
 
   const ToolIcon = TOOL_ICONS[block.name] ?? Wrench
   const elapsedSec = (elapsed / 1000).toFixed(1)
@@ -212,16 +279,74 @@ function ToolUseBlock({
   )
 }
 
-/** 流式文本平滑渲染组件 */
+// ── 不完整 Markdown 语法骨架组件 ──
+
+function IncompleteLink() {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-muted/30 animate-pulse text-muted-foreground/50 text-[13px]">
+      <span className="inline-block w-16 h-3 rounded bg-muted/50" />
+    </span>
+  )
+}
+
+function IncompleteImage() {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-muted/30 animate-pulse text-muted-foreground/40 text-[12px]">
+      <span className="inline-block w-4 h-4 rounded bg-muted/50" />
+      <span className="inline-block w-12 h-3 rounded bg-muted/50" />
+    </span>
+  )
+}
+
+function IncompleteTable() {
+  return (
+    <div className="my-1 rounded border border-border/20 overflow-hidden animate-pulse">
+      <div className="flex gap-px bg-muted/20">
+        <span className="flex-1 h-4 bg-muted/30" />
+        <span className="flex-1 h-4 bg-muted/30" />
+        <span className="flex-1 h-4 bg-muted/30" />
+      </div>
+      <div className="flex gap-px bg-muted/10">
+        <span className="flex-1 h-4 bg-muted/20" />
+        <span className="flex-1 h-4 bg-muted/20" />
+        <span className="flex-1 h-4 bg-muted/20" />
+      </div>
+    </div>
+  )
+}
+
+// ── 流式文本平滑渲染组件 ──
+
 function SmoothText({ text, isStreaming }: { text: string; isStreaming?: boolean }) {
   const { displayedContent } = useSmoothStream({
     content: text,
     isStreaming: !!isStreaming,
   })
+  const isDark = useIsDark()
 
   return (
-    <XMarkdown className="x-markdown text-[14px] leading-relaxed">
+    <div className="min-w-0 w-full">
+      <XMarkdown
+        className="x-markdown text-[14px] leading-relaxed"
+        rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
+      streaming={{
+        hasNextChunk: !!isStreaming,
+        enableAnimation: true,
+        tail: true,
+        incompleteMarkdownComponentMap: {
+          link: 'incomplete-link',
+          image: 'incomplete-image',
+          table: 'incomplete-table',
+        },
+      }}
+      components={{
+        'incomplete-link': IncompleteLink,
+        'incomplete-image': IncompleteImage,
+        'incomplete-table': IncompleteTable,
+      }}
+    >
       {displayedContent}
     </XMarkdown>
+    </div>
   )
 }

@@ -6,6 +6,7 @@ import { fetchChannelModels } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 export interface ChannelFormValue extends ChannelCreateInput {}
@@ -149,16 +150,21 @@ export function ChannelForm({
         </div>
         {fetchMsg && <p className="text-[11px] text-muted-foreground">{fetchMsg}</p>}
         {models.length > 0 && (
-          <div className="rounded-lg border divide-y max-h-48 overflow-y-auto">
-            {models.map((m) => (
-              <label key={m.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/50">
-                <input type="checkbox" checked={m.enabled} disabled={disabled}
-                  onChange={(e) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: e.target.checked } : x))}
-                />
-                <span className="text-[12px] font-mono truncate">{m.id}</span>
-              </label>
-            ))}
-          </div>
+          <ScrollArea className="max-h-48 rounded-lg border">
+            <div className="divide-y">
+              {models.map((m) => (
+                <label key={m.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/50">
+                  <input
+                    type="checkbox"
+                    checked={m.enabled}
+                    disabled={disabled}
+                    onChange={(e) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: e.target.checked } : x))}
+                  />
+                  <span className="text-[12px] font-mono truncate">{m.id}</span>
+                </label>
+              ))}
+            </div>
+          </ScrollArea>
         )}
       </div>
 

@@ -6,6 +6,7 @@ export { CodeBlock } from './code-block/index'
 export { MermaidBlock } from './mermaid-block/index'
 export { useSmoothStream } from './hooks/index'
 export {
+  clearHighlightCache,
   highlightCode,
   highlightCodeSync,
   highlightToTokens,

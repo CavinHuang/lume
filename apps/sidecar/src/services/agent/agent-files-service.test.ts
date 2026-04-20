@@ -8,6 +8,7 @@ import {
   renameAttachedPath,
   moveAgentFile,
   renameAgentFile,
+  resolveWorkspaceSlugBySessionId,
   searchAgentWorkspaceFiles,
   deleteAgentPlan,
   getAgentSessionPath,
@@ -74,12 +75,21 @@ describe("agent-files-service plans", () => {
     getAgentSessionPath(workspaceSlug, sessionId);
 
     expect(() => readAgentPlan(workspaceSlug, sessionId, "../secrets.md")).toThrow(
-      "Plan 路径超出会话 plans 目录"
+      "Plan 路径超出线程 plans 目录"
     );
   });
 });
 
 describe("agent-files-service file ops", () => {
+  test("应通过 threads/<threadId> 新目录结构解析 workspace slug", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-thread-root";
+    const sessionId = "session-thread-root";
+    getAgentSessionPath(workspaceSlug, sessionId);
+
+    expect(resolveWorkspaceSlugBySessionId(sessionId)).toBe(workspaceSlug);
+  });
+
   test("应支持重命名文件", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-c";

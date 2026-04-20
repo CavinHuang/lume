@@ -5,6 +5,7 @@
  */
 
 export {
+  clearHighlightCache,
   highlightCode,
   highlightCodeSync,
   highlightToTokens,

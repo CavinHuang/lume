@@ -1,0 +1,182 @@
+<h2>Subagent 面板设计方向</h2>
+<p class="subtitle">三种设计方案对比 — 均为内联对话流展示</p>
+
+<div class="section">
+<h3>方案 A: 增强型卡片</h3>
+<p>保留当前卡片模式，大幅增强信息密度</p>
+<div class="mockup">
+  <div class="mockup-header">Preview: 方案 A — 增强型卡片</div>
+  <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;padding:16px;font-family:system-ui;">
+    <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;">
+      <div style="width:28px;height:28px;border-radius:50%;background:#2d2d44;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <span style="font-size:12px;">🤖</span>
+      </div>
+      <div style="flex:1;">
+        <div style="background:#2d2d44;border-radius:12px;border:1px solid #3d3d55;overflow:hidden;">
+          <!-- Collapsed header -->
+          <div style="padding:10px 12px;display:flex;align-items:center;gap:8px;">
+            <span style="color:#888;font-size:11px;">▶</span>
+            <span style="font-size:13px;color:#e0e0e0;flex:1;">探索 src 目录结构</span>
+            <span style="font-size:11px;color:#60a5fa;background:#60a5fa20;padding:2px 8px;border-radius:8px;">运行中</span>
+            <span style="font-size:11px;color:#888;">12.3s</span>
+            <span style="font-size:11px;color:#888;">🔧 5</span>
+          </div>
+          <!-- Tool summary bar -->
+          <div style="padding:0 12px 8px;display:flex;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:10px;background:#3d3d55;padding:2px 6px;border-radius:4px;color:#aaa;">Glob ✓</span>
+            <span style="font-size:10px;background:#3d3d55;padding:2px 6px;border-radius:4px;color:#aaa;">Read ✓</span>
+            <span style="font-size:10px;background:#3d3d55;padding:2px 6px;border-radius:4px;color:#aaa;">Grep ✓</span>
+            <span style="font-size:10px;background:#60a5fa20;padding:2px 6px;border-radius:4px;color:#60a5fa;">Bash ⏳</span>
+            <span style="font-size:10px;background:#3d3d5540;padding:2px 6px;border-radius:4px;color:#555;">Write</span>
+          </div>
+        </div>
+        <!-- Nested subagent (indented) -->
+        <div style="margin-left:20px;margin-top:8px;border-left:2px solid #3d3d55;padding-left:12px;">
+          <div style="background:#2d2d44;border-radius:12px;border:1px solid #3d3d55;overflow:hidden;">
+            <div style="padding:10px 12px;display:flex;align-items:center;gap:8px;">
+              <span style="color:#888;font-size:11px;">▶</span>
+              <span style="font-size:13px;color:#e0e0e0;flex:1;">分析 package.json 依赖</span>
+              <span style="font-size:11px;color:#4ade80;background:#4ade8020;padding:2px 8px;border-radius:8px;">完成</span>
+              <span style="font-size:11px;color:#888;">3.1s</span>
+              <span style="font-size:11px;color:#888;">🔧 2</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;padding:8px;background:#1e1e32;border-radius:8px;border:1px dashed #3d3d55;">
+      <p style="font-size:11px;color:#888;margin:0;">展开后：显示实时 streaming 文本输出 + 完整工具调用时间线</p>
+    </div>
+  </div>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>优点</h4><ul><li>改动最小，基于现有 SubagentCard 增强</li><li>信息密度适中，不干扰主对话流</li><li>工具标签直观显示执行概况</li></ul></div>
+  <div class="cons"><h4>缺点</h4><ul><li>展开后仍需独立实现 streaming 输出</li><li>深层嵌套可能占用过多纵向空间</li></ul></div>
+</div>
+</div>
+
+<div class="section">
+<h3>方案 B: 内嵌迷你对话</h3>
+<p>在父对话中直接嵌入 subagent 的完整对话流</p>
+<div class="mockup">
+  <div class="mockup-header">Preview: 方案 B — 内嵌迷你对话</div>
+  <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;padding:16px;font-family:system-ui;">
+    <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;">
+      <div style="width:28px;height:28px;border-radius:50%;background:#2d2d44;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <span style="font-size:12px;">🤖</span>
+      </div>
+      <div style="flex:1;">
+        <!-- Mini conversation header -->
+        <div style="background:#252540;border-radius:12px;border:1px solid #3d3d55;overflow:hidden;">
+          <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;background:#2d2d44;border-bottom:1px solid #3d3d55;">
+            <span style="font-size:11px;color:#60a5fa;">● 运行中</span>
+            <span style="font-size:12px;color:#e0e0e0;flex:1;">探索 src 目录结构</span>
+            <span style="font-size:11px;color:#888;">12.3s · 5 工具调用</span>
+          </div>
+          <!-- Embedded conversation -->
+          <div style="padding:12px;max-height:200px;overflow-y:auto;">
+            <div style="margin-bottom:8px;">
+              <div style="background:#3d3d55;border-radius:8px;padding:6px 10px;display:inline-block;max-width:80%;">
+                <p style="font-size:12px;color:#e0e0e0;margin:0;">正在查找 src 目录中的 TypeScript 文件...</p>
+              </div>
+            </div>
+            <div style="margin-bottom:8px;display:flex;gap:6px;align-items:center;">
+              <span style="font-size:10px;background:#3d3d55;padding:3px 8px;border-radius:6px;color:#888;">📁 Glob src/**/*.ts</span>
+              <span style="font-size:10px;color:#4ade80;">✓</span>
+            </div>
+            <div style="margin-bottom:8px;display:flex;gap:6px;align-items:center;">
+              <span style="font-size:10px;background:#3d3d55;padding:3px 8px;border-radius:6px;color:#888;">📖 Read package.json</span>
+              <span style="font-size:10px;color:#4ade80;">✓</span>
+            </div>
+            <div style="margin-bottom:8px;">
+              <div style="background:#3d3d55;border-radius:8px;padding:6px 10px;display:inline-block;max-width:80%;">
+                <p style="font-size:12px;color:#e0e0e0;margin:0;">找到了 23 个 TypeScript 文件，正在分析依赖关系...</p>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <span style="font-size:10px;background:#60a5fa20;padding:3px 8px;border-radius:6px;color:#60a5fa;">⏳ Grep "import"</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;padding:8px;background:#1e1e32;border-radius:8px;border:1px dashed #3d3d55;">
+      <p style="font-size:11px;color:#888;margin:0;">嵌套时：子 subagent 同样以缩进+竖线的迷你对话嵌入</p>
+    </div>
+  </div>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>优点</h4><ul><li>实时展示 subagent 的完整思维过程</li><li>视觉效果最接近"对话中对话"</li><li>自然支持嵌套展示</li></ul></div>
+  <div class="cons"><h4>缺点</h4><ul><li>纵向空间占用大，可能打断主对话节奏</li><li>需要订阅子线程的 SDK 消息流</li><li>实现复杂度较高</li></ul></div>
+</div>
+</div>
+
+<div class="section">
+<h3>方案 C: 混合方案（推荐）</h3>
+<p>收缩时用增强卡片，展开时切换为内嵌对话流</p>
+<div class="mockup">
+  <div class="mockup-header">Preview: 方案 C — 收缩/展开双态</div>
+  <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;padding:16px;font-family:system-ui;">
+    <div style="display:flex;gap:8px;align-items:flex-start;">
+      <div style="width:28px;height:28px;border-radius:50%;background:#2d2d44;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <span style="font-size:12px;">🤖</span>
+      </div>
+      <div style="flex:1;">
+        <!-- State 1: Collapsed -->
+        <div style="margin-bottom:12px;">
+          <p style="font-size:11px;color:#60a5fa;margin:0 0 4px;">收缩态 ▼</p>
+          <div style="background:#2d2d44;border-radius:12px;border:1px solid #3d3d55;">
+            <div style="padding:10px 12px;display:flex;align-items:center;gap:8px;">
+              <span style="color:#888;font-size:11px;">▼</span>
+              <span style="font-size:13px;color:#e0e0e0;flex:1;">探索 src 目录结构</span>
+              <span style="font-size:11px;color:#60a5fa;background:#60a5fa20;padding:2px 8px;border-radius:8px;">运行中</span>
+              <span style="font-size:11px;color:#888;">12.3s · 🔧 5</span>
+            </div>
+            <div style="padding:0 12px 8px;display:flex;gap:6px;">
+              <span style="font-size:10px;background:#3d3d55;padding:2px 6px;border-radius:4px;color:#aaa;">Glob ✓</span>
+              <span style="font-size:10px;background:#3d3d55;padding:2px 6px;border-radius:4px;color:#aaa;">Read ✓</span>
+              <span style="font-size:10px;background:#60a5fa20;padding:2px 6px;border-radius:4px;color:#60a5fa;">Bash ⏳</span>
+            </div>
+          </div>
+        </div>
+        <!-- State 2: Expanded -->
+        <div>
+          <p style="font-size:11px;color:#4ade80;margin:0 0 4px;">展开态 ▼</p>
+          <div style="background:#252540;border-radius:12px;border:1px solid #4ade8040;overflow:hidden;">
+            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;background:#2d2d44;border-bottom:1px solid #3d3d55;">
+              <span style="font-size:11px;color:#4ade80;">● 完成</span>
+              <span style="font-size:12px;color:#e0e0e0;flex:1;">探索 src 目录结构</span>
+              <span style="font-size:11px;color:#888;">15.7s · 🔧 8</span>
+            </div>
+            <!-- Streaming output area -->
+            <div style="padding:12px;border-bottom:1px solid #3d3d55;">
+              <p style="font-size:12px;color:#e0e0e0;margin:0;line-height:1.6;">
+                我来帮你探索 src 目录结构。找到了 23 个 TypeScript 文件，主要分为以下模块：<br><br>
+                <strong>components/</strong> — UI 组件层，包含 AgentChat、Settings 等<br>
+                <strong>hooks/</strong> — React hooks，包含 useAgent、useStream 等<br>
+                <strong>lib/</strong> — 工具函数和 API 调用层<br><br>
+                依赖关系显示该项目使用了 React + Jotai + Tauri 技术栈...
+              </p>
+            </div>
+            <!-- Tool timeline -->
+            <div style="padding:8px 12px;">
+              <p style="font-size:10px;color:#888;margin:0 0 6px;">工具调用时间线</p>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                <span style="font-size:10px;background:#4ade8020;padding:3px 8px;border-radius:6px;color:#4ade80;border:1px solid #4ade8030;">Glob ✓ 0.2s</span>
+                <span style="font-size:10px;background:#4ade8020;padding:3px 8px;border-radius:6px;color:#4ade80;border:1px solid #4ade8030;">Read ✓ 0.5s</span>
+                <span style="font-size:10px;background:#4ade8020;padding:3px 8px;border-radius:6px;color:#4ade80;border:1px solid #4ade8030;">Grep ✓ 1.2s</span>
+                <span style="font-size:10px;background:#4ade8020;padding:3px 8px;border-radius:6px;color:#4ade80;border:1px solid #4ade8030;">Bash ✓ 3.0s</span>
+                <span style="font-size:10px;background:#4ade8020;padding:3px 8px;border-radius:6px;color:#4ade80;border:1px solid #4ade8030;">Read ✓ 0.8s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>优点</h4><ul><li>收缩态紧凑不干扰，展开态信息丰富</li><li>兼顾信息密度和深度查看需求</li><li>嵌套时收缩态保持整洁，展开时递归显示</li><li>复用现有 SDKContentBlock 渲染子线程输出</li></ul></div>
+  <div class="cons"><h4>缺点</h4><ul><li>需实现双态 UI 和切换逻辑</li><li>需订阅子线程消息流以获取实时输出</li></ul></div>
+</div>
+</div>

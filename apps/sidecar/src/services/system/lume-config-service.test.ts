@@ -64,6 +64,27 @@ describe("lume-config-service", () => {
     expect(anotherEffective.models?.agent?.defaultModelRef).toBe("openai/gpt-5.4");
   });
 
+  test("应支持子 Agent 默认模型配置并允许 workspace 覆盖", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.subagent.defaultModelRef",
+      value: "openai/gpt-5.4-mini"
+    });
+
+    updateLumeConfigSection({
+      source: "agent",
+      workspaceSlug: "default",
+      path: "models.subagent.defaultModelRef",
+      value: "anthropic/claude-sonnet-4-5"
+    });
+
+    const defaultEffective = getEffectiveLumeConfig("default");
+    const anotherEffective = getEffectiveLumeConfig("another");
+
+    expect(defaultEffective.models?.subagent?.defaultModelRef).toBe("anthropic/claude-sonnet-4-5");
+    expect(anotherEffective.models?.subagent?.defaultModelRef).toBe("openai/gpt-5.4-mini");
+  });
+
   test("写入配置后应追加审计日志", () => {
     updateLumeConfigSection({
       source: "agent",

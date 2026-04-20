@@ -4,17 +4,20 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
 import { Send, Square, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAtomValue } from 'jotai'
-import { useEffect, useRef } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
-import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, agentSDKMessagesAtom } from '@/atoms'
+import type { SDKMessage, LumeConfigThinkingLevel } from '@lume/shared'
 import { MentionList } from './MentionList'
 import { ModelPicker } from './ModelPicker'
+import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 import type { MentionItem, MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { SkillMeta, WorkspaceMcpConfig } from '@lume/shared'
+import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 
 interface AgentInputProps {
   threadId: string
@@ -133,7 +136,19 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const workspaceSlugRef = useRef<string | null>(null)
+  const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+
+  useEffect(() => {
+    getEffectiveLumeConfig()
+      .then((config) => {
+        if (config.agent?.thinkingLevel) {
+          setThinkingLevel(config.agent.thinkingLevel)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const thread = threads.find((t) => t.id === threadId)
@@ -185,7 +200,23 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
     const text = editor.getText().trim()
     if (!text) return
     editor.commands.clearContent()
-    await agentSend({ threadId, userMessage: text })
+    const now = Date.now()
+    const userMsg = {
+      type: 'user' as const,
+      uuid: `user:${threadId}:${now}`,
+      session_id: threadId,
+      timestamp: new Date(now).toISOString(),
+      parent_tool_use_id: null,
+      message: {
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text }]
+      }
+    } as unknown as SDKMessage
+    setSDKMessages((prev) => ({
+      ...prev,
+      [threadId]: [...(prev[threadId] ?? []), userMsg],
+    }))
+    await agentSend({ threadId, userMessage: text, thinkingLevel })
   }
 
   const handleStop = async () => {
@@ -234,6 +265,7 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
               <Paperclip size={15} />
             </button>
             <ModelPicker threadId={threadId} />
+            <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
           </div>
           {disabled ? (
             <button

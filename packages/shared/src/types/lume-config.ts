@@ -8,6 +8,10 @@ export interface LumeConfigAgentDefaultStrategy {
   fallbackModelRefs?: string[]
 }
 
+export interface LumeConfigSubagentModelStrategy {
+  defaultModelRef?: string
+}
+
 export interface LumeConfigAgentSection {
   permissionMode?: LumeConfigPermissionMode
   thinkingLevel?: LumeConfigThinkingLevel
@@ -23,6 +27,7 @@ export interface LumeConfigModelsSection {
     defaultModelRef?: string
   }
   agent?: LumeConfigAgentDefaultStrategy
+  subagent?: LumeConfigSubagentModelStrategy
   embedding?: {
     defaultModelRef?: string
   }

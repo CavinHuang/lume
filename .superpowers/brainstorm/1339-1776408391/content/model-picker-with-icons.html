@@ -1,0 +1,187 @@
+<h2>方案 A 精化 — 加入供应商图标</h2>
+<p class="subtitle">使用 @lobehub/icons 的 ProviderIcon 组件</p>
+
+<div class="mockup">
+  <div class="mockup-header">触发器按钮（未选中/已选中）</div>
+  <div class="mockup-body" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+    <!-- 未选中状态 -->
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);cursor:pointer">
+      <div style="width:18px;height:18px;border-radius:4px;background:linear-gradient(135deg,#d97706,#f59e0b);display:flex;align-items:center;justify-content:center">
+        <span style="font-size:10px;color:white;font-weight:700">A</span>
+      </div>
+      <span style="font-weight:600;font-size:13px">Claude Sonnet 4</span>
+      <span style="font-size:11px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+      <span style="color:var(--text-muted);font-size:12px">▾</span>
+    </div>
+    <!-- 覆盖状态 -->
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);cursor:pointer">
+      <div style="width:18px;height:18px;border-radius:4px;background:linear-gradient(135deg,#10b981,#34d399);display:flex;align-items:center;justify-content:center">
+        <span style="font-size:10px;color:white;font-weight:700">O</span>
+      </div>
+      <span style="font-weight:600;font-size:13px">GPT-4o</span>
+      <span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--accent-bg);color:var(--accent)">已覆盖</span>
+      <span style="color:var(--text-muted);font-size:12px">▾</span>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:16px">
+  <div class="mockup-header">下拉菜单 — 完整视图</div>
+  <div class="mockup-body" style="display:flex;gap:0">
+    <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:0 8px 32px rgba(0,0,0,0.18);width:340px">
+      <!-- 搜索框 -->
+      <div style="padding:8px 8px 6px">
+        <div style="display:flex;align-items:center;gap:6px;padding:7px 10px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border)">
+          <span style="color:var(--text-muted);font-size:14px">⌕</span>
+          <span style="color:var(--text-muted);font-size:13px">搜索模型名称...</span>
+        </div>
+      </div>
+
+      <!-- Anthropic 分组 -->
+      <div style="padding:4px 0 0">
+        <div style="padding:6px 12px 4px;display:flex;align-items:center;gap:6px">
+          <div style="width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#d97706,#f59e0b);display:flex;align-items:center;justify-content:center">
+            <span style="font-size:8px;color:white;font-weight:800">A</span>
+          </div>
+          <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Anthropic</span>
+        </div>
+        <!-- Sonnet - 选中 -->
+        <div style="margin:2px 6px;padding:8px 10px;background:var(--accent-bg);border-radius:8px;display:flex;align-items:center;gap:10px;cursor:pointer">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-weight:600;font-size:13px">Claude Sonnet 4</span>
+              <span style="font-size:10px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+            </div>
+            <div style="display:flex;gap:3px;margin-top:4px">
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#3b82f618;color:#3b82f6">视觉</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#8b5cf618;color:#8b5cf6">工具</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#f59e0b18;color:#f59e0b">推理</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:auto">$3/$15</span>
+            </div>
+          </div>
+          <span style="color:var(--accent);font-size:16px;font-weight:600">✓</span>
+        </div>
+        <!-- Opus -->
+        <div style="margin:2px 6px;padding:8px 10px;border-radius:8px;display:flex;align-items:center;gap:10px;cursor:pointer">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-weight:600;font-size:13px">Claude Opus 4.6</span>
+              <span style="font-size:10px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+            </div>
+            <div style="display:flex;gap:3px;margin-top:4px">
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#3b82f618;color:#3b82f6">视觉</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#8b5cf618;color:#8b5cf6">工具</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#f59e0b18;color:#f59e0b">推理</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:auto">$15/$75</span>
+            </div>
+          </div>
+        </div>
+        <!-- Haiku -->
+        <div style="margin:2px 6px;padding:8px 10px;border-radius:8px;display:flex;align-items:center;gap:10px;cursor:pointer">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-weight:600;font-size:13px">Claude Haiku 4.5</span>
+              <span style="font-size:10px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+            </div>
+            <div style="display:flex;gap:3px;margin-top:4px">
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#3b82f618;color:#3b82f6">视觉</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#8b5cf618;color:#8b5cf6">工具</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:auto">$0.8/$4</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OpenAI 分组 -->
+      <div style="padding:4px 0 0">
+        <div style="padding:6px 12px 4px;display:flex;align-items:center;gap:6px">
+          <div style="width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#10b981,#34d399);display:flex;align-items:center;justify-content:center">
+            <span style="font-size:8px;color:white;font-weight:800">O</span>
+          </div>
+          <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">OpenAI</span>
+        </div>
+        <div style="margin:2px 6px;padding:8px 10px;border-radius:8px;display:flex;align-items:center;gap:10px;cursor:pointer">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-weight:600;font-size:13px">GPT-4o</span>
+              <span style="font-size:10px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">128K</span>
+            </div>
+            <div style="display:flex;gap:3px;margin-top:4px">
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#3b82f618;color:#3b82f6">视觉</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#8b5cf618;color:#8b5cf6">工具</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:auto">$2.5/$10</span>
+            </div>
+          </div>
+        </div>
+        <div style="margin:2px 6px;padding:8px 10px;border-radius:8px;display:flex;align-items:center;gap:10px;cursor:pointer">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-weight:600;font-size:13px">o3-mini</span>
+              <span style="font-size:10px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">200K</span>
+            </div>
+            <div style="display:flex;gap:3px;margin-top:4px">
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#f59e0b18;color:#f59e0b">推理</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:auto">$1.1/$4.4</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Google 分组 -->
+      <div style="padding:4px 0 0">
+        <div style="padding:6px 12px 4px;display:flex;align-items:center;gap:6px">
+          <div style="width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#4285f4,#34a853);display:flex;align-items:center;justify-content:center">
+            <span style="font-size:8px;color:white;font-weight:800">G</span>
+          </div>
+          <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Google</span>
+        </div>
+        <div style="margin:2px 6px;padding:8px 10px;border-radius:8px;display:flex;align-items:center;gap:10px;cursor:pointer">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-weight:600;font-size:13px">Gemini 2.5 Pro</span>
+              <span style="font-size:10px;color:var(--text-muted);background:var(--bg-secondary);padding:1px 5px;border-radius:3px">1M</span>
+            </div>
+            <div style="display:flex;gap:3px;margin-top:4px">
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#3b82f618;color:#3b82f6">视觉</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#8b5cf618;color:#8b5cf6">工具</span>
+              <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#f59e0b18;color:#f59e0b">推理</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:auto">$1.25/$10</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部操作栏 -->
+      <div style="border-top:1px solid var(--border);padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:11px;color:var(--text-muted)">已覆盖默认策略</span>
+        <span style="font-size:12px;color:var(--accent);cursor:pointer;font-weight:500">恢复默认</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px">
+  <h3>设计要点</h3>
+  <ul>
+    <li><strong>触发器按钮</strong>：左侧显示供应商图标 → 模型名 → 上下文窗口 badge → 下拉箭头</li>
+    <li><strong>分组头</strong>：供应商图标 + 供应商名称，替代纯文字分组</li>
+    <li><strong>模型行</strong>：紧凑两行 — 名称+窗口 badge / 能力标签+价格</li>
+    <li><strong>搜索框</strong>：顶部，按模型名称过滤</li>
+    <li><strong>底部栏</strong>：覆盖状态提示 + 恢复默认操作</li>
+    <li><strong>供应商图标</strong>：使用 <code>@lobehub/icons</code> 的 <code>ProviderIcon</code>，type="avatar" 或 "color"</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>ProviderIcon 映射策略</h3>
+  <p>Channel 的 <code>provider</code> 字段 → <code>@lobehub/icons</code> 的 provider 名称映射：</p>
+  <table style="width:100%;font-size:13px;border-collapse:collapse">
+    <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px">Channel provider</th><th style="text-align:left;padding:6px">@lobehub/icons provider</th></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">anthropic</td><td style="padding:6px">"anthropic"</td></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">openai</td><td style="padding:6px">"openai"</td></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">google / gemini</td><td style="padding:6px">"google"</td></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">deepseek</td><td style="padding:6px">"deepseek"</td></tr>
+    <tr><td style="padding:6px">ollama</td><td style="padding:6px">"ollama"</td></tr>
+  </table>
+  <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">未匹配的 provider 使用通用 CPU 图标作为 fallback</p>
+</div>

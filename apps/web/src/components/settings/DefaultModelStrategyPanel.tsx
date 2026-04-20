@@ -13,7 +13,7 @@ import { buildModelSelectionGroups } from '@/components/model-selection/model-se
 
 const EMPTY_SELECT_VALUE = '__empty__'
 
-interface ModelOption {
+export interface ModelOption {
   channelId: string
   provider: string
   modelId: string
@@ -50,11 +50,11 @@ function buildModelRef(channel: Pick<Channel, 'provider'>, modelId: string): str
     : `${channel.provider}/${trimmed}`
 }
 
-function getEnabledChannels(channels: Channel[]): Channel[] {
+export function getEnabledChannels(channels: Channel[]): Channel[] {
   return channels.filter((channel) => channel.enabled && channel.models.some(isChatModel))
 }
 
-function buildModelOptions(channels: Channel[], channelId?: string): ModelOption[] {
+export function buildModelOptions(channels: Channel[], channelId?: string): ModelOption[] {
   const selectedChannels = channelId
     ? channels.filter((channel) => channel.id === channelId)
     : channels
@@ -213,7 +213,7 @@ export function hasStrategyChanges(input: {
     !== JSON.stringify(buildStrategySavePayload(input.draft, input.allModelOptions))
 }
 
-function getModelLabel(modelOptions: ModelOption[], modelRef?: string): string {
+export function getModelLabel(modelOptions: ModelOption[], modelRef?: string): string {
   const normalized = normalizeOptional(modelRef)
   if (!normalized) {
     return '未设置'

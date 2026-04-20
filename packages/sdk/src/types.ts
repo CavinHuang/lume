@@ -545,6 +545,7 @@ export interface ToolContext {
   /** Parent agent's API type */
   apiType?: import('./providers/types.js').ApiType
   sessionId?: string
+  toolUseId?: string
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>

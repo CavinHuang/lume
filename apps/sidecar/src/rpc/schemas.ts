@@ -290,6 +290,10 @@ const lumeConfigAgentStrategySchema = z.object({
   fallbackModelRefs: z.array(nonEmptyTrimmedStringSchema).optional()
 }).strict();
 
+const lumeConfigSubagentStrategySchema = z.object({
+  defaultModelRef: nonEmptyTrimmedStringSchema.optional()
+}).strict();
+
 const lumeConfigUpdateBaseSchema = z.object({
   source: z.enum(["user", "agent", "system"]),
   workspaceSlug: optionalIdSchema,
@@ -302,6 +306,10 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: lumeConfigAgentStrategySchema
   }),
   lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.subagent"),
+    value: lumeConfigSubagentStrategySchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.agent.defaultChannelId"),
     value: nonEmptyTrimmedStringSchema
   }),
@@ -312,6 +320,18 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.agent.fallbackModelRefs"),
     value: z.array(nonEmptyTrimmedStringSchema)
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.subagent.defaultModelRef"),
+    value: nonEmptyTrimmedStringSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("agent.thinkingLevel"),
+    value: z.enum(["off", "low", "medium", "high", "max"]).nullable()
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("agent.permissionMode"),
+    value: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).nullable()
   })
 ]);
 
@@ -377,31 +397,31 @@ export const marketplaceDetailInputSchema = z.object({
 });
 
 export const threadPathInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema
 });
 
 export const listDirectoryInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: z.string().optional()
 });
 
 export const pathFileInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: idSchema
 });
 
 export const renameFileInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: idSchema,
   newName: z.string().min(1)
 });
 
 export const moveFileInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   path: idSchema,
   targetDir: idSchema
@@ -429,7 +449,7 @@ export const promoteFileToWorkspaceInputSchema = z.object({
 });
 
 export const searchWorkspaceFilesInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   query: z.string().default(""),
   limit: z.number().int().min(1).max(200).optional(),
@@ -448,7 +468,7 @@ export const plansListInputSchema = z.object({
 });
 
 export const saveFilesToThreadInputSchema = z.object({
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema,
   files: z.array(z.object({
     filename: z.string().min(1),
@@ -472,7 +492,7 @@ export const saveFilesToWorkspaceInputSchema = z.object({
 
 export const copyFolderToThreadInputSchema = z.object({
   sourcePath: idSchema,
-  workspaceSlug: idSchema,
+  workspaceSlug: optionalIdSchema,
   threadId: idSchema
 });
 
@@ -600,6 +620,18 @@ export const updateUiStateInputSchema = z.object({
   chatDraftByConversationId: z.record(z.string(), z.string()).optional(),
   agentDraftByThreadId: z.record(z.string(), z.string()).optional()
 });
+
+export const updateGeneralSettingsInputSchema = z.object({
+  themeMode: z.enum(["system", "light", "dark"]).optional(),
+  windowBehavior: z.object({
+    minimizeToTray: z.boolean().optional(),
+    closeToTray: z.boolean().optional()
+  }).optional()
+});
+
+export const clearCacheInputSchema = z.object({
+  logs: z.boolean().optional()
+}).strict();
 
 export const lumeConfigEffectiveInputSchema = z.object({
   workspaceSlug: optionalIdSchema

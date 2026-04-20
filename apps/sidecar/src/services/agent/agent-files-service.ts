@@ -62,8 +62,12 @@ export function resolveWorkspaceSlugBySessionId(sessionId: string): string | nul
   if (!existsSync(workspacesDir)) return null;
   for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const candidate = join(workspacesDir, entry.name, sessionId);
-    if (!existsSync(candidate)) continue;
+    const threadRootCandidate = join(workspacesDir, entry.name, "threads", sessionId);
+    if (existsSync(threadRootCandidate)) {
+      return entry.name;
+    }
+    const legacyCandidate = join(workspacesDir, entry.name, sessionId);
+    if (!existsSync(legacyCandidate)) continue;
     return entry.name;
   }
   return null;

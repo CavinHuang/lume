@@ -500,6 +500,8 @@ export interface AgentAskUserQuestionRequest {
   originThreadId?: string
   /** 子任务 runId（用于 Team 面板定位） */
   subagentRunId?: string
+  /** 子任务显示名（优先用于 UI 展示） */
+  subagentLabel?: string
   toolUseId: string
   questions: AgentAskUserQuestionQuestion[]
 }
@@ -521,6 +523,8 @@ export interface AgentToolPermissionRequest {
   originThreadId?: string
   /** 子任务 runId（用于 Team 面板定位） */
   subagentRunId?: string
+  /** 子任务显示名（优先用于 UI 展示） */
+  subagentLabel?: string
   requestId: string
   toolUseId: string
   toolName: string
@@ -537,8 +541,8 @@ export interface AgentToolPermissionResponseInput {
 
 export interface AgentPendingInteractiveState {
   threadId: string
-  askUserQuestion?: AgentAskUserQuestionRequest
-  toolPermission?: AgentToolPermissionRequest
+  askUserQuestions?: AgentAskUserQuestionRequest[]
+  toolPermissions?: AgentToolPermissionRequest[]
 }
 
 // ===== Plan 模式 =====

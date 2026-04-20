@@ -94,6 +94,13 @@ let highlighterPromise: Promise<ShikiHighlighter> | null = null
 /** 已 resolve 的高亮器实例缓存（同步访问用） */
 let cachedHighlighter: ShikiHighlighter | null = null
 
+export function clearHighlightCache(): boolean {
+  const hadCache = cachedHighlighter !== null || highlighterPromise !== null
+  cachedHighlighter = null
+  highlighterPromise = null
+  return hadCache
+}
+
 /**
  * 获取或创建 Shiki 高亮器单例
  * 首次调用时懒加载，resolve 后缓存实例供同步使用

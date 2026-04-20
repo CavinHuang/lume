@@ -7,11 +7,10 @@
 
 import type { ToolDefinition, ToolContext, ToolResult, AgentDefinition, SDKMessage } from '../types.js'
 import { QueryEngine } from '../engine.js'
-import { getAllBaseTools, filterTools } from './index.js'
 import { createProvider, type ApiType } from '../providers/index.js'
 import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { loadSession } from '../session.js'
-import { finalizeSubagentOutput, summarizeSubagentAssistantEvent } from './subagent-output.js'
+import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from './subagent-output.js'
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
 
 // Store for registered agent definitions
@@ -49,7 +48,7 @@ const BUILTIN_AGENTS: Record<string, AgentDefinition> = {
 
 export const AgentTool: ToolDefinition = {
   name: 'Agent',
-  description: 'Launch a subagent to handle complex, multi-step tasks autonomously. Subagents have their own context and can run specialized tool sets.',
+  description: 'Launch a new agent to handle complex, multi-step tasks. Each agent has its own context and tool set. IMPORTANT: When tasks are independent, produce MULTIPLE Agent tool_use calls in a single response — they will execute in parallel automatically. Do not use run_in_background.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -111,12 +110,13 @@ export const AgentTool: ToolDefinition = {
     required: ['prompt', 'description'],
   },
   isReadOnly: () => false,
-  isConcurrencySafe: () => false,
+  isConcurrencySafe: () => true,
   isEnabled: () => true,
   async prompt() {
     return 'Launch a subagent to handle complex tasks autonomously.'
   },
   async call(input: any, context: ToolContext): Promise<ToolResult> {
+    const { getAllBaseTools, filterTools } = await import('./index.js')
     const agentType = input.subagent_type || 'general-purpose'
     const effectiveCwd = input.cwd || context.cwd
 
@@ -156,6 +156,9 @@ export const AgentTool: ToolDefinition = {
       agentType: agentType,
       task: input.prompt,
     })
+
+    let subagentStatus: 'completed' | 'errored' | 'aborted' = 'completed'
+    let subagentErrorMessage = ''
 
     const runSubagent = async (
       progress?: {
@@ -198,6 +201,7 @@ export const AgentTool: ToolDefinition = {
         includePartialMessages: false,
         sessionId: context.sessionId,
         permissionMode: input.mode,
+        abortSignal: context.abortSignal,
       })
 
       if (input.resume) {
@@ -212,6 +216,10 @@ export const AgentTool: ToolDefinition = {
       const toolCalls: string[] = []
 
       for await (const event of engine.submitMessage(input.prompt)) {
+        if (context.abortSignal?.aborted) {
+          subagentStatus = 'aborted'
+          break
+        }
         const taggedEvent = annotateSubagentStreamingEvent(event as SDKMessage, {
           subagentRunId: agentId,
           parentSessionId: context.sessionId,
@@ -247,10 +255,37 @@ export const AgentTool: ToolDefinition = {
               subagent_run_id: agentId,
             } as any)
           }
+          continue
+        }
+
+        if (event.type === 'result') {
+          if (typeof event.result === 'string' && event.result.trim()) {
+            resultText = resultText
+              ? `${resultText}\n\n${event.result.trim()}`
+              : event.result.trim()
+            lastAssistantMessage = event.result.trim()
+          }
+          const errorText = [
+            ...(Array.isArray(event.errors) ? event.errors : []),
+            typeof event.result === 'string' ? event.result : '',
+          ]
+            .find((value) => typeof value === 'string' && value.trim().length > 0)
+          if (event.is_error || (typeof event.subtype === 'string' && event.subtype !== 'success')) {
+            subagentStatus = 'errored'
+            if (errorText) {
+              subagentErrorMessage = errorText.trim()
+            }
+          }
         }
       }
 
-      const finalized = finalizeSubagentOutput(resultText, toolCalls)
+      const finalized = finalizeSubagentOutputFromState({
+        textOutput: resultText,
+        toolCalls,
+        lastAssistantMessage,
+        errorMessage: subagentErrorMessage,
+        status: subagentStatus,
+      })
 
       // Fire SubagentStop hook on the parent's hook registry
       if (context.hookRegistry) {
@@ -302,8 +337,9 @@ export const AgentTool: ToolDefinition = {
         taskId: task.id,
         description: task.subject,
       })
-        .then((output) => {
+        .then(async (output) => {
           updateTaskRecord(task.id, { status: 'completed', output })
+          await context.onSubagentEnd?.({ runId: agentId, status: 'completed', output })
           context.emitEvent?.({
             type: 'system',
             subtype: 'task_progress',
@@ -329,11 +365,12 @@ export const AgentTool: ToolDefinition = {
             subagent_run_id: agentId,
           })
         })
-        .catch((err: any) => {
+        .catch(async (err: any) => {
           updateTaskRecord(task.id, {
             status: 'failed',
             output: `Subagent error: ${err.message}`,
           })
+          await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
           context.emitEvent?.({
             type: 'system',
             subtype: 'task_progress',
@@ -377,7 +414,8 @@ export const AgentTool: ToolDefinition = {
         }
       }
       const output = await runSubagent()
-      await context.onSubagentEnd?.({ runId: agentId, status: 'completed', output })
+      const errored = (subagentStatus as string) === 'errored'
+      await context.onSubagentEnd?.({ runId: agentId, status: errored ? 'errored' : 'completed', output, error: errored ? subagentErrorMessage : undefined })
       return {
         type: 'tool_result',
         tool_use_id: '',
@@ -391,6 +429,7 @@ export const AgentTool: ToolDefinition = {
               ].filter(Boolean).join(', ')}]`
             : ''
         ),
+        ...(errored ? { is_error: true } : {}),
       }
     } catch (err: any) {
       await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })

@@ -1,0 +1,159 @@
+<h2>精化方案 — 复刻参考设计风格 + 增强</h2>
+<p class="subtitle">融合参考设计的紧凑柔和风格 + 供应商图标 + 搜索 + 价格信息</p>
+
+<div class="mockup">
+  <div class="mockup-header">当前参考设计（用户提供）</div>
+  <div class="mockup-body" style="max-width:280px">
+    <!-- 参考设计复刻 -->
+    <div style="padding:4px 8px;font-size:12px;font-weight:500;color:var(--text-muted);display:flex;align-items:center;gap:6px">
+      <svg style="width:16px;height:16px;opacity:0.4;flex-shrink:0" fill="currentColor" viewBox="0 0 24 24"><path d="M12.105 2L9.927 4.953H.653L2.83 2h9.276zM23.254 19.048L21.078 22h-9.242l2.174-2.952h9.244zM24 2L9.264 22H0L14.736 2H24z"></path></svg>
+      <span>Z.AI Coding Plan</span>
+    </div>
+    <div style="padding:6px 8px;border-radius:4px;background:rgba(var(--accent-rgb,99,102,241),0.12);display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+      <svg style="width:16px;height:16px;margin-top:2px;opacity:0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">glm-5-turbo</div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted);transform:scale(0.75);transform-origin:left;opacity:0.8">
+            <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"></path></svg>
+            <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 18V5M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path></svg>
+            <span style="font-size:9px;font-weight:500;opacity:0.5">200K</span>
+          </div>
+          <span style="font-family:monospace;font-size:10px;color:var(--text-muted);opacity:0.5">glm-5-turbo</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:16px">
+  <div class="mockup-header">新设计 — 复刻风格 + 增强信息</div>
+  <div class="mockup-body" style="max-width:320px">
+    <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg);box-shadow:0 4px 16px rgba(0,0,0,0.12)">
+
+      <!-- 搜索框 -->
+      <div style="padding:6px 6px 4px">
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border)">
+          <svg style="width:14px;height:14px;color:var(--text-muted);opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"></path></svg>
+          <span style="color:var(--text-muted);font-size:13px;opacity:0.6">搜索模型...</span>
+        </div>
+      </div>
+
+      <!-- Anthropic 分组 -->
+      <div style="padding:2px 0">
+        <div style="padding:5px 10px 3px;font-size:12px;font-weight:500;color:var(--text-muted);display:flex;align-items:center;gap:6px">
+          <div style="width:14px;height:14px;border-radius:3px;background:linear-gradient(135deg,#d97706,#f59e0b);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:7px;color:white;font-weight:800">A</span>
+          </div>
+          <span>Anthropic</span>
+        </div>
+
+        <!-- Sonnet - 选中态 -->
+        <div style="margin:1px 4px;padding:6px 8px;border-radius:6px;background:rgba(var(--accent-rgb,99,102,241),0.12);display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <svg style="width:16px;height:16px;margin-top:1px;color:var(--accent)" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Claude Sonnet 4</div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted);transform:scale(0.75);transform-origin:left;opacity:0.8">
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"></path></svg>
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 18V5M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path></svg>
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span style="font-size:9px;font-weight:500;opacity:0.5">200K</span>
+                <span style="font-size:9px;font-weight:500;opacity:0.4">$3/$15</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Opus - 非选中态 -->
+        <div style="margin:1px 4px;padding:6px 8px;border-radius:6px;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <svg style="width:16px;height:16px;margin-top:1px;opacity:0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:500">Claude Opus 4.6</div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted);transform:scale(0.75);transform-origin:left;opacity:0.8">
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"></path></svg>
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 18V5M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path></svg>
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span style="font-size:9px;font-weight:500;opacity:0.5">200K</span>
+                <span style="font-size:9px;font-weight:500;opacity:0.4">$15/$75</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Haiku -->
+        <div style="margin:1px 4px;padding:6px 8px;border-radius:6px;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <svg style="width:16px;height:16px;margin-top:1px;opacity:0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:500">Claude Haiku 4.5</div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted);transform:scale(0.75);transform-origin:left;opacity:0.8">
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"></path></svg>
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span style="font-size:9px;font-weight:500;opacity:0.5">200K</span>
+                <span style="font-size:9px;font-weight:500;opacity:0.4">$0.8/$4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OpenAI 分组 -->
+      <div style="padding:2px 0">
+        <div style="padding:5px 10px 3px;font-size:12px;font-weight:500;color:var(--text-muted);display:flex;align-items:center;gap:6px">
+          <div style="width:14px;height:14px;border-radius:3px;background:linear-gradient(135deg,#10b981,#34d399);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:7px;color:white;font-weight:800">O</span>
+          </div>
+          <span>OpenAI</span>
+        </div>
+        <div style="margin:1px 4px;padding:6px 8px;border-radius:6px;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <svg style="width:16px;height:16px;margin-top:1px;opacity:0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:500">GPT-4o</div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted);transform:scale(0.75);transform-origin:left;opacity:0.8">
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"></path></svg>
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span style="font-size:9px;font-weight:500;opacity:0.5">128K</span>
+                <span style="font-size:9px;font-weight:500;opacity:0.4">$2.5/$10</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="margin:1px 4px;padding:6px 8px;border-radius:6px;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <svg style="width:16px;height:16px;margin-top:1px;opacity:0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:500">o3-mini</div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted);transform:scale(0.75);transform-origin:left;opacity:0.8">
+                <svg style="width:10px;height:10px;opacity:0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 18V5M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path></svg>
+                <span style="font-size:9px;font-weight:500;opacity:0.5">200K</span>
+                <span style="font-size:9px;font-weight:500;opacity:0.4">$1.1/$4.4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部 -->
+      <div style="border-top:1px solid var(--border);padding:6px 10px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:11px;color:var(--text-muted);opacity:0.6">已覆盖默认策略</span>
+        <span style="font-size:12px;color:var(--accent);cursor:pointer;font-weight:500">恢复默认</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:16px">
+  <h3>与参考设计的差异对比</h3>
+  <table style="width:100%;font-size:13px;border-collapse:collapse">
+    <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px;width:30%">特性</th><th style="text-align:left;padding:6px">参考设计</th><th style="text-align:left;padding:6px">新设计</th></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">供应商图标</td><td style="padding:6px">自定义 SVG</td><td style="padding:6px">@lobehub/icons ProviderIcon</td></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">能力展示</td><td style="padding:6px">lucide 图标 (wrench, brain)</td><td style="padding:6px">同左 + eye图标(视觉)</td></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">上下文窗口</td><td style="padding:6px">9px 文字</td><td style="padding:6px">同左</td></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">价格信息</td><td style="padding:6px">无</td><td style="padding:6px">新增 $X/$Y per 1M</td></tr>
+    <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">模型 ID</td><td style="padding:6px">右侧 monospace</td><td style="padding:6px">去掉（太冗余）</td></tr>
+    <tr><td style="padding:6px">搜索</td><td style="padding:6px">无</td><td style="padding:6px">新增搜索框</td></tr>
+  </table>
+</div>

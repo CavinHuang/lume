@@ -45,7 +45,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 
 输出应尽量结构化，方便主线程直接整合。`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      model: "haiku"
+      model: "inherit"
     },
     researcher: {
       description: "技术调研子代理。用于方案对比、依赖评估和架构分析，输出结构化结论与风险提示。",
@@ -60,7 +60,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 
 保持客观，不要空泛表态。`,
       tools: ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"],
-      model: "haiku"
+      model: "inherit"
     },
     "code-reviewer": {
       description: "代码审查子代理。用于在变更完成后复核逻辑、边界、命名与规范一致性。",
@@ -79,7 +79,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 
 保持客观、具体，不要泛泛而谈。`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      model: "haiku"
+      model: "inherit"
     }
   };
 }
@@ -184,15 +184,15 @@ const SUBAGENT_DELEGATION_SECTION = `## SubAgent 委派策略
 
 **核心原则：先探索再行动，用 SubAgent 保持主上下文干净。**
 
-Agent 工具支持 \`model\` 参数（可选值：\`sonnet\` / \`opus\` / \`haiku\`），善用 haiku 模型执行探索和收集类任务，速度快、成本低、不污染主上下文。
+Agent 工具支持显式 \`model\` 参数。未显式指定时遵循设置中的子 Agent 默认模型，未设置则继承当前对话模型。
 
 ### 推荐的 SubAgent 角色
 
 系统已预定义以下内置子代理，可直接通过 Agent 工具按名称调用：
 
-- **explorer**（haiku）：代码库探索。快速搜索文件、理解项目结构、收集相关上下文。动手修改前优先调用
-- **researcher**（haiku）：技术调研。方案对比、依赖评估、架构分析，输出结构化调研报告
-- **code-reviewer**（haiku）：代码审查。任务完成后调用，检查代码质量和规范一致性
+- **explorer**：代码库探索。快速搜索文件、理解项目结构、收集相关上下文。动手修改前优先调用
+- **researcher**：技术调研。方案对比、依赖评估、架构分析，输出结构化调研报告
+- **code-reviewer**：代码审查。任务完成后调用，检查代码质量和规范一致性
 
 ### 何时委派 SubAgent
 
@@ -200,7 +200,7 @@ Agent 工具支持 \`model\` 参数（可选值：\`sonnet\` / \`opus\` / \`haik
 - 需要调研技术方案、对比多个选项时 → 委派 researcher 角色
 - 代码修改完成后做质量检查 → 委派 code-reviewer 角色
 - 需要并行处理多个独立子任务时 → 同时委派多个 SubAgent
-- 以上角色不满足需求时，也可以自行定义临时 SubAgent（指定 model: "haiku" 降低成本）
+- 以上角色不满足需求时，也可以自行定义临时 SubAgent；若要覆盖默认继承行为，再显式指定 \`model\`
 
 ### 不需要委派的场景
 
@@ -370,9 +370,6 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   );
   if (ctx.workspaceSlug) {
     lines.push(`Session path: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/`);
-    lines.push(
-      `Runtime-exposed config mirror: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/threads/${ctx.sessionId}/.lume-config/`
-    );
   }
   lines.push("System config entry: ~/.lume/lume.yaml");
 
@@ -470,6 +467,11 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 - 终端操作（Bash 等）
 - 公共网页检索（WebSearch / WebFetch）
 
+CRITICAL - 并行 Agent 调度:
+当你需要同时执行多个独立任务时，在同一个响应中产出多个 Agent tool_use 块。它们会被自动并行执行。
+不要使用 run_in_background，所有 Agent 调用都是前台执行，会等待结果返回。
+例如：需要同时搜索代码库的 3 个不同方面时，发出 3 个 Agent tool_use，而不是逐个等待。
+
 CRITICAL - Skill 调用规则:
 调用 Skill 工具时，skill 参数必须使用带命名空间前缀的完整名称，如 \`lume-workspace-${ctx.workspaceSlug ?? "default"}:skill-name\`。
 不要使用不带前缀的短名称。`);
@@ -490,7 +492,6 @@ CRITICAL - Skill 调用规则:
 
 - 工作区名称: ${ctx.workspaceName}
 - 系统配置入口: ~/.lume/lume.yaml
-- Runtime 暴露配置目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/threads/${ctx.sessionId}/.lume-config/
 - MCP 配置: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/mcp.json
 - Skills 目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/skills/
 - 线程目录: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/

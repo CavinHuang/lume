@@ -1,15 +1,31 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 import { App } from './App'
+import { getGeneralSettings } from './lib/desktop-api'
+import { initThemeModeRuntime, readStoredThemeMode, setThemeMode } from './lib/theme-mode'
 import './index.css'
 
-// Sync system dark mode to <html> class
-const mq = window.matchMedia('(prefers-color-scheme: dark)')
-document.documentElement.classList.toggle('dark', mq.matches)
-mq.addEventListener('change', (e) => document.documentElement.classList.toggle('dark', e.matches))
+async function bootstrap() {
+  const storedThemeMode = readStoredThemeMode()
+  initThemeModeRuntime(storedThemeMode)
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-)
+  let themeMode = storedThemeMode || GENERAL_SETTINGS_DEFAULTS.themeMode
+
+  try {
+    const settings = await getGeneralSettings()
+    themeMode = settings.themeMode
+  } catch {
+    // Fall back to the last locally stored theme mode during bootstrap.
+  }
+
+  setThemeMode(themeMode)
+
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  )
+}
+
+void bootstrap()

@@ -33,7 +33,6 @@ import {
   estimateMessagesTokens,
   estimateCost,
   estimateSystemPromptTokens,
-  getAutoCompactThreshold,
   getContextWindowSize,
 } from './utils/tokens.js'
 import {
@@ -49,7 +48,7 @@ import {
 } from './utils/retry.js'
 import { getSystemContext, getUserContext } from './utils/context.js'
 import { normalizeMessagesForAPI } from './utils/messages.js'
-import type { HookRegistry, HookInput, HookOutput, HookExecutionResult } from './hooks.js'
+import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
 import { captureFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
@@ -884,24 +883,24 @@ export class QueryEngine {
       process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY || '10',
     )
 
-    // Partition into read-only (concurrent) and mutation (serial)
-    const readOnly: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
-    const mutations: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
+    // Partition into concurrent (read-only or concurrency-safe) and serial (mutations)
+    const concurrent: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
+    const serial: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
 
     for (const block of toolUseBlocks) {
       const tool = this.config.tools.find((t) => t.name === block.name)
-      if (tool?.isReadOnly?.()) {
-        readOnly.push({ block, tool })
+      if (tool?.isReadOnly?.() || tool?.isConcurrencySafe?.()) {
+        concurrent.push({ block, tool })
       } else {
-        mutations.push({ block, tool })
+        serial.push({ block, tool })
       }
     }
 
     const results: (ToolResult & { tool_name?: string })[] = []
 
-    // Execute read-only tools concurrently (batched by MAX_CONCURRENCY)
-    for (let i = 0; i < readOnly.length; i += MAX_CONCURRENCY) {
-      const batch = readOnly.slice(i, i + MAX_CONCURRENCY)
+    // Execute concurrent tools (batched by MAX_CONCURRENCY)
+    for (let i = 0; i < concurrent.length; i += MAX_CONCURRENCY) {
+      const batch = concurrent.slice(i, i + MAX_CONCURRENCY)
       const batchResults = await Promise.all(
         batch.map((item) =>
           this.executeSingleTool(item.block, item.tool, context),
@@ -914,8 +913,8 @@ export class QueryEngine {
       }
     }
 
-    // Execute mutation tools sequentially
-    for (const item of mutations) {
+    // Execute serial tools sequentially
+    for (const item of serial) {
       const result = await this.executeSingleTool(item.block, item.tool, context)
       results.push(result.result)
       events.push(...result.events)
@@ -939,6 +938,10 @@ export class QueryEngine {
   }> {
     const events: SDKMessage[] = []
     const toolsUsed: string[] = []
+    const toolContext: ToolContext = {
+      ...context,
+      toolUseId: block.id,
+    }
     if (!tool) {
       return {
         result: {
@@ -1055,7 +1058,7 @@ export class QueryEngine {
     try {
       if (this.config.fileCheckpointState && this.config.currentUserMessageId) {
         const checkpointPaths = collectCheckpointPaths(block.name, block.input)
-          .map((path) => resolve(context.cwd, path))
+          .map((path) => resolve(toolContext.cwd, path))
         await captureFileSnapshots(
           this.config.fileCheckpointState,
           this.config.currentUserMessageId,
@@ -1065,7 +1068,7 @@ export class QueryEngine {
 
       const startedAt = performance.now()
       const eventStartIndex = events.length
-      const result = await tool.call(block.input, context)
+      const result = await tool.call(block.input, toolContext)
       const elapsedTimeSeconds = Math.max(0, (performance.now() - startedAt) / 1000)
       toolsUsed.push(block.name)
       events.push({

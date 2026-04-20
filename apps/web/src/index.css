@@ -49,9 +49,6 @@
   }
 }
 
-.scrollbar-none::-webkit-scrollbar { display: none; }
-.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
-
 .input {
   width: 100%;
   padding: 0.375rem 0.625rem;
@@ -65,8 +62,17 @@
 }
 .input:focus { border-color: var(--color-foreground); }
 
-/* x-markdown dark mode */
-.dark .x-markdown { --heading-color: rgba(255,255,255,0.85); --text-color: rgba(255,255,255,0.85); --border-color: rgba(48,48,48,1); --line-color: rgba(253,253,253,0.12); --dark-bg: rgba(255,255,255,0.1); --table-head-bg: rgba(29,29,29,1); --table-body-bg: rgba(20,20,20,1); }
+/* x-markdown dark mode — 变量由 dark.css 的 .x-markdown-dark 选择器提供 */
+
+/* x-markdown 宽度约束 — 表格和代码块不超出父容器 */
+.x-markdown table:not(pre) {
+  width: 100%;
+  max-width: 100%;
+}
+.x-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
 
 @theme inline {
   --font-heading: var(--font-sans);
@@ -144,6 +150,9 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --app-scrollbar-thumb: color-mix(in oklab, var(--border) 78%, transparent);
+  --app-scrollbar-thumb-active: color-mix(in oklab, var(--foreground) 16%, var(--border));
+  --app-scrollbar-track: transparent;
 }
 
 .dark {
@@ -178,4 +187,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

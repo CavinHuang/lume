@@ -363,6 +363,16 @@ export {
 } from './tools/agent-tool.js'
 
 export {
+  summarizeSubagentAssistantEvent,
+  finalizeSubagentOutput,
+  finalizeSubagentOutputFromState,
+} from './tools/subagent-output.js'
+
+export {
+  annotateSubagentStreamingEvent,
+} from './tools/agent-tool-events.js'
+
+export {
   setQuestionHandler,
   clearQuestionHandler,
 } from './tools/ask-user.js'

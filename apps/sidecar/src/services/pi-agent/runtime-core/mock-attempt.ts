@@ -1,4 +1,3 @@
-import { updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState
@@ -11,6 +10,7 @@ import { announceSubagentCompletion } from "../../agent/subagents/subagent-annou
 import { createRuntimeCoreSession } from "./run";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
 import type { resolveRuntimeCoreChannelModel } from "./model";
+import { updateRuntimeThreadMetaIfPresent } from "./thread-meta-target";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -160,7 +160,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
       cache_creation_input_tokens: 0
     }
   } as any);
-  updateAgentThreadMeta(runtime.sessionId, {
+  updateRuntimeThreadMetaIfPresent(runtime, {
     runtimeThreadId: session.threadId ?? session.sessionId
   });
   session.dispose();
@@ -327,7 +327,7 @@ export async function runRuntimeCoreMockCompactionAttempt(
       cache_creation_input_tokens: 0
     }
   } as any);
-  updateAgentThreadMeta(runtime.sessionId, {
+  updateRuntimeThreadMetaIfPresent(runtime, {
     runtimeThreadId: session.threadId ?? session.sessionId
   });
   session.dispose();
@@ -425,7 +425,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
         content: [{ type: "text", text: mockText }],
         timestamp: Date.now()
       });
-      updateAgentThreadMeta(runtime.sessionId, {
+      updateRuntimeThreadMetaIfPresent(runtime, {
         runtimeThreadId: session.threadId ?? session.sessionId
       });
       emit.onComplete();
@@ -459,7 +459,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
       content: [{ type: "text", text: mockText }],
       timestamp: Date.now()
     });
-    updateAgentThreadMeta(runtime.sessionId, {
+    updateRuntimeThreadMetaIfPresent(runtime, {
       runtimeThreadId: session.threadId ?? session.sessionId
     });
     emit.onComplete();
@@ -500,5 +500,4 @@ export function logMockSessionPersistence(kind: string, threadId: string, sessio
     sessionFile: sessionManager.getSessionFile()
   });
 }
-
 
