@@ -633,7 +633,7 @@ export interface FileEntry {
   /** 是否为目录 */
   isDirectory: boolean
   /** 外部附加来源信息（仅外部附加项有值） */
-  externalAttachment?: ExternalAttachmentDisplayMeta
+  externalAttachment?: ExternalAttachmentMeta
   /** 子条目（懒加载，仅目录展开时填充） */
   children?: FileEntry[]
 }
@@ -680,17 +680,17 @@ export interface AgentSavedFile {
   targetPath: string
 }
 
-/** 外部附加来源元信息（sidecar 持久化原始来源时使用） */
+/** 文件树展示用的外部附加来源信息 */
 export interface ExternalAttachmentMeta {
+  label: "外部附加"
+  absoluteSourcePath: string
+}
+
+/** sidecar 持久化外部附加来源时使用的完整元信息 */
+export interface PersistedExternalAttachmentMeta {
   absoluteSourcePath: string
   attachedAt: number
   attachedFrom: "thread" | "workspace"
-}
-
-/** 文件树展示用的外部附加来源信息 */
-export interface ExternalAttachmentDisplayMeta {
-  label: "外部附加"
-  absoluteSourcePath: string
 }
 
 /** Agent 复制文件夹到 thread 的输入 */
