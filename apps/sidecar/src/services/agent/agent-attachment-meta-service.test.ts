@@ -174,4 +174,27 @@ describe("agent-attachment-meta-service", () => {
     })).toThrow("附件元信息损坏");
     expect(readFileSync(metadataPath, "utf-8")).toBe("{ invalid json");
   });
+
+  test("move and delete do not create empty metadata files when nothing is tracked", () => {
+    createTempConfigDir();
+    const scope = { kind: "workspace" as const, workspaceSlug: "ws-empty" };
+    const resourcesRoot = getWorkspaceResourcesPath(scope.workspaceSlug);
+    const sourcePath = join(resourcesRoot, "doc.txt");
+    const movedPath = join(resourcesRoot, "archive", "doc.txt");
+    const metadataPath = join(resourcesRoot, "..", ".meta", "external-attachments.json");
+    mkdirSync(join(resourcesRoot, "archive"), { recursive: true });
+    writeFileSync(sourcePath, "hello", "utf-8");
+
+    moveAttachmentMeta(scope, sourcePath, movedPath);
+    deleteAttachmentMeta(scope, sourcePath);
+
+    expect(existsSync(metadataPath)).toBeFalse();
+  });
+
+  test("invalid scope identifiers are rejected", () => {
+    createTempConfigDir();
+
+    expect(() => readThreadAttachmentMeta(".", "thread")).toThrow("workspaceSlug 非法");
+    expect(() => readThreadAttachmentMeta("ws", "..")).toThrow("threadId 非法");
+  });
 });

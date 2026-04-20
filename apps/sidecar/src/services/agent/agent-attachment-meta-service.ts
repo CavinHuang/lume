@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { ExternalAttachmentMeta } from "@lume/shared";
 import {
@@ -37,7 +37,7 @@ class AttachmentMetadataReadError extends Error {
 }
 
 function validatePathSegment(value: string, label: string): string {
-  if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
+  if (!/^[a-zA-Z0-9._-]+$/.test(value) || value === "." || value === "..") {
     throw new Error(`${label} 非法`);
   }
   return value;
@@ -126,6 +126,12 @@ function readPersistedAttachmentMap(scope: AttachmentScope): PersistedAttachment
 
 function writePersistedAttachmentMap(scope: AttachmentScope, data: PersistedAttachmentMap): void {
   const path = getMetadataPath(scope);
+  if (Object.keys(data).length === 0) {
+    if (existsSync(path)) {
+      rmSync(path, { force: true });
+    }
+    return;
+  }
   mkdirSync(dirname(path), { recursive: true });
   const tempPath = `${path}.tmp`;
   writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf-8");
@@ -187,6 +193,10 @@ export function moveAttachmentMeta(scope: AttachmentScope, fromPath: string, toP
   const fromKey = normalizeRelativeTarget(scope, fromPath);
   const toKey = normalizeRelativeTarget(scope, toPath);
   const persisted = readPersistedAttachmentMap(scope);
+  const hasMatchingEntry = Object.keys(persisted).some((key) => key === fromKey || key.startsWith(`${fromKey}/`));
+  if (!hasMatchingEntry) {
+    return;
+  }
   const next: PersistedAttachmentMap = {};
 
   for (const [key, value] of Object.entries(persisted)) {
@@ -204,6 +214,10 @@ export function moveAttachmentMeta(scope: AttachmentScope, fromPath: string, toP
 export function deleteAttachmentMeta(scope: AttachmentScope, targetPath: string): void {
   const key = normalizeRelativeTarget(scope, targetPath);
   const persisted = readPersistedAttachmentMap(scope);
+  const hasMatchingEntry = Object.keys(persisted).some((entryKey) => entryKey === key || entryKey.startsWith(`${key}/`));
+  if (!hasMatchingEntry) {
+    return;
+  }
   const next = Object.fromEntries(
     Object.entries(persisted).filter(([entryKey]) => entryKey !== key && !entryKey.startsWith(`${key}/`))
   );
