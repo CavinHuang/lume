@@ -706,6 +706,12 @@ export interface WorkspaceCopyFolderInput {
   workspaceSlug: string
 }
 
+/** 工作区复制外部文件夹结果 */
+export interface WorkspaceCopyFolderResult {
+  ok: true
+  files: AgentSavedFile[]
+}
+
 export interface PromoteFileToWorkspaceInput {
   workspaceSlug: string
   threadId: string
