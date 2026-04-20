@@ -175,6 +175,23 @@ describe("agent-attachment-meta-service", () => {
     expect(readFileSync(metadataPath, "utf-8")).toBe("{ invalid json");
   });
 
+  test("schema-invalid metadata does not get silently overwritten on mutation", () => {
+    createTempConfigDir();
+    const scope = { kind: "workspace" as const, workspaceSlug: "ws-schema" };
+    const resourcesRoot = getWorkspaceResourcesPath(scope.workspaceSlug);
+    const targetPath = join(resourcesRoot, "notes.txt");
+    const metadataPath = join(resourcesRoot, "..", ".meta", "external-attachments.json");
+    writeFileSync(targetPath, "hello", "utf-8");
+    mkdirSync(join(resourcesRoot, "..", ".meta"), { recursive: true });
+    writeFileSync(metadataPath, JSON.stringify({ "notes.txt": { attachedAt: 1 } }), "utf-8");
+
+    expect(() => upsertAttachmentMeta(scope, targetPath, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/notes.txt"
+    })).toThrow("附件元信息损坏");
+    expect(readFileSync(metadataPath, "utf-8")).toBe(JSON.stringify({ "notes.txt": { attachedAt: 1 } }));
+  });
+
   test("move and delete do not create empty metadata files when nothing is tracked", () => {
     createTempConfigDir();
     const scope = { kind: "workspace" as const, workspaceSlug: "ws-empty" };

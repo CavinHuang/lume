@@ -102,16 +102,16 @@ function readPersistedAttachmentMap(scope: AttachmentScope): PersistedAttachment
   try {
     const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
     if (typeof raw !== "object" || raw === null) {
-      return {};
+      throw new AttachmentMetadataReadError("附件元信息结构非法", path);
     }
     const result: PersistedAttachmentMap = {};
     for (const [key, value] of Object.entries(raw)) {
       if (typeof key !== "string" || typeof value !== "object" || value === null) {
-        continue;
+        throw new AttachmentMetadataReadError("附件元信息结构非法", path);
       }
       const record = value as Partial<PersistedAttachmentRecord>;
       if (typeof record.absoluteSourcePath !== "string") {
-        continue;
+        throw new AttachmentMetadataReadError("附件元信息结构非法", path);
       }
       result[key] = {
         absoluteSourcePath: record.absoluteSourcePath,
@@ -153,7 +153,7 @@ export function readThreadAttachmentMeta(workspaceSlug: string, threadId: string
     );
   } catch (error) {
     if (error instanceof AttachmentMetadataReadError) {
-      console.warn("[Attachment Meta] 读取线程附件元信息失败:", error.cause ?? error);
+      console.warn("[Attachment Meta] 读取线程附件元信息失败:", error.metadataPath, error.cause ?? error);
       return {};
     }
     throw error;
@@ -168,7 +168,7 @@ export function readWorkspaceAttachmentMeta(workspaceSlug: string): Record<strin
     );
   } catch (error) {
     if (error instanceof AttachmentMetadataReadError) {
-      console.warn("[Attachment Meta] 读取工作区附件元信息失败:", error.cause ?? error);
+      console.warn("[Attachment Meta] 读取工作区附件元信息失败:", error.metadataPath, error.cause ?? error);
       return {};
     }
     throw error;
@@ -232,7 +232,7 @@ export function getAttachmentMeta(scope: AttachmentScope, targetPath: string): E
     return record ? toExternalAttachmentMeta(record) : undefined;
   } catch (error) {
     if (error instanceof AttachmentMetadataReadError) {
-      console.warn("[Attachment Meta] 查询附件元信息失败:", error.cause ?? error);
+      console.warn("[Attachment Meta] 查询附件元信息失败:", error.metadataPath, error.cause ?? error);
       return undefined;
     }
     throw error;
