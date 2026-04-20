@@ -632,6 +632,8 @@ export interface FileEntry {
   path: string
   /** 是否为目录 */
   isDirectory: boolean
+  /** 外部附加来源信息（仅外部附加项有值） */
+  externalAttachment?: ExternalAttachmentDisplayMeta
   /** 子条目（懒加载，仅目录展开时填充） */
   children?: FileEntry[]
 }
@@ -678,11 +680,30 @@ export interface AgentSavedFile {
   targetPath: string
 }
 
+/** 外部附加来源元信息（sidecar 持久化原始来源时使用） */
+export interface ExternalAttachmentMeta {
+  absoluteSourcePath: string
+  attachedAt: number
+  attachedFrom: "thread" | "workspace"
+}
+
+/** 文件树展示用的外部附加来源信息 */
+export interface ExternalAttachmentDisplayMeta {
+  label: "外部附加"
+  absoluteSourcePath: string
+}
+
 /** Agent 复制文件夹到 thread 的输入 */
 export interface AgentCopyFolderInput {
   sourcePath: string
   workspaceSlug: string
   threadId: string
+}
+
+/** 工作区复制外部文件夹输入 */
+export interface WorkspaceCopyFolderInput {
+  sourcePath: string
+  workspaceSlug: string
 }
 
 export interface PromoteFileToWorkspaceInput {
@@ -713,6 +734,17 @@ export interface WorkspaceMoveFileInput extends WorkspaceFilePathInput {
 export interface WorkspaceSaveFilesInput {
   workspaceSlug: string
   files: Array<{ filename: string; data?: string; sourcePath?: string }>
+}
+
+export interface AttachWorkspaceResourceToThreadInput {
+  workspaceSlug: string
+  threadId: string
+  sourcePath: string
+}
+
+export interface AttachWorkspaceResourceToThreadResult {
+  ok: true
+  path: string
 }
 
 // ===== IPC 通道常量 =====
@@ -850,6 +882,8 @@ export const AGENT_IPC_CHANNELS = {
   OPEN_FOLDER_DIALOG: 'agent:open-folder-dialog',
   /** 复制文件夹到 thread 工作目录 */
   COPY_FOLDER_TO_THREAD: 'agent:copy-folder-to-thread',
+  /** 复制文件夹到工作区共享目录 */
+  COPY_FOLDER_TO_WORKSPACE: 'agent:copy-folder-to-workspace',
 
   // 文件系统操作
   /** 获取 thread 工作路径 */
@@ -898,6 +932,8 @@ export const AGENT_IPC_CHANNELS = {
   MOVE_WORKSPACE_FILE: 'agent:move-workspace-file',
   /** 保存文件到工作区共享目录 */
   SAVE_FILES_TO_WORKSPACE: 'agent:save-files-to-workspace',
+  /** 将工作区共享文件或目录附加到当前线程 */
+  ATTACH_WORKSPACE_RESOURCE_TO_THREAD: 'agent:attach-workspace-resource-to-thread',
   /** 搜索工作区文件（用于 @ 引用） */
   SEARCH_WORKSPACE_FILES: 'agent:search-workspace-files',
 
