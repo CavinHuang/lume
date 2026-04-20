@@ -2,10 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { ExternalAttachmentMeta } from "@lume/shared";
 import {
-  getAgentThreadFilesPath,
-  getAgentThreadSystemContextPath,
-  getWorkspaceMetaPath,
-  getWorkspaceResourcesPath
+  getConfigDir,
 } from "../infra/config-paths";
 
 interface PersistedAttachmentRecord {
@@ -28,6 +25,24 @@ export type AttachmentScope = ThreadAttachmentScope | WorkspaceAttachmentScope;
 
 type PersistedAttachmentMap = Record<string, PersistedAttachmentRecord>;
 
+class AttachmentMetadataReadError extends Error {
+  constructor(
+    message: string,
+    readonly metadataPath: string,
+    readonly cause?: unknown
+  ) {
+    super(message);
+    this.name = "AttachmentMetadataReadError";
+  }
+}
+
+function validatePathSegment(value: string, label: string): string {
+  if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
+    throw new Error(`${label} 非法`);
+  }
+  return value;
+}
+
 function isWithin(basePath: string, targetPath: string): boolean {
   const base = resolve(basePath);
   const target = resolve(targetPath);
@@ -39,16 +54,31 @@ function isWithin(basePath: string, targetPath: string): boolean {
   return target === base || target.startsWith(`${base}/`);
 }
 
+function getWorkspaceRootPathUnsafe(workspaceSlug: string): string {
+  return join(getConfigDir(), "agent-workspaces", validatePathSegment(workspaceSlug, "workspaceSlug"));
+}
+
 function getScopeRoot(scope: AttachmentScope): string {
   return scope.kind === "thread"
-    ? getAgentThreadFilesPath(scope.workspaceSlug, scope.threadId)
-    : getWorkspaceResourcesPath(scope.workspaceSlug);
+    ? join(
+        getWorkspaceRootPathUnsafe(scope.workspaceSlug),
+        "threads",
+        validatePathSegment(scope.threadId, "threadId"),
+        "files"
+      )
+    : join(getWorkspaceRootPathUnsafe(scope.workspaceSlug), "resources");
 }
 
 function getMetadataPath(scope: AttachmentScope): string {
   return scope.kind === "thread"
-    ? join(getAgentThreadSystemContextPath(scope.workspaceSlug, scope.threadId), "external-attachments.json")
-    : join(getWorkspaceMetaPath(scope.workspaceSlug), "external-attachments.json");
+    ? join(
+        getWorkspaceRootPathUnsafe(scope.workspaceSlug),
+        "threads",
+        validatePathSegment(scope.threadId, "threadId"),
+        ".context",
+        "external-attachments.json"
+      )
+    : join(getWorkspaceRootPathUnsafe(scope.workspaceSlug), ".meta", "external-attachments.json");
 }
 
 function normalizeRelativeTarget(scope: AttachmentScope, targetPath: string): string {
@@ -89,8 +119,8 @@ function readPersistedAttachmentMap(scope: AttachmentScope): PersistedAttachment
       };
     }
     return result;
-  } catch {
-    return {};
+  } catch (error) {
+    throw new AttachmentMetadataReadError("附件元信息损坏", path, error);
   }
 }
 
@@ -110,17 +140,33 @@ function toExternalAttachmentMeta(record: PersistedAttachmentRecord): ExternalAt
 }
 
 export function readThreadAttachmentMeta(workspaceSlug: string, threadId: string): Record<string, ExternalAttachmentMeta> {
-  const persisted = readPersistedAttachmentMap({ kind: "thread", workspaceSlug, threadId });
-  return Object.fromEntries(
-    Object.entries(persisted).map(([key, value]) => [key, toExternalAttachmentMeta(value)])
-  );
+  try {
+    const persisted = readPersistedAttachmentMap({ kind: "thread", workspaceSlug, threadId });
+    return Object.fromEntries(
+      Object.entries(persisted).map(([key, value]) => [key, toExternalAttachmentMeta(value)])
+    );
+  } catch (error) {
+    if (error instanceof AttachmentMetadataReadError) {
+      console.warn("[Attachment Meta] 读取线程附件元信息失败:", error.cause ?? error);
+      return {};
+    }
+    throw error;
+  }
 }
 
 export function readWorkspaceAttachmentMeta(workspaceSlug: string): Record<string, ExternalAttachmentMeta> {
-  const persisted = readPersistedAttachmentMap({ kind: "workspace", workspaceSlug });
-  return Object.fromEntries(
-    Object.entries(persisted).map(([key, value]) => [key, toExternalAttachmentMeta(value)])
-  );
+  try {
+    const persisted = readPersistedAttachmentMap({ kind: "workspace", workspaceSlug });
+    return Object.fromEntries(
+      Object.entries(persisted).map(([key, value]) => [key, toExternalAttachmentMeta(value)])
+    );
+  } catch (error) {
+    if (error instanceof AttachmentMetadataReadError) {
+      console.warn("[Attachment Meta] 读取工作区附件元信息失败:", error.cause ?? error);
+      return {};
+    }
+    throw error;
+  }
 }
 
 export function upsertAttachmentMeta(
@@ -165,8 +211,16 @@ export function deleteAttachmentMeta(scope: AttachmentScope, targetPath: string)
 }
 
 export function getAttachmentMeta(scope: AttachmentScope, targetPath: string): ExternalAttachmentMeta | undefined {
-  const key = normalizeRelativeTarget(scope, targetPath);
-  const persisted = readPersistedAttachmentMap(scope);
-  const record = persisted[key];
-  return record ? toExternalAttachmentMeta(record) : undefined;
+  try {
+    const key = normalizeRelativeTarget(scope, targetPath);
+    const persisted = readPersistedAttachmentMap(scope);
+    const record = persisted[key];
+    return record ? toExternalAttachmentMeta(record) : undefined;
+  } catch (error) {
+    if (error instanceof AttachmentMetadataReadError) {
+      console.warn("[Attachment Meta] 查询附件元信息失败:", error.cause ?? error);
+      return undefined;
+    }
+    throw error;
+  }
 }

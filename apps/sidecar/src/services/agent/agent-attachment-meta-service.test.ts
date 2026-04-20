@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -142,5 +142,36 @@ describe("agent-attachment-meta-service", () => {
     expect(readWorkspaceAttachmentMeta(scope.workspaceSlug)).toEqual({});
     expect(getAttachmentMeta(scope, filePath)).toBeUndefined();
     expect(existsSync(resourcesRoot)).toBeTrue();
+  });
+
+  test("read helpers do not create scope directories for missing metadata", () => {
+    const configDir = createTempConfigDir();
+
+    expect(readThreadAttachmentMeta("ws-read", "thread-read")).toEqual({});
+    expect(readWorkspaceAttachmentMeta("ws-read")).toEqual({});
+
+    expect(existsSync(join(configDir, "agent-workspaces", "ws-read"))).toBeFalse();
+  });
+
+  test("malformed metadata does not get silently overwritten on mutation", () => {
+    createTempConfigDir();
+    const scope = { kind: "thread" as const, workspaceSlug: "ws", threadId: "thread-corrupt" };
+    const threadRoot = getAgentThreadFilesPath(scope.workspaceSlug, scope.threadId);
+    const targetPath = join(threadRoot, "notes.txt");
+    const metadataPath = join(
+      threadRoot,
+      "..",
+      ".context",
+      "external-attachments.json"
+    );
+    writeFileSync(targetPath, "hello", "utf-8");
+    mkdirSync(join(threadRoot, "..", ".context"), { recursive: true });
+    writeFileSync(metadataPath, "{ invalid json", "utf-8");
+
+    expect(() => upsertAttachmentMeta(scope, targetPath, {
+      label: "外部附加",
+      absoluteSourcePath: "/tmp/source/notes.txt"
+    })).toThrow("附件元信息损坏");
+    expect(readFileSync(metadataPath, "utf-8")).toBe("{ invalid json");
   });
 });
