@@ -67,13 +67,17 @@ export function LeftSidebar() {
     }
   }
 
-  const handleNewThread = async () => {
-    const meta = await sidecarCall<AgentThreadMeta>('agent:create-thread', {
-      workspaceId: currentWorkspaceId ?? undefined,
-    })
-    setThreads((prev) => [meta, ...prev])
-    setTabs((prev) => [...prev, { id: meta.id, type: 'agent', title: meta.title, threadId: meta.id }])
-    setActiveTabId(meta.id)
+  const handleNewThread = () => {
+    const welcomeId = '__welcome__'
+    if (tabs.find((t) => t.id === welcomeId)) {
+      setActiveTabId(welcomeId)
+      return
+    }
+    setTabs((prev) => [
+      { id: welcomeId, type: 'welcome' as const, title: '新会话', workspaceId: currentWorkspaceId ?? undefined },
+      ...prev,
+    ])
+    setActiveTabId(welcomeId)
   }
 
   const openSettings = () => {
