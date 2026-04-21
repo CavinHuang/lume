@@ -1,0 +1,118 @@
+<h2>附加资源面板方向对比</h2>
+<p class="subtitle">目标：让用户快速把文件或文件夹附加到当前线程，并清楚知道什么正在生效、什么只是候选资源。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. 双层来源面板</div>
+        <div class="mockup-body">
+          <div class="label">当前生效</div>
+          <div style="display:grid;gap:8px;margin:8px 0 14px;">
+            <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--panel);">
+              <strong>产品需求.docx</strong>
+              <div class="subtitle">线程已附加 · 文件</div>
+            </div>
+            <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--panel);">
+              <strong>竞品截图/</strong>
+              <div class="subtitle">线程已附加 · 文件夹</div>
+            </div>
+          </div>
+          <div class="label">可附加来源</div>
+          <div style="display:grid;gap:8px;margin-top:8px;">
+            <div style="padding:10px 12px;border:1px dashed var(--border);border-radius:12px;">
+              <strong>工作区共享</strong>
+              <div class="subtitle">设计规范.pdf</div>
+              <button class="mock-button" style="margin-top:8px;">附加到当前线程</button>
+            </div>
+            <div style="padding:10px 12px;border:1px dashed var(--border);border-radius:12px;">
+              <strong>工作区共享</strong>
+              <div class="subtitle">用户访谈录音/</div>
+              <button class="mock-button" style="margin-top:8px;">附加到当前线程</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>推荐：双层来源面板</h3>
+      <p>上层只展示当前线程已附加内容，下层展示工作区候选来源。主按钮就是“附加到当前线程”。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 来源时间线</div>
+        <div class="mockup-body">
+          <div style="display:grid;gap:8px;">
+            <div style="padding:10px 12px;border-left:3px solid var(--accent);background:var(--panel);">
+              <strong>已附加</strong>
+              <div class="subtitle">产品需求.docx</div>
+            </div>
+            <div style="padding:10px 12px;border-left:3px solid var(--muted);background:var(--panel);">
+              <strong>可附加</strong>
+              <div class="subtitle">设计规范.pdf</div>
+            </div>
+            <div style="padding:10px 12px;border-left:3px solid var(--muted);background:var(--panel);">
+              <strong>可附加</strong>
+              <div class="subtitle">竞品截图/</div>
+            </div>
+            <div style="padding:10px 12px;border-left:3px solid var(--accent);background:var(--panel);">
+              <strong>已附加</strong>
+              <div class="subtitle">用户反馈.xlsx</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>单列表混排</h3>
+      <p>所有来源放到一个列表里，用状态标签区分已附加和候选。信息更紧凑，但更容易混淆作用范围。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. 引导式附加</div>
+        <div class="mockup-body">
+          <div style="padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--panel);margin-bottom:10px;">
+            <strong>当前线程</strong>
+            <div class="subtitle">已附加 2 项</div>
+          </div>
+          <div class="placeholder" style="margin-bottom:10px;">点击“添加来源”</div>
+          <div style="padding:10px 12px;border:1px dashed var(--border);border-radius:12px;">
+            <strong>添加来源</strong>
+            <div class="subtitle">上传文件 / 上传文件夹 / 从工作区附加</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>动作优先</h3>
+      <p>把重点放在“添加来源”入口，适合解决操作路径太绕，但对当前上下文全貌的表达偏弱。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我目前的建议</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>A 的优点</h4>
+      <ul>
+        <li>最清楚地区分“当前生效”和“只是候选”</li>
+        <li>和你选的“上下文来源面板”心智最一致</li>
+        <li>后续可以自然增加“从工作区附加”“提升到工作区”等动作</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>A 的代价</h4>
+      <ul>
+        <li>比现在的双 tab 结构更像一个新面板而不是小修小补</li>
+        <li>需要重新定义顶部信息层次和空状态</li>
+      </ul>
+    </div>
+  </div>
+</div>

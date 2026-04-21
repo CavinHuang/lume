@@ -14,6 +14,8 @@ import {
 import { spawn } from "node:child_process";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type {
+  AttachWorkspaceResourceToThreadInput,
+  AttachWorkspaceResourceToThreadResult,
   AgentCopyFolderInput,
   AgentSaveFilesInput,
   AgentSavedFile,
@@ -33,6 +35,7 @@ import {
 import {
   assertAttachmentMetadataHealthy,
   deleteAttachmentMeta,
+  getAttachmentMeta,
   moveAttachmentMeta,
   readThreadAttachmentMeta,
   readWorkspaceAttachmentMeta,
@@ -925,6 +928,47 @@ export function copyFolderToWorkspace(input: WorkspaceCopyFolderInput): AgentSav
   };
   collect(targetDir);
   return results;
+}
+
+export function attachWorkspaceResourceToThread(
+  input: AttachWorkspaceResourceToThreadInput
+): AttachWorkspaceResourceToThreadResult {
+  const workspaceScope = getWorkspaceAttachmentScope(input.workspaceSlug);
+  const threadScope = getThreadAttachmentScope(input.workspaceSlug, input.threadId);
+  const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
+  const sourcePath = resolveSafePath(resourcesDir, input.sourcePath, "目标路径超出工作区共享目录");
+  const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
+  if (!existsSync(sourcePath)) {
+    throw new Error("目标不存在");
+  }
+
+  const targetPath = resolve(join(sessionDir, basename(sourcePath)));
+  if (!isWithin(sessionDir, targetPath)) {
+    throw new Error("目标路径越界");
+  }
+  if (existsSync(targetPath)) {
+    throw new Error("目标路径已存在同名文件");
+  }
+
+  assertAttachmentMetadataHealthy(workspaceScope);
+  assertAttachmentMetadataHealthy(threadScope);
+
+  const sourceMeta = getAttachmentMeta(workspaceScope, sourcePath);
+  const sourceStat = statSync(sourcePath);
+  if (sourceStat.isDirectory()) {
+    cpSync(sourcePath, targetPath, { recursive: true });
+  } else {
+    mkdirSync(dirname(targetPath), { recursive: true });
+    copyFileSync(sourcePath, targetPath);
+  }
+
+  if (sourceMeta) {
+    upsertAttachmentMeta(threadScope, targetPath, sourceMeta);
+  } else {
+    deleteAttachmentMeta(threadScope, targetPath);
+  }
+
+  return { ok: true, path: targetPath };
 }
 
 export const saveFilesToAgentThread = saveFilesToAgentSession;

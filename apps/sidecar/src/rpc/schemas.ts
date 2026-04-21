@@ -496,6 +496,12 @@ export const copyFolderToThreadInputSchema = z.object({
   threadId: idSchema
 });
 
+export const attachWorkspaceResourceToThreadInputSchema = z.object({
+  workspaceSlug: idSchema,
+  threadId: idSchema,
+  sourcePath: idSchema
+});
+
 export const submitAskUserQuestionInputSchema = z.object({
   threadId: idSchema,
   toolUseId: idSchema,

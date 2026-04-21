@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
@@ -7,7 +7,7 @@ import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { createAgentHandlers } from "./agent-handlers";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
 import { createAgentThread } from "../services/agent/agent-thread-manager";
-import { getAgentSessionWorkspacePath } from "../services/infra/config-paths";
+import { getAgentSessionWorkspacePath, getWorkspaceResourcesPath } from "../services/infra/config-paths";
 
 function createTestPlanStateTracker(): PlanStateTracker {
   return {
@@ -81,6 +81,104 @@ describe("agent-handlers file operations", () => {
 
     expect(result[0]?.filename).toBe("scratch.txt");
     expect(result[0]?.targetPath).toBe(join(threadDir, "scratch.txt"));
+
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("LIST_DIRECTORY 和 LIST_WORKSPACE_DIRECTORY 应返回 externalAttachment 元信息", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-list-meta-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspace = createAgentWorkspace("Default");
+    const thread = createAgentThread("meta thread", undefined, workspace.id);
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planStateTracker: createTestPlanStateTracker(),
+      notifyPlanStateChange: () => undefined,
+    });
+
+    const externalThreadSource = join(configDir, "thread-source.txt");
+    const externalWorkspaceSource = join(configDir, "workspace-source.txt");
+    writeFileSync(externalThreadSource, "thread", "utf-8");
+    writeFileSync(externalWorkspaceSource, "workspace", "utf-8");
+
+    await handlers[AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]!({
+      threadId: thread.id,
+      files: [{ filename: "thread.txt", sourcePath: externalThreadSource }]
+    });
+    await handlers[AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE]!({
+      workspaceSlug: workspace.slug,
+      files: [{ filename: "workspace.txt", sourcePath: externalWorkspaceSource }]
+    });
+
+    const threadResult = await handlers[AGENT_IPC_CHANNELS.LIST_DIRECTORY]!({
+      threadId: thread.id,
+    }) as { entries: Array<{ name: string; externalAttachment?: { absoluteSourcePath: string } }> };
+    const workspaceResult = await handlers[AGENT_IPC_CHANNELS.LIST_WORKSPACE_DIRECTORY]!({
+      workspaceSlug: workspace.slug,
+    }) as Array<{ name: string; externalAttachment?: { absoluteSourcePath: string } }>;
+
+    expect(threadResult.entries.find((entry) => entry.name === "thread.txt")?.externalAttachment?.absoluteSourcePath)
+      .toBe(externalThreadSource);
+    expect(workspaceResult.find((entry) => entry.name === "workspace.txt")?.externalAttachment?.absoluteSourcePath)
+      .toBe(externalWorkspaceSource);
+
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("ATTACH_WORKSPACE_RESOURCE_TO_THREAD 应复制工作区文件到线程", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-attach-file-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspace = createAgentWorkspace("Default");
+    const thread = createAgentThread("attach file thread", undefined, workspace.id);
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planStateTracker: createTestPlanStateTracker(),
+      notifyPlanStateChange: () => undefined,
+    });
+
+    const resourcesDir = getWorkspaceResourcesPath(workspace.slug);
+    const sourcePath = join(resourcesDir, "brief.md");
+    writeFileSync(sourcePath, "# brief", "utf-8");
+
+    const result = await handlers[AGENT_IPC_CHANNELS.ATTACH_WORKSPACE_RESOURCE_TO_THREAD]!({
+      workspaceSlug: workspace.slug,
+      threadId: thread.id,
+      sourcePath
+    }) as { ok: true; path: string };
+
+    expect(result.ok).toBeTrue();
+    expect(result.path).toBe(join(getAgentSessionWorkspacePath(workspace.slug, thread.id), "brief.md"));
+
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("ATTACH_WORKSPACE_RESOURCE_TO_THREAD 应复制工作区文件夹到线程", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-attach-folder-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspace = createAgentWorkspace("Default");
+    const thread = createAgentThread("attach folder thread", undefined, workspace.id);
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planStateTracker: createTestPlanStateTracker(),
+      notifyPlanStateChange: () => undefined,
+    });
+
+    const resourcesDir = getWorkspaceResourcesPath(workspace.slug);
+    const sourceDir = join(resourcesDir, "assets");
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(join(sourceDir, "logo.svg"), "<svg />", "utf-8");
+
+    const result = await handlers[AGENT_IPC_CHANNELS.ATTACH_WORKSPACE_RESOURCE_TO_THREAD]!({
+      workspaceSlug: workspace.slug,
+      threadId: thread.id,
+      sourcePath: sourceDir
+    }) as { ok: true; path: string };
+
+    expect(result.ok).toBeTrue();
+    expect(result.path).toBe(join(getAgentSessionWorkspacePath(workspace.slug, thread.id), "assets"));
 
     rmSync(configDir, { recursive: true, force: true });
   });
