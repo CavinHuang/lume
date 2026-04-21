@@ -37,6 +37,7 @@ import {
 } from "../services/agent/agent-service";
 import { resolveAgentDefaultStrategy } from "../services/channel/model-selection";
 import {
+  attachWorkspaceResourceToThread,
   copyFolderToSession,
   deleteAgentFile,
   deleteWorkspaceFile,
@@ -118,6 +119,7 @@ import {
   agentTruncateThreadInputSchema,
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
+  attachWorkspaceResourceToThreadInputSchema,
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
   deleteSkillInputSchema,
@@ -663,6 +665,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             workspaceSlug: resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug)
           };
         })()
+      ),
+    [AGENT_IPC_CHANNELS.ATTACH_WORKSPACE_RESOURCE_TO_THREAD]: async (params) =>
+      attachWorkspaceResourceToThread(
+        validateInput(
+          attachWorkspaceResourceToThreadInputSchema,
+          params,
+          AGENT_IPC_CHANNELS.ATTACH_WORKSPACE_RESOURCE_TO_THREAD
+        )
       ),
     [AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE]: async (params) =>
       saveFilesToWorkspace(

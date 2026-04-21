@@ -1,0 +1,108 @@
+<h2>侧边栏顶部区域布局方案</h2>
+<p class="subtitle">当前需要放置：工作区选择器、新建会话、搜索/过滤、技能市场入口</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>紧凑工具栏式</h3>
+      <p>工作区选择器 + 图标按钮行，所有操作在一行内完成</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">展开状态 (260px)</div>
+        <div class="mockup-body" style="padding:0;background:#18181b;color:#e4e4e7;font-size:13px;">
+          <!-- Title bar space -->
+          <div style="height:50px;"></div>
+          <!-- Top area -->
+          <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;">
+            <div style="flex:1;background:#27272a;border-radius:8px;padding:6px 10px;font-size:12px;color:#a1a1aa;display:flex;align-items:center;gap:6px;">
+              <span style="opacity:0.5;">▼</span>
+              <span>默认工作区</span>
+            </div>
+            <div style="display:flex;gap:4px;">
+              <div style="width:28px;height:28px;border-radius:6px;background:#27272a;display:flex;align-items:center;justify-content:center;font-size:11px;" title="搜索">🔍</div>
+              <div style="width:28px;height:28px;border-radius:6px;background:#27272a;display:flex;align-items:center;justify-content:center;font-size:11px;" title="技能">⚡</div>
+            </div>
+          </div>
+          <!-- New chat button -->
+          <div style="padding:0 12px 8px;">
+            <div style="background:#3b82f6;border-radius:8px;padding:7px 0;text-align:center;font-size:12px;color:white;font-weight:500;">＋ 新会话</div>
+          </div>
+          <!-- Divider -->
+          <div style="height:1px;background:#27272a;margin:0 12px;"></div>
+          <!-- Thread list preview -->
+          <div style="padding:8px 12px;font-size:11px;color:#71717a;">置顶</div>
+          <div style="padding:4px 12px 4px;font-size:12px;color:#a1a1aa;">📌 项目讨论...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>分层卡片式</h3>
+      <p>品牌+折叠在第一行，工作区独占一行，搜索+新建+技能在第三行</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">展开状态 (260px)</div>
+        <div class="mockup-body" style="padding:0;background:#18181b;color:#e4e4e7;font-size:13px;">
+          <div style="height:50px;"></div>
+          <!-- Brand row -->
+          <div style="padding:8px 12px 4px;display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:14px;font-weight:600;color:#e4e4e7;">Lume</span>
+            <div style="width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#71717a;">◀</div>
+          </div>
+          <!-- Workspace row -->
+          <div style="padding:4px 12px;">
+            <div style="background:#27272a;border-radius:8px;padding:7px 10px;font-size:12px;color:#a1a1aa;display:flex;align-items:center;justify-content:space-between;">
+              <span>📁 默认工作区</span>
+              <span style="opacity:0.4;font-size:10px;">▼</span>
+            </div>
+          </div>
+          <!-- Action row -->
+          <div style="padding:4px 12px 8px;display:flex;gap:6px;">
+            <div style="flex:1;background:#27272a;border-radius:8px;padding:6px 10px;font-size:11px;color:#71717a;display:flex;align-items:center;gap:4px;">
+              <span>🔍</span> 搜索...
+            </div>
+            <div style="width:30px;height:30px;border-radius:8px;background:#3b82f6;display:flex;align-items:center;justify-content:center;color:white;font-size:13px;">＋</div>
+            <div style="width:30px;height:30px;border-radius:8px;background:#27272a;display:flex;align-items:center;justify-content:center;font-size:11px;">⚡</div>
+          </div>
+          <div style="height:1px;background:#27272a;margin:0 12px;"></div>
+          <div style="padding:8px 12px;font-size:11px;color:#71717a;">置顶</div>
+          <div style="padding:4px 12px;font-size:12px;color:#a1a1aa;">📌 项目讨论...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>搜索优先式</h3>
+      <p>大搜索框在最顶部，工作区+操作按钮在搜索框下方</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">展开状态 (260px)</div>
+        <div class="mockup-body" style="padding:0;background:#18181b;color:#e4e4e7;font-size:13px;">
+          <div style="height:50px;"></div>
+          <!-- Search bar prominent -->
+          <div style="padding:8px 12px;">
+            <div style="background:#27272a;border:1px solid #3f3f46;border-radius:10px;padding:8px 12px;font-size:12px;color:#71717a;display:flex;align-items:center;gap:6px;">
+              <span>🔍</span> 搜索会话...
+              <span style="margin-left:auto;font-size:10px;background:#3f3f46;padding:1px 5px;border-radius:3px;">⌘K</span>
+            </div>
+          </div>
+          <!-- Workspace + actions -->
+          <div style="padding:2px 12px 8px;display:flex;align-items:center;gap:6px;">
+            <div style="flex:1;padding:5px 8px;font-size:12px;color:#a1a1aa;display:flex;align-items:center;gap:4px;">
+              <span style="opacity:0.4;">▼</span> 默认工作区
+            </div>
+            <div style="width:28px;height:28px;border-radius:6px;background:#27272a;display:flex;align-items:center;justify-content:center;font-size:11px;">⚡</div>
+            <div style="width:28px;height:28px;border-radius:6px;background:#3b82f6;display:flex;align-items:center;justify-content:center;color:white;font-size:12px;">＋</div>
+          </div>
+          <div style="height:1px;background:#27272a;margin:0 12px;"></div>
+          <div style="padding:8px 12px;font-size:11px;color:#71717a;">置顶</div>
+          <div style="padding:4px 12px;font-size:12px;color:#a1a1aa;">📌 项目讨论...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
