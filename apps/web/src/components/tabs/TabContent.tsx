@@ -2,6 +2,7 @@ import { useAtomValue } from 'jotai'
 import { tabsAtom, activeTabIdAtom } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
 import { SettingsView } from '@/components/settings/SettingsView'
+import { WelcomeView } from '@/components/welcome/WelcomeView'
 
 export function TabContent() {
   const tabs = useAtomValue(tabsAtom)
@@ -16,6 +17,10 @@ export function TabContent() {
     )
   }
 
+  if (activeTab.type === 'welcome') {
+    return <WelcomeView workspaceId={activeTab.workspaceId} />
+  }
+
   if (activeTab.type === 'agent' && activeTab.threadId) {
     return <AgentView threadId={activeTab.threadId} />
   }
@@ -26,4 +31,3 @@ export function TabContent() {
 
   return null
 }
-

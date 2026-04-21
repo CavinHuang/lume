@@ -1,7 +1,7 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 
-export type TabType = 'agent' | 'settings'
+export type TabType = 'agent' | 'settings' | 'welcome'
 export type SettingsTab = 'channel' | 'agent' | 'mcp' | 'about'
 
 export interface Tab {
@@ -10,6 +10,7 @@ export interface Tab {
   title: string
   threadId?: string
   settingsTab?: SettingsTab
+  workspaceId?: string
 }
 
 export const tabsAtom = atom<Tab[]>([])
