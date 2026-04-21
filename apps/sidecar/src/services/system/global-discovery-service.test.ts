@@ -1,10 +1,26 @@
 import { describe, expect, test } from "bun:test";
+import { AGENT_IPC_CHANNELS, type SkillCatalogItem, type SkillTrustLevel } from "@lume/shared";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { __internal } from "./global-discovery-service";
 
 describe("global-discovery-service", () => {
+  test("shared skills marketplace contracts 应暴露基础类型与 IPC 常量", () => {
+    const trust: SkillTrustLevel = "trusted";
+    const catalogItem: SkillCatalogItem = {
+      id: "built-in:demo",
+      slug: "demo",
+      name: "Demo",
+      sourceType: "built-in",
+      trustLevel: trust,
+      installState: "not-installed"
+    };
+
+    expect(catalogItem.name).toBe("Demo");
+    expect(AGENT_IPC_CHANNELS.GET_SKILL_MARKET_CATALOG).toBe("agent:get-skill-market-catalog");
+  });
+
   test("parseSkillFrontmatter 应解析 name/description/icon", () => {
     const content = `---
 name: 示例技能

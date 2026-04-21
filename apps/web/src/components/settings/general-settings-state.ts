@@ -5,7 +5,7 @@ import type {
 } from '@lume/shared'
 import { GENERAL_SETTINGS_DEFAULTS as SHARED_GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 
-export type SettingsTab = 'general' | 'channels' | 'agent' | 'mcp' | 'about'
+export type SettingsTab = 'general' | 'channels' | 'agent' | 'mcp' | 'skills' | 'about'
 
 export type CacheCleanupKey = 'frontendTemp' | 'previewRender' | 'logs'
 
@@ -33,6 +33,7 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   { id: 'channels', label: '供应商配置' },
   { id: 'agent', label: 'Agent' },
   { id: 'mcp', label: 'MCP' },
+  { id: 'skills', label: 'Skills' },
   { id: 'about', label: '关于' },
 ]
 

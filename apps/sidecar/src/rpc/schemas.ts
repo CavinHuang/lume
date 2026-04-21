@@ -396,6 +396,22 @@ export const marketplaceDetailInputSchema = z.object({
   marketplaceId: idSchema
 });
 
+export const skillMarketCatalogInputSchema = z.object({
+  workspaceSlug: idSchema,
+  includeBlockedSources: z.boolean().optional()
+});
+
+export const githubSkillReviewInputSchema = z.object({
+  url: z.string().url()
+});
+
+export const installGitHubSkillInputSchema = z.object({
+  url: z.string().url(),
+  workspaceSlug: idSchema,
+  reviewToken: z.string().min(1),
+  overwrite: z.boolean().optional()
+});
+
 export const threadPathInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
   threadId: idSchema
