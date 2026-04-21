@@ -17,9 +17,11 @@ import type {
   AgentCopyFolderInput,
   AgentSaveFilesInput,
   AgentSavedFile,
+  ExternalAttachmentMeta,
   FileEntry,
   FileSearchResult,
   PlanFileMeta,
+  WorkspaceCopyFolderInput,
   WorkspaceSaveFilesInput
 } from "@lume/shared";
 import {
@@ -27,6 +29,15 @@ import {
   getAgentWorkspacesDir,
   getWorkspaceResourcesPath
 } from "../infra/config-paths";
+import {
+  deleteAttachmentMeta,
+  getAttachmentMeta,
+  moveAttachmentMeta,
+  readThreadAttachmentMeta,
+  readWorkspaceAttachmentMeta,
+  upsertAttachmentMeta,
+  type AttachmentScope
+} from "./agent-attachment-meta-service";
 
 function validatePathSegment(value: string, label: string): void {
   if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
@@ -54,6 +65,26 @@ function resolveSessionDir(workspaceSlug: string, sessionId: string): string {
 function resolveWorkspaceResourcesDir(workspaceSlug: string): string {
   validatePathSegment(workspaceSlug, "workspaceSlug");
   return getWorkspaceResourcesPath(workspaceSlug);
+}
+
+function getThreadAttachmentScope(workspaceSlug: string, sessionId: string): AttachmentScope {
+  return { kind: "thread", workspaceSlug, threadId: sessionId };
+}
+
+function getWorkspaceAttachmentScope(workspaceSlug: string): AttachmentScope {
+  return { kind: "workspace", workspaceSlug };
+}
+
+function enrichEntriesWithAttachmentMeta(
+  entries: FileEntry[],
+  rootPath: string,
+  metadataByRelativePath: Record<string, ExternalAttachmentMeta>
+): FileEntry[] {
+  return entries.map((entry) => {
+    const relPath = relative(rootPath, entry.path).split(sep).join("/");
+    const externalAttachment = metadataByRelativePath[relPath];
+    return externalAttachment ? { ...entry, externalAttachment } : entry;
+  });
 }
 
 export function resolveWorkspaceSlugBySessionId(sessionId: string): string | null {
@@ -191,6 +222,8 @@ export function listAgentDirectory(
 ): FileEntry[] {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved)) return [];
+  const sessionRoot = resolveSessionDir(workspaceSlug, sessionId);
+  const attachmentMeta = readThreadAttachmentMeta(workspaceSlug, sessionId);
 
   const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => {
     const fullPath = join(resolved, entry.name);
@@ -206,7 +239,7 @@ export function listAgentDirectory(
     return a.name.localeCompare(b.name, "en");
   });
 
-  return items;
+  return enrichEntriesWithAttachmentMeta(items, sessionRoot, attachmentMeta);
 }
 
 export function listWorkspaceDirectory(
@@ -216,6 +249,7 @@ export function listWorkspaceDirectory(
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
   const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
   if (!existsSync(resolved)) return [];
+  const attachmentMeta = readWorkspaceAttachmentMeta(workspaceSlug);
 
   const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => {
     const fullPath = join(resolved, entry.name);
@@ -231,7 +265,7 @@ export function listWorkspaceDirectory(
     return a.name.localeCompare(b.name, "en");
   });
 
-  return items;
+  return enrichEntriesWithAttachmentMeta(items, resourcesDir, attachmentMeta);
 }
 
 export function deleteAgentFile(
@@ -252,6 +286,7 @@ export function deleteAgentFile(
   } else {
     rmSync(resolved, { force: true });
   }
+  deleteAttachmentMeta(getThreadAttachmentScope(workspaceSlug, sessionId), resolved);
   return { ok: true };
 }
 
@@ -272,6 +307,7 @@ export function deleteWorkspaceFile(
   } else {
     rmSync(resolved, { force: true });
   }
+  deleteAttachmentMeta(getWorkspaceAttachmentScope(workspaceSlug), resolved);
   return { ok: true };
 }
 
@@ -298,6 +334,7 @@ export function renameAgentFile(
     throw new Error("目标名称已存在");
   }
   movePathWithFallback(resolved, nextPath);
+  moveAttachmentMeta(getThreadAttachmentScope(workspaceSlug, sessionId), resolved, nextPath);
   return { ok: true, path: nextPath };
 }
 
@@ -323,6 +360,7 @@ export function renameWorkspaceFile(
     throw new Error("目标名称已存在");
   }
   movePathWithFallback(resolved, nextPath);
+  moveAttachmentMeta(getWorkspaceAttachmentScope(workspaceSlug), resolved, nextPath);
   return { ok: true, path: nextPath };
 }
 
@@ -358,6 +396,7 @@ export function moveAgentFile(
   }
 
   movePathWithFallback(resolved, nextPath);
+  moveAttachmentMeta(getThreadAttachmentScope(workspaceSlug, sessionId), resolved, nextPath);
   return { ok: true, path: nextPath };
 }
 
@@ -392,6 +431,7 @@ export function moveWorkspaceFile(
   }
 
   movePathWithFallback(resolved, nextPath);
+  moveAttachmentMeta(getWorkspaceAttachmentScope(workspaceSlug), resolved, nextPath);
   return { ok: true, path: nextPath };
 }
 
@@ -714,6 +754,7 @@ export function deleteAgentPlan(
 export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedFile[] {
   const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
   const results: AgentSavedFile[] = [];
+  const scope = getThreadAttachmentScope(input.workspaceSlug, input.threadId);
 
   for (const file of input.files) {
     const targetPath = resolve(join(sessionDir, file.filename));
@@ -734,6 +775,12 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
       throw new Error(`缺少文件内容: ${file.filename}`);
     }
     results.push({ filename: file.filename, targetPath });
+    if (file.sourcePath && file.sourcePath.trim()) {
+      upsertAttachmentMeta(scope, targetPath, {
+        label: "外部附加",
+        absoluteSourcePath: resolve(file.sourcePath)
+      });
+    }
   }
 
   return results;
@@ -742,6 +789,7 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
 export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSavedFile[] {
   const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
   const results: AgentSavedFile[] = [];
+  const scope = getWorkspaceAttachmentScope(input.workspaceSlug);
 
   for (const file of input.files) {
     const targetPath = resolve(join(resourcesDir, file.filename));
@@ -762,6 +810,12 @@ export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSaved
       throw new Error(`缺少文件内容: ${file.filename}`);
     }
     results.push({ filename: file.filename, targetPath });
+    if (file.sourcePath && file.sourcePath.trim()) {
+      upsertAttachmentMeta(scope, targetPath, {
+        label: "外部附加",
+        absoluteSourcePath: resolve(file.sourcePath)
+      });
+    }
   }
 
   return results;
@@ -781,6 +835,10 @@ export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile
   }
 
   cpSync(sourcePath, targetDir, { recursive: true });
+  upsertAttachmentMeta(getThreadAttachmentScope(input.workspaceSlug, input.threadId), targetDir, {
+    label: "外部附加",
+    absoluteSourcePath: sourcePath
+  });
 
   const results: AgentSavedFile[] = [];
   const collect = (dir: string): void => {
@@ -790,6 +848,41 @@ export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile
         collect(fullPath);
       } else {
         const rel = fullPath.slice(sessionDir.length + 1);
+        results.push({ filename: rel, targetPath: fullPath });
+      }
+    }
+  };
+  collect(targetDir);
+  return results;
+}
+
+export function copyFolderToWorkspace(input: WorkspaceCopyFolderInput): AgentSavedFile[] {
+  const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
+  const sourcePath = resolve(input.sourcePath);
+  if (!existsSync(sourcePath)) {
+    throw new Error("源目录不存在");
+  }
+
+  const folderName = sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
+  const targetDir = resolve(join(resourcesDir, folderName));
+  if (!isWithin(resourcesDir, targetDir)) {
+    throw new Error("目标路径越界");
+  }
+
+  cpSync(sourcePath, targetDir, { recursive: true });
+  upsertAttachmentMeta(getWorkspaceAttachmentScope(input.workspaceSlug), targetDir, {
+    label: "外部附加",
+    absoluteSourcePath: sourcePath
+  });
+
+  const results: AgentSavedFile[] = [];
+  const collect = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        collect(fullPath);
+      } else {
+        const rel = fullPath.slice(resourcesDir.length + 1);
         results.push({ filename: rel, targetPath: fullPath });
       }
     }

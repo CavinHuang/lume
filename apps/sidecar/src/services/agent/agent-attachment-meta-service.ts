@@ -64,7 +64,6 @@ function getScopeRoot(scope: AttachmentScope): string {
         getWorkspaceRootPathUnsafe(scope.workspaceSlug),
         "threads",
         validatePathSegment(scope.threadId, "threadId"),
-        "files"
       )
     : join(getWorkspaceRootPathUnsafe(scope.workspaceSlug), "resources");
 }

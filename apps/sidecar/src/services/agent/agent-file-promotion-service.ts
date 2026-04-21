@@ -2,9 +2,14 @@ import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { PromoteFileToWorkspaceInput, PromoteFileToWorkspaceResult } from "@lume/shared";
 import {
+  getAgentSessionWorkspacePath,
   getAgentThreadFilesPath,
   getWorkspaceResourcesPath
 } from "../infra/config-paths";
+import {
+  getAttachmentMeta,
+  upsertAttachmentMeta
+} from "./agent-attachment-meta-service";
 
 function isWithin(basePath: string, targetPath: string): boolean {
   const base = resolve(basePath);
@@ -33,8 +38,9 @@ export function promoteFileToWorkspace(
   input: PromoteFileToWorkspaceInput
 ): PromoteFileToWorkspaceResult {
   const threadFilesRoot = getAgentThreadFilesPath(input.workspaceSlug, input.threadId);
+  const threadRoot = getAgentSessionWorkspacePath(input.workspaceSlug, input.threadId);
   const sourcePath = resolve(input.filePath);
-  if (!isWithin(threadFilesRoot, sourcePath)) {
+  if (!isWithin(threadFilesRoot, sourcePath) && !isWithin(threadRoot, sourcePath)) {
     throw new Error("只能提升当前任务文件层中的文件");
   }
   if (!existsSync(sourcePath) || !statSync(sourcePath).isFile()) {
@@ -55,5 +61,16 @@ export function promoteFileToWorkspace(
 
   mkdirSync(dirname(targetPath), { recursive: true });
   copyFileSync(sourcePath, targetPath);
+  const sourceMeta = getAttachmentMeta(
+    { kind: "thread", workspaceSlug: input.workspaceSlug, threadId: input.threadId },
+    sourcePath
+  );
+  if (sourceMeta) {
+    upsertAttachmentMeta(
+      { kind: "workspace", workspaceSlug: input.workspaceSlug },
+      targetPath,
+      sourceMeta
+    );
+  }
   return { ok: true, path: targetPath };
 }
