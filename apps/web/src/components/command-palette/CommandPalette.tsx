@@ -1,6 +1,6 @@
 import { useAtom, useAtomValue } from 'jotai'
 import { Search } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   commandPaletteOpenAtom,
   tabsAtom,
@@ -32,26 +32,45 @@ export function CommandPalette() {
   const setActiveTabId = useAtom(activeTabIdAtom)[1]
 
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [closing, setClosing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
+
+  // Debounce search query by 150ms
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 150)
+    return () => clearTimeout(timer)
+  }, [query])
 
   const results = useMemo(() => {
-    if (!query.trim()) return []
-    const q = query.toLowerCase()
+    if (!debouncedQuery.trim()) return []
+    const q = debouncedQuery.toLowerCase()
     return threads
       .filter((t) => t.title.toLowerCase().includes(q))
       .sort((a, b) => {
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
         return b.updatedAt - a.updatedAt
       })
-  }, [query, threads])
+  }, [debouncedQuery, threads])
 
   const wsMap = useMemo(() => {
     const m = new Map<string, AgentWorkspace>()
     for (const ws of workspaces) m.set(ws.id, ws)
     return m
   }, [workspaces])
+
+  const closePalette = useCallback(() => {
+    setClosing(true)
+    setTimeout(() => {
+      setOpen(false)
+      setClosing(false)
+      previousFocusRef.current?.focus()
+      previousFocusRef.current = null
+    }, 100) // matches animate-out duration
+  }, [setOpen])
 
   const openThread = (thread: AgentThreadMeta) => {
     setActiveTabId(thread.id)
@@ -61,12 +80,12 @@ export function CommandPalette() {
         { id: thread.id, type: 'agent' as const, title: thread.title, threadId: thread.id },
       ])
     }
-    setOpen(false)
+    closePalette()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
-      setOpen(false)
+      closePalette()
       return
     }
     if (!results.length) return
@@ -88,7 +107,9 @@ export function CommandPalette() {
   // 打开时重置状态并聚焦
   useEffect(() => {
     if (open) {
+      previousFocusRef.current = document.activeElement as HTMLElement
       setQuery('')
+      setDebouncedQuery('')
       setSelectedIndex(0)
       requestAnimationFrame(() => inputRef.current?.focus())
     }
@@ -106,18 +127,26 @@ export function CommandPalette() {
     el?.scrollIntoView({ block: 'nearest' })
   }, [selectedIndex])
 
-  if (!open) return null
+  if (!open && !closing) return null
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh]">
       {/* 遮罩 */}
       <div
-        className="absolute inset-0 bg-black/50 animate-in fade-in duration-150"
-        onClick={() => setOpen(false)}
+        className={cn(
+          "absolute inset-0 bg-black/50",
+          closing ? "animate-out fade-out duration-100" : "animate-in fade-in duration-150"
+        )}
+        onClick={closePalette}
       />
 
       {/* 弹窗 */}
-      <div className="relative w-full max-w-lg mx-4 bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-150">
+      <div className={cn(
+        "relative w-full max-w-lg mx-4 bg-card border border-border rounded-xl shadow-2xl overflow-hidden",
+        closing
+          ? "animate-out fade-out zoom-out-95 duration-100"
+          : "animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-150"
+      )}>
         {/* 搜索输入 */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
           <Search size={16} className="text-muted-foreground flex-shrink-0" />
