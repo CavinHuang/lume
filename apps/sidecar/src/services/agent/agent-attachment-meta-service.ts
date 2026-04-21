@@ -237,3 +237,7 @@ export function getAttachmentMeta(scope: AttachmentScope, targetPath: string): E
     throw error;
   }
 }
+
+export function assertAttachmentMetadataHealthy(scope: AttachmentScope): void {
+  readPersistedAttachmentMap(scope);
+}

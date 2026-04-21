@@ -201,6 +201,30 @@ describe("agent-files-service file ops", () => {
     expect(existsSync(join(sessionDir, "brief.md"))).toBeTrue();
   });
 
+  test("agent 产出文件不应保留旧的外部附加元信息", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-f2";
+    const sessionId = "session-f2";
+    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-agent-files-src-"));
+    const sourcePath = join(sourceRoot, "brief.md");
+    createdDirs.push(sourceRoot);
+    writeFileSync(sourcePath, "# brief", "utf-8");
+
+    saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      files: [{ filename: "brief.md", sourcePath }]
+    });
+    saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      files: [{ filename: "brief.md", data: Buffer.from("# generated").toString("base64") }]
+    });
+
+    const entry = listAgentDirectory(workspaceSlug, sessionId).find((item) => item.name === "brief.md");
+    expect(entry?.externalAttachment).toBeUndefined();
+  });
+
   test("saveFilesToWorkspace 应记录外部附加元信息并反映到列表", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-g";
@@ -220,6 +244,43 @@ describe("agent-files-service file ops", () => {
       label: "外部附加",
       absoluteSourcePath: sourcePath
     });
+  });
+
+  test("workspace 内部 sourcePath 不应被标记为外部附加", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-g3";
+    const resourcesDir = getWorkspaceResourcesPath(workspaceSlug);
+    const internalSource = join(resourcesDir, "internal.md");
+    writeFileSync(internalSource, "# internal", "utf-8");
+
+    saveFilesToWorkspace({
+      workspaceSlug,
+      files: [{ filename: "copied.md", sourcePath: internalSource }]
+    });
+
+    const entry = listWorkspaceDirectory(workspaceSlug).find((item) => item.name === "copied.md");
+    expect(entry?.externalAttachment).toBeUndefined();
+  });
+
+  test("workspace 中的 agent 产出文件不应保留旧的外部附加元信息", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-g2";
+    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-workspace-files-src-"));
+    const sourcePath = join(sourceRoot, "guide.md");
+    createdDirs.push(sourceRoot);
+    writeFileSync(sourcePath, "# guide", "utf-8");
+
+    saveFilesToWorkspace({
+      workspaceSlug,
+      files: [{ filename: "guide.md", sourcePath }]
+    });
+    saveFilesToWorkspace({
+      workspaceSlug,
+      files: [{ filename: "guide.md", data: Buffer.from("# generated").toString("base64") }]
+    });
+
+    const entry = listWorkspaceDirectory(workspaceSlug).find((item) => item.name === "guide.md");
+    expect(entry?.externalAttachment).toBeUndefined();
   });
 
   test("copyFolderToSession 应复制文件夹并为根目录记录外部附加元信息", () => {
@@ -246,6 +307,32 @@ describe("agent-files-service file ops", () => {
     });
   });
 
+  test("copyFolderToSession 应拒绝文件 sourcePath 和同名目标目录", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-h2";
+    const sessionId = "session-h2";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const fileSourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-file-src-"));
+    const fileSource = join(fileSourceRoot, "single.txt");
+    const folderSourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-existing-src-"));
+    createdDirs.push(fileSourceRoot, folderSourceRoot);
+    writeFileSync(fileSource, "hello", "utf-8");
+    writeFileSync(join(folderSourceRoot, "note.txt"), "hello", "utf-8");
+    mkdirSync(join(sessionDir, folderSourceRoot.split(/[\\/]/).filter(Boolean).pop() as string), { recursive: true });
+
+    expect(() => copyFolderToSession({
+      workspaceSlug,
+      threadId: sessionId,
+      sourcePath: fileSource
+    })).toThrow("源目录不存在");
+
+    expect(() => copyFolderToSession({
+      workspaceSlug,
+      threadId: sessionId,
+      sourcePath: folderSourceRoot
+    })).toThrow("目标路径已存在同名文件");
+  });
+
   test("copyFolderToWorkspace 应复制文件夹并为根目录记录外部附加元信息", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-i";
@@ -266,6 +353,29 @@ describe("agent-files-service file ops", () => {
       label: "外部附加",
       absoluteSourcePath: sourceRoot
     });
+  });
+
+  test("copyFolderToWorkspace 应拒绝文件 sourcePath 和同名目标目录", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-i2";
+    const resourcesDir = getWorkspaceResourcesPath(workspaceSlug);
+    const fileSourceRoot = mkdtempSync(join(tmpdir(), "lume-ws-folder-file-src-"));
+    const fileSource = join(fileSourceRoot, "single.txt");
+    const folderSourceRoot = mkdtempSync(join(tmpdir(), "lume-ws-folder-existing-src-"));
+    createdDirs.push(fileSourceRoot, folderSourceRoot);
+    writeFileSync(fileSource, "hello", "utf-8");
+    writeFileSync(join(folderSourceRoot, "note.txt"), "hello", "utf-8");
+    mkdirSync(join(resourcesDir, folderSourceRoot.split(/[\\/]/).filter(Boolean).pop() as string), { recursive: true });
+
+    expect(() => copyFolderToWorkspace({
+      workspaceSlug,
+      sourcePath: fileSource
+    })).toThrow("源目录不存在");
+
+    expect(() => copyFolderToWorkspace({
+      workspaceSlug,
+      sourcePath: folderSourceRoot
+    })).toThrow("目标路径已存在同名文件");
   });
 
   test("rename/move/delete 应同步外部附加元信息", () => {

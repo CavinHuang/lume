@@ -77,4 +77,34 @@ describe("agent-file-promotion-service", () => {
       absoluteSourcePath: externalSource
     });
   });
+
+  test("overwrite 非外部来源文件时应清理旧的工作区 provenance", () => {
+    const externalSource = join(tempConfigDir, "external.md");
+    writeFileSync(externalSource, "# external", "utf-8");
+
+    saveFilesToAgentSession({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      files: [{ filename: "imported.md", sourcePath: externalSource }]
+    });
+    promoteFileToWorkspace({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      filePath: join(getAgentSessionWorkspacePath("demo", "thread-1"), "imported.md")
+    });
+
+    saveFilesToAgentSession({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      files: [{ filename: "imported.md", data: Buffer.from("# generated").toString("base64") }]
+    });
+    promoteFileToWorkspace({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      filePath: join(getAgentSessionWorkspacePath("demo", "thread-1"), "imported.md"),
+      conflictMode: "overwrite"
+    });
+
+    expect(listWorkspaceDirectory("demo").find((entry) => entry.name === "imported.md")?.externalAttachment).toBeUndefined();
+  });
 });

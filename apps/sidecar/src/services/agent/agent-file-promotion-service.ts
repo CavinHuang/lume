@@ -7,6 +7,8 @@ import {
   getWorkspaceResourcesPath
 } from "../infra/config-paths";
 import {
+  assertAttachmentMetadataHealthy,
+  deleteAttachmentMeta,
   getAttachmentMeta,
   upsertAttachmentMeta
 } from "./agent-attachment-meta-service";
@@ -60,6 +62,12 @@ export function promoteFileToWorkspace(
   }
 
   mkdirSync(dirname(targetPath), { recursive: true });
+  assertAttachmentMetadataHealthy(
+    { kind: "thread", workspaceSlug: input.workspaceSlug, threadId: input.threadId }
+  );
+  assertAttachmentMetadataHealthy(
+    { kind: "workspace", workspaceSlug: input.workspaceSlug }
+  );
   copyFileSync(sourcePath, targetPath);
   const sourceMeta = getAttachmentMeta(
     { kind: "thread", workspaceSlug: input.workspaceSlug, threadId: input.threadId },
@@ -70,6 +78,11 @@ export function promoteFileToWorkspace(
       { kind: "workspace", workspaceSlug: input.workspaceSlug },
       targetPath,
       sourceMeta
+    );
+  } else {
+    deleteAttachmentMeta(
+      { kind: "workspace", workspaceSlug: input.workspaceSlug },
+      targetPath
     );
   }
   return { ok: true, path: targetPath };
