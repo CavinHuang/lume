@@ -1,5 +1,10 @@
-import { useAtom, useAtomValue } from 'jotai'
-import { Plus, Settings, PanelLeftClose, PanelLeftOpen, FolderOpen, MoreHorizontal, Pin, PinOff, Pencil, Trash2, Check, X } from 'lucide-react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import {
+  SquarePen, Search, Box, Clock,
+  ChevronLeft, ChevronRight,
+  Minimize2, Maximize2, Filter, FolderPlus, Folder,
+  Settings, MoreHorizontal, Pin, PinOff, Pencil, Trash2, Check, X,
+} from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import {
@@ -9,12 +14,13 @@ import {
   tabsAtom,
   activeTabIdAtom,
   currentWorkspaceIdAtom,
+  agentWorkspacesAtom,
+  commandPaletteOpenAtom,
 } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { AgentThreadMeta } from '@lume/shared'
+import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 import { useEffect, useState, useRef } from 'react'
 import { toast } from 'sonner'
-import { WorkspaceSelector } from './WorkspaceSelector'
 
 function groupByDate(items: AgentThreadMeta[]) {
   const pinned = items.filter((t) => t.pinned)
@@ -43,7 +49,10 @@ export function LeftSidebar() {
   const [tabs, setTabs] = useAtom(tabsAtom)
   const streamingStates = useAtomValue(agentStreamingStatesAtom)
   const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom)
-  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
+  const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
+  const setOpenCommandPalette = useSetAtom(commandPaletteOpenAtom)
+  const [allExpanded, setAllExpanded] = useState(false)
 
   useEffect(() => {
     sidecarCall<AgentThreadMeta[]>('agent:list-threads', {})
@@ -114,92 +123,239 @@ export function LeftSidebar() {
     }
   }
 
-  const groups = groupByDate(
-    currentWorkspaceId
-      ? threads.filter((t) => !t.workspaceId || t.workspaceId === currentWorkspaceId)
-      : threads
-  )
+  // 工作区操作
+  const handleCreateWorkspace = async () => {
+    const name = prompt('工作区名称：')
+    if (!name?.trim()) return
+    try {
+      const ws = await sidecarCall<AgentWorkspace>('agent:create-workspace', { name: name.trim() })
+      setWorkspaces((prev) => [...prev, ws])
+      setCurrentWorkspaceId(ws.id)
+      toast.success(`已创建工作区「${ws.name}」`)
+    } catch (err) {
+      console.error('[LeftSidebar] 创建工作区失败:', err)
+      toast.error('创建失败')
+    }
+  }
 
   if (collapsed) {
     return (
       <div className="h-full flex flex-col items-center bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl rounded-2xl shadow-xl" style={{ width: 48, flexShrink: 0 }}>
-        <div className="pt-[50px]" />
-        <button onClick={() => setCollapsed(false)} className="p-2 mt-2 rounded-[10px] text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground transition-colors">
-          <PanelLeftOpen size={18} />
-        </button>
-        <button onClick={() => setCollapsed(false)} className="p-2 mt-2 rounded-[10px] text-foreground/50 hover:bg-foreground/[0.04] hover:text-foreground/70 transition-colors" title="工作区">
-          <FolderOpen size={16} />
-        </button>
-        <button onClick={handleNewThread} className="p-2 mt-2 rounded-[10px] text-foreground/70 bg-foreground/[0.04] hover:bg-foreground/[0.08] transition-colors border border-dashed border-foreground/10">
-          <Plus size={16} />
-        </button>
+        <div className="pt-2" />
+
+        {/* 操作图标 */}
+        <div className="flex flex-col items-center gap-0.5 px-2">
+          <button onClick={handleNewThread} title="新建聊天" className="size-8 flex items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/[0.06] hover:text-foreground/80 transition-colors">
+            <SquarePen size={16} />
+          </button>
+          <button onClick={() => setOpenCommandPalette(true)} title="搜索" className="size-8 flex items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/[0.06] hover:text-foreground/80 transition-colors">
+            <Search size={16} />
+          </button>
+          <button title="技能" className="size-8 flex items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/[0.06] hover:text-foreground/80 transition-colors">
+            <Box size={16} />
+          </button>
+          <button title="自动化（即将推出）" className="size-8 flex items-center justify-center rounded-md text-foreground/20 cursor-not-allowed" disabled>
+            <Clock size={16} />
+          </button>
+        </div>
+
+        {/* 分隔线 */}
+        <div className="w-6 h-px bg-foreground/10 my-2" />
+
+        {/* 工作区图标 */}
+        <div className="flex flex-col items-center gap-0.5 px-2">
+          {workspaces.map((ws) => (
+            <button
+              key={ws.id}
+              onClick={() => setCurrentWorkspaceId(ws.id)}
+              title={ws.name}
+              className={cn(
+                'size-8 flex items-center justify-center rounded-md transition-colors',
+                currentWorkspaceId === ws.id
+                  ? 'bg-foreground/[0.08] text-foreground'
+                  : 'text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70'
+              )}
+            >
+              <Folder size={16} />
+            </button>
+          ))}
+        </div>
+
         <div className="flex-1" />
-        <button onClick={openSettings} className="p-2 mb-3 rounded-[10px] text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground transition-colors">
-          <Settings size={16} />
-        </button>
+        <div className="pb-3 px-2 flex flex-col items-center gap-0.5">
+          <button onClick={() => setCollapsed(false)} title="展开侧边栏" className="size-8 flex items-center justify-center rounded-md text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70 transition-colors">
+            <ChevronRight size={16} />
+          </button>
+          <button onClick={openSettings} title="设置" className="size-8 flex items-center justify-center rounded-md text-foreground/50 hover:bg-foreground/[0.06] hover:text-foreground/70 transition-colors">
+            <Settings size={16} />
+          </button>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="h-full flex flex-col bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl rounded-2xl shadow-xl" style={{ width: 260, minWidth: 180, flexShrink: 1 }}>
-      <div className="pt-[50px] flex items-center justify-between px-3 pr-1">
-        <span className="text-[13px] font-semibold text-foreground/70">Lume</span>
-        <button onClick={() => setCollapsed(true)} className="size-8 flex items-center justify-center rounded-[10px] text-foreground/40 hover:bg-foreground/[0.04] hover:text-foreground/60 transition-colors">
-          <PanelLeftClose size={16} />
-        </button>
+      <div className="pt-2" />
+
+      {/* 顶部操作列表 */}
+      <div className="px-3 space-y-0.5">
+        <SidebarAction icon={<SquarePen size={17} />} label="新建聊天" onClick={handleNewThread} />
+        <SidebarAction icon={<Search size={17} />} label="搜索" onClick={() => setOpenCommandPalette(true)} />
+        <SidebarAction icon={<Box size={17} />} label="技能" onClick={() => {}} />
+        <SidebarAction icon={<Clock size={17} />} label="自动化" disabled badge="即将推出" />
       </div>
 
-      {/* 工作区选择器 */}
-      <div className="px-3 pt-2">
-        <WorkspaceSelector />
+      {/* 工作区区域 — 手风琴模式 */}
+      <div className="mt-5 px-3">
+        <div className="flex items-center justify-between px-2 mb-1">
+          <span className="text-[13px] font-semibold text-foreground">工作区</span>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => setAllExpanded((v) => !v)} className={cn("size-6 flex items-center justify-center rounded-[5px] transition-colors", allExpanded ? "text-foreground/60 bg-foreground/[0.06]" : "text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60")} title={allExpanded ? '收起全部' : '展开全部'}>
+              <span className="relative size-[14px]">
+                <Maximize2 size={14} className={cn("absolute inset-0 transition-opacity duration-200", allExpanded ? "opacity-0" : "opacity-100")} />
+                <Minimize2 size={14} className={cn("absolute inset-0 transition-opacity duration-200", allExpanded ? "opacity-100" : "opacity-0")} />
+              </span>
+            </button>
+            <button className="size-6 flex items-center justify-center rounded-[5px] text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors" title="筛选">
+              <Filter size={14} />
+            </button>
+            <button onClick={handleCreateWorkspace} className="size-6 flex items-center justify-center rounded-[5px] text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors" title="新建工作区">
+              <FolderPlus size={14} />
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="px-3 pt-2">
-        <button
-          onClick={handleNewThread}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-[10px] text-[13px] font-medium text-foreground/70 bg-foreground/[0.04] hover:bg-foreground/[0.08] transition-colors border border-dashed border-foreground/10 hover:border-foreground/20"
-        >
-          <Plus size={14} />
-          <span>新会话</span>
-        </button>
-      </div>
-
+      {/* 工作区手风琴列表 */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="px-3 pt-2 pb-3">
-          {groups.map((group) => (
-            <div key={group.label} className="mb-1">
-              <div className="px-3 pt-2 pb-1 text-[11px] font-medium text-foreground/40 select-none">{group.label}</div>
-              {group.items.map((thread) => (
-                <ThreadItem
-                  key={thread.id}
-                  thread={thread}
-                  isActive={activeTabId === thread.id}
-                  isRunning={streamingStates[thread.id] === 'streaming'}
-                  onOpen={openThread}
-                  onTogglePin={togglePin}
-                  onDelete={deleteThread}
-                  onRename={renameThread}
-                />
-              ))}
-            </div>
-          ))}
+        <div className="px-3 pb-3">
+          {workspaces.map((ws) => {
+            const isExpanded = allExpanded || currentWorkspaceId === ws.id
+            const wsThreads = threads.filter((t) => !t.workspaceId || t.workspaceId === ws.id)
+            const count = wsThreads.length
+            const wsGroups = groupByDate(wsThreads)
+
+            return (
+              <div key={ws.id} className="mb-1">
+                {/* 工作区标题行 */}
+                <button
+                  onClick={() => {
+                    if (allExpanded) {
+                      setAllExpanded(false)
+                      setCurrentWorkspaceId(ws.id)
+                    } else {
+                      setCurrentWorkspaceId(isExpanded ? null : ws.id)
+                    }
+                  }}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-2 py-[7px] rounded-lg text-[13px] transition-colors',
+                    isExpanded
+                      ? 'bg-foreground/[0.08] text-foreground'
+                      : 'text-foreground/70 hover:bg-foreground/[0.04]'
+                  )}
+                >
+                  <ChevronRight
+                    size={12}
+                    className={cn(
+                      'flex-shrink-0 text-foreground/30 transition-transform duration-150',
+                      isExpanded && 'rotate-90'
+                    )}
+                  />
+                  <Folder size={14} className={cn('flex-shrink-0', isExpanded ? 'text-primary' : 'text-foreground/40')} />
+                  <span className="flex-1 truncate text-left">{ws.name}</span>
+                  {count > 0 && <span className="text-[11px] text-foreground/35 flex-shrink-0">{count}</span>}
+                </button>
+
+                {/* 展开的线程列表 */}
+                <div
+                  className={cn(
+                    "ml-3 border-l border-foreground/10 pl-2 overflow-hidden transition-all duration-200 ease-in-out",
+                    isExpanded && wsGroups.length > 0 ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0 border-l-transparent"
+                  )}
+                >
+                  {wsGroups.map((group) => (
+                    <div key={group.label}>
+                      <div className="px-2 pt-2 pb-1 text-[11px] font-medium text-foreground/40 select-none">{group.label}</div>
+                      {group.items.map((thread) => (
+                        <ThreadItem
+                          key={thread.id}
+                          thread={thread}
+                          isActive={activeTabId === thread.id}
+                          isRunning={streamingStates[thread.id] === 'streaming'}
+                          onOpen={openThread}
+                          onTogglePin={togglePin}
+                          onDelete={deleteThread}
+                          onRename={renameThread}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </ScrollArea>
 
-      <div className="px-3 pb-3">
+      {/* 底部：设置 + 收缩按钮 */}
+      <div className="px-3 pb-3 flex items-center">
         <button
           onClick={openSettings}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground text-[13px]"
+          className="flex-1 flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground text-[13px]"
         >
           <Settings size={15} />
           <span>设置</span>
+        </button>
+        <button
+          onClick={() => setCollapsed(true)}
+          className="size-8 flex items-center justify-center rounded-md text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors"
+          title="收起侧边栏"
+        >
+          <ChevronLeft size={16} />
         </button>
       </div>
     </div>
   )
 }
 
+/* ——— 顶部操作项 ——— */
+function SidebarAction({
+  icon,
+  label,
+  onClick,
+  disabled,
+  badge,
+}: {
+  icon: React.ReactNode
+  label: string
+  onClick?: () => void
+  disabled?: boolean
+  badge?: string
+}) {
+  return (
+    <button
+      onClick={disabled ? undefined : onClick}
+      className={cn(
+        'w-full flex items-center gap-3 px-2 py-[9px] rounded-lg text-[13px] transition-colors',
+        disabled
+          ? 'text-foreground/25 cursor-not-allowed'
+          : 'text-foreground/80 hover:bg-foreground/[0.04]'
+      )}
+      disabled={disabled}
+    >
+      {icon}
+      <span>{label}</span>
+      {badge && (
+        <span className="ml-auto text-[10px] bg-foreground/[0.06] text-foreground/40 px-1.5 py-0.5 rounded">
+          {badge}
+        </span>
+      )}
+    </button>
+  )
+}
+
+/* ——— 线程列表项 ——— */
 function ThreadItem({
   thread,
   isActive,
@@ -243,7 +399,7 @@ function ThreadItem({
 
   if (editing) {
     return (
-      <div className="flex items-center gap-1 px-3 py-[7px] rounded-[10px] bg-foreground/[0.04]">
+      <div className="flex items-center gap-1 px-3 py-[7px] rounded-lg bg-foreground/[0.04]">
         <input
           ref={inputRef}
           value={draft}
@@ -265,7 +421,7 @@ function ThreadItem({
       <button
         onClick={() => onOpen(thread)}
         className={cn(
-          'w-full flex items-center gap-2 px-3 py-[7px] rounded-[10px] transition-colors duration-100 text-left text-[13px]',
+          'w-full flex items-center gap-2 px-3 py-[7px] rounded-lg transition-colors duration-100 text-left text-[13px]',
           isActive
             ? 'bg-foreground/[0.08] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
             : 'text-foreground/80 hover:bg-foreground/[0.04]'
