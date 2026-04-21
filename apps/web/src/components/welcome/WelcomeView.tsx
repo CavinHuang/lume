@@ -28,6 +28,7 @@ interface WelcomeViewProps {
 
 export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProps) {
   const threads = useAtomValue(agentThreadsAtom)
+  const setThreads = useSetAtom(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
@@ -139,6 +140,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         ]
       })
       setActiveTabId(meta.id)
+      setThreads((prev) => [meta, ...prev])
     } catch (err) {
       console.error('[WelcomeView] 发送失败:', err)
       toast.error('发送失败，请重试')
