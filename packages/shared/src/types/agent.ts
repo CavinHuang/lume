@@ -425,6 +425,70 @@ export interface GlobalImportResult {
   reason?: string
 }
 
+export type SkillSourceType = 'built-in' | 'local' | 'github' | 'subscribed-market'
+
+export type SkillTrustLevel = 'trusted' | 'review-required' | 'blocked-by-default'
+
+export type SkillInstallState = 'not-installed' | 'installed' | 'update-available'
+
+export interface SkillCatalogItem {
+  id: string
+  sourceId?: string
+  slug: string
+  name: string
+  description?: string
+  icon?: string
+  version?: string
+  sourceType: SkillSourceType
+  trustLevel: SkillTrustLevel
+  installState: SkillInstallState
+}
+
+export interface SkillMarketCatalogResult {
+  items: SkillCatalogItem[]
+}
+
+export interface GetSkillMarketCatalogInput {
+  workspaceSlug: string
+  includeBlockedSources?: boolean
+}
+
+export interface GitHubSkillReviewItem {
+  slug: string
+  name: string
+  path: string
+  description?: string
+  version?: string
+  riskSummary: string[]
+}
+
+export interface GitHubSkillReviewResult {
+  url: string
+  normalizedUrl: string
+  owner: string
+  repo: string
+  ref: string
+  rootPath: string
+  reviewToken: string
+  trustLevel: SkillTrustLevel
+  riskSummary: string[]
+  structuralIssues: string[]
+  skills: GitHubSkillReviewItem[]
+}
+
+export interface GetGitHubSkillReviewInput {
+  url: string
+}
+
+export interface InstallGitHubSkillToWorkspaceInput {
+  url: string
+  workspaceSlug: string
+  reviewToken: string
+  overwrite?: boolean
+}
+
+export interface InstallGitHubSkillToWorkspaceResult extends GlobalImportResult {}
+
 // ===== Agent 发送输入 =====
 
 /**
@@ -845,6 +909,12 @@ export const AGENT_IPC_CHANNELS = {
   IMPORT_GLOBAL_MCP_TO_WORKSPACE: 'agent:import-global-mcp-to-workspace',
   /** 导入全局 Skill 到工作区 */
   IMPORT_GLOBAL_SKILL_TO_WORKSPACE: 'agent:import-global-skill-to-workspace',
+  /** 获取技能市场聚合目录 */
+  GET_SKILL_MARKET_CATALOG: 'agent:get-skill-market-catalog',
+  /** 获取 GitHub 技能安装前审查摘要 */
+  GET_GITHUB_SKILL_REVIEW: 'agent:get-github-skill-review',
+  /** 从 GitHub 安装技能到工作区 */
+  INSTALL_GITHUB_SKILL_TO_WORKSPACE: 'agent:install-github-skill-to-workspace',
 
   // 流式事件（主进程 → 渲染进程推送）
   /** Agent 流式事件 */

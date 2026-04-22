@@ -89,6 +89,11 @@ import {
   importGlobalSkillToWorkspace,
   installGlobalPlugin
 } from "../services/system/global-discovery-service";
+import {
+  getGitHubSkillReview,
+  installGitHubSkillToWorkspace
+} from "../services/system/github-skill-install-service";
+import { getSkillMarketCatalog } from "../services/system/skills-market-service";
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
@@ -123,6 +128,8 @@ import {
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
   deleteSkillInputSchema,
+  githubSkillReviewInputSchema,
+  installGitHubSkillInputSchema,
   listDirectoryInputSchema,
   marketplaceDetailInputSchema,
   moveAttachedFileInputSchema,
@@ -140,6 +147,7 @@ import {
   saveFilesToThreadInputSchema,
   saveToolPolicyInputSchema,
   searchWorkspaceFilesInputSchema,
+  skillMarketCatalogInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
   submitToolPermissionInputSchema,
@@ -446,6 +454,30 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.GET_GLOBAL_DISCOVERY]: async () => getGlobalDiscoverySnapshot(),
     [AGENT_IPC_CHANNELS.RESCAN_GLOBAL_DISCOVERY]: async () => getGlobalDiscoverySnapshot(),
+    [AGENT_IPC_CHANNELS.GET_SKILL_MARKET_CATALOG]: async (params) => {
+      const input = validateInput(
+        skillMarketCatalogInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_SKILL_MARKET_CATALOG
+      );
+      return getSkillMarketCatalog(input);
+    },
+    [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
+      const input = validateInput(
+        githubSkillReviewInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW
+      );
+      return getGitHubSkillReview(input);
+    },
+    [AGENT_IPC_CHANNELS.INSTALL_GITHUB_SKILL_TO_WORKSPACE]: async (params) => {
+      const input = validateInput(
+        installGitHubSkillInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.INSTALL_GITHUB_SKILL_TO_WORKSPACE
+      );
+      return installGitHubSkillToWorkspace(input);
+    },
     [AGENT_IPC_CHANNELS.GET_GLOBAL_MARKETPLACE_DETAIL]: async (params) => {
       const input = validateInput(marketplaceDetailInputSchema, params, AGENT_IPC_CHANNELS.GET_GLOBAL_MARKETPLACE_DETAIL);
       return getGlobalMarketplaceDetail(input.marketplaceId);
