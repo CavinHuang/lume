@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Radio, Cpu, Puzzle, Info, SlidersHorizontal, WandSparkles } from 'lucide-react'
+import { Radio, Cpu, Puzzle, Info, SlidersHorizontal, WandSparkles, Timer } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { GeneralSettings } from './GeneralSettings'
@@ -8,6 +8,7 @@ import { AgentSettings } from './AgentSettings'
 import { McpSettings } from './McpSettings'
 import { AboutSettings } from './AboutSettings'
 import { SkillsSettings } from './SkillsSettings'
+import { AutomationSettings } from '../automation/AutomationSettings'
 import { SETTINGS_NAV_ITEMS, type SettingsTab } from './general-settings-state'
 
 const NAV_ICON_MAP: Record<SettingsTab, React.ReactNode> = {
@@ -16,6 +17,7 @@ const NAV_ICON_MAP: Record<SettingsTab, React.ReactNode> = {
   agent: <Cpu size={15} />,
   mcp: <Puzzle size={15} />,
   skills: <WandSparkles size={15} />,
+  automation: <Timer size={15} />,
   about: <Info size={15} />,
 }
 
@@ -52,6 +54,7 @@ export function SettingsView() {
           {tab === 'agent' && <AgentSettings />}
           {tab === 'mcp' && <McpSettings />}
           {tab === 'skills' && <SkillsSettings />}
+          {tab === 'automation' && <AutomationSettings />}
           {tab === 'about' && <AboutSettings />}
         </div>
       </ScrollArea>
