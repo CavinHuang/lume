@@ -98,13 +98,15 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 }
 
-function boot(): void {
+async function boot(): Promise<void> {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
   void initProxySettings().catch((error) => {
     console.error(`[代理配置] 初始化失败: ${error instanceof Error ? error.message : String(error)}`);
   });
   syncSharedSearchToolCredentials();
   if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
+    const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
+    setAutomationNotificationWriter(writeNotification);
     void startAutomationRunner().catch((error) => {
       console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -152,4 +154,4 @@ function boot(): void {
   });
 }
 
-boot();
+void boot();
