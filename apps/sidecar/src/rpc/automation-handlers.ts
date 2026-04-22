@@ -23,6 +23,7 @@ import {
   automationDeleteInputSchema,
   automationListRunsInputSchema,
   automationRunNowInputSchema,
+  automationToggleInputSchema,
   automationUpdateInputSchema
 } from "./schemas";
 import type { RpcHandler } from "./types";
@@ -84,6 +85,21 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
           AUTOMATION_IPC_CHANNELS.RUN_NOW
         ) as AutomationRunNowInput
       );
+    },
+    [AUTOMATION_IPC_CHANNELS.TOGGLE_JOB]: async (params) => {
+      const input = validateInput(
+        automationToggleInputSchema,
+        params,
+        AUTOMATION_IPC_CHANNELS.TOGGLE_JOB
+      ) as { id: string };
+      const jobs = listAutomationJobs();
+      const target = jobs.find((j) => j.id === input.id);
+      if (!target) {
+        throw new Error(`自动化任务不存在: ${input.id}`);
+      }
+      const updated = updateAutomationJob({ id: target.id, enabled: !target.enabled });
+      await refreshAutomationRunnerJobs();
+      return updated;
     }
   };
 }

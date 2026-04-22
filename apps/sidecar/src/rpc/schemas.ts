@@ -627,6 +627,10 @@ export const automationRunNowInputSchema = z.object({
   id: idSchema
 });
 
+export const automationToggleInputSchema = z.object({
+  id: idSchema
+});
+
 export const githubReleaseByTagInputSchema = z.object({
   tag: z.string().min(1)
 });
