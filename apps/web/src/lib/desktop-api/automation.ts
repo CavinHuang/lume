@@ -21,6 +21,7 @@ export const updateAutomationJob = (input: {
   name?: string
   prompt?: string
   enabled?: boolean
+  workspaceId?: string
   schedule?: {
     type: string
     cronExpr?: string
