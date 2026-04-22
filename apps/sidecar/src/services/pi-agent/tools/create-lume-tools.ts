@@ -8,9 +8,9 @@ import { resolveEnabledPiMemoryToolNames } from "./permissions/tool-policy";
 
 const BASE_PI_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
-  "cron_read",
-  "cron_set",
-  "cron_query"
+  "automation_read",
+  "automation_set",
+  "automation_query"
 ];
 
 export interface CreateLumePiToolsInput {

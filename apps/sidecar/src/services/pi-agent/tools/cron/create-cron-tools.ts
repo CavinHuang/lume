@@ -60,6 +60,13 @@ function parseSchedule(raw: unknown): AutomationSchedule {
   };
 }
 
+const PRESET_CRON_MAP: Record<string, string> = {
+  hourly: "0 * * * *",
+  daily: "0 9 * * *",
+  weekly: "0 9 * * 1",
+  monthly: "0 9 1 * *"
+};
+
 const ReadSchema = Type.Object({
   workspaceId: Type.Optional(Type.String()),
   id: Type.Optional(Type.String())
@@ -100,8 +107,8 @@ const QuerySchema = Type.Object({
 export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefinition[] {
   return [
     createSdkJsonResultTool({
-      name: "cron_read",
-      description: "读取定时任务配置（读取）",
+      name: "automation_read",
+      description: "读取自动化任务配置",
       inputSchema: {
         type: "object",
         properties: {
@@ -126,8 +133,8 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
       }
     }),
     createSdkJsonResultTool({
-      name: "cron_set",
-      description: "设置定时任务（创建/更新/删除/启停/立即执行）",
+      name: "automation_set",
+      description: "设置自动化任务（创建/更新/删除/启停/立即执行），支持预设频率（hourly/daily/weekly/monthly）",
       inputSchema: {
         type: "object",
         properties: {
@@ -138,7 +145,8 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
           enabled: { type: "boolean" },
           workspaceId: { type: "string" },
           threadId: { type: "string" },
-          schedule: { type: "object", properties: {} }
+          schedule: { type: "object", properties: {} },
+          preset: { type: "string", description: "预设频率: hourly | daily | weekly | monthly" },
         },
         required: ["action"]
       },
@@ -151,7 +159,12 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
         if (action === "create") {
           const name = asString(args.name);
           const prompt = asString(args.prompt);
-          const schedule = parseSchedule(args.schedule);
+          const preset = asString(args.preset);
+          let scheduleRaw = args.schedule;
+          if (preset && PRESET_CRON_MAP[preset]) {
+            scheduleRaw = { type: "cron", cronExpr: PRESET_CRON_MAP[preset] };
+          }
+          const schedule = parseSchedule(scheduleRaw);
           if (!name) throw new Error("创建任务缺少 name");
           if (!prompt) throw new Error("创建任务缺少 prompt");
           const created = createAutomationJob({
@@ -203,8 +216,8 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
       }
     }),
     createSdkJsonResultTool({
-      name: "cron_query",
-      description: "查询定时任务运行记录（查询）",
+      name: "automation_query",
+      description: "查询自动化任务运行记录",
       inputSchema: {
         type: "object",
         properties: {
