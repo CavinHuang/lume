@@ -23,6 +23,13 @@ const runningJobs = new Set<string>();
 const lastCronMinuteKeyByJob = new Map<string, string>();
 let runnerStarted = false;
 
+type NotificationWriter = (method: string, params: unknown) => void;
+let notificationWriter: NotificationWriter | null = null;
+
+export function setAutomationNotificationWriter(writer: NotificationWriter): void {
+  notificationWriter = writer;
+}
+
 function minuteKey(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -225,6 +232,13 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     finishedAt: Date.now()
   };
   appendRun(run);
+    if (notificationWriter) {
+      notificationWriter("automation:run-completed", {
+        run,
+        jobName: job.name,
+        jobEnabled: job.enabled
+      });
+    }
   return run;
 }
 
