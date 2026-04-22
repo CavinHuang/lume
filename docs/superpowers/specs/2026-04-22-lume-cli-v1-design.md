@@ -56,6 +56,51 @@ CLI 是 Lume 的一等运行面，不是桌面 app 的薄壳。桌面只是一�
 
 V1 只保留真正高频、能形成闭环的命令，不预先设计完整命令宇宙。
 
+## 技术栈建议
+
+V1 CLI 建议使用现有仓库主线技术栈实现，而不是为 CLI 单独引入第二语言栈。
+
+推荐方案：
+
+- 语言：`TypeScript`
+- 运行时：`Bun`
+- CLI 包位置：`packages/cli`
+- 命令解析：轻量命令库，优先 `cac`，`commander` 也可接受
+- 参数与输出校验：复用现有 `zod`
+- 共享类型：复用 `packages/shared`
+
+选择该方案的原因：
+
+1. 仓库当前主线已经是 `TypeScript + Bun`
+2. sidecar 现有业务能力主要位于 TypeScript 服务层，CLI 复用成本最低
+3. `zod` 与共享类型已经存在，适合继续作为 CLI 输入/输出契约基础
+4. V1 的目标是尽快验证命令面与 skill 调用模型，而不是开启新的运行时重写工程
+
+### 实现分层建议
+
+推荐分成三层：
+
+1. 命令层
+   - 负责 help、参数解析、stdout/stderr、退出码
+   - 仅处理 CLI 交互面
+
+2. 应用层
+   - 负责将命令翻译成 V1 用例
+   - 包括 `workspace create`、`thread create`、`thread send`、`file add`、`ask`
+   - 负责输入归一化、错误映射、输出 JSON 形状
+
+3. Headless service 层
+   - 负责真正的工作区、线程、文件、运行逻辑
+   - 优先复用现有 TypeScript service 能力
+   - 不应通过桌面 IPC 才能完成 CLI 行为
+
+### 明确约束
+
+1. CLI 不应直接依赖桌面 app IPC 作为唯一执行路径
+2. CLI 不应先用 Rust 或其他语言重写一遍 runtime
+3. CLI V1 优先走普通 Bun/JS 分发，不在第一版就追求单文件原生二进制
+4. 若现有 sidecar service 存在 UI / IPC 耦合，应优先抽出可 headless 复用的 service，而不是在 CLI 内重复实现逻辑
+
 ## V1 范围
 
 V1 只包含以下能力面：
