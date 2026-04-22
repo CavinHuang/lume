@@ -15,6 +15,7 @@ import {
 } from '@/atoms'
 import { sidecarCall, agentSend, openFileDialog } from '@/lib/desktop-api'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
+import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
 import { RecentThreads } from './RecentThreads'
@@ -30,6 +31,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const threads = useAtomValue(agentThreadsAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
+  const setWorkspaces = useSetAtom(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
   const setActiveTabId = useAtom(activeTabIdAtom)[1]
@@ -45,6 +47,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
   const [sending, setSending] = useState(false)
   const [pendingFiles, setPendingFiles] = useState<Array<{ filename: string; sourcePath: string }>>([])
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
   useEffect(() => {
     getEffectiveLumeConfig()
@@ -184,9 +187,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const hasText = editor?.getText().trim().length > 0
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-4 overflow-y-auto">
-      <div className="w-full max-w-xl flex flex-col items-center">
-        <h2 className="text-xl font-semibold text-foreground mb-6">
+    <div className="flex-1 flex flex-col items-center justify-center px-6 overflow-y-auto">
+      <div className="w-full max-w-2xl flex flex-col items-center">
+        <h2 className="text-2xl font-semibold text-foreground mb-8 text-center leading-snug">
           What should we work on
           {selectedWorkspace ? (
             <>
@@ -200,10 +203,11 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         </h2>
 
         <div className={cn(
-          'w-full rounded-2xl border border-border/60 bg-background shadow-sm transition-colors',
-          sending && 'opacity-60'
+          'w-full rounded-2xl border border-border/50 bg-background shadow-md transition-all duration-200',
+          'focus-within:border-border focus-within:shadow-lg',
+          sending && 'opacity-60 pointer-events-none'
         )}>
-          <div className="px-4 py-3">
+          <div className="px-4 pt-4 pb-2">
             <EditorContent editor={editor} />
           </div>
 
@@ -212,12 +216,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
               {pendingFiles.map((f, i) => (
                 <span
                   key={i}
-                  className="inline-flex items-center gap-1 text-[11px] bg-muted px-2 py-0.5 rounded"
+                  className="inline-flex items-center gap-1 text-[11px] bg-muted/80 px-2 py-1 rounded-md border border-border/40"
                 >
                   {f.filename}
                   <button
                     onClick={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
-                    className="text-muted-foreground hover:text-foreground"
+                    className="text-muted-foreground hover:text-foreground ml-0.5"
                   >
                     ×
                   </button>
@@ -226,12 +230,13 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
             </div>
           )}
 
-          <div className="flex items-center justify-between px-3 pb-2 gap-2">
-            <div className="flex items-center gap-1 min-w-0 flex-wrap">
+          <div className="flex items-center justify-between px-3 pb-3 pt-1 gap-2">
+            <div className="flex items-center gap-0.5 min-w-0 flex-wrap">
               <WorkspaceSelector
                 workspaces={workspaces}
                 selectedId={selectedWorkspaceId}
                 onSelect={handleSelectWorkspace}
+                onCreateWorkspaceClick={() => setCreateWorkspaceOpen(true)}
               />
               <WelcomeModelPicker
                 onModelChange={(ref, chId, mId) => {
@@ -242,16 +247,16 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
               />
               <button
                 onClick={handleAttach}
-                className="p-1.5 rounded-lg text-foreground/40 hover:text-foreground/70 hover:bg-muted/50 transition-colors"
+                className="p-1.5 rounded-lg text-foreground/35 hover:text-foreground/60 hover:bg-muted/60 transition-colors"
                 title="附加文件"
                 disabled={sending}
               >
-                <Paperclip size={15} />
+                <Paperclip size={14} />
               </button>
               <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
             </div>
             {sending ? (
-              <div className="p-1.5">
+              <div className="p-2">
                 <Loader2 size={14} className="animate-spin text-muted-foreground" />
               </div>
             ) : (
@@ -259,14 +264,14 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
                 onClick={handleSend}
                 disabled={!hasText}
                 className={cn(
-                  'p-1.5 rounded-lg transition-colors',
+                  'p-2 rounded-xl transition-all duration-150',
                   hasText
-                    ? 'bg-primary text-primary-foreground hover:opacity-90'
-                    : 'bg-muted text-muted-foreground cursor-not-allowed'
+                    ? 'bg-primary text-primary-foreground hover:opacity-85 shadow-sm'
+                    : 'bg-muted/60 text-muted-foreground/50 cursor-not-allowed'
                 )}
                 title="发送"
               >
-                <Send size={14} />
+                <Send size={13} />
               </button>
             )}
           </div>
@@ -274,6 +279,21 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
 
         <RecentThreads threads={recentThreads} onOpen={handleOpenThread} />
       </div>
+
+      <CreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onOpenChange={setCreateWorkspaceOpen}
+        onCreated={(workspace) => {
+          setWorkspaces((prev) => (prev.some((item) => item.id === workspace.id) ? prev : [...prev, workspace]))
+          setSelectedWorkspaceId(workspace.id)
+          setCurrentWorkspaceId(workspace.id)
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.id === '__welcome__' ? { ...tab, workspaceId: workspace.id } : tab
+            )
+          )
+        }}
+      />
     </div>
   )
 }

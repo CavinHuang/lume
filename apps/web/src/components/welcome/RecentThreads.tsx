@@ -29,7 +29,7 @@ export function RecentThreads({ threads, onOpen }: RecentThreadsProps) {
           <button
             key={thread.id}
             onClick={() => onOpen(thread)}
-            className="flex items-center justify-between px-3 py-2 rounded-lg border border-border/40 bg-background hover:bg-muted/30 transition-colors text-left"
+            className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-muted/30 transition-colors text-left"
           >
             <span className="text-[13px] text-foreground/80 truncate flex-1">{thread.title}</span>
             <span className="text-[11px] text-foreground/30 flex-shrink-0 ml-2">{relativeTime(thread.updatedAt)}</span>

@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { ChevronDown, Search, Cpu } from 'lucide-react'
+import { ChevronDown, Search } from 'lucide-react'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { buildModelSelectionGroups } from '@/components/model-selection/model-selection-state'
+import { buildModelSelectionGroups, getThreadSelectionSummary } from '@/components/model-selection/model-selection-state'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
+import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
 import type { ModelSelectionOption, ModelOptionGroup } from '@/components/model-selection/model-selection-state'
-import type { Channel } from '@lume/shared'
+import type { Channel, LumeConfigAgentDefaultStrategy } from '@lume/shared'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 
 interface WelcomeModelPickerProps {
@@ -15,22 +16,54 @@ export function WelcomeModelPicker({ onModelChange }: WelcomeModelPickerProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [channels, setChannels] = useState<Channel[]>([])
-  const [selectedLabel, setSelectedLabel] = useState<string>('默认模型')
+  const [channelsLoaded, setChannelsLoaded] = useState(false)
+  const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
+  const [activeChannelId, setActiveChannelId] = useState<string | undefined>()
+  const [activeModelRef, setActiveModelRef] = useState<string | undefined>()
   const menuRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const onModelChangeRef = useRef(onModelChange)
+  onModelChangeRef.current = onModelChange
+  const propagatedInitial = useRef(false)
 
   useEffect(() => {
-    listChannels().then(setChannels).catch(() => {})
-  }, [])
+    listChannels()
+      .then((items) => setChannels(items))
+      .catch(() => {})
+      .finally(() => setChannelsLoaded(true))
 
-  useEffect(() => {
     getEffectiveLumeConfig()
       .then((config) => {
-        if (config.models?.agent?.defaultModelRef) {
-          setSelectedLabel(config.models.agent.defaultModelRef.split('/').pop() ?? '默认模型')
+        const agent = config.models?.agent
+        if (agent) {
+          setDefaultStrategy(agent)
+          setActiveChannelId(agent.defaultChannelId)
+          setActiveModelRef(agent.defaultModelRef)
         }
       })
       .catch(() => {})
   }, [])
+
+  // 将默认模型传递给父组件
+  useEffect(() => {
+    if (propagatedInitial.current) return
+    if (!channelsLoaded || channels.length === 0 || !activeChannelId || !activeModelRef) return
+
+    const channel = channels.find(c => c.id === activeChannelId)
+    if (!channel) return
+
+    const model = channel.models.find(m =>
+      [m.id, `${channel.provider}/${m.id}`, `${channel.id}/${m.id}`].includes(activeModelRef!)
+    )
+    if (!model) return
+
+    onModelChangeRef.current(
+      `${channel.provider}/${model.id}`,
+      channel.id,
+      model.id
+    )
+    propagatedInitial.current = true
+  }, [channelsLoaded, channels, activeChannelId, activeModelRef])
 
   useEffect(() => {
     if (!open) return
@@ -41,7 +74,18 @@ export function WelcomeModelPicker({ onModelChange }: WelcomeModelPickerProps) {
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  const groups = useMemo(() => buildModelSelectionGroups({ channels }), [channels])
+  useEffect(() => {
+    if (open) {
+      setSearch('')
+      requestAnimationFrame(() => searchInputRef.current?.focus())
+    }
+  }, [open])
+
+  const groups = useMemo(() => buildModelSelectionGroups({
+    channels,
+    activeChannelId,
+    activeModelRef,
+  }), [channels, activeChannelId, activeModelRef])
 
   const filteredGroups: ModelOptionGroup[] = useMemo(() => {
     if (!search.trim()) return groups
@@ -56,59 +100,69 @@ export function WelcomeModelPicker({ onModelChange }: WelcomeModelPickerProps) {
       .filter((g) => g.options.length > 0)
   }, [groups, search])
 
+  const activeChannel = activeChannelId
+    ? channels.find(c => c.id === activeChannelId)
+    : undefined
+
+  const summary = useMemo(() => getThreadSelectionSummary({
+    channels,
+    channelsLoaded,
+    thread: undefined,
+    defaultStrategy,
+  }), [channels, channelsLoaded, defaultStrategy])
+
   const handleSelect = (option: ModelSelectionOption) => {
     onModelChange(option.modelRef, option.channelId, option.modelId)
-    setSelectedLabel(option.label)
+    setActiveChannelId(option.channelId)
+    setActiveModelRef(option.modelRef)
     setOpen(false)
-    setSearch('')
+  }
+
+  if (groups.length === 0 && !summary.label) {
+    return null
   }
 
   return (
-    <div className="relative" ref={menuRef}>
+    <div className="relative flex items-center gap-1.5" ref={menuRef}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 p-1.5 rounded-lg text-foreground/40 hover:text-foreground/70 hover:bg-muted/50 transition-colors text-[12px]"
-        title="选择模型"
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] text-foreground/60 hover:bg-muted/50 hover:text-foreground/80 transition-colors"
+        title="切换模型"
       >
-        <Cpu size={14} />
-        <span className="max-w-[80px] truncate">{selectedLabel}</span>
-        <ChevronDown size={10} />
+        {activeChannel && (
+          <ChannelProviderIcon provider={activeChannel.provider} size={11} />
+        )}
+        <span className="truncate max-w-[200px]">
+          {activeChannel && summary.label
+            ? `${activeChannel.name} / ${summary.label}`
+            : summary.label}
+        </span>
+        <ChevronDown size={10} className="text-foreground/40" />
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-50 overflow-hidden">
-          <div className="p-2 border-b border-border">
-            <div className="flex items-center gap-2 bg-muted/50 rounded-md px-2 py-1">
-              <Search size={12} className="text-muted-foreground" />
+        <div className="absolute bottom-full mb-1 left-0 z-50 min-w-[260px] max-h-[360px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg">
+          <div className="p-1.5 border-b border-border/40">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50">
+              <Search size={13} className="text-muted-foreground/50 shrink-0" />
               <input
+                ref={searchInputRef}
+                type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索模型..."
-                className="flex-1 bg-transparent outline-none text-[12px] placeholder:text-muted-foreground"
-                autoFocus
+                className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 outline-none"
               />
             </div>
           </div>
-          <div className="max-h-[200px] overflow-y-auto p-1">
-            {filteredGroups.map((group) => (
-              <div key={group.id}>
-                <div className="px-2 py-1 text-[10px] font-medium text-muted-foreground">{group.label}</div>
-                {group.options.map((option) => (
-                  <button
-                    key={option.modelRef}
-                    onClick={() => handleSelect(option)}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 text-[12px] rounded-md hover:bg-muted/50 text-left transition-colors"
-                  >
-                    <ChannelProviderIcon provider={group.provider} size={14} />
-                    <span className="truncate">{option.label}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
-            {filteredGroups.length === 0 && (
-              <div className="px-2 py-3 text-[12px] text-muted-foreground text-center">无匹配模型</div>
-            )}
-          </div>
+
+          {filteredGroups.length > 0 ? (
+            <ModelOptionList groups={filteredGroups} onSelect={handleSelect} />
+          ) : (
+            <div className="py-6 text-center text-xs text-muted-foreground/50">
+              没有匹配的模型
+            </div>
+          )}
         </div>
       )}
     </div>

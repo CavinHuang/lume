@@ -7,6 +7,13 @@ import {
 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
+import {
+  areAllWorkspacesExpanded,
+  reconcileExpandedWorkspaces,
+  toggleAllWorkspaces,
+  toggleWorkspaceExpansion,
+} from './left-sidebar-state'
 import {
   agentThreadsAtom,
   agentStreamingStatesAtom,
@@ -52,13 +59,23 @@ export function LeftSidebar() {
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const setOpenCommandPalette = useSetAtom(commandPaletteOpenAtom)
-  const [allExpanded, setAllExpanded] = useState(false)
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
+
+  const workspaceIds = workspaces.map((workspace) => workspace.id)
+  const allExpanded = areAllWorkspacesExpanded(workspaceIds, expandedWorkspaceIds)
 
   useEffect(() => {
     sidecarCall<AgentThreadMeta[]>('agent:list-threads', {})
       .then((r) => setThreads(Array.isArray(r) ? r : []))
       .catch(console.error)
   }, [setThreads])
+
+  useEffect(() => {
+    setExpandedWorkspaceIds((prev) =>
+      reconcileExpandedWorkspaces(workspaceIds, prev, currentWorkspaceId)
+    )
+  }, [currentWorkspaceId, workspaces])
 
   const openThread = (thread: AgentThreadMeta) => {
     setActiveTabId(thread.id)
@@ -128,18 +145,12 @@ export function LeftSidebar() {
   }
 
   // 工作区操作
-  const handleCreateWorkspace = async () => {
-    const name = prompt('工作区名称：')
-    if (!name?.trim()) return
-    try {
-      const ws = await sidecarCall<AgentWorkspace>('agent:create-workspace', { name: name.trim() })
-      setWorkspaces((prev) => [...prev, ws])
-      setCurrentWorkspaceId(ws.id)
-      toast.success(`已创建工作区「${ws.name}」`)
-    } catch (err) {
-      console.error('[LeftSidebar] 创建工作区失败:', err)
-      toast.error('创建失败')
-    }
+  const handleWorkspaceCreated = (ws: AgentWorkspace) => {
+    setWorkspaces((prev) => (prev.some((workspace) => workspace.id === ws.id) ? prev : [...prev, ws]))
+    setCurrentWorkspaceId(ws.id)
+    setExpandedWorkspaceIds((prev) =>
+      reconcileExpandedWorkspaces([...workspaceIds, ws.id], [...prev, ws.id], ws.id)
+    )
   }
 
   if (collapsed) {
@@ -215,7 +226,7 @@ export function LeftSidebar() {
         <div className="flex items-center justify-between px-2 mb-1">
           <span className="text-[13px] font-semibold text-foreground">工作区</span>
           <div className="flex items-center gap-1.5">
-            <button onClick={() => setAllExpanded((v) => !v)} className={cn("size-6 flex items-center justify-center rounded-[5px] transition-colors", allExpanded ? "text-foreground/60 bg-foreground/[0.06]" : "text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60")} title={allExpanded ? '收起全部' : '展开全部'}>
+            <button onClick={() => setExpandedWorkspaceIds((prev) => toggleAllWorkspaces(workspaceIds, prev))} className={cn("size-6 flex items-center justify-center rounded-[5px] transition-colors", allExpanded ? "text-foreground/60 bg-foreground/[0.06]" : "text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60")} title={allExpanded ? '收起全部' : '展开全部'}>
               <span className="relative size-[14px]">
                 <Maximize2 size={14} className={cn("absolute inset-0 transition-opacity duration-200", allExpanded ? "opacity-0" : "opacity-100")} />
                 <Minimize2 size={14} className={cn("absolute inset-0 transition-opacity duration-200", allExpanded ? "opacity-100" : "opacity-0")} />
@@ -224,7 +235,13 @@ export function LeftSidebar() {
             <button className="size-6 flex items-center justify-center rounded-[5px] text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors" title="筛选">
               <Filter size={14} />
             </button>
-            <button onClick={handleCreateWorkspace} className="size-6 flex items-center justify-center rounded-[5px] text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors" title="新建工作区">
+            <button
+              onClick={() => {
+                setCreateWorkspaceOpen(true)
+              }}
+              className="size-6 flex items-center justify-center rounded-[5px] text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors"
+              title="新建工作区"
+            >
               <FolderPlus size={14} />
             </button>
           </div>
@@ -235,7 +252,7 @@ export function LeftSidebar() {
       <ScrollArea className="flex-1 min-h-0">
         <div className="px-3 pb-3">
           {workspaces.map((ws) => {
-            const isExpanded = allExpanded || currentWorkspaceId === ws.id
+            const isExpanded = expandedWorkspaceIds.includes(ws.id)
             const wsThreads = threads.filter((t) => !t.workspaceId || t.workspaceId === ws.id)
             const count = wsThreads.length
             const wsGroups = groupByDate(wsThreads)
@@ -245,16 +262,17 @@ export function LeftSidebar() {
                 {/* 工作区标题行 */}
                 <button
                   onClick={() => {
-                    if (allExpanded) {
-                      setAllExpanded(false)
-                      setCurrentWorkspaceId(ws.id)
-                    } else {
-                      setCurrentWorkspaceId(isExpanded ? null : ws.id)
-                    }
+                    setCurrentWorkspaceId(ws.id)
+                    setExpandedWorkspaceIds((prev) => {
+                      if (currentWorkspaceId === ws.id) {
+                        return toggleWorkspaceExpansion(prev, ws.id)
+                      }
+                      return prev.includes(ws.id) ? prev : [...prev, ws.id]
+                    })
                   }}
                   className={cn(
                     'w-full flex items-center gap-2 px-2 py-[7px] rounded-lg text-[13px] transition-colors',
-                    isExpanded
+                    currentWorkspaceId === ws.id
                       ? 'bg-foreground/[0.08] text-foreground'
                       : 'text-foreground/70 hover:bg-foreground/[0.04]'
                   )}
@@ -319,6 +337,12 @@ export function LeftSidebar() {
           <ChevronLeft size={16} />
         </button>
       </div>
+
+      <CreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onOpenChange={setCreateWorkspaceOpen}
+        onCreated={handleWorkspaceCreated}
+      />
     </div>
   )
 }

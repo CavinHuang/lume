@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
 import { ChevronDown, FolderOpen, Plus, Search } from 'lucide-react'
-import { sidecarCall } from '@/lib/desktop-api'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { AgentWorkspace } from '@lume/shared'
 
@@ -9,9 +7,15 @@ interface WorkspaceSelectorProps {
   workspaces: AgentWorkspace[]
   selectedId: string | null
   onSelect: (id: string) => void
+  onCreateWorkspaceClick: () => void
 }
 
-export function WorkspaceSelector({ workspaces, selectedId, onSelect }: WorkspaceSelectorProps) {
+export function WorkspaceSelector({
+  workspaces,
+  selectedId,
+  onSelect,
+  onCreateWorkspaceClick,
+}: WorkspaceSelectorProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
@@ -30,20 +34,6 @@ export function WorkspaceSelector({ workspaces, selectedId, onSelect }: Workspac
   const filtered = search.trim()
     ? workspaces.filter((ws) => ws.name.toLowerCase().includes(search.toLowerCase()))
     : workspaces
-
-  const handleCreate = async () => {
-    const name = prompt('工作区名称：')
-    if (!name?.trim()) return
-    try {
-      const ws = await sidecarCall<AgentWorkspace>('agent:create-workspace', { name: name.trim() })
-      onSelect(ws.id)
-      setOpen(false)
-      setSearch('')
-      toast.success(`已创建工作区「${ws.name}」`)
-    } catch {
-      toast.error('创建失败')
-    }
-  }
 
   return (
     <div className="relative" ref={menuRef}>
@@ -91,7 +81,11 @@ export function WorkspaceSelector({ workspaces, selectedId, onSelect }: Workspac
           </div>
           <div className="border-t border-border p-1">
             <button
-              onClick={handleCreate}
+              onClick={() => {
+                setOpen(false)
+                setSearch('')
+                onCreateWorkspaceClick()
+              }}
               className="w-full flex items-center gap-2 px-2 py-1.5 text-[12px] rounded-md hover:bg-muted/50 text-muted-foreground text-left transition-colors"
             >
               <Plus size={12} />

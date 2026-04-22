@@ -13,6 +13,7 @@ import { agentWorkspacesAtom, currentWorkspaceIdAtom, agentWorkspaceCapabilities
 import { sidecarCall } from '@/lib/desktop-api'
 import type { AgentWorkspace } from '@lume/shared'
 import { toast } from 'sonner'
+import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 
 export function WorkspaceSelector() {
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
@@ -20,13 +21,11 @@ export function WorkspaceSelector() {
   const capabilities = useAtomValue(agentWorkspaceCapabilitiesAtom)
 
   const [open, setOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [createName, setCreateName] = useState('')
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
 
   const containerRef = useRef<HTMLDivElement>(null)
-  const createInputRef = useRef<HTMLInputElement>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
 
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
@@ -37,20 +36,12 @@ export function WorkspaceSelector() {
     const handle = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false)
-        setCreating(false)
         setEditingId(null)
       }
     }
     document.addEventListener('mousedown', handle)
     return () => document.removeEventListener('mousedown', handle)
   }, [open])
-
-  // 自动聚焦创建输入框
-  useEffect(() => {
-    if (creating) {
-      requestAnimationFrame(() => createInputRef.current?.focus())
-    }
-  }, [creating])
 
   // 自动聚焦编辑输入框
   useEffect(() => {
@@ -61,23 +52,6 @@ export function WorkspaceSelector() {
       })
     }
   }, [editingId])
-
-  // ——— 新建 ———
-  const handleCreate = async () => {
-    const name = createName.trim()
-    if (!name) { setCreating(false); return }
-    try {
-      const ws = await sidecarCall<AgentWorkspace>('agent:create-workspace', { name })
-      setWorkspaces((prev) => [...prev, ws])
-      setCurrentId(ws.id)
-      toast.success(`已创建工作区「${ws.name}」`)
-    } catch (err) {
-      console.error('[WorkspaceSelector] 创建失败:', err)
-      toast.error('创建失败')
-    }
-    setCreating(false)
-    setCreateName('')
-  }
 
   // ——— 重命名 ———
   const handleRename = async () => {
@@ -148,8 +122,8 @@ export function WorkspaceSelector() {
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                setCreating(true)
-                setCreateName('')
+                setOpen(false)
+                setCreateWorkspaceOpen(true)
               }}
               className="size-5 flex items-center justify-center rounded text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.06] transition-colors"
               title="新建工作区"
@@ -255,54 +229,36 @@ export function WorkspaceSelector() {
               )
             })}
 
-            {/* 内联新建输入 */}
-            {creating && (
-              <div className="flex items-center gap-1.5 px-3 py-[6px] mx-1">
-                <FolderOpen size={13} className="text-foreground/40 flex-shrink-0" />
-                <input
-                  ref={createInputRef}
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleCreate()
-                    if (e.key === 'Escape') { setCreating(false); setCreateName('') }
-                  }}
-                  placeholder="工作区名称..."
-                  className="flex-1 min-w-0 bg-transparent text-[12px] text-foreground border-b border-primary/50 outline-none placeholder:text-foreground/30"
-                  maxLength={50}
-                />
-                <button onClick={handleCreate} className="size-5 flex items-center justify-center text-green-500 hover:bg-green-500/10 rounded">
-                  <Check size={11} />
-                </button>
-                <button onClick={() => { setCreating(false); setCreateName('') }} className="size-5 flex items-center justify-center text-foreground/40 hover:bg-foreground/10 rounded">
-                  <X size={11} />
-                </button>
-              </div>
-            )}
-
-            {workspaces.length === 0 && !creating && (
+            {workspaces.length === 0 && (
               <div className="px-3 py-3 text-center text-[11px] text-foreground/30">暂无工作区</div>
             )}
           </div>
 
           {/* 底部新建入口 */}
-          {!creating && (
-            <div className="border-t border-border/40">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setCreating(true)
-                  setCreateName('')
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-foreground/50 hover:bg-foreground/[0.04] hover:text-foreground/70 transition-colors"
-              >
-                <Plus size={12} />
-                新建工作区
-              </button>
-            </div>
-          )}
+          <div className="border-t border-border/40">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setOpen(false)
+                setCreateWorkspaceOpen(true)
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-foreground/50 hover:bg-foreground/[0.04] hover:text-foreground/70 transition-colors"
+            >
+              <Plus size={12} />
+              新建工作区
+            </button>
+          </div>
         </div>
       )}
+
+      <CreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onOpenChange={setCreateWorkspaceOpen}
+        onCreated={(workspace) => {
+          setWorkspaces((prev) => (prev.some((item) => item.id === workspace.id) ? prev : [...prev, workspace]))
+          setCurrentId(workspace.id)
+        }}
+      />
     </div>
   )
 }

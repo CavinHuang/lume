@@ -11,14 +11,15 @@ import { cn } from '@/lib/utils'
 import { useAtom } from 'jotai'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom, agentWorkspaceCapabilitiesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { AgentWorkspace, WorkspaceCapabilities } from '@lume/shared'
-import { toast } from 'sonner'
+import type { WorkspaceCapabilities } from '@lume/shared'
+import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 
 export function WorkspacePicker() {
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [currentId, setCurrentId] = useAtom(currentWorkspaceIdAtom)
   const [capabilities, setCapabilities] = useAtom(agentWorkspaceCapabilitiesAtom)
   const [open, setOpen] = useState(false)
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
@@ -70,21 +71,6 @@ export function WorkspacePicker() {
     })
     return () => { cancelled = true }
   }, [open, workspaces, capabilities, setCapabilities])
-
-  const handleCreate = async () => {
-    const name = prompt('新工作区名称')
-    if (!name?.trim()) return
-    try {
-      const ws = await sidecarCall<AgentWorkspace>('agent:create-workspace', { name: name.trim() })
-      setWorkspaces((prev) => [...prev, ws])
-      setCurrentId(ws.id)
-      setOpen(false)
-      toast.success(`已创建工作区「${ws.name}」`)
-    } catch (err) {
-      console.error('[WorkspacePicker] 创建失败:', err)
-      toast.error('创建失败')
-    }
-  }
 
   return (
     <div className="relative flex items-center gap-1">
@@ -149,7 +135,10 @@ export function WorkspacePicker() {
           })}
           <div className="border-t border-border/40 mt-1 pt-1">
             <button
-              onClick={handleCreate}
+              onClick={() => {
+                setOpen(false)
+                setCreateWorkspaceOpen(true)
+              }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
             >
               <Plus size={12} />
@@ -158,6 +147,15 @@ export function WorkspacePicker() {
           </div>
         </div>
       )}
+
+      <CreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onOpenChange={setCreateWorkspaceOpen}
+        onCreated={(workspace) => {
+          setWorkspaces((prev) => (prev.some((item) => item.id === workspace.id) ? prev : [...prev, workspace]))
+          setCurrentId(workspace.id)
+        }}
+      />
     </div>
   )
 }
