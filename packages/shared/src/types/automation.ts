@@ -114,16 +114,12 @@ export interface AutomationRunNowInput {
 
 /** Automation IPC 通道 */
 export const AUTOMATION_IPC_CHANNELS = {
-  /** 获取任务列表 */
   LIST_JOBS: 'automation:list-jobs',
-  /** 创建任务 */
   CREATE_JOB: 'automation:create-job',
-  /** 更新任务 */
   UPDATE_JOB: 'automation:update-job',
-  /** 删除任务 */
   DELETE_JOB: 'automation:delete-job',
-  /** 获取运行记录 */
+  TOGGLE_JOB: 'automation:toggle-job',
   LIST_RUNS: 'automation:list-runs',
-  /** 立即执行任务 */
-  RUN_NOW: 'automation:run-now'
+  RUN_NOW: 'automation:run-now',
+  RUN_COMPLETED: 'automation:run-completed'
 } as const
