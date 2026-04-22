@@ -60,7 +60,7 @@ import {
 } from './mcp-resource-tools.js'
 
 // Scheduling
-import { CronCreateTool, CronDeleteTool, CronListTool, RemoteTriggerTool } from './cron-tools.js'
+import { AutomationCreateTool, AutomationListTool, AutomationDeleteTool, AutomationUpdateTool, AutomationRunNowTool } from './automation-tools.js'
 
 // LSP
 import { LSPTool } from './lsp-tool.js'
@@ -129,10 +129,11 @@ const ALL_TOOLS: ToolDefinition[] = [
   McpAuthTool,
 
   // Scheduling
-  CronCreateTool,
-  CronDeleteTool,
-  CronListTool,
-  RemoteTriggerTool,
+  AutomationCreateTool,
+  AutomationListTool,
+  AutomationDeleteTool,
+  AutomationUpdateTool,
+  AutomationRunNowTool,
 
   // LSP
   LSPTool,
@@ -259,10 +260,11 @@ export {
   UnsubscribePollingTool,
   McpAuthTool,
   // Scheduling
-  CronCreateTool,
-  CronDeleteTool,
-  CronListTool,
-  RemoteTriggerTool,
+  AutomationCreateTool,
+  AutomationListTool,
+  AutomationDeleteTool,
+  AutomationUpdateTool,
+  AutomationRunNowTool,
   // LSP
   LSPTool,
   // Config

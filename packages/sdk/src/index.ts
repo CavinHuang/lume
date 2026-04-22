@@ -138,10 +138,11 @@ export {
   McpAuthTool,
 
   // Scheduling
-  CronCreateTool,
-  CronDeleteTool,
-  CronListTool,
-  RemoteTriggerTool,
+  AutomationCreateTool,
+  AutomationListTool,
+  AutomationDeleteTool,
+  AutomationUpdateTool,
+  AutomationRunNowTool,
 
   // LSP
   LSPTool,
@@ -390,11 +391,7 @@ export {
   setMcpConnections,
 } from './tools/mcp-resource-tools.js'
 
-export {
-  getAllCronJobs,
-  clearCronJobs,
-} from './tools/cron-tools.js'
-export type { CronJob } from './tools/cron-tools.js'
+export type { AutomationJob } from './tools/automation-tools.js'
 
 export {
   getConfig,
