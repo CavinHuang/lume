@@ -4,6 +4,7 @@ export * from './system'
 export * from './channel'
 export * from './lume-config'
 export * from './skills-market'
+export * from './automation'
 export type {
   GeneralSettings,
   ThemeMode,
