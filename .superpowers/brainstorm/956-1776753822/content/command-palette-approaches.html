@@ -1,0 +1,151 @@
+<h2>命令面板布局方案</h2>
+<p class="subtitle">左侧栏线程搜索 — 三种视觉方案对比</p>
+
+<div class="cards">
+  <div class="card" data-choice="centered" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:var(--bg-secondary);padding:20px;min-height:280px;">
+      <!-- 方案 A: 居中弹窗 -->
+      <div style="position:relative;width:100%;height:100%;min-height:250px;display:flex;align-items:flex-start;justify-content:center;padding-top:20px;">
+        <div style="width:480px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;">
+          <!-- 搜索栏 -->
+          <div style="display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-color);gap:10px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <span style="color:var(--text-primary);flex:1;font-size:14px;">搜索线程...</span>
+            <kbd style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:11px;color:var(--text-secondary);">Esc</kbd>
+          </div>
+          <!-- 结果列表 -->
+          <div style="max-height:200px;overflow:auto;">
+            <div style="padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;margin:6px 8px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;color:var(--text-primary);">帮我重构 Auth 模块</span>
+              </div>
+              <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">工作区: Lume · 3 分钟前</div>
+            </div>
+            <div style="padding:8px 12px;margin:6px 8px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;color:var(--text-primary);">Auth 登录流程修复</span>
+              </div>
+              <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">工作区: Sidecar · 昨天</div>
+            </div>
+            <div style="padding:8px 12px;margin:6px 8px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;color:var(--text-primary);">数据库迁移脚本</span>
+              </div>
+              <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">工作区: Lume · 2 天前</div>
+            </div>
+          </div>
+          <!-- 底部提示 -->
+          <div style="padding:8px 16px;border-top:1px solid var(--border-color);display:flex;gap:12px;font-size:11px;color:var(--text-secondary);">
+            <span>↑↓ 导航</span>
+            <span>↵ 打开</span>
+            <span>Esc 关闭</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 居中弹窗（VS Code 风格）</h3>
+      <p>屏幕居中浮层，覆盖在内容上方，类似 VS Code / Cursor 的命令面板</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="sidebar" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:var(--bg-secondary);padding:20px;min-height:280px;">
+      <!-- 方案 B: 侧边栏内嵌面板 -->
+      <div style="position:relative;width:100%;height:100%;min-height:250px;display:flex;gap:2px;">
+        <!-- 模拟侧边栏 -->
+        <div style="width:200px;background:var(--bg-primary);border-right:1px solid var(--border-color);display:flex;flex-direction:column;">
+          <div style="padding:8px;border-bottom:1px solid var(--border-color);">
+            <div style="background:var(--bg-tertiary);border-radius:6px;padding:6px 8px;display:flex;align-items:center;gap:6px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <span style="font-size:12px;color:var(--text-primary);">auth</span>
+            </div>
+          </div>
+          <div style="flex:1;padding:4px;">
+            <div style="padding:6px 8px;background:var(--bg-tertiary);border-radius:4px;margin:2px 0;">
+              <div style="font-size:12px;color:var(--text-primary);">帮我重构 Auth 模块</div>
+              <div style="font-size:10px;color:var(--text-secondary);">Lume · 3分钟前</div>
+            </div>
+            <div style="padding:6px 8px;margin:2px 0;">
+              <div style="font-size:12px;color:var(--text-primary);">Auth 登录流程修复</div>
+              <div style="font-size:10px;color:var(--text-secondary);">Sidecar · 昨天</div>
+            </div>
+          </div>
+        </div>
+        <!-- 模拟主内容区 -->
+        <div style="flex:1;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;">
+          <span style="color:var(--text-secondary);font-size:12px;">主内容区域不变</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 侧边栏内嵌面板</h3>
+      <p>搜索框和结果直接在侧边栏内展示，替换线程列表，不遮挡主内容</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="popover" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:var(--bg-secondary);padding:20px;min-height:280px;">
+      <!-- 方案 C: 搜索按钮弹出 Popover -->
+      <div style="position:relative;width:100%;height:100%;min-height:250px;display:flex;gap:2px;">
+        <!-- 模拟侧边栏 -->
+        <div style="width:200px;background:var(--bg-primary);border-right:1px solid var(--border-color);display:flex;flex-direction:column;">
+          <div style="padding:8px;display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:6px;background:var(--bg-tertiary);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <span style="font-size:12px;color:var(--text-primary);">搜索</span>
+            </div>
+          </div>
+          <div style="padding:4px;">
+            <div style="font-size:11px;color:var(--text-secondary);padding:4px 8px;">Lume</div>
+            <div style="padding:4px 8px;font-size:12px;">帮我重构 Auth 模块</div>
+            <div style="padding:4px 8px;font-size:12px;">数据库迁移脚本</div>
+          </div>
+        </div>
+        <!-- Popover 弹出 -->
+        <div style="position:absolute;left:210px;top:10px;width:360px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.35);overflow:hidden;">
+          <div style="display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border-color);gap:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <span style="color:var(--text-primary);flex:1;font-size:13px;">auth</span>
+            <kbd style="background:var(--bg-tertiary);padding:2px 5px;border-radius:3px;font-size:10px;color:var(--text-secondary);">Esc</kbd>
+          </div>
+          <div style="max-height:160px;">
+            <div style="padding:7px 12px;background:var(--bg-tertiary);margin:4px 6px;border-radius:6px;">
+              <div style="font-size:12px;color:var(--text-primary);">帮我重构 Auth 模块</div>
+              <div style="font-size:10px;color:var(--text-secondary);">Lume · 3分钟前</div>
+            </div>
+            <div style="padding:7px 12px;margin:4px 6px;border-radius:6px;">
+              <div style="font-size:12px;color:var(--text-primary);">Auth 登录流程修复</div>
+              <div style="font-size:10px;color:var(--text-secondary);">Sidecar · 昨天</div>
+            </div>
+          </div>
+          <div style="padding:6px 12px;border-top:1px solid var(--border-color);font-size:10px;color:var(--text-secondary);display:flex;gap:10px;">
+            <span>↑↓ 导航</span><span>↵ 打开</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Popover 锚点弹出</h3>
+      <p>从侧边栏搜索按钮位置弹出浮层，也支持 Ctrl+K 居中弹出</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:20px;">
+  <div class="pros">
+    <h4>方案 A (居中) 优势</h4>
+    <ul>
+      <li>用户最熟悉的模式 (VS Code / Cursor)</li>
+      <li>不依赖侧边栏状态（折叠时也能用）</li>
+      <li>展示空间大，可扩展更多命令</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>方案 A 劣势</h4>
+    <ul>
+      <li>遮挡当前内容</li>
+      <li>与侧边栏搜索按钮的关系需额外设计</li>
+    </ul>
+  </div>
+</div>

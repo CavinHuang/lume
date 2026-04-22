@@ -1,0 +1,104 @@
+<h2>设计第三段：AI 分析引擎（Pattern Analyzer）</h2>
+<p class="subtitle">系统的"大脑"——从事件流中发现自动化机会</p>
+
+<div class="section">
+  <h3>两种检测机制</h3>
+  <p>分析引擎同时运行两种检测：结构化的频率统计 + AI 语义理解，互为补充。</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">分析引擎工作流程</div>
+  <div class="mockup-body" style="padding: 1.5rem;">
+
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+      <div style="flex:1; background:#f0f8ff; padding: 1rem; border-radius: 8px;">
+        <strong style="color:#2a6aff;">① 频率检测器</strong><br>
+        <span style="font-size:12px; color:#666;">结构化规则，实时统计</span>
+      </div>
+      <div style="flex:1; background:#f0fff8; padding: 1rem; border-radius: 8px;">
+        <strong style="color:#2aaf6a;">② 语义分析器</strong><br>
+        <span style="font-size:12px; color:#666;">LLM 理解意图和痛点</span>
+      </div>
+    </div>
+
+    <div style="text-align:center; margin: 0.5rem 0; color: #999;">▼ 汇聚 ▼</div>
+
+    <div style="background:#f8f0ff; padding: 1rem; border-radius: 8px; text-align: center;">
+      <strong style="color:#8a2af6;">③ 建议生成器</strong><br>
+      <span style="font-size:12px; color:#666;">合并检测结果，生成自动化建议</span>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 1.5rem;">
+  <h3>① 频率检测器（Frequency Detector）</h3>
+  <p>不依赖 LLM，用结构化规则统计重复模式。轻量、快速、确定性高。</p>
+  <div style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 1rem; border-radius: 8px;">
+    <strong>检测逻辑：</strong><br>
+    • 滑动窗口内（7天），统计相似事件序列出现次数<br>
+    • 相似度判定：同 source + 同 type + payload 关键字段匹配<br>
+    • 触发阈值：同一模式出现 ≥ 3 次，且跨越 ≥ 2 个不同日期<br>
+    • 输出：{ pattern, count, firstSeen, lastSeen, samplePayloads }<br><br>
+    <strong>示例：</strong><br>
+    用户连续 3 天在早上 9-10 点发送类似消息 "帮我总结 PR"<br>
+    → 频率检测器命中 → 输出重复模式
+  </div>
+</div>
+
+<div class="section" style="margin-top: 1.5rem;">
+  <h3>② 语义分析器（Semantic Analyzer）</h3>
+  <p>利用 LLM 理解对话上下文，识别用户表达的痛点和隐含需求。</p>
+  <div style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 1rem; border-radius: 8px;">
+    <strong>触发时机：</strong><br>
+    • Agent 对话结束时（消息流结束），对最近对话做一次分析<br>
+    • 不是实时分析，避免频繁调用 LLM<br><br>
+    <strong>分析内容：</strong><br>
+    • 用户是否表达了重复性工作的不满<br>
+    • 用户是否在多次对话中请求类似任务<br>
+    • 是否存在可以用定时/事件触发替代的手动操作<br><br>
+    <strong>输出：</strong><br>
+    { insight, suggestedAutomation, confidence, evidence }<br>
+    confidence < 0.6 的建议直接丢弃，避免噪音
+  </div>
+</div>
+
+<div class="section" style="margin-top: 1.5rem;">
+  <h3>③ 建议生成器（Suggestion Generator）</h3>
+  <p>合并两个检测器的结果，去重后生成最终建议。</p>
+  <div style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 1rem; border-radius: 8px;">
+    <strong>Suggestion 接口：</strong><br><br>
+    interface AutomationSuggestion {<br>
+    &nbsp;&nbsp;id: string;<br>
+    &nbsp;&nbsp;workspaceId: string;<br>
+    &nbsp;&nbsp;title: string;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// "每天早上总结 GitHub PR"</span><br>
+    &nbsp;&nbsp;description: string;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// 面向用户的解释</span><br>
+    &nbsp;&nbsp;triggerType: 'cron' | 'event';&nbsp;&nbsp;&nbsp;<span style="color:#666;">// 建议的触发类型</span><br>
+    &nbsp;&nbsp;triggerConfig: TriggerConfig;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// 触发配置</span><br>
+    &nbsp;&nbsp;actionPrompt: string;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// Agent 执行的 prompt</span><br>
+    &nbsp;&nbsp;evidence: string[];&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// 为什么建议这个自动化</span><br>
+    &nbsp;&nbsp;source: 'frequency' | 'semantic' | 'both';<br>
+    &nbsp;&nbsp;confidence: number;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666;">// 0-1</span><br>
+    &nbsp;&nbsp;status: 'pending' | 'accepted' | 'dismissed';<br>
+    &nbsp;&nbsp;createdAt: number;<br>
+    }
+  </div>
+</div>
+
+<div class="section" style="margin-top: 1.5rem;">
+  <h3>节流与降噪策略</h3>
+  <div class="pros-cons">
+    <div class="pros"><h4>做</h4><ul>
+      <li>频率检测器 5 分钟轮询一次（非实时）</li>
+      <li>语义分析器每次对话结束最多分析一次</li>
+      <li>同一工作区每天最多生成 3 条建议</li>
+      <li>用户 dismiss 的模式 14 天内不再建议</li>
+      <li>confidence < 0.6 自动丢弃</li>
+    </ul></div>
+    <div class="cons"><h4>不做</h4><ul>
+      <li>不做实时分析（太重）</li>
+      <li>不做跨工作区的模式检测</li>
+      <li>不做用户画像/习惯学习</li>
+      <li>不做复杂的 ML 模型训练</li>
+    </ul></div>
+  </div>
+</div>

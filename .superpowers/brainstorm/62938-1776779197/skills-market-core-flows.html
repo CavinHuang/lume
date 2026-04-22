@@ -1,0 +1,148 @@
+<h2>Core Pages and Key Flows</h2>
+<p class="subtitle">Phase 1 should optimize three everyday jobs: discover, install from GitHub, and manage what is already installed</p>
+
+<div class="section">
+  <div class="cards">
+    <div class="card" data-choice="discover" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>1. Discover</h3>
+        <p>User lands in Skills, browses trusted recommendations, filters by use case, and opens a detail view.</p>
+      </div>
+    </div>
+    <div class="card" data-choice="github" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>2. Install from GitHub</h3>
+        <p>User pastes a repo URL, Lume validates it, shows a review sheet, then installs to a workspace.</p>
+      </div>
+    </div>
+    <div class="card" data-choice="manage" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>3. Manage installed skills</h3>
+        <p>User sees install state, workspace scope, update status, and can disable, remove, or inspect source.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Recommended page structure</div>
+    <div class="mockup-body">
+      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px;">
+        <div style="padding:14px; border-radius:14px; background:#fff; border:1px solid #e4dfd5;">
+          <div class="label">Page A</div>
+          <h3 style="margin-top:6px;">Discover</h3>
+          <p style="font-size:13px;">Search, featured skills, trusted badges, categories, and source filters.</p>
+        </div>
+        <div style="padding:14px; border-radius:14px; background:#fff; border:1px solid #e4dfd5;">
+          <div class="label">Page B</div>
+          <h3 style="margin-top:6px;">Skill Detail</h3>
+          <p style="font-size:13px;">What it does, example prompts, files preview, source identity, install CTA.</p>
+        </div>
+        <div style="padding:14px; border-radius:14px; background:#fff; border:1px solid #e4dfd5;">
+          <div class="label">Page C</div>
+          <h3 style="margin-top:6px;">GitHub Install Sheet</h3>
+          <p style="font-size:13px;">Paste URL, fetch metadata, inspect risk summary, choose install target.</p>
+        </div>
+        <div style="padding:14px; border-radius:14px; background:#fff; border:1px solid #e4dfd5;">
+          <div class="label">Page D</div>
+          <h3 style="margin-top:6px;">Installed</h3>
+          <p style="font-size:13px;">Enabled state, workspace bindings, source status, updates, remove actions.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">GitHub install sheet</div>
+      <div class="mockup-body">
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <input class="mock-input" value="https://github.com/acme/agent-skills/tree/main/prompt-library" />
+          <div style="padding:12px; border-radius:12px; background:#f4efe6;">Repository recognized</div>
+          <div style="padding:12px; border-radius:12px; background:#fff; border:1px solid #e4dfd5;">
+            <strong>Maintainer</strong><br>
+            acme / last updated 3 days ago
+          </div>
+          <div style="padding:12px; border-radius:12px; background:#fff; border:1px solid #e4dfd5;">
+            <strong>Detected contents</strong><br>
+            4 skills, 2 scripts, SKILL.md files found
+          </div>
+          <div style="padding:12px; border-radius:12px; background:#fbf0d8; border:1px solid #e9d19a;">
+            <strong>Review required</strong><br>
+            Contains scripts. Read before install.
+          </div>
+          <button class="mock-button" style="background:#1d5c4b;">Continue review</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mockup">
+      <div class="mockup-header">Installed management</div>
+      <div class="mockup-body">
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div style="padding:12px; border-radius:12px; background:#fff; border:1px solid #e4dfd5;">
+            <div style="display:flex; justify-content:space-between; gap:12px;">
+              <div>
+                <strong>PowerPoint</strong><br>
+                <span style="font-size:12px; color:#6d665d;">Enabled in workspace: design-lab</span>
+              </div>
+              <div style="font-size:12px; color:#1d5c4b;">Up to date</div>
+            </div>
+          </div>
+          <div style="padding:12px; border-radius:12px; background:#fff; border:1px solid #e4dfd5;">
+            <div style="display:flex; justify-content:space-between; gap:12px;">
+              <div>
+                <strong>skill-installer</strong><br>
+                <span style="font-size:12px; color:#6d665d;">Built-in • Always trusted</span>
+              </div>
+              <div style="font-size:12px; color:#1d5c4b;">Pinned</div>
+            </div>
+          </div>
+          <div style="padding:12px; border-radius:12px; background:#fff; border:1px solid #e4dfd5;">
+            <div style="display:flex; justify-content:space-between; gap:12px;">
+              <div>
+                <strong>acme-writing-pack</strong><br>
+                <span style="font-size:12px; color:#6d665d;">GitHub • Review required for update</span>
+              </div>
+              <div style="font-size:12px; color:#8a5a2b;">Update available</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>Interaction principles</h4>
+      <ul>
+        <li>Discover and Installed are separate mental modes</li>
+        <li>Install from GitHub is a guided sheet, not a raw form</li>
+        <li>Risk language is plain, not technical jargon</li>
+        <li>Ordinary users always know what workspace they are installing into</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>What we avoid</h4>
+      <ul>
+        <li>No open publishing flow in Phase 1</li>
+        <li>No dense package-manager style table as the default view</li>
+        <li>No silent trust escalation for third-party sources</li>
+        <li>No mixing source subscription controls into the main browse flow</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:14px; padding:14px 16px; border-radius:14px; background:#fbf3e3; border:1px solid #ead7b2;">
+  <div style="font-weight:700; color:#7a5520;">Recommendation</div>
+  <div style="font-size:13px; margin-top:6px; color:#6b5737;">
+    Keep Phase 1 to four concrete surfaces: Discover, Detail, GitHub Install Sheet, Installed.
+    Everything else can be a sub-sheet or future iteration.
+  </div>
+</div>

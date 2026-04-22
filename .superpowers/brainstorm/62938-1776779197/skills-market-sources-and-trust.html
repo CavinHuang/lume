@@ -1,0 +1,99 @@
+<h2>Sources, Trust, and Install Flow</h2>
+<p class="subtitle">Phase 1 should feel simple for users, but internally model every listing as a source-backed package</p>
+
+<div class="section">
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">Unified source model</div>
+      <div class="mockup-body">
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div style="padding:12px; border-radius:12px; background:#e8f1ed; border:1px solid #c9ddd4;">
+            <div style="font-weight:700;">Built-in Source</div>
+            <div style="font-size:13px; margin-top:4px;">Ships with the app. Highest trust. Best default recommendations.</div>
+          </div>
+          <div style="padding:12px; border-radius:12px; background:#f7f1e8; border:1px solid #e7dac5;">
+            <div style="font-weight:700;">Local Source</div>
+            <div style="font-size:13px; margin-top:4px;">Existing skills already present on disk. Importable into a workspace.</div>
+          </div>
+          <div style="padding:12px; border-radius:12px; background:#f7f1e8; border:1px solid #e7dac5;">
+            <div style="font-weight:700;">GitHub Source</div>
+            <div style="font-size:13px; margin-top:4px;">User installs from repo URL. Review required before trust is granted.</div>
+          </div>
+          <div style="padding:12px; border-radius:12px; background:#fff8ef; border:1px dashed #d7c5a1;">
+            <div style="font-weight:700;">Subscribed Market Source</div>
+            <div style="font-size:13px; margin-top:4px;">Future: official/team/community catalogs, all treated as pluggable sources.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mockup">
+      <div class="mockup-header">Trust levels</div>
+      <div class="mockup-body">
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div style="padding:11px 12px; border-radius:12px; background:#dceee8; color:#1d5c4b; font-weight:700;">Trusted</div>
+          <div style="padding:11px 12px; border-radius:12px; background:#fbf0d8; color:#7a5a1f; font-weight:700;">Review Required</div>
+          <div style="padding:11px 12px; border-radius:12px; background:#f8e1df; color:#8a3b37; font-weight:700;">Blocked by Default</div>
+        </div>
+        <div style="font-size:13px; margin-top:14px;">
+          Ordinary users mostly see trusted results first. Third-party market sources stay blocked unless the user explicitly enables advanced source access.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Recommended install confirmation</div>
+    <div class="mockup-body">
+      <div style="display:flex; gap:16px;">
+        <div style="flex:1; border:1px solid #e4dfd5; border-radius:14px; padding:16px; background:#fff;">
+          <div class="label">Step 1</div>
+          <h3 style="margin-top:6px;">Source summary</h3>
+          <p>Show where this skill comes from, who maintains it, and whether it is built-in, local, GitHub, or subscribed market content.</p>
+        </div>
+        <div style="flex:1; border:1px solid #e4dfd5; border-radius:14px; padding:16px; background:#fff;">
+          <div class="label">Step 2</div>
+          <h3 style="margin-top:6px;">Risk summary</h3>
+          <p>Show scripts, file operations, external tools, and any network expectations in plain language before install.</p>
+        </div>
+        <div style="flex:1; border:1px solid #e4dfd5; border-radius:14px; padding:16px; background:#fff;">
+          <div class="label">Step 3</div>
+          <h3 style="margin-top:6px;">Install target</h3>
+          <p>Let the user choose workspace scope, then install. For blocked sources, send them through a stricter enable flow first.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="cards">
+    <div class="card" data-choice="a" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>A. Soft trust</h3>
+        <p>GitHub skills install with a warning sheet, but no global source gate.</p>
+      </div>
+    </div>
+    <div class="card" data-choice="b" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>B. Source gate</h3>
+        <p>Third-party sources are disabled by default. User must explicitly enable advanced sources first.</p>
+      </div>
+    </div>
+    <div class="card" data-choice="c" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>C. Repo-only exception</h3>
+        <p>GitHub install is allowed with review, but subscribed third-party markets stay blocked until enabled.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:14px; padding:14px 16px; border-radius:14px; background:#fbf3e3; border:1px solid #ead7b2;">
+  <div style="font-weight:700; color:#7a5520;">My recommendation</div>
+  <div style="font-size:13px; margin-top:6px; color:#6b5737;">
+    Use C for Phase 1. It supports the GitHub path you want without making generic third-party markets feel casually safe.
+  </div>
+</div>
