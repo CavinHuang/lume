@@ -200,6 +200,7 @@ export function LeftSidebar() {
           }
 
           setCurrentWorkspaceId(workspaceId)
+          setTabs((previous) => retargetWelcomeTabIfActive(previous, activeTabId, workspaceId))
         }}
         onToggleWorkspace={(workspaceId) => {
           setExpandedWorkspaceIds((previous) => {
@@ -246,4 +247,16 @@ export function upsertWelcomeTab(tabs: Tab[], currentWorkspaceId: string | null)
   }
 
   return tabs.map((tab, index) => (index === existingIndex ? { ...tab, workspaceId } : tab))
+}
+
+export function retargetWelcomeTabIfActive(
+  tabs: Tab[],
+  activeTabId: string | null,
+  workspaceId: string | null,
+): Tab[] {
+  if (activeTabId !== '__welcome__') {
+    return tabs
+  }
+
+  return upsertWelcomeTab(tabs, workspaceId)
 }
