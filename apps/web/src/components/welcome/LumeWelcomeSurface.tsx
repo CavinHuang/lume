@@ -4,6 +4,8 @@ import { ArrowUpRight, Loader2, Paperclip, Send } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { RecentThreads } from './RecentThreads'
+import { LumeComposer } from '@/components/composer/LumeComposer'
+import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import type {
   WelcomeSurfaceFileItem,
   WelcomeSurfacePanel,
@@ -48,6 +50,10 @@ export function LumeWelcomeSurface({
   onChoosePromptSeed,
   onRemovePendingFile,
 }: LumeWelcomeSurfaceProps) {
+  const composerState = deriveLumeComposerState({
+    text: hasText ? 'content' : '',
+    disabled: sending,
+  })
   const recentThreadsPanel = requirePanelById(model.lowerPanels, 'recent-threads')
   const workflowsPanel = requirePanelById(model.lowerPanels, 'recommended-workflows')
   const recentFilesPanel = requirePanelById(model.lowerPanels, 'recent-files')
@@ -135,41 +141,39 @@ export function LumeWelcomeSurface({
               </div>
             </div>
 
-            <div
-              className={cn(
-                'mt-4 rounded-[1.55rem] border border-[color:color-mix(in_oklab,var(--border-strong)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_92%,transparent)] transition-opacity',
-                sending && 'opacity-70',
-              )}
-            >
-              <div className="px-4 pt-4 pb-2">
+            <LumeComposer
+              tone={composerState.tone}
+              scale="hero"
+              className={cn('mt-4', sending && 'opacity-90')}
+              editorSlot={
                 <EditorContent
                   editor={editor}
-                  className="[&_.ProseMirror]:min-h-[110px] [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none [&_.ProseMirror]:placeholder:text-[var(--text-3)]"
+                  className="[&_.ProseMirror]:min-h-[110px] [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
                 />
-              </div>
-
-              {pendingFiles.length > 0 && (
-                <div className="flex flex-wrap gap-2 px-4 pb-3">
-                  {pendingFiles.map((file, index) => (
-                    <span
-                      key={`${file.sourcePath}:${index}`}
-                      className="inline-flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_60%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-1.5 text-[12px] text-[var(--text-2)]"
-                    >
-                      <span className="max-w-[180px] truncate">{file.filename}</span>
-                      <button
-                        type="button"
-                        onClick={() => onRemovePendingFile(index)}
-                        className="text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+              }
+              supportingContent={
+                pendingFiles.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 px-4 pb-3">
+                    {pendingFiles.map((file, index) => (
+                      <span
+                        key={`${file.sourcePath}:${index}`}
+                        className="inline-flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_60%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-1.5 text-[12px] text-[var(--text-2)]"
                       >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 pb-3 pt-3">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="max-w-[180px] truncate">{file.filename}</span>
+                        <button
+                          type="button"
+                          onClick={() => onRemovePendingFile(index)}
+                          className="text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null
+              }
+              leadingTools={
+                <>
                   <button
                     type="button"
                     onClick={onAttach}
@@ -180,9 +184,10 @@ export function LumeWelcomeSurface({
                     添加文件
                   </button>
                   {thinkingLevelPicker}
-                </div>
-
-                {sending ? (
+                </>
+              }
+              actionSlot={
+                sending ? (
                   <div className="inline-flex h-11 items-center gap-2 rounded-full bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] px-5 text-[13px] font-medium text-[var(--brand-foreground)]">
                     <Loader2 size={15} className="animate-spin" />
                     正在发送
@@ -191,10 +196,10 @@ export function LumeWelcomeSurface({
                   <button
                     type="button"
                     onClick={onSend}
-                    disabled={!hasText}
+                    disabled={!composerState.canSend}
                     className={cn(
                       'inline-flex h-11 items-center gap-2 rounded-full px-5 text-[13px] font-medium transition-all',
-                      hasText
+                      composerState.canSend
                         ? 'bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)] shadow-[0_18px_34px_-24px_color-mix(in_oklab,var(--brand)_82%,transparent)] hover:translate-y-[-1px]'
                         : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
                     )}
@@ -202,9 +207,9 @@ export function LumeWelcomeSurface({
                     发送
                     <Send size={14} />
                   </button>
-                )}
-              </div>
-            </div>
+                )
+              }
+            />
           </div>
         </section>
       </div>

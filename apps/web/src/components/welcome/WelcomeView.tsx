@@ -45,6 +45,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [modelId, setModelId] = useState<string | undefined>()
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
   const [sending, setSending] = useState(false)
+  const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<Array<{ filename: string; sourcePath: string }>>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
@@ -99,6 +100,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         return false
       },
     },
+    onCreate({ editor }) {
+      setEditorText(editor.getText())
+    },
+    onUpdate({ editor }) {
+      setEditorText(editor.getText())
+    },
   })
 
   const handleSend = async () => {
@@ -145,6 +152,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         userMessage: text,
         thinkingLevel,
       } as any)
+      editor.commands.clearContent()
+      setEditorText('')
+      setPendingFiles([])
 
       setTabs((prev) => {
         const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
@@ -208,7 +218,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     editor.commands.focus('end')
   }
 
-  const hasText = editor?.getText().trim().length > 0
+  const hasText = editorText.trim().length > 0
 
   return (
     <>
