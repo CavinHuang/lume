@@ -6,7 +6,6 @@ import { Send, Square, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { cn } from '@/lib/utils'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
 import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, agentSDKMessagesAtom } from '@/atoms'
@@ -18,7 +17,7 @@ import type { MentionItem, MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { SkillMeta, WorkspaceMcpConfig } from '@lume/shared'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
-import { LumeComposer } from '@/components/composer/LumeComposer'
+import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 
 interface AgentInputProps {
@@ -208,8 +207,8 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
   })
 
   const composerState = deriveLumeComposerState({
-    text: editorText,
-    disabled,
+    hasText: editorText.trim().length > 0,
+    mode: disabled ? 'streaming' : 'idle',
   })
 
   const handleSend = async () => {
@@ -307,12 +306,10 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
               type="button"
               onClick={handleSend}
               disabled={!composerState.canSend}
-              className={cn(
-                'inline-flex h-10 items-center gap-2 rounded-full px-4 text-[12px] font-medium transition-all',
-                composerState.canSend
-                  ? 'bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)] shadow-[0_18px_34px_-24px_color-mix(in_oklab,var(--brand)_82%,transparent)] hover:translate-y-[-1px]'
-                  : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
-              )}
+              className={getLumeComposerPrimaryActionClassName({
+                enabled: composerState.canSend,
+                size: 'compact',
+              })}
               title="发送"
             >
               发送

@@ -4,7 +4,7 @@ import { ArrowUpRight, Loader2, Paperclip, Send } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { RecentThreads } from './RecentThreads'
-import { LumeComposer } from '@/components/composer/LumeComposer'
+import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import type {
   WelcomeSurfaceFileItem,
@@ -51,8 +51,8 @@ export function LumeWelcomeSurface({
   onRemovePendingFile,
 }: LumeWelcomeSurfaceProps) {
   const composerState = deriveLumeComposerState({
-    text: hasText ? 'content' : '',
-    disabled: sending,
+    hasText,
+    mode: sending ? 'busy' : 'idle',
   })
   const recentThreadsPanel = requirePanelById(model.lowerPanels, 'recent-threads')
   const workflowsPanel = requirePanelById(model.lowerPanels, 'recommended-workflows')
@@ -187,7 +187,7 @@ export function LumeWelcomeSurface({
                 </>
               }
               actionSlot={
-                sending ? (
+                composerState.showBusy ? (
                   <div className="inline-flex h-11 items-center gap-2 rounded-full bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] px-5 text-[13px] font-medium text-[var(--brand-foreground)]">
                     <Loader2 size={15} className="animate-spin" />
                     正在发送
@@ -197,12 +197,10 @@ export function LumeWelcomeSurface({
                     type="button"
                     onClick={onSend}
                     disabled={!composerState.canSend}
-                    className={cn(
-                      'inline-flex h-11 items-center gap-2 rounded-full px-5 text-[13px] font-medium transition-all',
-                      composerState.canSend
-                        ? 'bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)] shadow-[0_18px_34px_-24px_color-mix(in_oklab,var(--brand)_82%,transparent)] hover:translate-y-[-1px]'
-                        : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
-                    )}
+                    className={getLumeComposerPrimaryActionClassName({
+                      enabled: composerState.canSend,
+                      size: 'hero',
+                    })}
                   >
                     发送
                     <Send size={14} />

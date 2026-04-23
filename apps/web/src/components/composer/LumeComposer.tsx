@@ -17,6 +17,8 @@ interface LumeComposerProps {
   actionSlot: ReactNode
 }
 
+type LumeComposerActionSize = 'compact' | 'hero'
+
 const toneStyles: Record<
   LumeComposerTone,
   {
@@ -94,6 +96,27 @@ const scaleClasses: Record<
     editor: 'px-4 pt-4 pb-2',
     footer: 'px-3 pb-3 pt-3',
   },
+}
+
+const actionSizeClasses: Record<LumeComposerActionSize, string> = {
+  compact: 'h-10 px-4 text-[12px]',
+  hero: 'h-11 px-5 text-[13px]',
+}
+
+export function getLumeComposerPrimaryActionClassName({
+  enabled,
+  size = 'compact',
+}: {
+  enabled: boolean
+  size?: LumeComposerActionSize
+}) {
+  return cn(
+    'inline-flex items-center gap-2 rounded-full font-medium transition-all',
+    actionSizeClasses[size],
+    enabled
+      ? 'bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)] shadow-[0_18px_34px_-24px_color-mix(in_oklab,var(--brand)_82%,transparent)] hover:translate-y-[-1px]'
+      : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
+  )
 }
 
 export function LumeComposer({

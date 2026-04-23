@@ -1,31 +1,44 @@
 export type LumeComposerTone = 'idle' | 'ready' | 'streaming'
+export type LumeComposerMode = 'idle' | 'busy' | 'streaming'
 
 interface DeriveLumeComposerStateInput {
-  text: string
-  disabled?: boolean
+  hasText: boolean
+  mode?: LumeComposerMode
 }
 
-interface LumeComposerState {
+export interface LumeComposerState {
   canSend: boolean
+  showBusy: boolean
   showStop: boolean
   tone: LumeComposerTone
 }
 
 export function deriveLumeComposerState({
-  text,
-  disabled = false,
+  hasText,
+  mode = 'idle',
 }: DeriveLumeComposerStateInput): LumeComposerState {
-  if (disabled) {
+  if (mode === 'streaming') {
     return {
       canSend: false,
+      showBusy: false,
       showStop: true,
       tone: 'streaming',
     }
   }
 
-  if (text.trim().length > 0) {
+  if (mode === 'busy') {
+    return {
+      canSend: false,
+      showBusy: true,
+      showStop: false,
+      tone: 'streaming',
+    }
+  }
+
+  if (hasText) {
     return {
       canSend: true,
+      showBusy: false,
       showStop: false,
       tone: 'ready',
     }
@@ -33,6 +46,7 @@ export function deriveLumeComposerState({
 
   return {
     canSend: false,
+    showBusy: false,
     showStop: false,
     tone: 'idle',
   }
