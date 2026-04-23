@@ -187,7 +187,7 @@ export function buildLumeSidebarViewModel({
       label: workspace.name,
       icon: 'folder',
       kind: 'workspace' as const,
-      workspaceId: workspace.id === UNASSIGNED_THREADS_WORKSPACE_ID ? undefined : workspace.id,
+      workspaceId: workspace.id,
       count: workspace.count,
       active: workspace.isCurrent,
     })),

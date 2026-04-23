@@ -195,12 +195,16 @@ export function LeftSidebar() {
         onTopAction={handleTopAction}
         onFooterAction={handleFooterAction}
         onSelectWorkspace={(workspaceId) => {
-          if (workspaceId === UNASSIGNED_THREADS_WORKSPACE_ID) {
-            return
-          }
-
-          setCurrentWorkspaceId(workspaceId)
-          setTabs((previous) => retargetWelcomeTabIfActive(previous, activeTabId, workspaceId))
+          const nextState = applyWorkspaceSelection({
+            tabs,
+            activeTabId,
+            expandedWorkspaceIds,
+            currentWorkspaceId,
+            workspaceId,
+          })
+          setCurrentWorkspaceId(nextState.currentWorkspaceId)
+          setTabs(nextState.tabs)
+          setExpandedWorkspaceIds(nextState.expandedWorkspaceIds)
         }}
         onToggleWorkspace={(workspaceId) => {
           setExpandedWorkspaceIds((previous) => {
@@ -259,4 +263,36 @@ export function retargetWelcomeTabIfActive(
   }
 
   return upsertWelcomeTab(tabs, workspaceId)
+}
+
+export function applyWorkspaceSelection({
+  tabs,
+  activeTabId,
+  expandedWorkspaceIds,
+  currentWorkspaceId,
+  workspaceId,
+}: {
+  tabs: Tab[]
+  activeTabId: string | null
+  expandedWorkspaceIds: string[]
+  currentWorkspaceId: string | null
+  workspaceId: string
+}) {
+  const nextExpandedWorkspaceIds = expandedWorkspaceIds.includes(workspaceId)
+    ? expandedWorkspaceIds
+    : [...expandedWorkspaceIds, workspaceId]
+
+  if (workspaceId === UNASSIGNED_THREADS_WORKSPACE_ID) {
+    return {
+      tabs,
+      currentWorkspaceId,
+      expandedWorkspaceIds: nextExpandedWorkspaceIds,
+    }
+  }
+
+  return {
+    tabs: retargetWelcomeTabIfActive(tabs, activeTabId, workspaceId),
+    currentWorkspaceId: workspaceId,
+    expandedWorkspaceIds: nextExpandedWorkspaceIds,
+  }
 }

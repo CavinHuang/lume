@@ -235,5 +235,14 @@ describe('buildLumeSidebarViewModel', () => {
         ],
       },
     ])
+    expect(currentFirstWorkspace.collapsedItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'workspace:__unassigned__',
+          workspaceId: '__unassigned__',
+          label: '未分配',
+        }),
+      ]),
+    )
   })
 })
