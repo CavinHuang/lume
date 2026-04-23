@@ -13,12 +13,14 @@ import {
 } from '@/atoms'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { sidecarCall } from '@/lib/desktop-api'
+import type { Tab } from '@/atoms/tab-atoms'
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 import { LumeSidebar } from './LumeSidebar'
 import {
   buildLumeSidebarViewModel,
   type LumeSidebarFooterActionId,
   type LumeSidebarTopActionId,
+  UNASSIGNED_THREADS_WORKSPACE_ID,
 } from './lume-sidebar-view-model'
 import {
   areAllWorkspacesExpanded,
@@ -39,7 +41,10 @@ export function LeftSidebar() {
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
-  const workspaceIds = workspaces.map((workspace) => workspace.id)
+  const hasUnassignedThreads = threads.some((thread) => thread.workspaceId == null)
+  const workspaceIds = hasUnassignedThreads
+    ? [...workspaces.map((workspace) => workspace.id), UNASSIGNED_THREADS_WORKSPACE_ID]
+    : workspaces.map((workspace) => workspace.id)
   const allExpanded = areAllWorkspacesExpanded(workspaceIds, expandedWorkspaceIds)
 
   useEffect(() => {
@@ -82,17 +87,8 @@ export function LeftSidebar() {
   }
 
   const handleNewThread = () => {
-    const welcomeId = '__welcome__'
-    if (tabs.find((tab) => tab.id === welcomeId)) {
-      setActiveTabId(welcomeId)
-      return
-    }
-
-    setTabs((previous) => [
-      { id: welcomeId, type: 'welcome' as const, title: '新会话', workspaceId: currentWorkspaceId ?? undefined },
-      ...previous,
-    ])
-    setActiveTabId(welcomeId)
+    setTabs((previous) => upsertWelcomeTab(previous, currentWorkspaceId))
+    setActiveTabId('__welcome__')
   }
 
   const openSettings = () => {
@@ -198,10 +194,19 @@ export function LeftSidebar() {
         onSetCollapsed={setCollapsed}
         onTopAction={handleTopAction}
         onFooterAction={handleFooterAction}
-        onSelectWorkspace={setCurrentWorkspaceId}
+        onSelectWorkspace={(workspaceId) => {
+          if (workspaceId === UNASSIGNED_THREADS_WORKSPACE_ID) {
+            return
+          }
+
+          setCurrentWorkspaceId(workspaceId)
+        }}
         onToggleWorkspace={(workspaceId) => {
           setExpandedWorkspaceIds((previous) => {
-            if (currentWorkspaceId === workspaceId) {
+            if (
+              currentWorkspaceId === workspaceId ||
+              workspaceId === UNASSIGNED_THREADS_WORKSPACE_ID
+            ) {
               return toggleWorkspaceExpansion(previous, workspaceId)
             }
 
@@ -225,4 +230,20 @@ export function LeftSidebar() {
       />
     </>
   )
+}
+
+export function upsertWelcomeTab(tabs: Tab[], currentWorkspaceId: string | null): Tab[] {
+  const workspaceId = currentWorkspaceId ?? undefined
+  const existingIndex = tabs.findIndex((tab) => tab.id === '__welcome__')
+
+  if (existingIndex === -1) {
+    return [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId }, ...tabs]
+  }
+
+  const existingTab = tabs[existingIndex]
+  if (existingTab.workspaceId === workspaceId) {
+    return tabs
+  }
+
+  return tabs.map((tab, index) => (index === existingIndex ? { ...tab, workspaceId } : tab))
 }

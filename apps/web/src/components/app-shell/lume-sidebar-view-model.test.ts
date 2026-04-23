@@ -170,7 +170,7 @@ describe('buildLumeSidebarViewModel', () => {
     )
   })
 
-  test('does not remap unassigned threads into whichever workspace is currently selected', () => {
+  test('keeps unassigned threads discoverable in a dedicated bucket without remapping them between workspaces', () => {
     const workspaces = [
       createWorkspace(),
       createWorkspace({ id: 'workspace-2', name: '自动化', slug: 'automation' }),
@@ -200,17 +200,40 @@ describe('buildLumeSidebarViewModel', () => {
       expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
     })
 
-    expect(currentFirstWorkspace.workspaces.map((workspace) => workspace.count)).toEqual([0, 0])
-    expect(currentSecondWorkspace.workspaces.map((workspace) => workspace.count)).toEqual([0, 0])
-    expect(
-      currentFirstWorkspace.workspaces.every(
-        (workspace) => workspace.rows.filter((row) => row.type === 'thread-group').length === 0,
-      ),
-    ).toBe(true)
-    expect(
-      currentSecondWorkspace.workspaces.every(
-        (workspace) => workspace.rows.filter((row) => row.type === 'thread-group').length === 0,
-      ),
-    ).toBe(true)
+    const firstUnassigned = currentFirstWorkspace.workspaces.find((workspace) => workspace.id === '__unassigned__')
+    const secondUnassigned = currentSecondWorkspace.workspaces.find((workspace) => workspace.id === '__unassigned__')
+
+    expect(currentFirstWorkspace.workspaces.slice(0, 2).map((workspace) => workspace.count)).toEqual([0, 0])
+    expect(currentSecondWorkspace.workspaces.slice(0, 2).map((workspace) => workspace.count)).toEqual([0, 0])
+    expect(firstUnassigned).toMatchObject({
+      id: '__unassigned__',
+      name: '未分配',
+      count: 1,
+      isCurrent: false,
+    })
+    expect(secondUnassigned).toMatchObject({
+      id: '__unassigned__',
+      name: '未分配',
+      count: 1,
+      isCurrent: false,
+    })
+    expect(firstUnassigned?.rows).toEqual(secondUnassigned?.rows)
+    expect(firstUnassigned?.rows).toEqual([
+      {
+        type: 'thread-group',
+        id: '__unassigned__:今天',
+        label: '今天',
+        items: [
+          {
+            id: 'legacy-thread',
+            title: 'Legacy thread',
+            active: false,
+            pinned: false,
+            isStreaming: false,
+            updatedAt: threads[0].updatedAt,
+          },
+        ],
+      },
+    ])
   })
 })

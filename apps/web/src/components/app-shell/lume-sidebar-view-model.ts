@@ -2,6 +2,8 @@ import type { AgentRuntimePhase, AgentThreadMeta, AgentWorkspace } from '@lume/s
 
 export type LumeSidebarTopActionId = 'new-chat' | 'search' | 'skills' | 'automations'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
+export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
+const UNASSIGNED_THREADS_WORKSPACE_NAME = '未分配'
 
 export interface BuildLumeSidebarViewModelInput {
   workspaces: AgentWorkspace[]
@@ -144,6 +146,32 @@ export function buildLumeSidebarViewModel({
       rows,
     }
   })
+  const unassignedThreads = sortThreadsByUpdatedAt(
+    threads.filter((thread) => getThreadWorkspaceId(thread) === null),
+  )
+
+  if (unassignedThreads.length > 0) {
+    workspaceItems.push({
+      id: UNASSIGNED_THREADS_WORKSPACE_ID,
+      name: UNASSIGNED_THREADS_WORKSPACE_NAME,
+      count: unassignedThreads.length,
+      isCurrent: false,
+      isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
+      rows: groupThreadsByDate(unassignedThreads).map<LumeSidebarThreadGroup>((group) => ({
+        type: 'thread-group',
+        id: `${UNASSIGNED_THREADS_WORKSPACE_ID}:${group.label}`,
+        label: group.label,
+        items: group.items.map((thread) => ({
+          id: thread.id,
+          title: thread.title,
+          active: activeTabId === thread.id,
+          pinned: !!thread.pinned,
+          isStreaming: streamingStates[thread.id] === 'streaming',
+          updatedAt: thread.updatedAt,
+        })),
+      })),
+    })
+  }
 
   const collapsedItems: LumeSidebarCollapsedItem[] = [
     ...topActions.map((action) => ({
@@ -159,7 +187,7 @@ export function buildLumeSidebarViewModel({
       label: workspace.name,
       icon: 'folder',
       kind: 'workspace' as const,
-      workspaceId: workspace.id,
+      workspaceId: workspace.id === UNASSIGNED_THREADS_WORKSPACE_ID ? undefined : workspace.id,
       count: workspace.count,
       active: workspace.isCurrent,
     })),
