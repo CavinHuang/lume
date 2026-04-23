@@ -21,7 +21,7 @@ export function AppShell() {
   }, [setOpen])
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-950 dark:to-zinc-900">
+    <div className="h-screen w-screen flex overflow-hidden bg-background text-foreground">
       <TitleBar />
       <div className="p-2 pr-0 relative z-[60]">
         <LeftSidebar />
