@@ -57,6 +57,10 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       .catch(() => {})
   }, [])
 
+  useEffect(() => {
+    setSelectedWorkspaceId(initialWorkspaceId ?? currentWorkspaceId ?? null)
+  }, [currentWorkspaceId, initialWorkspaceId])
+
   const selectedWorkspace = useMemo(
     () => workspaces.find((ws) => ws.id === selectedWorkspaceId),
     [workspaces, selectedWorkspaceId]

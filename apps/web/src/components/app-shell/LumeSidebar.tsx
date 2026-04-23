@@ -439,6 +439,7 @@ function ThreadRow({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(thread.title)
   const menuRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -449,7 +450,7 @@ function ThreadRow({
     if (!menuOpen) return
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      if (shouldCloseThreadMenuForTarget(menuRef.current, triggerRef.current, event.target as Node | null)) {
         setMenuOpen(false)
       }
     }
@@ -534,6 +535,7 @@ function ThreadRow({
       </button>
 
       <button
+        ref={triggerRef}
         type="button"
         onClick={(event) => {
           event.stopPropagation()
@@ -585,6 +587,18 @@ function ThreadRow({
       )}
     </div>
   )
+}
+
+export function shouldCloseThreadMenuForTarget(
+  menuElement: Pick<Node, 'contains'> | null,
+  triggerElement: Pick<Node, 'contains'> | null,
+  target: Node | null,
+) {
+  if (!target) {
+    return true
+  }
+
+  return !menuElement?.contains(target) && !triggerElement?.contains(target)
 }
 
 function ThreadMenuItem({
