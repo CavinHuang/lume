@@ -8,14 +8,12 @@ function readWebFile(...parts: string[]) {
   return readFileSync(join(webRoot, ...parts), 'utf-8')
 }
 
-function extractCssBlock(source: string, selector: string, occurrence: 'first' | 'last' = 'first') {
-  const startIndex = occurrence === 'last'
-    ? source.lastIndexOf(selector)
-    : source.indexOf(selector)
-  expect(startIndex).toBeGreaterThanOrEqual(0)
+function extractCssBlockBody(source: string, selector: string, startFrom = 0) {
+  const startIndex = source.indexOf(selector, startFrom)
+  if (startIndex < 0) return null
 
   const openBraceIndex = source.indexOf('{', startIndex)
-  expect(openBraceIndex).toBeGreaterThanOrEqual(0)
+  if (openBraceIndex < 0) return null
 
   let depth = 0
   for (let index = openBraceIndex; index < source.length; index += 1) {
@@ -23,18 +21,44 @@ function extractCssBlock(source: string, selector: string, occurrence: 'first' |
     if (char === '{') depth += 1
     if (char === '}') depth -= 1
     if (depth === 0) {
-      return source.slice(openBraceIndex + 1, index)
+      return {
+        body: source.slice(openBraceIndex + 1, index),
+        nextIndex: index + 1,
+      }
     }
   }
 
-  throw new Error(`Could not extract CSS block for selector: ${selector}`)
+  return null
+}
+
+function extractCssBlockWithToken(source: string, selector: string, token: string) {
+  let startFrom = 0
+
+  while (startFrom < source.length) {
+    const block = extractCssBlockBody(source, selector, startFrom)
+    if (!block) break
+    if (block.body.includes(token)) return block.body
+    startFrom = block.nextIndex
+  }
+
+  throw new Error(`Could not find ${selector} block containing token: ${token}`)
+}
+
+function expectClassListToContain(source: string, pattern: RegExp, requiredClasses: string[]) {
+  const match = source.match(pattern)
+  expect(match).not.toBeNull()
+
+  const classList = match?.[1].split(/\s+/).filter(Boolean) ?? []
+  for (const className of requiredClasses) {
+    expect(classList).toContain(className)
+  }
 }
 
 describe('Lume theme contract', () => {
   test('index.css defines the exact theme foundation tokens in :root and .dark', () => {
     const indexCss = readWebFile('src', 'index.css')
-    const rootBlock = extractCssBlock(indexCss, ':root')
-    const darkBlock = extractCssBlock(indexCss, '.dark', 'last')
+    const rootBlock = extractCssBlockWithToken(indexCss, ':root', '--brand: oklch(0.67 0.2 282);')
+    const darkBlock = extractCssBlockWithToken(indexCss, '.dark', '--brand: oklch(0.72 0.19 283);')
     const rootTokens = [
       '--brand: oklch(0.67 0.2 282);',
       '--brand-2: oklch(0.73 0.18 294);',
@@ -82,9 +106,7 @@ describe('Lume theme contract', () => {
       'text-foreground',
     ]
 
-    for (const className of requiredClasses) {
-      expect(appShell).toContain(className)
-    }
+    expectClassListToContain(appShell, /<div className="([^"]+)">\s*<TitleBar \/>/s, requiredClasses)
 
     expect(appShell).not.toContain('from-zinc-50')
     expect(appShell).not.toContain('dark:from-zinc-950')
@@ -106,13 +128,8 @@ describe('Lume theme contract', () => {
       'bg-background',
     ]
 
-    for (const className of wrapperClasses) {
-      expect(mainArea).toContain(className)
-    }
-
-    for (const className of contentClasses) {
-      expect(mainArea).toContain(className)
-    }
+    expectClassListToContain(mainArea, /<div className="([^"]+)">\s*<TabBar \/>/s, wrapperClasses)
+    expectClassListToContain(mainArea, /<div className="([^"]+)">\s*<TabContent \/>/s, contentClasses)
 
     expect(mainArea).not.toContain('bg-white/95')
     expect(mainArea).not.toContain('dark:bg-zinc-900/95')
