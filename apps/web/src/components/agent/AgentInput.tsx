@@ -22,7 +22,7 @@ import { deriveLumeComposerState } from '@/components/composer/lume-composer-sta
 
 interface AgentInputProps {
   threadId: string
-  disabled?: boolean
+  streaming?: boolean
 }
 
 /** 获取各类 mention 的建议列表 */
@@ -133,7 +133,7 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps) {
   wrapper.style.top = 'auto'
 }
 
-export function AgentInput({ threadId, disabled }: AgentInputProps) {
+export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -208,11 +208,11 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
 
   const composerState = deriveLumeComposerState({
     hasText: editorText.trim().length > 0,
-    mode: disabled ? 'streaming' : 'idle',
+    mode: streaming ? 'streaming' : 'idle',
   })
 
   const handleSend = async () => {
-    if (!editor || disabled) return
+    if (!editor || streaming) return
     const text = editor.getText().trim()
     if (!text) return
     editor.commands.clearContent()

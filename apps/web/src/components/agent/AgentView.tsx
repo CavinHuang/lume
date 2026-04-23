@@ -119,7 +119,7 @@ export function AgentView({ threadId }: AgentViewProps) {
         {pendingAskUserQuestions.map((request) => (
           <AskUserBanner key={request.toolUseId} threadId={threadId} request={request} />
         ))}
-        <AgentInput threadId={threadId} disabled={streamingState === 'streaming'} />
+        <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
       </div>
 
       {/* 右侧面板 */}
