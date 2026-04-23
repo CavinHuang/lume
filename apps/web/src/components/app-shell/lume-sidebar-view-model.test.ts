@@ -140,4 +140,33 @@ describe('buildLumeSidebarViewModel', () => {
       ]),
     )
   })
+
+  test('marks recycle bin disabled until a real footer flow exists', () => {
+    const model = buildLumeSidebarViewModel({
+      workspaces: [createWorkspace()],
+      threads: [],
+      currentWorkspaceId: 'workspace-1',
+      activeTabId: null,
+      streamingStates: {},
+      expandedWorkspaceIds: ['workspace-1'],
+    })
+
+    expect(model.footerActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'recycle-bin',
+          disabled: true,
+        }),
+      ]),
+    )
+    expect(model.collapsedItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'recycle-bin',
+          kind: 'footer-action',
+          disabled: true,
+        }),
+      ]),
+    )
+  })
 })

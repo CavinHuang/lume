@@ -108,7 +108,7 @@ export function buildLumeSidebarViewModel({
   ]
 
   const footerActions: LumeSidebarFooterAction[] = [
-    { id: 'recycle-bin', label: '回收站', icon: 'trash', kind: 'button' },
+    { id: 'recycle-bin', label: '回收站', icon: 'trash', kind: 'button', disabled: true },
     { id: 'settings', label: '设置', icon: 'settings', kind: 'button' },
   ]
 
