@@ -6,6 +6,7 @@ import {
   RECENT_FILE_PANEL_ROWS,
   RECENT_THREAD_PANEL_LIMIT,
   RECOMMENDED_WORKFLOW_PANEL_ROWS,
+  type WelcomeSurfacePanel,
 } from './welcome-surface-view-model'
 
 function createThread(index: number, overrides: Partial<AgentThreadMeta> = {}): AgentThreadMeta {
@@ -20,6 +21,15 @@ function createThread(index: number, overrides: Partial<AgentThreadMeta> = {}): 
     updatedAt,
     ...overrides,
   }
+}
+
+function getPanelById<TPanel extends WelcomeSurfacePanel['id']>(
+  model: ReturnType<typeof buildWelcomeSurfaceViewModel>,
+  panelId: TPanel,
+) {
+  return model.lowerPanels.find(
+    (panel): panel is Extract<WelcomeSurfacePanel, { id: TPanel }> => panel.id === panelId,
+  )
 }
 
 describe('buildWelcomeSurfaceViewModel', () => {
@@ -60,11 +70,12 @@ describe('buildWelcomeSurfaceViewModel', () => {
       recentFiles: [],
     })
 
-    const recentThreadsPanel = model.lowerPanels[0]
+    const recentThreadsPanel = getPanelById(model, 'recent-threads')
 
-    expect(recentThreadsPanel.id).toBe('recent-threads')
-    expect(recentThreadsPanel.items).toHaveLength(RECENT_THREAD_PANEL_LIMIT)
-    expect(recentThreadsPanel.items.map((item) => item.id)).toEqual([
+    expect(recentThreadsPanel).toBeDefined()
+    expect(recentThreadsPanel!.id).toBe('recent-threads')
+    expect(recentThreadsPanel!.items).toHaveLength(RECENT_THREAD_PANEL_LIMIT)
+    expect(recentThreadsPanel!.items.map((item) => item.id)).toEqual([
       'thread-6',
       'thread-5',
       'thread-4',
@@ -85,8 +96,13 @@ describe('buildWelcomeSurfaceViewModel', () => {
       'recent-files',
     ])
 
-    expect(model.lowerPanels[1].items).toHaveLength(RECOMMENDED_WORKFLOW_PANEL_ROWS)
-    expect(model.lowerPanels[2].items).toHaveLength(RECENT_FILE_PANEL_ROWS)
-    expect(model.lowerPanels[2].items.every((item) => item.kind === 'empty')).toBe(true)
+    const workflowsPanel = getPanelById(model, 'recommended-workflows')
+    const recentFilesPanel = getPanelById(model, 'recent-files')
+
+    expect(workflowsPanel).toBeDefined()
+    expect(recentFilesPanel).toBeDefined()
+    expect(workflowsPanel!.items).toHaveLength(RECOMMENDED_WORKFLOW_PANEL_ROWS)
+    expect(recentFilesPanel!.items).toHaveLength(RECENT_FILE_PANEL_ROWS)
+    expect(recentFilesPanel!.items.every((item) => item.kind === 'empty')).toBe(true)
   })
 })

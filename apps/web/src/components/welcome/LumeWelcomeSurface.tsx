@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { RecentThreads } from './RecentThreads'
 import type {
   WelcomeSurfaceFileItem,
+  WelcomeSurfacePanel,
   WelcomeSurfacePrimaryCard,
   WelcomeSurfaceViewModel,
   WelcomeSurfaceWorkflowItem,
@@ -47,9 +48,9 @@ export function LumeWelcomeSurface({
   onChoosePromptSeed,
   onRemovePendingFile,
 }: LumeWelcomeSurfaceProps) {
-  const recentThreadsPanel = model.lowerPanels[0]
-  const workflowsPanel = model.lowerPanels[1]
-  const recentFilesPanel = model.lowerPanels[2]
+  const recentThreadsPanel = requirePanelById(model.lowerPanels, 'recent-threads')
+  const workflowsPanel = requirePanelById(model.lowerPanels, 'recommended-workflows')
+  const recentFilesPanel = requirePanelById(model.lowerPanels, 'recent-files')
 
   return (
     <div
@@ -221,6 +222,21 @@ function HeroMark() {
       </div>
     </div>
   )
+}
+
+function requirePanelById<TPanel extends WelcomeSurfacePanel['id']>(
+  panels: WelcomeSurfacePanel[],
+  panelId: TPanel,
+) {
+  const panel = panels.find(
+    (panel): panel is Extract<WelcomeSurfacePanel, { id: TPanel }> => panel.id === panelId,
+  )
+
+  if (!panel) {
+    throw new Error(`Missing welcome surface panel: ${panelId}`)
+  }
+
+  return panel
 }
 
 function PrimaryCard({
