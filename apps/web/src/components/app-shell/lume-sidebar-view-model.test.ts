@@ -169,4 +169,48 @@ describe('buildLumeSidebarViewModel', () => {
       ]),
     )
   })
+
+  test('does not remap unassigned threads into whichever workspace is currently selected', () => {
+    const workspaces = [
+      createWorkspace(),
+      createWorkspace({ id: 'workspace-2', name: '自动化', slug: 'automation' }),
+    ]
+    const threads = [
+      createThread({
+        id: 'legacy-thread',
+        title: 'Legacy thread',
+        workspaceId: undefined,
+      }),
+    ]
+
+    const currentFirstWorkspace = buildLumeSidebarViewModel({
+      workspaces,
+      threads,
+      currentWorkspaceId: 'workspace-1',
+      activeTabId: null,
+      streamingStates: {},
+      expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
+    })
+    const currentSecondWorkspace = buildLumeSidebarViewModel({
+      workspaces,
+      threads,
+      currentWorkspaceId: 'workspace-2',
+      activeTabId: null,
+      streamingStates: {},
+      expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
+    })
+
+    expect(currentFirstWorkspace.workspaces.map((workspace) => workspace.count)).toEqual([0, 0])
+    expect(currentSecondWorkspace.workspaces.map((workspace) => workspace.count)).toEqual([0, 0])
+    expect(
+      currentFirstWorkspace.workspaces.every(
+        (workspace) => workspace.rows.filter((row) => row.type === 'thread-group').length === 0,
+      ),
+    ).toBe(true)
+    expect(
+      currentSecondWorkspace.workspaces.every(
+        (workspace) => workspace.rows.filter((row) => row.type === 'thread-group').length === 0,
+      ),
+    ).toBe(true)
+  })
 })

@@ -114,7 +114,7 @@ export function buildLumeSidebarViewModel({
 
   const workspaceItems = workspaces.map((workspace) => {
     const workspaceThreads = sortThreadsByUpdatedAt(
-      threads.filter((thread) => getThreadWorkspaceId(thread, selectedWorkspaceId) === workspace.id),
+      threads.filter((thread) => getThreadWorkspaceId(thread) === workspace.id),
     )
     const threadGroups = groupThreadsByDate(workspaceThreads).map<LumeSidebarThreadGroup>((group) => ({
       type: 'thread-group',
@@ -181,8 +181,8 @@ export function buildLumeSidebarViewModel({
   }
 }
 
-function getThreadWorkspaceId(thread: AgentThreadMeta, currentWorkspaceId: string | null): string | null {
-  return thread.workspaceId ?? currentWorkspaceId
+function getThreadWorkspaceId(thread: AgentThreadMeta): string | null {
+  return thread.workspaceId ?? null
 }
 
 function sortThreadsByUpdatedAt(threads: AgentThreadMeta[]): AgentThreadMeta[] {

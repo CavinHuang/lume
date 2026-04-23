@@ -54,6 +54,7 @@ export function LumeWelcomeSurface({
     hasText,
     mode: sending ? 'busy' : 'idle',
   })
+  const interactionLockProps = sending ? ({ inert: '' } as Record<string, string>) : {}
   const recentThreadsPanel = requirePanelById(model.lowerPanels, 'recent-threads')
   const workflowsPanel = requirePanelById(model.lowerPanels, 'recommended-workflows')
   const recentFilesPanel = requirePanelById(model.lowerPanels, 'recent-files')
@@ -86,15 +87,30 @@ export function LumeWelcomeSurface({
             {model.hero.subtitle}
           </p>
 
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <div
+            {...interactionLockProps}
+            data-welcome-lock="hero-controls"
+            aria-disabled={sending}
+            className="mt-8 flex flex-wrap items-center justify-center gap-3"
+          >
             {workspaceSelector}
             {modelPicker}
           </div>
         </section>
 
-        <section className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <section
+          {...interactionLockProps}
+          data-welcome-lock="primary-cards"
+          aria-disabled={sending}
+          className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4"
+        >
           {model.primaryCards.map((card) => (
-            <PrimaryCard key={card.id} card={card} onChoosePromptSeed={onChoosePromptSeed} />
+            <PrimaryCard
+              key={card.id}
+              card={card}
+              disabled={sending}
+              onChoosePromptSeed={onChoosePromptSeed}
+            />
           ))}
         </section>
 
@@ -105,11 +121,17 @@ export function LumeWelcomeSurface({
 
           {workflowsPanel.id === 'recommended-workflows' && (
             <PanelFrame title={workflowsPanel.title} subtitle={workflowsPanel.subtitle}>
-              <div className="flex flex-1 flex-col gap-2">
+              <div
+                {...interactionLockProps}
+                data-welcome-lock="workflow-panel"
+                aria-disabled={sending}
+                className="flex flex-1 flex-col gap-2"
+              >
                 {workflowsPanel.items.map((item) => (
                   <WorkflowRow
                     key={item.id}
                     item={item}
+                    disabled={sending}
                     onChoosePromptSeed={onChoosePromptSeed}
                   />
                 ))}
@@ -141,73 +163,80 @@ export function LumeWelcomeSurface({
               </div>
             </div>
 
-            <LumeComposer
-              tone={composerState.tone}
-              scale="hero"
-              className={cn('mt-4', sending && 'opacity-90')}
-              editorSlot={
-                <EditorContent
-                  editor={editor}
-                  className="[&_.ProseMirror]:min-h-[110px] [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
-                />
-              }
-              supportingContent={
-                pendingFiles.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 px-4 pb-3">
-                    {pendingFiles.map((file, index) => (
-                      <span
-                        key={`${file.sourcePath}:${index}`}
-                        className="inline-flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_60%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-1.5 text-[12px] text-[var(--text-2)]"
-                      >
-                        <span className="max-w-[180px] truncate">{file.filename}</span>
-                        <button
-                          type="button"
-                          onClick={() => onRemovePendingFile(index)}
-                          className="text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+            <div
+              {...interactionLockProps}
+              data-welcome-lock="composer"
+              aria-disabled={sending}
+            >
+              <LumeComposer
+                tone={composerState.tone}
+                scale="hero"
+                className={cn('mt-4', sending && 'opacity-90')}
+                editorSlot={
+                  <EditorContent
+                    editor={editor}
+                    className="[&_.ProseMirror]:min-h-[110px] [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
+                  />
+                }
+                supportingContent={
+                  pendingFiles.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 px-4 pb-3">
+                      {pendingFiles.map((file, index) => (
+                        <span
+                          key={`${file.sourcePath}:${index}`}
+                          className="inline-flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_60%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-1.5 text-[12px] text-[var(--text-2)]"
                         >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null
-              }
-              leadingTools={
-                <>
-                  <button
-                    type="button"
-                    onClick={onAttach}
-                    disabled={sending}
-                    className="inline-flex h-10 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-4 text-[13px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
-                  >
-                    <Paperclip size={14} />
-                    添加文件
-                  </button>
-                  {thinkingLevelPicker}
-                </>
-              }
-              actionSlot={
-                composerState.showBusy ? (
-                  <div className="inline-flex h-11 items-center gap-2 rounded-full bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] px-5 text-[13px] font-medium text-[var(--brand-foreground)]">
-                    <Loader2 size={15} className="animate-spin" />
-                    正在发送
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={onSend}
-                    disabled={!composerState.canSend}
-                    className={getLumeComposerPrimaryActionClassName({
-                      enabled: composerState.canSend,
-                      size: 'hero',
-                    })}
-                  >
-                    发送
-                    <Send size={14} />
-                  </button>
-                )
-              }
-            />
+                          <span className="max-w-[180px] truncate">{file.filename}</span>
+                          <button
+                            type="button"
+                            disabled={sending}
+                            onClick={() => onRemovePendingFile(index)}
+                            className="text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null
+                }
+                leadingTools={
+                  <>
+                    <button
+                      type="button"
+                      onClick={onAttach}
+                      disabled={sending}
+                      className="inline-flex h-10 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-4 text-[13px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+                    >
+                      <Paperclip size={14} />
+                      添加文件
+                    </button>
+                    {thinkingLevelPicker}
+                  </>
+                }
+                actionSlot={
+                  composerState.showBusy ? (
+                    <div className="inline-flex h-11 items-center gap-2 rounded-full bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] px-5 text-[13px] font-medium text-[var(--brand-foreground)]">
+                      <Loader2 size={15} className="animate-spin" />
+                      正在发送
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onSend}
+                      disabled={!composerState.canSend}
+                      className={getLumeComposerPrimaryActionClassName({
+                        enabled: composerState.canSend,
+                        size: 'hero',
+                      })}
+                    >
+                      发送
+                      <Send size={14} />
+                    </button>
+                  )
+                }
+              />
+            </div>
           </div>
         </section>
       </div>
@@ -244,14 +273,17 @@ function requirePanelById<TPanel extends WelcomeSurfacePanel['id']>(
 
 function PrimaryCard({
   card,
+  disabled,
   onChoosePromptSeed,
 }: {
   card: WelcomeSurfacePrimaryCard
+  disabled: boolean
   onChoosePromptSeed: (promptSeed: string) => void
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => onChoosePromptSeed(card.promptSeed)}
       className="group flex min-h-[188px] flex-col rounded-[1.85rem] border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_95%,transparent),color-mix(in_oklab,var(--surface-2)_82%,transparent))] p-5 text-left shadow-[0_20px_38px_-36px_hsl(var(--shadow-panel)/0.34)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-3)_78%,transparent))]"
     >
@@ -301,14 +333,17 @@ function PanelFrame({
 
 function WorkflowRow({
   item,
+  disabled,
   onChoosePromptSeed,
 }: {
   item: WelcomeSurfaceWorkflowItem
+  disabled: boolean
   onChoosePromptSeed: (promptSeed: string) => void
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => onChoosePromptSeed(item.promptSeed)}
       className="group flex rounded-[1.15rem] border border-transparent bg-[color:color-mix(in_oklab,var(--surface-2)_76%,transparent)] px-3.5 py-3 text-left transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-3)_72%,transparent)]"
     >
