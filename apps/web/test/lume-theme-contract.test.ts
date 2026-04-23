@@ -8,9 +8,33 @@ function readWebFile(...parts: string[]) {
   return readFileSync(join(webRoot, ...parts), 'utf-8')
 }
 
+function extractCssBlock(source: string, selector: string, occurrence: 'first' | 'last' = 'first') {
+  const startIndex = occurrence === 'last'
+    ? source.lastIndexOf(selector)
+    : source.indexOf(selector)
+  expect(startIndex).toBeGreaterThanOrEqual(0)
+
+  const openBraceIndex = source.indexOf('{', startIndex)
+  expect(openBraceIndex).toBeGreaterThanOrEqual(0)
+
+  let depth = 0
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '{') depth += 1
+    if (char === '}') depth -= 1
+    if (depth === 0) {
+      return source.slice(openBraceIndex + 1, index)
+    }
+  }
+
+  throw new Error(`Could not extract CSS block for selector: ${selector}`)
+}
+
 describe('Lume theme contract', () => {
   test('index.css defines the exact theme foundation tokens in :root and .dark', () => {
     const indexCss = readWebFile('src', 'index.css')
+    const rootBlock = extractCssBlock(indexCss, ':root')
+    const darkBlock = extractCssBlock(indexCss, '.dark', 'last')
     const rootTokens = [
       '--brand: oklch(0.67 0.2 282);',
       '--brand-2: oklch(0.73 0.18 294);',
@@ -39,26 +63,58 @@ describe('Lume theme contract', () => {
     ]
 
     for (const token of rootTokens) {
-      expect(indexCss).toContain(token)
+      expect(rootBlock).toContain(token)
     }
 
     for (const token of darkTokens) {
-      expect(indexCss).toContain(token)
+      expect(darkBlock).toContain(token)
     }
   })
 
-  test('AppShell uses the exact baseline wrapper class string', () => {
+  test('AppShell keeps the required baseline shell classes without legacy zinc styling', () => {
     const appShell = readWebFile('src', 'components', 'app-shell', 'AppShell.tsx')
+    const requiredClasses = [
+      'h-screen',
+      'w-screen',
+      'flex',
+      'overflow-hidden',
+      'bg-background',
+      'text-foreground',
+    ]
 
-    expect(appShell).toContain(
-      'h-screen w-screen flex overflow-hidden bg-background text-foreground'
-    )
+    for (const className of requiredClasses) {
+      expect(appShell).toContain(className)
+    }
+
+    expect(appShell).not.toContain('from-zinc-50')
+    expect(appShell).not.toContain('dark:from-zinc-950')
   })
 
-  test('MainArea uses the exact baseline wrapper and content area class strings', () => {
+  test('MainArea keeps the required baseline wrapper and content classes without legacy glass styling', () => {
     const mainArea = readWebFile('src', 'components', 'tabs', 'MainArea.tsx')
+    const wrapperClasses = [
+      'h-full',
+      'flex',
+      'flex-col',
+      'bg-background',
+      'overflow-hidden',
+    ]
+    const contentClasses = [
+      'flex-1',
+      'min-h-0',
+      'flex',
+      'bg-background',
+    ]
 
-    expect(mainArea).toContain('h-full flex flex-col bg-background overflow-hidden')
-    expect(mainArea).toContain('flex-1 min-h-0 flex bg-background')
+    for (const className of wrapperClasses) {
+      expect(mainArea).toContain(className)
+    }
+
+    for (const className of contentClasses) {
+      expect(mainArea).toContain(className)
+    }
+
+    expect(mainArea).not.toContain('bg-white/95')
+    expect(mainArea).not.toContain('dark:bg-zinc-900/95')
   })
 })
