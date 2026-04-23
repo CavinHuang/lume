@@ -125,33 +125,34 @@ export function WelcomeModelPicker({ onModelChange }: WelcomeModelPickerProps) {
   return (
     <div className="relative flex items-center gap-1.5" ref={menuRef}>
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] text-foreground/60 hover:bg-muted/50 hover:text-foreground/80 transition-colors"
+        className="inline-flex h-11 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_62%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_92%,transparent)] px-4 text-[13px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
         title="切换模型"
       >
         {activeChannel && (
           <ChannelProviderIcon provider={activeChannel.provider} size={11} />
         )}
-        <span className="truncate max-w-[200px]">
+        <span className="max-w-[220px] truncate">
           {activeChannel && summary.label
             ? `${activeChannel.name} / ${summary.label}`
             : summary.label}
         </span>
-        <ChevronDown size={10} className="text-foreground/40" />
+        <ChevronDown size={12} className="text-[var(--text-3)]" />
       </button>
 
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 z-50 min-w-[260px] max-h-[360px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg">
-          <div className="p-1.5 border-b border-border/40">
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50">
-              <Search size={13} className="text-muted-foreground/50 shrink-0" />
+        <div className="absolute left-0 top-full z-50 mt-3 min-w-[300px] max-h-[380px] overflow-y-auto rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_74%,transparent)] bg-[var(--surface-1)] shadow-[0_28px_52px_-34px_hsl(var(--shadow-panel)/0.48)]">
+          <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] p-3">
+            <div className="flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-2">
+              <Search size={13} className="shrink-0 text-[var(--text-3)]" />
               <input
                 ref={searchInputRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索模型..."
-                className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 outline-none"
+                className="flex-1 bg-transparent text-[12px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
               />
             </div>
           </div>
@@ -159,7 +160,7 @@ export function WelcomeModelPicker({ onModelChange }: WelcomeModelPickerProps) {
           {filteredGroups.length > 0 ? (
             <ModelOptionList groups={filteredGroups} onSelect={handleSelect} />
           ) : (
-            <div className="py-6 text-center text-xs text-muted-foreground/50">
+            <div className="py-6 text-center text-[12px] text-[var(--text-3)]">
               没有匹配的模型
             </div>
           )}
