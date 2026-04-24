@@ -36,6 +36,7 @@ export interface WelcomeSurfaceThreadItem {
   kind: 'thread'
   id: string
   title: string
+  description: string
   meta: string
 }
 
@@ -87,30 +88,30 @@ const primaryCards: WelcomeSurfacePrimaryCard[] = [
   {
     id: 'plan',
     eyebrow: 'Workflow',
-    title: '梳理需求与落地路径',
-    description: '把目标、约束和验收条件整理成可执行计划。',
-    promptSeed: '先帮我梳理目标、约束、风险和验收标准，再给出一个可执行计划。',
+    title: '整理产品需求',
+    description: '梳理需求要点，输出 PRD 大纲和功能清单。',
+    promptSeed: '请帮我整理产品需求，梳理核心目标、用户场景、PRD 大纲和功能清单。',
   },
   {
     id: 'ship',
     eyebrow: 'Build',
-    title: '从想法推进到可交付',
-    description: '围绕当前工作区快速搭起实现路径并开始推进。',
-    promptSeed: '基于当前工作区，帮我把这个想法拆成实现步骤并开始第一步。',
+    title: '分析代码结构',
+    description: '解读项目结构，生成模块依赖图和优化建议。',
+    promptSeed: '请先分析当前项目的代码结构、模块依赖和关键风险，并给出优化建议。',
   },
   {
     id: 'analyze',
     eyebrow: 'Insight',
-    title: '先读懂代码，再动手',
-    description: '快速理解关键模块、边界和已有行为，避免盲改。',
-    promptSeed: '先分析这个仓库里和当前任务最相关的模块、数据流和风险点。',
+    title: '生成发布清单',
+    description: '基于变更内容，生成发布说明和验证清单。',
+    promptSeed: '请根据当前变更生成发布说明、验证清单和交付前检查项。',
   },
   {
     id: 'review',
     eyebrow: 'Quality',
-    title: '收敛风险并验证结果',
-    description: '围绕测试、构建和回归点做一次交付前检查。',
-    promptSeed: '请帮我检查这项改动的风险、缺失验证和建议补充的测试。',
+    title: '优化 UI 设计系统',
+    description: '提出设计系统改进建议，统一组件与视觉语言。',
+    promptSeed: '请帮我审视当前 UI 设计系统，提出组件、布局、色彩和交互的一致性优化建议。',
   },
 ]
 
@@ -164,6 +165,7 @@ export function buildWelcomeSurfaceViewModel({
             kind: 'thread',
             id: thread.id,
             title: clampText(thread.title, 28),
+            description: buildThreadDescription(thread.title),
             meta: formatRelativeTime(thread.updatedAt),
           })),
       },
@@ -207,6 +209,10 @@ function buildRecentFileItems(recentFiles: WelcomeSurfaceRecentFile[]): WelcomeS
 
 function clampText(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit - 1)}…` : value
+}
+
+function buildThreadDescription(title: string): string {
+  return clampText(`继续推进「${title}」相关上下文`, 34)
 }
 
 function simplifyPath(sourcePath: string): string {

@@ -39,6 +39,7 @@ export interface LumeSidebarThreadItem {
 export interface LumeSidebarSyntheticThreadRow {
   type: 'synthetic-thread'
   id: '__welcome__'
+  workspaceId: string
   label: '新对话'
   active: boolean
 }
@@ -84,11 +85,14 @@ interface ThreadGroup {
   items: AgentThreadMeta[]
 }
 
-const welcomeRow: LumeSidebarSyntheticThreadRow = {
-  type: 'synthetic-thread',
-  id: '__welcome__',
-  label: '新对话',
-  active: false,
+function buildWelcomeRow(workspaceId: string, active: boolean): LumeSidebarSyntheticThreadRow {
+  return {
+    type: 'synthetic-thread',
+    id: '__welcome__',
+    workspaceId,
+    label: '新对话',
+    active,
+  }
 }
 
 export function buildLumeSidebarViewModel({
@@ -132,10 +136,10 @@ export function buildLumeSidebarViewModel({
       })),
     }))
 
-    const rows: LumeSidebarWorkspaceRow[] =
-      workspace.id === selectedWorkspaceId
-        ? [{ ...welcomeRow, active: activeTabId === '__welcome__' }, ...threadGroups]
-        : threadGroups
+    const rows: LumeSidebarWorkspaceRow[] = [
+      buildWelcomeRow(workspace.id, workspace.id === selectedWorkspaceId && activeTabId === '__welcome__'),
+      ...threadGroups,
+    ]
 
     return {
       id: workspace.id,

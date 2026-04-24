@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { ChevronDown, FolderOpen, Plus, Search } from 'lucide-react'
+import { Box, ChevronDown, FolderOpen, Plus, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { AgentWorkspace } from '@lume/shared'
 
@@ -41,16 +41,17 @@ export function WorkspaceSelector({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'inline-flex h-11 items-center gap-2 rounded-full border px-4 text-[13px] font-medium transition-colors',
+          'inline-flex h-9 min-w-[168px] items-center gap-2 rounded-lg border px-3 text-[13px] transition-colors',
           open
-            ? 'border-[color:color-mix(in_oklab,var(--brand)_20%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--text-1)]'
-            : 'border-[color:color-mix(in_oklab,var(--border-strong)_62%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_92%,transparent)] text-[var(--text-2)] hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]',
+            ? 'border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] text-[var(--text-1)]'
+            : 'border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] text-[var(--text-2)] hover:border-[color:color-mix(in_oklab,var(--brand)_20%,var(--border-strong))] hover:text-[var(--text-1)]',
         )}
         title="选择工作区"
       >
-        <FolderOpen size={14} className="text-[var(--text-3)]" />
-        <span className="max-w-[180px] truncate">{selected?.name ?? '当前工作区'}</span>
-        <ChevronDown size={12} className="text-[var(--text-3)]" />
+        <Box size={15} className="shrink-0 text-[var(--text-2)]" />
+        <span className="shrink-0 text-[var(--text-2)]">工作区：</span>
+        <span className="min-w-0 flex-1 truncate font-semibold text-[var(--text-1)]">{selected?.name ?? '当前工作区'}</span>
+        <ChevronDown size={13} className="shrink-0 text-[var(--text-3)]" />
       </button>
 
       {open && (

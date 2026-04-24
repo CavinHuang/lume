@@ -395,4 +395,69 @@ describe('WelcomeView', () => {
       }
     }
   })
+
+  test('mirrors the selected model into both welcome pickers and uses it for new threads', async () => {
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      {
+        id: 'workspace-1',
+        name: '默认工作区',
+        slug: 'default-workspace',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
+    store.set(activeTabIdAtom, '__welcome__')
+
+    const { container } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <WelcomeView workspaceId="workspace-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      await act(async () => {
+        latestSurfaceProps.composerModelPicker.props.onModelChange('openai/gpt-5-mini', 'channel-openai', 'gpt-5-mini')
+        await flush()
+      })
+
+      expect(latestSurfaceProps.modelPicker.props.selectedModelRef).toBe('openai/gpt-5-mini')
+      expect(latestSurfaceProps.modelPicker.props.selectedChannelId).toBe('channel-openai')
+      expect(latestSurfaceProps.composerModelPicker.props.selectedModelRef).toBe('openai/gpt-5-mini')
+      expect(latestSurfaceProps.composerModelPicker.props.selectedChannelId).toBe('channel-openai')
+
+      editorText = '用选中的模型开始'
+
+      await act(async () => {
+        await latestSurfaceProps.onSend()
+        await flush()
+      })
+
+      expect(sidecarCallMock).toHaveBeenCalledWith(
+        'agent:create-thread',
+        expect.objectContaining({
+          workspaceId: 'workspace-1',
+          modelRef: 'openai/gpt-5-mini',
+          channelId: 'channel-openai',
+          modelId: 'gpt-5-mini',
+        }),
+      )
+    } finally {
+      if (root) {
+        await act(async () => {
+          root!.unmount()
+          await flush()
+        })
+        root = null
+      }
+    }
+  })
 })

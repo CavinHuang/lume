@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import type { LumeComposerTone } from './lume-composer-state'
 
@@ -8,6 +8,7 @@ interface LumeComposerProps {
   tone: LumeComposerTone
   scale?: LumeComposerScale
   className?: string
+  shellStyle?: CSSProperties
   editorClassName?: string
   footerClassName?: string
   editorSlot: ReactNode
@@ -92,7 +93,7 @@ const scaleClasses: Record<
     footer: 'px-3 pb-3 pt-3',
   },
   hero: {
-    shell: 'rounded-[1.55rem]',
+    shell: 'rounded-[1rem]',
     editor: 'px-4 pt-4 pb-2',
     footer: 'px-3 pb-3 pt-3',
   },
@@ -123,6 +124,7 @@ export function LumeComposer({
   tone,
   scale = 'compact',
   className,
+  shellStyle,
   editorClassName,
   footerClassName,
   editorSlot,
@@ -143,7 +145,7 @@ export function LumeComposer({
         sizing.shell,
         className,
       )}
-      style={palette.shell}
+      style={{ ...palette.shell, ...shellStyle }}
     >
       <div
         aria-hidden

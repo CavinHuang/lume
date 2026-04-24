@@ -68,9 +68,9 @@ export function LeftSidebar() {
     expandedWorkspaceIds,
   })
 
-  const openThread = (threadId: string) => {
+  const openThread = (threadId: string, workspaceId?: string) => {
     if (threadId === '__welcome__') {
-      handleNewThread()
+      handleNewThread(workspaceId)
       return
     }
 
@@ -86,8 +86,12 @@ export function LeftSidebar() {
     }
   }
 
-  const handleNewThread = () => {
-    setTabs((previous) => upsertWelcomeTab(previous, currentWorkspaceId))
+  const handleNewThread = (targetWorkspaceId = currentWorkspaceId ?? undefined) => {
+    const workspaceId = targetWorkspaceId ?? null
+    if (workspaceId) {
+      setCurrentWorkspaceId(workspaceId)
+    }
+    setTabs((previous) => upsertWelcomeTab(previous, workspaceId))
     setActiveTabId('__welcome__')
   }
 
@@ -207,16 +211,16 @@ export function LeftSidebar() {
           setExpandedWorkspaceIds(nextState.expandedWorkspaceIds)
         }}
         onToggleWorkspace={(workspaceId) => {
-          setExpandedWorkspaceIds((previous) => {
-            if (
-              currentWorkspaceId === workspaceId ||
-              workspaceId === UNASSIGNED_THREADS_WORKSPACE_ID
-            ) {
-              return toggleWorkspaceExpansion(previous, workspaceId)
-            }
-
-            return previous.includes(workspaceId) ? previous : [...previous, workspaceId]
+          const nextState = applyWorkspaceToggle({
+            tabs,
+            activeTabId,
+            expandedWorkspaceIds,
+            currentWorkspaceId,
+            workspaceId,
           })
+          setCurrentWorkspaceId(nextState.currentWorkspaceId)
+          setTabs(nextState.tabs)
+          setExpandedWorkspaceIds(nextState.expandedWorkspaceIds)
         }}
         onToggleAllWorkspaces={() => {
           setExpandedWorkspaceIds((previous) => toggleAllWorkspaces(workspaceIds, previous))
@@ -294,5 +298,33 @@ export function applyWorkspaceSelection({
     tabs: retargetWelcomeTabIfActive(tabs, activeTabId, workspaceId),
     currentWorkspaceId: workspaceId,
     expandedWorkspaceIds: nextExpandedWorkspaceIds,
+  }
+}
+
+export function applyWorkspaceToggle({
+  tabs,
+  activeTabId,
+  expandedWorkspaceIds,
+  currentWorkspaceId,
+  workspaceId,
+}: {
+  tabs: Tab[]
+  activeTabId: string | null
+  expandedWorkspaceIds: string[]
+  currentWorkspaceId: string | null
+  workspaceId: string
+}) {
+  if (workspaceId === UNASSIGNED_THREADS_WORKSPACE_ID) {
+    return {
+      tabs,
+      currentWorkspaceId,
+      expandedWorkspaceIds: toggleWorkspaceExpansion(expandedWorkspaceIds, workspaceId),
+    }
+  }
+
+  return {
+    tabs: retargetWelcomeTabIfActive(tabs, activeTabId, workspaceId),
+    currentWorkspaceId: workspaceId,
+    expandedWorkspaceIds: toggleWorkspaceExpansion(expandedWorkspaceIds, workspaceId),
   }
 }

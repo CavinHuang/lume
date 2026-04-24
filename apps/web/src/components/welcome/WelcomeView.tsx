@@ -68,6 +68,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
 
   const workspaceSlug = selectedWorkspace?.slug ?? null
 
+  useEffect(() => {
+    setModelRef(undefined)
+    setChannelId(undefined)
+    setModelId(undefined)
+  }, [workspaceSlug])
+
   const recentThreads = useMemo(() => {
     if (!selectedWorkspaceId) return []
     return threads
@@ -91,7 +97,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ undoRedo: false }),
-      Placeholder.configure({ placeholder: '描述你想完成的任务...' }),
+      Placeholder.configure({ placeholder: '输入 @文件 /Skill #MCP，或直接描述你想完成的任务...' }),
     ],
     editorProps: {
       attributes: { class: 'outline-none min-h-[80px] max-h-[200px] overflow-y-auto text-[14px] leading-relaxed' },
@@ -238,6 +244,23 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         }
         modelPicker={
           <WelcomeModelPicker
+            variant="hero"
+            selectedChannelId={channelId}
+            selectedModelRef={modelRef}
+            workspaceSlug={workspaceSlug}
+            onModelChange={(ref, chId, mId) => {
+              setModelRef(ref)
+              setChannelId(chId)
+              setModelId(mId)
+            }}
+          />
+        }
+        composerModelPicker={
+          <WelcomeModelPicker
+            variant="composer"
+            selectedChannelId={channelId}
+            selectedModelRef={modelRef}
+            workspaceSlug={workspaceSlug}
             onModelChange={(ref, chId, mId) => {
               setModelRef(ref)
               setChannelId(chId)

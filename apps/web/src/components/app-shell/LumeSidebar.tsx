@@ -6,7 +6,7 @@ import {
   ChevronRight,
   Clock3,
   Folder,
-  FolderPlus,
+  Home,
   Maximize2,
   Minimize2,
   MoreHorizontal,
@@ -15,7 +15,9 @@ import {
   PinOff,
   Search,
   Settings,
+  Sparkles,
   SquarePen,
+  Plus,
   Trash2,
   X,
 } from 'lucide-react'
@@ -41,7 +43,7 @@ interface LumeSidebarProps {
   onToggleWorkspace: (workspaceId: string) => void
   onToggleAllWorkspaces: () => void
   onCreateWorkspace: () => void
-  onOpenThread: (threadId: string) => void
+  onOpenThread: (threadId: string, workspaceId?: string) => void
   onToggleThreadPin: (threadId: string) => void
   onDeleteThread: (threadId: string) => void
   onRenameThread: (threadId: string, title: string) => void
@@ -155,7 +157,7 @@ export function LumeSidebar({
       className="flex h-full w-[286px] min-w-[286px] -ml-2 flex-col border-r border-[var(--border-strong)] text-[var(--text-1)]"
       style={{
         background:
-          'linear-gradient(180deg, var(--surface-1) 0%, color-mix(in oklab, var(--surface-1) 70%, var(--surface-2)) 100%)',
+          'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 82%, white) 0%, color-mix(in oklab, var(--surface-1) 74%, var(--surface-2)) 100%)',
       }}
     >
       <div className="flex flex-col gap-3 px-4 pb-4 pt-4">
@@ -166,12 +168,12 @@ export function LumeSidebar({
                 key={action.id}
                 type="button"
                 onClick={() => onTopAction(action.id)}
-                className="flex h-11 w-full items-center gap-3 rounded-[1.1rem] bg-gradient-to-r from-[var(--brand)] to-[var(--brand-2)] px-4 text-left text-[13px] font-medium text-[var(--brand-foreground)] shadow-[0_20px_32px_-24px_color-mix(in_oklab,var(--brand)_75%,transparent)] transition-transform hover:translate-y-[-1px]"
+                className="flex h-10 w-full items-center gap-3 rounded-xl bg-gradient-to-r from-[var(--brand)] to-[var(--brand-2)] px-4 text-left text-[13px] font-medium text-[var(--brand-foreground)] shadow-[0_16px_28px_-22px_color-mix(in_oklab,var(--brand)_78%,transparent)] transition-transform hover:translate-y-[-1px]"
               >
                 <SquarePen size={17} />
                 <span className="flex-1">新建聊天</span>
                 {action.shortcut && (
-                  <span className="rounded-full border border-white/25 bg-white/14 px-2 py-0.5 text-[10px] font-semibold tracking-[0.02em] text-white/92">
+                  <span className="rounded-full border border-white/25 bg-white/14 px-2 py-0.5 text-[10px] font-semibold text-white/92">
                     {action.shortcut}
                   </span>
                 )}
@@ -185,7 +187,7 @@ export function LumeSidebar({
                 key={action.id}
                 type="button"
                 onClick={() => onTopAction(action.id)}
-                className="flex h-11 w-full items-center gap-3 rounded-[1.05rem] border border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[var(--surface-2)] px-4 text-left transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_22%,var(--border-strong))] hover:bg-[color:color-mix(in_oklab,var(--surface-2)_72%,var(--surface-3))]"
+                className="flex h-10 w-full items-center gap-3 rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_74%,transparent)] px-4 text-left transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_22%,var(--border-strong))] hover:bg-[color:color-mix(in_oklab,var(--surface-2)_72%,var(--surface-3))]"
               >
                 <Search size={16} className="text-[var(--text-3)]" />
                 <span className="flex-1 text-[13px] text-[var(--text-2)]">搜索</span>
@@ -205,7 +207,7 @@ export function LumeSidebar({
               disabled={action.disabled}
               onClick={() => onTopAction(action.id)}
               className={cn(
-                'flex h-10 w-full items-center gap-3 rounded-[0.95rem] px-3.5 text-left text-[13px] transition-colors',
+                'flex h-9 w-full items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors',
                 action.disabled
                   ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
                   : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
@@ -225,39 +227,38 @@ export function LumeSidebar({
         })}
       </div>
 
-      <div className="flex items-center justify-between px-4 pb-2 pt-2">
+      <div className="flex items-center justify-between px-4 pb-3 pt-2">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-3)]">
+          <span className="text-[12px] font-semibold leading-none text-[var(--text-3)]">
             工作区
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2 pr-1">
           <button
             type="button"
             title={allExpanded ? '收起全部' : '展开全部'}
             onClick={onToggleAllWorkspaces}
-            className="flex size-8 items-center justify-center rounded-xl border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
-            {allExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            {allExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
           <button
             type="button"
             title="新建工作区"
             onClick={onCreateWorkspace}
-            className="flex size-8 items-center justify-center rounded-xl border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
-            <FolderPlus size={15} />
+            <Plus size={17} strokeWidth={2.1} />
           </button>
         </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="px-3 pb-4">
+        <div className="px-4 pb-4">
           {model.workspaces.map((workspace) => (
             <WorkspaceTree
               key={workspace.id}
               workspace={workspace}
-              onSelectWorkspace={onSelectWorkspace}
               onToggleWorkspace={onToggleWorkspace}
               onOpenThread={onOpenThread}
               onToggleThreadPin={onToggleThreadPin}
@@ -270,36 +271,58 @@ export function LumeSidebar({
 
       <div className="border-t border-[color:color-mix(in_oklab,var(--border-strong)_50%,transparent)] px-3 pb-4 pt-3">
         <div className="space-y-1">
-          {model.footerActions.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              disabled={action.disabled}
-              onClick={() => onFooterAction(action.id)}
-              className={cn(
-                'flex h-10 w-full items-center gap-3 rounded-[0.95rem] px-3.5 text-left text-[13px] transition-colors',
-                action.disabled
-                  ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
-                  : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
-              )}
-            >
-              <span className="flex size-5 items-center justify-center">
-                {renderIcon(action.icon, 16)}
-              </span>
-              <span>{action.label}</span>
-            </button>
-          ))}
-        </div>
+          {model.footerActions.map((action) => {
+            if (action.id === 'settings') {
+              return (
+                <div key={action.id} className="flex h-9 items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={action.disabled}
+                    onClick={() => onFooterAction(action.id)}
+                    className={cn(
+                      'flex h-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors',
+                      action.disabled
+                        ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
+                        : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                    )}
+                  >
+                    <span className="flex size-5 items-center justify-center">
+                      {renderIcon(action.icon, 16)}
+                    </span>
+                    <span>{action.label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    title="收起侧边栏"
+                    onClick={() => onSetCollapsed(true)}
+                    className="flex size-8 items-center justify-center rounded-xl border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+                  >
+                    <ChevronLeft size={17} />
+                  </button>
+                </div>
+              )
+            }
 
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            title="收起侧边栏"
-            onClick={() => onSetCollapsed(true)}
-            className="flex size-9 items-center justify-center rounded-2xl border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
-          >
-            <ChevronLeft size={17} />
-          </button>
+            return (
+              <button
+                key={action.id}
+                type="button"
+                disabled={action.disabled}
+                onClick={() => onFooterAction(action.id)}
+                className={cn(
+                  'flex h-9 w-full items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors',
+                  action.disabled
+                    ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
+                    : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                )}
+              >
+                <span className="flex size-5 items-center justify-center">
+                  {renderIcon(action.icon, 16)}
+                </span>
+                <span>{action.label}</span>
+              </button>
+            )
+          })}
         </div>
       </div>
     </aside>
@@ -308,7 +331,6 @@ export function LumeSidebar({
 
 function WorkspaceTree({
   workspace,
-  onSelectWorkspace,
   onToggleWorkspace,
   onOpenThread,
   onToggleThreadPin,
@@ -316,44 +338,42 @@ function WorkspaceTree({
   onRenameThread,
 }: {
   workspace: LumeSidebarWorkspaceItem
-  onSelectWorkspace: (workspaceId: string) => void
   onToggleWorkspace: (workspaceId: string) => void
-  onOpenThread: (threadId: string) => void
+  onOpenThread: (threadId: string, workspaceId?: string) => void
   onToggleThreadPin: (threadId: string) => void
   onDeleteThread: (threadId: string) => void
   onRenameThread: (threadId: string, title: string) => void
 }) {
   return (
-    <section className="mb-1.5">
+    <section className="mb-2.5">
       <button
         type="button"
         onClick={() => {
-          onSelectWorkspace(workspace.id)
           onToggleWorkspace(workspace.id)
         }}
         className={cn(
-          'flex w-full items-center gap-2 rounded-[1rem] px-3 py-2.5 text-left transition-colors',
+          'flex h-7 w-full items-center gap-2 rounded-md px-0 text-left transition-colors',
           workspace.isCurrent
-            ? 'bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-2))] text-[var(--text-1)]'
+            ? 'text-[var(--text-1)]'
             : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
         )}
       >
         <ChevronRight
-          size={14}
+          size={13}
           className={cn(
-            'shrink-0 text-[var(--text-3)] transition-transform duration-150',
+            'ml-0.5 shrink-0 text-[var(--text-3)] transition-transform duration-150',
             workspace.isExpanded && 'rotate-90',
           )}
         />
-        <Folder size={15} className={cn('shrink-0', workspace.isCurrent ? 'text-[var(--brand)]' : 'text-[var(--text-3)]')} />
-        <span className="flex-1 truncate text-[13px] font-medium">{workspace.name}</span>
-        <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-3)]">
+        <WorkspaceIcon workspace={workspace} />
+        <span className="flex-1 truncate text-[13px] font-semibold">{workspace.name}</span>
+        <span className="pr-2 text-[12px] font-medium leading-none text-[var(--text-3)]">
           {workspace.count}
         </span>
       </button>
 
       {workspace.isExpanded && (
-        <div className="mt-1 border-l border-[color:color-mix(in_oklab,var(--border-strong)_54%,transparent)] pl-3">
+        <div className="mt-1 pl-4">
           {workspace.rows.map((row) => (
             <WorkspaceRowRenderer
               key={row.type === 'thread-group' ? row.id : row.id}
@@ -370,6 +390,15 @@ function WorkspaceTree({
   )
 }
 
+function WorkspaceIcon({ workspace }: { workspace: LumeSidebarWorkspaceItem }) {
+  const isPersonal = workspace.name.toLowerCase() === 'personal'
+  const className = cn('shrink-0', workspace.isCurrent ? 'text-[var(--brand)]' : 'text-[var(--text-3)]')
+
+  return isPersonal
+    ? <Home size={14} strokeWidth={2} className={className} />
+    : <Box size={14} strokeWidth={2} className={className} />
+}
+
 function WorkspaceRowRenderer({
   row,
   onOpenThread,
@@ -378,7 +407,7 @@ function WorkspaceRowRenderer({
   onRenameThread,
 }: {
   row: LumeSidebarWorkspaceRow
-  onOpenThread: (threadId: string) => void
+  onOpenThread: (threadId: string, workspaceId?: string) => void
   onToggleThreadPin: (threadId: string) => void
   onDeleteThread: (threadId: string) => void
   onRenameThread: (threadId: string, title: string) => void
@@ -387,26 +416,28 @@ function WorkspaceRowRenderer({
     return (
       <button
         type="button"
-        onClick={() => onOpenThread(row.id)}
+        onClick={() => onOpenThread(row.id, row.workspaceId)}
         className={cn(
-          'mb-1 flex h-9 w-full items-center gap-2 rounded-[0.9rem] px-3 text-left text-[13px] transition-colors',
+          'mb-1 flex h-7 w-full items-center gap-2 rounded-md px-3 text-left text-[13px] transition-colors',
           row.active
-            ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--text-1)]'
+            ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]'
             : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
         )}
       >
-        <SquarePen size={14} className="text-[var(--text-3)]" />
-        <span>{row.label}</span>
+        <Sparkles size={13} strokeWidth={2.1} className={cn(row.active ? 'text-[var(--brand)]' : 'text-[var(--text-3)]')} />
+        <span className="font-medium">{row.label}</span>
       </button>
     )
   }
 
   return (
-    <div className="pb-1">
-      <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-3)]">
-        {row.label}
+    <div className="pb-2">
+      <div className="flex h-7 items-center gap-2 px-0 text-[12px] font-semibold text-[var(--text-3)]">
+        <ChevronRight size={12} className="rotate-90 text-[var(--text-3)]" />
+        <span className="flex-1">{row.label}</span>
+        <span className="pr-3 text-[12px] font-semibold">{row.items.length}</span>
       </div>
-      <div className="space-y-1">
+      <div className="ml-3 space-y-1 border-l border-[color:color-mix(in_oklab,var(--border-strong)_20%,transparent)] pl-1">
         {row.items.map((thread) => (
           <ThreadRow
             key={thread.id}
@@ -514,24 +545,23 @@ function ThreadRow({
         type="button"
         onClick={() => onOpenThread(thread.id)}
         className={cn(
-          'relative flex h-9 w-full items-center gap-2 overflow-hidden rounded-[0.9rem] px-3 pr-10 text-left text-[13px] transition-colors',
+          'relative flex h-7 w-full items-center gap-3 overflow-hidden rounded-md px-3 pr-9 text-left text-[13px] transition-colors',
           thread.active
-            ? 'bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-2))] text-[var(--text-1)]'
+            ? 'bg-[color:color-mix(in_oklab,var(--brand)_11%,var(--surface-2))] text-[var(--text-1)]'
             : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
         )}
       >
-        {thread.active && <span className="absolute left-0 top-1.5 h-6 w-0.5 rounded-full bg-[var(--brand)]" />}
-        {thread.isStreaming ? (
-          <span className="relative flex size-2.5 shrink-0">
-            <span className="absolute inset-0 rounded-full bg-[var(--brand)] opacity-45 animate-ping" />
-            <span className="relative block size-2.5 rounded-full bg-[var(--brand)]" />
+                {thread.isStreaming ? (
+          <span className="relative flex size-2 shrink-0 translate-y-px">
+            <span className="absolute inset-0 animate-ping rounded-full bg-[var(--brand)] opacity-45" />
+            <span className="relative block size-2 rounded-full bg-[var(--brand)]" />
           </span>
         ) : thread.pinned ? (
-          <Pin size={11} className="shrink-0 text-[var(--text-3)]" />
+          <Pin size={12} className="shrink-0 text-[var(--text-3)]" />
         ) : (
-          <span className="size-2.5 shrink-0 rounded-full bg-[color:color-mix(in_oklab,var(--text-3)_22%,transparent)]" />
+          <span className="size-2 shrink-0 translate-y-px rounded-full bg-[color:color-mix(in_oklab,var(--text-3)_24%,transparent)]" />
         )}
-        <span className="truncate">{thread.title}</span>
+        <span className="truncate font-medium">{thread.title}</span>
       </button>
 
       <button

@@ -62,8 +62,38 @@ describe('buildLumeSidebarViewModel', () => {
     expect(syntheticRow).toEqual({
       type: 'synthetic-thread',
       id: '__welcome__',
+      workspaceId: 'workspace-1',
       label: '新对话',
       active: true,
+    })
+  })
+
+  test('adds a new conversation row as the first row for every real workspace', () => {
+    const model = buildLumeSidebarViewModel({
+      workspaces: [
+        createWorkspace(),
+        createWorkspace({ id: 'workspace-2', name: '自动化', slug: 'automation' }),
+      ],
+      threads: [],
+      currentWorkspaceId: 'workspace-1',
+      activeTabId: '__welcome__',
+      streamingStates: {},
+      expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
+    })
+
+    expect(model.workspaces[0].rows[0]).toEqual({
+      type: 'synthetic-thread',
+      id: '__welcome__',
+      workspaceId: 'workspace-1',
+      label: '新对话',
+      active: true,
+    })
+    expect(model.workspaces[1].rows[0]).toEqual({
+      type: 'synthetic-thread',
+      id: '__welcome__',
+      workspaceId: 'workspace-2',
+      label: '新对话',
+      active: false,
     })
   })
 

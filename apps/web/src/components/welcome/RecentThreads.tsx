@@ -1,3 +1,5 @@
+import { ArrowRight, MessageCircle } from 'lucide-react'
+
 interface RecentThreadsProps {
   panel: {
     id: 'recent-threads'
@@ -8,6 +10,7 @@ interface RecentThreadsProps {
       kind: 'thread'
       id: string
       title: string
+      description: string
       meta: string
     }>
   }
@@ -16,37 +19,47 @@ interface RecentThreadsProps {
 
 export function RecentThreads({ panel, onOpen }: RecentThreadsProps) {
   return (
-    <section className="flex h-full flex-col rounded-[1.7rem] border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_94%,transparent),color-mix(in_oklab,var(--surface-2)_84%,transparent))] p-5 shadow-[0_20px_44px_-38px_hsl(var(--shadow-panel)/0.35)]">
-      <header className="mb-4">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-3)]">
-          {panel.title}
-        </p>
-        <p className="mt-1 text-[13px] leading-6 text-[var(--text-2)]">{panel.subtitle}</p>
+    <section className="flex h-full min-h-[190px] flex-col rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_50%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] p-4 shadow-[0_16px_34px_-32px_hsl(var(--shadow-panel)/0.34)]">
+      <header className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold text-[var(--text-1)]">
+            {panel.title}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center gap-1 text-[12px] font-medium text-[var(--brand)] transition-colors hover:text-[color:color-mix(in_oklab,var(--brand)_72%,black)]"
+        >
+          查看全部 ({panel.items.length})
+          <ArrowRight size={13} />
+        </button>
       </header>
 
-      <div className="flex flex-1 flex-col gap-2">
+      <div className="flex flex-1 flex-col">
         {panel.items.length > 0 ? (
           panel.items.map((thread) => (
             <button
               key={thread.id}
               type="button"
               onClick={() => onOpen(thread.id)}
-              className="group flex items-center gap-3 rounded-[1.15rem] border border-transparent bg-[color:color-mix(in_oklab,var(--surface-2)_76%,transparent)] px-3.5 py-3 text-left transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-3)_72%,transparent)]"
+              className="group flex items-center gap-3 border-b border-[color:color-mix(in_oklab,var(--border-strong)_34%,transparent)] py-2.5 text-left transition-colors last:border-b-0 hover:bg-[color:color-mix(in_oklab,var(--surface-2)_55%,transparent)]"
             >
-              <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[color:color-mix(in_oklab,var(--brand)_78%,white)]" />
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_92%,transparent)] text-[var(--text-2)]">
+                <MessageCircle size={14} />
+              </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium text-[var(--text-1)]">
                   {thread.title}
                 </span>
-                <span className="mt-1 block text-[12px] text-[var(--text-3)]">{thread.meta}</span>
+                <span className="mt-0.5 block truncate text-[12px] text-[var(--text-3)]">{thread.description}</span>
               </span>
-              <span className="text-[12px] text-[var(--text-3)] transition-transform group-hover:translate-x-0.5">
-                打开
+              <span className="shrink-0 text-[12px] text-[var(--text-3)]">
+                {thread.meta}
               </span>
             </button>
           ))
         ) : (
-          <div className="flex flex-1 items-center rounded-[1.2rem] border border-dashed border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-4 py-5 text-[13px] leading-6 text-[var(--text-2)]">
+          <div className="flex flex-1 items-center rounded-lg border border-dashed border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_62%,transparent)] px-4 py-5 text-[13px] leading-6 text-[var(--text-2)]">
             {panel.emptyLabel}
           </div>
         )}

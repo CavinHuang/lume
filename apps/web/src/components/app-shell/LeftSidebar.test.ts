@@ -17,6 +17,17 @@ const upsertWelcomeTab = (
       currentWorkspaceId: string | null
       expandedWorkspaceIds: string[]
     }
+    applyWorkspaceToggle?: (input: {
+      tabs: Tab[]
+      activeTabId: string | null
+      expandedWorkspaceIds: string[]
+      currentWorkspaceId: string | null
+      workspaceId: string
+    }) => {
+      tabs: Tab[]
+      currentWorkspaceId: string | null
+      expandedWorkspaceIds: string[]
+    }
   }
 ).upsertWelcomeTab
 const retargetWelcomeTabIfActive = (
@@ -24,6 +35,17 @@ const retargetWelcomeTabIfActive = (
     upsertWelcomeTab?: (tabs: Tab[], workspaceId: string | null) => Tab[]
     retargetWelcomeTabIfActive?: (tabs: Tab[], activeTabId: string | null, workspaceId: string | null) => Tab[]
     applyWorkspaceSelection?: (input: {
+      tabs: Tab[]
+      activeTabId: string | null
+      expandedWorkspaceIds: string[]
+      currentWorkspaceId: string | null
+      workspaceId: string
+    }) => {
+      tabs: Tab[]
+      currentWorkspaceId: string | null
+      expandedWorkspaceIds: string[]
+    }
+    applyWorkspaceToggle?: (input: {
       tabs: Tab[]
       activeTabId: string | null
       expandedWorkspaceIds: string[]
@@ -51,8 +73,34 @@ const applyWorkspaceSelection = (
       currentWorkspaceId: string | null
       expandedWorkspaceIds: string[]
     }
+    applyWorkspaceToggle?: (input: {
+      tabs: Tab[]
+      activeTabId: string | null
+      expandedWorkspaceIds: string[]
+      currentWorkspaceId: string | null
+      workspaceId: string
+    }) => {
+      tabs: Tab[]
+      currentWorkspaceId: string | null
+      expandedWorkspaceIds: string[]
+    }
   }
 ).applyWorkspaceSelection
+const applyWorkspaceToggle = (
+  LeftSidebarModule as {
+    applyWorkspaceToggle?: (input: {
+      tabs: Tab[]
+      activeTabId: string | null
+      expandedWorkspaceIds: string[]
+      currentWorkspaceId: string | null
+      workspaceId: string
+    }) => {
+      tabs: Tab[]
+      currentWorkspaceId: string | null
+      expandedWorkspaceIds: string[]
+    }
+  }
+).applyWorkspaceToggle
 
 describe('LeftSidebar welcome tab state', () => {
   test('retargets an existing welcome tab to the currently selected workspace before reopening it', () => {
@@ -177,6 +225,64 @@ describe('LeftSidebar welcome tab state', () => {
       tabs,
       currentWorkspaceId: 'workspace-1',
       expandedWorkspaceIds: ['workspace-1', '__unassigned__'],
+    })
+  })
+
+  test('workspace header toggle reopens the current workspace after all workspaces are collapsed', () => {
+    const tabs: Tab[] = [
+      {
+        id: '__welcome__',
+        type: 'welcome',
+        title: '新会话',
+        workspaceId: 'workspace-1',
+      },
+    ]
+
+    expect(applyWorkspaceToggle).toBeDefined()
+    expect(
+      applyWorkspaceToggle?.({
+        tabs,
+        activeTabId: '__welcome__',
+        expandedWorkspaceIds: [],
+        currentWorkspaceId: 'workspace-1',
+        workspaceId: 'workspace-1',
+      }),
+    ).toEqual({
+      tabs,
+      currentWorkspaceId: 'workspace-1',
+      expandedWorkspaceIds: ['workspace-1'],
+    })
+  })
+
+  test('workspace header toggle retargets the active welcome tab when opening another workspace', () => {
+    const tabs: Tab[] = [
+      {
+        id: '__welcome__',
+        type: 'welcome',
+        title: '新会话',
+        workspaceId: 'workspace-1',
+      },
+    ]
+
+    expect(
+      applyWorkspaceToggle?.({
+        tabs,
+        activeTabId: '__welcome__',
+        expandedWorkspaceIds: [],
+        currentWorkspaceId: 'workspace-1',
+        workspaceId: 'workspace-2',
+      }),
+    ).toEqual({
+      tabs: [
+        {
+          id: '__welcome__',
+          type: 'welcome',
+          title: '新会话',
+          workspaceId: 'workspace-2',
+        },
+      ],
+      currentWorkspaceId: 'workspace-2',
+      expandedWorkspaceIds: ['workspace-2'],
     })
   })
 })
