@@ -7,7 +7,13 @@ import {
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
-import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
+import {
+  createAgentWorkspace,
+  getAgentWorkspaceBySlug,
+  listAgentWorkspaces,
+  getWorkspaceMcpConfig,
+  getWorkspaceSkills
+} from "./agent-workspace-manager";
 
 function withTempConfigDir(): () => void {
   const previous = process.env.LUME_CONFIG_DIR;
@@ -122,5 +128,34 @@ describe("agent-workspace-manager lume.yaml integration", () => {
 
     const skills = getWorkspaceSkills(workspaceSlug);
     expect(skills.map((item) => item.slug)).toEqual(["alpha"]);
+  });
+});
+
+describe("agent-workspace-manager workspace creation", () => {
+  let restoreEnv: (() => void) | null = null;
+
+  afterEach(() => {
+    restoreEnv?.();
+    restoreEnv = null;
+  });
+
+  test("createAgentWorkspace 应接受显式 slug 并规范化为 kebab-case", () => {
+    restoreEnv = withTempConfigDir();
+
+    const workspace = createAgentWorkspace("CLI Workspace", { slug: "  My_Custom Slug  " });
+
+    expect(workspace.slug).toBe("my-custom-slug");
+    expect(getAgentWorkspaceBySlug("my-custom-slug")?.id).toBe(workspace.id);
+    expect(listAgentWorkspaces().map((item) => item.slug)).toEqual(["my-custom-slug"]);
+  });
+
+  test("createAgentWorkspace 应拒绝重复的显式 slug", () => {
+    restoreEnv = withTempConfigDir();
+
+    createAgentWorkspace("First Workspace", { slug: "CLI Workspace" });
+
+    expect(() => createAgentWorkspace("Second Workspace", { slug: "cli-workspace" })).toThrow(
+      "workspace slug 已存在"
+    );
   });
 });

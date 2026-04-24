@@ -89,10 +89,7 @@ function writeIndex(index: AgentWorkspacesIndex): void {
 }
 
 function slugify(name: string, existingSlugs: Set<string>): string {
-  let base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  let base = normalizeWorkspaceSlug(name);
 
   if (!base) {
     base = `workspace-${Date.now()}`;
@@ -106,6 +103,22 @@ function slugify(name: string, existingSlugs: Set<string>): string {
   }
 
   return slug;
+}
+
+function normalizeWorkspaceSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function normalizeRequestedSlug(slug: string | undefined): string | undefined {
+  if (slug === undefined) {
+    return undefined;
+  }
+
+  const normalized = normalizeWorkspaceSlug(slug);
+  return normalized || undefined;
 }
 
 function compareVersions(a: string, b: string): number {
@@ -290,10 +303,16 @@ export function getAgentWorkspaceBySlug(slug: string): AgentWorkspace | undefine
   return readIndex().workspaces.find((workspace) => workspace.slug === slug);
 }
 
-export function createAgentWorkspace(name: string): AgentWorkspace {
+export function createAgentWorkspace(name: string, options?: { slug?: string }): AgentWorkspace {
   const index = readIndex();
   const existingSlugs = new Set(index.workspaces.map((workspace) => workspace.slug));
-  const slug = slugify(name, existingSlugs);
+  const explicitSlug = normalizeRequestedSlug(options?.slug);
+
+  if (explicitSlug && existingSlugs.has(explicitSlug)) {
+    throw new Error("workspace slug 已存在");
+  }
+
+  const slug = explicitSlug || slugify(name, existingSlugs);
   const now = Date.now();
 
   const workspace: AgentWorkspace = {
