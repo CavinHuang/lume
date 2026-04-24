@@ -1,0 +1,531 @@
+<style>
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+  .hero strong {
+    color: var(--accent);
+  }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin: 1rem 0 1.5rem;
+  }
+  .kpi {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-secondary);
+    padding: 0.9rem 1rem;
+  }
+  .kpi .label {
+    margin-bottom: 0.35rem;
+  }
+  .kpi p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+  .mock-shell {
+    min-height: 620px;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.12);
+  }
+  .mock-shell.light {
+    background: linear-gradient(180deg, #fbfbfe 0%, #f5f6fb 100%);
+  }
+  .mock-shell.dark {
+    background: linear-gradient(180deg, #11131c 0%, #0d0f16 100%);
+  }
+  .topbar {
+    height: 54px;
+    display: grid;
+    grid-template-columns: 280px 1fr 240px;
+    align-items: center;
+    padding: 0 16px;
+    border-bottom: 1px solid rgba(128,128,128,0.18);
+    font-size: 12px;
+  }
+  .topbar .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(128,128,128,0.18);
+    background: rgba(255,255,255,0.04);
+  }
+  .shell-body {
+    display: grid;
+    grid-template-columns: 312px 1fr;
+    min-height: 566px;
+  }
+  .sidebar {
+    border-right: 1px solid rgba(128,128,128,0.18);
+    padding: 20px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .sidebar .cta {
+    height: 52px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    color: white;
+    font-weight: 600;
+    background: linear-gradient(135deg, #6875ff 0%, #8c73ff 100%);
+    box-shadow: 0 10px 24px rgba(103, 100, 255, 0.28);
+  }
+  .sidebar .search {
+    height: 44px;
+    border-radius: 14px;
+    border: 1px solid rgba(128,128,128,0.18);
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    color: var(--text-secondary);
+    background: rgba(255,255,255,0.04);
+  }
+  .sidebar .cluster,
+  .workspace-card,
+  .thread-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .nav-item,
+  .workspace-row,
+  .thread-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  .nav-item.active,
+  .thread-item.active {
+    background: rgba(104, 117, 255, 0.12);
+    color: #6d76ff;
+  }
+  .workspace-title {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 6px 0 2px;
+  }
+  .workspace-row {
+    background: rgba(255,255,255,0.04);
+  }
+  .thread-item {
+    color: var(--text-secondary);
+    padding-left: 22px;
+  }
+  .main {
+    padding: 30px 28px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .hero-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+    padding: 18px 0 10px;
+  }
+  .hero-block .title {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .hero-block .sub {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+  .toolbar {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+  }
+  .pill {
+    min-width: 180px;
+    height: 40px;
+    border-radius: 14px;
+    border: 1px solid rgba(128,128,128,0.18);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    background: rgba(255,255,255,0.04);
+  }
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .feature-card,
+  .content-card {
+    border-radius: 18px;
+    border: 1px solid rgba(128,128,128,0.18);
+    background: rgba(255,255,255,0.04);
+  }
+  .feature-card {
+    min-height: 138px;
+    padding: 18px;
+  }
+  .feature-card h4 {
+    font-size: 15px;
+    margin-bottom: 8px;
+    color: #6673ff;
+  }
+  .feature-card p {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .content-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr 1fr;
+    gap: 14px;
+  }
+  .content-card {
+    min-height: 220px;
+    padding: 18px;
+  }
+  .content-card h4 {
+    font-size: 15px;
+    margin-bottom: 12px;
+  }
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .list-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(128,128,128,0.12);
+  }
+  .composer {
+    margin-top: auto;
+    border-radius: 20px;
+    border: 1px solid rgba(109,118,255,0.45);
+    background: rgba(255,255,255,0.03);
+    min-height: 152px;
+    padding: 18px 20px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .composer .prompt {
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+  .composer-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-top: auto;
+  }
+  .actions,
+  .sendbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .mini-chip {
+    height: 38px;
+    border-radius: 12px;
+    border: 1px solid rgba(128,128,128,0.18);
+    padding: 0 14px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: rgba(255,255,255,0.04);
+  }
+  .send {
+    width: 52px;
+    height: 44px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #6875ff 0%, #8a72ff 100%);
+  }
+  .legend {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+  .custom { background: #6d76ff; }
+  .primitive { background: #17b26a; }
+  .data { background: #ff9f0a; }
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .note {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .note h4 {
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+  .note p {
+    font-size: 0.84rem;
+    color: var(--text-secondary);
+  }
+</style>
+
+<h2>第一段设计：主路径结构映射</h2>
+<p class="subtitle">目标是 <strong>1:1 贴近设计稿气质</strong>，但继续保留真实数据驱动。下面只确认欢迎页、左侧栏、输入区的结构与边界，不讨论实现细节。</p>
+
+<div class="kpis">
+  <div class="kpi">
+    <div class="label">保留</div>
+    <p>工作区、线程、最近会话、推荐内容、模型选择仍由现有数据源驱动。</p>
+  </div>
+  <div class="kpi">
+    <div class="label">重做</div>
+    <p>左侧栏外壳、欢迎页主舞台、底部输入区将按设计稿重新组织视觉层级。</p>
+  </div>
+  <div class="kpi">
+    <div class="label">策略</div>
+    <p>能复用的基础交互用 shadcn 原语，强视觉区域改成 Lume 自定义品牌组件。</p>
+  </div>
+</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Light Theme Structure</div>
+    <div class="mockup-body">
+      <div class="mock-shell light">
+        <div class="topbar">
+          <div class="chip">Lume / Lume Core</div>
+          <div style="text-align:center"><span class="chip">已同步</span></div>
+          <div style="display:flex;justify-content:flex-end;gap:8px"><span class="chip">搜索 / 通知 / 头像</span></div>
+        </div>
+        <div class="shell-body">
+          <div class="sidebar">
+            <div class="cta"><span>新建聊天</span><span>⌘N</span></div>
+            <div class="search">搜索</div>
+            <div class="cluster">
+              <div class="nav-item">技能</div>
+              <div class="nav-item">自动化 <span>即将推出</span></div>
+            </div>
+            <div class="workspace-title">工作区</div>
+            <div class="workspace-card">
+              <div class="workspace-row"><span>Lume Core</span><span>8</span></div>
+              <div class="thread-list">
+                <div class="thread-item active">新对话</div>
+                <div class="thread-item">重新设计 Lume 的 UI</div>
+                <div class="thread-item">Q2 产品路线图讨论</div>
+                <div class="thread-item">用户反馈分析与洞察</div>
+              </div>
+            </div>
+            <div style="margin-top:auto" class="cluster">
+              <div class="nav-item">回收站</div>
+              <div class="nav-item">设置</div>
+            </div>
+          </div>
+          <div class="main">
+            <div class="hero-block">
+              <div style="font-size:34px;color:#6973ff">✳</div>
+              <div class="title">今天想一起完成什么？</div>
+              <div class="sub">在 Lume Core 中开始新的工作流</div>
+            </div>
+            <div class="toolbar">
+              <div class="pill">工作区：Lume Core</div>
+              <div class="pill">模型：Lume 3.5 Pro</div>
+            </div>
+            <div class="feature-grid">
+              <div class="feature-card"><h4>整理产品需求</h4><p>真实卡片数据映射到设计稿的功能卡样式。</p></div>
+              <div class="feature-card"><h4>分析代码结构</h4><p>保留推荐入口，但统一图标、文案层级与卡片边界。</p></div>
+              <div class="feature-card"><h4>生成发布清单</h4><p>四张卡片保持等宽、等高和稳定 hover 行为。</p></div>
+              <div class="feature-card"><h4>优化 UI 设计系统</h4><p>该行优先做成可复用的欢迎页品牌模块。</p></div>
+            </div>
+            <div class="content-grid">
+              <div class="content-card"><h4>最近会话</h4><div class="list"><div class="list-row"><span>重新设计 Lume 的 UI</span><span>10:20</span></div><div class="list-row"><span>Q2 产品路线图讨论</span><span>昨天</span></div><div class="list-row"><span>AI 赋能代码质量分析</span><span>昨天</span></div></div></div>
+              <div class="content-card"><h4>推荐工作流</h4><div class="list"><div class="list-row"><span>需求到 PRD 工作流</span><span>›</span></div><div class="list-row"><span>代码评审与优化</span><span>›</span></div><div class="list-row"><span>发布准备清单</span><span>›</span></div></div></div>
+              <div class="content-card"><h4>最近文件</h4><div class="list"><div class="list-row"><span>设计需求文档.md</span><span>10:15</span></div><div class="list-row"><span>Figma 设计文件.fig</span><span>昨天</span></div><div class="list-row"><span>用户反馈数据.xlsx</span><span>3 天前</span></div></div></div>
+            </div>
+            <div class="composer">
+              <div class="prompt">输入 @文件 /Skill #MCP，或直接描述你想完成的任务...</div>
+              <div class="composer-footer">
+                <div class="actions">
+                  <div class="mini-chip">附件</div>
+                  <div class="mini-chip">@ 文件</div>
+                  <div class="mini-chip">/Skill</div>
+                  <div class="mini-chip"># MCP</div>
+                </div>
+                <div class="sendbar">
+                  <div class="mini-chip">Lume 3.5 Pro</div>
+                  <div class="mini-chip">思考级别</div>
+                  <div class="send"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Dark Theme Structure</div>
+    <div class="mockup-body">
+      <div class="mock-shell dark">
+        <div class="topbar">
+          <div class="chip">Lume / Lume Core</div>
+          <div style="text-align:center"><span class="chip">已同步</span></div>
+          <div style="display:flex;justify-content:flex-end;gap:8px"><span class="chip">搜索 / 通知 / 头像</span></div>
+        </div>
+        <div class="shell-body">
+          <div class="sidebar">
+            <div class="cta"><span>新建聊天</span><span>⌘N</span></div>
+            <div class="search">搜索</div>
+            <div class="cluster">
+              <div class="nav-item">技能</div>
+              <div class="nav-item">自动化 <span>即将推出</span></div>
+            </div>
+            <div class="workspace-title">工作区</div>
+            <div class="workspace-card">
+              <div class="workspace-row"><span>Lume Core</span><span>8</span></div>
+              <div class="thread-list">
+                <div class="thread-item active">新对话</div>
+                <div class="thread-item">重新设计 Lume 的 UI</div>
+                <div class="thread-item">Q2 产品路线图讨论</div>
+                <div class="thread-item">用户反馈分析与洞察</div>
+              </div>
+            </div>
+            <div style="margin-top:auto" class="cluster">
+              <div class="nav-item">回收站</div>
+              <div class="nav-item">设置</div>
+            </div>
+          </div>
+          <div class="main">
+            <div class="hero-block">
+              <div style="font-size:34px;color:#7d78ff">✳</div>
+              <div class="title">今天想一起完成什么？</div>
+              <div class="sub">在 Lume Core 中开始新的工作流</div>
+            </div>
+            <div class="toolbar">
+              <div class="pill">工作区：Lume Core</div>
+              <div class="pill">模型：Lume 3.5 Pro</div>
+            </div>
+            <div class="feature-grid">
+              <div class="feature-card"><h4>整理产品需求</h4><p>暗色版保持同一栅格和信息密度，只切换 token。</p></div>
+              <div class="feature-card"><h4>分析代码结构</h4><p>主内容面板不换布局，避免 light/dark 出现交互分叉。</p></div>
+              <div class="feature-card"><h4>生成发布清单</h4><p>品牌色发光和边框强度集中通过 token 控制。</p></div>
+              <div class="feature-card"><h4>优化 UI 设计系统</h4><p>最终实现目标是两套主题都达到成品级一致。</p></div>
+            </div>
+            <div class="content-grid">
+              <div class="content-card"><h4>最近会话</h4><div class="list"><div class="list-row"><span>重新设计 Lume 的 UI</span><span>10:20</span></div><div class="list-row"><span>Q2 产品路线图讨论</span><span>昨天</span></div><div class="list-row"><span>AI 赋能代码质量分析</span><span>昨天</span></div></div></div>
+              <div class="content-card"><h4>推荐工作流</h4><div class="list"><div class="list-row"><span>需求到 PRD 工作流</span><span>›</span></div><div class="list-row"><span>代码评审与优化</span><span>›</span></div><div class="list-row"><span>发布准备清单</span><span>›</span></div></div></div>
+              <div class="content-card"><h4>最近文件</h4><div class="list"><div class="list-row"><span>设计需求文档.md</span><span>10:15</span></div><div class="list-row"><span>Figma 设计文件.fig</span><span>昨天</span></div><div class="list-row"><span>用户反馈数据.xlsx</span><span>3 天前</span></div></div></div>
+            </div>
+            <div class="composer">
+              <div class="prompt">输入 @文件 /Skill #MCP，或直接描述你想完成的任务...</div>
+              <div class="composer-footer">
+                <div class="actions">
+                  <div class="mini-chip">附件</div>
+                  <div class="mini-chip">@ 文件</div>
+                  <div class="mini-chip">/Skill</div>
+                  <div class="mini-chip"># MCP</div>
+                </div>
+                <div class="sendbar">
+                  <div class="mini-chip">Lume 3.5 Pro</div>
+                  <div class="mini-chip">思考级别</div>
+                  <div class="send"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><i class="dot custom"></i> 自定义品牌组件：Sidebar / Welcome Surface / Composer</span>
+  <span><i class="dot primitive"></i> 可复用 shadcn 原语：Select / Dialog / ScrollArea / Tooltip</span>
+  <span><i class="dot data"></i> 保留真实数据结构：workspace / thread / recent items / model picker</span>
+</div>
+
+<div class="notes">
+  <div class="note">
+    <h4>左侧栏</h4>
+    <p>结构仍是工作区和线程树，但视觉上改成设计稿式单列导航，不再保留当前的“厚玻璃卡片”外壳语言。</p>
+  </div>
+  <div class="note">
+    <h4>欢迎页</h4>
+    <p>现有 RecentThreads、workspace/model selector、推荐块都继续使用真实数据，只是重组为设计稿中的中心舞台布局。</p>
+  </div>
+  <div class="note">
+    <h4>输入区</h4>
+    <p>继续保留 TipTap、mentions、模型和思考级别选择，但外层容器和操作排布改成设计稿的大型 composer。</p>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 1.75rem;">
+  <div class="label">确认这一段设计</div>
+  <div class="options">
+    <div class="option" data-choice="approve-structure" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>结构方向正确</h3>
+        <p>欢迎页、左侧栏、输入区的映射方式和设计稿方向一致，可以继续细化 token 与组件边界。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="adjust-structure" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>方向对，但局部要调整</h3>
+        <p>整体映射没问题，但某个区域的层级、信息量或版式需要改。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="rework-structure" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content">
+        <h3>结构需要重排</h3>
+        <p>当前设计分区不符合预期，需要重新定义第一批主路径的版面关系。</p>
+      </div>
+    </div>
+  </div>
+</div>
