@@ -1,6 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Send, Loader2, Paperclip } from 'lucide-react'
-import { useEditor, EditorContent } from '@tiptap/react'
+import { useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { useState, useEffect, useMemo } from 'react'
@@ -18,10 +17,10 @@ import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
-import { RecentThreads } from './RecentThreads'
 import type { AgentThreadMeta, LumeConfigThinkingLevel } from '@lume/shared'
-import { cn } from '@/lib/utils'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
+import { LumeWelcomeSurface } from './LumeWelcomeSurface'
+import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
 
 interface WelcomeViewProps {
   workspaceId?: string
@@ -46,6 +45,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [modelId, setModelId] = useState<string | undefined>()
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
   const [sending, setSending] = useState(false)
+  const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<Array<{ filename: string; sourcePath: string }>>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
@@ -56,6 +56,10 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    setSelectedWorkspaceId(initialWorkspaceId ?? currentWorkspaceId ?? null)
+  }, [currentWorkspaceId, initialWorkspaceId])
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((ws) => ws.id === selectedWorkspaceId),
@@ -69,8 +73,20 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     return threads
       .filter((t) => t.workspaceId === selectedWorkspaceId && !t.pinned)
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, 3)
   }, [threads, selectedWorkspaceId])
+
+  const welcomeSurfaceModel = useMemo(
+    () =>
+      buildWelcomeSurfaceViewModel({
+        workspaceName: selectedWorkspace?.name ?? null,
+        recentThreads,
+        recentFiles: pendingFiles.map((file) => ({
+          filename: file.filename,
+          sourcePath: file.sourcePath,
+        })),
+      }),
+    [pendingFiles, recentThreads, selectedWorkspace?.name]
+  )
 
   const editor = useEditor({
     extensions: [
@@ -87,6 +103,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         }
         return false
       },
+    },
+    onCreate({ editor }) {
+      setEditorText(editor.getText())
+    },
+    onUpdate({ editor }) {
+      setEditorText(editor.getText())
     },
   })
 
@@ -134,6 +156,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         userMessage: text,
         thinkingLevel,
       } as any)
+      editor.commands.clearContent()
+      setEditorText('')
+      setPendingFiles([])
 
       setTabs((prev) => {
         const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
@@ -184,102 +209,57 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     }
   }
 
-  const hasText = editor?.getText().trim().length > 0
+  const handleOpenThreadById = (threadId: string) => {
+    const thread = threads.find((item) => item.id === threadId)
+    if (!thread) return
+    handleOpenThread(thread)
+  }
+
+  const handleChoosePromptSeed = (promptSeed: string) => {
+    if (!editor) return
+    editor.commands.clearContent()
+    editor.commands.insertContent(promptSeed)
+    editor.commands.focus('end')
+  }
+
+  const hasText = editorText.trim().length > 0
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6 overflow-y-auto">
-      <div className="w-full max-w-2xl flex flex-col items-center">
-        <h2 className="text-2xl font-semibold text-foreground mb-8 text-center leading-snug">
-          What should we work on
-          {selectedWorkspace ? (
-            <>
-              {' '}in{' '}
-              <span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">
-                {selectedWorkspace.name}
-              </span>
-            </>
-          ) : null}
-          ?
-        </h2>
-
-        <div className={cn(
-          'w-full rounded-2xl border border-border/50 bg-background shadow-md transition-all duration-200',
-          'focus-within:border-border focus-within:shadow-lg',
-          sending && 'opacity-60 pointer-events-none'
-        )}>
-          <div className="px-4 pt-4 pb-2">
-            <EditorContent editor={editor} />
-          </div>
-
-          {pendingFiles.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-              {pendingFiles.map((f, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 text-[11px] bg-muted/80 px-2 py-1 rounded-md border border-border/40"
-                >
-                  {f.filename}
-                  <button
-                    onClick={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
-                    className="text-muted-foreground hover:text-foreground ml-0.5"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between px-3 pb-3 pt-1 gap-2">
-            <div className="flex items-center gap-0.5 min-w-0 flex-wrap">
-              <WorkspaceSelector
-                workspaces={workspaces}
-                selectedId={selectedWorkspaceId}
-                onSelect={handleSelectWorkspace}
-                onCreateWorkspaceClick={() => setCreateWorkspaceOpen(true)}
-              />
-              <WelcomeModelPicker
-                onModelChange={(ref, chId, mId) => {
-                  setModelRef(ref)
-                  setChannelId(chId)
-                  setModelId(mId)
-                }}
-              />
-              <button
-                onClick={handleAttach}
-                className="p-1.5 rounded-lg text-foreground/35 hover:text-foreground/60 hover:bg-muted/60 transition-colors"
-                title="附加文件"
-                disabled={sending}
-              >
-                <Paperclip size={14} />
-              </button>
-              <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
-            </div>
-            {sending ? (
-              <div className="p-2">
-                <Loader2 size={14} className="animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!hasText}
-                className={cn(
-                  'p-2 rounded-xl transition-all duration-150',
-                  hasText
-                    ? 'bg-primary text-primary-foreground hover:opacity-85 shadow-sm'
-                    : 'bg-muted/60 text-muted-foreground/50 cursor-not-allowed'
-                )}
-                title="发送"
-              >
-                <Send size={13} />
-              </button>
-            )}
-          </div>
-        </div>
-
-        <RecentThreads threads={recentThreads} onOpen={handleOpenThread} />
-      </div>
-
+    <>
+      <LumeWelcomeSurface
+        model={welcomeSurfaceModel}
+        workspaceSelector={
+          <WorkspaceSelector
+            workspaces={workspaces}
+            selectedId={selectedWorkspaceId}
+            onSelect={handleSelectWorkspace}
+            onCreateWorkspaceClick={() => setCreateWorkspaceOpen(true)}
+          />
+        }
+        modelPicker={
+          <WelcomeModelPicker
+            onModelChange={(ref, chId, mId) => {
+              setModelRef(ref)
+              setChannelId(chId)
+              setModelId(mId)
+            }}
+          />
+        }
+        thinkingLevelPicker={
+          <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
+        }
+        editor={editor}
+        pendingFiles={pendingFiles}
+        sending={sending}
+        hasText={Boolean(hasText)}
+        onSend={handleSend}
+        onAttach={handleAttach}
+        onOpenThread={handleOpenThreadById}
+        onChoosePromptSeed={handleChoosePromptSeed}
+        onRemovePendingFile={(index) =>
+          setPendingFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
+        }
+      />
       <CreateWorkspaceDialog
         open={createWorkspaceOpen}
         onOpenChange={setCreateWorkspaceOpen}
@@ -294,6 +274,6 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
           )
         }}
       />
-    </div>
+    </>
   )
 }

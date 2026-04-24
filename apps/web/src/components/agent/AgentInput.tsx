@@ -6,7 +6,6 @@ import { Send, Square, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { cn } from '@/lib/utils'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
 import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, agentSDKMessagesAtom } from '@/atoms'
@@ -18,10 +17,12 @@ import type { MentionItem, MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { SkillMeta, WorkspaceMcpConfig } from '@lume/shared'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
+import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
+import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 
 interface AgentInputProps {
   threadId: string
-  disabled?: boolean
+  streaming?: boolean
 }
 
 /** 获取各类 mention 的建议列表 */
@@ -132,13 +133,14 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps) {
   wrapper.style.top = 'auto'
 }
 
-export function AgentInput({ threadId, disabled }: AgentInputProps) {
+export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const workspaceSlugRef = useRef<string | null>(null)
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+  const [editorText, setEditorText] = useState('')
 
   useEffect(() => {
     getEffectiveLumeConfig()
@@ -183,7 +185,10 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
       }),
     ],
     editorProps: {
-      attributes: { class: 'outline-none min-h-[24px] max-h-[200px] overflow-y-auto text-[14px] leading-relaxed' },
+      attributes: {
+        class:
+          'outline-none min-h-[72px] max-h-[220px] overflow-y-auto text-[14px] leading-7 text-[var(--text-1)]',
+      },
       handleKeyDown(_, event) {
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault()
@@ -193,13 +198,25 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
         return false
       },
     },
+    onCreate({ editor }) {
+      setEditorText(editor.getText())
+    },
+    onUpdate({ editor }) {
+      setEditorText(editor.getText())
+    },
+  })
+
+  const composerState = deriveLumeComposerState({
+    hasText: editorText.trim().length > 0,
+    mode: streaming ? 'streaming' : 'idle',
   })
 
   const handleSend = async () => {
-    if (!editor || disabled) return
+    if (!editor || streaming) return
     const text = editor.getText().trim()
     if (!text) return
     editor.commands.clearContent()
+    setEditorText('')
     const now = Date.now()
     const userMsg = {
       type: 'user' as const,
@@ -248,44 +265,59 @@ export function AgentInput({ threadId, disabled }: AgentInputProps) {
 
   return (
     <div className="px-4 pb-4 pt-2">
-      <div className={cn(
-        'rounded-2xl border border-border/60 bg-background shadow-sm transition-colors',
-        disabled && 'opacity-60'
-      )}>
-        <div className="px-4 py-3">
-          <EditorContent editor={editor} />
-        </div>
-        <div className="flex items-center justify-between px-3 pb-2 gap-2">
-          <div className="flex items-center gap-1 min-w-0 flex-wrap">
+      <LumeComposer
+        tone={composerState.tone}
+        scale="compact"
+        className="rounded-[1.6rem]"
+        editorSlot={
+          <EditorContent
+            editor={editor}
+            className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
+          />
+        }
+        leadingTools={
+          <>
             <button
               onClick={handleAttach}
-              className="p-1.5 rounded-lg text-foreground/40 hover:text-foreground/70 hover:bg-muted/50 transition-colors"
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-3.5 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
               title="附加文件"
+              type="button"
             >
-              <Paperclip size={15} />
+              <Paperclip size={14} />
+              文件
             </button>
             <ModelPicker threadId={threadId} />
             <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
-          </div>
-          {disabled ? (
+          </>
+        }
+        actionSlot={
+          composerState.showStop ? (
             <button
+              type="button"
               onClick={handleStop}
-              className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--brand-2)_26%,transparent)] bg-[color:color-mix(in_oklab,var(--brand-2)_14%,var(--surface-2))] px-4 text-[12px] font-medium text-[var(--text-1)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand-2)_34%,transparent)]"
               title="停止"
             >
-              <Square size={14} />
+              <Square size={13} />
+              停止
             </button>
           ) : (
             <button
+              type="button"
               onClick={handleSend}
-              className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+              disabled={!composerState.canSend}
+              className={getLumeComposerPrimaryActionClassName({
+                enabled: composerState.canSend,
+                size: 'compact',
+              })}
               title="发送"
             >
-              <Send size={14} />
+              发送
+              <Send size={13} />
             </button>
-          )}
-        </div>
-      </div>
+          )
+        }
+      />
     </div>
   )
 }
