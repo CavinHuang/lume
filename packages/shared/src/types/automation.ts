@@ -5,7 +5,10 @@
  */
 
 /** 调度类型 */
-export type AutomationScheduleType = 'cron' | 'once' | 'interval'
+export type AutomationScheduleType = 'cron' | 'once' | 'interval' | 'manual'
+
+/** 自动化任务触发入口 */
+export type AutomationTriggerMode = 'manual' | 'schedule' | 'webhook' | 'chat'
 
 /** 任务调度配置 */
 export interface AutomationSchedule {
@@ -36,6 +39,14 @@ export interface AutomationJob {
   workspaceId?: string
   /** 调度配置 */
   schedule: AutomationSchedule
+  /** 可触发任务的入口，用于管理页展示和未来能力扩展 */
+  triggerModes?: AutomationTriggerMode[]
+  /** 简短说明 */
+  description?: string
+  /** 默认模型展示值 */
+  defaultModel?: string
+  /** 任务可用工具与资源标识 */
+  toolResourceIds?: string[]
   /** 执行提示词（后续可扩展为 workflow） */
   prompt: string
   /** 内置系统动作（可选）。存在时优先执行系统动作，而不是发送 Agent prompt。 */
@@ -61,6 +72,10 @@ export interface AutomationCreateJobInput {
   workspaceId?: string
   threadId?: string
   schedule: AutomationSchedule
+  triggerModes?: AutomationTriggerMode[]
+  description?: string
+  defaultModel?: string
+  toolResourceIds?: string[]
   prompt: string
   systemAction?: AutomationSystemAction
 }
@@ -73,6 +88,10 @@ export interface AutomationUpdateJobInput {
   workspaceId?: string
   threadId?: string
   schedule?: AutomationSchedule
+  triggerModes?: AutomationTriggerMode[]
+  description?: string
+  defaultModel?: string
+  toolResourceIds?: string[]
   prompt?: string
   systemAction?: AutomationSystemAction
 }

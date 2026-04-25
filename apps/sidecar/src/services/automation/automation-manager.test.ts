@@ -62,6 +62,36 @@ describe("automation-manager", () => {
     expect(listAutomationJobs()).toEqual([]);
   });
 
+  test("应保留自动化管理页的手动触发与展示元数据", () => {
+    const created = createAutomationJob({
+      name: "PRD 初稿生成",
+      description: "根据需求文档，生成产品需求文档初稿",
+      schedule: { type: "manual" },
+      prompt: "阅读并理解需求文档，输出结构清晰的 PRD 初稿",
+      triggerModes: ["manual", "chat"],
+      toolResourceIds: ["file", "prd", "design"],
+      defaultModel: "GPT-5.1"
+    });
+
+    expect(created.schedule).toEqual({ type: "manual" });
+    expect(created.triggerModes).toEqual(["manual", "chat"]);
+    expect(created.toolResourceIds).toEqual(["file", "prd", "design"]);
+    expect(created.description).toBe("根据需求文档，生成产品需求文档初稿");
+    expect(created.defaultModel).toBe("GPT-5.1");
+
+    const updated = updateAutomationJob({
+      id: created.id,
+      triggerModes: ["manual", "schedule", "chat"],
+      toolResourceIds: ["file", "web", "prd"],
+      schedule: { type: "cron", cronExpr: "0 9 * * *" }
+    });
+
+    expect(updated.schedule).toEqual({ type: "cron", cronExpr: "0 9 * * *" });
+    expect(updated.triggerModes).toEqual(["manual", "schedule", "chat"]);
+    expect(updated.toolResourceIds).toEqual(["file", "web", "prd"]);
+    expect(listAutomationJobs()[0]?.triggerModes).toEqual(["manual", "schedule", "chat"]);
+  });
+
   test("索引损坏时应自动备份并回退空列表", () => {
     const indexPath = getAutomationJobsPath();
     writeFileSync(indexPath, "{broken-json", "utf-8");

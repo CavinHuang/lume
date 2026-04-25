@@ -19,6 +19,7 @@ function describeSchedule(job: AutomationJob): string {
   const s = job.schedule
   if (s.type === 'cron') return `Cron: ${s.cronExpr}`
   if (s.type === 'once') return `一次性: ${new Date(s.runAt ?? 0).toLocaleString('zh-CN')}`
+  if (s.type === 'manual') return '手动运行'
   if (s.type === 'interval') {
     const mins = Math.round((s.intervalMs ?? 0) / 60000)
     return `间隔: ${mins >= 60 ? `${Math.round(mins / 60)}小时` : `${mins}分钟`}`

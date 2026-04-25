@@ -74,6 +74,9 @@ function validateSchedule(schedule: AutomationSchedule): void {
     }
     return;
   }
+  if (schedule.type === "manual") {
+    return;
+  }
   throw new Error(`不支持的 schedule.type: ${(schedule as { type?: string }).type ?? "unknown"}`);
 }
 
@@ -108,6 +111,10 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     workspaceId: input.workspaceId?.trim() || undefined,
     threadId: input.threadId?.trim() || undefined,
     schedule: input.schedule,
+    ...(input.triggerModes ? { triggerModes: input.triggerModes } : {}),
+    ...(input.description ? { description: input.description.trim() } : {}),
+    ...(input.defaultModel ? { defaultModel: input.defaultModel.trim() } : {}),
+    ...(input.toolResourceIds ? { toolResourceIds: input.toolResourceIds } : {}),
     prompt: normalizePrompt(input.prompt),
     ...(input.systemAction ? { systemAction: input.systemAction } : {}),
     createdAt: now,
@@ -135,6 +142,10 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId.trim() || undefined } : {}),
     ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
     ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
+    ...(input.triggerModes !== undefined ? { triggerModes: input.triggerModes } : {}),
+    ...(input.description !== undefined ? { description: input.description.trim() || undefined } : {}),
+    ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel.trim() || undefined } : {}),
+    ...(input.toolResourceIds !== undefined ? { toolResourceIds: input.toolResourceIds } : {}),
     ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
     ...(input.systemAction !== undefined ? { systemAction: input.systemAction } : {}),
     updatedAt: Date.now()
