@@ -8,6 +8,12 @@ import { sidecarCall } from './system'
 export const getEffectiveLumeConfig = (workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:get-effective', workspaceSlug ? { workspaceSlug } : {})
 
+export const getLumeConfigSourcePath = () =>
+  sidecarCall<{ sourcePath: string }>('lume-config:get-source-path', {})
+
+export const openLumeConfigSourceFile = () =>
+  sidecarCall<{ ok: boolean }>('lume-config:open-source-file', {})
+
 export const updateAgentModelStrategy = (value: LumeConfigAgentDefaultStrategy, workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
     source: 'user',

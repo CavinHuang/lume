@@ -1,284 +1,167 @@
 import * as React from 'react'
+import { useAtom } from 'jotai'
 import {
-  FolderOpen,
-  Laptop,
-  Loader2,
-  MoonStar,
-  MonitorCog,
-  Sun,
+  ChevronDown,
+  ExternalLink,
+  Folder,
+  Keyboard,
+  Languages,
+  RefreshCcw,
   Trash2,
   type LucideIcon,
 } from 'lucide-react'
-import { toast } from 'sonner'
-import {
-  getGeneralSettings,
-  openLogsDir,
-  updateGeneralSettings,
-  type GeneralSettings as GeneralSettingsValue,
-  type ThemeMode,
-} from '@/lib/desktop-api'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import { cn } from '@/lib/utils'
 import { ClearCacheDialog } from './ClearCacheDialog'
-import {
-  GENERAL_SETTINGS_DEFAULTS,
-  THEME_MODE_OPTIONS,
-  mergeGeneralSettings,
-} from './general-settings-state'
-import { getThemeMode, setThemeMode } from '@/lib/theme-mode'
 
-const THEME_MODE_ICONS: Record<ThemeMode, LucideIcon> = {
-  system: Laptop,
-  light: Sun,
-  dark: MoonStar,
-}
+type DefaultPage = 'home' | 'recent' | 'workspace'
 
 export function GeneralSettings() {
-  const [settings, setSettings] = React.useState<GeneralSettingsValue>({
-    ...GENERAL_SETTINGS_DEFAULTS,
-    themeMode: getThemeMode(),
-  })
-  const [loading, setLoading] = React.useState(true)
-  const [themeSaving, setThemeSaving] = React.useState<ThemeMode | null>(null)
-  const [windowSaving, setWindowSaving] = React.useState<Partial<Record<keyof GeneralSettingsValue['windowBehavior'], boolean>>>({})
-  const [maintenanceLoading, setMaintenanceLoading] = React.useState<{ logs: boolean }>({ logs: false })
+  const [workspaces] = useAtom(agentWorkspacesAtom)
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
+  const [defaultPage, setDefaultPage] = React.useState<DefaultPage>('home')
+  const [restoreLastSession, setRestoreLastSession] = React.useState(true)
+  const [autoSync, setAutoSync] = React.useState(true)
+  const [desktopNotice, setDesktopNotice] = React.useState(true)
+  const [taskNotice, setTaskNotice] = React.useState(true)
+  const [updateNotice, setUpdateNotice] = React.useState(true)
   const [clearCacheOpen, setClearCacheOpen] = React.useState(false)
 
-  React.useEffect(() => {
-    let cancelled = false
-
-    getGeneralSettings()
-      .then((value) => {
-        if (cancelled) {
-          return
-        }
-
-        const nextSettings = mergeGeneralSettings(undefined, value)
-        setSettings(nextSettings)
-        setThemeMode(nextSettings.themeMode)
-      })
-      .catch((error) => {
-        console.error('[GeneralSettings] 加载常规设置失败:', error)
-        setSettings((current) => ({
-          ...current,
-          themeMode: getThemeMode(),
-        }))
-        toast.error('加载常规设置失败')
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const handleThemeModeChange = async (themeMode: ThemeMode) => {
-    if (themeSaving || settings.themeMode === themeMode) {
-      return
-    }
-
-    const previous = settings
-    const optimistic = mergeGeneralSettings(previous, { themeMode })
-    setSettings(optimistic)
-    setThemeMode(themeMode)
-    setThemeSaving(themeMode)
-
-    try {
-      const persisted = mergeGeneralSettings(undefined, await updateGeneralSettings({ themeMode }))
-      setSettings(persisted)
-      setThemeMode(persisted.themeMode)
-      toast.success('主题已更新')
-    } catch (error) {
-      console.error('[GeneralSettings] 更新主题失败:', error)
-      setSettings(previous)
-      setThemeMode(previous.themeMode)
-      toast.error('主题更新失败')
-    } finally {
-      setThemeSaving(null)
-    }
-  }
-
-  const handleWindowBehaviorChange = async (
-    key: keyof GeneralSettingsValue['windowBehavior'],
-    checked: boolean
-  ) => {
-    const previous = settings
-    const optimistic = mergeGeneralSettings(previous, {
-      windowBehavior: {
-        [key]: checked,
-      },
-    })
-
-    setSettings(optimistic)
-    setWindowSaving((current) => ({ ...current, [key]: true }))
-
-    try {
-      const persisted = mergeGeneralSettings(undefined, await updateGeneralSettings({
-        windowBehavior: {
-          [key]: checked,
-        },
-      }))
-      setSettings(persisted)
-    } catch (error) {
-      console.error('[GeneralSettings] 更新窗口行为失败:', error)
-      setSettings(previous)
-      toast.error('窗口行为更新失败')
-    } finally {
-      setWindowSaving((current) => ({ ...current, [key]: false }))
-    }
-  }
-
-  const handleOpenLogsDir = async () => {
-    setMaintenanceLoading({ logs: true })
-
-    try {
-      await openLogsDir()
-    } catch (error) {
-      console.error('[GeneralSettings] 打开日志目录失败:', error)
-      toast.error('打开日志目录失败')
-    } finally {
-      setMaintenanceLoading({ logs: false })
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="p-6">
-        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 size={14} className="animate-spin" />
-          加载常规设置...
-        </div>
-      </div>
-    )
-  }
+  const currentWorkspace = React.useMemo(
+    () => workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null,
+    [currentWorkspaceId, workspaces]
+  )
 
   return (
     <>
-      <div className="p-6 space-y-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-[15px] font-semibold">常规设置</h2>
-            <p className="mt-0.5 text-[12px] text-muted-foreground">
-              管理界面偏好、窗口行为和本地维护操作。
-            </p>
+      <div className="space-y-3">
+        <SettingsCard title="账户与工作区">
+          <div className="flex items-center gap-3 border-b border-[#eef0f5] pb-5">
+            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[linear-gradient(135deg,#d7c9b5,#f1e5d8)] text-[15px] font-semibold text-[#3f4555]">
+              M
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-semibold leading-5 text-[#283046]">Minator Huang</div>
+              <div className="mt-0.5 text-[12px] leading-4 text-[#8a91a6]">minator.huang@example.com</div>
+            </div>
+            <button
+              type="button"
+              className="flex h-10 items-center gap-2 rounded-[8px] border border-[#e4e7ef] bg-white px-4 text-[13px] font-medium text-[#4c566f] shadow-[0_1px_2px_rgba(20,24,40,0.02)] transition-colors hover:bg-[#f8f9fc]"
+            >
+              管理账户
+              <ExternalLink size={15} strokeWidth={1.8} />
+            </button>
           </div>
-          <Badge variant="outline" className="h-6 rounded-full px-2.5 text-[11px] text-muted-foreground">
-            应用级
-          </Badge>
-        </div>
 
-        <SectionCard
-          icon={MonitorCog}
-          title="界面"
-          desc="这些偏好作用于整个应用，而不是当前工作区。"
-        >
-          <div className="grid gap-3 md:grid-cols-3">
-            {THEME_MODE_OPTIONS.map((option) => {
-              const Icon = THEME_MODE_ICONS[option.value]
-              const selected = settings.themeMode === option.value
-              const saving = themeSaving === option.value
-
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => handleThemeModeChange(option.value)}
-                  disabled={Boolean(themeSaving)}
-                  className={cn(
-                    'rounded-2xl border px-4 py-4 text-left transition-all',
-                    selected
-                      ? 'border-primary/30 bg-primary/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
-                      : 'border-border/60 bg-background/70 hover:bg-muted/30',
-                    themeSaving && !selected && 'opacity-70'
-                  )}
+          <div className="divide-y divide-[#eef0f5]">
+            <SettingsRow label="默认工作区">
+              <SelectShell className="w-[136px]">
+                <select
+                  value={currentWorkspace?.id ?? ''}
+                  onChange={(event) => setCurrentWorkspaceId(event.target.value || null)}
+                  className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#4c566f] outline-none"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="inline-flex size-9 items-center justify-center rounded-xl bg-muted/50">
-                      <Icon size={16} className={selected ? 'text-primary' : 'text-muted-foreground'} />
-                    </div>
-                    {saving && <Loader2 size={14} className="animate-spin text-muted-foreground" />}
-                  </div>
-                  <div className="mt-4 text-[13px] font-medium">{option.label}</div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">{option.desc}</div>
-                </button>
-              )
-            })}
+                  {workspaces.length === 0 ? (
+                    <option value="">未选择</option>
+                  ) : workspaces.map((workspace) => (
+                    <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+                  ))}
+                </select>
+              </SelectShell>
+            </SettingsRow>
+
+            <SettingsRow
+              label="启动时打开上次会话"
+              desc="应用启动后自动恢复到上次查看的会话"
+            >
+              <LumeSwitch checked={restoreLastSession} onCheckedChange={setRestoreLastSession} />
+            </SettingsRow>
+
+            <SettingsRow
+              label="自动同步"
+              desc="自动同步会话、文件与设置到云端"
+            >
+              <LumeSwitch checked={autoSync} onCheckedChange={setAutoSync} />
+            </SettingsRow>
           </div>
-        </SectionCard>
+        </SettingsCard>
 
-        <SectionCard
-          icon={Laptop}
-          title="窗口行为"
-          desc="托盘相关行为会在桌面壳层读取并长期生效。"
-        >
-          <div className="space-y-3">
-            <SettingRow
-              title="最小化到系统托盘"
-              desc="开启后，最小化窗口时会隐藏到系统托盘，而不是只保留在任务栏。"
-              action={(
-                <div className="flex items-center gap-2">
-                  {windowSaving.minimizeToTray && <Loader2 size={13} className="animate-spin text-muted-foreground" />}
-                  <Switch
-                    checked={settings.windowBehavior.minimizeToTray}
-                    onCheckedChange={(checked) => handleWindowBehaviorChange('minimizeToTray', checked)}
-                    disabled={Boolean(windowSaving.minimizeToTray)}
-                  />
-                </div>
-              )}
-            />
+        <SettingsCard title="基础偏好">
+          <div className="divide-y divide-[#eef0f5]">
+            <SettingsRow label="语言" icon={Languages}>
+              <SelectShell className="w-[136px]">
+                <select className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#4c566f] outline-none" defaultValue="zh-CN">
+                  <option value="zh-CN">简体中文</option>
+                  <option value="en-US">English</option>
+                </select>
+              </SelectShell>
+            </SettingsRow>
 
-            <SettingRow
-              title="关闭到系统托盘"
-              desc="开启后，点击关闭按钮不会退出应用，而是隐藏到系统托盘。"
-              action={(
-                <div className="flex items-center gap-2">
-                  {windowSaving.closeToTray && <Loader2 size={13} className="animate-spin text-muted-foreground" />}
-                  <Switch
-                    checked={settings.windowBehavior.closeToTray}
-                    onCheckedChange={(checked) => handleWindowBehaviorChange('closeToTray', checked)}
-                    disabled={Boolean(windowSaving.closeToTray)}
-                  />
-                </div>
-              )}
+            <SettingsRow label="默认页面">
+              <div className="grid h-9 w-[252px] grid-cols-3 rounded-[8px] border border-[#e3e6ee] bg-white p-0.5">
+                {[
+                  ['home', '首页'],
+                  ['recent', '最近会话'],
+                  ['workspace', '工作区'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setDefaultPage(value as DefaultPage)}
+                    className={cn(
+                      'rounded-[6px] text-[13px] font-medium transition-colors',
+                      defaultPage === value
+                        ? 'border border-[#9f91ff] bg-[#f5f2ff] text-[#625bff]'
+                        : 'text-[#667089] hover:bg-[#f7f8fb]'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </SettingsRow>
+
+            <SettingsRow label="时间格式">
+              <SelectShell className="w-[120px]">
+                <select className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#4c566f] outline-none" defaultValue="24">
+                  <option value="24">24 小时</option>
+                  <option value="12">12 小时</option>
+                </select>
+              </SelectShell>
+            </SettingsRow>
+          </div>
+        </SettingsCard>
+
+        <SettingsCard title="通知">
+          <div className="divide-y divide-[#eef0f5]">
+            <SettingsRow label="桌面通知" desc="接收新消息、任务完成等桌面通知">
+              <LumeSwitch checked={desktopNotice} onCheckedChange={setDesktopNotice} />
+            </SettingsRow>
+            <SettingsRow label="任务完成提醒" desc="任务成功完成时发送通知提醒">
+              <LumeSwitch checked={taskNotice} onCheckedChange={setTaskNotice} />
+            </SettingsRow>
+            <SettingsRow label="系统更新提醒" desc="有新版本或重要更新时提醒我">
+              <LumeSwitch checked={updateNotice} onCheckedChange={setUpdateNotice} />
+            </SettingsRow>
+          </div>
+        </SettingsCard>
+
+        <SettingsCard title="快速操作">
+          <div className="grid grid-cols-4 gap-3">
+            <QuickAction icon={Keyboard} label="管理快捷键" />
+            <QuickAction icon={Folder} label="打开数据目录" onClick={() => void openLumeConfigSourceFile()} />
+            <QuickAction icon={RefreshCcw} label="检查更新" />
+            <QuickAction
+              icon={Trash2}
+              label="重置偏好"
+              tone="danger"
+              onClick={() => setClearCacheOpen(true)}
             />
           </div>
-        </SectionCard>
-
-        <SectionCard
-          icon={Trash2}
-          title="维护"
-          desc="执行本地维护动作，不会影响工作区、线程和配置。"
-        >
-          <div className="space-y-3">
-            <SettingRow
-              title="打开日志目录"
-              desc="在系统文件管理器中打开本地日志目录，便于排查运行问题。"
-              action={(
-                <Button variant="outline" size="sm" onClick={handleOpenLogsDir} disabled={maintenanceLoading.logs}>
-                  {maintenanceLoading.logs ? <Loader2 size={13} className="animate-spin" /> : <FolderOpen size={13} />}
-                  打开
-                </Button>
-              )}
-            />
-
-            <SettingRow
-              title="清理缓存"
-              desc="仅清理安全缓存项。会话、线程、工作区和配置保持不变。"
-              action={(
-                <Button variant="outline" size="sm" onClick={() => setClearCacheOpen(true)}>
-                  <Trash2 size={13} />
-                  清理
-                </Button>
-              )}
-            />
-          </div>
-        </SectionCard>
+        </SettingsCard>
       </div>
 
       <ClearCacheDialog open={clearCacheOpen} onOpenChange={setClearCacheOpen} />
@@ -286,49 +169,87 @@ export function GeneralSettings() {
   )
 }
 
-function SectionCard({
-  icon: Icon,
-  title,
-  desc,
-  children,
-}: {
-  icon: LucideIcon
-  title: string
-  desc: string
-  children: React.ReactNode
-}) {
+function SettingsCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-4 rounded-2xl border bg-background/70 p-5">
-      <div className="flex items-start gap-3">
-        <div className="inline-flex size-10 items-center justify-center rounded-2xl bg-muted/40">
-          <Icon size={17} className="text-muted-foreground" />
-        </div>
-        <div>
-          <h3 className="text-[14px] font-semibold">{title}</h3>
-          <p className="mt-0.5 text-[12px] text-muted-foreground">{desc}</p>
-        </div>
-      </div>
+    <section className="rounded-[10px] border border-[#e7e9f1] bg-white px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[#202338]">{title}</h2>
       {children}
     </section>
   )
 }
 
-function SettingRow({
-  title,
+function SettingsRow({
+  label,
   desc,
-  action,
+  icon: Icon,
+  children,
 }: {
-  title: string
-  desc: string
-  action: React.ReactNode
+  label: string
+  desc?: string
+  icon?: LucideIcon
+  children: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-xl border px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
       <div className="min-w-0">
-        <div className="text-[13px] font-medium">{title}</div>
-        <div className="mt-0.5 text-[11px] text-muted-foreground">{desc}</div>
+        <div className="flex items-center gap-2 text-[13px] font-medium leading-5 text-[#4d566f]">
+          {Icon && <Icon size={15} className="text-[#68718a]" />}
+          <span>{label}</span>
+        </div>
+        {desc && <div className="mt-0.5 text-[12px] leading-4 text-[#9aa1b3]">{desc}</div>}
       </div>
-      <div className="shrink-0">{action}</div>
+      <div className="shrink-0">{children}</div>
     </div>
+  )
+}
+
+function SelectShell({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <div className={cn('relative h-9 rounded-[8px] border border-[#e3e6ee] bg-white', className)}>
+      {children}
+      <ChevronDown
+        size={15}
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#778096]"
+      />
+    </div>
+  )
+}
+
+function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
+  return (
+    <Switch
+      {...props}
+      className={cn(
+        'data-[size=default]:h-[25px] data-[size=default]:w-[42px] data-checked:bg-[#625bff]',
+        '[&_[data-slot=switch-thumb]]:size-[21px] data-checked:[&_[data-slot=switch-thumb]]:translate-x-[19px]'
+      )}
+    />
+  )
+}
+
+function QuickAction({
+  icon: Icon,
+  label,
+  tone = 'default',
+  onClick,
+}: {
+  icon: LucideIcon
+  label: string
+  tone?: 'default' | 'danger'
+  onClick?: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={onClick}
+      className={cn(
+        'h-10 gap-2 rounded-[8px] border-[#e3e6ee] bg-white text-[13px] font-medium text-[#4d566f] shadow-none hover:bg-[#f8f9fc]',
+        tone === 'danger' && 'border-[#ff9fa8] text-[#ff4d57] hover:bg-[#fff5f6] hover:text-[#ff4d57]'
+      )}
+    >
+      <Icon size={15} />
+      {label}
+    </Button>
   )
 }

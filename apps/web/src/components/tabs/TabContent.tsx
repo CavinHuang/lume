@@ -1,6 +1,7 @@
 import { useAtomValue } from 'jotai'
 import { tabsAtom, activeTabIdAtom } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
+import { AutomationManagementView } from '@/components/automation/AutomationManagementView'
 import { SettingsView } from '@/components/settings/SettingsView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 
@@ -27,6 +28,10 @@ export function TabContent() {
 
   if (activeTab.type === 'settings') {
     return <SettingsView />
+  }
+
+  if (activeTab.type === 'automation') {
+    return <AutomationManagementView />
   }
 
   return null
