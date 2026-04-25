@@ -312,11 +312,12 @@ export async function sendAgentMessage(
   emit: AgentStreamEmitter,
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean } = {}
 ): Promise<void> {
-  const { threadId, userMessage, workspaceId } = input;
+  const { threadId, userMessage } = input;
   const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const threadMeta = getAgentThreadMeta(threadId);
-  const effectiveWorkspace = getAgentWorkspace(input.workspaceId ?? threadMeta?.workspaceId ?? "");
+  const effectiveWorkspaceId = input.workspaceId ?? threadMeta?.workspaceId;
+  const effectiveWorkspace = effectiveWorkspaceId ? getAgentWorkspace(effectiveWorkspaceId) : undefined;
   const shouldRecomputeInheritedSelection = threadMeta?.modelSelectionSource === "inherited"
     && input.channelId === undefined
     && input.modelRef === undefined;
@@ -352,9 +353,7 @@ export async function sendAgentMessage(
   const persistedSdkMessages: SDKMessage[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
-  const stateWorkspaceSlug = workspaceId
-    ? getAgentWorkspace(workspaceId)?.slug
-    : undefined;
+  const stateWorkspaceSlug = effectiveWorkspace?.slug;
 
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: stateWorkspaceSlug,
@@ -376,7 +375,7 @@ export async function sendAgentMessage(
 
   log.info("[Agent 会话] 开始发送消息", buildAgentSendStartLogData({
     threadId,
-    workspaceId,
+    workspaceId: effectiveWorkspaceId,
     channelId: resolvedChannelId,
     modelId: resolvedModelId,
     modelRef: canonicalModelRef,
@@ -444,6 +443,7 @@ export async function sendAgentMessage(
   const piResult = await runPiAgent({
     input: {
       ...input,
+      ...(effectiveWorkspaceId ? { workspaceId: effectiveWorkspaceId } : {}),
       messageMetadata: effectiveMessageMetadata,
       channelId: resolvedChannelId,
       modelId: resolvedModelId,
@@ -459,7 +459,7 @@ export async function sendAgentMessage(
       modelRef: canonicalModelRef,
       channelId: resolvedChannelId,
       resolvedModelId,
-      workspaceId: input.workspaceId,
+      workspaceId: effectiveWorkspaceId,
       threadType: input.threadType
     }
   }, {

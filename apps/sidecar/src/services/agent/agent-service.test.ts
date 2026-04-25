@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import type { AgentMessageAppendedEvent, SDKMessage } from "@lume/shared";
 
 const heldRunResolvers = new Map<string, () => void>();
+const runPiAgentCalls: unknown[] = [];
 
 function emitSuccessfulRun(emit: {
   onSdkMessage: (message: SDKMessage) => void;
@@ -102,6 +103,7 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
       onError: (error: string) => void;
     }
   ) => {
+    runPiAgentCalls.push(params);
     const userMessage = (params as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
     const threadId = (params as { runtime?: { sessionId?: string } })?.runtime?.sessionId ?? "";
     if (userMessage === "subagent-projection") {
@@ -160,6 +162,7 @@ describe("agent-service", () => {
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
     resetAgentRuntimeStatusManagerForTest();
     heldRunResolvers.clear();
+    runPiAgentCalls.length = 0;
     if (previousConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -207,6 +210,31 @@ describe("agent-service", () => {
     expect(visibleMessages[0]?.sdkMessages?.[0]?.type).toBe("user");
     expect(visibleMessages[1]?.content).toBe("mock assistant output");
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
+  });
+
+  test("sendAgentMessage 应继承线程工作区传给 runtime", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { createAgentWorkspace } = await import("./agent-workspace-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const workspace = createAgentWorkspace("Runtime Workspace", { slug: "runtime-workspace" });
+    const thread = createAgentThread("workspace runtime", "channel-test", workspace.id);
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "workspace inherited",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onSdkMessage: () => undefined,
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    expect((runPiAgentCalls.at(-1) as { runtime?: { workspaceId?: string } })?.runtime?.workspaceId).toBe(workspace.id);
   });
 
   test("appendAgentMessage 应在运行中排队并在完成后自动发送下一条", async () => {

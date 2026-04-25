@@ -138,6 +138,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
+  const workspaceIdRef = useRef<string | null>(null)
   const workspaceSlugRef = useRef<string | null>(null)
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
   const [editorText, setEditorText] = useState('')
@@ -156,6 +157,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
     const thread = threads.find((t) => t.id === threadId)
     const targetId = thread?.workspaceId ?? currentWorkspaceId
     const ws = workspaces.find((w) => w.id === targetId)
+    workspaceIdRef.current = ws?.id ?? null
     workspaceSlugRef.current = ws?.slug ?? null
   }, [threads, workspaces, currentWorkspaceId, threadId])
 
@@ -233,7 +235,12 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
       ...prev,
       [threadId]: [...(prev[threadId] ?? []), userMsg],
     }))
-    await agentSend({ threadId, userMessage: text, thinkingLevel })
+    await agentSend({
+      threadId,
+      userMessage: text,
+      thinkingLevel,
+      ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
+    })
   }
 
   const handleStop = async () => {
