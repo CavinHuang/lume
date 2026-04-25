@@ -16,6 +16,7 @@ import {
   readSystemPromptComponents,
   resolveLoadedLongTermMemoryPath
 } from "../system/workspace-bootstrap-service";
+import { getPersistedGeneralSettings } from "../system/general-settings-service";
 import { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-content";
 import type { SessionType as ThreadType } from "@lume/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -443,7 +444,7 @@ function buildToolingSection(inputTools?: string[]): string[] {
 }
 
 export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
-  const userName = "用户";
+  const userName = getPersistedGeneralSettings().userProfile.displayName || "用户";
   const promptMode = resolveSystemPromptMode(ctx);
   const sections: string[] = [LUME_AGENT_IDENTITY_LINE];
 

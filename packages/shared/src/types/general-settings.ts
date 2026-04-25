@@ -5,18 +5,27 @@ export interface GeneralSettingsWindowBehavior {
   closeToTray: boolean
 }
 
+export interface GeneralSettingsUserProfile {
+  displayName: string
+}
+
 export interface GeneralSettings {
   themeMode: ThemeMode
+  userProfile: GeneralSettingsUserProfile
   windowBehavior: GeneralSettingsWindowBehavior
 }
 
 export interface UpdateGeneralSettingsInput {
   themeMode?: ThemeMode
+  userProfile?: Partial<GeneralSettingsUserProfile>
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
 }
 
 export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
+  userProfile: {
+    displayName: ""
+  },
   windowBehavior: {
     minimizeToTray: false,
     closeToTray: false

@@ -41,6 +41,9 @@ describe("general-settings-service", () => {
   test("缺少 settings.json 时返回默认常规设置", () => {
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
+      userProfile: {
+        displayName: ""
+      },
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false
@@ -61,6 +64,9 @@ describe("general-settings-service", () => {
 
     expect(first).toEqual({
       themeMode: "dark",
+      userProfile: {
+        displayName: ""
+      },
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false
@@ -75,6 +81,9 @@ describe("general-settings-service", () => {
 
     expect(second).toEqual({
       themeMode: "dark",
+      userProfile: {
+        displayName: ""
+      },
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true
@@ -85,6 +94,9 @@ describe("general-settings-service", () => {
       proxy?: { enabled?: boolean };
       generalSettings?: {
         themeMode?: string;
+        userProfile?: {
+          displayName?: string;
+        };
         windowBehavior?: {
           minimizeToTray?: boolean;
           closeToTray?: boolean;
@@ -94,6 +106,9 @@ describe("general-settings-service", () => {
     expect(raw.proxy?.enabled).toBeTrue();
     expect(raw.generalSettings).toEqual({
       themeMode: "dark",
+      userProfile: {
+        displayName: ""
+      },
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true
@@ -154,6 +169,9 @@ describe("general-settings-service", () => {
 
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
+      userProfile: {
+        displayName: ""
+      },
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false
@@ -164,6 +182,27 @@ describe("general-settings-service", () => {
       themeMode: "dark"
     })).toThrow();
     expect(readFileSync(settingsPath, "utf-8")).toBe("{ invalid json");
+  });
+
+  test("更新用户名称时应清洗空白并落盘到本地 settings.json", () => {
+    const settingsPath = getSettingsPath();
+
+    const result = updatePersistedGeneralSettings({
+      userProfile: {
+        displayName: "  Minator Huang  "
+      }
+    });
+
+    expect(result.userProfile.displayName).toBe("Minator Huang");
+
+    const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
+      generalSettings?: {
+        userProfile?: {
+          displayName?: string;
+        };
+      };
+    };
+    expect(raw.generalSettings?.userProfile?.displayName).toBe("Minator Huang");
   });
 
   test("清理缓存仅删除安全缓存目录并保留会话线程工作区与配置", () => {

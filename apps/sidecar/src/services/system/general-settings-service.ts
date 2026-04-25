@@ -47,18 +47,29 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
   if (typeof input !== "object" || input === null) {
     return {
       ...GENERAL_SETTINGS_DEFAULTS,
+      userProfile: { ...GENERAL_SETTINGS_DEFAULTS.userProfile },
       windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior }
     };
   }
 
   const value = input as Partial<GeneralSettings>;
+  const userProfile =
+    typeof value.userProfile === "object" && value.userProfile !== null
+      ? value.userProfile
+      : undefined;
   const windowBehavior =
     typeof value.windowBehavior === "object" && value.windowBehavior !== null
       ? value.windowBehavior
       : undefined;
+  const displayName = typeof userProfile?.displayName === "string"
+    ? userProfile.displayName.trim()
+    : GENERAL_SETTINGS_DEFAULTS.userProfile.displayName;
 
   return {
     themeMode: isThemeMode(value.themeMode) ? value.themeMode : GENERAL_SETTINGS_DEFAULTS.themeMode,
+    userProfile: {
+      displayName
+    },
     windowBehavior: {
       minimizeToTray:
         typeof windowBehavior?.minimizeToTray === "boolean"
@@ -127,6 +138,7 @@ export function getPersistedGeneralSettings(): GeneralSettings {
       console.warn("[General Settings] 读取 settings.json 失败，回退默认值:", error.cause ?? error);
       return {
         ...GENERAL_SETTINGS_DEFAULTS,
+        userProfile: { ...GENERAL_SETTINGS_DEFAULTS.userProfile },
         windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior }
       };
     }
@@ -137,8 +149,14 @@ export function getPersistedGeneralSettings(): GeneralSettings {
 export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput): GeneralSettings {
   const settings = readPersistedSettings() as SidecarSettings;
   const current = sanitizeGeneralSettings(settings.generalSettings);
+  const displayName = typeof input.userProfile?.displayName === "string"
+    ? input.userProfile.displayName.trim()
+    : current.userProfile.displayName;
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
+    userProfile: {
+      displayName
+    },
     windowBehavior: {
       minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
       closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray
