@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { AutomationJob } from '@lume/shared'
+import type { AutomationJob, AutomationSchedule } from '@lume/shared'
 
 type ScheduleMode = 'preset' | 'cron' | 'once'
 
@@ -22,7 +22,7 @@ interface AutomationJobDialogProps {
     name: string
     prompt: string
     workspaceId: string
-    schedule: { type: string; cronExpr?: string; runAt?: number }
+    schedule: AutomationSchedule
   }) => void
   onCancel: () => void
 }
@@ -67,7 +67,7 @@ export function AutomationJobDialog({ open, job, workspaces, onSubmit, onCancel 
 
   const handleSubmit = () => {
     if (!name.trim() || !prompt.trim()) return
-    let schedule: { type: string; cronExpr?: string; runAt?: number }
+    let schedule: AutomationSchedule
     if (scheduleMode === 'preset') {
       const opt = PRESET_OPTIONS.find(p => p.value === preset)
       schedule = { type: 'cron', cronExpr: opt?.cron ?? '0 9 * * *' }

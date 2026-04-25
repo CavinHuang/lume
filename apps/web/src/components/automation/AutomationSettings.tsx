@@ -15,7 +15,14 @@ import {
 import { AutomationJobCard } from './AutomationJobCard'
 import { AutomationJobDialog } from './AutomationJobDialog'
 import { AutomationRunList } from './AutomationRunList'
-import type { AutomationJob } from '@lume/shared'
+import type { AutomationJob, AutomationSchedule } from '@lume/shared'
+
+type AutomationJobFormData = {
+  name: string
+  prompt: string
+  workspaceId: string
+  schedule: AutomationSchedule
+}
 
 export function AutomationSettings() {
   useAutomationListeners()
@@ -41,12 +48,7 @@ export function AutomationSettings() {
     }
   }, [])
 
-  const handleCreate = useCallback(async (data: {
-    name: string
-    prompt: string
-    workspaceId: string
-    schedule: { type: string; cronExpr?: string; runAt?: number }
-  }) => {
+  const handleCreate = useCallback(async (data: AutomationJobFormData) => {
     setLoading(true)
     try {
       await createAutomationJob(data)
@@ -58,12 +60,7 @@ export function AutomationSettings() {
     }
   }, [])
 
-  const handleEdit = useCallback(async (data: {
-    name: string
-    prompt: string
-    workspaceId: string
-    schedule: { type: string; cronExpr?: string; runAt?: number }
-  }) => {
+  const handleEdit = useCallback(async (data: AutomationJobFormData) => {
     if (!editingJob) return
     setLoading(true)
     try {
