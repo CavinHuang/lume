@@ -1,4 +1,5 @@
-import { useRef, useEffect, useCallback, useLayoutEffect } from 'react'
+import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState } from 'react'
+import { ArrowDown } from 'lucide-react'
 import type { SDKMessage } from '@lume/shared'
 import { SDKContentBlock } from './SDKContentBlock'
 import { useSetAtom } from 'jotai'
@@ -9,6 +10,7 @@ import { getThreadSDKMessages } from '@/lib/desktop-api'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { AgentListSubagentRunsResult } from '@lume/shared'
 import { cn } from '@/lib/utils'
+import { projectRenderableAgentMessages } from './agent-message-projection'
 
 interface AgentMessagesProps {
   threadId: string
@@ -42,13 +44,16 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   const setSubagentMessages = useSetAtom(agentSubagentMessagesAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const wasNearBottomRef = useRef(true)
+  const prevStreamingRef = useRef(streaming)
   const pendingRestoreThreadIdRef = useRef<string | null>(threadId)
   const restoreVersionRef = useRef(0)
   const threadRestoreRafRef = useRef<number | null>(null)
   const contentRestoreRafRef = useRef<number | null>(null)
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false)
 
   const { save, restore } = useScrollPositionMemory()
   const followSignal = getFollowSignal(sdkMessages)
+  const renderMessages = useMemo(() => projectRenderableAgentMessages(sdkMessages), [sdkMessages])
   const getScrollElement = useCallback(() => {
     const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
     return viewport instanceof HTMLDivElement ? viewport : null
@@ -67,7 +72,18 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
     const scrollElement = getScrollElement()
     restore(threadId, scrollElement)
     wasNearBottomRef.current = isNearBottom(scrollElement)
+    setShowJumpToBottom(!wasNearBottomRef.current)
   }, [getScrollElement, restore, threadId])
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    bottomRef.current?.scrollIntoView({ behavior, block: 'end' })
+    wasNearBottomRef.current = true
+    setShowJumpToBottom(false)
+
+    const scrollElement = getScrollElement()
+    if (scrollElement) {
+      requestAnimationFrame(() => save(threadId, scrollElement))
+    }
+  }, [getScrollElement, save, threadId])
 
   // 首次访问线程时拉取历史 SDK 消息 + subagent runs
   useEffect(() => {
@@ -120,11 +136,15 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
     if (!scrollElement) return
 
     const handleScroll = () => {
-      wasNearBottomRef.current = isNearBottom(scrollElement)
+      const nearBottom = isNearBottom(scrollElement)
+      wasNearBottomRef.current = nearBottom
+      setShowJumpToBottom(!nearBottom)
       save(threadId, scrollElement)
     }
 
-    wasNearBottomRef.current = isNearBottom(scrollElement)
+    const nearBottom = isNearBottom(scrollElement)
+    wasNearBottomRef.current = nearBottom
+    setShowJumpToBottom(!nearBottom)
     scrollElement.addEventListener('scroll', handleScroll, { passive: true })
     return () => {
       scrollElement.removeEventListener('scroll', handleScroll)
@@ -181,20 +201,23 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
 
   // 流式输出时根据更新前的滚动状态决定是否继续跟随到底部
   useLayoutEffect(() => {
-    if (streaming && wasNearBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const wasStreaming = prevStreamingRef.current
+    prevStreamingRef.current = streaming
+
+    if ((streaming || wasStreaming) && wasNearBottomRef.current) {
+      requestAnimationFrame(() => scrollToBottom(streaming ? 'smooth' : 'auto'))
     }
-  }, [followSignal, streaming])
+  }, [followSignal, scrollToBottom, streaming])
 
   const items: React.ReactNode[] = []
-  for (let i = 0; i < sdkMessages.length; i++) {
-    const msg = sdkMessages[i]
+  for (let i = 0; i < renderMessages.length; i++) {
+    const msg = renderMessages[i]
     items.push(
       <SDKContentBlock
         key={(msg as { uuid?: string }).uuid ?? `msg-${i}`}
         message={msg}
         index={i}
-        animate={streaming && i === sdkMessages.length - 1}
+        animate={streaming && i === renderMessages.length - 1}
         allMessages={sdkMessages}
         isStreaming={streaming}
         threadId={threadId}
@@ -208,10 +231,10 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         ref={containerRef}
         className={cn(
           'min-h-full w-full px-3 py-5',
-          sdkMessages.length === 0 ? 'flex items-center justify-center' : 'space-y-7'
+          renderMessages.length === 0 ? 'flex items-center justify-center' : 'space-y-7'
         )}
       >
-        {sdkMessages.length === 0 ? (
+        {renderMessages.length === 0 ? (
           <div className="text-center space-y-1">
             <p className="text-foreground/50 text-sm font-medium">Agent 已就绪</p>
             <p className="text-foreground/30 text-xs">输入任务开始</p>
@@ -223,6 +246,17 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
           </>
         )}
       </div>
+      {showJumpToBottom && renderMessages.length > 0 && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom('smooth')}
+          className="absolute bottom-4 right-5 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[#e2e5ef] bg-white text-[#667085] shadow-[0_8px_22px_rgba(27,31,45,0.12)] transition-colors hover:border-[#c9cdfb] hover:text-[#625cff]"
+          aria-label="回到底部"
+          title="回到底部"
+        >
+          <ArrowDown size={17} strokeWidth={2.2} />
+        </button>
+      )}
     </ScrollArea>
   )
 }

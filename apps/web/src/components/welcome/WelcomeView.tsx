@@ -161,6 +161,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         threadId: meta.id,
         userMessage: text,
         thinkingLevel,
+        ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
       } as any)
       editor.commands.clearContent()
       setEditorText('')
@@ -169,7 +170,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       setTabs((prev) => {
         const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
         return [
-          { id: meta.id, type: 'agent' as const, title: meta.title, threadId: meta.id },
+          { id: meta.id, type: 'agent' as const, title: meta.title, threadId: meta.id, workspaceId: meta.workspaceId },
           ...withoutWelcome,
         ]
       })

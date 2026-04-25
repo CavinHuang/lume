@@ -29,7 +29,7 @@ import {
 } from './pending-interactive-state'
 import { upsertRunFromSubagentStreamMessage } from './subagent-run-state'
 
-interface StreamingRef {
+export interface StreamingRef {
   uuid: string
   text: string
   thinking: string
@@ -59,6 +59,26 @@ function upsertStreamingMessage(
     return { ...prev, [threadId]: updated }
   }
   return { ...prev, [threadId]: [...existing, syntheticMsg] }
+}
+
+export function replaceStreamingMessage(
+  prev: Record<string, SDKMessage[]>,
+  threadId: string,
+  ref: StreamingRef | undefined,
+  msg: SDKMessage,
+): Record<string, SDKMessage[]> {
+  const existing = prev[threadId] ?? []
+  if (ref) {
+    const idx = existing.findIndex((m) => (m as { uuid?: string }).uuid === ref.uuid)
+    const stableMsg = { ...(msg as object), uuid: ref.uuid } as SDKMessage
+    if (idx >= 0) {
+      const updated = [...existing]
+      updated[idx] = stableMsg
+      return { ...prev, [threadId]: updated }
+    }
+    return { ...prev, [threadId]: [...existing, stableMsg] }
+  }
+  return { ...prev, [threadId]: [...existing, msg] }
 }
 
 function appendSubagentMessage(
@@ -255,22 +275,10 @@ export function useGlobalAgentListeners() {
           if (msg.type === 'assistant') {
             const ref = streamingRef.current[streamKey]
             if (ref) {
-              setSDKMessages((prev) => {
-                const existing = prev[streamKey] ?? []
-                const idx = existing.findIndex((m) => (m as { uuid?: string }).uuid === ref.uuid)
-                if (idx >= 0) {
-                  const updated = [...existing]
-                  updated[idx] = msg
-                  return { ...prev, [streamKey]: updated }
-                }
-                return { ...prev, [streamKey]: [...existing, msg] }
-              })
+              setSDKMessages((prev) => replaceStreamingMessage(prev, streamKey, ref, msg))
               delete streamingRef.current[streamKey]
             } else {
-              setSDKMessages((prev) => ({
-                ...prev,
-                [streamKey]: [...(prev[streamKey] ?? []), msg],
-              }))
+              setSDKMessages((prev) => replaceStreamingMessage(prev, streamKey, undefined, msg))
             }
             setStreamingStates((prev) => ({ ...prev, [streamKey]: 'streaming' }))
             break

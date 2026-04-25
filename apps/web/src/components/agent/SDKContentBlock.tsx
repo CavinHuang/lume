@@ -14,8 +14,6 @@ import {
   Cpu,
   Wrench,
   Loader2,
-  ThumbsDown,
-  ThumbsUp,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
@@ -320,28 +318,14 @@ function MessageFeedbackActions({ text }: { text: string }) {
   }
 
   return (
-    <div className="flex items-center gap-4 pt-2 text-[#9aa1b3]">
+    <div className="flex items-center pt-2 text-[#9aa1b3]">
       <button
         type="button"
         aria-label="复制消息"
         onClick={handleCopy}
-        className="rounded-md p-1 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff]"
+        className="rounded-md p-0.5 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff]"
       >
-        <Copy size={19} strokeWidth={1.8} />
-      </button>
-      <button
-        type="button"
-        aria-label="喜欢"
-        className="rounded-md p-1 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff]"
-      >
-        <ThumbsUp size={19} strokeWidth={1.8} />
-      </button>
-      <button
-        type="button"
-        aria-label="不喜欢"
-        className="rounded-md p-1 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff]"
-      >
-        <ThumbsDown size={19} strokeWidth={1.8} />
+        <Copy size={15} strokeWidth={1.8} />
       </button>
     </div>
   )

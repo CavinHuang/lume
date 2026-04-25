@@ -139,7 +139,7 @@ export function LumeComposer({
     <div
       data-tone={tone}
       className={cn(
-        'relative overflow-hidden border backdrop-blur transition-[border-color,box-shadow,transform] duration-200',
+        'relative overflow-visible border backdrop-blur transition-[border-color,box-shadow,transform] duration-200',
         sizing.shell,
         className,
       )}

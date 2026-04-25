@@ -193,7 +193,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
       {open && (
         <div
           ref={menuRef}
-          className="absolute bottom-full mb-1 left-0 z-50 min-w-[260px] max-h-[360px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg"
+          className="absolute bottom-full left-0 z-[120] mb-2 min-w-[260px] max-h-[360px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg"
         >
           {/* Search */}
           <div className="p-1.5 border-b border-border/40">
