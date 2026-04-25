@@ -51,31 +51,29 @@ const toneStyles: Record<
   },
   ready: {
     shell: {
-      borderColor: 'color-mix(in oklab, var(--brand) 26%, var(--border-strong))',
+      borderColor: 'color-mix(in oklab, var(--border-strong) 54%, transparent)',
       background:
-        'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 96%, transparent), color-mix(in oklab, var(--brand) 9%, var(--surface-2)) 100%)',
-      boxShadow: '0 28px 56px -36px color-mix(in oklab, var(--brand) 28%, transparent)',
+        'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 95%, transparent), color-mix(in oklab, var(--surface-2) 84%, transparent))',
+      boxShadow: 'none',
     },
     glow: {
-      background:
-        'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--brand) 20%, transparent) 0%, transparent 60%), radial-gradient(circle at 80% 0%, color-mix(in oklab, var(--brand-2) 16%, transparent) 0%, transparent 48%)',
-      opacity: 0.96,
+      background: 'transparent',
+      opacity: 0,
     },
-    dividerColor: 'color-mix(in oklab, var(--brand) 18%, var(--border-strong))',
+    dividerColor: 'color-mix(in oklab, var(--border-strong) 42%, transparent)',
   },
   streaming: {
     shell: {
-      borderColor: 'color-mix(in oklab, var(--brand-2) 28%, var(--border-strong))',
+      borderColor: 'color-mix(in oklab, var(--border-strong) 54%, transparent)',
       background:
-        'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 95%, transparent), color-mix(in oklab, var(--brand-2) 10%, var(--surface-2)) 100%)',
-      boxShadow: '0 28px 58px -34px color-mix(in oklab, var(--brand-2) 30%, transparent)',
+        'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 95%, transparent), color-mix(in oklab, var(--surface-2) 84%, transparent))',
+      boxShadow: 'none',
     },
     glow: {
-      background:
-        'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--brand-2) 22%, transparent) 0%, transparent 58%), radial-gradient(circle at 15% 0%, color-mix(in oklab, var(--brand) 14%, transparent) 0%, transparent 45%)',
-      opacity: 1,
+      background: 'transparent',
+      opacity: 0,
     },
-    dividerColor: 'color-mix(in oklab, var(--brand-2) 18%, var(--border-strong))',
+    dividerColor: 'color-mix(in oklab, var(--border-strong) 42%, transparent)',
   },
 }
 

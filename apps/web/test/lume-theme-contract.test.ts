@@ -69,7 +69,9 @@ describe('Lume theme contract', () => {
       '--text-1: oklch(0.19 0.01 275);',
       '--text-2: oklch(0.42 0.01 275);',
       '--text-3: oklch(0.58 0.008 275);',
+      '--border: oklch(0.94 0.006 275);',
       '--border-strong: oklch(0.85 0.01 275);',
+      '--sidebar-border: var(--border);',
       '--shadow-panel: 220 40% 2%;',
     ]
     const darkTokens = [
@@ -83,6 +85,7 @@ describe('Lume theme contract', () => {
       '--text-2: oklch(0.82 0.006 275);',
       '--text-3: oklch(0.67 0.008 275);',
       '--border-strong: oklch(0.34 0.012 275);',
+      '--sidebar-border: var(--border);',
       '--shadow-panel: 228 60% 2%;',
     ]
 
@@ -133,5 +136,18 @@ describe('Lume theme contract', () => {
 
     expect(mainArea).not.toContain('bg-white/95')
     expect(mainArea).not.toContain('dark:bg-zinc-900/95')
+  })
+
+  test('LumeSidebar uses the unified sidebar border token for its main rail divider', () => {
+    const lumeSidebar = readWebFile('src', 'components', 'app-shell', 'LumeSidebar.tsx')
+    const collapsedRail = lumeSidebar.match(/className="([^"]*w-\[72px\][^"]*)"/)?.[1] ?? ''
+    const expandedRail = lumeSidebar.match(/className="([^"]*w-\[286px\][^"]*)"/)?.[1] ?? ''
+
+    expect(collapsedRail).toContain('border-r')
+    expect(collapsedRail).toContain('border-sidebar-border')
+    expect(expandedRail).toContain('border-r')
+    expect(expandedRail).toContain('border-sidebar-border')
+    expect(collapsedRail).not.toContain('border-[var(--border-strong)]')
+    expect(expandedRail).not.toContain('border-[var(--border-strong)]')
   })
 })

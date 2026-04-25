@@ -74,6 +74,52 @@
   overflow-x: auto;
 }
 
+.agent-message-markdown {
+  color: #303445;
+  font-weight: 450;
+}
+
+.agent-message-markdown p {
+  margin: 0 0 16px;
+}
+
+.agent-message-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.agent-message-markdown strong {
+  color: #292d3d;
+  font-weight: 700;
+}
+
+.agent-message-markdown ul,
+.agent-message-markdown ol {
+  margin: 10px 0 22px 20px;
+  padding-left: 8px;
+}
+
+.agent-message-markdown li {
+  margin: 5px 0;
+  padding-left: 2px;
+}
+
+.agent-message-markdown h1,
+.agent-message-markdown h2,
+.agent-message-markdown h3,
+.agent-message-markdown h4 {
+  margin: 22px 0 10px;
+  color: #292d3d;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.agent-message-markdown h1:first-child,
+.agent-message-markdown h2:first-child,
+.agent-message-markdown h3:first-child,
+.agent-message-markdown h4:first-child {
+  margin-top: 0;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;
@@ -136,7 +182,7 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
+  --border: oklch(0.94 0.006 275);
   --border-strong: oklch(0.85 0.01 275);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -159,7 +205,7 @@
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: var(--border);
   --sidebar-ring: oklch(0.708 0 0);
   --app-scrollbar-thumb: color-mix(in oklab, var(--border) 78%, transparent);
   --app-scrollbar-thumb-active: color-mix(in oklab, var(--foreground) 16%, var(--border));
@@ -207,7 +253,7 @@
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-border: var(--border);
   --sidebar-ring: oklch(0.556 0 0);
 }
 

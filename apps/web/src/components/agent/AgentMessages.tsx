@@ -207,8 +207,8 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
       <div
         ref={containerRef}
         className={cn(
-          'min-h-full px-4 py-4',
-          sdkMessages.length === 0 ? 'flex items-center justify-center' : 'space-y-2'
+          'min-h-full w-full px-3 py-5',
+          sdkMessages.length === 0 ? 'flex items-center justify-center' : 'space-y-7'
         )}
       >
         {sdkMessages.length === 0 ? (
