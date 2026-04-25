@@ -1,4 +1,5 @@
-import type { LumeConfigThinkingLevel } from '@lume/shared'
+import type { Channel, ChannelCreateInput, LumeConfigThinkingLevel, ProviderType } from '@lume/shared'
+import { PROVIDER_DEFAULT_URLS, PROVIDER_LABELS } from '@lume/shared'
 
 export type PermissionModeValue = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
 
@@ -75,3 +76,69 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
     emphasis: '规划',
   },
 ]
+
+export interface ModelProviderRow {
+  provider: ProviderType
+  label: string
+  channel: Channel | null
+  tone: string
+}
+
+const PROVIDER_TONES: Partial<Record<ProviderType, string>> = {
+  openai: 'bg-[#efe9ff] text-[#7a54f2]',
+  anthropic: 'bg-[#f5e4b8] text-[#6e5928]',
+  google: 'bg-[#e6f0ff] text-[#346df1]',
+  deepseek: 'bg-[#e9f1ff] text-[#3a65e5]',
+  openrouter: 'bg-[#eff4ff] text-[#111827]',
+  custom: 'bg-[#eadcff] text-[#7a52e8]',
+  zai: 'bg-[#eee7ff] text-[#7557ff]',
+  moonshot: 'bg-[#111827] text-white',
+}
+
+export function buildModelProviderRows(channels: Channel[]): ModelProviderRow[] {
+  return (Object.entries(PROVIDER_LABELS) as [ProviderType, string][])
+    .map(([provider, label], index) => ({
+      provider,
+      label,
+      channel: channels.find((channel) => channel.provider === provider) ?? null,
+      tone: PROVIDER_TONES[provider] ?? 'bg-[#eef2f7] text-[#4d566f]',
+      index,
+    }))
+    .sort((a, b) => {
+      const aRank = a.channel?.enabled ? 0 : a.channel ? 1 : 2
+      const bRank = b.channel?.enabled ? 0 : b.channel ? 1 : 2
+      return aRank - bRank || a.index - b.index
+    })
+    .map(({ provider, label, channel, tone }) => ({ provider, label, channel, tone }))
+}
+
+export function getModelProviderFormInitialValue(
+  provider: ProviderType,
+  channels: Channel[],
+  apiKey: string
+): ChannelCreateInput {
+  const existing = channels.find((channel) => channel.provider === provider)
+  if (!existing) {
+    return {
+      name: PROVIDER_LABELS[provider],
+      provider,
+      baseUrl: PROVIDER_DEFAULT_URLS[provider],
+      apiKey,
+      models: [],
+      defaultModelId: undefined,
+      fallbackModelIds: undefined,
+      enabled: false,
+    }
+  }
+
+  return {
+    name: existing.name,
+    provider: existing.provider,
+    baseUrl: existing.baseUrl,
+    apiKey,
+    models: existing.models,
+    defaultModelId: existing.defaultModelId,
+    fallbackModelIds: existing.fallbackModelIds,
+    enabled: existing.enabled,
+  }
+}

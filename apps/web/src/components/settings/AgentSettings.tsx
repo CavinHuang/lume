@@ -3,47 +3,43 @@ import {
   Activity,
   Box,
   ChevronDown,
-  Copy,
-  Eye,
-  FileUp,
-  Info,
   KeyRound,
   Loader2,
-  Plus,
   Search,
   Trash2,
-  Upload,
   UserRound,
-  Waves,
-  X,
   type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
   Channel,
+  ChannelCreateInput,
   LumeConfigAgentDefaultStrategy,
   LumeConfigThinkingLevel,
   LumeEffectiveConfig,
   ProviderType,
 } from '@lume/shared'
-import { PROVIDER_DEFAULT_URLS, PROVIDER_LABELS } from '@lume/shared'
+import { PROVIDER_LABELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
-import { listChannels } from '@/lib/desktop-api/channel'
+import { createChannel, decryptChannelKey, listChannels, updateChannel } from '@/lib/desktop-api/channel'
 import { getEffectiveLumeConfig, updateAgentModelStrategy } from '@/lib/desktop-api/lume-config'
 import { sidecarCall } from '@/lib/desktop-api'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
+import { ChannelForm } from './ChannelForm'
 import {
   buildModelOptions,
   getEnabledChannels,
   type ModelOption,
 } from './model-option-utils'
+import {
+  buildModelProviderRows,
+  getModelProviderFormInitialValue,
+  type ModelProviderRow,
+} from './agent-settings-state'
 
 type ReasoningTone = 'low' | 'medium' | 'high'
-type ContextStrategy = 'balanced' | 'large' | 'cheap'
-type RateLimit = 'normal' | 'fast' | 'safe'
-type Timeout = '30' | '60' | '120'
 type ProviderFilter = 'all' | 'configured' | 'unconfigured'
 
 const MODEL_PROVIDER_QUICK_FILTERS: Array<[ProviderFilter, string]> = [
@@ -52,45 +48,19 @@ const MODEL_PROVIDER_QUICK_FILTERS: Array<[ProviderFilter, string]> = [
   ['unconfigured', '未配置'],
 ]
 
-const MODEL_PROVIDER_ROWS: Array<{
-  provider: ProviderType
-  label: string
-  tone: string
-}> = [
-  { provider: 'openai', label: 'OpenAI', tone: 'bg-[#efe9ff] text-[#7a54f2]' },
-  { provider: 'anthropic', label: 'Anthropic', tone: 'bg-[#f5e4b8] text-[#6e5928]' },
-  { provider: 'google', label: 'Google AI', tone: 'bg-[#e6f0ff] text-[#346df1]' },
-  { provider: 'deepseek', label: 'DeepSeek', tone: 'bg-[#e9f1ff] text-[#3a65e5]' },
-  { provider: 'openrouter', label: 'OpenRouter', tone: 'bg-[#eff4ff] text-[#111827]' },
-  { provider: 'custom', label: '自定义供应商', tone: 'bg-[#eadcff] text-[#7a52e8]' },
-  { provider: 'zai', label: '智谱 Z.ai', tone: 'bg-[#eee7ff] text-[#7557ff]' },
-  { provider: 'moonshot', label: 'Moonshot / Kimi', tone: 'bg-[#111827] text-white' },
-]
-
-const PREVIEW_MODELS: Partial<Record<ProviderType, string[]>> = {
-  zai: ['glm-4.5', 'glm-4.6', 'glm-5', 'glm-4.5-air', 'glm-4.7', 'glm-5-flash'],
-  openai: ['gpt-5.1', 'gpt-5.4', 'gpt-5.4-mini', 'o4-mini'],
-  anthropic: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-haiku-4-5'],
-  google: ['gemini-3-pro', 'gemini-3-flash', 'gemini-2.5-pro'],
-  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  moonshot: ['kimi-k2', 'kimi-thinking-preview'],
-}
-
 export function AgentSettings() {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [config, setConfig] = React.useState<LumeEffectiveConfig | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [savingModel, setSavingModel] = React.useState(false)
   const [reasoningTone, setReasoningTone] = React.useState<ReasoningTone>('medium')
-  const [contextStrategy, setContextStrategy] = React.useState<ContextStrategy>('balanced')
-  const [preferDefault, setPreferDefault] = React.useState(true)
-  const [autoFallback, setAutoFallback] = React.useState(true)
-  const [rateLimit, setRateLimit] = React.useState<RateLimit>('normal')
-  const [timeout, setTimeout] = React.useState<Timeout>('60')
-  const [costNotice, setCostNotice] = React.useState(true)
   const [providerFilter, setProviderFilter] = React.useState<ProviderFilter>('all')
   const [providerSearch, setProviderSearch] = React.useState('')
-  const [activeProvider, setActiveProvider] = React.useState<ProviderType>('zai')
+  const [activeProvider, setActiveProvider] = React.useState<ProviderType>('anthropic')
+  const [selectedApiKey, setSelectedApiKey] = React.useState('')
+  const [apiKeyLoading, setApiKeyLoading] = React.useState(false)
+  const [providerEnabled, setProviderEnabled] = React.useState(false)
+  const [savingProvider, setSavingProvider] = React.useState(false)
 
   const reload = React.useCallback(async () => {
     const [nextChannels, nextConfig] = await Promise.all([
@@ -140,20 +110,10 @@ export function AgentSettings() {
   )
   const selectedProviderValue = selectedProviderId
   const selectedModelValue = activeDefault.option?.modelRef ?? selectedProviderModels[0]?.modelRef ?? ''
-  const providerRows = React.useMemo(
-    () => MODEL_PROVIDER_ROWS.map((row) => ({
-      ...row,
-      channel: channels.find((channel) => channel.provider === row.provider) ?? null,
-    })),
-    [channels]
-  )
+  const providerRows = React.useMemo(() => buildModelProviderRows(channels), [channels])
   const connectedProviderCount = providerRows.filter((row) => row.channel?.enabled).length
   const availableModelCount = allModelOptions.length
   const defaultProviderLabel = activeDefault.channel?.name ?? activeDefault.option?.channelLabel ?? '未设置'
-  const fallbackProviders = React.useMemo(
-    () => getFallbackProviderLabels(currentStrategy.fallbackModelRefs ?? [], allModelOptions, activeDefault.option),
-    [activeDefault.option, allModelOptions, currentStrategy.fallbackModelRefs]
-  )
   const filteredProviderRows = React.useMemo(
     () => providerRows.filter((row) => {
       const matchesFilter = providerFilter === 'all'
@@ -168,13 +128,51 @@ export function AgentSettings() {
     [providerFilter, providerRows, providerSearch]
   )
   const activeProviderRow = providerRows.find((row) => row.provider === activeProvider) ?? providerRows[0]
+  const activeChannel = activeProviderRow?.channel ?? null
+  const providerFormInitialValue = React.useMemo(
+    () => getModelProviderFormInitialValue(activeProvider, channels, activeChannel ? selectedApiKey : ''),
+    [activeChannel, activeProvider, channels, selectedApiKey]
+  )
 
   React.useEffect(() => {
     const defaultProvider = activeDefault.channel?.provider
     if (defaultProvider && providerRows.some((row) => row.provider === defaultProvider)) {
       setActiveProvider(defaultProvider)
+      return
     }
-  }, [activeDefault.channel?.provider, providerRows])
+    if (!providerRows.some((row) => row.provider === activeProvider)) {
+      setActiveProvider(providerRows[0]?.provider ?? 'anthropic')
+    }
+  }, [activeDefault.channel?.provider, activeProvider, providerRows])
+
+  React.useEffect(() => {
+    if (!activeChannel) {
+      setSelectedApiKey('')
+      setProviderEnabled(false)
+      setApiKeyLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setProviderEnabled(activeChannel.enabled)
+    setApiKeyLoading(true)
+    decryptChannelKey(activeChannel.id)
+      .then((apiKey) => {
+        if (!cancelled) setSelectedApiKey(apiKey)
+      })
+      .catch((error) => {
+        console.error('[AgentSettings] decrypt channel key FAILED:', error)
+        if (!cancelled) setSelectedApiKey('')
+        toast.error('加载供应商密钥失败')
+      })
+      .finally(() => {
+        if (!cancelled) setApiKeyLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeChannel?.id, activeChannel?.enabled])
 
   const persistDefaultModel = async (modelRef: string) => {
     const selected = allModelOptions.find((option) => option.modelRef === modelRef)
@@ -218,6 +216,52 @@ export function AgentSettings() {
     })
   }
 
+  const persistProvider = async (input: ChannelCreateInput) => {
+    const payload = { ...input, enabled: providerEnabled }
+    setSavingProvider(true)
+    try {
+      if (activeChannel) {
+        const updated = await updateChannel(activeChannel.id, payload)
+        setChannels((prev) => prev.map((channel) => (channel.id === updated.id ? updated : channel)))
+        setSelectedApiKey(input.apiKey)
+        setProviderEnabled(updated.enabled)
+        toast.success('供应商配置已保存')
+        return
+      }
+
+      const created = await createChannel(payload)
+      setChannels((prev) => [...prev.filter((channel) => channel.provider !== created.provider), created])
+      setSelectedApiKey(input.apiKey)
+      setProviderEnabled(created.enabled)
+      setActiveProvider(created.provider)
+      toast.success('供应商配置已创建')
+    } catch (error) {
+      console.error('[AgentSettings] save provider FAILED:', error)
+      toast.error('保存供应商配置失败')
+      throw error
+    } finally {
+      setSavingProvider(false)
+    }
+  }
+
+  const handleProviderEnabledChange = async (checked: boolean) => {
+    setProviderEnabled(checked)
+    if (!activeChannel) return
+
+    setSavingProvider(true)
+    try {
+      const updated = await updateChannel(activeChannel.id, { enabled: checked })
+      setChannels((prev) => prev.map((channel) => (channel.id === updated.id ? updated : channel)))
+      toast.success(checked ? '供应商已启用' : '供应商已停用')
+    } catch (error) {
+      console.error('[AgentSettings] toggle provider FAILED:', error)
+      setProviderEnabled(activeChannel.enabled)
+      toast.error('更新供应商状态失败')
+    } finally {
+      setSavingProvider(false)
+    }
+  }
+
   const handleReset = async () => {
     setSavingModel(true)
     try {
@@ -249,20 +293,7 @@ export function AgentSettings() {
         defaultProviderLabel={defaultProviderLabel}
       />
 
-      <SettingsCard
-        title="默认模型配置"
-        action={(
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => toast.success('默认配置可用')}
-            className="h-8 gap-2 rounded-[8px] border-[#e1e5ee] bg-white px-3 text-[12px] font-medium text-[#566078] shadow-none hover:bg-[#f8f9fc]"
-          >
-            <Activity size={14} />
-            测试默认配置
-          </Button>
-        )}
-      >
+      <SettingsCard title="默认模型配置">
         <div className="grid grid-cols-[minmax(0,330px)_minmax(0,1fr)] items-center gap-x-14 gap-y-3">
           <div className="grid grid-cols-[104px_168px] items-center gap-x-8 gap-y-3">
             <FieldLabel>默认供应商</FieldLabel>
@@ -308,95 +339,43 @@ export function AgentSettings() {
               ]}
               onChange={(value) => handleReasoningToneChange(value as ReasoningTone)}
             />
-
-            <FieldLabel className="justify-end">上下文策略</FieldLabel>
-            <SegmentedControl
-              value={contextStrategy}
-              options={[
-                ['balanced', '平衡'],
-                ['large', '大上下文'],
-                ['cheap', '低成本'],
-              ]}
-              onChange={(value) => setContextStrategy(value as ContextStrategy)}
-            />
-          </div>
-        </div>
-      </SettingsCard>
-
-      <SettingsCard title="请求与路由策略">
-        <div className="grid grid-cols-[296px_1px_minmax(0,1fr)] gap-8">
-          <div className="space-y-2.5">
-            <ToggleRow label="优先使用默认供应商" checked={preferDefault} onCheckedChange={setPreferDefault} />
-            <ToggleRow label="默认供应商失败时自动回退" checked={autoFallback} onCheckedChange={setAutoFallback} />
-            <ToggleRow label="成本提示" checked={costNotice} onCheckedChange={setCostNotice} />
-          </div>
-          <div className="bg-[#edf0f6]" />
-          <div className="grid grid-cols-[86px_minmax(0,1fr)_86px_204px] items-center gap-x-4 gap-y-3">
-            <FieldLabel>回退顺序</FieldLabel>
-            <FallbackChipSelect labels={fallbackProviders} />
-            <div />
-            <div />
-
-            <FieldLabel>速率限制</FieldLabel>
-            <SelectShell className="w-[178px]">
-              <select
-                value={rateLimit}
-                onChange={(event) => setRateLimit(event.target.value as RateLimit)}
-                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#4c566f] outline-none"
-              >
-                <option value="normal">标准</option>
-                <option value="fast">高吞吐</option>
-                <option value="safe">保守</option>
-              </select>
-            </SelectShell>
-            <FieldLabel>请求超时</FieldLabel>
-            <SelectShell className="w-full">
-              <select
-                value={timeout}
-                onChange={(event) => setTimeout(event.target.value as Timeout)}
-                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#4c566f] outline-none"
-              >
-                <option value="30">30 秒</option>
-                <option value="60">60 秒</option>
-                <option value="120">120 秒</option>
-              </select>
-            </SelectShell>
           </div>
         </div>
       </SettingsCard>
 
       <SettingsCard
         title="供应商配置"
-        action={(
-          <div className="flex items-center gap-2">
-            <Button variant="outline" className="h-8 gap-2 rounded-[8px] border-[#e1e5ee] bg-white px-4 text-[12px] font-medium text-[#566078] shadow-none hover:bg-[#f8f9fc]">
-              <Upload size={14} />
-              导入配置
-            </Button>
-            <Button className="h-8 gap-2 rounded-[8px] bg-[#625bff] px-4 text-[12px] font-medium text-white shadow-none hover:bg-[#5a52f2]">
-              <Plus size={14} />
-              添加供应商
-            </Button>
-          </div>
-        )}
+        description="供应商名称、Base URL、API Key 和模型列表会通过本地 channel 配置落盘。开启供应商后即可编辑并保存配置。"
       >
         <ProviderConfigurationWorkbench
           activeProvider={activeProvider}
           activeProviderRow={activeProviderRow}
+          apiKeyLoading={apiKeyLoading}
           filteredProviderRows={filteredProviderRows}
+          initialValue={providerFormInitialValue}
           providerFilter={providerFilter}
+          providerEnabled={providerEnabled}
           providerSearch={providerSearch}
+          savingProvider={savingProvider}
           onActiveProviderChange={setActiveProvider}
           onProviderFilterChange={setProviderFilter}
           onProviderSearchChange={setProviderSearch}
-          timeout={timeout}
+          onProviderEnabledChange={(checked) => void handleProviderEnabledChange(checked)}
+          onProviderSubmit={persistProvider}
         />
       </SettingsCard>
 
-      <div className="grid grid-cols-3 gap-4">
-        <FooterAction icon={FileUp} label="导出配置" />
-        <FooterAction icon={Waves} label="检查全部连接" />
-        <FooterAction icon={Trash2} label="重置模型设置" tone="danger" onClick={() => void handleReset()} />
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void handleReset()}
+          disabled={savingModel}
+          className="h-10 gap-2 rounded-[8px] border-[#ffb8be] bg-white px-4 text-[13px] font-medium text-[#ff4d57] shadow-none hover:bg-[#fff5f6] hover:text-[#ff4d57]"
+        >
+          <Trash2 size={15} />
+          重置模型设置
+        </Button>
       </div>
     </div>
   )
@@ -449,33 +428,40 @@ function ModelProviderStats({
 function ProviderConfigurationWorkbench({
   activeProvider,
   activeProviderRow,
+  apiKeyLoading,
   filteredProviderRows,
+  initialValue,
   providerFilter,
+  providerEnabled,
   providerSearch,
+  savingProvider,
   onActiveProviderChange,
   onProviderFilterChange,
+  onProviderEnabledChange,
   onProviderSearchChange,
-  timeout,
+  onProviderSubmit,
 }: {
   activeProvider: ProviderType
   activeProviderRow?: ProviderRowModel
+  apiKeyLoading: boolean
   filteredProviderRows: ProviderRowModel[]
+  initialValue: ChannelCreateInput
   providerFilter: ProviderFilter
+  providerEnabled: boolean
   providerSearch: string
+  savingProvider: boolean
   onActiveProviderChange: (provider: ProviderType) => void
   onProviderFilterChange: (filter: ProviderFilter) => void
+  onProviderEnabledChange: (checked: boolean) => void
   onProviderSearchChange: (value: string) => void
-  timeout: Timeout
+  onProviderSubmit: (input: ChannelCreateInput) => Promise<void>
 }) {
   const activeChannel = activeProviderRow?.channel ?? null
-  const models = getWorkbenchModels(activeProvider, activeChannel)
   const activeLabel = activeProviderRow?.label ?? PROVIDER_LABELS[activeProvider]
-  const baseUrl = activeChannel?.baseUrl || PROVIDER_DEFAULT_URLS[activeProvider] || ''
-  const displayName = activeChannel?.name || activeLabel
 
   return (
     <div className="grid min-h-[365px] grid-cols-[282px_minmax(0,1fr)] overflow-hidden rounded-[9px] border border-[#e4e8f0] bg-white">
-      <div className="border-r border-[#e7ebf3] bg-[#fbfcff] p-3">
+      <div className="flex h-full min-h-0 flex-col border-r border-[#e7ebf3] bg-[#fbfcff] p-3">
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#96a0b5]" />
           <input
@@ -504,7 +490,7 @@ function ProviderConfigurationWorkbench({
           ))}
         </div>
 
-        <div className="mt-2 max-h-[288px] space-y-1.5 overflow-y-auto pr-1">
+        <div className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
           {filteredProviderRows.map((row) => (
             <ProviderListItem
               key={row.provider}
@@ -516,7 +502,7 @@ function ProviderConfigurationWorkbench({
         </div>
       </div>
 
-      <div className="p-4">
+      <div className="min-w-0 p-4">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h3 className="text-[15px] font-semibold leading-5 text-[#1f2638]">{activeLabel}</h3>
@@ -525,112 +511,38 @@ function ProviderConfigurationWorkbench({
             </p>
           </div>
           <div className="flex items-center gap-2 text-[12px] font-medium text-[#6f7890]">
-            已启用
-            <LumeSwitch checked={Boolean(activeChannel?.enabled)} onCheckedChange={() => undefined} />
+            {savingProvider && <Loader2 size={13} className="animate-spin text-[#8a94aa]" />}
+            开启
+            <LumeSwitch
+              checked={providerEnabled}
+              disabled={savingProvider}
+              onCheckedChange={onProviderEnabledChange}
+            />
           </div>
         </div>
 
-        <div className="grid grid-cols-[minmax(0,1fr)_308px] gap-6">
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-4">
-              <FieldBlock label="供应商">
-                <SelectShell>
-                  <select
-                    value={activeProvider}
-                    onChange={(event) => onActiveProviderChange(event.target.value as ProviderType)}
-                    className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#273044] outline-none"
-                  >
-                    {MODEL_PROVIDER_ROWS.map((row) => (
-                      <option key={row.provider} value={row.provider}>{row.label}</option>
-                    ))}
-                  </select>
-                </SelectShell>
-              </FieldBlock>
-              <FieldBlock label="名称">
-                <FieldInput value={displayName} />
-              </FieldBlock>
-            </div>
-
-            <FieldBlock label="Base URL">
-              <FieldInput value={baseUrl} mono />
-            </FieldBlock>
-
-            <FieldBlock label="API Key">
-              <div className="grid h-9 grid-cols-[minmax(0,1fr)_36px_36px] rounded-[8px] border border-[#e1e6ef] bg-white">
-                <input
-                  value={activeChannel ? '••••••••••••••••••••••••••••••••••••••' : ''}
-                  readOnly
-                  placeholder="sk-..."
-                  className="min-w-0 bg-transparent px-3 font-mono text-[12px] font-medium text-[#273044] outline-none placeholder:text-[#9aa3b6]"
-                />
-                <button type="button" className="flex items-center justify-center border-l border-[#e1e6ef] text-[#7e879b] hover:bg-[#f8f9fc]">
-                  <Eye size={14} />
-                </button>
-                <button type="button" className="flex items-center justify-center border-l border-[#e1e6ef] text-[#7e879b] hover:bg-[#f8f9fc]">
-                  <Copy size={14} />
-                </button>
-              </div>
-            </FieldBlock>
+        {apiKeyLoading ? (
+          <div className="flex h-[290px] items-center gap-2 rounded-[9px] border border-[#e4e8f0] px-4 text-[13px] text-[#7d869a]">
+            <Loader2 size={14} className="animate-spin" />
+            加载供应商详情...
           </div>
-
-          <FieldBlock label="模型选择">
-            <div className="overflow-hidden rounded-[8px] border border-[#e1e6ef] bg-white">
-              <div className="flex h-9 items-center gap-2 border-b border-[#eef1f6] px-3">
-                <Search size={14} className="text-[#8a94aa]" />
-                <input
-                  readOnly
-                  value=""
-                  placeholder="搜索模型"
-                  className="min-w-0 flex-1 bg-transparent text-[12px] font-medium outline-none placeholder:text-[#9aa3b6]"
-                />
-                <button type="button" className="h-7 rounded-[6px] border border-[#d8dcff] bg-white px-2 text-[12px] font-medium text-[#625bff]">
-                  拉取模型列表
-                </button>
-              </div>
-              <div className="max-h-[134px] space-y-1 overflow-y-auto p-2">
-                {models.map((model) => (
-                  <label key={model} className="flex h-6 items-center gap-2 text-[12px] font-mono text-[#3f485e]">
-                    <input type="checkbox" checked readOnly className="size-3.5 accent-[#625bff]" />
-                    <span className="truncate">{model}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </FieldBlock>
-        </div>
-
-        <div className="mt-3 rounded-[9px] border border-[#e4e8f0] p-3">
-          <div className="mb-3 text-[13px] font-semibold leading-5 text-[#202338]">高级选项</div>
-          <div className="grid grid-cols-[130px_1fr_88px_204px] items-center gap-x-5">
-            <ToggleRow label="作为默认供应商" checked={false} onCheckedChange={() => undefined} muted />
-            <Button variant="outline" className="h-9 gap-2 rounded-[8px] border-[#e1e5ee] bg-white px-4 text-[12px] font-medium text-[#566078] shadow-none hover:bg-[#f8f9fc]">
-              <Activity size={14} />
-              测试连接
-            </Button>
-            <FieldLabel>请求超时</FieldLabel>
-            <SelectShell>
-              <select
-                value={timeout}
-                onChange={() => undefined}
-                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#4c566f] outline-none"
-              >
-                <option value="30">30 秒</option>
-                <option value="60">60 秒</option>
-                <option value="120">120 秒</option>
-              </select>
-            </SelectShell>
+        ) : (
+          <div className="rounded-[9px] border border-[#e4e8f0] p-4">
+            <ChannelForm
+              mode={activeChannel ? 'edit' : 'create'}
+              initialValue={initialValue}
+              providerLocked
+              disabled={!providerEnabled || savingProvider}
+              onSubmit={onProviderSubmit}
+            />
           </div>
-          <div className="mt-3 flex h-8 items-center gap-2 rounded-[7px] bg-[#f0efff] px-3 text-[12px] font-medium text-[#625bff]">
-            <Info size={14} />
-            填写配置信息后点击下方保存，未开启时不会提交该供应商配置。
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )
 }
 
-type ProviderRowModel = (typeof MODEL_PROVIDER_ROWS)[number] & { channel: Channel | null }
+type ProviderRowModel = ModelProviderRow
 
 function ProviderListItem({
   row,
@@ -670,18 +582,23 @@ function ProviderListItem({
 
 function SettingsCard({
   title,
+  description,
   action,
   children,
 }: {
   title?: string
+  description?: string
   action?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <section className="rounded-[10px] border border-[#e7e9f1] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       {(title || action) && (
-        <div className="mb-3 flex min-h-8 items-center justify-between gap-4">
-          {title && <h2 className="text-[16px] font-semibold leading-6 text-[#202338]">{title}</h2>}
+        <div className="mb-3 flex min-h-8 items-start justify-between gap-4">
+          <div className="min-w-0">
+            {title && <h2 className="text-[16px] font-semibold leading-6 text-[#202338]">{title}</h2>}
+            {description && <p className="mt-0.5 text-[11px] font-medium leading-4 text-[#9aa1b3]">{description}</p>}
+          </div>
           {action}
         </div>
       )}
@@ -693,28 +610,6 @@ function SettingsCard({
 function FieldLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={cn('flex h-9 items-center text-[13px] font-medium text-[#59637a]', className)}>{children}</div>
-  )
-}
-
-function FieldBlock({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[12px] font-semibold leading-4 text-[#59637a]">{label}</span>
-      {children}
-    </label>
-  )
-}
-
-function FieldInput({ value, mono = false }: { value: string; mono?: boolean }) {
-  return (
-    <input
-      value={value}
-      readOnly
-      className={cn(
-        'h-9 w-full rounded-[8px] border border-[#e1e6ef] bg-white px-3 text-[13px] font-medium text-[#273044] outline-none',
-        mono && 'font-mono text-[12px]'
-      )}
-    />
   )
 }
 
@@ -760,47 +655,6 @@ function SegmentedControl({
   )
 }
 
-function FallbackChipSelect({ labels }: { labels: string[] }) {
-  return (
-    <div className="col-span-3 flex h-9 min-w-0 items-center gap-1.5 rounded-[8px] border border-[#e3e7f0] bg-white px-2">
-      {labels.length > 0 ? labels.map((label) => (
-        <span
-          key={label}
-          className="inline-flex h-6 min-w-0 items-center gap-1 rounded-[6px] bg-[#f0efff] px-2 text-[12px] font-medium text-[#625bff]"
-        >
-          <span className="truncate">{label}</span>
-          <X size={12} className="shrink-0 text-[#8d84ff]" />
-        </span>
-      )) : (
-        <span className="text-[12px] text-[#9aa1b3]">未设置回退供应商</span>
-      )}
-      <ChevronDown size={14} className="ml-auto shrink-0 text-[#8a91a6]" />
-    </div>
-  )
-}
-
-function ToggleRow({
-  label,
-  checked,
-  muted = false,
-  onCheckedChange,
-}: {
-  label: string
-  checked: boolean
-  muted?: boolean
-  onCheckedChange: (checked: boolean) => void
-}) {
-  return (
-    <div className="flex h-7 items-center justify-between gap-4">
-      <div className="flex items-center gap-2 text-[13px] font-medium text-[#59637a]">
-        <span>{label}</span>
-        {muted && <Info size={13} className="text-[#9aa3b6]" />}
-      </div>
-      <LumeSwitch checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
-  )
-}
-
 function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
   return (
     <Switch
@@ -811,45 +665,6 @@ function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
       )}
     />
   )
-}
-
-function FooterAction({
-  icon: Icon,
-  label,
-  tone = 'default',
-  onClick,
-}: {
-  icon: LucideIcon
-  label: string
-  tone?: 'default' | 'danger'
-  onClick?: () => void
-}) {
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      onClick={onClick}
-      className={cn(
-        'h-11 gap-2 rounded-[8px] border-[#e3e6ee] bg-white text-[13px] font-medium text-[#4d566f] shadow-none hover:bg-[#f8f9fc]',
-        tone === 'danger' && 'border-[#ffb8be] text-[#ff4d57] hover:bg-[#fff5f6] hover:text-[#ff4d57]'
-      )}
-    >
-      <Icon size={15} />
-      {label}
-    </Button>
-  )
-}
-
-function getWorkbenchModels(provider: ProviderType, channel: Channel | null): string[] {
-  const channelModels = channel?.models
-    .filter((model) => model.capabilities?.chat !== false)
-    .map((model) => model.id)
-
-  if (channelModels && channelModels.length > 0) {
-    return channelModels.slice(0, 8)
-  }
-
-  return PREVIEW_MODELS[provider] ?? ['model-1', 'model-2', 'model-3']
 }
 
 function resolveDefaultModel(input: {
@@ -867,26 +682,6 @@ function resolveDefaultModel(input: {
     : null
 
   return { option, channel }
-}
-
-function getFallbackProviderLabels(
-  fallbackModelRefs: string[],
-  modelOptions: ModelOption[],
-  activeModel: ModelOption | null
-): string[] {
-  const labels = fallbackModelRefs
-    .map((modelRef) => modelOptions.find((option) => option.modelRef === modelRef)?.channelLabel)
-    .filter((label): label is string => Boolean(label))
-
-  if (labels.length > 0) {
-    return Array.from(new Set(labels)).slice(0, 3)
-  }
-
-  return Array.from(new Set(
-    modelOptions
-      .filter((option) => option.channelId !== activeModel?.channelId)
-      .map((option) => option.channelLabel)
-  )).slice(0, 3)
 }
 
 function toReasoningTone(value: LumeConfigThinkingLevel): ReasoningTone {

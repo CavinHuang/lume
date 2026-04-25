@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { PERMISSION_OPTIONS } from './agent-settings-state'
+import { PROVIDER_LABELS, type Channel } from '@lume/shared'
+import {
+  buildModelProviderRows,
+  getModelProviderFormInitialValue,
+  PERMISSION_OPTIONS,
+} from './agent-settings-state'
 
 describe('PERMISSION_OPTIONS', () => {
   test('covers every permission mode with icon and visual tone metadata', () => {
@@ -29,5 +34,45 @@ describe('PERMISSION_OPTIONS', () => {
         emphasis: '规划',
       }),
     ])
+  })
+})
+
+describe('model provider settings state', () => {
+  test('buildModelProviderRows covers every supported provider from the channel contract', () => {
+    const rows = buildModelProviderRows([])
+
+    expect(rows.map((row) => row.provider)).toEqual(Object.keys(PROVIDER_LABELS))
+    expect(rows[0]).toEqual(expect.objectContaining({
+      provider: 'anthropic',
+      label: PROVIDER_LABELS.anthropic,
+      channel: null,
+    }))
+  })
+
+  test('getModelProviderFormInitialValue uses existing channel data with decrypted api key', () => {
+    const channel: Channel = {
+      id: 'channel-openai',
+      name: 'Local OpenAI',
+      provider: 'openai',
+      baseUrl: 'https://example.local/v1',
+      apiKey: 'encrypted',
+      models: [{ id: 'gpt-local', name: 'GPT Local', enabled: true }],
+      defaultModelId: 'gpt-local',
+      fallbackModelIds: ['gpt-fallback'],
+      enabled: true,
+      createdAt: 1,
+      updatedAt: 2,
+    }
+
+    expect(getModelProviderFormInitialValue('openai', [channel], 'sk-local')).toEqual({
+      name: 'Local OpenAI',
+      provider: 'openai',
+      baseUrl: 'https://example.local/v1',
+      apiKey: 'sk-local',
+      models: channel.models,
+      defaultModelId: 'gpt-local',
+      fallbackModelIds: ['gpt-fallback'],
+      enabled: true,
+    })
   })
 })
