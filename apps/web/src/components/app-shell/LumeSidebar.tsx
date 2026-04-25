@@ -72,7 +72,7 @@ export function LumeSidebar({
 
     return (
       <aside
-        className="flex h-full w-[72px] -ml-2 flex-col border-r border-[var(--border-strong)] text-[var(--text-1)]"
+        className="flex h-full w-[72px] -ml-2 flex-col border-r border-sidebar-border text-[var(--text-1)]"
         style={{
           background:
             'linear-gradient(180deg, var(--surface-1) 0%, color-mix(in oklab, var(--surface-1) 72%, var(--surface-2)) 100%)',
@@ -154,7 +154,7 @@ export function LumeSidebar({
 
   return (
     <aside
-      className="flex h-full w-[286px] min-w-[286px] -ml-2 flex-col border-r border-[var(--border-strong)] text-[var(--text-1)]"
+      className="flex h-full w-[286px] min-w-[286px] -ml-2 flex-col border-r border-sidebar-border text-[var(--text-1)]"
       style={{
         background:
           'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 82%, white) 0%, color-mix(in oklab, var(--surface-1) 74%, var(--surface-2)) 100%)',
@@ -210,10 +210,15 @@ export function LumeSidebar({
                 'flex h-9 w-full items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors',
                 action.disabled
                   ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
+                  : action.active
+                    ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]'
                   : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
               )}
             >
-              <span className={cn('flex size-5 items-center justify-center', action.disabled ? 'text-[var(--text-3)]' : 'text-[var(--text-2)]')}>
+              <span className={cn(
+                'flex size-5 items-center justify-center',
+                action.disabled ? 'text-[var(--text-3)]' : action.active ? 'text-[var(--brand)]' : 'text-[var(--text-2)]',
+              )}>
                 {renderIcon(action.icon, 16)}
               </span>
               <span className="flex-1">{action.label}</span>

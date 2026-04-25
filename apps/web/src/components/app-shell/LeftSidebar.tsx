@@ -104,6 +104,15 @@ export function LeftSidebar() {
     }
   }
 
+  const openAutomation = () => {
+    const automationId = '__automation__'
+    setActiveTabId(automationId)
+
+    if (!tabs.find((tab) => tab.id === automationId)) {
+      setTabs((previous) => [...previous, { id: automationId, type: 'automation', title: '自动化' }])
+    }
+  }
+
   const togglePin = async (threadId: string) => {
     const thread = threads.find((item) => item.id === threadId)
     if (!thread) return
@@ -169,6 +178,7 @@ export function LeftSidebar() {
       case 'skills':
         return
       case 'automations':
+        openAutomation()
         return
     }
   }

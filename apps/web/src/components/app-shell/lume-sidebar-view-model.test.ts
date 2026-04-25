@@ -46,6 +46,37 @@ describe('buildLumeSidebarViewModel', () => {
     ])
   })
 
+  test('marks automation navigation active and enabled when the automation tab is open', () => {
+    const model = buildLumeSidebarViewModel({
+      workspaces: [createWorkspace()],
+      threads: [],
+      currentWorkspaceId: 'workspace-1',
+      activeTabId: '__automation__',
+      streamingStates: {},
+      expandedWorkspaceIds: ['workspace-1'],
+    })
+
+    expect(model.topActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'automations',
+          disabled: false,
+          active: true,
+        }),
+      ]),
+    )
+    expect(model.collapsedItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'automations',
+          kind: 'top-action',
+          disabled: false,
+          active: true,
+        }),
+      ]),
+    )
+  })
+
   test('adds an active synthetic new conversation row for the current workspace welcome tab', () => {
     const model = buildLumeSidebarViewModel({
       workspaces: [createWorkspace()],

@@ -22,6 +22,7 @@ export interface LumeSidebarAction<TId extends string> {
   shortcut?: string
   badge?: string
   disabled?: boolean
+  active?: boolean
 }
 
 export type LumeSidebarTopAction = LumeSidebarAction<LumeSidebarTopActionId>
@@ -110,7 +111,15 @@ export function buildLumeSidebarViewModel({
     { id: 'new-chat', label: '新建聊天', icon: 'square-pen', kind: 'button', shortcut: 'Ctrl N' },
     { id: 'search', label: '搜索', icon: 'search', kind: 'search', shortcut: 'Ctrl K' },
     { id: 'skills', label: '技能', icon: 'box', kind: 'button' },
-    { id: 'automations', label: '自动化', icon: 'clock', kind: 'button', badge: '即将推出', disabled: true },
+    {
+      id: 'automations',
+      label: '自动化',
+      icon: 'clock',
+      kind: 'button',
+      badge: '即将推出',
+      disabled: false,
+      active: activeTabId === '__automation__',
+    },
   ]
 
   const footerActions: LumeSidebarFooterAction[] = [
@@ -184,7 +193,7 @@ export function buildLumeSidebarViewModel({
       icon: action.icon,
       kind: 'top-action' as const,
       disabled: action.disabled,
-      active: action.id === 'new-chat' ? activeTabId === '__welcome__' : false,
+      active: action.id === 'new-chat' ? activeTabId === '__welcome__' : !!action.active,
     })),
     ...workspaceItems.map((workspace) => ({
       id: `workspace:${workspace.id}`,
