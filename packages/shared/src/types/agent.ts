@@ -419,6 +419,18 @@ export interface ImportGlobalSkillToWorkspaceInput {
   overwrite?: boolean
 }
 
+export interface ImportLocalSkillDirectoryToWorkspaceInput {
+  workspaceSlug: string
+  localPath: string
+  overwrite?: boolean
+}
+
+export interface InstallSkillMarketItemToWorkspaceInput {
+  workspaceSlug: string
+  skillId: string
+  overwrite?: boolean
+}
+
 export interface GlobalImportResult {
   ok: true
   imported: boolean
@@ -444,6 +456,14 @@ export interface SkillCatalogItem {
   installState: SkillInstallState
 }
 
+export interface SkillFileTreeNode {
+  name: string
+  path: string
+  type: 'file' | 'directory'
+  content?: string
+  children?: SkillFileTreeNode[]
+}
+
 export interface SkillMarketCatalogResult {
   items: SkillCatalogItem[]
 }
@@ -451,6 +471,17 @@ export interface SkillMarketCatalogResult {
 export interface GetSkillMarketCatalogInput {
   workspaceSlug: string
   includeBlockedSources?: boolean
+}
+
+export interface GetSkillMarketDetailInput {
+  workspaceSlug: string
+  skillSlug: string
+}
+
+export interface SkillMarketDetailResult {
+  item: SkillCatalogItem
+  rootPath: string
+  files: SkillFileTreeNode[]
 }
 
 export interface GitHubSkillReviewItem {
@@ -909,8 +940,14 @@ export const AGENT_IPC_CHANNELS = {
   IMPORT_GLOBAL_MCP_TO_WORKSPACE: 'agent:import-global-mcp-to-workspace',
   /** 导入全局 Skill 到工作区 */
   IMPORT_GLOBAL_SKILL_TO_WORKSPACE: 'agent:import-global-skill-to-workspace',
+  /** 从本地目录导入 Skill 到工作区 */
+  IMPORT_LOCAL_SKILL_DIRECTORY_TO_WORKSPACE: 'agent:import-local-skill-directory-to-workspace',
+  /** 从技能市场条目安装 Skill 到工作区 */
+  INSTALL_SKILL_MARKET_ITEM_TO_WORKSPACE: 'agent:install-skill-market-item-to-workspace',
   /** 获取技能市场聚合目录 */
   GET_SKILL_MARKET_CATALOG: 'agent:get-skill-market-catalog',
+  /** 获取技能详情与文件树 */
+  GET_SKILL_MARKET_DETAIL: 'agent:get-skill-market-detail',
   /** 获取 GitHub 技能安装前审查摘要 */
   GET_GITHUB_SKILL_REVIEW: 'agent:get-github-skill-review',
   /** 从 GitHub 安装技能到工作区 */

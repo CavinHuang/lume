@@ -149,6 +149,9 @@ export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponse
     getAgentRuntimeStatusManager().markStreaming(input.threadId);
     return { ok: true };
   }
+  if (input.canceled) {
+    return { ok: true };
+  }
   throw new Error("未找到待确认的 AskUserQuestion 请求");
 }
 

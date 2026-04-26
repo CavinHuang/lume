@@ -1,7 +1,7 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 
-export type TabType = 'agent' | 'settings' | 'welcome' | 'automation'
+export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills'
 export type SettingsTab = 'channel' | 'agent' | 'mcp' | 'about'
 
 export interface Tab {

@@ -3,6 +3,7 @@ import { tabsAtom, activeTabIdAtom } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
 import { AutomationManagementView } from '@/components/automation/AutomationManagementView'
 import { SettingsView } from '@/components/settings/SettingsView'
+import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 
 export function TabContent() {
@@ -32,6 +33,10 @@ export function TabContent() {
 
   if (activeTab.type === 'automation') {
     return <AutomationManagementView />
+  }
+
+  if (activeTab.type === 'skills') {
+    return <SkillsMarketView />
   }
 
   return null

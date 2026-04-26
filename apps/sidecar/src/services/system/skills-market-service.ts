@@ -1,17 +1,23 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, lstatSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import type {
   GetSkillMarketCatalogInput,
+  GetSkillMarketDetailInput,
   GlobalSkillMeta,
+  GlobalImportResult,
+  InstallSkillMarketItemToWorkspaceInput,
+  ImportLocalSkillDirectoryToWorkspaceInput,
   SkillCatalogItem,
+  SkillFileTreeNode,
+  SkillMarketDetailResult,
   SkillMarketCatalogResult,
   SkillMeta
 } from "@lume/shared";
 import { getWorkspaceSkills } from "../agent/agent-workspace-manager";
-import { getDefaultSkillsDir } from "../infra/config-paths";
-import { getGlobalDiscoverySnapshot } from "./global-discovery-service";
+import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { getGlobalDiscoverySnapshot, importGlobalSkillToWorkspace } from "./global-discovery-service";
 import { seedDefaultSkills } from "./default-skills-seeder";
-import { getInstalledSkillSourceMetadata } from "./skills-market-metadata";
+import { getInstalledSkillSourceMetadata, saveLocalInstalledSkillMetadata, type InstalledSkillSourceMeta } from "./skills-market-metadata";
 
 const SOURCE_PRIORITY: Record<SkillCatalogItem["sourceType"], number> = {
   "built-in": 0,
@@ -63,6 +69,68 @@ function readSkillsFromDir(skillsDir: string): SkillMeta[] {
   return skills;
 }
 
+function discoverSkillDirsFromLocalPath(localPath: string): Array<{ slug: string; sourcePath: string }> {
+  const resolvedPath = resolve(localPath);
+  if (!existsSync(resolvedPath)) {
+    throw new Error("本地目录不存在");
+  }
+
+  const stat = lstatSync(resolvedPath);
+  if (!stat.isDirectory()) {
+    throw new Error("本地路径必须是目录");
+  }
+
+  if (existsSync(join(resolvedPath, "SKILL.md"))) {
+    return [{ slug: basename(resolvedPath), sourcePath: resolvedPath }];
+  }
+
+  const skillDirs = readdirSync(resolvedPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(resolvedPath, entry.name, "SKILL.md")))
+    .map((entry) => ({ slug: entry.name, sourcePath: join(resolvedPath, entry.name) }))
+    .sort((left, right) => left.slug.localeCompare(right.slug, "zh-CN"));
+
+  if (skillDirs.length === 0) {
+    throw new Error("没有检测到有效的 SKILL.md 或技能目录");
+  }
+
+  return skillDirs;
+}
+
+function buildFileTreeFromDir(rootPath: string, relativePath = ""): SkillFileTreeNode[] {
+  const absolutePath = join(rootPath, relativePath);
+  return readdirSync(absolutePath, { withFileTypes: true })
+    .filter((entry) => !entry.name.startsWith(".tmp-"))
+    .sort((left, right) => {
+      if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+      return left.name.localeCompare(right.name, "zh-CN");
+    })
+    .map((entry) => {
+      const nodePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        return {
+          name: entry.name,
+          path: nodePath,
+          type: "directory" as const,
+          children: buildFileTreeFromDir(rootPath, nodePath)
+        };
+      }
+      return {
+        name: entry.name,
+        path: nodePath,
+        type: "file" as const,
+        content: readSkillFileContent(join(rootPath, nodePath))
+      };
+    });
+}
+
+function readSkillFileContent(filePath: string): string {
+  try {
+    return readFileSync(filePath, "utf-8");
+  } catch {
+    return "该文件暂不支持预览。";
+  }
+}
+
 function normalizeBuiltInSkills(skills: SkillMeta[]): SkillCatalogItem[] {
   return skills.map((skill) => ({
     id: `built-in:${skill.slug}`,
@@ -90,6 +158,41 @@ function normalizeGlobalSkills(skills: GlobalSkillMeta[]): SkillCatalogItem[] {
     trustLevel: "trusted",
     installState: "not-installed"
   }));
+}
+
+function normalizeMetadataSkillSources(metadata: Record<string, InstalledSkillSourceMeta>): SkillCatalogItem[] {
+  const items: SkillCatalogItem[] = [];
+  for (const [slug, meta] of Object.entries(metadata)) {
+    if (meta.sourceType === "local") {
+      const skillMdPath = join(meta.sourcePath, "SKILL.md");
+      if (!existsSync(skillMdPath)) continue;
+      const parsed = parseSkillFrontmatter(readSkillFileContent(skillMdPath), slug);
+      items.push({
+        id: `local:skill:${slug}`,
+        sourceId: `local:skill:${slug}`,
+        slug,
+        name: parsed.name,
+        description: parsed.description,
+        icon: parsed.icon,
+        version: parsed.version,
+        sourceType: "local",
+        trustLevel: "trusted",
+        installState: "not-installed"
+      });
+      continue;
+    }
+
+    items.push({
+      id: `github:skill:${slug}`,
+      sourceId: `github:skill:${slug}`,
+      slug,
+      name: slug,
+      sourceType: "github",
+      trustLevel: "review-required",
+      installState: "not-installed"
+    });
+  }
+  return items;
 }
 
 function compareCatalogItems(a: SkillCatalogItem, b: SkillCatalogItem): number {
@@ -161,17 +264,121 @@ export function getSkillMarketCatalog(input: GetSkillMarketCatalogInput): SkillM
   const globalSkills = normalizeGlobalSkills(getGlobalDiscoverySnapshot().skills);
   const workspaceSkills = getWorkspaceSkills(input.workspaceSlug);
   const installedSourceMetadata = getInstalledSkillSourceMetadata(input.workspaceSlug);
+  const persistedSources = normalizeMetadataSkillSources(installedSourceMetadata);
 
   return buildSkillMarketCatalog({
-    sources: [...builtInSkills, ...globalSkills],
+    sources: [...builtInSkills, ...globalSkills, ...persistedSources],
     workspaceSkills,
     installedSourceMetadata,
     includeBlockedSources: input.includeBlockedSources
   });
 }
 
+export function getSkillMarketDetail(input: GetSkillMarketDetailInput): SkillMarketDetailResult {
+  const catalog = getSkillMarketCatalog(input);
+  const item = catalog.items.find((candidate) => candidate.slug === input.skillSlug);
+  if (!item) {
+    throw new Error("未找到指定 Skill");
+  }
+
+  const workspaceSkillPath = join(getWorkspaceSkillsDir(input.workspaceSlug), item.slug);
+  const builtInSkillPath = join(getDefaultSkillsDir(), item.slug);
+  const globalSkillPath = item.sourceId
+    ? getGlobalDiscoverySnapshot().skills.find((skill) => skill.id === item.sourceId)?.sourcePath
+    : undefined;
+  const metadataPath = (() => {
+    const metadata = getInstalledSkillSourceMetadata(input.workspaceSlug)[item.slug];
+    return metadata?.sourceType === "local" ? metadata.sourcePath : undefined;
+  })();
+  const candidates = [workspaceSkillPath, builtInSkillPath, globalSkillPath, metadataPath].filter((path): path is string => !!path);
+  const rootPath = candidates.find((path) => existsSync(join(path, "SKILL.md")));
+
+  if (!rootPath) {
+    throw new Error("未找到 Skill 文件目录");
+  }
+
+  return {
+    item,
+    rootPath,
+    files: buildFileTreeFromDir(rootPath)
+  };
+}
+
+export function importLocalSkillDirectoryToWorkspace(
+  input: ImportLocalSkillDirectoryToWorkspaceInput
+): GlobalImportResult {
+  const skillDirs = discoverSkillDirsFromLocalPath(input.localPath);
+  const workspaceSkillsDir = getWorkspaceSkillsDir(input.workspaceSlug);
+
+  for (const skill of skillDirs) {
+    const targetDir = join(workspaceSkillsDir, skill.slug);
+    if (!input.overwrite && existsSync(join(targetDir, "SKILL.md"))) {
+      return {
+        ok: true,
+        imported: false,
+        reason: `技能「${skill.slug}」已存在`
+      };
+    }
+  }
+
+  for (const skill of skillDirs) {
+    const targetDir = join(workspaceSkillsDir, skill.slug);
+    rmSync(targetDir, { recursive: true, force: true });
+    cpSync(skill.sourcePath, targetDir, { recursive: true });
+  }
+
+  saveLocalInstalledSkillMetadata({
+    workspaceSlug: input.workspaceSlug,
+    skills: skillDirs
+  });
+
+  return { ok: true, imported: true };
+}
+
+export function installSkillMarketItemToWorkspace(
+  input: InstallSkillMarketItemToWorkspaceInput
+): GlobalImportResult {
+  const catalog = getSkillMarketCatalog({ workspaceSlug: input.workspaceSlug, includeBlockedSources: true });
+  const item = catalog.items.find((candidate) => candidate.id === input.skillId || candidate.sourceId === input.skillId);
+  if (!item) {
+    throw new Error("未找到指定 Skill 来源");
+  }
+
+  const targetDir = join(getWorkspaceSkillsDir(input.workspaceSlug), item.slug);
+  if (!input.overwrite && existsSync(join(targetDir, "SKILL.md"))) {
+    return { ok: true, imported: false, reason: "工作区已存在同名 Skill" };
+  }
+
+  if (item.sourceType === "built-in") {
+    const sourcePath = join(getDefaultSkillsDir(), item.slug);
+    rmSync(targetDir, { recursive: true, force: true });
+    cpSync(sourcePath, targetDir, { recursive: true });
+    return { ok: true, imported: true };
+  }
+
+  if (item.sourceId?.startsWith("claude:skill:")) {
+    return importGlobalSkillToWorkspace({
+      workspaceSlug: input.workspaceSlug,
+      skillId: item.sourceId,
+      overwrite: input.overwrite
+    });
+  }
+
+  const metadata = getInstalledSkillSourceMetadata(input.workspaceSlug)[item.slug];
+  if (metadata?.sourceType === "local") {
+    rmSync(targetDir, { recursive: true, force: true });
+    cpSync(metadata.sourcePath, targetDir, { recursive: true });
+    return { ok: true, imported: true };
+  }
+
+  throw new Error("该 Skill 来源暂不支持一键重新安装，请重新添加市场源");
+}
+
 export const __internal = {
+  buildFileTreeFromDir,
   buildSkillMarketCatalog,
+  discoverSkillDirsFromLocalPath,
+  normalizeMetadataSkillSources,
   normalizeBuiltInSkills,
   normalizeGlobalSkills,
   readSkillsFromDir

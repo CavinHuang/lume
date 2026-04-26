@@ -2,14 +2,21 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getWorkspaceMetaPath } from "../infra/config-paths";
 
-interface InstalledSkillSourceMeta {
-  sourceType: "github";
-  sourceRef: string;
-  trustLevel: "review-required";
-  ref: string;
-  rootPath: string;
-  installedAt: number;
-}
+export type InstalledSkillSourceMeta =
+  | {
+    sourceType: "github";
+    sourceRef: string;
+    trustLevel: "review-required";
+    ref: string;
+    rootPath: string;
+    installedAt: number;
+  }
+  | {
+    sourceType: "local";
+    sourcePath: string;
+    trustLevel: "trusted";
+    installedAt: number;
+  };
 
 interface SkillsMarketMetadataFile {
   version: 1;
@@ -66,6 +73,28 @@ export function saveGitHubInstalledSkillMetadata(input: {
       trustLevel: "review-required",
       ref: input.ref,
       rootPath: input.rootPath,
+      installedAt: Date.now()
+    };
+  }
+
+  writeMetadata(input.workspaceSlug, next);
+}
+
+export function saveLocalInstalledSkillMetadata(input: {
+  workspaceSlug: string;
+  skills: Array<{ slug: string; sourcePath: string }>;
+}): void {
+  const current = readMetadata(input.workspaceSlug);
+  const next: SkillsMarketMetadataFile = {
+    version: 1,
+    installedSources: { ...current.installedSources }
+  };
+
+  for (const skill of input.skills) {
+    next.installedSources[skill.slug] = {
+      sourceType: "local",
+      sourcePath: skill.sourcePath,
+      trustLevel: "trusted",
       installedAt: Date.now()
     };
   }

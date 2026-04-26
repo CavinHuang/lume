@@ -7,6 +7,8 @@ import type {
   AgentRuntimeToolPolicyConfig,
   ImportGlobalMcpToWorkspaceInput,
   ImportGlobalSkillToWorkspaceInput,
+  ImportLocalSkillDirectoryToWorkspaceInput,
+  InstallSkillMarketItemToWorkspaceInput,
   InstallGlobalPluginInput,
   PlanStep,
   WorkspaceMcpConfig
@@ -93,7 +95,12 @@ import {
   getGitHubSkillReview,
   installGitHubSkillToWorkspace
 } from "../services/system/github-skill-install-service";
-import { getSkillMarketCatalog } from "../services/system/skills-market-service";
+import {
+  getSkillMarketDetail,
+  getSkillMarketCatalog,
+  installSkillMarketItemToWorkspace,
+  importLocalSkillDirectoryToWorkspace
+} from "../services/system/skills-market-service";
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
@@ -129,7 +136,9 @@ import {
   copyFolderToThreadInputSchema,
   deleteSkillInputSchema,
   githubSkillReviewInputSchema,
+  importLocalSkillDirectoryInputSchema,
   installGitHubSkillInputSchema,
+  installSkillMarketItemInputSchema,
   listDirectoryInputSchema,
   marketplaceDetailInputSchema,
   moveAttachedFileInputSchema,
@@ -148,6 +157,7 @@ import {
   saveToolPolicyInputSchema,
   searchWorkspaceFilesInputSchema,
   skillMarketCatalogInputSchema,
+  skillMarketDetailInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
   submitToolPermissionInputSchema,
@@ -462,6 +472,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       return getSkillMarketCatalog(input);
     },
+    [AGENT_IPC_CHANNELS.GET_SKILL_MARKET_DETAIL]: async (params) => {
+      const input = validateInput(
+        skillMarketDetailInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_SKILL_MARKET_DETAIL
+      );
+      return getSkillMarketDetail(input);
+    },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(
         githubSkillReviewInputSchema,
@@ -488,6 +506,22 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       importGlobalMcpToWorkspace(params as ImportGlobalMcpToWorkspaceInput),
     [AGENT_IPC_CHANNELS.IMPORT_GLOBAL_SKILL_TO_WORKSPACE]: async (params) =>
       importGlobalSkillToWorkspace(params as ImportGlobalSkillToWorkspaceInput),
+    [AGENT_IPC_CHANNELS.IMPORT_LOCAL_SKILL_DIRECTORY_TO_WORKSPACE]: async (params) => {
+      const input = validateInput(
+        importLocalSkillDirectoryInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.IMPORT_LOCAL_SKILL_DIRECTORY_TO_WORKSPACE
+      );
+      return importLocalSkillDirectoryToWorkspace(input as ImportLocalSkillDirectoryToWorkspaceInput);
+    },
+    [AGENT_IPC_CHANNELS.INSTALL_SKILL_MARKET_ITEM_TO_WORKSPACE]: async (params) => {
+      const input = validateInput(
+        installSkillMarketItemInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.INSTALL_SKILL_MARKET_ITEM_TO_WORKSPACE
+      );
+      return installSkillMarketItemToWorkspace(input as InstallSkillMarketItemToWorkspaceInput);
+    },
     [AGENT_IPC_CHANNELS.GET_THREAD_PATH]: async (params) => {
       const input = validateInput(threadPathInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_PATH);
       return getAgentThreadPath(

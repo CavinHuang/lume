@@ -401,6 +401,11 @@ export const skillMarketCatalogInputSchema = z.object({
   includeBlockedSources: z.boolean().optional()
 });
 
+export const skillMarketDetailInputSchema = z.object({
+  workspaceSlug: idSchema,
+  skillSlug: idSchema
+});
+
 export const githubSkillReviewInputSchema = z.object({
   url: z.string().url()
 });
@@ -409,6 +414,18 @@ export const installGitHubSkillInputSchema = z.object({
   url: z.string().url(),
   workspaceSlug: idSchema,
   reviewToken: z.string().min(1),
+  overwrite: z.boolean().optional()
+});
+
+export const importLocalSkillDirectoryInputSchema = z.object({
+  workspaceSlug: idSchema,
+  localPath: z.string().min(1),
+  overwrite: z.boolean().optional()
+});
+
+export const installSkillMarketItemInputSchema = z.object({
+  workspaceSlug: idSchema,
+  skillId: z.string().min(1),
   overwrite: z.boolean().optional()
 });
 
@@ -584,7 +601,7 @@ export const proxySettingsInputSchema = z.object({
 });
 
 const automationScheduleSchema = z.object({
-  type: z.enum(["cron", "once", "interval"]),
+  type: z.enum(["cron", "once", "interval", "manual"]),
   cronExpr: z.string().optional(),
   runAt: z.number().optional(),
   intervalMs: z.number().optional(),
@@ -592,6 +609,7 @@ const automationScheduleSchema = z.object({
 });
 
 const automationSystemActionSchema = z.enum(["memory_distill_workspace"]);
+const automationTriggerModeSchema = z.enum(["manual", "schedule", "webhook", "chat"]);
 
 export const automationCreateInputSchema = z.object({
   name: z.string().min(1),
@@ -599,6 +617,10 @@ export const automationCreateInputSchema = z.object({
   workspaceId: z.string().optional(),
   threadId: z.string().optional(),
   schedule: automationScheduleSchema,
+  triggerModes: z.array(automationTriggerModeSchema).optional(),
+  description: z.string().optional(),
+  defaultModel: z.string().optional(),
+  toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1),
   systemAction: automationSystemActionSchema.optional()
 });
@@ -610,6 +632,10 @@ export const automationUpdateInputSchema = z.object({
   workspaceId: z.string().optional(),
   threadId: z.string().optional(),
   schedule: automationScheduleSchema.optional(),
+  triggerModes: z.array(automationTriggerModeSchema).optional(),
+  description: z.string().optional(),
+  defaultModel: z.string().optional(),
+  toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1).optional(),
   systemAction: automationSystemActionSchema.optional()
 });

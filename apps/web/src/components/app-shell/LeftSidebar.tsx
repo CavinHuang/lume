@@ -113,6 +113,15 @@ export function LeftSidebar() {
     }
   }
 
+  const openSkills = () => {
+    const skillsId = '__skills__'
+    setActiveTabId(skillsId)
+
+    if (!tabs.find((tab) => tab.id === skillsId)) {
+      setTabs((previous) => [...previous, { id: skillsId, type: 'skills', title: '技能' }])
+    }
+  }
+
   const togglePin = async (threadId: string) => {
     const thread = threads.find((item) => item.id === threadId)
     if (!thread) return
@@ -176,6 +185,7 @@ export function LeftSidebar() {
         setOpenCommandPalette(true)
         return
       case 'skills':
+        openSkills()
         return
       case 'automations':
         openAutomation()
