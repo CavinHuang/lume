@@ -1,7 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { clearHighlightCache } from '@lume/ui'
 import {
+  AGENT_IPC_CHANNELS,
   GENERAL_SETTINGS_IPC_CHANNELS,
+  type AgentProxySettings,
+  type AgentProxyStatus,
   type GeneralSettings,
   type UpdateGeneralSettingsInput,
 } from '@lume/shared'
@@ -70,6 +73,12 @@ export const updateGeneralSettings = (input: UpdateGeneralSettingsInput) =>
       }
       return settings
     })
+
+export const getProxySettings = () =>
+  sidecarCall<AgentProxyStatus>(AGENT_IPC_CHANNELS.GET_PROXY_SETTINGS, {})
+
+export const saveProxySettings = (input: AgentProxySettings) =>
+  sidecarCall<AgentProxyStatus>(AGENT_IPC_CHANNELS.SAVE_PROXY_SETTINGS, input)
 
 export const openLogsDir = () =>
   sidecarCall<{ ok: boolean }>(GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR, {})

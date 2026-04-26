@@ -29,6 +29,7 @@ import {
   getPersistedGeneralSettings,
   updatePersistedGeneralSettings
 } from "../services/system/general-settings-service";
+import { getActiveProxyConfig } from "../services/system/proxy-settings-manager";
 import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
 import {
   clearCacheInputSchema,
@@ -98,11 +99,7 @@ async function runNetworkDiagnostic(): Promise<NetworkDiagnosticResult> {
   }));
 
   return {
-    proxy: {
-      httpProxy: process.env.HTTP_PROXY ?? process.env.http_proxy,
-      httpsProxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
-      noProxy: process.env.NO_PROXY ?? process.env.no_proxy
-    },
+    proxy: getActiveProxyConfig(),
     searchCredentials: {
       braveConfigured: Boolean(getChatToolCredentials("web_search").braveApiKey?.trim()),
       tavilyConfigured: Boolean(getChatToolCredentials("web_search").tavilyApiKey?.trim())

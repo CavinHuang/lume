@@ -2,10 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import {
   CACHE_CLEANUP_OPTIONS,
   GENERAL_SETTINGS_DEFAULTS,
+  PROXY_MODE_OPTIONS,
   SETTINGS_NAV_ITEMS,
   THEME_MODE_OPTIONS,
   createDefaultCacheCleanupSelection,
   hasSelectedCacheCleanup,
+  normalizeProxyDraft,
   mergeGeneralSettings,
 } from './general-settings-state'
 
@@ -22,6 +24,14 @@ describe('general settings state', () => {
       'system',
       'light',
       'dark',
+    ])
+  })
+
+  test('proxy mode options expose off/system/custom modes', () => {
+    expect(PROXY_MODE_OPTIONS.map((option) => option.value)).toEqual([
+      'off',
+      'system',
+      'custom',
     ])
   })
 
@@ -100,5 +110,22 @@ describe('general settings state', () => {
       previewRender: false,
       logs: false,
     })).toBe(false)
+  })
+
+  test('normalizeProxyDraft disables proxy when mode is off and trims custom values', () => {
+    expect(normalizeProxyDraft({
+      version: 1,
+      enabled: true,
+      mode: 'off',
+      httpProxy: ' http://127.0.0.1:7890 ',
+      httpsProxy: ' ',
+      noProxy: ' localhost ',
+    })).toEqual({
+      version: 1,
+      enabled: false,
+      mode: 'off',
+      httpProxy: 'http://127.0.0.1:7890',
+      noProxy: 'localhost',
+    })
   })
 })

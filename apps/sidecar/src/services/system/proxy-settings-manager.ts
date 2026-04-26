@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentProxySettings, AgentProxyStatus } from "@lume/shared";
@@ -18,11 +19,18 @@ const DEFAULT_PROXY_SETTINGS: AgentProxySettings = {
   mode: "off"
 };
 
-const startupEnvProxy = {
-  httpProxy: process.env.HTTP_PROXY ?? process.env.http_proxy,
-  httpsProxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
-  noProxy: process.env.NO_PROXY ?? process.env.no_proxy
-};
+type ProxyEnvironment = Record<string, string | undefined>;
+
+interface SystemProxyDetectionOptions {
+  env?: ProxyEnvironment;
+  platform?: NodeJS.Platform;
+  execFileSync?: typeof execFileSync;
+}
+
+interface ApplyProxySettingsOptions {
+  detectSystemProxy?: () => SystemProxySnapshot;
+  applyDispatcher?: (mode: AgentProxySettings["mode"], proxyUrl?: string) => Promise<void>;
+}
 
 export interface ActiveProxyConfig {
   mode: AgentProxySettings["mode"];
@@ -31,6 +39,8 @@ export interface ActiveProxyConfig {
   httpsProxy?: string;
   noProxy?: string;
 }
+
+type SystemProxySnapshot = Pick<ActiveProxyConfig, "httpProxy" | "httpsProxy" | "noProxy">;
 
 function readStoredSettings(): StoredSettings {
   const path = getSettingsPath();
@@ -78,6 +88,104 @@ function writeStoredSettings(proxy: AgentProxySettings): void {
 function pickProxyValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function formatHostPortProxy(host: string | undefined, port: string | undefined): string | undefined {
+  const trimmedHost = pickProxyValue(host);
+  const trimmedPort = pickProxyValue(port);
+  if (!trimmedHost || !trimmedPort) {
+    return undefined;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmedHost)) {
+    return trimmedHost;
+  }
+  return `http://${trimmedHost}:${trimmedPort}`;
+}
+
+function readEnvProxy(env: ProxyEnvironment = process.env): SystemProxySnapshot {
+  return {
+    httpProxy: pickProxyValue(env.HTTP_PROXY ?? env.http_proxy),
+    httpsProxy: pickProxyValue(env.HTTPS_PROXY ?? env.https_proxy),
+    noProxy: pickProxyValue(env.NO_PROXY ?? env.no_proxy)
+  };
+}
+
+export function parseMacSystemProxyOutput(output: string): SystemProxySnapshot {
+  const entries = new Map<string, string>();
+  const exceptions: string[] = [];
+  let insideExceptions = false;
+
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (trimmed.startsWith("ExceptionsList")) {
+      insideExceptions = true;
+      continue;
+    }
+    if (insideExceptions) {
+      if (trimmed === "}") {
+        insideExceptions = false;
+        continue;
+      }
+      const match = trimmed.match(/^\d+\s*:\s*(.+)$/);
+      if (match?.[1]) {
+        exceptions.push(match[1].trim());
+      }
+      continue;
+    }
+
+    const match = trimmed.match(/^([A-Za-z]+)\s*:\s*(.+)$/);
+    if (match?.[1] && match[2] !== undefined) {
+      entries.set(match[1], match[2].trim());
+    }
+  }
+
+  const httpProxy = entries.get("HTTPEnable") === "1"
+    ? formatHostPortProxy(entries.get("HTTPProxy"), entries.get("HTTPPort"))
+    : undefined;
+  const httpsProxy = entries.get("HTTPSEnable") === "1"
+    ? formatHostPortProxy(entries.get("HTTPSProxy"), entries.get("HTTPSPort"))
+    : undefined;
+  const socksProxy = entries.get("SOCKSEnable") === "1"
+    ? formatHostPortProxy(entries.get("SOCKSProxy"), entries.get("SOCKSPort"))?.replace(/^http:\/\//, "socks5://")
+    : undefined;
+
+  return {
+    httpProxy: httpProxy ?? socksProxy,
+    httpsProxy: httpsProxy ?? httpProxy ?? socksProxy,
+    noProxy: pickProxyValue(exceptions.join(","))
+  };
+}
+
+export function detectSystemProxySettings(options: SystemProxyDetectionOptions = {}): SystemProxySnapshot {
+  const platform = options.platform ?? process.platform;
+  const exec = options.execFileSync ?? execFileSync;
+  const envProxy = readEnvProxy(options.env);
+
+  if (platform !== "darwin") {
+    return envProxy;
+  }
+
+  for (const command of ["/usr/sbin/scutil", "scutil"]) {
+    try {
+      const output = exec(command, ["--proxy"], {
+        encoding: "utf8",
+        timeout: 1500
+      });
+      const detected = parseMacSystemProxyOutput(output.toString());
+      return {
+        httpProxy: detected.httpProxy ?? envProxy.httpProxy,
+        httpsProxy: detected.httpsProxy ?? envProxy.httpsProxy,
+        noProxy: detected.noProxy ?? envProxy.noProxy
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return envProxy;
 }
 
 function normalizeProxySettings(input: Partial<AgentProxySettings>): AgentProxySettings {
@@ -128,21 +236,26 @@ async function applyUndiciProxyDispatcher(mode: AgentProxySettings["mode"], prox
   }
 }
 
-export async function applyProxySettings(settings: AgentProxySettings): Promise<void> {
+export async function applyProxySettings(
+  settings: AgentProxySettings,
+  options: ApplyProxySettingsOptions = {}
+): Promise<void> {
   const normalized = normalizeProxySettings(settings);
+  const applyDispatcher = options.applyDispatcher ?? applyUndiciProxyDispatcher;
   if (!normalized.enabled || normalized.mode === "off") {
     setEnvProxy("HTTP_PROXY", undefined);
     setEnvProxy("HTTPS_PROXY", undefined);
     setEnvProxy("NO_PROXY", undefined);
-    await applyUndiciProxyDispatcher("off");
+    await applyDispatcher("off");
     return;
   }
 
   if (normalized.mode === "system") {
-    setEnvProxy("HTTP_PROXY", startupEnvProxy.httpProxy);
-    setEnvProxy("HTTPS_PROXY", startupEnvProxy.httpsProxy);
-    setEnvProxy("NO_PROXY", startupEnvProxy.noProxy);
-    await applyUndiciProxyDispatcher("system");
+    const systemProxy = options.detectSystemProxy?.() ?? detectSystemProxySettings();
+    setEnvProxy("HTTP_PROXY", systemProxy.httpProxy);
+    setEnvProxy("HTTPS_PROXY", systemProxy.httpsProxy ?? systemProxy.httpProxy);
+    setEnvProxy("NO_PROXY", systemProxy.noProxy);
+    await applyDispatcher("system");
     return;
   }
 
@@ -151,18 +264,15 @@ export async function applyProxySettings(settings: AgentProxySettings): Promise<
   setEnvProxy("HTTP_PROXY", httpProxy);
   setEnvProxy("HTTPS_PROXY", httpsProxy);
   setEnvProxy("NO_PROXY", normalized.noProxy);
-  await applyUndiciProxyDispatcher("custom", httpsProxy ?? httpProxy);
+  await applyDispatcher("custom", httpsProxy ?? httpProxy);
 }
 
 export function getAgentProxyStatus(): AgentProxyStatus {
   const stored = readStoredSettings();
+  const systemProxy = detectSystemProxySettings();
   return {
     settings: stored.proxy,
-    systemProxy: {
-      httpProxy: startupEnvProxy.httpProxy,
-      httpsProxy: startupEnvProxy.httpsProxy,
-      noProxy: startupEnvProxy.noProxy
-    }
+    systemProxy
   };
 }
 
@@ -172,12 +282,13 @@ export function getActiveProxyConfig(): ActiveProxyConfig {
     return { mode: "off", enabled: false };
   }
   if (stored.mode === "system") {
+    const systemProxy = detectSystemProxySettings();
     return {
       mode: "system",
       enabled: true,
-      httpProxy: startupEnvProxy.httpProxy,
-      httpsProxy: startupEnvProxy.httpsProxy,
-      noProxy: startupEnvProxy.noProxy
+      httpProxy: systemProxy.httpProxy,
+      httpsProxy: systemProxy.httpsProxy ?? systemProxy.httpProxy,
+      noProxy: systemProxy.noProxy
     };
   }
   return {

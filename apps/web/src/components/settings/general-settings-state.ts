@@ -1,4 +1,6 @@
 import type {
+  AgentProxyMode,
+  AgentProxySettings,
   GeneralSettings,
   UpdateGeneralSettingsInput,
   ThemeMode,
@@ -18,6 +20,12 @@ export interface SettingsNavItem {
 
 export interface ThemeModeOption {
   value: ThemeMode
+  label: string
+  desc: string
+}
+
+export interface ProxyModeOption {
+  value: AgentProxyMode
   label: string
   desc: string
 }
@@ -55,6 +63,24 @@ export const THEME_MODE_OPTIONS: ThemeModeOption[] = [
     value: 'dark',
     label: '深色',
     desc: '始终使用深色界面',
+  },
+]
+
+export const PROXY_MODE_OPTIONS: ProxyModeOption[] = [
+  {
+    value: 'off',
+    label: '关闭',
+    desc: '不为 sidecar 工具设置代理',
+  },
+  {
+    value: 'system',
+    label: '系统',
+    desc: '自动读取系统网络代理',
+  },
+  {
+    value: 'custom',
+    label: '自定义',
+    desc: '手动指定 HTTP/HTTPS 代理',
   },
 ]
 
@@ -107,4 +133,21 @@ export function createDefaultCacheCleanupSelection(): CacheCleanupSelection {
 
 export function hasSelectedCacheCleanup(selection: CacheCleanupSelection): boolean {
   return Object.values(selection).some(Boolean)
+}
+
+export function normalizeProxyDraft(settings: AgentProxySettings): AgentProxySettings {
+  const mode = settings.mode === 'system' || settings.mode === 'custom' ? settings.mode : 'off'
+  const enabled = mode !== 'off' && settings.enabled
+  const httpProxy = settings.httpProxy?.trim() || undefined
+  const httpsProxy = settings.httpsProxy?.trim() || undefined
+  const noProxy = settings.noProxy?.trim() || undefined
+
+  return {
+    version: 1,
+    enabled,
+    mode: enabled ? mode : 'off',
+    ...(httpProxy ? { httpProxy } : {}),
+    ...(httpsProxy ? { httpsProxy } : {}),
+    ...(noProxy ? { noProxy } : {}),
+  }
 }

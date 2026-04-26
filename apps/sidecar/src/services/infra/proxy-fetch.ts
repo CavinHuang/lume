@@ -5,13 +5,22 @@ import { getActiveProxyConfig } from "../system/proxy-settings-manager";
 const execFileAsync = promisify(execFile);
 const STATUS_SENTINEL = "__LUME_STATUS__:";
 
-function shouldBypassProxy(targetUrl: string, noProxy?: string): boolean {
+export function shouldBypassProxy(targetUrl: string, noProxy?: string): boolean {
   const hostname = new URL(targetUrl).hostname.toLowerCase();
   const rules = (noProxy ?? "")
     .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
-  return rules.some((rule) => hostname === rule || hostname.endsWith(`.${rule}`));
+  return rules.some((rule) => {
+    if (rule === "*") {
+      return true;
+    }
+    if (rule.startsWith("*.")) {
+      const suffix = rule.slice(2);
+      return hostname === suffix || hostname.endsWith(`.${suffix}`);
+    }
+    return hostname === rule || hostname.endsWith(`.${rule}`);
+  });
 }
 
 function resolveProxyUrl(targetUrl: string): string | null {

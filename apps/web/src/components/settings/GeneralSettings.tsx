@@ -6,6 +6,7 @@ import {
   Loader2,
   Monitor,
   Moon,
+  Network,
   Sun,
   Trash2,
   UserRound,
@@ -13,6 +14,9 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
+  AgentProxyMode,
+  AgentProxySettings,
+  AgentProxyStatus,
   GeneralSettings as GeneralSettingsModel,
   ThemeMode,
   UpdateGeneralSettingsInput,
@@ -21,14 +25,16 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
-import { getGeneralSettings, updateGeneralSettings } from '@/lib/desktop-api'
+import { getGeneralSettings, getProxySettings, saveProxySettings, updateGeneralSettings } from '@/lib/desktop-api'
 import { setThemeMode } from '@/lib/theme-mode'
 import { cn } from '@/lib/utils'
 import { ClearCacheDialog } from './ClearCacheDialog'
 import {
   GENERAL_SETTINGS_DEFAULTS,
+  PROXY_MODE_OPTIONS,
   THEME_MODE_OPTIONS,
   mergeGeneralSettings,
+  normalizeProxyDraft,
 } from './general-settings-state'
 
 const THEME_ICONS: Record<ThemeMode, LucideIcon> = {
@@ -37,10 +43,18 @@ const THEME_ICONS: Record<ThemeMode, LucideIcon> = {
   dark: Moon,
 }
 
+const DEFAULT_PROXY_SETTINGS: AgentProxySettings = {
+  version: 1,
+  enabled: false,
+  mode: 'off',
+}
+
 export function GeneralSettings() {
   const [workspaces] = useAtom(agentWorkspacesAtom)
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
   const [settings, setSettings] = React.useState<GeneralSettingsModel>(GENERAL_SETTINGS_DEFAULTS)
+  const [proxyStatus, setProxyStatus] = React.useState<AgentProxyStatus | null>(null)
+  const [proxyDraft, setProxyDraft] = React.useState<AgentProxySettings>(DEFAULT_PROXY_SETTINGS)
   const [displayNameDraft, setDisplayNameDraft] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
@@ -54,14 +68,21 @@ export function GeneralSettings() {
   const effectiveDisplayName = settings.userProfile.displayName || '本地用户'
   const avatarLabel = Array.from(effectiveDisplayName.trim())[0]?.toUpperCase() ?? 'L'
   const displayNameChanged = trimmedDisplayName !== settings.userProfile.displayName
+  const normalizedProxyDraft = React.useMemo(() => normalizeProxyDraft(proxyDraft), [proxyDraft])
+  const proxyChanged = React.useMemo(
+    () => JSON.stringify(normalizedProxyDraft) !== JSON.stringify(normalizeProxyDraft(proxyStatus?.settings ?? DEFAULT_PROXY_SETTINGS)),
+    [normalizedProxyDraft, proxyStatus]
+  )
 
   React.useEffect(() => {
     let cancelled = false
 
-    getGeneralSettings()
-      .then((loaded) => {
+    Promise.all([getGeneralSettings(), getProxySettings()])
+      .then(([loaded, loadedProxy]) => {
         if (cancelled) return
         setSettings(loaded)
+        setProxyStatus(loadedProxy)
+        setProxyDraft(loadedProxy.settings)
         setDisplayNameDraft(loaded.userProfile.displayName)
       })
       .catch((error) => {
@@ -106,6 +127,40 @@ export function GeneralSettings() {
     void persistSettings({ themeMode }, '外观设置已保存')
   }
 
+  const handleProxyModeChange = (mode: AgentProxyMode) => {
+    setProxyDraft((current) => ({
+      ...current,
+      enabled: mode !== 'off',
+      mode,
+    }))
+  }
+
+  const handleProxyDraftChange = (key: 'httpProxy' | 'httpsProxy' | 'noProxy', value: string) => {
+    setProxyDraft((current) => ({
+      ...current,
+      [key]: value,
+    }))
+  }
+
+  const handleSaveProxy = async () => {
+    if (!proxyChanged || saving) return
+    setSaving(true)
+    try {
+      const saved = await saveProxySettings(normalizedProxyDraft)
+      setProxyStatus(saved)
+      setProxyDraft(saved.settings)
+      toast.success('网络代理设置已保存')
+    } catch (error) {
+      console.error('[GeneralSettings] save proxy FAILED:', error)
+      if (proxyStatus) {
+        setProxyDraft(proxyStatus.settings)
+      }
+      toast.error('保存网络代理失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleSaveDisplayName = () => {
     if (!displayNameChanged || saving) return
     void persistSettings({
@@ -117,7 +172,7 @@ export function GeneralSettings() {
 
   if (loading) {
     return (
-      <div className="flex h-[260px] items-center justify-center rounded-[10px] border border-[#e7e9f1] bg-white text-[13px] text-[#7c8398]">
+      <div className="flex h-[260px] items-center justify-center rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
         <Loader2 size={14} className="mr-2 animate-spin" />
         加载通用设置...
       </div>
@@ -129,12 +184,12 @@ export function GeneralSettings() {
       <div className="space-y-3">
         <SettingsCard title="本地用户">
           <div className="flex items-center gap-4">
-            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#ebe7ff] text-[16px] font-semibold text-[#625bff]">
+            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[16px] font-semibold text-[var(--brand)]">
               {avatarLabel}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 text-[13px] font-medium leading-5 text-[#4d566f]">
-                <UserRound size={15} className="text-[#68718a]" />
+              <div className="flex items-center gap-2 text-[13px] font-medium leading-5 text-[var(--text-2)]">
+                <UserRound size={15} className="text-[var(--text-2)]" />
                 用户名称
               </div>
               <input
@@ -146,7 +201,7 @@ export function GeneralSettings() {
                   }
                 }}
                 placeholder="本地用户"
-                className="mt-2 h-9 w-full max-w-[360px] rounded-[8px] border border-[#e3e6ee] bg-white px-3 text-[13px] font-medium text-[#283046] outline-none transition-colors placeholder:text-[#a0a7b8] focus:border-[#b7adff]"
+                className="mt-2 h-9 w-full max-w-[360px] rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] outline-none transition-colors placeholder:text-[var(--text-3)] focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
               />
             </div>
             <Button
@@ -154,7 +209,7 @@ export function GeneralSettings() {
               variant="outline"
               disabled={!displayNameChanged || saving}
               onClick={handleSaveDisplayName}
-              className="h-9 rounded-[8px] border-[#d8dcff] bg-white px-4 text-[13px] font-medium text-[#625bff] shadow-none hover:bg-[#f6f4ff] disabled:opacity-50"
+              className="h-9 rounded-[8px] border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] bg-[var(--surface-1)] px-4 text-[13px] font-medium text-[var(--brand)] shadow-none hover:bg-[color-mix(in_oklab,var(--brand)_8%,var(--surface-1))] disabled:opacity-50"
             >
               保存
             </Button>
@@ -167,7 +222,7 @@ export function GeneralSettings() {
               <select
                 value={currentWorkspace?.id ?? ''}
                 onChange={(event) => setCurrentWorkspaceId(event.target.value || null)}
-                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#4c566f] outline-none"
+                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[var(--text-2)] outline-none"
               >
                 {workspaces.length === 0 ? (
                   <option value="">未选择</option>
@@ -181,7 +236,7 @@ export function GeneralSettings() {
 
         <SettingsCard title="外观">
           <SettingsRow label="主题">
-            <div className="grid h-9 w-[306px] grid-cols-3 rounded-[8px] border border-[#e3e6ee] bg-white p-0.5">
+            <div className="grid h-9 w-[306px] grid-cols-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
               {THEME_MODE_OPTIONS.map((option) => {
                 const Icon = THEME_ICONS[option.value]
                 return (
@@ -193,8 +248,8 @@ export function GeneralSettings() {
                     className={cn(
                       'inline-flex items-center justify-center gap-1.5 rounded-[6px] text-[13px] font-medium transition-colors disabled:opacity-60',
                       settings.themeMode === option.value
-                        ? 'border border-[#9f91ff] bg-[#f5f2ff] text-[#625bff]'
-                        : 'text-[#667089] hover:bg-[#f7f8fb]'
+                        ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                        : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
                     )}
                   >
                     <Icon size={14} />
@@ -207,7 +262,7 @@ export function GeneralSettings() {
         </SettingsCard>
 
         <SettingsCard title="窗口行为">
-          <div className="divide-y divide-[#eef0f5]">
+          <div className="divide-y divide-[var(--border)]">
             <SettingsRow
               label="最小化到托盘"
               desc="点击最小化时保留后台运行"
@@ -239,6 +294,79 @@ export function GeneralSettings() {
           </div>
         </SettingsCard>
 
+        <SettingsCard title="网络代理">
+          <div className="space-y-3">
+            <SettingsRow label="代理模式" desc="用于 sidecar 中需要联网的工具">
+              <div className="grid h-9 w-[306px] grid-cols-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+                {PROXY_MODE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleProxyModeChange(option.value)}
+                    disabled={saving}
+                    title={option.desc}
+                    className={cn(
+                      'inline-flex items-center justify-center gap-1.5 rounded-[6px] text-[13px] font-medium transition-colors disabled:opacity-60',
+                      proxyDraft.mode === option.value
+                        ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                        : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
+                    )}
+                  >
+                    <Network size={14} />
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </SettingsRow>
+
+            {proxyDraft.mode === 'system' && (
+              <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 text-[var(--text-3)]">
+                <div>HTTP: {proxyStatus?.systemProxy.httpProxy || '未检测到'}</div>
+                <div>HTTPS: {proxyStatus?.systemProxy.httpsProxy || proxyStatus?.systemProxy.httpProxy || '未检测到'}</div>
+                <div>NO_PROXY: {proxyStatus?.systemProxy.noProxy || '未设置'}</div>
+              </div>
+            )}
+
+            {proxyDraft.mode === 'custom' && (
+              <div className="grid gap-2">
+                <ProxyInput
+                  label="HTTP"
+                  value={proxyDraft.httpProxy ?? ''}
+                  placeholder="http://127.0.0.1:7890"
+                  disabled={saving}
+                  onChange={(value) => handleProxyDraftChange('httpProxy', value)}
+                />
+                <ProxyInput
+                  label="HTTPS"
+                  value={proxyDraft.httpsProxy ?? ''}
+                  placeholder="默认使用 HTTP 代理"
+                  disabled={saving}
+                  onChange={(value) => handleProxyDraftChange('httpsProxy', value)}
+                />
+                <ProxyInput
+                  label="NO_PROXY"
+                  value={proxyDraft.noProxy ?? ''}
+                  placeholder="localhost,127.0.0.1"
+                  disabled={saving}
+                  onChange={(value) => handleProxyDraftChange('noProxy', value)}
+                />
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!proxyChanged || saving}
+                onClick={handleSaveProxy}
+                className="h-9 rounded-[8px] border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] bg-[var(--surface-1)] px-4 text-[13px] font-medium text-[var(--brand)] shadow-none hover:bg-[color-mix(in_oklab,var(--brand)_8%,var(--surface-1))] disabled:opacity-50"
+              >
+                保存代理
+              </Button>
+            </div>
+          </div>
+        </SettingsCard>
+
         <SettingsCard title="本地数据">
           <div className="grid grid-cols-2 gap-3">
             <QuickAction icon={FileCog} label="打开配置文件" onClick={() => void openLumeConfigSourceFile()} />
@@ -259,8 +387,8 @@ export function GeneralSettings() {
 
 function SettingsCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-[10px] border border-[#e7e9f1] bg-white px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
-      <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[#202338]">{title}</h2>
+    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">{title}</h2>
       {children}
     </section>
   )
@@ -278,8 +406,8 @@ function SettingsRow({
   return (
     <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
       <div className="min-w-0">
-        <div className="text-[13px] font-medium leading-5 text-[#4d566f]">{label}</div>
-        {desc && <div className="mt-0.5 text-[12px] leading-4 text-[#9aa1b3]">{desc}</div>}
+        <div className="text-[13px] font-medium leading-5 text-[var(--text-2)]">{label}</div>
+        {desc && <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">{desc}</div>}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -288,11 +416,11 @@ function SettingsRow({
 
 function SelectShell({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn('relative h-9 rounded-[8px] border border-[#e3e6ee] bg-white', className)}>
+    <div className={cn('relative h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)]', className)}>
       {children}
       <ChevronDown
         size={15}
-        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#778096]"
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-2)]"
       />
     </div>
   )
@@ -303,10 +431,37 @@ function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
     <Switch
       {...props}
       className={cn(
-        'data-[size=default]:h-[25px] data-[size=default]:w-[42px] data-checked:bg-[#625bff]',
+        'data-[size=default]:h-[25px] data-[size=default]:w-[42px] data-checked:bg-[var(--brand)]',
         '[&_[data-slot=switch-thumb]]:size-[21px] data-checked:[&_[data-slot=switch-thumb]]:translate-x-[19px]'
       )}
     />
+  )
+}
+
+function ProxyInput({
+  label,
+  value,
+  placeholder,
+  disabled,
+  onChange,
+}: {
+  label: string
+  value: string
+  placeholder: string
+  disabled?: boolean
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 text-[12px] font-medium text-[var(--text-2)]">
+      <span>{label}</span>
+      <input
+        value={value}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 min-w-0 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] outline-none transition-colors placeholder:text-[var(--text-3)] focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] disabled:opacity-60"
+      />
+    </label>
   )
 }
 
@@ -327,7 +482,7 @@ function QuickAction({
       variant="outline"
       onClick={onClick}
       className={cn(
-        'h-10 gap-2 rounded-[8px] border-[#e3e6ee] bg-white text-[13px] font-medium text-[#4d566f] shadow-none hover:bg-[#f8f9fc]',
+        'h-10 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]',
         tone === 'danger' && 'border-[#ff9fa8] text-[#ff4d57] hover:bg-[#fff5f6] hover:text-[#ff4d57]'
       )}
     >
