@@ -24,9 +24,9 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { createChannel, decryptChannelKey, listChannels, updateChannel } from '@/lib/desktop-api/channel'
-import { getEffectiveLumeConfig, updateAgentModelStrategy } from '@/lib/desktop-api/lume-config'
-import { sidecarCall } from '@/lib/desktop-api'
+import { getEffectiveLumeConfig, updateAgentModelStrategy, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
+import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { ChannelForm } from './ChannelForm'
 import {
   buildModelOptions,
@@ -39,7 +39,6 @@ import {
   type ModelProviderRow,
 } from './agent-settings-state'
 
-type ReasoningTone = 'low' | 'medium' | 'high'
 type ProviderFilter = 'all' | 'configured' | 'unconfigured'
 
 const MODEL_PROVIDER_QUICK_FILTERS: Array<[ProviderFilter, string]> = [
@@ -53,7 +52,7 @@ export function AgentSettings() {
   const [config, setConfig] = React.useState<LumeEffectiveConfig | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [savingModel, setSavingModel] = React.useState(false)
-  const [reasoningTone, setReasoningTone] = React.useState<ReasoningTone>('medium')
+  const [thinkingLevel, setThinkingLevel] = React.useState<LumeConfigThinkingLevel>('medium')
   const [providerFilter, setProviderFilter] = React.useState<ProviderFilter>('all')
   const [providerSearch, setProviderSearch] = React.useState('')
   const [activeProvider, setActiveProvider] = React.useState<ProviderType>('anthropic')
@@ -70,7 +69,7 @@ export function AgentSettings() {
     setChannels(nextChannels)
     setConfig(nextConfig)
     const nextThinkingLevel = nextConfig.agent?.thinkingLevel ?? 'medium'
-    setReasoningTone(toReasoningTone(nextThinkingLevel))
+    setThinkingLevel(nextThinkingLevel)
   }, [])
 
   React.useEffect(() => {
@@ -143,7 +142,9 @@ export function AgentSettings() {
     if (!providerRows.some((row) => row.provider === activeProvider)) {
       setActiveProvider(providerRows[0]?.provider ?? 'anthropic')
     }
-  }, [activeDefault.channel?.provider, activeProvider, providerRows])
+    // activeProvider 故意不加入依赖——用户手动切换 provider 时不应被默认值覆盖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDefault.channel?.provider, providerRows])
 
   React.useEffect(() => {
     if (!activeChannel) {
@@ -202,15 +203,9 @@ export function AgentSettings() {
     }
   }
 
-  const handleReasoningToneChange = (value: ReasoningTone) => {
-    const nextThinkingLevel = toThinkingLevel(value)
-    setReasoningTone(value)
-    sidecarCall('lume-config:update-section', {
-      source: 'user',
-      path: 'agent.thinkingLevel',
-      value: nextThinkingLevel,
-      summary: 'update agent thinking level',
-    }).catch((error) => {
+  const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
+    setThinkingLevel(value)
+    updateAgentThinkingLevel(value).catch((error) => {
       console.error('[AgentSettings] save thinking level FAILED:', error)
       toast.error('保存推理强度失败')
     })
@@ -278,7 +273,7 @@ export function AgentSettings() {
 
   if (loading) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-[10px] border border-[#e7e9f1] bg-white text-[13px] text-[#7c8398]">
+      <div className="flex h-[280px] items-center justify-center rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
         <Loader2 size={14} className="mr-2 animate-spin" />
         加载模型设置...
       </div>
@@ -301,7 +296,7 @@ export function AgentSettings() {
               <select
                 value={selectedProviderValue}
                 onChange={(event) => handleProviderChange(event.target.value)}
-                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#273044] outline-none"
+                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[var(--text-1)] outline-none"
               >
                 {enabledChannels.length === 0 ? (
                   <option value="">未配置</option>
@@ -317,7 +312,7 @@ export function AgentSettings() {
                 value={selectedModelValue}
                 onChange={(event) => void persistDefaultModel(event.target.value)}
                 disabled={savingModel || selectedProviderModels.length === 0}
-                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[#273044] outline-none disabled:opacity-60"
+                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[var(--text-1)] outline-none disabled:opacity-60"
               >
                 {selectedProviderModels.length === 0 ? (
                   <option value="">未设置</option>
@@ -328,17 +323,9 @@ export function AgentSettings() {
             </SelectShell>
           </div>
 
-          <div className="grid grid-cols-[86px_minmax(0,230px)] items-center justify-end gap-x-4 gap-y-3">
+          <div className="grid grid-cols-[86px_minmax(0,260px)] items-start justify-end gap-x-4 gap-y-3">
             <FieldLabel className="justify-end">推理强度</FieldLabel>
-            <SegmentedControl
-              value={reasoningTone}
-              options={[
-                ['low', '轻量'],
-                ['medium', '标准'],
-                ['high', '深入'],
-              ]}
-              onChange={(value) => handleReasoningToneChange(value as ReasoningTone)}
-            />
+            <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} inline />
           </div>
         </div>
       </SettingsCard>
@@ -371,7 +358,7 @@ export function AgentSettings() {
           variant="outline"
           onClick={() => void handleReset()}
           disabled={savingModel}
-          className="h-10 gap-2 rounded-[8px] border-[#ffb8be] bg-white px-4 text-[13px] font-medium text-[#ff4d57] shadow-none hover:bg-[#fff5f6] hover:text-[#ff4d57]"
+          className="h-10 gap-2 rounded-[8px] border-[#ffb8be] bg-[var(--surface-1)] px-4 text-[13px] font-medium text-[#ff4d57] shadow-none hover:bg-[#fff5f6] hover:text-[#ff4d57]"
         >
           <Trash2 size={15} />
           重置模型设置
@@ -397,24 +384,24 @@ function ModelProviderStats({
     tone: string
     status?: 'success'
   }> = [
-    { icon: KeyRound, label: '已连接供应商', value: String(connectedProviderCount), tone: 'bg-[#efe9ff] text-[#7657ff]' },
-    { icon: Box, label: '可用模型', value: String(availableModelCount), tone: 'bg-[#eaf2ff] text-[#347cff]' },
-    { icon: UserRound, label: '默认供应商', value: defaultProviderLabel, tone: 'bg-[#fff1cc] text-[#e39516]' },
-    { icon: Activity, label: '连接状态', value: connectedProviderCount > 0 ? '正常' : '待配置', tone: 'bg-[#dcf9e8] text-[#1fbd65]', status: 'success' },
+    { icon: KeyRound, label: '已连接供应商', value: String(connectedProviderCount), tone: 'bg-[color-mix(in_oklab,var(--brand)_15%,var(--surface-2))] text-[var(--brand)]' },
+    { icon: Box, label: '可用模型', value: String(availableModelCount), tone: 'bg-[color-mix(in_oklab,oklch(0.55_0.2_260)_15%,var(--surface-2))] text-[oklch(0.55_0.2_260)]' },
+    { icon: UserRound, label: '默认供应商', value: defaultProviderLabel, tone: 'bg-[color-mix(in_oklab,oklch(0.7_0.15_85)_15%,var(--surface-2))] text-[oklch(0.7_0.15_85)]' },
+    { icon: Activity, label: '连接状态', value: connectedProviderCount > 0 ? '正常' : '待配置', tone: 'bg-[color-mix(in_oklab,oklch(0.65_0.2_145)_15%,var(--surface-2))] text-[oklch(0.65_0.2_145)]', status: 'success' },
   ]
 
   return (
-    <section className="grid h-[78px] grid-cols-4 overflow-hidden rounded-[10px] border border-[#e7e9f1] bg-white shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="grid h-[78px] grid-cols-4 overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       {stats.map((stat, index) => {
         const Icon = stat.icon
         return (
-          <div key={stat.label} className={cn('flex items-center gap-4 px-5', index > 0 && 'border-l border-[#edf0f6]')}>
+          <div key={stat.label} className={cn('flex items-center gap-4 px-5', index > 0 && 'border-l border-[var(--border)]')}>
             <div className={cn('flex size-12 items-center justify-center rounded-full', stat.tone)}>
               <Icon size={21} strokeWidth={2} />
             </div>
             <div className="min-w-0">
-              <div className="text-[12px] font-medium leading-4 text-[#6f7890]">{stat.label}</div>
-              <div className={cn('mt-1 truncate text-[20px] font-semibold leading-6 text-[#11182f]', stat.status === 'success' && 'text-[#18b969]')}>
+              <div className="text-[12px] font-medium leading-4 text-[var(--text-2)]">{stat.label}</div>
+              <div className={cn('mt-1 truncate text-[20px] font-semibold leading-6 text-[var(--text-1)]', stat.status === 'success' && 'text-[#18b969]')}>
                 {stat.value}
               </div>
             </div>
@@ -460,58 +447,60 @@ function ProviderConfigurationWorkbench({
   const activeLabel = activeProviderRow?.label ?? PROVIDER_LABELS[activeProvider]
 
   return (
-    <div className="grid min-h-[365px] grid-cols-[282px_minmax(0,1fr)] overflow-hidden rounded-[9px] border border-[#e4e8f0] bg-white">
-      <div className="flex h-full min-h-0 flex-col border-r border-[#e7ebf3] bg-[#fbfcff] p-3">
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#96a0b5]" />
-          <input
-            value={providerSearch}
-            onChange={(event) => onProviderSearchChange(event.target.value)}
-            placeholder="搜索供应商"
-            className="h-8 w-full rounded-[7px] border border-[#e1e6ef] bg-white pl-9 pr-3 text-[12px] font-medium text-[#283046] outline-none placeholder:text-[#9aa3b6]"
-          />
-        </div>
-
-        <div className="mt-2 grid h-7 grid-cols-3 rounded-[7px] border border-[#d8dcff] bg-white p-0.5">
-          {MODEL_PROVIDER_QUICK_FILTERS.map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => onProviderFilterChange(value)}
-              className={cn(
-                'rounded-[5px] text-[12px] font-medium transition-colors',
-                providerFilter === value
-                  ? 'border border-[#9f91ff] bg-[#f5f2ff] text-[#625bff]'
-                  : 'text-[#667089] hover:bg-[#f7f8fb]'
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
-          {filteredProviderRows.map((row) => (
-            <ProviderListItem
-              key={row.provider}
-              row={row}
-              selected={row.provider === activeProvider}
-              onClick={() => onActiveProviderChange(row.provider)}
+    <div className="grid min-h-[365px] grid-cols-[282px_minmax(0,1fr)] items-stretch overflow-hidden rounded-[9px] border border-[var(--border)] bg-[var(--surface-1)]">
+      <div className="relative min-h-0 rounded-l-[9px] border-r border-[var(--border)] bg-[var(--surface-1)]">
+        <div className="absolute inset-0 flex min-h-0 flex-col p-4">
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]" />
+            <input
+              value={providerSearch}
+              onChange={(event) => onProviderSearchChange(event.target.value)}
+              placeholder="搜索供应商"
+              className="h-8 w-full rounded-[7px] border border-[var(--border)] bg-[var(--surface-1)] pl-9 pr-3 text-[12px] font-medium text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
             />
-          ))}
+          </div>
+
+          <div className="mt-2 grid h-7 shrink-0 grid-cols-3 rounded-[7px] border border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] bg-[var(--surface-1)] p-0.5">
+            {MODEL_PROVIDER_QUICK_FILTERS.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => onProviderFilterChange(value)}
+                className={cn(
+                  'rounded-[5px] text-[12px] font-medium transition-colors',
+                  providerFilter === value
+                    ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                    : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+            {filteredProviderRows.map((row) => (
+              <ProviderListItem
+                key={row.provider}
+                row={row}
+                selected={row.provider === activeProvider}
+                onClick={() => onActiveProviderChange(row.provider)}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="min-w-0 p-4">
+      <div className="min-w-0 rounded-r-[9px] bg-[var(--surface-1)] p-4">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-[15px] font-semibold leading-5 text-[#1f2638]">{activeLabel}</h3>
-            <p className="mt-1 text-[12px] leading-4 text-[#7d869a]">
+            <h3 className="text-[15px] font-semibold leading-5 text-[var(--text-1)]">{activeLabel}</h3>
+            <p className="mt-1 text-[12px] leading-4 text-[var(--text-3)]">
               {activeChannel ? '已存在该供应商配置，开启后可编辑并保存。' : '尚未配置该供应商，开启后即可填写连接信息。'}
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[12px] font-medium text-[#6f7890]">
-            {savingProvider && <Loader2 size={13} className="animate-spin text-[#8a94aa]" />}
+          <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-2)]">
+            {savingProvider && <Loader2 size={13} className="animate-spin text-[var(--text-3)]" />}
             开启
             <LumeSwitch
               checked={providerEnabled}
@@ -522,13 +511,14 @@ function ProviderConfigurationWorkbench({
         </div>
 
         {apiKeyLoading ? (
-          <div className="flex h-[290px] items-center gap-2 rounded-[9px] border border-[#e4e8f0] px-4 text-[13px] text-[#7d869a]">
+          <div className="flex h-[290px] items-center gap-2 rounded-[9px] border border-[var(--border)] px-4 text-[13px] text-[var(--text-3)]">
             <Loader2 size={14} className="animate-spin" />
             加载供应商详情...
           </div>
         ) : (
-          <div className="rounded-[9px] border border-[#e4e8f0] p-4">
+          <div className="rounded-[9px] border border-[var(--border)] p-4">
             <ChannelForm
+              key={activeProvider}
               mode={activeChannel ? 'edit' : 'create'}
               initialValue={initialValue}
               providerLocked
@@ -563,19 +553,19 @@ function ProviderListItem({
       className={cn(
         'grid h-9 w-full grid-cols-[28px_minmax(0,1fr)_56px_14px] items-center gap-2 rounded-[7px] border px-2 text-left transition-colors',
         selected
-          ? 'border-[#9f91ff] bg-[#f5f2ff] text-[#625bff]'
-          : 'border-transparent bg-white text-[#3d465d] hover:border-[#e3e7f0]'
+          ? 'border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+          : 'border-transparent bg-[var(--surface-1)] text-[#3d465d] hover:border-[var(--border)]'
       )}
     >
       <span className={cn('flex size-6 items-center justify-center rounded-[6px]', row.tone)}>
         <ChannelProviderIcon provider={row.provider} size={14} />
       </span>
       <span className="truncate text-[12px] font-semibold">{row.label}</span>
-      <span className="flex items-center gap-1 text-[11px] font-medium text-[#667089]">
-        <span className={cn('size-1.5 rounded-full', connected ? 'bg-[#22c76f]' : configured ? 'bg-[#9aa3b6]' : 'bg-[#b8c0cf]')} />
+      <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]">
+        <span className={cn('size-1.5 rounded-full', connected ? 'bg-[#22c76f]' : configured ? 'bg-[var(--text-3)]' : 'bg-[#b8c0cf]')} />
         {configured ? '已配置' : '未配置'}
       </span>
-      <ChevronDown size={14} className="-rotate-90 text-[#98a1b5]" />
+      <ChevronDown size={14} className="-rotate-90 text-[var(--text-3)]" />
     </button>
   )
 }
@@ -592,12 +582,12 @@ function SettingsCard({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-[10px] border border-[#e7e9f1] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       {(title || action) && (
         <div className="mb-3 flex min-h-8 items-start justify-between gap-4">
           <div className="min-w-0">
-            {title && <h2 className="text-[16px] font-semibold leading-6 text-[#202338]">{title}</h2>}
-            {description && <p className="mt-0.5 text-[11px] font-medium leading-4 text-[#9aa1b3]">{description}</p>}
+            {title && <h2 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">{title}</h2>}
+            {description && <p className="mt-0.5 text-[11px] font-medium leading-4 text-[var(--text-3)]">{description}</p>}
           </div>
           {action}
         </div>
@@ -609,48 +599,18 @@ function SettingsCard({
 
 function FieldLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn('flex h-9 items-center text-[13px] font-medium text-[#59637a]', className)}>{children}</div>
+    <div className={cn('flex h-9 items-center text-[13px] font-medium text-[var(--text-2)]', className)}>{children}</div>
   )
 }
 
 function SelectShell({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn('relative h-9 rounded-[8px] border border-[#e3e6ee] bg-white', className)}>
+    <div className={cn('relative h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)]', className)}>
       {children}
       <ChevronDown
         size={15}
-        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#778096]"
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]"
       />
-    </div>
-  )
-}
-
-function SegmentedControl({
-  value,
-  options,
-  onChange,
-}: {
-  value: string
-  options: Array<[string, string]>
-  onChange: (value: string) => void
-}) {
-  return (
-    <div className="grid h-9 w-full grid-cols-3 rounded-[8px] border border-[#e3e6ee] bg-white p-0.5">
-      {options.map(([optionValue, label]) => (
-        <button
-          key={optionValue}
-          type="button"
-          onClick={() => onChange(optionValue)}
-          className={cn(
-            'rounded-[6px] text-[13px] font-medium transition-colors',
-            value === optionValue
-              ? 'border border-[#9f91ff] bg-[#f5f2ff] text-[#625bff]'
-              : 'text-[#667089] hover:bg-[#f7f8fb]'
-          )}
-        >
-          {label}
-        </button>
-      ))}
     </div>
   )
 }
@@ -660,7 +620,7 @@ function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
     <Switch
       {...props}
       className={cn(
-        'data-[size=default]:h-[18px] data-[size=default]:w-[32px] data-checked:bg-[#625bff] data-unchecked:bg-[#d8dee9]',
+        'data-[size=default]:h-[18px] data-[size=default]:w-[32px] data-checked:bg-[var(--brand)] data-unchecked:bg-[#d8dee9]',
         '[&_[data-slot=switch-thumb]]:size-[14px] data-checked:[&_[data-slot=switch-thumb]]:translate-x-[14px]'
       )}
     />
@@ -682,20 +642,4 @@ function resolveDefaultModel(input: {
     : null
 
   return { option, channel }
-}
-
-function toReasoningTone(value: LumeConfigThinkingLevel): ReasoningTone {
-  if (value === 'low' || value === 'off') {
-    return 'low'
-  }
-  if (value === 'high' || value === 'max') {
-    return 'high'
-  }
-  return 'medium'
-}
-
-function toThinkingLevel(value: ReasoningTone): LumeConfigThinkingLevel {
-  if (value === 'low') return 'low'
-  if (value === 'high') return 'high'
-  return 'medium'
 }

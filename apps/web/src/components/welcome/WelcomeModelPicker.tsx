@@ -76,17 +76,25 @@ export function WelcomeModelPicker({
   // 将默认模型传递给父组件
   useEffect(() => {
     if (propagatedInitial.current) return
-    if (!channelsLoaded || channels.length === 0 || selectedModelRef || !defaultStrategy.defaultModelRef) return
+    if (!channelsLoaded || channels.length === 0 || selectedModelRef) return
 
     const defaultGroups = buildModelSelectionGroups({
       channels,
       activeChannelId: defaultStrategy.defaultChannelId,
       activeModelRef: defaultStrategy.defaultModelRef,
     })
-    const option = findSelectedOption(defaultGroups, {
-      channelId: defaultStrategy.defaultChannelId,
-      modelRef: defaultStrategy.defaultModelRef,
-    })
+
+    // 先匹配配置的默认模型，再回退到第一个可用模型
+    let option: ModelSelectionOption | undefined
+    if (defaultStrategy.defaultModelRef) {
+      option = findSelectedOption(defaultGroups, {
+        channelId: defaultStrategy.defaultChannelId,
+        modelRef: defaultStrategy.defaultModelRef,
+      })
+    }
+    if (!option) {
+      option = defaultGroups[0]?.options[0]
+    }
     if (!option) return
 
     onModelChangeRef.current(

@@ -307,32 +307,32 @@ export function AutomationManagementView() {
   if (!selectedTask || !effectiveDraft) return null
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#fcfdff]">
+    <div className="flex min-h-0 flex-1 flex-col bg-[var(--background)]">
       <ScrollArea className="min-h-0 flex-1">
         <main className="relative flex w-full min-w-[1180px] flex-col gap-4 px-8 py-4">
-          <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-[#edf0f8] bg-white px-5 py-2 text-[13px] font-medium text-[#7a84a1] shadow-[0_2px_10px_rgba(35,40,80,0.04)]">
+          <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--surface-1)] px-5 py-2 text-[13px] font-medium text-[var(--text-3)] shadow-[0_2px_10px_rgba(35,40,80,0.04)]">
             <span className="mr-2 inline-block size-2 rounded-full bg-[#22c983]" />
             已同步
           </div>
 
           <header className="flex items-start justify-between gap-6 pt-8">
             <div>
-              <h1 className="text-[22px] font-semibold leading-7 text-[#171d3a]">Agent 自动化</h1>
-              <p className="mt-2 text-[13px] leading-5 text-[#75809d]">
+              <h1 className="text-[22px] font-semibold leading-7 text-[var(--text-1)]">Agent 自动化</h1>
+              <p className="mt-2 text-[13px] leading-5 text-[var(--text-2)]">
                 创建可复用的 Agent 任务，按需运行或在对话中调用。
               </p>
             </div>
             <button
               type="button"
               onClick={() => setModalOpen(true)}
-              className="flex h-10 shrink-0 items-center gap-2 rounded-[8px] bg-[#4f54ff] px-5 text-[14px] font-semibold text-white shadow-[0_14px_30px_-20px_rgba(79,84,255,0.9)] transition-colors hover:bg-[#4549f0]"
+              className="flex h-10 shrink-0 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-5 text-[14px] font-semibold text-white shadow-[0_14px_30px_-20px_rgba(79,84,255,0.9)] transition-colors hover:brightness-110"
             >
               <Plus size={18} />
               新建任务
             </button>
           </header>
 
-          <div className="grid min-h-[690px] grid-cols-[390px_minmax(640px,1fr)] gap-6">
+          <div className="grid min-h-[690px] grid-cols-[280px_minmax(640px,1fr)] gap-6">
             <AutomationTaskList
               tasks={tasks}
               selectedTaskId={selectedTask.id}
@@ -393,29 +393,29 @@ function AutomationTaskList({
             type="button"
             onClick={() => onSelect(task.id)}
             className={cn(
-              'flex h-[132px] w-full items-center gap-4 rounded-[8px] border bg-white px-4 text-left transition-all',
+              'flex h-[132px] w-full items-center gap-4 rounded-[8px] border bg-[var(--surface-1)] px-4 text-left transition-all',
               selected
-                ? 'border-[#a7a3ff] bg-[#fbfaff] shadow-[0_14px_34px_-30px_rgba(79,84,255,0.8)]'
-                : 'border-[#eef1f8] hover:border-[#d9dcff] hover:bg-[#fdfdff]',
+                ? 'border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] shadow-[0_14px_34px_-30px_rgba(79,84,255,0.8)]'
+                : 'border-[var(--border)] hover:border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] hover:bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))]',
             )}
           >
-            <span className="flex size-[46px] min-w-[46px] items-center justify-center rounded-[8px] border border-[#e5e8f6] bg-white text-[#5f63ff]">
+            <span className="flex size-[46px] min-w-[46px] items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] text-[var(--brand)]">
               <Icon size={24} strokeWidth={1.8} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] font-semibold leading-5 text-[#171d3a]">{task.name}</span>
-              <span className="mt-2 block truncate text-[12px] leading-5 text-[#75809d]">{task.description}</span>
+              <span className="block truncate text-[15px] font-semibold leading-5 text-[var(--text-1)]">{task.name}</span>
+              <span className="mt-2 block truncate text-[12px] leading-5 text-[var(--text-2)]">{task.description}</span>
               <span className="mt-2 flex flex-wrap gap-1.5">
                 {task.tags.map((tag) => (
                   <span
                     key={tag}
-                    className="rounded-full bg-[#f0f2fb] px-2 py-0.5 text-[11px] font-medium text-[#7a84a1]"
+                    className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-3)]"
                   >
                     {tag}
                   </span>
                 ))}
               </span>
-              <span className="mt-3 flex items-center gap-4 text-[12px] text-[#6f7894]">
+              <span className="mt-3 flex items-center gap-4 text-[12px] text-[var(--text-2)]">
                 <span>{task.timeLabel}</span>
                 <span className="flex items-center gap-1.5">
                   <span className="size-1.5 rounded-full bg-[#22c983]" />
@@ -431,7 +431,7 @@ function AutomationTaskList({
                 if (selected) void onRun()
                 else onSelect(task.id)
               }}
-              className="flex size-10 min-w-10 items-center justify-center rounded-full border border-[#dde1ff] bg-white text-[#5f63ff] transition-colors hover:bg-[#f5f5ff]"
+              className="flex size-10 min-w-10 items-center justify-center rounded-full border border-[color-mix(in_oklab,var(--brand)_22%,var(--border-strong))] bg-[var(--surface-1)] text-[var(--brand)] transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))]"
             >
               {running && selected ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} fill="currentColor" />}
             </span>
@@ -486,13 +486,13 @@ function AutomationTaskDetail({
           <input
             value={draft.name}
             onChange={(event) => onDraftChange({ ...draft, name: event.target.value })}
-            className="h-7 bg-transparent text-[13px] font-medium text-[#202847] outline-none"
+            className="h-7 bg-transparent text-[13px] font-medium text-[var(--text-1)] outline-none"
           />
           <FieldLabel>简要说明</FieldLabel>
           <input
             value={draft.description}
             onChange={(event) => onDraftChange({ ...draft, description: event.target.value })}
-            className="h-7 bg-transparent text-[13px] text-[#4d5a7a] outline-none"
+            className="h-7 bg-transparent text-[13px] text-[var(--text-2)] outline-none"
           />
           <FieldLabel>运行方式（可多选）</FieldLabel>
           <RunModePicker
@@ -517,14 +517,14 @@ function AutomationTaskDetail({
 
       <Panel>
         <SectionTitle marker="B" title="Agent 指令" />
-        <div className="mt-3 rounded-[8px] border border-[#dfe4f2] bg-white p-3">
+        <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-3">
           <textarea
             value={draft.prompt}
             onChange={(event) => onDraftChange({ ...draft, prompt: event.target.value })}
             maxLength={2000}
-            className="h-[56px] w-full resize-none bg-transparent text-[13px] leading-6 text-[#2f3a59] outline-none"
+            className="h-[56px] w-full resize-none bg-transparent text-[13px] leading-6 text-[var(--text-1)] outline-none"
           />
-          <div className="text-right text-[12px] text-[#8d96b4]">{draft.prompt.length}/2000</div>
+          <div className="text-right text-[12px] text-[var(--text-3)]">{draft.prompt.length}/2000</div>
         </div>
       </Panel>
 
@@ -538,9 +538,9 @@ function AutomationTaskDetail({
       </Panel>
 
       <Panel>
-        <h2 className="text-[14px] font-semibold text-[#1d2545]">最近运行</h2>
-        <div className="mt-3 overflow-hidden rounded-[8px] border border-[#edf0f8]">
-          <div className="grid h-9 grid-cols-[1fr_1fr_1fr_120px] items-center border-b border-[#edf0f8] bg-[#fbfcff] px-4 text-[12px] font-medium text-[#8a94b1]">
+        <h2 className="text-[14px] font-semibold text-[var(--text-1)]">最近运行</h2>
+        <div className="mt-3 overflow-hidden rounded-[8px] border border-[var(--border)]">
+          <div className="grid h-9 grid-cols-[1fr_1fr_1fr_120px] items-center border-b border-[var(--border)] bg-[var(--surface-2)] px-4 text-[12px] font-medium text-[var(--text-3)]">
             <span>时间</span>
             <span>来源</span>
             <span>状态</span>
@@ -549,7 +549,7 @@ function AutomationTaskDetail({
           {runRows.map((row) => (
             <div
               key={row.id}
-              className="grid h-10 grid-cols-[1fr_1fr_1fr_120px] items-center border-b border-[#f2f4fa] px-4 text-[12px] text-[#66708f] last:border-b-0"
+              className="grid h-10 grid-cols-[1fr_1fr_1fr_120px] items-center border-b border-[var(--border)] px-4 text-[12px] text-[var(--text-2)] last:border-b-0"
             >
               <span>{row.time}</span>
               <span>{row.source}</span>
@@ -557,7 +557,7 @@ function AutomationTaskDetail({
                 <span className="size-1.5 rounded-full bg-[#22c983]" />
                 {row.status}
               </span>
-              <button type="button" className="text-left font-medium text-[#595eff]">
+              <button type="button" className="text-left font-medium text-[var(--brand)]">
                 查看结果
               </button>
             </div>
@@ -569,7 +569,7 @@ function AutomationTaskDetail({
         <button
           type="button"
           onClick={onReset}
-          className="rounded-[8px] border border-[#e0e4ef] bg-white text-[14px] font-medium text-[#67718f] transition-colors hover:bg-[#f8f9fd]"
+          className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] text-[14px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)]"
         >
           取消
         </button>
@@ -577,7 +577,7 @@ function AutomationTaskDetail({
           type="button"
           onClick={onRun}
           disabled={running || !isDraftValid(draft)}
-          className="flex items-center justify-center gap-2 rounded-[8px] border border-[#8e89ff] bg-white text-[14px] font-semibold text-[#5b5fff] transition-colors hover:bg-[#f8f7ff] disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-[8px] border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[var(--surface-1)] text-[14px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {running && <Loader2 size={16} className="animate-spin" />}
           立即运行
@@ -586,7 +586,7 @@ function AutomationTaskDetail({
           type="button"
           onClick={onSave}
           disabled={saving || !isDraftValid(draft)}
-          className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4f54ff] text-[14px] font-semibold text-white transition-colors hover:bg-[#4549f0] disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-[8px] bg-[var(--brand)] text-[14px] font-semibold text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving && <Loader2 size={16} className="animate-spin" />}
           保存任务
@@ -622,20 +622,20 @@ export function AutomationTaskModal({
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/28 backdrop-blur-[2px]" onClick={onCancel}>
       <div
-        className="w-full max-w-[760px] rounded-[10px] border border-[#e3e6f1] bg-white p-7 shadow-[0_28px_80px_rgba(27,32,58,0.24)]"
+        className="w-full max-w-[760px] rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-7 shadow-[0_28px_80px_rgba(27,32,58,0.24)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-[18px] font-semibold leading-6 text-[#151b37]">新建任务</h2>
-            <p className="mt-2 text-[13px] leading-5 text-[#75809d]">
+            <h2 className="text-[18px] font-semibold leading-6 text-[var(--text-1)]">新建任务</h2>
+            <p className="mt-2 text-[13px] leading-5 text-[var(--text-2)]">
               创建一个可复用的 Agent 任务，支持手动、定时、Webhook 和对话中调用。
             </p>
           </div>
           <button
             type="button"
             onClick={onCancel}
-            className="flex size-8 items-center justify-center rounded-[8px] text-[#697393] transition-colors hover:bg-[#f4f6fb] hover:text-[#28304d]"
+            className="flex size-8 items-center justify-center rounded-[8px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={18} />
           </button>
@@ -686,14 +686,14 @@ export function AutomationTaskModal({
 
         <div className="mt-5">
           <FormLabel>Agent 指令</FormLabel>
-          <div className="mt-2 rounded-[8px] border border-[#dfe4f2] bg-white p-4">
+          <div className="mt-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
             <textarea
               value={draft.prompt}
               onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
               maxLength={2000}
-              className="h-[72px] w-full resize-none bg-transparent text-[13px] leading-6 text-[#2f3a59] outline-none"
+              className="h-[72px] w-full resize-none bg-transparent text-[13px] leading-6 text-[var(--text-1)] outline-none"
             />
-            <div className="text-right text-[12px] text-[#8d96b4]">{draft.prompt.length}/2000</div>
+            <div className="text-right text-[12px] text-[var(--text-3)]">{draft.prompt.length}/2000</div>
           </div>
         </div>
 
@@ -710,7 +710,7 @@ export function AutomationTaskModal({
           <button
             type="button"
             onClick={onCancel}
-            className="h-10 rounded-[8px] border border-[#e0e4ef] bg-white text-[13px] font-medium text-[#67718f] transition-colors hover:bg-[#f8f9fd]"
+            className="h-10 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)]"
           >
             取消
           </button>
@@ -718,7 +718,7 @@ export function AutomationTaskModal({
             type="button"
             onClick={() => onSubmit(draft, false)}
             disabled={submitting || !isDraftValid(draft)}
-            className="flex h-10 items-center justify-center gap-2 rounded-[8px] bg-[#4f54ff] text-[13px] font-semibold text-white transition-colors hover:bg-[#4549f0] disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-10 items-center justify-center gap-2 rounded-[8px] bg-[var(--brand)] text-[13px] font-semibold text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting && <Loader2 size={15} className="animate-spin" />}
             创建任务
@@ -727,7 +727,7 @@ export function AutomationTaskModal({
             type="button"
             onClick={() => onSubmit(draft, true)}
             disabled={submitting || !isDraftValid(draft)}
-            className="h-10 rounded-[8px] bg-white text-[13px] font-medium text-[#737b98] transition-colors hover:bg-[#f8f9fd] disabled:cursor-not-allowed disabled:opacity-60"
+            className="h-10 rounded-[8px] bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             创建并运行
           </button>
@@ -739,7 +739,7 @@ export function AutomationTaskModal({
 
 function Panel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-[8px] border border-[#edf0f8] bg-white p-4 shadow-[0_1px_2px_rgba(31,35,70,0.02)]">
+    <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(31,35,70,0.02)]">
       {children}
     </div>
   )
@@ -748,20 +748,20 @@ function Panel({ children }: { children: React.ReactNode }) {
 function SectionTitle({ marker, title }: { marker: string; title: string }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="flex size-5 items-center justify-center rounded-full bg-[#565bff] text-[11px] font-bold text-white">
+      <span className="flex size-5 items-center justify-center rounded-full bg-[var(--brand)] text-[11px] font-bold text-white">
         {marker}
       </span>
-      <h2 className="text-[14px] font-semibold text-[#1d2545]">{title}</h2>
+      <h2 className="text-[14px] font-semibold text-[var(--text-1)]">{title}</h2>
     </div>
   )
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-7 items-center text-[13px] text-[#7d879f]">{children}</div>
+  return <div className="flex h-7 items-center text-[13px] text-[var(--text-2)]">{children}</div>
 }
 
 function FormLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-[13px] font-semibold text-[#1f2744]">{children}</div>
+  return <div className="text-[13px] font-semibold text-[var(--text-1)]">{children}</div>
 }
 
 function LabeledInput({
@@ -779,7 +779,7 @@ function LabeledInput({
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-2 h-10 w-full rounded-[8px] border border-[#dfe4f2] bg-white px-3 text-[13px] text-[#202847] outline-none transition-colors focus:border-[#9693ff]"
+        className="mt-2 h-10 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--border)]"
       />
     </div>
   )
@@ -808,27 +808,27 @@ function RunModePicker({
             type="button"
             onClick={() => onChange(toggleListValue(value, mode.id, 'manual'))}
             className={cn(
-              'relative rounded-[8px] border bg-white p-3 text-left transition-colors',
+              'relative rounded-[8px] border bg-[var(--surface-1)] p-3 text-left transition-colors',
               compact ? 'h-[92px] p-2.5' : 'h-[98px]',
-              selected ? 'border-[#9a96ff] bg-[#fbfaff]' : 'border-[#dfe4f2] hover:border-[#c8cbff]',
+              selected ? 'border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))]' : 'border-[var(--border)] hover:border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))]',
             )}
           >
             <span className={cn(
               'flex items-center justify-center rounded-full',
               compact ? 'size-5' : 'size-6',
-              selected ? 'bg-[#565bff] text-white' : 'text-[#24304f]',
+              selected ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-1)]',
             )}>
               <Icon size={compact ? 13 : 15} />
             </span>
-            <span className={cn('block font-semibold text-[#222b4b]', compact ? 'mt-2.5 text-[12px] leading-4' : 'mt-4 text-[13px]')}>
+            <span className={cn('block font-semibold text-[var(--text-1)]', compact ? 'mt-2.5 text-[12px] leading-4' : 'mt-4 text-[13px]')}>
               {mode.title}
             </span>
-            <span className={cn('mt-0.5 block text-[#7d879f]', compact ? 'text-[10px] leading-4' : 'text-[11px]')}>
+            <span className={cn('mt-0.5 block text-[var(--text-2)]', compact ? 'text-[10px] leading-4' : 'text-[11px]')}>
               {mode.desc}
             </span>
             {selected && (
               <span className={cn(
-                'absolute flex items-center justify-center rounded-full bg-[#565bff] text-white',
+                'absolute flex items-center justify-center rounded-full bg-[var(--brand)] text-white',
                 compact ? 'right-2.5 top-2.5 size-4' : 'right-3 top-3 size-5',
               )}>
                 <Check size={compact ? 11 : 13} strokeWidth={2.4} />
@@ -862,13 +862,13 @@ function ResourcePicker({
             type="button"
             onClick={() => onChange(toggleListValue(value, resource.id, 'file'))}
             className={cn(
-              'flex h-9 items-center gap-2 rounded-[8px] border bg-white px-3 text-[12px] font-medium transition-colors',
+              'flex h-9 items-center gap-2 rounded-[8px] border bg-[var(--surface-1)] px-3 text-[12px] font-medium transition-colors',
               selected
-                ? 'border-[#9a96ff] bg-[#fbfaff] text-[#565bff]'
-                : 'border-[#e2e6f1] text-[#59647f] hover:border-[#c8cbff]',
+                ? 'border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                : 'border-[var(--border)] text-[var(--text-2)] hover:border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))]',
             )}
           >
-            <Icon size={15} className={selected ? 'text-[#565bff]' : resource.accent} />
+            <Icon size={15} className={selected ? 'text-[var(--brand)]' : resource.accent} />
             {resource.title}
           </button>
         )
@@ -893,7 +893,7 @@ function SelectControl({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       className={cn(
-        'h-9 w-full rounded-[8px] border border-[#dfe4f2] bg-white px-3 text-[13px] text-[#28304f] outline-none transition-colors focus:border-[#9693ff]',
+        'h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none transition-colors focus:border-[var(--border)]',
         className,
       )}
     >

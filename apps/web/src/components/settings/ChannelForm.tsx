@@ -30,11 +30,11 @@ export function ChannelForm({
   onSubmit,
   onCancel,
 }: Props) {
-  const [provider, setProvider] = useState<ProviderType>('anthropic')
-  const [name, setName] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState(PROVIDER_DEFAULT_URLS['anthropic'])
-  const [models, setModels] = useState<ChannelModel[]>([])
+  const [provider, setProvider] = useState<ProviderType>(initialValue?.provider ?? 'anthropic')
+  const [name, setName] = useState(initialValue?.name ?? '')
+  const [apiKey, setApiKey] = useState(initialValue?.apiKey ?? '')
+  const [baseUrl, setBaseUrl] = useState(initialValue?.baseUrl ?? PROVIDER_DEFAULT_URLS['anthropic'])
+  const [models, setModels] = useState<ChannelModel[]>(initialValue?.models ?? [])
   const [fetching, setFetching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [fetchMsg, setFetchMsg] = useState('')

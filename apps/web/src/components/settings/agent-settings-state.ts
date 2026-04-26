@@ -92,6 +92,7 @@ const PROVIDER_TONES: Partial<Record<ProviderType, string>> = {
   openrouter: 'bg-[#eff4ff] text-[#111827]',
   custom: 'bg-[#eadcff] text-[#7a52e8]',
   zai: 'bg-[#eee7ff] text-[#7557ff]',
+  'zai-coding-plan': 'bg-[#eee7ff] text-[#7557ff]',
   moonshot: 'bg-[#111827] text-white',
 }
 

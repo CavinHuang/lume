@@ -1,6 +1,6 @@
 import type { Editor } from '@tiptap/react'
 import { EditorContent } from '@tiptap/react'
-import { ArrowRight, ChevronRight, Code2, FileText, ListChecks, Loader2, Palette, Paperclip, Send } from 'lucide-react'
+import { ArrowRight, ChevronRight, Code2, FileText, ListChecks, Loader2, Paperclip, Send } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { RecentThreads } from './RecentThreads'
@@ -9,7 +9,6 @@ import { deriveLumeComposerState } from '@/components/composer/lume-composer-sta
 import type {
   WelcomeSurfaceFileItem,
   WelcomeSurfacePanel,
-  WelcomeSurfacePrimaryCard,
   WelcomeSurfaceViewModel,
   WelcomeSurfaceWorkflowItem,
 } from './welcome-surface-view-model'
@@ -63,7 +62,7 @@ export function LumeWelcomeSurface({
 
   return (
     <div
-      className="relative flex-1 overflow-y-auto"
+      className="relative flex flex-1 flex-col overflow-hidden"
       style={{
         background:
           'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 88%, var(--background)) 0%, var(--background) 30%, color-mix(in oklab, var(--surface-2) 54%, var(--background)) 100%)',
@@ -78,45 +77,30 @@ export function LumeWelcomeSurface({
         }}
       />
 
-      <div className="relative mx-auto flex min-h-full w-full max-w-[1104px] flex-col px-5 pb-8 pt-7 md:px-7 md:pb-10 lg:px-8">
-        <section className="mx-auto flex w-full max-w-[640px] flex-col items-center pt-4 text-center md:pt-7">
-          <HeroMark />
+      <div className="relative flex-1 overflow-y-auto">
+        <div className="relative mx-auto flex w-full max-w-[1104px] flex-col px-5 pb-8 pt-7 md:px-7 md:pb-10 lg:px-8">
+          <section className="mx-auto flex w-full max-w-[640px] flex-col items-center pt-4 text-center md:pt-7">
+            <HeroMark />
 
-          <h1 className="mt-5 text-[28px] font-semibold text-[var(--text-1)] md:text-[32px]">
-            {model.hero.title}
-          </h1>
-          <p className="mt-3 max-w-[480px] text-[14px] leading-6 text-[var(--text-2)]">
-            {model.hero.subtitle}
-          </p>
+            <h1 className="mt-5 text-[28px] font-semibold text-[var(--text-1)] md:text-[32px]">
+              {model.hero.title}
+            </h1>
+            <p className="mt-3 max-w-[480px] text-[14px] leading-6 text-[var(--text-2)]">
+              {model.hero.subtitle}
+            </p>
 
-          <div
-            {...interactionLockProps}
-            data-welcome-lock="hero-controls"
-            aria-disabled={sending}
-            className="mt-5 flex flex-wrap items-center justify-center gap-3"
-          >
-            {workspaceSelector}
-            {modelPicker}
-          </div>
-        </section>
+            <div
+              {...interactionLockProps}
+              data-welcome-lock="hero-controls"
+              aria-disabled={sending}
+              className="mt-5 flex flex-wrap items-center justify-center gap-3"
+            >
+              {workspaceSelector}
+              {modelPicker}
+            </div>
+          </section>
 
-        <section
-          {...interactionLockProps}
-          data-welcome-lock="primary-cards"
-          aria-disabled={sending}
-          className="mt-7 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4"
-        >
-          {model.primaryCards.map((card) => (
-            <PrimaryCard
-              key={card.id}
-              card={card}
-              disabled={sending}
-              onChoosePromptSeed={onChoosePromptSeed}
-            />
-          ))}
-        </section>
-
-        <section className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.04fr_1fr_1fr]">
+          <section className="mt-7 grid grid-cols-1 gap-4 lg:grid-cols-[1.04fr_1fr_1fr]">
           {recentThreadsPanel.id === 'recent-threads' && (
             <RecentThreads panel={recentThreadsPanel} onOpen={onOpenThread} />
           )}
@@ -159,8 +143,10 @@ export function LumeWelcomeSurface({
             </PanelFrame>
           )}
         </section>
+        </div>
+      </div>
 
-        <section className="mx-auto mt-5 w-full max-w-[1104px]">
+      <section className="relative mx-auto w-full max-w-[1104px] shrink-0 px-5 pb-6 pt-0 md:px-7 lg:px-8">
           <div
             {...interactionLockProps}
             data-welcome-lock="composer"
@@ -264,7 +250,6 @@ export function LumeWelcomeSurface({
             Lume 可能会犯错，请核查重要信息。
           </p>
         </section>
-      </div>
     </div>
   )
 }
@@ -294,39 +279,6 @@ function requirePanelById<TPanel extends WelcomeSurfacePanel['id']>(
   }
 
   return panel
-}
-
-function PrimaryCard({
-  card,
-  disabled,
-  onChoosePromptSeed,
-}: {
-  card: WelcomeSurfacePrimaryCard
-  disabled: boolean
-  onChoosePromptSeed: (promptSeed: string) => void
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onChoosePromptSeed(card.promptSeed)}
-      className="group flex min-h-[114px] flex-col rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] p-4 text-left shadow-[0_14px_30px_-28px_hsl(var(--shadow-panel)/0.32)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_22%,transparent)] hover:bg-[var(--surface-1)]"
-    >
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:color-mix(in_oklab,var(--brand)_12%,var(--surface-2))] text-[var(--brand)] shadow-[0_12px_24px_-18px_color-mix(in_oklab,var(--brand)_58%,transparent)]">
-          <CardGlyph id={card.id} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-[14px] font-semibold leading-5 text-[var(--brand)]">{card.title}</h2>
-          <p className="mt-1 text-[12px] leading-5 text-[var(--text-2)]">{card.description}</p>
-        </div>
-      </div>
-
-      <div className="mt-auto flex pt-3 text-[var(--brand)]">
-        <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
-      </div>
-    </button>
-  )
 }
 
 function PanelFrame({
@@ -420,20 +372,4 @@ function ToolbarChip({ children }: { children: ReactNode }) {
       {children}
     </button>
   )
-}
-
-function CardGlyph({ id }: { id: WelcomeSurfacePrimaryCard['id'] }) {
-  if (id === 'plan') {
-    return <FileText size={18} strokeWidth={2.2} />
-  }
-
-  if (id === 'ship') {
-    return <Code2 size={18} strokeWidth={2.2} />
-  }
-
-  if (id === 'analyze') {
-    return <ListChecks size={18} strokeWidth={2.2} />
-  }
-
-  return <Palette size={18} strokeWidth={2.2} />
 }

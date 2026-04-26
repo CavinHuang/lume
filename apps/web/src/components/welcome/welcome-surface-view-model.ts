@@ -3,9 +3,6 @@ import type { AgentThreadMeta } from '@lume/shared'
 export const RECENT_THREAD_PANEL_LIMIT = 4
 export const RECOMMENDED_WORKFLOW_PANEL_ROWS = 3
 export const RECENT_FILE_PANEL_ROWS = 3
-export const PRIMARY_WELCOME_CARD_IDS = ['plan', 'ship', 'analyze', 'review'] as const
-
-type PrimaryWelcomeCardId = (typeof PRIMARY_WELCOME_CARD_IDS)[number]
 
 export interface WelcomeSurfaceRecentFile {
   filename: string
@@ -22,14 +19,6 @@ export interface BuildWelcomeSurfaceViewModelInput {
 export interface WelcomeSurfaceHero {
   title: string
   subtitle: string
-}
-
-export interface WelcomeSurfacePrimaryCard {
-  id: PrimaryWelcomeCardId
-  eyebrow: string
-  title: string
-  description: string
-  promptSeed: string
 }
 
 export interface WelcomeSurfaceThreadItem {
@@ -80,40 +69,8 @@ export type WelcomeSurfacePanel =
 
 export interface WelcomeSurfaceViewModel {
   hero: WelcomeSurfaceHero
-  primaryCards: WelcomeSurfacePrimaryCard[]
   lowerPanels: WelcomeSurfacePanel[]
 }
-
-const primaryCards: WelcomeSurfacePrimaryCard[] = [
-  {
-    id: 'plan',
-    eyebrow: 'Workflow',
-    title: '整理产品需求',
-    description: '梳理需求要点，输出 PRD 大纲和功能清单。',
-    promptSeed: '请帮我整理产品需求，梳理核心目标、用户场景、PRD 大纲和功能清单。',
-  },
-  {
-    id: 'ship',
-    eyebrow: 'Build',
-    title: '分析代码结构',
-    description: '解读项目结构，生成模块依赖图和优化建议。',
-    promptSeed: '请先分析当前项目的代码结构、模块依赖和关键风险，并给出优化建议。',
-  },
-  {
-    id: 'analyze',
-    eyebrow: 'Insight',
-    title: '生成发布清单',
-    description: '基于变更内容，生成发布说明和验证清单。',
-    promptSeed: '请根据当前变更生成发布说明、验证清单和交付前检查项。',
-  },
-  {
-    id: 'review',
-    eyebrow: 'Quality',
-    title: '优化 UI 设计系统',
-    description: '提出设计系统改进建议，统一组件与视觉语言。',
-    promptSeed: '请帮我审视当前 UI 设计系统，提出组件、布局、色彩和交互的一致性优化建议。',
-  },
-]
 
 const recommendedWorkflows: WelcomeSurfaceWorkflowItem[] = [
   {
@@ -151,7 +108,6 @@ export function buildWelcomeSurfaceViewModel({
         ? `在「${workspaceName}」中开始新的工作流`
         : '在当前工作区中开始新的工作流',
     },
-    primaryCards,
     lowerPanels: [
       {
         id: 'recent-threads',

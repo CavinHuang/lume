@@ -179,10 +179,10 @@ export function McpSettings() {
 
   if (!workspaceSlug) {
     return (
-      <div className="rounded-[10px] border border-dashed border-[#dfe4ee] bg-white p-8 text-center">
-        <Plug size={24} className="mx-auto mb-2 text-[#9aa1b3]" />
-        <p className="text-[13px] text-[#6d768c]">尚未选择工作区</p>
-        <p className="mt-1 text-[11px] text-[#9aa1b3]">
+      <div className="rounded-[10px] border border-dashed border-[var(--border)] bg-[var(--surface-1)] p-8 text-center">
+        <Plug size={24} className="mx-auto mb-2 text-[var(--text-3)]" />
+        <p className="text-[13px] text-[var(--text-2)]">尚未选择工作区</p>
+        <p className="mt-1 text-[11px] text-[var(--text-3)]">
           请先在左侧边栏或 AgentHeader 切换/创建工作区
         </p>
       </div>
@@ -227,7 +227,7 @@ export function McpSettings() {
                 variant="outline"
                 onClick={() => void handleRescan()}
                 disabled={rescanning}
-                className="h-8 gap-2 rounded-[8px] border-[#e1e5ee] bg-white px-3 text-[12px] font-medium text-[#566078] shadow-none hover:bg-[#f8f9fc]"
+                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
               >
                 {rescanning ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
                 重新扫描
@@ -236,7 +236,7 @@ export function McpSettings() {
                 type="button"
                 variant="outline"
                 onClick={() => void openLumeConfigSourceFile()}
-                className="h-8 gap-2 rounded-[8px] border-[#e1e5ee] bg-white px-3 text-[12px] font-medium text-[#566078] shadow-none hover:bg-[#f8f9fc]"
+                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
               >
                 <ExternalLink size={14} />
                 打开配置文件
@@ -244,11 +244,11 @@ export function McpSettings() {
             </div>
           )}
         >
-          <p className="mt-1 text-[12px] leading-5 text-[#8a91a6]">
+          <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
             Lume 会默认从配置文件自动发现 MCP 服务，无需手动添加。
           </p>
 
-          <div className="mt-4 grid h-[86px] grid-cols-[1fr_1fr_1fr] items-center rounded-[8px] border border-[#e8ebf2] bg-white">
+          <div className="mt-4 grid h-[86px] grid-cols-[1fr_1fr_1fr] items-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)]">
             <DiscoveryItem
               icon={FileCode2}
               title="发现方式"
@@ -269,15 +269,15 @@ export function McpSettings() {
             />
           </div>
 
-          <div className="mt-4 flex items-center gap-2 text-[12px] leading-5 text-[#8a91a6]">
-            <Info size={14} className="text-[#7e88a3]" />
+          <div className="mt-4 flex items-center gap-2 text-[12px] leading-5 text-[var(--text-3)]">
+            <Info size={14} className="text-[var(--text-3)]" />
             Lume 会默认从全局配置和当前工作区配置中自动发现 MCP 服务
           </div>
         </SettingsCard>
 
         <SettingsCard title="已发现的 MCP 服务" marker="B">
           {loading ? (
-            <div className="flex h-[180px] items-center justify-center text-[13px] text-[#7c8398]">
+            <div className="flex h-[180px] items-center justify-center text-[13px] text-[var(--text-3)]">
               <Loader2 size={14} className="mr-2 animate-spin" />
               加载 MCP 服务...
             </div>
@@ -288,7 +288,7 @@ export function McpSettings() {
                 onEdit={(name, entry) => { setEditingServer({ name, entry }); setViewMode('edit') }}
                 onReconnect={(name) => void handleToggle(name, true)}
               />
-              <div className="mt-3 text-[12px] text-[#8a91a6]">共 {serverRows.length} 个服务</div>
+              <div className="mt-3 text-[12px] text-[var(--text-3)]">共 {serverRows.length} 个服务</div>
             </div>
           )}
         </SettingsCard>
@@ -299,7 +299,7 @@ export function McpSettings() {
           action={(
             <button
               type="button"
-              className="flex items-center gap-1.5 text-[12px] font-semibold text-[#625bff]"
+              className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--brand)]"
             >
               管理集成
               <ArrowRight size={14} />
@@ -314,7 +314,7 @@ export function McpSettings() {
             </div>
             <button
               type="button"
-              className="absolute right-0 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-[#7f879d] transition-colors hover:bg-[#f7f8fb] hover:text-[#625bff]"
+              className="absolute right-0 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--brand)]"
               aria-label="查看更多集成"
             >
               <ArrowRight size={18} strokeWidth={1.9} />
@@ -338,15 +338,15 @@ function SettingsCard({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-[10px] border border-[#e7e9f1] bg-white px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2">
           {marker && (
-            <span className="flex size-5 shrink-0 items-center justify-center rounded-[6px] border border-[#d9d6ff] bg-[#f4f2ff] text-[12px] font-semibold text-[#625bff]">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-[6px] border border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[12px] font-semibold text-[var(--brand)]">
               {marker}
             </span>
           )}
-          <h2 className="text-[16px] font-semibold leading-6 text-[#202338]">{title}</h2>
+          <h2 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">{title}</h2>
         </div>
         {action}
       </div>
@@ -369,14 +369,14 @@ function DiscoveryItem({
   bordered?: boolean
 }) {
   return (
-    <div className={cn('flex h-full items-center gap-3 px-6', bordered && 'border-l border-[#edf0f5]')}>
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-[8px] bg-[#f0efff] text-[#625bff]">
+    <div className={cn('flex h-full items-center gap-3 px-6', bordered && 'border-l border-[var(--border)]')}>
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]">
         <Icon size={22} strokeWidth={1.8} />
       </div>
       <div className="min-w-0">
-        <div className="text-[12px] font-medium leading-5 text-[#8a91a6]">{title}</div>
-        <div className="truncate text-[13px] font-semibold leading-5 text-[#404960]">{value}</div>
-        {subValue && <div className="truncate text-[13px] font-semibold leading-5 text-[#404960]">{subValue}</div>}
+        <div className="text-[12px] font-medium leading-5 text-[var(--text-3)]">{title}</div>
+        <div className="truncate text-[13px] font-semibold leading-5 text-[var(--text-1)]">{value}</div>
+        {subValue && <div className="truncate text-[13px] font-semibold leading-5 text-[var(--text-1)]">{subValue}</div>}
       </div>
     </div>
   )
@@ -393,7 +393,7 @@ function McpServiceTable({
 }) {
   return (
     <div className="w-full">
-      <div className="grid h-8 grid-cols-[176px_112px_114px_112px_128px_1fr] items-center border-b border-[#e8ebf2] text-[12px] font-semibold text-[#7f879d]">
+      <div className="grid h-8 grid-cols-[176px_112px_114px_112px_128px_1fr] items-center border-b border-[var(--border)] text-[12px] font-semibold text-[var(--text-3)]">
         <div>服务名称</div>
         <div>状态</div>
         <div>来源</div>
@@ -403,30 +403,30 @@ function McpServiceTable({
       </div>
 
       {rows.length === 0 ? (
-        <div className="flex h-[182px] flex-col items-center justify-center rounded-[8px] border border-dashed border-[#dfe4ee] bg-[#fbfcff] text-center">
-          <Plug size={24} className="mb-2 text-[#9aa1b3]" />
-          <div className="text-[13px] font-semibold text-[#59637a]">暂无 MCP 服务</div>
-          <div className="mt-1 text-[12px] text-[#9aa1b3]">打开配置文件后添加服务，重新扫描后会显示在这里</div>
+        <div className="flex h-[182px] flex-col items-center justify-center rounded-[8px] border border-dashed border-[var(--border)] bg-[var(--background)] text-center">
+          <Plug size={24} className="mb-2 text-[var(--text-3)]" />
+          <div className="text-[13px] font-semibold text-[var(--text-2)]">暂无 MCP 服务</div>
+          <div className="mt-1 text-[12px] text-[var(--text-3)]">打开配置文件后添加服务，重新扫描后会显示在这里</div>
         </div>
       ) : rows.map((row) => (
         <div
           key={row.name}
-          className="grid h-10 grid-cols-[176px_112px_114px_112px_128px_1fr] items-center border-b border-[#edf0f5] text-[13px] last:border-b-0"
+          className="grid h-10 grid-cols-[176px_112px_114px_112px_128px_1fr] items-center border-b border-[var(--border)] text-[13px] last:border-b-0"
         >
           <div className="flex min-w-0 items-center gap-3">
             <row.Icon size={18} className={cn('shrink-0', row.iconClassName)} />
-            <span className="truncate font-medium text-[#293246]">{row.name}</span>
+            <span className="truncate font-medium text-[var(--text-1)]">{row.name}</span>
           </div>
           <StatusPill status={row.status} />
-          <div className="text-[#7b8499]">{row.source}</div>
-          <div className="text-[#7b8499]">{row.entry.type}</div>
-          <div className="text-[#7b8499]">{row.lastChecked}</div>
+          <div className="text-[var(--text-3)]">{row.source}</div>
+          <div className="text-[var(--text-3)]">{row.entry.type}</div>
+          <div className="text-[var(--text-3)]">{row.lastChecked}</div>
           <div className="flex items-center justify-end">
             {row.status === 'connected' ? (
               <button
                 type="button"
                 onClick={() => onEdit(row.name, row.entry)}
-                className="text-[12px] font-semibold text-[#625bff] hover:text-[#5148f0]"
+                className="text-[12px] font-semibold text-[var(--brand)] hover:text-[var(--brand)]"
               >
                 查看详情
               </button>
@@ -434,7 +434,7 @@ function McpServiceTable({
               <button
                 type="button"
                 onClick={() => onReconnect(row.name)}
-                className="text-[12px] font-semibold text-[#625bff] hover:text-[#5148f0]"
+                className="text-[12px] font-semibold text-[var(--brand)] hover:text-[var(--brand)]"
               >
                 重连
               </button>
@@ -448,9 +448,9 @@ function McpServiceTable({
 
 function StatusPill({ status }: { status: ServerStatus }) {
   const meta = {
-    connected: { label: '已连接', color: 'bg-[#20c872]', text: 'text-[#7b8499]' },
-    warning: { label: '异常', color: 'bg-[#ff9d2e]', text: 'text-[#7b8499]' },
-    disconnected: { label: '未连接', color: 'bg-[#a3aabc]', text: 'text-[#7b8499]' },
+    connected: { label: '已连接', color: 'bg-[#20c872]', text: 'text-[var(--text-3)]' },
+    warning: { label: '异常', color: 'bg-[#ff9d2e]', text: 'text-[var(--text-3)]' },
+    disconnected: { label: '未连接', color: 'bg-[#a3aabc]', text: 'text-[var(--text-3)]' },
   }[status]
 
   return (
@@ -475,17 +475,17 @@ function IntegrationCard({
   color: string
 }) {
   return (
-    <div className="flex h-[134px] min-w-0 flex-col rounded-[8px] border border-[#e8ebf2] bg-white px-3 py-3 shadow-[0_1px_1px_rgba(20,24,40,0.01)]">
+    <div className="flex h-[134px] min-w-0 flex-col rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-3 shadow-[0_1px_1px_rgba(20,24,40,0.01)]">
       <div className="flex h-7 items-center gap-2">
         <Icon size={24} strokeWidth={2.15} className={cn('shrink-0', color)} />
-        <div className="min-w-0 truncate text-[12px] font-semibold leading-4 text-[#293246]">{name}</div>
+        <div className="min-w-0 truncate text-[12px] font-semibold leading-4 text-[var(--text-1)]">{name}</div>
       </div>
-      <div className="mt-[18px] flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#6f7890]">
+      <div className="mt-[18px] flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[var(--text-2)]">
         <span className={cn('size-1.5 shrink-0 rounded-full', connected ? 'bg-[#20c872]' : 'bg-[#ff9d2e]')} />
         {connected ? '已连接' : '未连接'}
       </div>
-      <div className="mt-2 truncate text-[11px] leading-4 text-[#9aa1b3]">{workspace}</div>
-      <button type="button" className="mt-auto self-start text-[12px] font-semibold leading-4 text-[#625bff] hover:text-[#5148f0]">
+      <div className="mt-2 truncate text-[11px] leading-4 text-[var(--text-3)]">{workspace}</div>
+      <button type="button" className="mt-auto self-start text-[12px] font-semibold leading-4 text-[var(--brand)] hover:text-[var(--brand)]">
         管理
       </button>
     </div>
@@ -508,7 +508,7 @@ function McpOverviewStats({
       label: '已发现服务',
       value: String(discoveredCount),
       icon: Box,
-      iconClassName: 'bg-[#f0efff] text-[#625bff]',
+      iconClassName: 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]',
     },
     {
       label: '已连接',
@@ -531,18 +531,18 @@ function McpOverviewStats({
   ]
 
   return (
-    <section className="grid h-[78px] grid-cols-4 overflow-hidden rounded-[10px] border border-[#e7e9f1] bg-white shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="grid h-[78px] grid-cols-4 overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       {stats.map((stat, index) => {
         const Icon = stat.icon
 
         return (
-          <div key={stat.label} className={cn('flex items-center gap-4 px-5', index > 0 && 'border-l border-[#edf0f6]')}>
+          <div key={stat.label} className={cn('flex items-center gap-4 px-5', index > 0 && 'border-l border-[var(--border)]')}>
             <div className={cn('flex size-12 shrink-0 items-center justify-center rounded-full', stat.iconClassName)}>
               <Icon size={24} strokeWidth={1.85} />
             </div>
             <div className="min-w-0">
-              <div className="text-[12px] font-medium leading-4 text-[#7b849b]">{stat.label}</div>
-              <div className="mt-1 truncate text-[20px] font-semibold leading-6 text-[#101527]">{stat.value}</div>
+              <div className="text-[12px] font-medium leading-4 text-[var(--text-2)]">{stat.label}</div>
+              <div className="mt-1 truncate text-[20px] font-semibold leading-6 text-[var(--text-1)]">{stat.value}</div>
             </div>
           </div>
         )
@@ -622,7 +622,7 @@ function getServerIconClass(name: string): string {
   if (name.includes('notion')) return 'text-[#111827]'
   if (name.includes('browser')) return 'text-[#566078]'
   if (name.includes('file')) return 'text-[#ff9f2d]'
-  return 'text-[#625bff]'
+  return 'text-[var(--brand)]'
 }
 
 function formatLastScan(scannedAt?: number): string {
@@ -713,7 +713,7 @@ function McpServerForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-[10px] border border-[#e7e9f1] bg-white p-5">
+    <form onSubmit={handleSubmit} className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-8 w-8" type="button" onClick={onCancel}>
           <ArrowLeft size={16} />

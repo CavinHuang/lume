@@ -169,16 +169,16 @@ export function WorkspacesSettings() {
 
   if (!selectedWorkspace) {
     return (
-      <section className="rounded-[10px] border border-border bg-white p-10 text-center shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
-        <div className="mx-auto flex size-12 items-center justify-center rounded-[12px] bg-[#f0efff] text-[#625bff]">
+      <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-10 text-center shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-[12px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]">
           <Box size={22} />
         </div>
-        <h3 className="mt-4 text-[16px] font-semibold text-[#161827]">暂无工作区</h3>
-        <p className="mt-2 text-[13px] text-[#697089]">创建工作区后即可管理本地目录、默认行为和工作流边界。</p>
+        <h3 className="mt-4 text-[16px] font-semibold text-[var(--text-1)]">暂无工作区</h3>
+        <p className="mt-2 text-[13px] text-[var(--text-2)]">创建工作区后即可管理本地目录、默认行为和工作流边界。</p>
         <button
           type="button"
           onClick={() => setCreateWorkspaceOpen(true)}
-          className="mt-5 inline-flex h-9 items-center gap-2 rounded-[8px] bg-[#625bff] px-4 text-[13px] font-medium text-white"
+          className="mt-5 inline-flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-medium text-white"
         >
           <Plus size={15} />
           新建工作区
@@ -206,21 +206,21 @@ export function WorkspacesSettings() {
 
       <div className="grid grid-cols-[minmax(0,438px)_minmax(0,1fr)] gap-4">
         <div className="space-y-4">
-          <section className="rounded-[10px] border border-border bg-white p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+          <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-[17px] font-semibold leading-6 text-[#18203a]">工作区列表</h3>
+              <h3 className="text-[17px] font-semibold leading-6 text-[var(--text-1)]">工作区列表</h3>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setCreateWorkspaceOpen(true)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-[7px] border border-border bg-white px-3 text-[12px] font-medium text-[#44506a] shadow-[0_1px_1px_rgba(20,24,40,0.02)] hover:bg-[#f8f9fc]"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-[7px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-[0_1px_1px_rgba(20,24,40,0.02)] hover:bg-[var(--surface-2)]"
                 >
                   <Plus size={14} />
                   新建工作区
                 </button>
                 <button
                   type="button"
-                  className="flex size-8 items-center justify-center rounded-[7px] border border-border bg-white text-[#59627a] hover:bg-[#f8f9fc]"
+                  className="flex size-8 items-center justify-center rounded-[7px] border border-border bg-[var(--surface-1)] text-[var(--text-2)] hover:bg-[var(--surface-2)]"
                   aria-label="更多工作区操作"
                 >
                   <MoreHorizontal size={16} />
@@ -228,13 +228,13 @@ export function WorkspacesSettings() {
               </div>
             </div>
 
-            <label className="mb-3 flex h-9 items-center gap-2 rounded-[8px] border border-border bg-white px-3 text-[#8b93a6]">
+            <label className="mb-3 flex h-9 items-center gap-2 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
               <Search size={15} />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="搜索工作区"
-                className="min-w-0 flex-1 bg-transparent text-[13px] text-[#20263a] outline-none placeholder:text-[#97a0b5]"
+                className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
               />
             </label>
 
@@ -252,8 +252,8 @@ export function WorkspacesSettings() {
             </div>
           </section>
 
-          <section className="rounded-[10px] border border-border bg-white p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
-            <h3 className="mb-3 text-[17px] font-semibold leading-6 text-[#18203a]">本地目录</h3>
+          <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+            <h3 className="mb-3 text-[17px] font-semibold leading-6 text-[var(--text-1)]">本地目录</h3>
             <div className="overflow-hidden rounded-[8px] border border-border">
               {WORKSPACE_DIRS.map((item, index) => (
                 <div
@@ -263,23 +263,23 @@ export function WorkspacesSettings() {
                     index > 0 && 'border-t border-border'
                   )}
                 >
-                  <div className="flex items-center gap-2 font-medium text-[#536079]">
-                    <Folder size={15} className="text-[#74809a]" />
+                  <div className="flex items-center gap-2 font-medium text-[var(--text-2)]">
+                    <Folder size={15} className="text-[var(--text-3)]" />
                     {item.label}
                   </div>
-                  <div className="truncate font-mono text-[11px] text-[#7d879d]">
+                  <div className="truncate font-mono text-[11px] text-[var(--text-3)]">
                     {compactPath(rootPath, item.path)}
                   </div>
                   <button
                     type="button"
                     onClick={() => void handleOpenResources(item.path)}
-                    className="h-7 rounded-[6px] border border-border bg-white px-3 text-[12px] font-medium text-[#45516d] hover:bg-[#f8f9fc]"
+                    className="h-7 rounded-[6px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
                   >
                     打开
                   </button>
                   <button
                     type="button"
-                    className="h-7 rounded-[6px] border border-border bg-white px-3 text-[12px] font-medium text-[#45516d] hover:bg-[#f8f9fc]"
+                    className="h-7 rounded-[6px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
                   >
                     更改
                   </button>
@@ -289,8 +289,8 @@ export function WorkspacesSettings() {
           </section>
         </div>
 
-        <section className="rounded-[10px] border border-border bg-white p-5 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
-          <h3 className="mb-5 text-[17px] font-semibold leading-6 text-[#18203a]">工作区概览</h3>
+        <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-5 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+          <h3 className="mb-5 text-[17px] font-semibold leading-6 text-[var(--text-1)]">工作区概览</h3>
           <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-6">
             <div className="space-y-4">
               <div className="flex size-[106px] items-center justify-center rounded-[12px] bg-gradient-to-br from-[#6d5cff] to-[#9b84ff] text-white shadow-[0_12px_28px_rgba(98,91,255,0.24)]">
@@ -298,7 +298,7 @@ export function WorkspacesSettings() {
               </div>
               <button
                 type="button"
-                className="h-9 w-full rounded-[7px] border border-border bg-white text-[12px] font-medium text-[#52607a] hover:bg-[#f8f9fc]"
+                className="h-9 w-full rounded-[7px] border border-border bg-[var(--surface-1)] text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
               >
                 更换图标
               </button>
@@ -309,7 +309,7 @@ export function WorkspacesSettings() {
                 <input
                   value={workspaceName}
                   onChange={(event) => setWorkspaceName(event.target.value)}
-                  className="h-10 w-full rounded-[8px] border border-border bg-white px-3 text-[13px] font-medium text-[#273049] outline-none focus:border-[#9d8cff] focus:ring-3 focus:ring-[#625bff]/10"
+                  className="h-10 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] outline-none focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] focus:ring-3 focus:ring-[var(--brand)]/10"
                 />
               </WorkspaceField>
               <WorkspaceField label="本地路径">
@@ -317,12 +317,12 @@ export function WorkspacesSettings() {
                   <input
                     value={rootPath || `~/Documents/Lume/${selectedWorkspace.slug}`}
                     readOnly
-                    className="h-10 w-full rounded-[8px] border border-border bg-white px-3 text-[13px] text-[#43506b] outline-none"
+                    className="h-10 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-2)] outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => void handleOpenResources()}
-                    className="h-10 rounded-[8px] border border-border bg-white text-[13px] font-medium text-[#33405c] hover:bg-[#f8f9fc]"
+                    className="h-10 rounded-[8px] border border-border bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
                   >
                     打开目录
                   </button>
@@ -332,7 +332,7 @@ export function WorkspacesSettings() {
                 <input
                   value={workspaceDescription}
                   onChange={(event) => setWorkspaceDescription(event.target.value)}
-                  className="h-10 w-full rounded-[8px] border border-border bg-white px-3 text-[13px] text-[#273049] outline-none focus:border-[#9d8cff] focus:ring-3 focus:ring-[#625bff]/10"
+                  className="h-10 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] focus:ring-3 focus:ring-[var(--brand)]/10"
                 />
               </WorkspaceField>
             </div>
@@ -340,8 +340,8 @@ export function WorkspacesSettings() {
 
           <div className="my-5 h-px bg-border" />
 
-          <h3 className="text-[17px] font-semibold leading-6 text-[#18203a]">工作区偏好</h3>
-          <p className="mt-1 text-[12px] leading-5 text-[#778096]">应用您的偏好以进入此工作区</p>
+          <h3 className="text-[17px] font-semibold leading-6 text-[var(--text-1)]">工作区偏好</h3>
+          <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">应用您的偏好以进入此工作区</p>
           <div className="mt-5 space-y-4">
             <PreferenceRow label="在启动应用时显示会话">
               <LumeSwitch checked={openOnStart} onCheckedChange={setOpenOnStart} />
@@ -360,8 +360,8 @@ export function WorkspacesSettings() {
             </WorkspaceField>
           </div>
 
-          <div className="mt-5 rounded-[8px] bg-[#edf7ff] px-3 py-2 text-[12px] font-medium text-[#586982]">
-            <span className="mr-2 inline-flex size-4 items-center justify-center rounded-full border border-[#4c8dff] text-[11px] text-[#4c7dff]">i</span>
+          <div className="mt-5 rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] font-medium text-[var(--text-2)]">
+            <span className="mr-2 inline-flex size-4 items-center justify-center rounded-full border border-[var(--brand)] text-[11px] text-[var(--brand)]">i</span>
             这些设置仅作用于当前工作区。
           </div>
         </section>
@@ -371,20 +371,20 @@ export function WorkspacesSettings() {
         <button
           type="button"
           onClick={() => setWorkspaceName(selectedWorkspace.name)}
-          className="h-10 rounded-[8px] border border-border bg-white text-[13px] font-medium text-[#35405a] hover:bg-[#f8f9fc]"
+          className="h-10 rounded-[8px] border border-border bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
         >
           取消
         </button>
         <button
           type="button"
-          className="h-10 rounded-[8px] border border-border bg-white text-[13px] font-medium text-[#35405a] hover:bg-[#f8f9fc]"
+          className="h-10 rounded-[8px] border border-border bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
         >
           导出工作区配置
         </button>
         <button
           type="button"
           onClick={() => void handleSave()}
-          className="h-10 rounded-[8px] bg-[#625bff] text-[13px] font-medium text-white shadow-[0_8px_20px_rgba(98,91,255,0.22)] hover:bg-[#554dff]"
+          className="h-10 rounded-[8px] bg-[var(--brand)] text-[13px] font-medium text-white shadow-[0_8px_20px_rgba(98,91,255,0.22)] hover:bg-[var(--brand)]"
         >
           保存更改
         </button>
@@ -401,7 +401,7 @@ export function WorkspacesSettings() {
               <button
                 type="button"
                 onClick={() => selectedWorkspace.id === currentWorkspaceId && setCurrentWorkspaceId(null)}
-                className="h-8 min-w-[128px] rounded-[6px] border border-border px-5 text-[12px] font-medium text-[#7a8498] hover:bg-[#f8f9fc]"
+                className="h-8 min-w-[128px] rounded-[6px] border border-border px-5 text-[12px] font-medium text-[var(--text-3)] hover:bg-[var(--surface-2)]"
               >
                 移除默认状态
               </button>
@@ -432,8 +432,8 @@ function WorkspaceStats({
   lastOpenedLabel: string
 }) {
   const stats = [
-    { label: '工作区数量', value: String(workspaceCount), Icon: Box, iconClass: 'bg-[#f0efff] text-[#625bff]' },
-    { label: '默认工作区', value: defaultWorkspaceName, Icon: FolderOpen, iconClass: 'bg-[#f0efff] text-[#625bff]' },
+    { label: '工作区数量', value: String(workspaceCount), Icon: Box, iconClass: 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]' },
+    { label: '默认工作区', value: defaultWorkspaceName, Icon: FolderOpen, iconClass: 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]' },
     { label: '最近打开', value: lastOpenedLabel, Icon: Clock3, iconClass: 'bg-[#eaf3ff] text-[#2f86ff]' },
     { label: '本地模式', value: '已启用', Icon: ShieldCheck, iconClass: 'bg-[#ddfae8] text-[#20b566]' },
   ]
@@ -443,14 +443,14 @@ function WorkspaceStats({
       {stats.map(({ label, value, Icon, iconClass }) => (
         <div
           key={label}
-          className="flex h-[72px] items-center gap-4 rounded-[10px] border border-border bg-white px-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]"
+          className="flex h-[72px] items-center gap-4 rounded-[10px] border border-border bg-[var(--surface-1)] px-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]"
         >
           <div className={cn('flex size-11 items-center justify-center rounded-full', iconClass)}>
             <Icon size={24} strokeWidth={1.9} />
           </div>
           <div className="min-w-0">
-            <div className="text-[12px] font-medium leading-4 text-[#788199]">{label}</div>
-            <div className={cn('mt-1 truncate text-[18px] font-semibold leading-6 text-[#11172b]', label === '本地模式' && 'text-[#20b566]')}>
+            <div className="text-[12px] font-medium leading-4 text-[var(--text-2)]">{label}</div>
+            <div className={cn('mt-1 truncate text-[18px] font-semibold leading-6 text-[var(--text-1)]', label === '本地模式' && 'text-[#20b566]')}>
               {value}
             </div>
           </div>
@@ -480,23 +480,23 @@ function WorkspaceListItem({
       className={cn(
         'flex h-[58px] w-full items-center gap-3 rounded-[8px] border px-3 text-left transition-colors',
         active
-          ? 'border-[#bbb4ff] bg-[#f3f1ff] shadow-[0_6px_16px_rgba(98,91,255,0.08)]'
-          : 'border-transparent bg-white hover:bg-[#fafbff]'
+          ? 'border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] shadow-[0_6px_16px_rgba(98,91,255,0.08)]'
+          : 'border-transparent bg-[var(--surface-1)] hover:bg-[var(--surface-2)]'
       )}
     >
       <div className={cn('flex size-8 items-center justify-center rounded-[8px] bg-gradient-to-br text-white', accentClass)}>
         <Box size={17} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-semibold leading-5 text-[#26304a]">{workspace.name}</div>
-        <div className="truncate text-[12px] leading-4 text-[#8a93a8]">~/Documents/Lume/{workspace.slug}</div>
+        <div className="truncate text-[13px] font-semibold leading-5 text-[var(--text-1)]">{workspace.name}</div>
+        <div className="truncate text-[12px] leading-4 text-[var(--text-3)]">~/Documents/Lume/{workspace.slug}</div>
       </div>
       {isDefault && (
-        <span className="rounded-[6px] bg-white px-2 py-1 text-[12px] font-medium text-[#625bff] shadow-[0_0_0_1px_rgba(98,91,255,0.14)]">
+        <span className="rounded-[6px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--brand)] shadow-[0_0_0_1px_rgba(98,91,255,0.14)]">
           默认
         </span>
       )}
-      <ChevronRight size={16} className="text-[#758099]" />
+      <ChevronRight size={16} className="text-[var(--text-3)]" />
     </button>
   )
 }
@@ -504,7 +504,7 @@ function WorkspaceListItem({
 function WorkspaceField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="grid grid-cols-[86px_minmax(0,1fr)] items-center gap-4">
-      <span className="text-[13px] font-medium text-[#667089]">{label}</span>
+      <span className="text-[13px] font-medium text-[var(--text-2)]">{label}</span>
       {children}
     </label>
   )
@@ -513,7 +513,7 @@ function WorkspaceField({ label, children }: { label: string; children: React.Re
 function PreferenceRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex h-5 items-center justify-between">
-      <span className="text-[13px] font-medium text-[#667089]">{label}</span>
+      <span className="text-[13px] font-medium text-[var(--text-2)]">{label}</span>
       {children}
     </div>
   )
@@ -523,10 +523,10 @@ function SelectLike({ value }: { value: string }) {
   return (
     <button
       type="button"
-      className="flex h-10 w-full items-center justify-between rounded-[8px] border border-border bg-white px-3 text-[13px] font-medium text-[#495571]"
+      className="flex h-10 w-full items-center justify-between rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-2)]"
     >
       {value}
-      <ChevronDown size={15} className="text-[#7b8498]" />
+      <ChevronDown size={15} className="text-[var(--text-3)]" />
     </button>
   )
 }
@@ -537,7 +537,7 @@ function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
       {...props}
       data-size="default"
       className={cn(
-        'h-5 w-9 data-checked:bg-[#625bff]',
+        'h-5 w-9 data-checked:bg-[var(--brand)]',
         '[&_[data-slot=switch-thumb]]:size-4 data-checked:[&_[data-slot=switch-thumb]]:translate-x-4',
         props.className,
       )}
