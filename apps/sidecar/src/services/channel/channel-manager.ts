@@ -72,11 +72,11 @@ function writeConfig(config: ChannelsConfig): void {
   writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
 }
 
-function normalizeProviderForStorage(provider: Channel["provider"]): Channel["provider"] {
+function normalizeProviderForStorage(provider: string): Channel["provider"] {
   if (provider === "zhipu") return "zai";
   if (provider === "qwen") return "qwen-portal";
   if (provider === "moonshot") return "kimi-coding";
-  return provider;
+  return provider as Channel["provider"];
 }
 
 function normalizeChannelsConfig(config: ChannelsConfig): { config: ChannelsConfig; changed: boolean } {

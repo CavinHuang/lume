@@ -218,7 +218,11 @@ export class Agent {
     const envType =
       this.cfg.env?.CODEANY_API_TYPE ??
       this.readEnv('CODEANY_API_TYPE')
-    if (envType === 'openai-completions' || envType === 'anthropic-messages') {
+    if (
+      envType === 'openai-completions' ||
+      envType === 'anthropic-messages' ||
+      envType === 'deepseek-chat-completions'
+    ) {
       return envType
     }
 
@@ -233,6 +237,9 @@ export class Agent {
       if (baseUrl.includes('/anthropic') || /\/messages\/?$/.test(baseUrl)) {
         return 'anthropic-messages'
       }
+      if (baseUrl.includes('api.deepseek.com')) {
+        return 'deepseek-chat-completions'
+      }
       if (baseUrl.includes('/chat/completions')) {
         return 'openai-completions'
       }
@@ -244,7 +251,6 @@ export class Agent {
       model.includes('o1') ||
       model.includes('o3') ||
       model.includes('o4') ||
-      model.includes('deepseek') ||
       model.includes('qwen') ||
       model.includes('yi-') ||
       model.includes('glm') ||
@@ -252,6 +258,10 @@ export class Agent {
       model.includes('gemma')
     ) {
       return 'openai-completions'
+    }
+
+    if (model.includes('deepseek')) {
+      return 'deepseek-chat-completions'
     }
 
     return 'anthropic-messages'

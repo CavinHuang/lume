@@ -9,6 +9,7 @@
 
 import type {
   LLMProvider,
+  ApiType,
   CreateMessageParams,
   CreateMessageResponse,
   CreateMessageStreamEvent,
@@ -25,6 +26,7 @@ import type {
 interface OpenAIChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content?: string | null
+  reasoning_content?: string
   tool_calls?: OpenAIToolCall[]
   tool_call_id?: string
 }
@@ -108,7 +110,7 @@ function normalizeContentBlocks(content: unknown): NormalizedContentBlock[] {
 // --------------------------------------------------------------------------
 
 export class OpenAIProvider implements LLMProvider {
-  readonly apiType = 'openai-completions' as const
+  readonly apiType: ApiType = 'openai-completions'
   private apiKey: string
   private baseURL: string
 
@@ -126,6 +128,12 @@ export class OpenAIProvider implements LLMProvider {
       model: params.model,
       max_tokens: params.maxTokens,
       messages,
+    }
+
+    if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
+      body.enable_thinking = true
+    } else if (params.thinking?.type === 'disabled') {
+      body.enable_thinking = false
     }
 
     if (params.effort) {
@@ -149,6 +157,8 @@ export class OpenAIProvider implements LLMProvider {
         },
       }
     }
+
+    this.prepareChatCompletionBody(body)
 
     // Make API call
     const response = await fetch(`${this.baseURL}/chat/completions`, {
@@ -188,6 +198,12 @@ export class OpenAIProvider implements LLMProvider {
       stream: true,
     }
 
+    if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
+      body.enable_thinking = true
+    } else if (params.thinking?.type === 'disabled') {
+      body.enable_thinking = false
+    }
+
     if (params.effort) {
       body.reasoning_effort = params.effort
     }
@@ -209,6 +225,8 @@ export class OpenAIProvider implements LLMProvider {
         },
       }
     }
+
+    this.prepareChatCompletionBody(body)
 
     const response = await fetch(`${this.baseURL}/chat/completions`, {
       method: 'POST',
@@ -431,6 +449,8 @@ export class OpenAIProvider implements LLMProvider {
     return result
   }
 
+  protected prepareChatCompletionBody(_body: Record<string, any>): void {}
+
   private convertUserMessage(
     msg: NormalizedMessageParam,
     result: OpenAIChatMessage[],
@@ -482,10 +502,13 @@ export class OpenAIProvider implements LLMProvider {
     // Extract text and tool_use blocks
     const textParts: string[] = []
     const toolCalls: OpenAIToolCall[] = []
+    let reasoningContent: string | undefined
 
     for (const block of normalizeContentBlocks(msg.content)) {
       if (block.type === 'text') {
         textParts.push(block.text)
+      } else if (block.type === 'thinking') {
+        reasoningContent = block.thinking
       } else if (block.type === 'tool_use') {
         toolCalls.push({
           id: block.id,
@@ -502,11 +525,15 @@ export class OpenAIProvider implements LLMProvider {
 
     const assistantMsg: OpenAIChatMessage = {
       role: 'assistant',
-      content: textParts.length > 0 ? textParts.join('\n') : null,
+      content: textParts.length > 0 ? textParts.join('\n') : toolCalls.length > 0 ? null : '',
     }
 
     if (toolCalls.length > 0) {
       assistantMsg.tool_calls = toolCalls
+    }
+
+    if (reasoningContent) {
+      assistantMsg.reasoning_content = reasoningContent
     }
 
     result.push(assistantMsg)

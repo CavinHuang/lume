@@ -490,7 +490,9 @@ export class QueryEngine {
                 type: 'enabled',
                 budget_tokens: this.config.thinking.budgetTokens,
               }
-            : undefined,
+            : this.config.thinking?.type === 'disabled'
+              ? { type: 'disabled' }
+              : undefined,
       }
       const apiStart = performance.now()
       try {

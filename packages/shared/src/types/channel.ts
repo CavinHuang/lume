@@ -24,8 +24,8 @@ export type ProviderType =
   | 'deepseek'
   | 'google'
   | 'zai'
+  | 'zai-coding-plan'
   | 'moonshot'
-  | 'zhipu'
   | 'minimax'
   | 'minimax-cn'
   | 'doubao'
@@ -52,11 +52,11 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   openai: 'https://api.openai.com/v1',
   jina: 'https://api.jina.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
-  deepseek: 'https://api.deepseek.com',
+  deepseek: 'https://api.deepseek.com/v1',
   google: 'https://generativelanguage.googleapis.com',
   zai: 'https://open.bigmodel.cn/api/paas/v4',
+  'zai-coding-plan': 'https://open.bigmodel.cn/api/paas/v4',
   moonshot: 'https://api.moonshot.cn/v1',
-  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimax.chat/v1',
   'minimax-cn': 'https://api.minimax.chat/v1',
   doubao: 'https://ark.cn-beijing.volces.com/api/v3',
@@ -78,9 +78,9 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   openrouter: 'OpenRouter',
   deepseek: 'DeepSeek',
   google: 'Google',
-  zai: '智谱 Z.ai',
+  zai: 'Z.ai',
+  'zai-coding-plan': 'Zai Coding Plan',
   moonshot: 'Moonshot / Kimi',
-  zhipu: '智谱 AI',
   minimax: 'MiniMax',
   'minimax-cn': 'MiniMax CN',
   doubao: '豆包',
@@ -101,8 +101,8 @@ export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   deepseek: 'openai',
   google: 'google',
   zai: 'openai',
+  'zai-coding-plan': 'openai',
   moonshot: 'openai',
-  zhipu: 'openai',
   minimax: 'openai',
   'minimax-cn': 'openai',
   doubao: 'openai',

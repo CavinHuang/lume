@@ -17,6 +17,7 @@ export interface ResolvedAgentDefaultStrategy {
 const PROVIDER_ALIAS: Record<string, string> = {
   "z.ai": "zai",
   "z-ai": "zai",
+  zhipu: "zai",
   qwen: "qwen-portal",
   "kimi-code": "kimi-coding"
 };
@@ -69,6 +70,11 @@ function resolveAdapterProviderByFamily(family: ProviderApiFamily): ProviderType
   return "openai";
 }
 
+function resolveOpenAICompatibleAdapterProvider(provider: string): ProviderType {
+  const knownProvider = coerceKnownProvider(provider);
+  return knownProvider === "deepseek" ? "deepseek" : "openai";
+}
+
 function coerceKnownProvider(provider: string): ProviderType {
   return ([
     "anthropic",
@@ -79,8 +85,8 @@ function coerceKnownProvider(provider: string): ProviderType {
     "deepseek",
     "google",
     "zai",
+    "zai-coding-plan",
     "moonshot",
-    "zhipu",
     "minimax",
     "minimax-cn",
     "doubao",
@@ -115,10 +121,12 @@ export function resolveChannelModelSelection(input: {
   const baseUrlFamily = resolveProviderApiFamilyFromBaseUrl(input.baseUrl);
   const providerFamily = resolveProviderApiFamilyFromId(parsed.provider);
   const resolvedFamily = baseUrlFamily ?? providerFamily;
-  const adapterProvider = resolveAdapterProviderByFamily(resolvedFamily);
+  const adapterProvider = resolvedFamily === "openai"
+    ? resolveOpenAICompatibleAdapterProvider(parsed.provider)
+    : resolveAdapterProviderByFamily(resolvedFamily);
 
   return {
-    adapterProvider: coerceKnownProvider(adapterProvider),
+    adapterProvider,
     resolvedModelId: parsed.model,
     modelRef: `${parsed.provider}/${parsed.model}`
   };

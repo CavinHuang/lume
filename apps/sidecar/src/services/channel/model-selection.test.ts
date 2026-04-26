@@ -70,6 +70,7 @@ describe("model-selection", () => {
   test("normalizeProviderId 应兼容历史 provider 别名", () => {
     expect(normalizeProviderId("z.ai")).toBe("zai");
     expect(normalizeProviderId("z-ai")).toBe("zai");
+    expect(normalizeProviderId("zhipu")).toBe("zai");
     expect(normalizeProviderId("qwen")).toBe("qwen-portal");
     expect(normalizeProviderId("kimi-code")).toBe("kimi-coding");
   });
@@ -80,7 +81,7 @@ describe("model-selection", () => {
       model: "glm-5"
     });
     expect(parseModelRef("glm-5", "zhipu")).toEqual({
-      provider: "zhipu",
+      provider: "zai",
       model: "glm-5"
     });
   });
@@ -124,6 +125,17 @@ describe("model-selection", () => {
     });
     expect(resolved.adapterProvider).toBe("anthropic");
     expect(resolved.modelRef).toBe("anthropic-compatible/claude-sonnet-4-5");
+  });
+
+  test("deepseek provider 应保留独立适配器而不是折叠为 openai", () => {
+    const resolved = resolveChannelModelSelection({
+      channelProvider: "deepseek",
+      baseUrl: "https://api.deepseek.com/v1",
+      modelId: "deepseek-chat"
+    });
+    expect(resolved.adapterProvider).toBe("deepseek");
+    expect(resolved.resolvedModelId).toBe("deepseek-chat");
+    expect(resolved.modelRef).toBe("deepseek/deepseek-chat");
   });
 
   test("resolveRequestedModelIdForChannel 应支持 alias/name/default", () => {

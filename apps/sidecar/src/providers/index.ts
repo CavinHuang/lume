@@ -16,6 +16,7 @@ import type { ProviderType } from '@lume/shared'
 import type { ProviderAdapter } from './types'
 import { AnthropicAdapter } from './anthropic-adapter'
 import { OpenAIAdapter } from './openai-adapter'
+import { DeepSeekAdapter } from './deepseek-adapter'
 import { GoogleAdapter } from './google-adapter'
 
 // 导出所有类型和工具
@@ -26,6 +27,7 @@ export * from './url-utils'
 // 导出适配器类
 export { AnthropicAdapter } from './anthropic-adapter'
 export { OpenAIAdapter } from './openai-adapter'
+export { DeepSeekAdapter } from './deepseek-adapter'
 export { GoogleAdapter } from './google-adapter'
 
 /** 供应商适配器注册表 */
@@ -34,10 +36,10 @@ const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
   ['anthropic-compatible', new AnthropicAdapter()],
   ['openai', new OpenAIAdapter()],
   ['openrouter', new OpenAIAdapter()],    // OpenRouter 使用 OpenAI 兼容协议
-  ['deepseek', new OpenAIAdapter()],      // DeepSeek 使用 OpenAI 兼容协议
+  ['deepseek', new DeepSeekAdapter()],    // DeepSeek 使用独立 provider SDK
   ['moonshot', new OpenAIAdapter()],      // Moonshot/Kimi 使用 OpenAI 兼容协议
-  ['zhipu', new OpenAIAdapter()],         // 智谱 AI 使用 OpenAI 兼容协议
   ['zai', new OpenAIAdapter()],           // Z.ai 使用 OpenAI 兼容协议
+  ['zai-coding-plan', new OpenAIAdapter()], // Zai Coding Plan 使用 OpenAI 兼容协议
   ['minimax', new OpenAIAdapter()],       // MiniMax 使用 OpenAI 兼容协议
   ['minimax-cn', new OpenAIAdapter()],    // MiniMax CN 使用 OpenAI 兼容协议
   ['doubao', new OpenAIAdapter()],        // 豆包使用 OpenAI 兼容协议

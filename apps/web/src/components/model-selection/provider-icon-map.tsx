@@ -14,7 +14,6 @@ import {
   OpenRouter,
   Qwen,
   ZAI,
-  Zhipu,
 } from '@lobehub/icons'
 import type { ProviderType } from '@lume/shared'
 import type { FC, SVGProps } from 'react'
@@ -31,8 +30,8 @@ const PROVIDER_ICON_MAP: Partial<Record<ProviderType, BrandIcon>> = {
   minimax: Minimax as BrandIcon,
   'minimax-cn': Minimax as BrandIcon,
   moonshot: Moonshot as BrandIcon,
-  zhipu: Zhipu as BrandIcon,
   zai: ZAI as BrandIcon,
+  'zai-coding-plan': ZAI as BrandIcon,
   qwen: Qwen as BrandIcon,
   'qwen-portal': Qwen as BrandIcon,
   doubao: Doubao as BrandIcon,

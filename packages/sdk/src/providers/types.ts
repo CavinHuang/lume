@@ -12,7 +12,7 @@
 // API Type
 // --------------------------------------------------------------------------
 
-export type ApiType = 'anthropic-messages' | 'openai-completions'
+export type ApiType = 'anthropic-messages' | 'openai-completions' | 'deepseek-chat-completions'
 
 // --------------------------------------------------------------------------
 // Normalized Request
