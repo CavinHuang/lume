@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { MessageCircle } from 'lucide-react'
+import { MessageCircle, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -24,10 +24,25 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
 
   const submit = async () => {
     await sidecarCall('agent:submit-ask-user-question', { threadId, toolUseId: request.toolUseId, answers })
+    dismiss()
+  }
+
+  const dismiss = () => {
     setPending((prev) => {
       const next = { ...prev }
       return removePendingAskUserQuestion(next, threadId, request.toolUseId)
     })
+  }
+
+  const close = async () => {
+    dismiss()
+    try {
+      await sidecarCall('agent:submit-ask-user-question', { threadId, toolUseId: request.toolUseId, canceled: true })
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('未找到待确认的 AskUserQuestion 请求')) {
+        throw error
+      }
+    }
   }
 
   const allAnswered = request.questions.every((q) => answers[q.question])
@@ -40,6 +55,14 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
         {subagentDisplayLabel && (
           <span className="text-[11px] text-foreground/45">{subagentDisplayLabel}</span>
         )}
+        <button
+          type="button"
+          title="关闭"
+          onClick={() => void close()}
+          className="ml-auto flex size-6 items-center justify-center rounded-md text-foreground/45 transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <X size={14} />
+        </button>
       </div>
       <div className="px-3 pb-3 space-y-3">
         {request.questions.map((q) => (

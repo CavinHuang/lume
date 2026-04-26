@@ -49,9 +49,13 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   const restoreVersionRef = useRef(0)
   const threadRestoreRafRef = useRef<number | null>(null)
   const contentRestoreRafRef = useRef<number | null>(null)
+  const initialBottomFollowCleanupRef = useRef<(() => void) | null>(null)
+  const shouldFollowInitialBottomRef = useRef(false)
+  const suppressProgrammaticSaveRef = useRef(false)
+  const userScrollIntentRef = useRef(false)
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
 
-  const { save, restore } = useScrollPositionMemory()
+  const { save, restore, hasSavedPosition } = useScrollPositionMemory()
   const followSignal = getFollowSignal(sdkMessages)
   const renderMessages = useMemo(() => projectRenderableAgentMessages(sdkMessages), [sdkMessages])
   const getScrollElement = useCallback(() => {
@@ -67,13 +71,113 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
       cancelAnimationFrame(contentRestoreRafRef.current)
       contentRestoreRafRef.current = null
     }
+    initialBottomFollowCleanupRef.current?.()
+    initialBottomFollowCleanupRef.current = null
+    shouldFollowInitialBottomRef.current = false
+    suppressProgrammaticSaveRef.current = false
+    userScrollIntentRef.current = false
   }, [])
+  const startInitialBottomFollow = useCallback(() => {
+    const scrollElement = getScrollElement()
+    const containerElement = containerRef.current
+    if (!scrollElement || !containerElement) return
+
+    initialBottomFollowCleanupRef.current?.()
+    shouldFollowInitialBottomRef.current = true
+    suppressProgrammaticSaveRef.current = true
+
+    let rafId: number | null = null
+    let frameCount = 0
+    let stableFrames = 0
+    let lastHeight = scrollElement.scrollHeight
+
+    const syncToBottom = () => {
+      scrollElement.scrollTop = scrollElement.scrollHeight
+      wasNearBottomRef.current = true
+      setShowJumpToBottom(false)
+    }
+
+    const stopFollowing = (saveFinalPosition = true) => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+      observer.disconnect()
+      window.clearTimeout(timeoutId)
+      scrollElement.removeEventListener('wheel', stopForUserScroll)
+      scrollElement.removeEventListener('touchstart', stopForUserScroll)
+      scrollElement.removeEventListener('pointerdown', stopForUserScroll)
+      initialBottomFollowCleanupRef.current = null
+      shouldFollowInitialBottomRef.current = false
+      suppressProgrammaticSaveRef.current = false
+      if (saveFinalPosition) {
+        save(threadId, scrollElement)
+      }
+    }
+
+    const stopForUserScroll = () => {
+      userScrollIntentRef.current = true
+      stopFollowing(true)
+    }
+
+    const tick = () => {
+      if (!shouldFollowInitialBottomRef.current) {
+        stopFollowing()
+        return
+      }
+
+      const nextHeight = scrollElement.scrollHeight
+      if (nextHeight !== lastHeight) {
+        lastHeight = nextHeight
+        stableFrames = 0
+      } else {
+        stableFrames += 1
+      }
+
+      syncToBottom()
+      frameCount += 1
+
+      if ((frameCount >= 90 && stableFrames >= 12) || frameCount >= 300) {
+        stopFollowing()
+        return
+      }
+
+      rafId = requestAnimationFrame(tick)
+    }
+
+    const observer = new ResizeObserver(() => {
+      stableFrames = 0
+      lastHeight = scrollElement.scrollHeight
+      syncToBottom()
+    })
+
+    observer.observe(containerElement)
+    scrollElement.addEventListener('wheel', stopForUserScroll, { passive: true })
+    scrollElement.addEventListener('touchstart', stopForUserScroll, { passive: true })
+    scrollElement.addEventListener('pointerdown', stopForUserScroll, { passive: true })
+    const timeoutId = window.setTimeout(() => {
+      stopFollowing()
+    }, 5000)
+
+    initialBottomFollowCleanupRef.current = () => {
+      stopFollowing(false)
+    }
+    rafId = requestAnimationFrame(tick)
+  }, [getScrollElement, save, threadId])
   const restoreCurrentThread = useCallback(() => {
     const scrollElement = getScrollElement()
-    restore(threadId, scrollElement)
+    if (shouldFollowInitialBottomRef.current && scrollElement && sdkMessages.length > 0) {
+      startInitialBottomFollow()
+      return
+    }
+    const restored = restore(threadId, scrollElement)
+    if (!restored && scrollElement && sdkMessages.length > 0) {
+      startInitialBottomFollow()
+      return
+    }
     wasNearBottomRef.current = isNearBottom(scrollElement)
     setShowJumpToBottom(!wasNearBottomRef.current)
-  }, [getScrollElement, restore, threadId])
+  }, [getScrollElement, restore, sdkMessages.length, startInitialBottomFollow, threadId])
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     bottomRef.current?.scrollIntoView({ behavior, block: 'end' })
     wasNearBottomRef.current = true
@@ -135,29 +239,44 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
     const scrollElement = getScrollElement()
     if (!scrollElement) return
 
+    const markUserScrollIntent = () => {
+      userScrollIntentRef.current = true
+    }
+
     const handleScroll = () => {
       const nearBottom = isNearBottom(scrollElement)
       wasNearBottomRef.current = nearBottom
       setShowJumpToBottom(!nearBottom)
+      if (suppressProgrammaticSaveRef.current) return
+      if (pendingRestoreThreadIdRef.current === threadId) return
+      if (!userScrollIntentRef.current) return
       save(threadId, scrollElement)
     }
 
     const nearBottom = isNearBottom(scrollElement)
     wasNearBottomRef.current = nearBottom
     setShowJumpToBottom(!nearBottom)
+    scrollElement.addEventListener('wheel', markUserScrollIntent, { passive: true })
+    scrollElement.addEventListener('touchstart', markUserScrollIntent, { passive: true })
+    scrollElement.addEventListener('pointerdown', markUserScrollIntent, { passive: true })
     scrollElement.addEventListener('scroll', handleScroll, { passive: true })
     return () => {
+      scrollElement.removeEventListener('wheel', markUserScrollIntent)
+      scrollElement.removeEventListener('touchstart', markUserScrollIntent)
+      scrollElement.removeEventListener('pointerdown', markUserScrollIntent)
       scrollElement.removeEventListener('scroll', handleScroll)
     }
   }, [getScrollElement, save, threadId])
 
   // 切换 thread 时保存/恢复滚动位置
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
       cancelScheduledRestores()
+      userScrollIntentRef.current = false
       restoreVersionRef.current += 1
       const restoreVersion = restoreVersionRef.current
       prevThreadIdRef.current = threadId
+      shouldFollowInitialBottomRef.current = !hasSavedPosition(threadId)
       pendingRestoreThreadIdRef.current = threadId
       threadRestoreRafRef.current = requestAnimationFrame(() => {
         threadRestoreRafRef.current = null
@@ -169,12 +288,12 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         }
         const hasMessages = sdkMessages.length > 0
         restoreCurrentThread()
-        if (hasMessages) {
+        if (hasMessages && !shouldFollowInitialBottomRef.current) {
           pendingRestoreThreadIdRef.current = null
         }
       })
     }
-  }, [cancelScheduledRestores, restoreCurrentThread, sdkMessages.length, threadId])
+  }, [cancelScheduledRestores, hasSavedPosition, restoreCurrentThread, sdkMessages.length, threadId])
 
   useLayoutEffect(() => {
     if (pendingRestoreThreadIdRef.current !== threadId || sdkMessages.length === 0) return
@@ -193,9 +312,18 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         return
       }
       restoreCurrentThread()
-      pendingRestoreThreadIdRef.current = null
+      if (!shouldFollowInitialBottomRef.current) {
+        pendingRestoreThreadIdRef.current = null
+      }
     })
   }, [restoreCurrentThread, sdkMessages.length, threadId])
+
+  useEffect(() => {
+    if (!shouldFollowInitialBottomRef.current) return
+    if (sdkMessages.length === 0) return
+    startInitialBottomFollow()
+    pendingRestoreThreadIdRef.current = null
+  }, [sdkMessages.length, startInitialBottomFollow])
 
   useEffect(() => cancelScheduledRestores, [cancelScheduledRestores])
 
