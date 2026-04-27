@@ -1,47 +1,18 @@
 ---
 title: "TOOLS.md Template"
-summary: "Workspace template for TOOLS.md"
+summary: "Optional workspace-specific tool notes"
 read_when:
   - Bootstrapping a workspace manually
 ---
 
-# TOOLS.md - Local Notes
+# TOOLS.md
 
-Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
+Use this for workspace-specific tool notes only. Leave empty until there is real local setup information.
 
-## What Goes Here
+## Local Tool Notes
 
-Things like:
+<!-- examples: SSH aliases, device names, local service URLs, preferred voices, environment-specific commands -->
 
-- Camera names and locations
-- SSH hosts and aliases
-- Preferred voices for TTS
-- Speaker/room names
-- Device nicknames
-- Anything environment-specific
+## Constraints
 
-## Examples
-
-```markdown
-### Cameras
-
-- living-room → Main area, 180° wide angle
-- front-door → Entrance, motion-triggered
-
-### SSH
-
-- home-server → 192.168.1.100, user: admin
-
-### TTS
-
-- Preferred voice: "Nova" (warm, slightly British)
-- Default speaker: Kitchen HomePod
-```
-
-## Why Separate?
-
-Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
-
----
-
-Add whatever helps you do your job. This is your cheat sheet.
+<!-- examples: commands to avoid, tools that require confirmation, known local limitations -->
