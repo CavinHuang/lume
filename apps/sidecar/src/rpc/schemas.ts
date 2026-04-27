@@ -268,6 +268,18 @@ export const searchGlobalMemoryInputSchema = z.object({
   maxResults: z.number().int().min(1).max(50).optional()
 });
 
+export const memoryToolPolicySchema = z.object({
+  allow: z.array(z.string()).optional(),
+  deny: z.array(z.string()).optional()
+});
+
+export const updateMemoryRuntimeConfigInputSchema = z.object({
+  tools: memoryToolPolicySchema.optional(),
+  citations: z.enum(["on", "off", "auto"]).optional(),
+  sources: z.array(z.enum(["memory", "sessions"])).optional(),
+  extraPaths: z.array(z.string()).optional()
+});
+
 export const agentCreateThreadInputSchema = z.object({
   title: z.string().optional(),
   modelRef: z.string().optional(),

@@ -1,15 +1,7 @@
 import { useState } from 'react'
 import type * as React from 'react'
 import {
-  Box,
-  Cloud,
-  Cog,
-  Keyboard,
-  Palette,
-  Puzzle,
   Settings,
-  Users,
-  type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -19,29 +11,13 @@ import { McpSettings } from './McpSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
 import { AutomationSettings } from '../automation/AutomationSettings'
-
-type SettingsViewTab =
-  | 'general'
-  | 'appearance'
-  | 'models'
-  | 'workspaces'
-  | 'files'
-  | 'shortcuts'
-  | 'integrations'
-
-const SETTINGS_NAV_ITEMS: Array<{
-  id: SettingsViewTab
-  label: string
-  icon: LucideIcon
-}> = [
-  { id: 'general', label: '通用', icon: Cog },
-  { id: 'appearance', label: '外观', icon: Palette },
-  { id: 'models', label: '模型', icon: Box },
-  { id: 'workspaces', label: '工作区', icon: Users },
-  { id: 'files', label: '文件与同步', icon: Cloud },
-  { id: 'shortcuts', label: '快捷键', icon: Keyboard },
-  { id: 'integrations', label: 'MCP 与集成', icon: Puzzle },
-]
+import { MemorySettings } from './MemorySettings'
+import {
+  SETTINGS_NAV_ITEMS,
+  SETTINGS_PAGE_SUBTITLES,
+  SETTINGS_PAGE_TITLES,
+  type SettingsViewTab,
+} from './settings-view-state'
 
 export function SettingsView() {
   const [tab, setTab] = useState<SettingsViewTab>('general')
@@ -92,6 +68,7 @@ export function SettingsView() {
           )}
           {tab === 'models' && <AgentSettings />}
           {tab === 'workspaces' && <WorkspacesSettings />}
+          {tab === 'memory' && <MemorySettings />}
           {tab === 'files' && <SettingsContentShell><SkillsSettings /></SettingsContentShell>}
           {tab === 'shortcuts' && <SettingsContentShell><AutomationSettings /></SettingsContentShell>}
           {tab === 'integrations' && <McpSettings />}
@@ -99,26 +76,6 @@ export function SettingsView() {
       </ScrollArea>
     </div>
   )
-}
-
-const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
-  general: '通用设置',
-  appearance: '外观',
-  models: '模型与供应商',
-  workspaces: '工作区设置',
-  files: '文件与同步',
-  shortcuts: '快捷键',
-  integrations: 'MCP 与集成',
-}
-
-const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
-  general: '管理你的应用偏好、模型配置与工作区设置',
-  appearance: '调整界面外观、显示密度与主题偏好',
-  models: '管理默认模型、供应商连接与可用模型配置',
-  workspaces: '管理多个本地工作区的基本信息、目录和默认行为',
-  files: '管理文件接入、同步状态与资料上下文',
-  shortcuts: '管理键盘快捷键与常用自动化操作',
-  integrations: '管理 MCP 服务发现、连接状态与集成能力',
 }
 
 function SettingsContentShell({ children }: { children: React.ReactNode }) {

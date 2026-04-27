@@ -3,9 +3,11 @@ import {
   applyMemoryToolPolicy,
   deriveChatTypeFromThreadKey,
   deriveChatTypeFromThreadType,
+  getMemoryRuntimeConfig,
   normalizeMemoryChatType,
   parseMemoryRuntimeConfigPayload,
-  shouldIncludeCitations
+  shouldIncludeCitations,
+  updateMemoryRuntimeConfig
 } from "./memory-policy";
 
 describe("memory-policy", () => {
@@ -112,5 +114,22 @@ describe("memory-policy", () => {
     expect(tools).toEqual(["memory.search", "memory.read"]);
     expect(result.sources).toEqual(["memory"]);
     expect(result.extraPaths).toEqual([]);
+  });
+
+  test("updateMemoryRuntimeConfig 应持久化记忆工具分组权限", () => {
+    const saved = updateMemoryRuntimeConfig({
+      tools: {
+        allow: ["group:memory", "group:memory-write", "group:memory-global"],
+        deny: ["memory.promoteGlobal"]
+      },
+      citations: "on",
+      sources: ["memory", "sessions"]
+    });
+
+    expect(saved.tools.allow).toEqual(["group:memory", "group:memory-write", "group:memory-global"]);
+    expect(saved.tools.deny).toEqual(["memory.promoteGlobal"]);
+    expect(saved.citations).toBe("on");
+    expect(saved.sources).toEqual(["memory", "sessions"]);
+    expect(getMemoryRuntimeConfig()).toEqual(saved);
   });
 });

@@ -282,6 +282,29 @@ export interface MemoryIndexDocumentToolInput {
   force?: boolean;
 }
 
+export type MemoryCitationsMode = "on" | "off" | "auto";
+export type MemorySourceMode = "memory" | "sessions";
+
+export interface MemoryToolPolicy {
+  allow?: string[];
+  deny?: string[];
+}
+
+export interface MemoryRuntimeConfig {
+  version: number;
+  tools: MemoryToolPolicy;
+  citations: MemoryCitationsMode;
+  sources: MemorySourceMode[];
+  extraPaths: string[];
+}
+
+export interface UpdateMemoryRuntimeConfigInput {
+  tools?: MemoryToolPolicy;
+  citations?: MemoryCitationsMode;
+  sources?: MemorySourceMode[];
+  extraPaths?: string[];
+}
+
 export interface MemoryIndexWorkspaceInput {
   workspaceSlug: string;
   force?: boolean;
@@ -345,6 +368,13 @@ export interface PromoteGlobalMemoryInput {
   editedContent?: string;
 }
 
+export interface GlobalMemoryStatus {
+  workspaceSlug: string;
+  candidateCount: number;
+  pendingCandidateCount: number;
+  itemCount: number;
+}
+
 export interface MemoryProviderStatus {
   backend?: "builtin" | "qmd";
   provider: string;
@@ -378,5 +408,7 @@ export const MEMORY_IPC_CHANNELS = {
   PROMOTE_GLOBAL: "memory:promote-global",
   REJECT_GLOBAL_CANDIDATE: "memory:reject-global-candidate",
   SEARCH_GLOBAL: "memory:search-global",
-  STATUS_GLOBAL: "memory:status-global"
+  STATUS_GLOBAL: "memory:status-global",
+  GET_RUNTIME_CONFIG: "memory:get-runtime-config",
+  UPDATE_RUNTIME_CONFIG: "memory:update-runtime-config"
 } as const;

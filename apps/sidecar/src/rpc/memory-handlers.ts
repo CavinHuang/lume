@@ -19,6 +19,10 @@ import {
 } from "../services/memory/memory-global-promoter";
 import { startMemorySyncWatcher } from "../services/memory/memory-sync-watcher";
 import {
+  getMemoryRuntimeConfig,
+  updateMemoryRuntimeConfig
+} from "../services/memory/memory-policy";
+import {
   listGlobalMemoryCandidatesInputSchema,
   memoryDistillInputSchema,
   memoryGetInputSchema,
@@ -29,6 +33,7 @@ import {
   memorySaveInputSchema,
   memorySearchInputSchema,
   searchGlobalMemoryInputSchema,
+  updateMemoryRuntimeConfigInputSchema,
   workspaceSlugInputSchema
 } from "./schemas";
 import type { RpcHandler } from "./types";
@@ -104,6 +109,14 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     },
     [MEMORY_IPC_CHANNELS.STATUS_GLOBAL]: async () => {
       return getGlobalMemoryStatus();
+    },
+    [MEMORY_IPC_CHANNELS.GET_RUNTIME_CONFIG]: async () => {
+      return getMemoryRuntimeConfig();
+    },
+    [MEMORY_IPC_CHANNELS.UPDATE_RUNTIME_CONFIG]: async (params) => {
+      return updateMemoryRuntimeConfig(
+        validateInput(updateMemoryRuntimeConfigInputSchema, params, MEMORY_IPC_CHANNELS.UPDATE_RUNTIME_CONFIG)
+      );
     }
   };
 }

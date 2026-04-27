@@ -1,4 +1,16 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import type {
+  MemoryCitationsMode,
+  MemoryRuntimeConfig,
+  MemorySourceMode,
+  MemoryToolPolicy,
+  UpdateMemoryRuntimeConfigInput
+} from "@lume/shared";
+export type {
+  MemoryCitationsMode,
+  MemorySourceMode,
+  MemoryToolPolicy
+} from "@lume/shared";
 import { getMemoryConfigPath } from "../infra/config-paths";
 import {
   compilePatterns as compilePatterns_shared,
@@ -6,14 +18,7 @@ import {
   type CompiledPattern
 } from "../infra/pattern-utils";
 
-export type MemoryCitationsMode = "on" | "off" | "auto";
 export type MemoryChatType = "direct" | "group" | "channel";
-export type MemorySourceMode = "memory" | "sessions";
-
-export interface MemoryToolPolicy {
-  allow?: string[];
-  deny?: string[];
-}
 
 interface MemoryRuntimeConfigFile {
   version?: number;
@@ -23,7 +28,7 @@ interface MemoryRuntimeConfigFile {
   extraPaths?: string[];
 }
 
-const MEMORY_CONFIG_VERSION = 1;
+export const MEMORY_CONFIG_VERSION = 1;
 
 const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | "tools" | "citations">> = {
   version: MEMORY_CONFIG_VERSION,
@@ -149,6 +154,17 @@ export function parseMemoryRuntimeConfigPayload(payload: unknown): {
   };
 }
 
+function normalizeRuntimeConfig(payload: unknown): MemoryRuntimeConfig {
+  const parsed = parseMemoryRuntimeConfigPayload(payload);
+  return {
+    version: MEMORY_CONFIG_VERSION,
+    tools: parsed.toolPolicy ?? { ...DEFAULT_MEMORY_CONFIG.tools },
+    citations: parsed.citationsMode,
+    sources: parsed.sources,
+    extraPaths: parsed.extraPaths
+  };
+}
+
 export function shouldIncludeCitations(mode: MemoryCitationsMode, chatType: MemoryChatType): boolean {
   if (mode === "on") return true;
   if (mode === "off") return false;
@@ -218,4 +234,32 @@ export function resolveMemoryRuntimeConfig(): {
       extraPaths: [...DEFAULT_EXTRA_PATHS]
     };
   }
+}
+
+export function getMemoryRuntimeConfig(): MemoryRuntimeConfig {
+  const configPath = getMemoryConfigPath();
+  if (!existsSync(configPath)) {
+    return updateMemoryRuntimeConfig({});
+  }
+  try {
+    return normalizeRuntimeConfig(JSON.parse(readFileSync(configPath, "utf-8")) as unknown);
+  } catch (error) {
+    console.warn("[Memory] 读取配置失败，使用默认值:", error);
+    return normalizeRuntimeConfig({});
+  }
+}
+
+export function updateMemoryRuntimeConfig(input: UpdateMemoryRuntimeConfigInput): MemoryRuntimeConfig {
+  const current = existsSync(getMemoryConfigPath())
+    ? getMemoryRuntimeConfig()
+    : normalizeRuntimeConfig({});
+  const next = normalizeRuntimeConfig({
+    version: MEMORY_CONFIG_VERSION,
+    tools: input.tools ?? current.tools,
+    citations: input.citations ?? current.citations,
+    sources: input.sources ?? current.sources,
+    extraPaths: input.extraPaths ?? current.extraPaths
+  });
+  writeFileSync(getMemoryConfigPath(), JSON.stringify(next, null, 2), "utf-8");
+  return next;
 }
