@@ -21,6 +21,22 @@ describe("capability-routing", () => {
     expect(decision.reason).toContain("low-level");
   });
 
+  test("没有明确 skill 匹配时，应默认回落 raw-tools 而不是 skills", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "分析一下这个提示词设计有什么问题",
+      availableTools: ["Skill", "read", "write", "grep"],
+      loadedSkills: [
+        {
+          slug: "brainstorming",
+          name: "Brainstorming",
+          description: "Use for ambiguous product and design exploration"
+        }
+      ]
+    });
+    expect(decision.preferredLane).toBe("raw-tools");
+    expect(decision.reason).toContain("direct tools");
+  });
+
   test("匹配已加载 skill 元数据时应优先 skills", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "帮我做一个 execution plan",
@@ -34,7 +50,7 @@ describe("capability-routing", () => {
       ]
     });
     expect(decision.preferredLane).toBe("skills");
-    expect(decision.reason).toContain("loaded skill metadata");
+    expect(decision.reason).toContain("skill metadata");
   });
 
   test("浏览器请求应优先 browser", () => {
@@ -45,10 +61,17 @@ describe("capability-routing", () => {
     expect(decision.preferredLane).toBe("browser");
   });
 
-  test("历史连续性请求应优先 memory", () => {
+  test("历史连续性请求应优先 memory，且不被 skills lane 抢占", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "回忆一下我们之前确认过的偏好",
-      availableTools: ["memory_search", "memory_get", "read"]
+      availableTools: ["Skill", "memory_search", "memory_get", "read"],
+      loadedSkills: [
+        {
+          slug: "brainstorming",
+          name: "Brainstorming",
+          description: "Use for ambiguous product and design exploration"
+        }
+      ]
     });
     expect(decision.preferredLane).toBe("memory");
   });
