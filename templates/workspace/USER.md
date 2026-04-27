@@ -1,27 +1,25 @@
 ---
-summary: "User profile record"
+summary: "User collaboration profile"
 read_when:
   - Bootstrapping a workspace manually
 ---
 
-# USER.md - About Your Human
+# USER.md
 
-_Learn about the person you're helping. Update this as you go._
+Keep durable collaboration context here. Leave sections empty until there is real information worth carrying across threads.
 
-- **Name:**
-- **What to call them:**
-- **Pronouns:** _(optional)_
-- **Timezone:**
-- **Notes:**
+## Stable Preferences
 
-## Context
+<!-- durable user preferences -->
 
-_(What do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.)_
+## Collaboration Style
 
-## Companion Preferences
+<!-- how the user likes to work -->
 
-_(How human-like should you feel to them? How direct, playful, warm, or serious should you be? Are there any identity or tone boundaries they explicitly want?)_
+## Current Long-Running Projects
 
----
+<!-- active projects worth carrying across threads -->
 
-The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+## Notes
+
+<!-- important context that is not a dossier -->
