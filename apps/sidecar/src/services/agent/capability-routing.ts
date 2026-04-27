@@ -76,6 +76,27 @@ function containsAny(text: string, patterns: string[]): boolean {
   return patterns.some((pattern) => text.includes(pattern));
 }
 
+function tokenizeMessage(message: string): string[] {
+  return message
+    .split(/[\s,.;:!?，。；：！？()（）\[\]{}<>《》"'`]+/)
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length >= 3);
+}
+
+function hasSkillMetadataMatch(message: string, skillText: string): boolean {
+  if (!skillText) return false;
+  return tokenizeMessage(message).some((token) => skillText.includes(token));
+}
+
+function pickDefaultLane(lanes: CapabilityLane[]): CapabilityLane | null {
+  if (lanes.includes("raw-tools")) return "raw-tools";
+  if (lanes.includes("web")) return "web";
+  if (lanes.includes("browser")) return "browser";
+  if (lanes.includes("memory")) return "memory";
+  if (lanes.includes("skills")) return "skills";
+  return lanes[0] ?? null;
+}
+
 export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): CapabilityRoutingDecision {
   const lanes = inferCapabilityLanes(input.availableTools);
   const laneSet = new Set(lanes);
@@ -83,10 +104,13 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
   const skillText = buildSkillText(input.loadedSkills ?? []);
 
   if (!message) {
+    const preferredLane = pickDefaultLane(lanes);
     return {
       lanes,
-      preferredLane: lanes[0] ?? null,
-      reason: lanes.length > 0 ? "fallback to first available capability lane" : "no capability lanes available"
+      preferredLane,
+      reason: preferredLane
+        ? "no user intent available; use the lightest direct capability lane"
+        : "no capability lanes available"
     };
   }
 
@@ -107,18 +131,6 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
       lanes,
       preferredLane: "raw-tools",
       reason: "user explicitly asked for low-level/manual tool control"
-    };
-  }
-
-  const skillLikelyMatch = laneSet.has("skills")
-    && skillText.length > 0
-    && message.split(/[\s,.;:!?，。；：！？()（）]+/).filter((token) => token.length >= 3)
-      .some((token) => skillText.includes(token));
-  if (skillLikelyMatch) {
-    return {
-      lanes,
-      preferredLane: "skills",
-      reason: "loaded skill metadata overlaps with the user request"
     };
   }
 
@@ -185,25 +197,23 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
     };
   }
 
-  if (laneSet.has("skills")) {
+  const skillLikelyMatch = laneSet.has("skills") && hasSkillMetadataMatch(message, skillText);
+  if (skillLikelyMatch) {
     return {
       lanes,
       preferredLane: "skills",
-      reason: "skills lane is available and should be preferred before raw tools by default"
+      reason: "loaded skill metadata clearly overlaps with the user request"
     };
   }
 
-  if (laneSet.has("raw-tools")) {
-    return {
-      lanes,
-      preferredLane: "raw-tools",
-      reason: "no higher-level capability lane matched; use direct tools"
-    };
-  }
-
+  const preferredLane = pickDefaultLane(lanes);
   return {
     lanes,
-    preferredLane: lanes[0] ?? null,
-    reason: lanes.length > 0 ? "fallback to first available capability lane" : "no capability lanes available"
+    preferredLane,
+    reason: preferredLane === "raw-tools"
+      ? "no specialized capability clearly matched; use direct tools"
+      : preferredLane
+        ? "no specialized capability clearly matched; use the lightest available lane"
+        : "no capability lanes available"
   };
 }
