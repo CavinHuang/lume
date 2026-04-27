@@ -1,44 +1,30 @@
 ---
 title: "WORKSPACE.md Template"
-summary: "Workspace brief and current project state"
+summary: "Compact workspace brief"
 read_when:
   - Every session in this workspace
 ---
 
-# WORKSPACE.md - Workspace Brief
+# WORKSPACE.md
 
-## What This Workspace Is
+Keep this as the compact brief for the workspace. Update it with facts that help future threads orient quickly.
 
-Describe the product, project, or collaboration space.
+## Purpose
 
-## Current Goals
+<!-- what this workspace is for -->
 
-- ...
+## Current Focus
 
-## Active Work
+<!-- active workstreams -->
 
-- ...
+## Important Paths
 
-## Important Decisions
+<!-- files, folders, or docs that matter -->
 
-- ...
+## Common Commands
 
-## User Preferences In This Workspace
-
-- ...
+<!-- project-specific commands -->
 
 ## Constraints
 
-- ...
-
-## Current State
-
-- ...
-
-## Open Questions
-
-- ...
-
----
-
-This file is the compact working memory of the workspace. Keep it current, concise, and useful.
+<!-- important boundaries, preferences, or known limitations -->
