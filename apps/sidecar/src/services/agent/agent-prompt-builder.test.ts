@@ -130,7 +130,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Capability Routing Order");
     expect(prompt).toContain("1. Use a loaded Skill when it clearly matches the request.");
     expect(prompt).toContain("browser for browser-session continuity and current-page actions");
-    expect(prompt).toContain("memory_search / memory_get for prior decisions");
+    expect(prompt).toContain("memory.search / memory.read for prior decisions");
     expect(prompt).toContain("WebSearch / WebFetch for public web retrieval");
     expect(prompt).toContain("Compose direct low-level tools only when no packaged capability cleanly fits.");
   });

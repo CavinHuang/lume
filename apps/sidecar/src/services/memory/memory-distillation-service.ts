@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { MemoryDistillationResult } from "@lume/shared";
-import { getAgentWorkspacePath, getGlobalMemoryPath } from "../infra/config-paths";
+import type { MemoryDistillationResult, MemoryDistillInput, MemoryKind } from "@lume/shared";
+import { getAgentWorkspacePath, getGlobalMemoryPath, getWorkspaceMemoryDbPath } from "../infra/config-paths";
+import { MemoryRepository } from "./memory-repository";
+import { generateGlobalCandidates } from "./memory-global-promoter";
 
 function readTextIfExists(path: string): string {
   if (!existsSync(path)) return "";
@@ -25,6 +27,62 @@ function appendUniqueLines(path: string, lines: string[]): boolean {
   return true;
 }
 
+function normalizeDistilledLine(line: string): string {
+  return line
+    .replace(/^[-*]\s+/, "")
+    .replace(/^\[(decision|preference|fact|lesson|milestone|episode)\]\s*/i, "")
+    .trim();
+}
+
+function classifyDistilledLine(line: string): MemoryKind {
+  if (/^\s*[-*]?\s*\[decision\]/i.test(line) || /\b(decided|decision|采用|确定)\b/i.test(line)) {
+    return "decision";
+  }
+  if (/^\s*[-*]?\s*\[preference\]/i.test(line) || /\b(prefers?|preference|偏好)\b/i.test(line)) {
+    return "preference";
+  }
+  if (/^\s*[-*]?\s*\[lesson\]/i.test(line) || /\b(lesson|pitfall|踩坑)\b/i.test(line)) {
+    return "lesson";
+  }
+  if (/^\s*[-*]?\s*\[milestone\]/i.test(line) || /\b(milestone|released|完成)\b/i.test(line)) {
+    return "milestone";
+  }
+  if (/^\s*[-*]?\s*\[episode\]/i.test(line)) {
+    return "episode";
+  }
+  return "fact";
+}
+
+function appendWorkspaceBriefDecisions(path: string, decisions: string[]): boolean {
+  if (decisions.length === 0) return false;
+  const existing = readTextIfExists(path);
+  const existingSet = new Set(
+    existing
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^[-*]\s+/, "").trim())
+      .filter(Boolean)
+  );
+  const toAppend = decisions.filter((line) => !existingSet.has(line.trim()));
+  if (toAppend.length === 0) return false;
+
+  const base = existing.trim().length > 0
+    ? existing
+    : [
+        "# WORKSPACE.md - Workspace Brief",
+        "",
+        "## Important Decisions",
+        ""
+      ].join("\n");
+  const hasDecisionHeading = /^## Important Decisions\s*$/im.test(base);
+  const prefix = base.endsWith("\n") ? "" : "\n";
+  const block = toAppend.map((line) => `- ${line}`).join("\n");
+  const next = hasDecisionHeading
+    ? `${base}${prefix}${block}\n`
+    : `${base}${prefix}\n## Important Decisions\n\n${block}\n`;
+  writeFileSync(path, next, "utf-8");
+  return true;
+}
+
 function collectWorkspaceDailyMemoryLines(workspacePath: string): string[] {
   const memoryDir = join(workspacePath, "memory");
   if (!existsSync(memoryDir)) return [];
@@ -42,11 +100,10 @@ function collectWorkspaceDailyMemoryLines(workspacePath: string): string[] {
   );
 }
 
-export async function distillWorkspaceMemory(input: {
-  workspaceSlug: string;
-}): Promise<MemoryDistillationResult> {
+export async function distillWorkspaceMemory(input: MemoryDistillInput): Promise<MemoryDistillationResult> {
   const workspacePath = getAgentWorkspacePath(input.workspaceSlug);
   const workspaceMemoryPath = join(workspacePath, "MEMORY.md");
+  const workspaceBriefPath = join(workspacePath, "WORKSPACE.md");
   const globalMemoryPath = getGlobalMemoryPath();
   const dailyLines = collectWorkspaceDailyMemoryLines(workspacePath);
 
@@ -61,15 +118,67 @@ export async function distillWorkspaceMemory(input: {
 
   const updatedWorkspaceMemory = appendUniqueLines(workspaceMemoryPath, distilledWorkspaceLines);
 
+  const repository = new MemoryRepository({
+    dbPath: getWorkspaceMemoryDbPath(input.workspaceSlug),
+    workspaceSlug: input.workspaceSlug
+  });
+  let createdItems = 0;
+  let skippedItems = 0;
+  const decisionLines: string[] = [];
+  const createdMemoryIds: string[] = [];
+  try {
+    const existingItems = await repository.listByWorkspace(input.workspaceSlug);
+    const existingDistilledContent = new Set(
+      existingItems
+        .filter((item) => item.source === "distillation")
+        .map((item) => item.content.trim())
+    );
+    for (const rawLine of distilledWorkspaceLines) {
+      const content = normalizeDistilledLine(rawLine);
+      if (!content) continue;
+      if (existingDistilledContent.has(content)) {
+        skippedItems += 1;
+        continue;
+      }
+      const kind = classifyDistilledLine(rawLine);
+      const saved = await repository.save({
+        workspaceSlug: input.workspaceSlug,
+        scope: "workspace",
+        kind,
+        source: "distillation",
+        content,
+        sourcePath: "MEMORY.md",
+        importance: kind === "decision" || kind === "preference" ? 4 : 3,
+        confidence: 0.8
+      });
+      createdItems += 1;
+      createdMemoryIds.push(saved.id);
+      existingDistilledContent.add(content);
+      if (kind === "decision") {
+        decisionLines.push(content);
+      }
+    }
+  } finally {
+    repository.dispose();
+  }
+
+  const updatedWorkspaceBrief = appendWorkspaceBriefDecisions(workspaceBriefPath, decisionLines);
+  const generatedGlobalCandidates = input.generateGlobalCandidates
+    ? await generateGlobalCandidates({
+        workspaceSlug: input.workspaceSlug,
+        memoryIds: createdMemoryIds
+      })
+    : [];
+
   const workspaceMemory = readTextIfExists(workspaceMemoryPath);
-  const globalCandidates = workspaceMemory
+  const globalPromotionLines = workspaceMemory
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.startsWith("[global] "))
     .map((line) => line.slice("[global] ".length).trim())
     .filter(Boolean);
 
-  const promotedToGlobal = globalCandidates.filter((line) => {
+  const promotedToGlobal = globalPromotionLines.filter((line) => {
     const before = readTextIfExists(globalMemoryPath);
     const globalDir = dirname(globalMemoryPath);
     if (!existsSync(globalDir)) {
@@ -83,6 +192,14 @@ export async function distillWorkspaceMemory(input: {
   return {
     workspaceSlug: input.workspaceSlug,
     updatedWorkspaceMemory,
-    promotedToGlobal
+    promotedToGlobal,
+    createdItems,
+    updatedItems: 0,
+    skippedItems,
+    invalidatedItems: 0,
+    updatedWorkspaceBrief,
+    scannedFiles: dailyLines.length > 0 ? 1 : 0,
+    candidateItems: distilledWorkspaceLines.length,
+    globalCandidateCount: generatedGlobalCandidates.length
   };
 }

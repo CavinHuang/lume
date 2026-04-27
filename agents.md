@@ -48,12 +48,12 @@ Keep runtime marker contracts stable and non-destructive when overlays are appli
 
 ## Working agreements
 - Write a cleanup plan before modifying code for cleanup/refactor/deslop work.
-- Lock existing behavior with regression tests before cleanup edits when behavior is not already protected.
+- 仅在清理已有测试保护的代码时才锁定行为；新增或无测试的代码不要为了仪式感补写测试。
 - Prefer deletion over addition.
 - Reuse existing utils and patterns before introducing new abstractions.
 - No new dependencies without explicit request.
 - Keep diffs small, reviewable, and reversible.
-- Run lint, typecheck, tests, and static analysis after changes.
+- 仅在改动涉及可测试逻辑时运行相关测试；样式、文案、纯 UI 调整无需运行测试。不要为了"证明完成"而执行全量 lint/typecheck/test，只在改动有风险或涉及公共接口时验证。
 - Final reports must include changed files, simplifications made, and remaining risks.
 
 <lore_commit_protocol>

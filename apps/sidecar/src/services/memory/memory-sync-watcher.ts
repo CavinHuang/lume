@@ -70,6 +70,7 @@ export function startMemorySyncWatcher(): void {
       const normalized = relativeFilename.replace(/\\/g, "/");
       if (
         normalized.endsWith("/MEMORY.md") ||
+        normalized.endsWith("/WORKSPACE.md") ||
         (normalized.includes("/memory/") && normalized.endsWith(".md"))
       ) {
         scheduleSync(relativeFilename);

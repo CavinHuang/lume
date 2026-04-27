@@ -14,7 +14,7 @@ describe("memory-policy", () => {
       baseTools: ["memory_search", "memory_get", "memory_save"],
       policy: { allow: ["group:memory"] }
     });
-    expect(result).toEqual(["memory_search", "memory_get"]);
+    expect(result).toEqual(["memory.search", "memory.read"]);
   });
 
   test("deny 可覆盖 allow", () => {
@@ -22,7 +22,7 @@ describe("memory-policy", () => {
       baseTools: ["memory_search", "memory_get", "memory_save"],
       policy: { allow: ["group:memory", "memory_save"], deny: ["memory_get"] }
     });
-    expect(result).toEqual(["memory_search", "memory_save"]);
+    expect(result).toEqual(["memory.search", "memory.remember"]);
   });
 
   test("allow=* 时应允许全部基础工具（再应用 deny）", () => {
@@ -30,7 +30,7 @@ describe("memory-policy", () => {
       baseTools: ["memory_search", "memory_get", "memory_save"],
       policy: { allow: ["*"], deny: ["memory_get"] }
     });
-    expect(result).toEqual(["memory_search", "memory_save"]);
+    expect(result).toEqual(["memory.search", "memory.remember"]);
   });
 
   test("allow 支持通配符", () => {
@@ -38,7 +38,7 @@ describe("memory-policy", () => {
       baseTools: ["memory_search", "memory_get", "memory_save"],
       policy: { allow: ["memory_*"] }
     });
-    expect(result).toEqual(["memory_search", "memory_get", "memory_save"]);
+    expect(result).toEqual(["memory.search", "memory.read", "memory.remember"]);
   });
 
   test("deny 支持通配符，且优先于 allow", () => {
@@ -46,7 +46,7 @@ describe("memory-policy", () => {
       baseTools: ["memory_search", "memory_get", "memory_save"],
       policy: { allow: ["memory_*"], deny: ["*_save"] }
     });
-    expect(result).toEqual(["memory_search", "memory_get"]);
+    expect(result).toEqual(["memory.search", "memory.read"]);
   });
 
   test("citation auto 仅 direct 为 true", () => {
@@ -109,7 +109,7 @@ describe("memory-policy", () => {
       baseTools: ["memory_search", "memory_get", "memory_save"],
       policy: result.toolPolicy
     });
-    expect(tools).toEqual(["memory_search", "memory_get"]);
+    expect(tools).toEqual(["memory.search", "memory.read"]);
     expect(result.sources).toEqual(["memory"]);
     expect(result.extraPaths).toEqual([]);
   });

@@ -61,6 +61,43 @@ describe("memory-index-manager", () => {
     removeDirWithRetry(root);
   });
 
+  test("indexWorkspace 应从 Markdown section 生成结构化 MemoryItem", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-memory-index-structured-"));
+    const dbPath = join(root, "memory.sqlite");
+    writeFileSync(
+      join(root, "WORKSPACE.md"),
+      [
+        "# Workspace",
+        "",
+        "## Important Decisions",
+        "- Use structured workspace journey memory for auditable recall."
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const manager = new MemoryIndexManager({
+      workspaceRoot: root,
+      workspaceSlug: "structured-demo",
+      dbPath
+    });
+    try {
+      await manager.indexWorkspace(true);
+      const results = await manager.search({
+        query: "auditable recall",
+        maxResults: 5
+      });
+      expect(results.some((item) =>
+        item.kind === "decision"
+        && item.scope === "workspace"
+        && item.source === "memory"
+        && item.path === "WORKSPACE.md"
+      )).toBeTrue();
+    } finally {
+      manager.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("readFile 默认返回完整内容，且拒绝非记忆路径", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-memory-read-"));
     const memoryDir = join(root, "memory");

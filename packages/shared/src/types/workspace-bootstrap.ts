@@ -16,6 +16,7 @@ export type BootstrapFileType =
   | 'SOUL'       // 智能体人格定义
   | 'USER'       // 用户信息
   | 'IDENTITY'   // 身份标识
+  | 'WORKSPACE'  // 工作区概括
   | 'AGENTS'     // 操作指令
   | 'TOOLS'      // 工具说明
   | 'HEARTBEAT'  // 心跳任务
@@ -60,6 +61,12 @@ export const BOOTSTRAP_FILES: BootstrapFileMeta[] = [
     type: 'IDENTITY',
     filename: 'IDENTITY.md',
     devFilename: 'IDENTITY.dev.md',
+    loadInAllSessions: true,
+  },
+  {
+    type: 'WORKSPACE',
+    filename: 'WORKSPACE.md',
+    devFilename: 'WORKSPACE.dev.md',
     loadInAllSessions: true,
   },
   {
@@ -149,6 +156,8 @@ export interface SystemPromptComponents {
   user?: string
   /** 身份标识（IDENTITY.md） */
   identity?: string
+  /** 工作区概括（WORKSPACE.md） */
+  workspace?: string
   /** 操作指令（AGENTS.md） */
   agents?: string
   /** 工具说明（TOOLS.md） */

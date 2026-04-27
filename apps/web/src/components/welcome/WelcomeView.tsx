@@ -18,7 +18,7 @@ import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDia
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
 import type { AgentThreadMeta, LumeConfigThinkingLevel } from '@lume/shared'
-import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
+import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
 
@@ -229,6 +229,16 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     editor.commands.focus('end')
   }
 
+  const handleThinkingLevelChange = async (value: LumeConfigThinkingLevel) => {
+    setThinkingLevel(value)
+    try {
+      await updateAgentThinkingLevel(value)
+    } catch (error) {
+      console.error('[WelcomeView] 保存思考等级失败:', error)
+      toast.error('保存思考等级失败')
+    }
+  }
+
   const hasText = editorText.trim().length > 0
 
   return (
@@ -270,7 +280,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
           />
         }
         thinkingLevelPicker={
-          <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
+          <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
         }
         editor={editor}
         pendingFiles={pendingFiles}

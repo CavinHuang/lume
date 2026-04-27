@@ -74,6 +74,22 @@ function emitRunWithSubagentTranscript(emit: {
   emit.onComplete();
 }
 
+function emitRunWithCompactionSummary(emit: {
+  onSdkMessage: (message: SDKMessage) => void;
+  onComplete: () => void;
+}): void {
+  emit.onSdkMessage({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: {
+      trigger: "auto",
+      pre_tokens: 1234,
+      summary: "The session established structured memory flush from compaction summaries."
+    }
+  } as SDKMessage);
+  emitSuccessfulRun(emit);
+}
+
 async function waitForQueuedRunRelease(userMessage: string): Promise<void> {
   for (let i = 0; i < 50; i += 1) {
     const resolver = heldRunResolvers.get(userMessage);
@@ -108,6 +124,10 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
     const threadId = (params as { runtime?: { sessionId?: string } })?.runtime?.sessionId ?? "";
     if (userMessage === "subagent-projection") {
       emitRunWithSubagentTranscript(emit);
+      return { status: "completed" as const };
+    }
+    if (userMessage === "compact-summary") {
+      emitRunWithCompactionSummary(emit);
       return { status: "completed" as const };
     }
     if (userMessage === "subagent-announce-during-run") {
@@ -160,7 +180,9 @@ describe("agent-service", () => {
 
   afterEach(async () => {
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
+    const { closeMemoryManagers } = await import("../memory/memory-service");
     resetAgentRuntimeStatusManagerForTest();
+    closeMemoryManagers();
     heldRunResolvers.clear();
     runPiAgentCalls.length = 0;
     if (previousConfigDir === undefined) {
@@ -235,6 +257,44 @@ describe("agent-service", () => {
     });
 
     expect((runPiAgentCalls.at(-1) as { runtime?: { workspaceId?: string } })?.runtime?.workspaceId).toBe(workspace.id);
+  });
+
+  test("sendAgentMessage 在 compaction boundary 后写入结构化 memory flush", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { createAgentWorkspace } = await import("./agent-workspace-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { searchLayeredMemory } = await import("../memory/memory-service");
+    const workspace = createAgentWorkspace("Memory Flush Workspace", { slug: "memory-flush-workspace" });
+    const thread = createAgentThread("compaction memory flush", "channel-test", workspace.id);
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "compact-summary",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onSdkMessage: () => undefined,
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const results = await searchLayeredMemory({
+      workspaceSlug: workspace.slug,
+      query: "structured memory flush compaction summaries",
+      maxResults: 5,
+      includeGlobal: false
+    });
+
+    expect(results[0]).toEqual(expect.objectContaining({
+      kind: "episode",
+      scope: "workspace",
+      source: "flush"
+    }));
+    expect(results[0]?.snippet).toContain("structured memory flush");
   });
 
   test("appendAgentMessage 应在运行中排队并在完成后自动发送下一条", async () => {

@@ -30,7 +30,7 @@ function decorateMemorySearchResults(params: {
     return params.results.map((entry) => ({ ...entry, citation: undefined }));
   }
   return params.results.map((entry) => {
-    const citation = entry.citation ?? formatCitation(entry.path, entry.startLine, entry.endLine);
+    const citation = entry.citation ?? formatCitation(entry.path, entry.startLine ?? 1, entry.endLine ?? 1);
     const hasSourceLine = /\n\nSource:\s+/i.test(entry.snippet);
     const snippet = hasSourceLine ? entry.snippet : `${entry.snippet.trim()}\n\nSource: ${citation}`;
     return { ...entry, citation, snippet };

@@ -65,7 +65,7 @@ describe("tool-policy", () => {
       allow: ["memory_search", "memory_get"],
       deny: ["memory_get"]
     });
-    expect(tools).toEqual(["memory_search"]);
+    expect(tools).toEqual(["memory.search"]);
   });
 
   test("应支持读取和保存 runtime tool policy 配置", () => {
@@ -151,5 +151,4 @@ describe("tool-policy", () => {
     }
   });
 });
-
 

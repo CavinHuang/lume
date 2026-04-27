@@ -6,6 +6,7 @@ import {
   getAgentWorkspacePath,
   getGlobalMemoryPath,
   getGlobalMemoryDbPath,
+  getGlobalStructuredMemoryPath,
   getWorkspaceMemoryDbPath
 } from "../infra/config-paths";
 import { MemoryIndexManager } from "./memory-index-manager";
@@ -14,8 +15,10 @@ import { resolveMemoryRuntimeConfig } from "./memory-policy";
 import { isMemoryPath, normalizeRelPath } from "./memory-path-utils";
 import { getEmbeddingCacheStats } from "./embedding";
 import { distillWorkspaceMemory } from "./memory-distillation-service";
+import { searchGlobalMemory } from "./memory-global-promoter";
 import type {
   MemoryDistillationResult,
+  MemoryDistillInput,
   MemoryGetInput,
   MemoryGetResult,
   MemoryIndexFileInput,
@@ -58,7 +61,8 @@ function getGlobalManager(): MemoryIndexManager {
     workspaceRoot: getConfigDir(),
     dbPath: getGlobalMemoryDbPath(),
     sources: ["memory"],
-    extraPaths: []
+    extraPaths: [],
+    includeWorkspaceBrief: false
   });
   managerCache.set(GLOBAL_MEMORY_KEY, manager);
   return manager;
@@ -87,36 +91,77 @@ export function removeWorkspaceMemoryDocument(input: {
 
 export async function searchLayeredMemory(input: MemorySearchInput): Promise<MemorySearchResult[]> {
   const manager = getManager(input.workspaceSlug);
-  const globalManager = getGlobalManager();
   const stats = manager.getStats();
   if (stats.chunkCount === 0) {
     await manager.indexWorkspace(false);
   }
+  const limit = input.maxResults ?? 10;
+  const workspaceResults = await manager.search({
+    query: input.query,
+    maxResults: limit,
+    minScore: input.minScore,
+    scopes: input.scopes,
+    kinds: input.kinds,
+    sources: input.sources,
+    includeRecent: input.includeRecent,
+    includeLongTerm: input.includeLongTerm,
+    includeWorkspaceBrief: input.includeWorkspaceBrief,
+    includeSessions: input.includeSessions,
+    strategy: input.strategy
+  });
+
+  const includeGlobal = input.includeGlobal ?? true;
+  if (!includeGlobal) {
+    return workspaceResults.slice(0, limit);
+  }
+
+  const globalManager = getGlobalManager();
   const globalStats = globalManager.getStats();
   if (globalStats.chunkCount === 0) {
     await globalManager.indexWorkspace(false);
   }
-  const limit = input.maxResults ?? 10;
-  const [workspaceResults, globalResults] = await Promise.all([
-    manager.search({
-      query: input.query,
-      maxResults: limit,
-      minScore: input.minScore
-    }),
+
+  const [legacyGlobalResults, structuredGlobalResults] = await Promise.all([
     globalManager.search({
       query: input.query,
       maxResults: limit,
-      minScore: input.minScore
+      minScore: input.minScore,
+      scopes: input.scopes,
+      kinds: input.kinds,
+      sources: input.sources,
+      includeRecent: input.includeRecent,
+      includeLongTerm: input.includeLongTerm,
+      includeWorkspaceBrief: input.includeWorkspaceBrief,
+      includeSessions: input.includeSessions,
+      strategy: input.strategy
+    }),
+    searchGlobalMemory({
+      query: input.query,
+      maxResults: limit
     })
   ]);
 
-  const normalizedGlobalResults = globalResults.map((entry) =>
+  const normalizedLegacyGlobalResults = legacyGlobalResults.map((entry) =>
     entry.path === "MEMORY.md" && entry.source === "memory"
-      ? { ...entry, path: "~/.lume/MEMORY.md" }
+      ? { ...entry, path: "~/.lume/MEMORY.md", scope: entry.scope ?? "global" as const }
       : entry
   );
 
-  return [...workspaceResults, ...normalizedGlobalResults]
+  const structuredGlobalPath = getGlobalStructuredMemoryPath();
+  const normalizedStructuredGlobalResults = structuredGlobalResults.map((entry) => ({
+    ...entry,
+    path: entry.path || structuredGlobalPath,
+    scope: entry.scope ?? "global" as const
+  }));
+
+  const seen = new Set<string>();
+  return [...workspaceResults, ...normalizedStructuredGlobalResults, ...normalizedLegacyGlobalResults]
+    .filter((entry) => {
+      const key = `${entry.id}:${entry.path}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 }
@@ -154,8 +199,12 @@ export function getEmbeddingCacheHitStats(): { hits: number; misses: number; hit
 
 export async function runWorkspaceMemoryDistillation(input: {
   workspaceSlug: string;
+  days?: number;
+  dryRun?: boolean;
+  updateWorkspaceBrief?: boolean;
+  generateGlobalCandidates?: boolean;
 }): Promise<MemoryDistillationResult> {
-  return distillWorkspaceMemory(input);
+  return distillWorkspaceMemory(input as MemoryDistillInput);
 }
 
 export async function writeWorkspaceMemory(input: MemorySaveInput): Promise<MemorySaveResult> {
@@ -163,7 +212,20 @@ export async function writeWorkspaceMemory(input: MemorySaveInput): Promise<Memo
   return manager.saveMemory({
     content: input.content,
     date: input.date,
-    path: input.path
+    path: input.path,
+    scope: input.scope,
+    kind: input.kind,
+    source: input.source,
+    title: input.title,
+    summary: input.summary,
+    tags: input.tags,
+    entities: input.entities,
+    topics: input.topics,
+    importance: input.importance,
+    confidence: input.confidence,
+    sourceSessionId: input.sourceSessionId,
+    sourceMessageIds: input.sourceMessageIds,
+    sourceToolCallId: input.sourceToolCallId
   });
 }
 

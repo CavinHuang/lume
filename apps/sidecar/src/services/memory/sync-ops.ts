@@ -23,6 +23,7 @@ export interface SyncTargetEntry {
 export function collectWorkspaceMemoryEntries(params: {
   workspaceRoot: string;
   extraPaths: string[];
+  includeWorkspaceBrief?: boolean;
 }): SyncTargetEntry[] {
   const memoryFiles = new Map<string, string>();
   const addCandidateFile = (absPath: string): void => {
@@ -41,6 +42,9 @@ export function collectWorkspaceMemoryEntries(params: {
   };
 
   addCandidateFile(resolve(params.workspaceRoot, "MEMORY.md"));
+  if (params.includeWorkspaceBrief !== false) {
+    addCandidateFile(resolve(params.workspaceRoot, "WORKSPACE.md"));
+  }
 
   const memoryDir = resolve(params.workspaceRoot, "memory");
   for (const file of collectMarkdownFiles(memoryDir)) {

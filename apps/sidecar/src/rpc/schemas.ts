@@ -186,7 +186,11 @@ export const memoryIndexWorkspaceInputSchema = z.object({
 });
 
 export const memoryDistillInputSchema = z.object({
-  workspaceSlug: idSchema
+  workspaceSlug: idSchema,
+  days: z.number().int().min(1).max(90).optional(),
+  dryRun: z.boolean().optional(),
+  updateWorkspaceBrief: z.boolean().optional(),
+  generateGlobalCandidates: z.boolean().optional()
 });
 
 export const memoryIndexFileInputSchema = z.object({
@@ -195,11 +199,25 @@ export const memoryIndexFileInputSchema = z.object({
   force: z.boolean().optional()
 });
 
+const memoryScopeSchema = z.enum(["global", "workspace", "agent", "session"]);
+const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);
+const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual", "flush", "distillation", "promotion"]);
+const memorySearchStrategySchema = z.enum(["hybrid", "keyword", "vector", "recent"]);
+
 export const memorySearchInputSchema = z.object({
   workspaceSlug: idSchema,
   query: z.string().min(1),
   maxResults: z.number().int().min(1).max(50).optional(),
-  minScore: z.number().min(0).max(1).optional()
+  minScore: z.number().min(0).max(1).optional(),
+  scopes: z.array(memoryScopeSchema).optional(),
+  kinds: z.array(memoryKindSchema).optional(),
+  sources: z.array(memorySourceSchema).optional(),
+  includeGlobal: z.boolean().optional(),
+  includeRecent: z.boolean().optional(),
+  includeLongTerm: z.boolean().optional(),
+  includeWorkspaceBrief: z.boolean().optional(),
+  includeSessions: z.boolean().optional(),
+  strategy: memorySearchStrategySchema.optional()
 });
 
 export const memoryGetInputSchema = z.object({
@@ -213,7 +231,41 @@ export const memorySaveInputSchema = z.object({
   workspaceSlug: idSchema,
   content: z.string().min(1),
   path: z.string().optional(),
-  date: z.string().optional()
+  date: z.string().optional(),
+  scope: memoryScopeSchema.optional(),
+  kind: memoryKindSchema.optional(),
+  source: memorySourceSchema.optional(),
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  entities: z.array(z.string()).optional(),
+  topics: z.array(z.string()).optional(),
+  importance: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  sourceSessionId: z.string().optional(),
+  sourceMessageIds: z.array(z.string()).optional(),
+  sourceToolCallId: z.string().optional(),
+  writeMode: z.enum(["append", "upsert", "replace-section"]).optional(),
+  requireReview: z.boolean().optional()
+});
+
+export const listGlobalMemoryCandidatesInputSchema = z.object({
+  status: z.enum(["pending", "approved", "rejected", "ignored"]).optional()
+}).optional();
+
+export const promoteGlobalMemoryInputSchema = z.object({
+  candidateId: idSchema,
+  approve: z.boolean(),
+  editedContent: z.string().optional()
+});
+
+export const rejectGlobalMemoryCandidateInputSchema = z.object({
+  candidateId: idSchema
+});
+
+export const searchGlobalMemoryInputSchema = z.object({
+  query: z.string().min(1),
+  maxResults: z.number().int().min(1).max(50).optional()
 });
 
 export const agentCreateThreadInputSchema = z.object({

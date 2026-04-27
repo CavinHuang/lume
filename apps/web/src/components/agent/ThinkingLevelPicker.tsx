@@ -3,7 +3,7 @@
  *
  * 两种模式：
  * - Popover 模式（默认）：点击按钮弹出浮层，适用于输入框工具栏
- * - 内嵌模式（inline）：直接展示卡片列表，适用于设置页
+ * - 内嵌模式（inline）：横向按钮组，适用于设置页
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -46,7 +46,7 @@ export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPi
 
   if (inline) {
     return (
-      <ThinkingLevelCards value={value} onSelect={handleSelect} />
+      <ThinkingLevelButtons value={value} onSelect={handleSelect} />
     )
   }
 
@@ -90,6 +90,38 @@ function ThinkingLevelCards({
           onSelect={() => onSelect(opt.value)}
         />
       ))}
+    </div>
+  )
+}
+
+function ThinkingLevelButtons({
+  value,
+  onSelect,
+}: {
+  value: LumeConfigThinkingLevel
+  onSelect: (v: LumeConfigThinkingLevel) => void
+}) {
+  return (
+    <div className="grid h-9 w-full grid-cols-5 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+      {THINKING_LEVEL_OPTIONS.map((option) => {
+        const selected = value === option.value
+        return (
+          <button
+            key={option.value}
+            type="button"
+            title={`${option.label} - ${option.desc}`}
+            onClick={() => onSelect(option.value)}
+            className={cn(
+              'min-w-0 rounded-[6px] px-1 text-[12px] font-medium transition-colors',
+              selected
+                ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                : 'border border-transparent text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+            )}
+          >
+            {option.label}
+          </button>
+        )
+      })}
     </div>
   )
 }

@@ -31,6 +31,7 @@ import {
 } from "./status-ops";
 import { collectWorkspaceMemoryEntries, pruneStaleIndexedRows, type SyncTargetEntry } from "./sync-ops";
 import type { HybridSearchResult } from "./types";
+import { parseMarkdownMemoryItems } from "./memory-indexer";
 import { listThreadEntriesForWorkspace } from "../session/thread-files";
 import {
   isMarkdownFile,
@@ -39,10 +40,14 @@ import {
 } from "./memory-path-utils";
 import type {
   MemoryGetResult,
+  MemoryKind,
   MemorySearchResult,
   MemorySaveResult,
+  MemoryScope,
+  MemorySource,
   MemoryStats
 } from "@lume/shared";
+import { MemoryRepository } from "./memory-repository";
 
 interface FileMetaRow {
   path: string;
@@ -103,6 +108,8 @@ export class MemoryIndexManager {
   private readonly sources: Set<"memory" | "sessions">;
   private readonly extraPaths: string[];
   private readonly workspaceId?: string;
+  private readonly repository: MemoryRepository;
+  private readonly includeWorkspaceBrief: boolean;
 
   constructor(params: {
     workspaceRoot: string;
@@ -111,6 +118,7 @@ export class MemoryIndexManager {
     workspaceId?: string;
     sources?: Array<"memory" | "sessions">;
     extraPaths?: string[];
+    includeWorkspaceBrief?: boolean;
   }) {
     this.workspaceRoot = resolve(params.workspaceRoot);
     this.workspaceSlug = params.workspaceSlug;
@@ -119,6 +127,7 @@ export class MemoryIndexManager {
     this.sources = new Set((params.sources ?? ["memory"]).filter((item) => item === "memory" || item === "sessions"));
     if (this.sources.size === 0) this.sources.add("memory");
     this.extraPaths = normalizeExtraMemoryPaths(this.workspaceRoot, params.extraPaths ?? []);
+    this.includeWorkspaceBrief = params.includeWorkspaceBrief !== false;
     this.db = new Database(params.dbPath, { create: true, strict: true });
     this.embedding = resolveEmbeddingProvider();
 
@@ -215,6 +224,10 @@ export class MemoryIndexManager {
     this.vecEnabled = vecEnabled;
     this.vecSearchReady = vecEnabled;
     this.vecDims = vecDims;
+    this.repository = new MemoryRepository({
+      db: this.db,
+      workspaceSlug: this.workspaceSlug
+    });
   }
 
   dispose(): void {
@@ -326,7 +339,7 @@ export class MemoryIndexManager {
     const resolvedPath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, filePath));
     const relativePath = relative(this.workspaceRoot, resolvedPath).replace(/\\/g, "/");
     if (!isMemoryPath(relativePath)) {
-      throw new Error("仅允许移除 MEMORY.md 或 memory/YYYY-MM-DD.md 的索引");
+      throw new Error("仅允许移除 MEMORY.md、WORKSPACE.md 或 memory/YYYY-MM-DD.md 的索引");
     }
     this.removeFileChunks(relativePath);
     this.db.query("DELETE FROM files WHERE path = ?1").run(relativePath);
@@ -426,6 +439,16 @@ export class MemoryIndexManager {
       ).run(entry.logicalPath, this.workspaceSlug, entry.source, hash, entry.mtimeMs, entry.size, now);
     })();
 
+    const structuredItems = parseMarkdownMemoryItems({
+      workspaceSlug: this.workspaceSlug,
+      path: entry.logicalPath,
+      content: entry.content,
+      source: entry.source
+    });
+    for (const item of structuredItems) {
+      await this.repository.save(item);
+    }
+
     return chunks.length;
   }
 
@@ -518,7 +541,8 @@ export class MemoryIndexManager {
       targetEntries.push(
         ...collectWorkspaceMemoryEntries({
           workspaceRoot: this.workspaceRoot,
-          extraPaths: this.extraPaths
+          extraPaths: this.extraPaths,
+          includeWorkspaceBrief: this.includeWorkspaceBrief
         })
       );
     }
@@ -560,6 +584,14 @@ export class MemoryIndexManager {
     maxResults?: number;
     minScore?: number;
     queryEmbedding?: number[];
+    scopes?: MemoryScope[];
+    kinds?: MemoryKind[];
+    sources?: MemorySource[];
+    includeRecent?: boolean;
+    includeLongTerm?: boolean;
+    includeWorkspaceBrief?: boolean;
+    includeSessions?: boolean;
+    strategy?: "hybrid" | "keyword" | "vector" | "recent";
   }): Promise<MemorySearchResult[]> {
     const query = input.query.trim();
     if (!query) return [];
@@ -723,7 +755,30 @@ export class MemoryIndexManager {
       } catch { /* LIKE 回退失败时返回空 */ }
     }
 
-    return finalResults;
+    const structuredResults = await this.repository.search({
+      workspaceSlug: this.workspaceSlug,
+      query,
+      maxResults,
+      minScore,
+      scopes: input.scopes,
+      kinds: input.kinds,
+      sources: input.sources,
+      includeRecent: input.includeRecent,
+      includeLongTerm: input.includeLongTerm,
+      includeWorkspaceBrief: input.includeWorkspaceBrief,
+      includeSessions: input.includeSessions,
+      strategy: input.strategy
+    });
+
+    const seen = new Set<string>();
+    return [...structuredResults, ...finalResults]
+      .filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxResults);
   }
 
   readFile(input: { path: string; from?: number; lines?: number }): MemoryGetResult {
@@ -764,7 +819,7 @@ export class MemoryIndexManager {
       resolvedPath = ensureInsideRoot(this.workspaceRoot, resolve(this.workspaceRoot, input.path));
       const relPath = relative(this.workspaceRoot, resolvedPath).replace(/\\/g, "/");
       if (!isMemoryPath(relPath)) {
-        throw new Error("仅允许读取 MEMORY.md、memory/YYYY-MM-DD.md 或 sessions/*");
+        throw new Error("仅允许读取 MEMORY.md、WORKSPACE.md、memory/YYYY-MM-DD.md 或 sessions/*");
       }
       if (existsSync(resolvedPath)) {
         const st = lstatSync(resolvedPath);
@@ -816,7 +871,24 @@ export class MemoryIndexManager {
     };
   }
 
-  async saveMemory(input: { content: string; date?: string; path?: string }): Promise<MemorySaveResult> {
+  async saveMemory(input: {
+    content: string;
+    date?: string;
+    path?: string;
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    source?: MemorySource;
+    title?: string;
+    summary?: string;
+    tags?: string[];
+    entities?: string[];
+    topics?: string[];
+    importance?: 1 | 2 | 3 | 4 | 5;
+    confidence?: number;
+    sourceSessionId?: string;
+    sourceMessageIds?: string[];
+    sourceToolCallId?: string;
+  }): Promise<MemorySaveResult> {
     const trimmed = input.content.trim();
     if (!trimmed) {
       throw new Error("记忆内容不能为空");
@@ -844,9 +916,28 @@ export class MemoryIndexManager {
     appendFileSync(absolutePath, block, "utf-8");
 
     await this.indexFile(absolutePath, true);
+    const item = await this.repository.save({
+      workspaceSlug: this.workspaceSlug,
+      scope: input.scope ?? (input.path === "MEMORY.md" ? "workspace" : "session"),
+      kind: input.kind ?? (input.path === "MEMORY.md" ? "summary" : "episode"),
+      source: input.source ?? "manual",
+      title: input.title,
+      content: trimmed,
+      summary: input.summary,
+      sourcePath: relativePath,
+      sourceSessionId: input.sourceSessionId,
+      sourceMessageIds: input.sourceMessageIds,
+      sourceToolCallId: input.sourceToolCallId,
+      tags: input.tags,
+      entities: input.entities,
+      topics: input.topics,
+      importance: input.importance ?? 3,
+      confidence: input.confidence ?? 1
+    });
     return {
       path: relativePath,
-      bytes: Buffer.byteLength(block, "utf-8")
+      bytes: Buffer.byteLength(block, "utf-8"),
+      itemId: item.id
     };
   }
 }

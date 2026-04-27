@@ -56,6 +56,7 @@ import {
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { runStructuredMemoryFlush } from "../memory/memory-flush-runner";
 
 type AgentStreamEmitter = {
   onSdkMessage: (message: SDKMessage) => void;
@@ -141,6 +142,56 @@ function handleRuntimeThreadStateMessage(
     log.info("线程开始压缩", { threadId: threadId.slice(0, 8) });
     log.info("线程压缩完成", { threadId: threadId.slice(0, 8) });
   }
+}
+
+function extractCompactSummary(message: SDKMessage): string | null {
+  if (message.type !== "system" || message.subtype !== "compact_boundary") {
+    return null;
+  }
+  const metadataSummary = (message as SDKMessage & {
+    compact_metadata?: { summary?: unknown };
+  }).compact_metadata?.summary;
+  if (typeof metadataSummary === "string" && metadataSummary.trim()) {
+    return metadataSummary.trim();
+  }
+  const legacySummary = (message as SDKMessage & { summary?: unknown }).summary;
+  if (typeof legacySummary === "string" && legacySummary.trim()) {
+    return legacySummary.trim();
+  }
+  return null;
+}
+
+async function flushCompactionSummaryToMemory(input: {
+  workspaceSlug?: string;
+  threadId: string;
+  message: SDKMessage;
+}): Promise<void> {
+  if (!input.workspaceSlug) return;
+  const summary = extractCompactSummary(input.message);
+  if (!summary) return;
+
+  const rawOutput = JSON.stringify({
+    entries: [{
+      kind: "episode",
+      scope: "workspace",
+      title: "Compaction summary",
+      content: summary,
+      importance: 3,
+      confidence: 0.8,
+      tags: ["compaction", "memory-flush"]
+    }]
+  });
+  const result = await runStructuredMemoryFlush({
+    workspaceSlug: input.workspaceSlug,
+    sessionId: input.threadId,
+    rawOutput
+  });
+  log.info("compaction memory flush completed", {
+    threadId: input.threadId.slice(0, 8),
+    workspaceSlug: input.workspaceSlug,
+    savedCount: result.savedCount ?? 0,
+    skippedCount: result.skippedCount ?? 0
+  });
 }
 
 export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): { ok: true } {
@@ -354,6 +405,7 @@ export async function sendAgentMessage(
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
   const persistedSdkMessages: SDKMessage[] = [];
+  const memoryFlushTasks: Promise<void>[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
   const stateWorkspaceSlug = effectiveWorkspace?.slug;
@@ -471,6 +523,19 @@ export async function sendAgentMessage(
       handleRuntimeThreadStateMessage(threadId, stampedMessage, sessionStateManager);
       if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
         runtimeStatusManager.markCompacting(threadId);
+        memoryFlushTasks.push(
+          flushCompactionSummaryToMemory({
+            workspaceSlug: stateWorkspaceSlug,
+            threadId,
+            message: stampedMessage
+          }).catch((error) => {
+            log.warn("compaction memory flush failed", {
+              threadId: threadId.slice(0, 8),
+              workspaceSlug: stateWorkspaceSlug,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          })
+        );
       }
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
         persistedSdkMessages.push(stampedMessage);
@@ -505,6 +570,9 @@ export async function sendAgentMessage(
   });
   if (persistedSdkMessages.length > 0) {
     appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
+  }
+  if (memoryFlushTasks.length > 0) {
+    await Promise.allSettled(memoryFlushTasks);
   }
   if (piResult.status === "completed" && activeTurnId) {
     const latestAssistantMessage = projectAssistantMessageFromSdkMessages({

@@ -53,6 +53,12 @@ const BOOTSTRAP_FILE_CONFIGS: BootstrapFileMeta[] = [
     loadInAllSessions: true,
   },
   {
+    type: 'WORKSPACE',
+    filename: 'WORKSPACE.md',
+    devFilename: 'WORKSPACE.dev.md',
+    loadInAllSessions: true,
+  },
+  {
     type: 'AGENTS',
     filename: 'AGENTS.md',
     devFilename: 'AGENTS.dev.md',
@@ -77,7 +83,7 @@ const BOOTSTRAP_FILE_CONFIGS: BootstrapFileMeta[] = [
   },
 ];
 
-const CORE_WORKSPACE_FILE_TYPES: BootstrapFileType[] = ['AGENTS', 'SOUL', 'TOOLS', 'IDENTITY', 'USER'];
+const CORE_WORKSPACE_FILE_TYPES: BootstrapFileType[] = ['AGENTS', 'SOUL', 'TOOLS', 'IDENTITY', 'USER', 'WORKSPACE'];
 
 // ===== 模板路径 =====
 
@@ -223,7 +229,7 @@ export function deleteBootstrapFile(workspaceSlug: string, fileType: BootstrapFi
  */
 export function ensureBootstrapFiles(
   workspaceSlug: string,
-  fileTypes: BootstrapFileType[] = ['SOUL', 'USER', 'IDENTITY', 'AGENTS', 'TOOLS'],
+  fileTypes: BootstrapFileType[] = ['SOUL', 'USER', 'IDENTITY', 'WORKSPACE', 'AGENTS', 'TOOLS'],
   devMode: boolean = false
 ): BootstrapResult {
   const result: BootstrapResult = {
@@ -317,6 +323,9 @@ export function readSystemPromptComponents(
         case 'IDENTITY':
           components.identity = content;
           break;
+        case 'WORKSPACE':
+          components.workspace = content;
+          break;
 
         case 'AGENTS':
           components.agents = content;
@@ -393,6 +402,7 @@ export function filterComponentsForSessionType(
     return components;
   }
   return {
+    workspace: components.workspace,
     agents: components.agents,
     tools: components.tools
   };
@@ -466,26 +476,31 @@ export function buildSystemPrompt(components: SystemPromptComponents): string {
   }
 
   // 4. 操作指令
+  if (components.workspace) {
+    sections.push(`## Workspace Brief\n\n${components.workspace}`);
+  }
+
+  // 5. 操作指令
   if (components.agents) {
     sections.push(`## Workspace Instructions\n\n${components.agents}`);
   }
 
-  // 5. 工具说明
+  // 6. 工具说明
   if (components.tools) {
     sections.push(`## Tools\n\n${components.tools}`);
   }
 
-  // 6. 长期记忆
+  // 7. 长期记忆
   if (components.memory) {
     sections.push(`## Long-Term Memory\n\n${components.memory}`);
   }
 
-  // 7. 每日记忆
+  // 8. 每日记忆
   if (components.dailyMemory) {
     sections.push(`## Recent Activity\n\n${components.dailyMemory}`);
   }
 
-  // 8. 心跳任务（如果有）
+  // 9. 心跳任务（如果有）
   if (components.heartbeat) {
     sections.push(`## Heartbeat Tasks\n\n${components.heartbeat}`);
   }

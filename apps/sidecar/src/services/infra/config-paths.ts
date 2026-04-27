@@ -106,6 +106,22 @@ export function getGlobalMemoryDbPath(): string {
   return join(getGlobalMetaPath(), "memory.sqlite");
 }
 
+export function getStructuredMemoryDir(): string {
+  return ensureDir(join(getConfigDir(), "memory"), "记忆目录");
+}
+
+export function getGlobalStructuredMemoryPath(): string {
+  return join(getStructuredMemoryDir(), "GLOBAL.md");
+}
+
+export function getGlobalStructuredMemoryDbPath(): string {
+  return join(getStructuredMemoryDir(), "global.sqlite");
+}
+
+export function getGlobalMemoryAuditDbPath(): string {
+  return join(getStructuredMemoryDir(), "audit.sqlite");
+}
+
 export function getLumeConfigYamlPath(): string {
   return join(getConfigDir(), "lume.yaml");
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { PROVIDER_LABELS, type Channel } from '@lume/shared'
+import { PROVIDER_DEFAULT_URLS, PROVIDER_LABELS, type Channel } from '@lume/shared'
 import {
   buildModelProviderRows,
   getModelProviderFormInitialValue,
@@ -74,5 +74,17 @@ describe('model provider settings state', () => {
       fallbackModelIds: ['gpt-fallback'],
       enabled: true,
     })
+  })
+
+  test('getModelProviderFormInitialValue uses DeepSeek provider endpoint by default', () => {
+    expect(getModelProviderFormInitialValue('deepseek', [], 'sk-deepseek')).toEqual(
+      expect.objectContaining({
+        name: PROVIDER_LABELS.deepseek,
+        provider: 'deepseek',
+        baseUrl: PROVIDER_DEFAULT_URLS.deepseek,
+        apiKey: 'sk-deepseek',
+      })
+    )
+    expect(PROVIDER_DEFAULT_URLS.deepseek).toBe('https://api.deepseek.com/v1')
   })
 })

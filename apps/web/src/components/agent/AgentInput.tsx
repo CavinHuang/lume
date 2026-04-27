@@ -16,7 +16,7 @@ import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 import type { MentionItem, MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { SkillMeta, WorkspaceMcpConfig } from '@lume/shared'
-import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
+import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 
@@ -251,6 +251,14 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
     }
   }
 
+  const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
+    setThinkingLevel(value)
+    updateAgentThinkingLevel(value).catch((error) => {
+      console.error('[AgentInput] 保存思考等级失败:', error)
+      toast.error('保存思考等级失败')
+    })
+  }
+
   const handleAttach = async () => {
     try {
       const result = await openFileDialog()
@@ -294,7 +302,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
               文件
             </button>
             <ModelPicker threadId={threadId} />
-            <ThinkingLevelPicker value={thinkingLevel} onChange={setThinkingLevel} />
+            <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
           </>
         }
         actionSlot={

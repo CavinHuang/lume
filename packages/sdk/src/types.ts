@@ -230,6 +230,7 @@ export interface SDKCompactBoundaryMessage {
   compact_metadata?: {
     trigger: 'manual' | 'auto'
     pre_tokens: number
+    summary?: string
     preserved_segment?: {
       head_uuid: string
       anchor_uuid: string

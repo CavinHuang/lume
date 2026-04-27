@@ -5,6 +5,8 @@
  * 参考来源: 早期 memory flush 设计
  */
 
+import type { MemoryKind, MemoryScope } from "./memory";
+
 // ===== 常量 =====
 
 /**
@@ -19,9 +21,11 @@ export const DEFAULT_MEMORY_FLUSH_SOFT_TOKENS = 4000
  */
 export const DEFAULT_MEMORY_FLUSH_PROMPT = [
   "Pre-compaction memory flush.",
-  "Store durable memories now (use memory/YYYY-MM-DD.md; create memory/ if needed).",
-  "IMPORTANT: If the file already exists, APPEND new content only and do not overwrite existing entries.",
-  "If nothing to store, reply with NO_REPLY.",
+  "Extract durable memories from this session.",
+  "Return JSON only.",
+  "Schema: {\"entries\":[{\"kind\":\"decision | preference | fact | episode | lesson | milestone\",\"title\":\"...\",\"content\":\"...\",\"importance\":1,\"tags\":[\"...\"]}]}",
+  "Only include memories that will matter in future collaboration.",
+  "If nothing should be stored, return {\"entries\":[]}.",
 ].join(" ")
 
 /**
@@ -29,8 +33,8 @@ export const DEFAULT_MEMORY_FLUSH_PROMPT = [
  */
 export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
   "Pre-compaction memory flush turn.",
-  "The session is near auto-compaction; capture durable memories to disk.",
-  "You may reply, but usually NO_REPLY is correct.",
+  "The session is near auto-compaction; extract structured durable memories.",
+  "Return JSON only and do not write markdown directly.",
 ].join(" ")
 
 /**
@@ -77,6 +81,26 @@ export interface MemoryFlushCheckParams {
   softThresholdTokens: number
 }
 
+export interface MemoryFlushEntry {
+  kind: MemoryKind
+  scope?: MemoryScope
+  title?: string
+  content: string
+  summary?: string
+  importance: 1 | 2 | 3 | 4 | 5
+  confidence?: number
+  tags?: string[]
+  entities?: string[]
+  topics?: string[]
+  sourceMessageIds?: string[]
+}
+
+export interface MemoryFlushPayload {
+  workspaceSlug: string
+  sessionId: string
+  entries: MemoryFlushEntry[]
+}
+
 /**
  * Memory Flush 执行结果
  */
@@ -89,6 +113,12 @@ export interface MemoryFlushResult {
   prompt?: string
   /** 生成的系统提示词 */
   systemPrompt?: string
+  /** 结构化记忆 payload */
+  payload?: MemoryFlushPayload
+  /** 成功保存条数 */
+  savedCount?: number
+  /** 跳过条数 */
+  skippedCount?: number
 }
 
 // ===== 工具函数类型 =====

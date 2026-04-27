@@ -52,6 +52,7 @@ import {
 import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
 import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
+import { buildMemoryContext } from "../../memory/memory-prompt-builder";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
@@ -612,11 +613,15 @@ function buildRuntimeCoreTools(input: {
   };
 }
 
-function resolveSdkApiType(provider: string): "anthropic-messages" | "openai-completions" {
+function resolveSdkApiType(provider: string): ApiType {
   const normalized = provider.trim().toLowerCase();
-  return normalized === "anthropic" || normalized === "anthropic-compatible"
-    ? "anthropic-messages"
-    : "openai-completions";
+  if (normalized === "anthropic" || normalized === "anthropic-compatible") {
+    return "anthropic-messages";
+  }
+  if (normalized === "deepseek") {
+    return "deepseek-chat-completions";
+  }
+  return "openai-completions";
 }
 
 function buildMcpServers(workspaceSlug?: string): Record<string, McpServerConfig> | undefined {
@@ -667,7 +672,16 @@ function resolveSkillDirectories(workspaceSlug?: string): string[] {
   return roots;
 }
 
-function buildCombinedSystemPrompt(input: {
+function resolvePromptMemorySessionType(input: {
+  threadType?: AgentSendInput["threadType"];
+  chatType?: AgentSendInput["chatType"];
+}): "main" | "subagent" | "group" | "channel" {
+  if (input.threadType) return input.threadType;
+  if (input.chatType === "group" || input.chatType === "channel") return input.chatType;
+  return "main";
+}
+
+async function buildCombinedSystemPrompt(input: {
   lumeSessionId: string;
   cwd: string;
   modelRef?: string;
@@ -681,7 +695,7 @@ function buildCombinedSystemPrompt(input: {
   permissionMode?: AgentSendInput["permissionMode"];
   userMessage?: string;
   availableTools: string[];
-}): string {
+}): Promise<string> {
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
   const systemPromptAppend = buildSystemPromptAppend({
     workspaceName: input.workspaceName,
@@ -722,7 +736,29 @@ function buildCombinedSystemPrompt(input: {
     })
   ).trim();
 
-  return [systemPromptAppend, dynamicContext]
+  let memoryContext = "";
+  if (input.workspaceSlug && input.userMessage?.trim()) {
+    try {
+      memoryContext = await buildMemoryContext({
+        workspaceSlug: input.workspaceSlug,
+        sessionType: resolvePromptMemorySessionType({
+          threadType: input.threadType,
+          chatType: input.chatType
+        }),
+        userInput: input.userMessage,
+        maxItems: 8,
+        tokenBudget: 1200
+      });
+    } catch (error) {
+      log.warn("failed to build memory context", {
+        sessionId: input.lumeSessionId,
+        workspaceSlug: input.workspaceSlug,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  return [systemPromptAppend, dynamicContext, memoryContext]
     .filter((part) => typeof part === "string" && part.trim().length > 0)
     .join("\n\n");
 }
@@ -747,7 +783,7 @@ export async function createRuntimeCoreSession(
     emitToolPermissionRequest: input.emitToolPermissionRequest
   });
 
-  const systemPrompt = buildCombinedSystemPrompt({
+  const systemPrompt = await buildCombinedSystemPrompt({
     lumeSessionId: input.lumeSessionId,
     cwd: input.cwd,
     modelRef: input.modelRef,

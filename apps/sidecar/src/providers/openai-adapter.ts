@@ -183,7 +183,7 @@ function appendContinuationMessages(
 // ===== 适配器实现 =====
 
 export class OpenAIAdapter implements ProviderAdapter {
-  readonly providerType = 'openai' as const
+  readonly providerType: ProviderAdapter['providerType'] = 'openai'
 
   buildStreamRequest(input: StreamRequestInput): ProviderRequest {
     const url = normalizeBaseUrl(input.baseUrl)

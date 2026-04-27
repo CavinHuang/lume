@@ -40,4 +40,49 @@ describe("memory-save", () => {
     manager.dispose();
     removeDirWithRetry(root);
   });
+
+  test("saveMemory 应同步写入结构化 memory item", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-memory-save-"));
+    const dbPath = join(root, "default.sqlite");
+    const manager = new MemoryIndexManager({
+      workspaceRoot: root,
+      workspaceSlug: "default",
+      dbPath
+    });
+
+    const saved = await manager.saveMemory({
+      content: "The memory settings page should expose audit history.",
+      date: "2026-04-26",
+      scope: "workspace",
+      kind: "decision",
+      source: "manual",
+      title: "Expose memory audit",
+      tags: ["memory", "settings"],
+      importance: 4,
+      confidence: 0.8,
+      sourceSessionId: "session-1",
+      sourceMessageIds: ["msg-1"]
+    });
+
+    expect(saved.path).toBe("memory/2026-04-26.md");
+    expect(saved.itemId).toBeTruthy();
+
+    const result = await manager.search({
+      query: "audit history",
+      maxResults: 3,
+      kinds: ["decision"],
+      scopes: ["workspace"]
+    });
+    expect(result[0]).toEqual(
+      expect.objectContaining({
+        id: saved.itemId,
+        kind: "decision",
+        scope: "workspace",
+        source: "manual"
+      })
+    );
+
+    manager.dispose();
+    removeDirWithRetry(root);
+  });
 });

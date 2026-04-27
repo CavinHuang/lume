@@ -229,7 +229,7 @@ Choose capabilities in this priority order unless a higher-priority user instruc
 1. Use a loaded Skill when it clearly matches the request.
 2. Use specialized first-class tools when the task is obviously in their lane:
    - browser for browser-session continuity and current-page actions
-   - memory_search / memory_get for prior decisions, preferences, or continuity
+   - memory.search / memory.read for prior decisions, preferences, or continuity
    - WebSearch / WebFetch for public web retrieval when browser context is not required
 3. Compose direct low-level tools only when no packaged capability cleanly fits.
 4. If the user explicitly asks for low-level control or manual tool use, follow that request and skip higher-level routing when safe.`;
@@ -255,6 +255,19 @@ const PROMPT_TOOL_ORDER = [
   "todowrite",
   "task",
   "askuserquestion",
+  "memory.search",
+  "memory.read",
+  "memory.remember",
+  "memory.writeEpisode",
+  "memory.flush",
+  "memory.distillWorkspace",
+  "memory.status",
+  "memory.indexWorkspace",
+  "memory.indexDocument",
+  "memory.searchGlobal",
+  "memory.listGlobalCandidates",
+  "memory.promoteGlobal",
+  "memory.rejectGlobalCandidate",
   "memory_search",
   "memory_get",
   "memory_save"
@@ -666,7 +679,12 @@ Do this before answering requests that depend on identity, continuity, prior dec
   }
 
   // 记忆系统哲学引导
-  if (availableTools.has("memory_search") || availableTools.has("memory_get") || availableTools.has("memory_save")) {
+  const hasMemorySearch = availableTools.has("memory.search") || availableTools.has("memory_search");
+  const hasMemoryRead = availableTools.has("memory.read") || availableTools.has("memory_get");
+  const hasMemoryWrite = availableTools.has("memory.remember") || availableTools.has("memory.writeEpisode") || availableTools.has("memory.flush") || availableTools.has("memory_save");
+  const hasGlobalMemory = availableTools.has("memory.searchGlobal") || availableTools.has("memory.listGlobalCandidates") || availableTools.has("memory.promoteGlobal") || availableTools.has("memory.rejectGlobalCandidate");
+
+  if (hasMemorySearch || hasMemoryRead || hasMemoryWrite || hasGlobalMemory) {
     sections.push(`## 记忆系统
 
 你拥有跨线程的记忆能力。这些记忆是你和用户之间共同的经历——你们一起讨论过的问题、一起做过的决定、一起踩过的坑。
@@ -678,10 +696,10 @@ Do this before answering requests that depend on identity, continuity, prior dec
 - 自然地运用记忆，不要提及"记忆系统"、"检索"等内部概念`);
   }
 
-  if (availableTools.has("memory_search") || availableTools.has("memory_get")) {
+  if (hasMemorySearch || hasMemoryRead) {
       const lines = [
         "## Memory Recall",
-        "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on thread note + workspace memory/YYYY-MM-DD.md + workspace MEMORY.md + ~/.lume/MEMORY.md; then use memory_get to pull only the needed lines. Do not use generic read for memory files. If low confidence after search, say you checked."
+        "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory.search; then use memory.read to pull only the needed full item or line range. If only legacy tools are available, use memory_search and memory_get. Do not use generic read for memory files. If low confidence after search, say you checked."
       ];
     if (ctx.memoryCitationsMode === "off") {
       lines.push(
@@ -693,26 +711,31 @@ Do this before answering requests that depend on identity, continuity, prior dec
     sections.push(lines.join("\n"));
   }
 
-  if (availableTools.has("memory_save")) {
+  if (hasMemoryWrite) {
     sections.push(`## Memory Write Rules
 
-Short-term memory (daily log) — write to memory/YYYY-MM-DD.md via memory_save:
+Structured memory — prefer memory.writeEpisode / memory.remember:
 - After completing any non-trivial task, decision, or learning in this session
 - When the user states a preference, constraint, or important fact
 - When you finish a multi-step task (summarize what was done and the outcome)
 - At natural conversation breakpoints when meaningful work has occurred
-Format: concise bullet points. Date defaults to today if omitted.
 
-Long-term memory — write to MEMORY.md via memory_save with path=MEMORY.md:
-- Only for durable facts: user identity, persistent preferences, project-level decisions, recurring patterns
-- APPEND only; never overwrite existing entries
-- Threshold: only if the information would still be relevant weeks from now
+Use memory.remember immediately when the user says "记住这个", "以后都这样", "这是我的偏好", or states a durable preference/fact/decision.
+Use memory.writeEpisode after meaningful task completion; include decisions/preferences/lessons as separate arrays so they become structured memory items.
+Use memory.flush only for pre-compaction structured entries. If only legacy memory_save is available, write concise bullets to daily memory or MEMORY.md with path=MEMORY.md.
 
 **存储时的要点：**
 - 记的是经历和结论，不是对话流水账
 - 宁可少记也不要记一堆没用的，保持记忆都是有温度的、有价值的共同经历
 
 Do NOT save: trivial exchanges, greetings, or information already in MEMORY.md.`);
+  }
+
+  if (hasGlobalMemory) {
+    sections.push(`## Global Memory Rules
+
+memory.searchGlobal and memory.listGlobalCandidates are read-only.
+Use memory.promoteGlobal or memory.rejectGlobalCandidate only after explicit user confirmation, because these affect cross-workspace memory.`);
   }
 
   sections.push(`## Workspace Files (injected)

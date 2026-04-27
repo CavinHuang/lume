@@ -10,14 +10,25 @@ import {
   searchLayeredMemory,
   writeWorkspaceMemory
 } from "../services/memory/memory-service";
+import {
+  getGlobalMemoryStatus,
+  listGlobalMemoryCandidates,
+  promoteGlobalMemory,
+  rejectGlobalMemoryCandidate,
+  searchGlobalMemory
+} from "../services/memory/memory-global-promoter";
 import { startMemorySyncWatcher } from "../services/memory/memory-sync-watcher";
 import {
+  listGlobalMemoryCandidatesInputSchema,
   memoryDistillInputSchema,
   memoryGetInputSchema,
   memoryIndexFileInputSchema,
   memoryIndexWorkspaceInputSchema,
+  promoteGlobalMemoryInputSchema,
+  rejectGlobalMemoryCandidateInputSchema,
   memorySaveInputSchema,
   memorySearchInputSchema,
+  searchGlobalMemoryInputSchema,
   workspaceSlugInputSchema
 } from "./schemas";
 import type { RpcHandler } from "./types";
@@ -64,6 +75,35 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
       startMemorySyncWatcher();
       const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.STATUS_LAYERED);
       return getLayeredMemoryStatus(input.workspaceSlug);
+    },
+    [MEMORY_IPC_CHANNELS.LIST_GLOBAL_CANDIDATES]: async (params) => {
+      const input = validateInput(
+        listGlobalMemoryCandidatesInputSchema,
+        params,
+        MEMORY_IPC_CHANNELS.LIST_GLOBAL_CANDIDATES
+      ) ?? {};
+      return listGlobalMemoryCandidates(input);
+    },
+    [MEMORY_IPC_CHANNELS.PROMOTE_GLOBAL]: async (params) => {
+      return promoteGlobalMemory(
+        validateInput(promoteGlobalMemoryInputSchema, params, MEMORY_IPC_CHANNELS.PROMOTE_GLOBAL)
+      );
+    },
+    [MEMORY_IPC_CHANNELS.REJECT_GLOBAL_CANDIDATE]: async (params) => {
+      const input = validateInput(
+        rejectGlobalMemoryCandidateInputSchema,
+        params,
+        MEMORY_IPC_CHANNELS.REJECT_GLOBAL_CANDIDATE
+      );
+      return rejectGlobalMemoryCandidate(input.candidateId);
+    },
+    [MEMORY_IPC_CHANNELS.SEARCH_GLOBAL]: async (params) => {
+      return searchGlobalMemory(
+        validateInput(searchGlobalMemoryInputSchema, params, MEMORY_IPC_CHANNELS.SEARCH_GLOBAL)
+      );
+    },
+    [MEMORY_IPC_CHANNELS.STATUS_GLOBAL]: async () => {
+      return getGlobalMemoryStatus();
     }
   };
 }

@@ -36,6 +36,10 @@ describe("workspace-bootstrap-service", () => {
     const content = readTemplateContent("SOUL");
     expect(content.startsWith("---")).toBeFalse();
     expect(content).toContain("# SOUL.md");
+
+    const workspace = readTemplateContent("WORKSPACE");
+    expect(workspace.startsWith("---")).toBeFalse();
+    expect(workspace).toContain("# WORKSPACE.md");
   });
 
   test("核心 persona 模板应包含默认克制的人格引导结构", () => {
@@ -51,7 +55,7 @@ describe("workspace-bootstrap-service", () => {
     expect(agents).toContain("## Persona Guardrails");
   });
 
-  test("ensureBootstrapFiles 默认仅创建核心文件（不再创建 BOOTSTRAP，且不自动创建 HEARTBEAT/MEMORY）", () => {
+  test("ensureBootstrapFiles 默认创建核心文件和 WORKSPACE（不再创建 BOOTSTRAP，且不自动创建 HEARTBEAT/MEMORY）", () => {
     const workspaceSlug = `bootstrap-default-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);
 
@@ -59,6 +63,7 @@ describe("workspace-bootstrap-service", () => {
       const result = ensureBootstrapFiles(workspaceSlug);
       expect(result.created).toContain("SOUL.md");
       expect(result.created).toContain("AGENTS.md");
+      expect(result.created).toContain("WORKSPACE.md");
       expect(result.created).not.toContain("BOOTSTRAP.md");
 
       expect(existsSync(join(workspacePath, "HEARTBEAT.md"))).toBeFalse();
@@ -91,6 +96,7 @@ describe("workspace-bootstrap-service", () => {
         soul: "soul",
         user: "user",
         identity: "identity",
+        workspace: "workspace",
         agents: "agents",
         tools: "tools",
         heartbeat: "heartbeat",
@@ -100,6 +106,7 @@ describe("workspace-bootstrap-service", () => {
       "subagent"
     );
     expect(filtered).toEqual({
+      workspace: "workspace",
       agents: "agents",
       tools: "tools"
     });

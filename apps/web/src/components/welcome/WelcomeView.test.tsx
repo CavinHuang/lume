@@ -12,6 +12,7 @@ import {
 
 let editorText = ''
 let latestSurfaceProps: any = null
+let effectiveThinkingLevel: 'off' | 'low' | 'medium' | 'high' | 'max' | undefined
 
 const mockEditor = {
   getText: () => editorText,
@@ -76,7 +77,13 @@ mock.module('@/lib/desktop-api', () => ({
 }))
 
 mock.module('@/lib/desktop-api/lume-config', () => ({
-  getEffectiveLumeConfig: async () => ({}),
+  getEffectiveLumeConfig: async () => ({
+    agent: effectiveThinkingLevel ? { thinkingLevel: effectiveThinkingLevel } : {},
+  }),
+  updateAgentThinkingLevel: async (value: string) => {
+    effectiveThinkingLevel = value as typeof effectiveThinkingLevel
+    return { agent: { thinkingLevel: value } }
+  },
 }))
 
 mock.module('@/components/agent/ThinkingLevelPicker', () => ({
@@ -292,6 +299,7 @@ describe('WelcomeView', () => {
   beforeEach(() => {
     editorText = ''
     latestSurfaceProps = null
+    effectiveThinkingLevel = undefined
     sidecarCallMock.mockClear()
     agentSendMock.mockClear()
   })
@@ -450,6 +458,69 @@ describe('WelcomeView', () => {
           modelId: 'gpt-5-mini',
         }),
       )
+    } finally {
+      if (root) {
+        await act(async () => {
+          root!.unmount()
+          await flush()
+        })
+        root = null
+      }
+    }
+  })
+
+  test('persists the selected thinking level and uses it when creating a new thread', async () => {
+    effectiveThinkingLevel = 'medium'
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      {
+        id: 'workspace-1',
+        name: '默认工作区',
+        slug: 'default-workspace',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
+    store.set(activeTabIdAtom, '__welcome__')
+
+    const { container } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <WelcomeView workspaceId="workspace-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      const thinkingPickerProps = latestSurfaceProps.thinkingLevelPicker.props
+      expect(thinkingPickerProps.value).toBe('medium')
+
+      await act(async () => {
+        await thinkingPickerProps.onChange('high')
+        await flush()
+      })
+
+      expect(effectiveThinkingLevel).toBe('high')
+      expect(latestSurfaceProps.thinkingLevelPicker.props.value).toBe('high')
+
+      editorText = '用高思考等级开始'
+
+      await act(async () => {
+        await latestSurfaceProps.onSend()
+        await flush()
+      })
+
+      expect(agentSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: 'created-thread',
+        userMessage: '用高思考等级开始',
+        thinkingLevel: 'high',
+      }))
     } finally {
       if (root) {
         await act(async () => {

@@ -1,11 +1,4 @@
 /**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\core\src\providers\anthropic-adapter.ts
- * Adaptation:
- * - Kept logic parity for MIG-003.
- */
-
-/**
  * Anthropic 供应商适配器
  *
  * 实现 Anthropic Messages API 的消息转换、请求构建和 SSE 解析。

@@ -20,7 +20,7 @@ export function isMemoryPath(relPath: string): boolean {
   if (!normalized) {
     return false;
   }
-  if (normalized === "MEMORY.md") {
+  if (normalized === "MEMORY.md" || normalized === "WORKSPACE.md") {
     return true;
   }
   return /^memory\/\d{4}-\d{2}-\d{2}\.md$/i.test(normalized);

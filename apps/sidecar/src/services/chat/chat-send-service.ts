@@ -193,6 +193,7 @@ export async function sendMessage(input: ChatSendInput, emit: ChatEventEmitter):
   const useModelToolCalling = (
     (
       modelSelection.adapterProvider === "openai"
+      || modelSelection.adapterProvider === "deepseek"
       || modelSelection.adapterProvider === "anthropic"
       || modelSelection.adapterProvider === "google"
     )

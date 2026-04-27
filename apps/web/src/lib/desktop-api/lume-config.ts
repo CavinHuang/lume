@@ -1,5 +1,6 @@
 import type {
   LumeConfigAgentDefaultStrategy,
+  LumeConfigThinkingLevel,
   LumeConfigSubagentModelStrategy,
   LumeEffectiveConfig,
 } from '@lume/shared'
@@ -30,4 +31,13 @@ export const updateSubagentModelStrategy = (value: LumeConfigSubagentModelStrate
     path: 'models.subagent',
     value,
     summary: 'update subagent default model strategy',
+  })
+
+export const updateAgentThinkingLevel = (value: LumeConfigThinkingLevel, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'agent.thinkingLevel',
+    value,
+    summary: 'update agent thinking level',
   })

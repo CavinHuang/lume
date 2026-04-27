@@ -34,15 +34,24 @@ const DEFAULT_SOURCES: MemorySourceMode[] = ["memory"];
 const DEFAULT_EXTRA_PATHS: string[] = [];
 
 const MEMORY_TOOL_GROUPS: Record<string, string[]> = {
-  "group:memory": ["memory_search", "memory_get"]
+  "group:memory": ["memory.search", "memory.read"],
+  "group:memory-write": ["memory.remember", "memory.writeEpisode", "memory.flush"],
+  "group:memory-maintenance": ["memory.distillWorkspace", "memory.status", "memory.indexWorkspace", "memory.indexDocument"],
+  "group:memory-global": ["memory.searchGlobal", "memory.listGlobalCandidates"],
+  "group:memory-global-write": ["memory.promoteGlobal", "memory.rejectGlobalCandidate"]
 };
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",
-  bash: "exec"
+  bash: "exec",
+  memory_search: "memory.search",
+  memory_get: "memory.read",
+  memory_save: "memory.remember"
 };
 
 function normalizeEntry(value: string): string {
   const normalized = value.trim().toLowerCase();
+  if (normalized === "memory_*") return "memory.*";
+  if (normalized === "*_save") return "*.remember";
   return TOOL_NAME_ALIASES[normalized] ?? normalized;
 }
 

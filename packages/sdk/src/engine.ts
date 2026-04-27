@@ -456,6 +456,7 @@ export class QueryEngine {
             compact_metadata: {
               trigger: 'auto',
               pre_tokens: preCompactTokens,
+              summary: result.summary,
             },
             session_id: this.sessionId,
           } as SDKMessage
