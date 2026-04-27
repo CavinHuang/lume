@@ -27,6 +27,7 @@ import {
   getAgentWorkspacePath,
 } from "../infra/config-paths";
 import { stripFrontMatter } from "./workspace-template-utils";
+import { sanitizeWorkspacePromptComponent } from "./workspace-doc-sanitizer";
 
 // ===== 常量 =====
 
@@ -287,6 +288,42 @@ function shouldLoadForSessionType(config: BootstrapFileMeta, sessionType: Sessio
   return config.sessionTypes.includes(sessionType);
 }
 
+function assignPromptComponent(
+  components: SystemPromptComponents,
+  fileType: BootstrapFileType,
+  rawContent: string
+): void {
+  const content = sanitizeWorkspacePromptComponent(fileType, rawContent);
+  if (!content) return;
+
+  switch (fileType) {
+    case 'SOUL':
+      components.soul = content;
+      break;
+    case 'USER':
+      components.user = content;
+      break;
+    case 'IDENTITY':
+      components.identity = content;
+      break;
+    case 'WORKSPACE':
+      components.workspace = content;
+      break;
+    case 'AGENTS':
+      components.agents = content;
+      break;
+    case 'TOOLS':
+      components.tools = content;
+      break;
+    case 'HEARTBEAT':
+      components.heartbeat = content;
+      break;
+    case 'MEMORY':
+      components.memory = content;
+      break;
+  }
+}
+
 /**
  * 读取系统提示词组件
  *
@@ -313,33 +350,7 @@ export function readSystemPromptComponents(
 
     const content = readBootstrapFile(workspaceSlug, config.type);
     if (content) {
-      switch (config.type) {
-        case 'SOUL':
-          components.soul = content;
-          break;
-        case 'USER':
-          components.user = content;
-          break;
-        case 'IDENTITY':
-          components.identity = content;
-          break;
-        case 'WORKSPACE':
-          components.workspace = content;
-          break;
-
-        case 'AGENTS':
-          components.agents = content;
-          break;
-        case 'TOOLS':
-          components.tools = content;
-          break;
-        case 'HEARTBEAT':
-          components.heartbeat = content;
-          break;
-        case 'MEMORY':
-          components.memory = content;
-          break;
-      }
+      assignPromptComponent(components, config.type, content);
     }
   }
 
@@ -352,8 +363,9 @@ export function readSystemPromptComponents(
         try {
           const parsed = parseAieos(readFileSync(jsonPath, 'utf-8'));
           const prompt = aieosToSystemPrompt(parsed);
-          if (prompt.trim()) {
-            components.identity = prompt;
+          const sanitizedPrompt = sanitizeWorkspacePromptComponent('IDENTITY', prompt);
+          if (sanitizedPrompt.trim()) {
+            components.identity = sanitizedPrompt;
             break;
           }
         } catch { /* ignore */ }
