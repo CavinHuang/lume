@@ -16,7 +16,8 @@
       "Bash(rtk tsc:*)",
       "Bash(rtk git:*)",
       "Bash(rtk ls:*)",
-      "Bash(rtk wc:*)"
+      "Bash(rtk wc:*)",
+      "Bash(git remote:*)"
     ]
   }
 }
