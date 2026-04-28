@@ -45,7 +45,14 @@ export function inferCapabilityLanes(inputTools?: string[]): CapabilityLane[] {
   const lanes: CapabilityLane[] = [];
   if (normalized.has("skill")) lanes.push("skills");
   if (normalized.has("browser")) lanes.push("browser");
-  if (normalized.has("memory_search") || normalized.has("memory_get") || normalized.has("memory_save")) {
+  if (
+    normalized.has("memory_search")
+    || normalized.has("memory_get")
+    || normalized.has("memory_save")
+    || normalized.has("memory.search")
+    || normalized.has("memory.read")
+    || normalized.has("memory.remember")
+  ) {
     lanes.push("memory");
   }
   if (normalized.has("web_search") || normalized.has("web_fetch")) {
@@ -83,10 +90,15 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
   const skillText = buildSkillText(input.loadedSkills ?? []);
 
   if (!message) {
+    const fallbackLane = laneSet.has("raw-tools") ? "raw-tools" : null;
     return {
       lanes,
-      preferredLane: lanes[0] ?? null,
-      reason: lanes.length > 0 ? "fallback to first available capability lane" : "no capability lanes available"
+      preferredLane: fallbackLane,
+      reason: fallbackLane
+        ? "no user message available; default to direct tools"
+        : lanes.length > 0
+          ? "no user message available; no capability lane is preferred"
+          : "no capability lanes available"
     };
   }
 
@@ -185,19 +197,19 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
     };
   }
 
-  if (laneSet.has("skills")) {
-    return {
-      lanes,
-      preferredLane: "skills",
-      reason: "skills lane is available and should be preferred before raw tools by default"
-    };
-  }
-
   if (laneSet.has("raw-tools")) {
     return {
       lanes,
       preferredLane: "raw-tools",
-      reason: "no higher-level capability lane matched; use direct tools"
+      reason: "no specific capability lane matched; use direct tools"
+    };
+  }
+
+  if (laneSet.has("skills")) {
+    return {
+      lanes,
+      preferredLane: null,
+      reason: "skills are available but no loaded skill clearly matched the request"
     };
   }
 

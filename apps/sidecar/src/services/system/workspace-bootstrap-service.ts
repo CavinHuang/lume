@@ -453,9 +453,9 @@ export function readDailyMemoryFiles(workspaceSlug: string, days: number = 2): s
 }
 
 /**
- * 构建系统提示词
- *
- * 将各个组件组装成最终的系统提示词
+ * @deprecated Compatibility formatter for legacy callers that already pass
+ * preloaded bootstrap components. Agent runtime prompts are composed by
+ * agent/prompt section builders instead, so do not add new prompt policy here.
  */
 export function buildSystemPrompt(components: SystemPromptComponents): string {
   const sections: string[] = [];

@@ -34,6 +34,7 @@ import {
   waitForPiAskUserQuestionAnswers
 } from "../tools/bridges/ask-user-question-bridge";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
+import { evaluateRuntimeToolSafety } from "./runtime-tool-safety";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -51,12 +52,6 @@ interface PreparedRuntimeCoreAttempt {
 
 const log = createLogger("pi-agent-runtime-core-attempt");
 
-const PARAM_DENY_RULES: Array<{ tool: string; param: string; pattern: RegExp; reason: string }> = [
-  { tool: "bash", param: "command", pattern: /rm\s+-rf\s+\/(?:\s|$)/, reason: "禁止删除根目录" },
-  { tool: "bash", param: "command", pattern: /:\s*\(\s*\)\s*\{.*\}\s*;.*:/, reason: "禁止 fork bomb" },
-  { tool: "bash", param: "command", pattern: />\s*\/dev\/sd[a-z]/, reason: "禁止写入块设备" }
-];
-
 function sanitizeToolInput(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object") return {};
   const record = input as Record<string, unknown>;
@@ -69,19 +64,6 @@ function sanitizeToolInput(input: unknown): Record<string, unknown> {
     }
   }
   return copied;
-}
-
-function checkParamDenyRules(toolName: string, args: unknown): string | null {
-  const normalized = toolName.trim().toLowerCase();
-  const record = args && typeof args === "object" ? args as Record<string, unknown> : {};
-  for (const rule of PARAM_DENY_RULES) {
-    if (rule.tool !== normalized) continue;
-    const value = record[rule.param];
-    if (typeof value === "string" && rule.pattern.test(value)) {
-      return rule.reason;
-    }
-  }
-  return null;
 }
 
 function shouldRequireConfirmation(permissionMode: PiAgentRunParams["input"]["permissionMode"], toolName: string): boolean {
@@ -174,11 +156,11 @@ function createCanUseToolHandler(
       };
     }
 
-    const paramDenyReason = checkParamDenyRules(toolName, input);
-    if (paramDenyReason) {
+    const inputSafety = evaluateRuntimeToolSafety(toolName, input);
+    if (inputSafety.behavior === "deny") {
       return {
         behavior: "deny",
-        message: `工具参数被拒绝: ${paramDenyReason}`
+        message: `工具参数被拒绝: ${inputSafety.reason}`
       };
     }
 
@@ -235,7 +217,7 @@ function createCanUseToolHandler(
       };
     }
 
-    if (!shouldRequireConfirmation(params.input.permissionMode, toolName)) {
+    if (inputSafety.behavior !== "confirm" && !shouldRequireConfirmation(params.input.permissionMode, toolName)) {
       return { behavior: "allow" };
     }
 
@@ -252,7 +234,7 @@ function createCanUseToolHandler(
       toolUseId: metadata?.toolUseId ?? toolName,
       toolName,
       risk: (getToolMetadata(toolName) ?? inferToolMetadata(toolName)).riskLevel,
-      reason: buildPermissionReason(toolName),
+      reason: inputSafety.behavior === "confirm" ? inputSafety.reason : buildPermissionReason(toolName),
       input: sanitizeToolInput(input)
     } as const;
     const decision = await waitForToolPermissionDecision(

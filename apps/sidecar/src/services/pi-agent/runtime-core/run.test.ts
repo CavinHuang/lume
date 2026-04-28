@@ -322,19 +322,19 @@ describe("runtime-core run", () => {
 
     const systemPrompt = result.session.agent.state.systemPrompt;
     expect(systemPrompt).toContain("You are Lume, a persistent counterpart running inside this workspace.");
-    expect(systemPrompt).toContain("## Workspace Files (injected)");
+    expect(systemPrompt).toContain("## Loaded Context Policy");
     expect(systemPrompt).toContain("## 系统配置");
     expect(systemPrompt).toContain("~/.lume/lume.yaml");
     expect(systemPrompt).not.toContain(".lume-config");
-    expect(systemPrompt).toContain("## Project Context");
+    expect(systemPrompt).toContain("## Workspace Context");
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
-    expect(systemPrompt).toContain("- Skill");
+    expect(systemPrompt).toContain("Available tools are provided by the runtime tool schema");
     expect(systemPrompt).toContain("<thread_state>");
     expect(systemPrompt).toContain("threadType: main");
     expect(systemPrompt).toContain("chatType: direct");
     expect(systemPrompt).toContain("modelId: claude-sonnet-4-5");
-    expect(systemPrompt).toContain("Preferred capability route: skills");
+    expect(systemPrompt).toContain("Preferred capability route: raw-tools");
     expect(systemPrompt).toContain("<working_directory>");
 
     result.session.dispose();

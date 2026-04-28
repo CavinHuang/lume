@@ -50,7 +50,7 @@ export function createSdkMemoryTools(params: {
     tools.push(createSdkJsonResultTool({
       name: MEMORY_SEARCH_TOOL_NAME,
       description:
-        "Mandatory recall step: search thread note + workspace memory/YYYY-MM-DD.md + workspace MEMORY.md + global ~/.lume/MEMORY.md before answering questions about prior work, decisions, dates, preferences, or todos.",
+        "Search layered memory only when loaded context is insufficient for prior work, decisions, dates, preferences, or todos. Integrate results naturally; do not treat every history-related question as a mandatory recall ritual.",
       inputSchema: {
         type: "object",
         properties: {
@@ -79,7 +79,7 @@ export function createSdkMemoryTools(params: {
   if (params.enabledTools.has("memory.search")) {
     tools.push(createSdkJsonResultTool({
       name: "memory.search",
-      description: "Search layered workspace memory and optional global memory. Use before tasks that depend on prior work, decisions, preferences, or todos.",
+      description: "Search layered workspace memory and optional global memory when loaded context is insufficient for prior work, decisions, preferences, or todos.",
       inputSchema: {
         type: "object",
         properties: {

@@ -217,6 +217,97 @@ registerToolMetadata({
   description: "保存记忆内容"
 });
 
+registerToolMetadata({
+  name: "memory.search",
+  category: "read",
+  riskLevel: "low",
+  description: "搜索记忆内容"
+});
+
+registerToolMetadata({
+  name: "memory.read",
+  category: "read",
+  riskLevel: "low",
+  description: "读取记忆内容"
+});
+
+registerToolMetadata({
+  name: "memory.remember",
+  category: "write",
+  riskLevel: "medium",
+  description: "保存结构化记忆"
+});
+
+registerToolMetadata({
+  name: "memory.writeEpisode",
+  category: "write",
+  riskLevel: "medium",
+  description: "保存协作 episode 记忆"
+});
+
+registerToolMetadata({
+  name: "memory.flush",
+  category: "write",
+  riskLevel: "medium",
+  description: "落盘待压缩记忆"
+});
+
+registerToolMetadata({
+  name: "memory.distillWorkspace",
+  category: "write",
+  riskLevel: "medium",
+  description: "蒸馏工作区长期记忆"
+});
+
+registerToolMetadata({
+  name: "memory.searchGlobal",
+  category: "read",
+  riskLevel: "low",
+  description: "搜索全局记忆"
+});
+
+registerToolMetadata({
+  name: "memory.listGlobalCandidates",
+  category: "read",
+  riskLevel: "low",
+  description: "列出全局记忆候选"
+});
+
+registerToolMetadata({
+  name: "memory.promoteGlobal",
+  category: "write",
+  riskLevel: "high",
+  description: "提升候选到全局记忆"
+});
+
+registerToolMetadata({
+  name: "memory.rejectGlobalCandidate",
+  category: "write",
+  riskLevel: "high",
+  description: "拒绝全局记忆候选"
+});
+
+registerToolMetadata({
+  name: "memory.status",
+  category: "read",
+  riskLevel: "low",
+  description: "读取记忆状态"
+});
+
+registerToolMetadata({
+  name: "memory.indexWorkspace",
+  category: "write",
+  riskLevel: "medium",
+  description: "刷新工作区记忆索引"
+});
+
+registerToolMetadata({
+  name: "memory.indexDocument",
+  category: "write",
+  riskLevel: "medium",
+  description: "刷新单文档记忆索引"
+});
+
 // 网络工具
 registerToolMetadata({
   name: "web_search",
@@ -246,6 +337,14 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
+  name: "automation_read",
+  category: "read",
+  riskLevel: "low",
+  description: "读取自动化任务配置",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
   name: "cron_set",
   category: "write",
   riskLevel: "medium",
@@ -254,10 +353,26 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
+  name: "automation_set",
+  category: "write",
+  riskLevel: "high",
+  description: "设置自动化任务（创建/更新/删除/启停/立即执行）",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
   name: "cron_query",
   category: "read",
   riskLevel: "low",
   description: "查询定时任务运行记录",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "automation_query",
+  category: "read",
+  riskLevel: "low",
+  description: "查询自动化任务运行记录",
   allowedInPlanMode: true
 });
 

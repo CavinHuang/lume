@@ -66,6 +66,7 @@ import {
   hasRuntimeCoreSessionTranscript,
   type RuntimeCoreSessionManager
 } from "./session-store";
+import fs from 'node:fs'
 
 const log = createLogger("runtime-core-prompt");
 
@@ -706,7 +707,7 @@ async function buildCombinedSystemPrompt(input: {
     availableTools: input.availableTools,
     memoryCitationsMode: memoryRuntimeConfig.citationsMode,
     permissionMode: input.permissionMode
-  }).trim().replace("\n# Project Context\n", "\n## Project Context\n");
+  }).trim();
 
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: input.workspaceSlug,
@@ -798,6 +799,8 @@ export async function createRuntimeCoreSession(
     userMessage: input.userMessage,
     availableTools: toolset.availableToolNames
   });
+
+  fs.writeFileSync(resolve(input.cwd, 'systemPrompt.md'), systemPrompt)
 
   const agentOptions: AgentOptions = {
     apiType: resolveSdkApiType(input.provider),

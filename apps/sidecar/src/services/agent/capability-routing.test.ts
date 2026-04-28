@@ -10,6 +10,7 @@ describe("capability-routing", () => {
     expect(
       inferCapabilityLanes(["Skill", "browser", "memory_search", "web_search", "read", "write"])
     ).toEqual(["skills", "browser", "memory", "web", "raw-tools"]);
+    expect(inferCapabilityLanes(["memory.search", "memory.read"])).toEqual(["memory"]);
   });
 
   test("用户明确要求低层控制时应优先 raw-tools", () => {
@@ -59,6 +60,39 @@ describe("capability-routing", () => {
       availableTools: ["web_search", "read"]
     });
     expect(decision.preferredLane).toBe("web");
+  });
+
+  test("没有明确 skill 匹配时默认使用 raw-tools 而不是 skills-first", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "帮我看一下这个文件",
+      availableTools: ["Skill", "read", "write"],
+      loadedSkills: [
+        {
+          slug: "xlsx",
+          name: "Spreadsheet",
+          description: "Use for spreadsheet files"
+        }
+      ]
+    });
+
+    expect(decision.preferredLane).toBe("raw-tools");
+    expect(decision.reason).toContain("use direct tools");
+  });
+
+  test("没有 user message 时也不应 fallback 到 skills-first", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      availableTools: ["Skill", "read", "write"],
+      loadedSkills: [
+        {
+          slug: "xlsx",
+          name: "Spreadsheet",
+          description: "Use for spreadsheet files"
+        }
+      ]
+    });
+
+    expect(decision.preferredLane).toBe("raw-tools");
+    expect(decision.reason).toContain("default to direct tools");
   });
 
   test("browser/memory/web 路由应生成保守 soft tool policy", () => {
