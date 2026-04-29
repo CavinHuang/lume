@@ -53,7 +53,7 @@ jobs:
             patchelf
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Typecheck
         run: bun run typecheck
