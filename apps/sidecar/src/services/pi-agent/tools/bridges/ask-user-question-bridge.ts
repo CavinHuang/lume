@@ -3,6 +3,13 @@ import type {
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput
 } from "@lume/shared";
+import {
+  persistAskUserInterruption,
+  resolvePersistedAskUserInterruption,
+  resolveAskUserInterruption,
+  updateAskUserApprovalSession
+} from "../../../agent-runtime/interruption/ask-user-service";
+import { listPendingRuntimeCoreInterruptions } from "../../../agent-runtime/interruption/interruption-index";
 
 const pendingPiAskUserQuestionResolvers = new Map<
   string,
@@ -28,6 +35,11 @@ export function setAskUserQuestionApprovalSession(toolUseId: string, approvalSes
   const normalized = approvalSessionId.trim();
   if (!normalized) return;
   pending.approvalSessionId = normalized;
+  void updateAskUserApprovalSession({
+    originalThreadId: pending.threadId,
+    approvalThreadId: normalized,
+    request: pending.request
+  });
 }
 
 function resolveAskTimeoutMs(): number {
@@ -55,6 +67,12 @@ export function waitForPiAskUserQuestionAnswers(
       }
       pendingPiAskUserQuestionResolvers.delete(toolUseId);
       signal.removeEventListener("abort", onAbort);
+      void resolveAskUserInterruption({
+        threadId,
+        toolUseId,
+        canceled: result.status !== "answered",
+        answers: result.answers ?? undefined
+      });
       resolve(result);
     };
 
@@ -95,6 +113,7 @@ export function waitForPiAskUserQuestionAnswers(
       timeout
     });
     signal.addEventListener("abort", onAbort, { once: true });
+    void persistAskUserInterruption(request);
     emit(request);
   });
 }
@@ -102,7 +121,12 @@ export function waitForPiAskUserQuestionAnswers(
 export function submitPiAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): boolean {
   const pending = pendingPiAskUserQuestionResolvers.get(input.toolUseId);
   if (!pending) {
-    return false;
+    return resolvePersistedAskUserInterruption({
+      approvalThreadId: input.threadId,
+      toolUseId: input.toolUseId,
+      canceled: input.canceled,
+      answers: input.answers
+    });
   }
   if (pending.approvalSessionId !== input.threadId) {
     throw new Error("AskUserQuestion 会话不匹配");
@@ -120,13 +144,18 @@ export function cancelPendingPiAskUserQuestionBySession(threadId: string): void 
     if (pending.threadId !== threadId && pending.approvalSessionId !== threadId) {
       continue;
     }
+    void resolveAskUserInterruption({
+      threadId: pending.threadId,
+      toolUseId,
+      canceled: true
+    });
     pending.resolve({ status: "canceled", answers: null });
     pendingPiAskUserQuestionResolvers.delete(toolUseId);
   }
 }
 
 export function listPendingPiAskUserQuestionRequests(): AgentAskUserQuestionRequest[] {
-  return Array.from(pendingPiAskUserQuestionResolvers.values()).map((pending) => ({
+  const liveRequests = Array.from(pendingPiAskUserQuestionResolvers.values()).map((pending) => ({
     ...pending.request,
     threadId: pending.approvalSessionId,
     ...(pending.request.originThreadId ? {} : (
@@ -135,4 +164,18 @@ export function listPendingPiAskUserQuestionRequests(): AgentAskUserQuestionRequ
         : {}
     ))
   }));
+  mergePersistedAskUserRequests(liveRequests);
+  return liveRequests;
+}
+
+function mergePersistedAskUserRequests(target: AgentAskUserQuestionRequest[]): void {
+  const seen = new Set(target.map((request) => request.toolUseId));
+  const persisted = listPendingRuntimeCoreInterruptions();
+  for (const interruption of persisted) {
+    if (interruption.type !== "ask_user") continue;
+    const payload = interruption.payload as AgentAskUserQuestionRequest;
+    if (!payload?.toolUseId || seen.has(payload.toolUseId)) continue;
+    seen.add(payload.toolUseId);
+    target.push(payload);
+  }
 }

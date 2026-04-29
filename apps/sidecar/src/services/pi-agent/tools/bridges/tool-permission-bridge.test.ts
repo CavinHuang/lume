@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getRuntimeCoreSessionDir } from "../../runtime-core/session-store";
+import { createFileBackedLumeInterruptionStore } from "../../../agent-runtime/interruption/interruption-store";
 import {
   isToolAlwaysAllowed,
   listPendingToolPermissionRequests,
@@ -9,6 +14,16 @@ import {
 } from "./tool-permission-bridge";
 
 describe("tool-permission-bridge", () => {
+  const prevConfigDir = process.env.LUME_CONFIG_DIR;
+
+  afterEach(() => {
+    if (prevConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = prevConfigDir;
+    }
+  });
+
   test("wait + submit 应返回用户决策", async () => {
     const waitPromise = waitForToolPermissionDecision(
       {
@@ -93,5 +108,147 @@ describe("tool-permission-bridge", () => {
       decision: "deny"
     });
     await waitPromise;
+  });
+
+  test("应持久化工具审批并在提交后写入 resolution", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-persist-"));
+    const threadId = "persist-thread";
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId,
+        requestId: "persist-req",
+        toolUseId: "persist-tool",
+        toolName: "Bash",
+        risk: "high",
+        reason: "needs approval",
+        input: { command: "git push origin main" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+
+    const store = createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(threadId));
+    expect((await store.listPendingByThread(threadId)).map((item) => item.id)).toEqual([
+      "tool_approval:persist-req"
+    ]);
+
+    submitToolPermissionDecision({
+      threadId,
+      requestId: "persist-req",
+      decision: "allow_always"
+    });
+    expect(await waitPromise).toBe("allow_always");
+    const resolved = await store.get("tool_approval:persist-req");
+    expect(resolved?.status).toBe("approved");
+    expect(resolved?.resolution?.rememberDecision).toBeTrue();
+  });
+
+  test("自动化执行的工具审批应持久化为 automation_approval", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-automation-"));
+    const threadId = "automation-thread";
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId,
+        requestId: "automation-req",
+        toolUseId: "automation-tool",
+        toolName: "Bash",
+        risk: "high",
+        reason: "automation needs approval",
+        input: { command: "deploy" },
+        interruptionType: "automation_approval"
+      },
+      new AbortController().signal,
+      () => {}
+    );
+
+    const store = createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(threadId));
+    const [pending] = await store.listPendingByThread(threadId);
+    expect(pending?.type).toBe("automation_approval");
+    expect(listPendingToolPermissionRequests().some((request) => request.requestId === "automation-req")).toBeTrue();
+
+    submitToolPermissionDecision({
+      threadId,
+      requestId: "automation-req",
+      decision: "deny"
+    });
+    await waitPromise;
+    expect((await store.get("tool_approval:automation-req"))?.status).toBe("rejected");
+  });
+
+  test("冷启动后没有 live resolver 时也应能拒绝落盘 automation_approval", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-automation-cold-"));
+    const threadId = "automation-cold-thread";
+    const store = createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(threadId));
+    await store.upsert({
+      id: "tool_approval:automation-cold-req",
+      threadId,
+      type: "automation_approval",
+      status: "pending",
+      title: "确认自动化执行 Bash",
+      message: "needs approval",
+      payload: {
+        threadId,
+        requestId: "automation-cold-req",
+        toolUseId: "automation-cold-tool",
+        toolName: "Bash",
+        risk: "high",
+        reason: "needs approval",
+        input: { command: "deploy" },
+        interruptionType: "automation_approval"
+      },
+      source: {
+        toolName: "Bash",
+        toolCallId: "automation-cold-tool"
+      },
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    const handled = submitToolPermissionDecision({
+      threadId,
+      requestId: "automation-cold-req",
+      decision: "deny"
+    });
+
+    expect(handled).toBeTrue();
+    expect((await store.get("tool_approval:automation-cold-req"))?.status).toBe("rejected");
+  });
+
+  test("冷启动后没有 live resolver 时也应能拒绝落盘工具审批", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-cold-"));
+    const threadId = "cold-thread";
+    const store = createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(threadId));
+    await store.upsert({
+      id: "tool_approval:cold-req",
+      threadId,
+      type: "tool_approval",
+      status: "pending",
+      title: "确认执行 Bash",
+      message: "needs approval",
+      payload: {
+        threadId,
+        requestId: "cold-req",
+        toolUseId: "cold-tool",
+        toolName: "Bash",
+        risk: "high",
+        reason: "needs approval",
+        input: { command: "git push origin main" }
+      },
+      source: {
+        toolName: "Bash",
+        toolCallId: "cold-tool"
+      },
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    const handled = submitToolPermissionDecision({
+      threadId,
+      requestId: "cold-req",
+      decision: "deny"
+    });
+
+    expect(handled).toBeTrue();
+    expect((await store.get("tool_approval:cold-req"))?.status).toBe("rejected");
   });
 });

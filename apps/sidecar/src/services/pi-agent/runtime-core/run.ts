@@ -41,18 +41,11 @@ import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   buildBuiltinAgents,
-  buildDynamicContext,
-  buildSystemPromptAppend,
   loadCustomAgents
 } from "../../agent/agent-prompt-builder";
-import {
-  resolveAgentDynamicContextInput,
-  resolveAgentRuntimeRoutingTrace
-} from "../../agent/agent-runtime-context";
 import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
 import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
-import { buildMemoryContext } from "../../memory/memory-prompt-builder";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
@@ -63,10 +56,13 @@ import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-regis
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
 import {
   createOrResumeRuntimeCoreSessionManager,
+  getRuntimeCoreSessionDir,
   hasRuntimeCoreSessionTranscript,
   type RuntimeCoreSessionManager
 } from "./session-store";
-import fs from 'node:fs'
+import { ContextAssembler } from "../../agent-runtime/context/context-assembler";
+import type { ContextAssemblyInput } from "../../agent-runtime/context/context-assembler";
+import { createPlanWriteTool } from "../../agent-runtime/plan/plan-write-tool";
 
 const log = createLogger("runtime-core-prompt");
 
@@ -99,6 +95,8 @@ export interface CreateRuntimeCoreSessionInput {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+  runId?: string;
+  trace?: ContextAssemblyInput["trace"];
 }
 
 export interface RuntimeCoreSessionLike {
@@ -244,6 +242,19 @@ export function buildSidecarSubagentRunContext(input: {
       resolvedAgentId: agentId,
       status: "running"
     }
+  };
+}
+
+export function buildSidecarSubagentExecutionInput(input: {
+  forwardedToolInput: Record<string, unknown>;
+  modelOverride: ResolvedSubagentModelOverride;
+  runInBackground: boolean;
+}): Record<string, unknown> {
+  return {
+    ...input.forwardedToolInput,
+    run_in_background: input.runInBackground,
+    isolation: undefined,
+    ...(input.modelOverride.resolvedModelId ? { model: input.modelOverride.resolvedModelId } : {})
   };
 }
 
@@ -490,6 +501,7 @@ function buildRuntimeCoreTools(input: {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+  runId?: string;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
@@ -501,6 +513,13 @@ function buildRuntimeCoreTools(input: {
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
     includeAskUserQuestion: automationExecution !== true
   });
+  const planWriteTool = permissionMode === "plan"
+    ? createPlanWriteTool({
+        sessionDir: getRuntimeCoreSessionDir(input.sessionId),
+        threadId: input.sessionId,
+        runId: input.runId ?? input.sessionId
+      })
+    : null;
   const lumeTools = createLumePiTools({
     threadId: input.sessionId,
     workspaceId: input.workspaceId,
@@ -560,12 +579,12 @@ function buildRuntimeCoreTools(input: {
           if (run) await announceSubagentCompletion({ run });
         }
       };
-      const forcedForegroundInput = {
-        ...subagentRun.forwardedToolInput,
-        run_in_background: false as const,
-        isolation: undefined,
-        ...(modelOverride.resolvedModelId ? { model: modelOverride.resolvedModelId } : {})
-      };
+      const runInBackground = toolInput.run_in_background === true;
+      const executionInput = buildSidecarSubagentExecutionInput({
+        forwardedToolInput: subagentRun.forwardedToolInput,
+        modelOverride,
+        runInBackground
+      });
       getSubagentRunRegistry().create({
         ...subagentRun.registryInput,
         deliveryThreadId: parentThreadId,
@@ -574,24 +593,49 @@ function buildRuntimeCoreTools(input: {
         ...(modelOverride.channelId ? { channelId: modelOverride.channelId } : input.channelId ? { channelId: input.channelId } : {}),
         ...(modelOverride.resolvedModelId ? { modelId: modelOverride.resolvedModelId } : context.model ? { modelId: context.model } : {})
       });
+      const executeSubagent = () => runSidecarSubagent({
+        toolInput: executionInput,
+        context: enrichedContext,
+        runId: subagentRun.runId,
+        childThreadId: subagentRun.childThreadId,
+        parentThreadId,
+        deliveryThreadId: parentThreadId,
+        parentToolUseId: context.toolUseId,
+        modelOverride,
+        channelId: input.channelId,
+        workspaceId: input.workspaceId,
+        chatType: input.chatType,
+        messageMetadata: input.messageMetadata,
+        permissionMode,
+        emitAskUserQuestion: input.emitAskUserQuestion,
+        emitToolPermissionRequest: input.emitToolPermissionRequest
+      });
+      if (runInBackground) {
+        void executeSubagent()
+          .then(async (execution) => {
+            await enrichedContext.onSubagentEnd?.({
+              runId: subagentRun.runId,
+              status: execution.status,
+              output: execution.output,
+              error: execution.error
+            });
+          })
+          .catch(async (err: any) => {
+            getSubagentRunRegistry().update(subagentRun.runId, {
+              status: "errored",
+              outcome: { error: err?.message ?? String(err) }
+            });
+            const run = getSubagentRunRegistry().get(subagentRun.runId);
+            if (run) await announceSubagentCompletion({ run });
+          });
+        return {
+          type: "tool_result" as const,
+          tool_use_id: "",
+          content: `Background subagent started: ${subagentRun.runId}`
+        };
+      }
       try {
-        const execution = await runSidecarSubagent({
-          toolInput: forcedForegroundInput,
-          context: enrichedContext,
-          runId: subagentRun.runId,
-          childThreadId: subagentRun.childThreadId,
-          parentThreadId,
-          deliveryThreadId: parentThreadId,
-          parentToolUseId: context.toolUseId,
-          modelOverride,
-          channelId: input.channelId,
-          workspaceId: input.workspaceId,
-          chatType: input.chatType,
-          messageMetadata: input.messageMetadata,
-          permissionMode,
-          emitAskUserQuestion: input.emitAskUserQuestion,
-          emitToolPermissionRequest: input.emitToolPermissionRequest
-        });
+        const execution = await executeSubagent();
         await enrichedContext.onSubagentEnd?.({
           runId: subagentRun.runId,
           status: execution.status,
@@ -606,7 +650,12 @@ function buildRuntimeCoreTools(input: {
     }
   };
 
-  const tools = [...filteredBaseTools, ...customTools, sidecarAgentTool];
+  const tools = [
+    ...filteredBaseTools,
+    ...(planWriteTool ? [planWriteTool] : []),
+    ...customTools,
+    sidecarAgentTool
+  ];
 
   return {
     tools,
@@ -673,97 +722,6 @@ function resolveSkillDirectories(workspaceSlug?: string): string[] {
   return roots;
 }
 
-function resolvePromptMemorySessionType(input: {
-  threadType?: AgentSendInput["threadType"];
-  chatType?: AgentSendInput["chatType"];
-}): "main" | "subagent" | "group" | "channel" {
-  if (input.threadType) return input.threadType;
-  if (input.chatType === "group" || input.chatType === "channel") return input.chatType;
-  return "main";
-}
-
-async function buildCombinedSystemPrompt(input: {
-  lumeSessionId: string;
-  cwd: string;
-  modelRef?: string;
-  resolvedModelId: string;
-  workspaceId?: string;
-  workspaceName?: string;
-  workspaceSlug?: string;
-  channelId?: string;
-  threadType?: AgentSendInput["threadType"];
-  chatType?: AgentSendInput["chatType"];
-  permissionMode?: AgentSendInput["permissionMode"];
-  userMessage?: string;
-  availableTools: string[];
-}): Promise<string> {
-  const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
-  const systemPromptAppend = buildSystemPromptAppend({
-    workspaceName: input.workspaceName,
-    workspaceSlug: input.workspaceSlug,
-    sessionId: input.lumeSessionId,
-    sessionType: input.threadType,
-    chatType: input.chatType,
-    availableTools: input.availableTools,
-    memoryCitationsMode: memoryRuntimeConfig.citationsMode,
-    permissionMode: input.permissionMode
-  }).trim();
-
-  const routingTrace = resolveAgentRuntimeRoutingTrace({
-    workspaceSlug: input.workspaceSlug,
-    userMessage: input.userMessage,
-    availableTools: input.availableTools
-  });
-  log.debug("resolved capability routing trace", {
-    sessionId: input.lumeSessionId,
-    workspaceSlug: input.workspaceSlug,
-    capabilityLanes: routingTrace.capabilityLanes,
-    preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
-    routingReason: routingTrace.reason
-  });
-
-  const dynamicContext = buildDynamicContext(
-    resolveAgentDynamicContextInput({
-      threadId: input.lumeSessionId,
-      userMessage: input.userMessage,
-      workspaceName: input.workspaceName,
-      workspaceSlug: input.workspaceSlug,
-      agentCwd: input.cwd,
-      availableTools: input.availableTools,
-      threadType: input.threadType,
-      chatType: input.chatType,
-      fallbackModelRef: input.modelRef,
-      fallbackModelId: input.modelRef ?? input.resolvedModelId
-    })
-  ).trim();
-
-  let memoryContext = "";
-  if (input.workspaceSlug && input.userMessage?.trim()) {
-    try {
-      memoryContext = await buildMemoryContext({
-        workspaceSlug: input.workspaceSlug,
-        sessionType: resolvePromptMemorySessionType({
-          threadType: input.threadType,
-          chatType: input.chatType
-        }),
-        userInput: input.userMessage,
-        maxItems: 8,
-        tokenBudget: 1200
-      });
-    } catch (error) {
-      log.warn("failed to build memory context", {
-        sessionId: input.lumeSessionId,
-        workspaceSlug: input.workspaceSlug,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  return [systemPromptAppend, dynamicContext, memoryContext]
-    .filter((part) => typeof part === "string" && part.trim().length > 0)
-    .join("\n\n");
-}
-
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
@@ -781,26 +739,27 @@ export async function createRuntimeCoreSession(
     messageMetadata: input.messageMetadata,
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion,
-    emitToolPermissionRequest: input.emitToolPermissionRequest
+    emitToolPermissionRequest: input.emitToolPermissionRequest,
+    runId: input.runId
   });
 
-  const systemPrompt = await buildCombinedSystemPrompt({
-    lumeSessionId: input.lumeSessionId,
+  const contextAssembly = await new ContextAssembler().assemble({
+    threadId: input.lumeSessionId,
+    runId: input.lumeSessionId,
     cwd: input.cwd,
     modelRef: input.modelRef,
     resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
-    workspaceId: input.workspaceId,
     workspaceName: input.workspaceName,
     workspaceSlug: input.workspaceSlug,
-    channelId: input.channelId,
     threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
-    userMessage: input.userMessage,
-    availableTools: toolset.availableToolNames
+    userMessage: input.userMessage ?? "",
+    availableTools: toolset.availableToolNames,
+    tokenBudget: input.resolvedModel?.contextWindow ?? 32_000,
+    trace: input.trace
   });
-
-  fs.writeFileSync(resolve(input.cwd, 'systemPrompt.md'), systemPrompt)
+  const systemPrompt = contextAssembly.systemPrompt;
 
   const agentOptions: AgentOptions = {
     apiType: resolveSdkApiType(input.provider),

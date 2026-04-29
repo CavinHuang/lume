@@ -15,6 +15,7 @@ import {
 } from '@/atoms'
 import type {
   AgentStreamEvent,
+  AgentRunEventNotification,
   AgentRuntimeStatusChangedEvent,
   AgentAskUserQuestionRequest,
   AgentToolPermissionRequest,
@@ -315,6 +316,24 @@ export function useGlobalAgentListeners() {
           setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
           if (error) {
             setErrorMessages((prev) => ({ ...prev, [threadId]: error }))
+          }
+          break
+        }
+        case 'agent:run:event': {
+          const { threadId, event } = params as AgentRunEventNotification
+          if (event.type === 'assistant_delta' || event.type === 'tool_call_started' || event.type === 'tool_call_completed') {
+            setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
+            break
+          }
+          if (event.type === 'run_completed') {
+            delete streamingRef.current[threadId]
+            setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+            break
+          }
+          if (event.type === 'run_failed') {
+            delete streamingRef.current[threadId]
+            setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
+            setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
           }
           break
         }

@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
-import { buildSidecarSubagentRunContext, createRuntimeCoreSession, resolveSubagentModelOverride } from "./run";
+import {
+  buildSidecarSubagentExecutionInput,
+  buildSidecarSubagentRunContext,
+  createRuntimeCoreSession,
+  resolveSubagentModelOverride
+} from "./run";
 import { runRuntimeCoreAttempt } from "./attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath } from "../../infra/config-paths";
@@ -547,5 +552,30 @@ describe("runtime-core run", () => {
     expect(result.registryInput.parentThreadId).toBe("parent-thread");
     expect(result.registryInput.rootThreadId).toBe("root-thread");
     expect(result.registryInput.parentRunId).toBe("parent-run");
+  });
+
+  test("buildSidecarSubagentExecutionInput 应仅在显式后台模式下保留 run_in_background", () => {
+    const background = buildSidecarSubagentExecutionInput({
+      forwardedToolInput: {
+        prompt: "后台执行",
+        run_in_background: true,
+        isolation: "remote"
+      },
+      modelOverride: { source: "inherit" },
+      runInBackground: true
+    });
+
+    const foreground = buildSidecarSubagentExecutionInput({
+      forwardedToolInput: {
+        prompt: "前台执行",
+        run_in_background: true
+      },
+      modelOverride: { source: "inherit" },
+      runInBackground: false
+    });
+
+    expect(background.run_in_background).toBe(true);
+    expect(background.isolation).toBeUndefined();
+    expect(foreground.run_in_background).toBe(false);
   });
 });

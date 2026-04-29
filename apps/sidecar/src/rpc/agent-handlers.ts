@@ -11,6 +11,7 @@ import type {
   InstallSkillMarketItemToWorkspaceInput,
   InstallGlobalPluginInput,
   PlanStep,
+  SDKMessage,
   WorkspaceMcpConfig
 } from "@lume/shared";
 import {
@@ -106,6 +107,7 @@ import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attempt";
+import { mapSdkMessageToRunEvents } from "../services/agent-runtime/runner/run-events";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
 import { listPendingPiAskUserQuestionRequests } from "../services/pi-agent/tools/bridges/ask-user-question-bridge";
 import { listPendingToolPermissionRequests } from "../services/pi-agent/tools/bridges/tool-permission-bridge";
@@ -208,11 +210,24 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         threadId,
         message
       });
+      for (const event of mapSdkMessageToRunEvents(message as SDKMessage)) {
+        context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+          threadId,
+          event
+        });
+      }
     },
     onMessageAppended: (event: unknown) => {
       context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
     },
     onComplete: () => {
+      context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+        threadId,
+        event: {
+          type: "run_completed",
+          result: { status: "completed" }
+        }
+      });
       context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
         threadId
       });
@@ -222,6 +237,16 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
     },
     onError: (error: string) => {
+      context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+        threadId,
+        event: {
+          type: "run_failed",
+          error: {
+            code: "runtime_error",
+            message: error
+          }
+        }
+      });
       context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
         threadId,
         error

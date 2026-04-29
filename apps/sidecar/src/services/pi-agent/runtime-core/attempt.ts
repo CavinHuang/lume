@@ -1,23 +1,10 @@
-import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
-import {
-  appendSdkMessage,
-  createAgentStreamAccumulatorState,
-  hasRenderableAssistantOutput
-} from "../../agent/agent-stream-accumulator";
-import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
-import { decryptApiKey, listChannels } from "../../channel/channel-manager";
-import { resolveChannelModelBinding } from "../../channel/channel-manager";
-import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { type CanUseToolFn } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import { buildRuntimeAttemptLogData } from "../../agent/agent-log-summary";
 import { resolveMockAttempt } from "./mock-attempt";
 import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../runner/types";
-import { resolveAgentThinkingLevel } from "../runner/model-capabilities";
-import { resolveRuntimeCoreChannelModel } from "./model";
-import { createRuntimeCoreSession } from "./run";
 import { resolveSubagentInteractiveLabel } from "./subagent-interactive-display";
-import { getRuntimeCoreAgentDir, hasRuntimeCoreSessionTranscript } from "./session-store";
-import { updateRuntimeThreadMetaIfPresent } from "./thread-meta-target";
+import { hasRuntimeCoreSessionTranscript } from "./session-store";
 import {
   isToolAlwaysAllowed,
   markToolAlwaysAllowed,
@@ -34,23 +21,19 @@ import {
   waitForPiAskUserQuestionAnswers
 } from "../tools/bridges/ask-user-question-bridge";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
-import { evaluateRuntimeToolSafety } from "./runtime-tool-safety";
+import { builtinToolInputGuardrails } from "../../agent-runtime/guardrails/builtin-tool-guardrails";
+import { LumeGuardrailRunner } from "../../agent-runtime/guardrails/guardrail-runner";
+import { LumeRunner } from "../../agent-runtime/runner/lume-runner";
+import { evaluateToolApprovalPolicy } from "../../agent-runtime/tools/tool-policy";
+import { prepareRuntimeCoreAttempt, type PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
   unregisterAbort: (threadId: string) => void;
 }
 
-interface PreparedRuntimeCoreAttempt {
-  agentCwd: string;
-  agentDir: string;
-  workspaceName?: string;
-  workspaceSlug?: string;
-  modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
-  apiKey: string;
-}
-
 const log = createLogger("pi-agent-runtime-core-attempt");
+const toolInputGuardrails = new LumeGuardrailRunner(builtinToolInputGuardrails);
 
 function sanitizeToolInput(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object") return {};
@@ -64,35 +47,6 @@ function sanitizeToolInput(input: unknown): Record<string, unknown> {
     }
   }
   return copied;
-}
-
-function shouldRequireConfirmation(permissionMode: PiAgentRunParams["input"]["permissionMode"], toolName: string): boolean {
-  const mode = permissionMode ?? "default";
-  if (mode === "bypassPermissions") {
-    return false;
-  }
-  const metadata = getToolMetadata(toolName) ?? inferToolMetadata(toolName);
-  if (metadata.riskLevel === "low") {
-    return false;
-  }
-  if (mode === "acceptEdits" && metadata.category === "write") {
-    return false;
-  }
-  return true;
-}
-
-function buildPermissionReason(toolName: string): string {
-  const metadata = getToolMetadata(toolName) ?? inferToolMetadata(toolName);
-  if (metadata.riskLevel === "high") {
-    return `${toolName} 可能执行系统命令或高风险操作，需要你确认。`;
-  }
-  if (metadata.category === "write") {
-    return `${toolName} 将修改文件或数据，需要你确认。`;
-  }
-  if (metadata.category === "execute") {
-    return `${toolName} 将执行操作，需要你确认。`;
-  }
-  return `${toolName} 将触发操作，需要你确认。`;
 }
 
 function toReadableString(value: unknown): string {
@@ -137,6 +91,7 @@ function parseAskUserQuestions(input: Record<string, unknown>): AgentAskUserQues
 
 function createCanUseToolHandler(
   params: PiAgentRunParams,
+  prepared: PreparedRuntimeCoreAttempt,
   emit: PiAgentRuntimeEmitter,
   askUserSignal: AbortSignal
 ): CanUseToolFn {
@@ -149,6 +104,7 @@ function createCanUseToolHandler(
       : undefined;
     const subagentRunId = params.runtime.subagentRunId;
     const subagentLabel = resolveSubagentInteractiveLabel(subagentRunId);
+    const automationExecution = isAutomationExecution(params.input.messageMetadata);
     if (mode === "plan" && !isToolAllowedInPlanMode(toolName)) {
       return {
         behavior: "deny",
@@ -156,8 +112,16 @@ function createCanUseToolHandler(
       };
     }
 
-    const inputSafety = evaluateRuntimeToolSafety(toolName, input);
-    if (inputSafety.behavior === "deny") {
+    const inputSafety = await toolInputGuardrails.runToolInputGuardrails({
+      toolName,
+      input,
+      context: {
+        threadId: params.runtime.sessionId,
+        cwd: prepared.agentCwd,
+        workspaceSlug: prepared.workspaceSlug
+      }
+    });
+    if (inputSafety.behavior === "reject") {
       return {
         behavior: "deny",
         message: `工具参数被拒绝: ${inputSafety.reason}`
@@ -217,7 +181,13 @@ function createCanUseToolHandler(
       };
     }
 
-    if (inputSafety.behavior !== "confirm" && !shouldRequireConfirmation(params.input.permissionMode, toolName)) {
+    const approvalPolicy = evaluateToolApprovalPolicy({
+      permissionMode: params.input.permissionMode,
+      toolName,
+      guardrailResult: inputSafety
+    });
+
+    if (!approvalPolicy.requiresApproval) {
       return { behavior: "allow" };
     }
 
@@ -234,8 +204,9 @@ function createCanUseToolHandler(
       toolUseId: metadata?.toolUseId ?? toolName,
       toolName,
       risk: (getToolMetadata(toolName) ?? inferToolMetadata(toolName)).riskLevel,
-      reason: inputSafety.behavior === "confirm" ? inputSafety.reason : buildPermissionReason(toolName),
-      input: sanitizeToolInput(input)
+      reason: approvalPolicy.reason,
+      input: sanitizeToolInput(input),
+      ...(automationExecution ? { interruptionType: "automation_approval" as const } : {})
     } as const;
     const decision = await waitForToolPermissionDecision(
       request,
@@ -267,6 +238,12 @@ function createCanUseToolHandler(
   };
 }
 
+function isAutomationExecution(messageMetadata?: Record<string, unknown>): boolean {
+  if (!messageMetadata) return false;
+  return typeof messageMetadata.automationJobId === "string"
+    || typeof messageMetadata.automationTrigger === "string";
+}
+
 export async function runRuntimeCoreAttempt(
   params: PiAgentRunParams,
   emit: PiAgentRuntimeEmitter,
@@ -276,14 +253,20 @@ export async function runRuntimeCoreAttempt(
 
   const mockHandler = resolveMockAttempt(input);
   const prepared = await prepareRuntimeCoreAttempt(params);
-  if (mockHandler) {
-    if ("status" in prepared) {
-      return prepared;
-    }
-    return mockHandler(params, emit, options, prepared);
-  }
   if ("status" in prepared) {
     return prepared;
+  }
+
+  const runner = await LumeRunner.create({ params, prepared, emit });
+
+  if (mockHandler) {
+    try {
+      const result = await mockHandler(params, runner.emit, options, prepared);
+      return runner.finalizeResult(result);
+    } catch (error) {
+      await runner.finalizeError(error);
+      throw error;
+    }
   }
 
   const resumeExistingSession = hasRuntimeCoreSessionTranscript(runtime.sessionId, prepared.agentDir);
@@ -297,249 +280,13 @@ export async function runRuntimeCoreAttempt(
     cwd: prepared.agentCwd
   }));
 
-  const runtimeSession = await createRuntimeCoreSession({
-    lumeSessionId: runtime.sessionId,
-    cwd: prepared.agentCwd,
-    agentDir: prepared.agentDir,
-    userMessage: input.userMessage,
-    provider: prepared.modelResolution.provider,
-    modelRef: runtime.modelRef,
-    resolvedModelId: prepared.modelResolution.resolvedModelId,
-    resolvedModel: {
-      id: prepared.modelResolution.model.id,
-      provider: prepared.modelResolution.model.provider,
-      baseUrl: prepared.modelResolution.model.baseUrl,
-      contextWindow: prepared.modelResolution.model.contextWindow,
-      maxTokens: prepared.modelResolution.model.maxTokens
-    },
-    apiKey: prepared.apiKey,
-    workspaceId: runtime.workspaceId,
-    workspaceName: prepared.workspaceName,
-    workspaceSlug: prepared.workspaceSlug,
-    channelId: runtime.channelId,
-    threadType: runtime.threadType,
-    chatType: input.chatType,
-    permissionMode: input.permissionMode,
-    messageMetadata: input.messageMetadata,
-    emitSdkMessage: emit.onSdkMessage,
-    emitAskUserQuestion: emit.onAskUserQuestion,
-    emitToolPermissionRequest: emit.onToolPermissionRequest
+  return runner.runPreparedRuntimeCoreAttempt({
+    params,
+    prepared,
+    options,
+    createCanUseTool: (askUserSignal) =>
+      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal)
   });
-
-  const { agent, session } = runtimeSession;
-  log.info("[Agent 编排] runtime session 已建立", buildRuntimeAttemptLogData({
-    sessionId: runtime.sessionId,
-    workspaceSlug: prepared.workspaceSlug,
-    provider: prepared.modelResolution.provider,
-    modelId: prepared.modelResolution.resolvedModelId,
-    resume: resumeExistingSession,
-    permissionMode: input.permissionMode,
-    cwd: prepared.agentCwd,
-    toolCount: runtimeSession.tools.length
-  }));
-  const accumulator = createAgentStreamAccumulatorState();
-  let finalResult: PiAgentRunResult = { status: "completed" };
-  let finalError = "";
-  const askUserAbortController = new AbortController();
-
-  options.registerAbort(runtime.sessionId, async () => {
-    askUserAbortController.abort();
-    await agent.interrupt();
-  });
-
-  try {
-    setQuestionHandler((async (request: {
-      questions: AgentAskUserQuestionQuestion[];
-      answers?: Record<string, string>;
-    }) => {
-      if (request.answers && typeof request.answers === "object") {
-        return {
-          questions: request.questions,
-          answers: request.answers as Record<string, string>
-        };
-      }
-      throw new Error("AskUserQuestion answers missing");
-    }) as any);
-    await agent.setModel(prepared.modelResolution.resolvedModelId);
-    const thinkingLevel = resolveAgentThinkingLevel(
-      prepared.modelResolution.model,
-      prepared.modelResolution.model.baseUrl,
-      input.thinkingLevel
-    );
-    if (thinkingLevel === "high") {
-      await agent.setMaxThinkingTokens(8_192);
-    } else if (thinkingLevel === "medium") {
-      await agent.setMaxThinkingTokens(4_096);
-    } else if (thinkingLevel === "low") {
-      await agent.setMaxThinkingTokens(1_024);
-    } else if (thinkingLevel === "xhigh") {
-      await agent.setMaxThinkingTokens(16_384);
-    } else if (thinkingLevel === "off") {
-      await agent.setMaxThinkingTokens(null);
-    }
-
-    log.info("[Agent 编排] 开始遍历事件流", {
-      sessionId: runtime.sessionId.slice(0, 8),
-      modelId: prepared.modelResolution.resolvedModelId,
-      thinkingLevel,
-      permissionMode: input.permissionMode ?? "default"
-    });
-
-    const query = agent.query(input.userMessage, {
-      canUseTool: createCanUseToolHandler(params, emit, askUserAbortController.signal),
-      permissionMode: input.permissionMode === "bypassPermissions"
-        ? "bypassPermissions"
-        : input.permissionMode === "plan"
-          ? "plan"
-          : input.permissionMode === "acceptEdits"
-            ? "acceptEdits"
-            : "default",
-      includePartialMessages: true
-    });
-
-    for await (const message of query) {
-      emit.onSdkMessage(message);
-      appendSdkMessage(accumulator, message);
-
-      const errorMessage = getLastError(message);
-      if (errorMessage) {
-        finalError = errorMessage;
-      }
-      if (message.type === "result" && message.is_error) {
-        finalResult = {
-          status: "errored",
-          errorMessage: errorMessage || "Agent SDK 执行失败"
-        };
-      }
-    }
-
-    if (finalResult.status === "errored") {
-      return finalResult;
-    }
-
-    if (!hasRenderableAssistantOutput(accumulator)) {
-      return {
-        status: "errored",
-        errorMessage: "runtime-core 未检测到可渲染输出。"
-      };
-    }
-
-    updateRuntimeThreadMetaIfPresent(runtime, {
-      sdkThreadId: session.threadId ?? session.sessionId,
-      runtimeThreadId: session.threadId ?? session.sessionId
-    });
-
-    log.info("[Agent 编排] 事件流结束", {
-      sessionId: runtime.sessionId.slice(0, 8),
-      status: "completed",
-      sdkSessionId: (session.threadId ?? session.sessionId)?.slice(0, 8),
-      hasRenderableOutput: true
-    });
-    emit.onComplete();
-    return { status: "completed" };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (/abort|interrupted/i.test(errorMessage)) {
-      log.warn("[Agent 编排] 事件流中止", {
-        sessionId: runtime.sessionId.slice(0, 8),
-        status: "aborted",
-        errorMessage
-      });
-      emit.onComplete();
-      return { status: "aborted" };
-    }
-    log.error("[Agent 编排] 事件流失败", {
-      sessionId: runtime.sessionId.slice(0, 8),
-      status: "errored",
-      errorMessage: finalError || errorMessage
-    });
-    emit.onError(finalError || errorMessage);
-    return {
-      status: "errored",
-      errorMessage: finalError || errorMessage
-    };
-  } finally {
-    clearQuestionHandler();
-    askUserAbortController.abort();
-    await session.dispose();
-    options.unregisterAbort(runtime.sessionId);
-  }
-}
-
-function getLastError(message: import("@lume/agent-sdk").SDKMessage): string | null {
-  if (message.type === "result" && message.is_error) {
-    const firstError = Array.isArray(message.errors) ? message.errors[0] : undefined;
-    const detailedResult = typeof message.result === "string" ? message.result.trim() : "";
-    return typeof firstError === "string" && firstError.trim()
-      ? firstError
-      : detailedResult || "Agent SDK 执行失败";
-  }
-  if (message.type === "assistant" && message.error) {
-    const text = (message.message?.content ?? [])
-      .filter((block) => !!block && typeof block === "object")
-      .map((block) => block as { type?: string; text?: string })
-      .filter((block) => block.type === "text" && typeof block.text === "string")
-      .map((block) => block.text ?? "")
-      .join("")
-      .trim();
-    return text || message.error;
-  }
-  if (message.type === "system" && message.subtype === "status" && typeof message.message === "string") {
-    return message.message;
-  }
-  return null;
-}
-
-async function prepareRuntimeCoreAttempt(
-  params: PiAgentRunParams
-): Promise<PreparedRuntimeCoreAttempt | PiAgentRunResult> {
-  const { runtime } = params;
-  const boundModel = resolveChannelModelBinding(runtime.modelRef ?? "", "chat");
-  const channel = boundModel?.channel ?? listChannels().find((item) => item.id === runtime.channelId);
-  if (!channel) {
-    return { status: "errored", errorMessage: "runtime-core 未找到可用渠道。" };
-  }
-
-  let apiKey = "";
-  try {
-    apiKey = decryptApiKey(runtime.channelId);
-  } catch {
-    return { status: "errored", errorMessage: "runtime-core 解密 API Key 失败。" };
-  }
-
-  const modelResolution = resolveRuntimeCoreChannelModel({
-    channel,
-    channelProvider: channel.provider,
-    requestedModelRefOrId: runtime.modelRef ?? boundModel?.modelId ?? runtime.resolvedModelId,
-    baseUrl: channel.baseUrl
-  });
-  if (!modelResolution) {
-    return {
-      status: "errored",
-      errorMessage: `runtime-core 未找到模型: ${runtime.modelRef ?? `${channel.provider}/${runtime.resolvedModelId}`}`
-    };
-  }
-
-  let agentCwd = process.cwd();
-  let workspaceName: string | undefined;
-  let workspaceSlug: string | undefined;
-  if (runtime.workspaceId) {
-    const workspace = getAgentWorkspace(runtime.workspaceId);
-    if (workspace) {
-      workspaceName = workspace.name;
-      workspaceSlug = workspace.slug;
-      agentCwd = getAgentSessionWorkspacePath(workspace.slug, runtime.sessionId);
-    }
-  }
-
-  return {
-    agentCwd,
-    agentDir: getRuntimeCoreAgentDir(),
-    workspaceName,
-    workspaceSlug,
-    modelResolution,
-    apiKey
-  };
 }
 
 // ─── Pi Agent runner (migrated from runner/run.ts) ───

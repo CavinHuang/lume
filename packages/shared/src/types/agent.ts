@@ -626,6 +626,8 @@ export interface AgentToolPermissionRequest {
   risk: AgentToolPermissionRiskLevel
   reason: string
   input: Record<string, unknown>
+  /** 持久化 interruption 类型；自动化运行高风险工具时使用 automation_approval。 */
+  interruptionType?: 'tool_approval' | 'automation_approval'
 }
 
 export interface AgentToolPermissionResponseInput {
@@ -691,6 +693,45 @@ export interface AgentStreamEvent {
   threadId: string
   /** SDK 原始流消息 */
   message: SDKMessage
+}
+
+export type LumeRunEvent =
+  | { type: 'assistant_delta'; text: string }
+  | {
+      type: 'tool_call_started'
+      item: {
+        type: 'tool_call'
+        id: string
+        toolName: string
+        input: unknown
+        parentAgentId: string
+        parentToolCallId?: string
+        status: 'pending' | 'approved' | 'running' | 'completed' | 'failed' | 'denied'
+        traceSpanId?: string
+        createdAt: string
+      }
+    }
+  | {
+      type: 'tool_call_completed'
+      item: {
+        type: 'tool_result'
+        id: string
+        toolCallId: string
+        toolName?: string
+        output: unknown
+        isError?: boolean
+        traceSpanId?: string
+        createdAt: string
+      }
+    }
+  | { type: 'interruption_created'; interruption: unknown }
+  | { type: 'interruption_resolved'; interruption: unknown }
+  | { type: 'run_completed'; result: { status: 'completed'; finalOutput?: string } }
+  | { type: 'run_failed'; error: { code: string; message: string; stack?: string; retryable?: boolean } }
+
+export interface AgentRunEventNotification {
+  threadId: string
+  event: LumeRunEvent
 }
 
 export interface AgentThreadSDKMessagesResult {
@@ -956,6 +997,8 @@ export const AGENT_IPC_CHANNELS = {
   // 流式事件（主进程 → 渲染进程推送）
   /** Agent 流式事件 */
   STREAM_EVENT: 'agent:stream:event',
+  /** Agent runtime 结构化事件 */
+  RUN_EVENT: 'agent:run:event',
   /** Agent 流式完成 */
   STREAM_COMPLETE: 'agent:stream:complete',
   /** Agent 流式错误 */

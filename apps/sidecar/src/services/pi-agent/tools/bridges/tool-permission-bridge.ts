@@ -3,6 +3,13 @@ import type {
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput
 } from "@lume/shared";
+import {
+  persistToolApprovalInterruption,
+  resolvePersistedToolApprovalInterruption,
+  resolveToolApprovalInterruption,
+  updateToolApprovalSession
+} from "../../../agent-runtime/interruption/approval-service";
+import { listPendingRuntimeCoreInterruptions } from "../../../agent-runtime/interruption/interruption-index";
 
 const pendingToolPermissionResolvers = new Map<
   string,
@@ -54,6 +61,11 @@ export function setToolPermissionApprovalSession(requestId: string, approvalSess
   const normalized = approvalSessionId.trim();
   if (!normalized) return;
   pending.approvalSessionId = normalized;
+  void updateToolApprovalSession({
+    originalThreadId: pending.threadId,
+    approvalThreadId: normalized,
+    request: pending.request
+  });
 }
 
 export function waitForToolPermissionDecision(
@@ -69,6 +81,11 @@ export function waitForToolPermissionDecision(
       }
       pendingToolPermissionResolvers.delete(request.requestId);
       signal.removeEventListener("abort", onAbort);
+      void resolveToolApprovalInterruption({
+        threadId: request.threadId,
+        requestId: request.requestId,
+        decision
+      });
       resolve(decision);
     };
 
@@ -96,6 +113,7 @@ export function waitForToolPermissionDecision(
       timeout
     });
     signal.addEventListener("abort", onAbort, { once: true });
+    void persistToolApprovalInterruption(request);
     emit(request);
   });
 }
@@ -103,7 +121,11 @@ export function waitForToolPermissionDecision(
 export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): boolean {
   const pending = pendingToolPermissionResolvers.get(input.requestId);
   if (!pending) {
-    return false;
+    return resolvePersistedToolApprovalInterruption({
+      approvalThreadId: input.threadId,
+      requestId: input.requestId,
+      decision: input.decision
+    });
   }
   if (pending.approvalSessionId !== input.threadId) {
     throw new Error("工具权限确认会话不匹配");
@@ -115,13 +137,18 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
 export function cancelPendingToolPermissionBySession(threadId: string): void {
   for (const [requestId, pending] of pendingToolPermissionResolvers) {
     if (pending.threadId !== threadId && pending.approvalSessionId !== threadId) continue;
+    void resolveToolApprovalInterruption({
+      threadId: pending.threadId,
+      requestId,
+      decision: null
+    });
     pending.resolve(null);
     pendingToolPermissionResolvers.delete(requestId);
   }
 }
 
 export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[] {
-  return Array.from(pendingToolPermissionResolvers.values()).map((pending) => ({
+  const liveRequests = Array.from(pendingToolPermissionResolvers.values()).map((pending) => ({
     ...pending.request,
     threadId: pending.approvalSessionId,
     ...(pending.request.originThreadId ? {} : (
@@ -130,5 +157,18 @@ export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[
         : {}
     ))
   }));
+  mergePersistedToolPermissionRequests(liveRequests);
+  return liveRequests;
 }
 
+function mergePersistedToolPermissionRequests(target: AgentToolPermissionRequest[]): void {
+  const seen = new Set(target.map((request) => request.requestId));
+  const persisted = listPendingRuntimeCoreInterruptions();
+  for (const interruption of persisted) {
+    if (interruption.type !== "tool_approval" && interruption.type !== "automation_approval") continue;
+    const payload = interruption.payload as AgentToolPermissionRequest;
+    if (!payload?.requestId || seen.has(payload.requestId)) continue;
+    seen.add(payload.requestId);
+    target.push(payload);
+  }
+}
