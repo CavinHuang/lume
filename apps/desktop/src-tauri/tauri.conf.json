@@ -20,6 +20,23 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["dmg", "nsis", "msi", "deb", "appimage"],
+    "externalBin": ["binaries/lume-sidecar"],
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "../../sidecar/default-skills": "default-skills"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
+      "endpoints": [
+        "https://github.com/CavinHuang/lume/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
