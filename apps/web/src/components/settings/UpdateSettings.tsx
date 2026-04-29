@@ -17,21 +17,27 @@ import {
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import {
+  checkForAppUpdate,
+  downloadPendingAppUpdate,
+  formatUpdateCheckedAt,
+  getCurrentAppVersion,
+  installPendingAppUpdate,
+  restartAppForUpdate,
+} from '@/lib/app-update-service'
 import { cn } from '@/lib/utils'
 
-const CURRENT_VERSION = '0.1.0'
-const LATEST_VERSION = '0.1.1'
+const FALLBACK_LATEST_VERSION = '0.1.1'
 const BUILD_VERSION = '2026.04.29'
-const RELEASE_DATE = '2026-04-29'
-const LAST_CHECKED_AT = '今天 10:32'
+const FALLBACK_RELEASE_DATE = '2026-04-29'
 
-const RELEASE_NOTES = [
+const FALLBACK_RELEASE_NOTES = [
   '优化 Agent 会话体验',
   '修复模型供应商配置问题',
   '改进 MCP 设置与稳定性',
 ]
 
-type UpdateCheckStatus = 'available' | 'checking' | 'latest'
+type UpdateCheckStatus = 'available' | 'checking' | 'latest' | 'downloading' | 'downloaded' | 'failed'
 
 export function UpdateSettings() {
   const [autoCheck, setAutoCheck] = React.useState(true)
@@ -39,18 +45,96 @@ export function UpdateSettings() {
   const [protectRunningAgent, setProtectRunningAgent] = React.useState(true)
   const [idleInstallOnly, setIdleInstallOnly] = React.useState(true)
   const [status, setStatus] = React.useState<UpdateCheckStatus>('available')
+  const [currentVersion, setCurrentVersion] = React.useState('0.1.0')
+  const [latestVersion, setLatestVersion] = React.useState(FALLBACK_LATEST_VERSION)
+  const [releaseDate, setReleaseDate] = React.useState(FALLBACK_RELEASE_DATE)
+  const [lastCheckedAt, setLastCheckedAt] = React.useState('今天 10:32')
+  const [releaseNotes, setReleaseNotes] = React.useState(FALLBACK_RELEASE_NOTES)
+  const [downloadProgress, setDownloadProgress] = React.useState(0)
+  const [downloadDetail, setDownloadDetail] = React.useState('')
+  const [errorMessage, setErrorMessage] = React.useState<string | null>(null)
 
-  const handleCheck = () => {
-    if (status === 'checking') return
+  React.useEffect(() => {
+    let cancelled = false
+
+    getCurrentAppVersion()
+      .then((version) => {
+        if (!cancelled) setCurrentVersion(version)
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentVersion('0.1.0')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleCheck = async () => {
+    if (status === 'checking' || status === 'downloading') return
+
     setStatus('checking')
-    window.setTimeout(() => {
+    setErrorMessage(null)
+
+    try {
+      const result = await checkForAppUpdate()
+      setCurrentVersion(result.currentVersion)
+      setLastCheckedAt(formatUpdateCheckedAt(result.checkedAt))
+
+      if (!result.available) {
+        setStatus('latest')
+        setLatestVersion(result.latestVersion ?? result.currentVersion)
+        toast.success('你正在使用最新版本')
+        return
+      }
+
       setStatus('available')
-      toast.success('已检查到可用更新')
-    }, 850)
+      setLatestVersion(result.latestVersion)
+      setReleaseDate(result.date ?? FALLBACK_RELEASE_DATE)
+      setReleaseNotes(parseReleaseNotes(result.body))
+      toast.success(`Lume ${result.latestVersion} 可用`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '检查更新失败'
+      setStatus('failed')
+      setErrorMessage(message)
+      toast.error('检查更新失败')
+    }
   }
 
-  const handleDownload = () => {
-    toast.info('更新下载能力将在打包更新流水线接入后启用')
+  const handleDownload = async () => {
+    if (status === 'downloading') return
+
+    setStatus('downloading')
+    setErrorMessage(null)
+    setDownloadProgress(0)
+    setDownloadDetail('准备下载更新...')
+
+    try {
+      await downloadPendingAppUpdate((event) => {
+        setDownloadProgress(event.progress)
+        setDownloadDetail(formatDownloadDetail(event.downloaded, event.total))
+      })
+      await installPendingAppUpdate()
+      setStatus('downloaded')
+      setDownloadProgress(100)
+      setDownloadDetail('更新已准备好，重启后生效')
+      toast.success('更新已准备好')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '下载更新失败'
+      setStatus('failed')
+      setErrorMessage(message)
+      setDownloadDetail('')
+      toast.error('下载更新失败')
+    }
+  }
+
+  const handleRestart = async () => {
+    try {
+      await restartAppForUpdate()
+    } catch (error) {
+      console.error('[UpdateSettings] restart failed:', error)
+      toast.error('重启应用失败')
+    }
   }
 
   const handleSave = () => {
@@ -61,26 +145,26 @@ export function UpdateSettings() {
     {
       icon: Box,
       label: '当前版本',
-      value: CURRENT_VERSION,
+      value: currentVersion,
       tone: 'violet',
     },
     {
       icon: CloudDownload,
       label: '最新版本',
-      value: LATEST_VERSION,
+      value: latestVersion,
       tone: 'blue',
     },
     {
       icon: ArrowUpCircle,
       label: '更新状态',
-      value: status === 'checking' ? '检查中' : status === 'latest' ? '已最新' : '可更新',
-      tone: 'green',
-      valueClassName: status === 'available' ? 'text-[#15b365]' : undefined,
+      value: statusLabel(status),
+      tone: status === 'failed' ? 'purple' : 'green',
+      valueClassName: status === 'available' ? 'text-[#15b365]' : status === 'failed' ? 'text-[#ef4444]' : undefined,
     },
     {
       icon: Clock3,
       label: '上次检查',
-      value: LAST_CHECKED_AT,
+      value: lastCheckedAt,
       tone: 'purple',
     },
   ]
@@ -93,12 +177,21 @@ export function UpdateSettings() {
         ))}
       </div>
 
-      <VersionCard />
+      <VersionCard currentVersion={currentVersion} />
 
       <UpdateDetailsCard
+        currentVersion={currentVersion}
+        latestVersion={latestVersion}
+        releaseDate={releaseDate}
+        releaseNotes={releaseNotes}
+        lastCheckedAt={lastCheckedAt}
         status={status}
+        downloadProgress={downloadProgress}
+        downloadDetail={downloadDetail}
+        errorMessage={errorMessage}
         onCheck={handleCheck}
         onDownload={handleDownload}
+        onRestart={handleRestart}
       />
 
       <div className="grid grid-cols-2 gap-3">
@@ -190,7 +283,7 @@ function UpdateStatCard({ item }: { item: UpdateStat }) {
   )
 }
 
-function VersionCard() {
+function VersionCard({ currentVersion }: { currentVersion: string }) {
   return (
     <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       <h3 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">当前版本</h3>
@@ -213,7 +306,7 @@ function VersionCard() {
         <div className="h-[112px] bg-[var(--border)]" />
 
         <dl className="space-y-3">
-          <InfoRow label="当前版本" value={CURRENT_VERSION} />
+          <InfoRow label="当前版本" value={currentVersion} />
           <InfoRow label="构建版本" value={BUILD_VERSION} />
           <InfoRow label="更新通道" value="Stable" />
           <InfoRow label="安装方式" value="桌面应用" />
@@ -225,60 +318,128 @@ function VersionCard() {
 
 function UpdateDetailsCard({
   status,
+  currentVersion,
+  latestVersion,
+  releaseDate,
+  releaseNotes,
+  lastCheckedAt,
+  downloadProgress,
+  downloadDetail,
+  errorMessage,
   onCheck,
   onDownload,
+  onRestart,
 }: {
   status: UpdateCheckStatus
+  currentVersion: string
+  latestVersion: string
+  releaseDate: string
+  releaseNotes: string[]
+  lastCheckedAt: string
+  downloadProgress: number
+  downloadDetail: string
+  errorMessage: string | null
   onCheck: () => void
   onDownload: () => void
+  onRestart: () => void
 }) {
   const checking = status === 'checking'
+  const downloading = status === 'downloading'
+  const downloaded = status === 'downloaded'
+  const latest = status === 'latest'
+  const failed = status === 'failed'
+  const canDownload = status === 'available' || failed
 
   return (
     <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       <h3 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">更新详情</h3>
       <div className="mt-4 flex items-center gap-3">
-        <span className="inline-flex h-7 items-center gap-1.5 rounded-[8px] bg-[#e2f8eb] px-3 text-[13px] font-semibold text-[#12a15a]">
+        <span
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[13px] font-semibold',
+            latest ? 'bg-[#edf2f7] text-[var(--text-2)]' : 'bg-[#e2f8eb] text-[#12a15a]',
+            failed && 'bg-[#fff1f2] text-[#ef4444]'
+          )}
+        >
           <ArrowUpCircle size={15} />
-          Lume {LATEST_VERSION} 可用
+          {latest ? '已是最新版本' : failed ? '更新检查失败' : `Lume ${latestVersion} 可用`}
         </span>
-        <span className="text-[13px] leading-5 text-[var(--text-3)]">发布于 {RELEASE_DATE}</span>
+        {!latest && !failed && <span className="text-[13px] leading-5 text-[var(--text-3)]">发布于 {releaseDate}</span>}
       </div>
 
       <p className="mt-4 max-w-[720px] text-[13px] leading-6 text-[var(--text-2)]">
-        此更新优化了稳定性与用户体验，建议尽快更新以获得更好的使用体验。
+        {latest
+          ? `当前版本 ${currentVersion} 已是最新版本。`
+          : failed
+            ? '本次更新操作没有完成，当前版本仍可继续使用。'
+            : '此更新优化了稳定性与用户体验，建议尽快更新以获得更好的使用体验。'}
       </p>
 
-      <ul className="mt-2 space-y-1 text-[13px] leading-6 text-[var(--text-1)]">
-        {RELEASE_NOTES.map((note) => (
-          <li key={note} className="flex gap-2">
-            <span className="mt-[9px] size-1 rounded-full bg-[var(--text-3)]" />
-            <span>{note}</span>
-          </li>
-        ))}
-      </ul>
+      {!latest && !failed && (
+        <ul className="mt-2 space-y-1 text-[13px] leading-6 text-[var(--text-1)]">
+          {releaseNotes.map((note) => (
+            <li key={note} className="flex gap-2">
+              <span className="mt-[9px] size-1 rounded-full bg-[var(--text-3)]" />
+              <span>{note}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {failed && errorMessage && (
+        <div className="mt-3 rounded-[8px] border border-[#fecdd3] bg-[#fff7f8] px-3 py-2 text-[12px] leading-5 text-[#e11d48]">
+          {errorMessage}
+        </div>
+      )}
+
+      {(downloading || downloaded) && (
+        <div className="mt-4 rounded-[9px] border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3">
+          <div className="flex items-center justify-between text-[12px] font-medium text-[var(--text-2)]">
+            <span>{downloaded ? '更新已准备好' : '正在下载更新'}</span>
+            <span>{downloadProgress}%</span>
+          </div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))]">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#6d5df6] to-[#7c5cff] transition-[width] duration-200"
+              style={{ width: `${downloadProgress}%` }}
+            />
+          </div>
+          {downloadDetail && <div className="mt-2 text-[12px] leading-4 text-[var(--text-3)]">{downloadDetail}</div>}
+        </div>
+      )}
 
       <div className="mt-5 flex items-center justify-between gap-4">
-        <div className="text-[13px] leading-5 text-[var(--text-3)]">上次检查：{LAST_CHECKED_AT}</div>
+        <div className="text-[13px] leading-5 text-[var(--text-3)]">上次检查：{lastCheckedAt}</div>
         <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="outline"
-            disabled={checking}
+            disabled={checking || downloading}
             onClick={onCheck}
             className="h-9 min-w-[128px] rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)] disabled:opacity-70"
           >
             {checking ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
             检查更新
           </Button>
-          <Button
-            type="button"
-            onClick={onDownload}
-            className="h-9 min-w-[132px] rounded-[8px] bg-gradient-to-r from-[#6d5df6] to-[#7c5cff] px-5 text-[13px] font-semibold text-white shadow-[0_10px_22px_rgba(109,93,246,0.20)] hover:from-[#5f52e8] hover:to-[#704ff2]"
-          >
-            <Download size={15} />
-            下载更新
-          </Button>
+          {downloaded ? (
+            <Button
+              type="button"
+              onClick={onRestart}
+              className="h-9 min-w-[132px] rounded-[8px] bg-gradient-to-r from-[#6d5df6] to-[#7c5cff] px-5 text-[13px] font-semibold text-white shadow-[0_10px_22px_rgba(109,93,246,0.20)] hover:from-[#5f52e8] hover:to-[#704ff2]"
+            >
+              立即重启
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              disabled={!canDownload || downloading || checking || latest}
+              onClick={onDownload}
+              className="h-9 min-w-[132px] rounded-[8px] bg-gradient-to-r from-[#6d5df6] to-[#7c5cff] px-5 text-[13px] font-semibold text-white shadow-[0_10px_22px_rgba(109,93,246,0.20)] hover:from-[#5f52e8] hover:to-[#704ff2] disabled:opacity-60"
+            >
+              {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+              {downloading ? '下载中...' : '下载更新'}
+            </Button>
+          )}
         </div>
       </div>
     </section>
@@ -342,4 +503,45 @@ function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
       )}
     />
   )
+}
+
+function statusLabel(status: UpdateCheckStatus) {
+  switch (status) {
+    case 'checking':
+      return '检查中'
+    case 'latest':
+      return '已最新'
+    case 'downloading':
+      return '下载中'
+    case 'downloaded':
+      return '待重启'
+    case 'failed':
+      return '失败'
+    case 'available':
+    default:
+      return '可更新'
+  }
+}
+
+function parseReleaseNotes(body?: string) {
+  if (!body?.trim()) return FALLBACK_RELEASE_NOTES
+
+  const notes = body
+    .split('\n')
+    .map((line) => line.replace(/^[-*•]\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 5)
+
+  return notes.length > 0 ? notes : FALLBACK_RELEASE_NOTES
+}
+
+function formatDownloadDetail(downloaded: number, total: number) {
+  if (!total) return '正在下载更新包...'
+  return `${formatBytes(downloaded)} / ${formatBytes(total)}`
+}
+
+function formatBytes(bytes: number) {
+  if (bytes <= 0) return '0 MB'
+  const mb = bytes / 1024 / 1024
+  return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`
 }
