@@ -12,6 +12,7 @@ import { SkillsSettings } from './SkillsSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
 import { AutomationSettings } from '../automation/AutomationSettings'
 import { MemorySettings } from './MemorySettings'
+import { UpdateSettings } from './UpdateSettings'
 import {
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
@@ -72,6 +73,7 @@ export function SettingsView() {
           {tab === 'files' && <SettingsContentShell><SkillsSettings /></SettingsContentShell>}
           {tab === 'shortcuts' && <SettingsContentShell><AutomationSettings /></SettingsContentShell>}
           {tab === 'integrations' && <McpSettings />}
+          {tab === 'updates' && <UpdateSettings />}
         </main>
       </ScrollArea>
     </div>
