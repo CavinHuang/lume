@@ -321,7 +321,7 @@ describe("runtime-core run", () => {
     });
 
     const systemPrompt = result.session.agent.state.systemPrompt;
-    expect(systemPrompt).toContain("You are Lume, a persistent counterpart running inside this workspace.");
+    expect(systemPrompt).toContain("You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.");
     expect(systemPrompt).toContain("## Loaded Context Policy");
     expect(systemPrompt).toContain("## 系统配置");
     expect(systemPrompt).toContain("~/.lume/lume.yaml");

@@ -145,21 +145,23 @@ describe("agent-prompt-builder", () => {
     expect(prompt).not.toContain("## Capability Routing Order");
   });
 
-  test("buildSystemPromptAppend 应注入新的 counterpart 身份主句与自然交互规范", () => {
+  test("buildSystemPromptAppend 应注入新的行为导向身份主句与自然交互规范", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-persona-style",
       availableTools: ["read", "write"]
     });
-    expect(prompt).toContain("You are Lume, a persistent counterpart running inside this workspace.");
-    expect(prompt).toContain("像真实工作搭档一样自然、直接、有判断");
-    expect(prompt).toContain("不要客服腔、空洞开场或 yes-machine");
+    expect(prompt).toContain("You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.");
+    expect(prompt).toContain("## Core Behavior");
+    expect(prompt).toContain("Lume should feel natural, useful, and present without acting like a scripted persona.");
+    expect(prompt).toContain("不要客服腔，不要夸张寒暄");
+    expect(prompt).toContain("不要为了显得友好而机械复述用户的问题");
     expect(prompt).toContain("直接进入任务");
-    expect(prompt).toContain("yes-machine");
+    expect(prompt).toContain("一个必要问题");
     expect(prompt).toContain("## 系统配置");
     expect(prompt).toContain("~/.lume/lume.yaml");
   });
 
-  test("minimal 模式仍应保留新的 counterpart 身份主句", () => {
+  test("minimal 模式仍应保留新的行为导向身份主句", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-minimal-identity",
       availableTools: ["read"],

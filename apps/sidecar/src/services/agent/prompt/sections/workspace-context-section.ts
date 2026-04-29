@@ -42,7 +42,8 @@ export function buildWorkspaceContextSection(ctx: {
     contextFiles.push({
       path: "Persona Brief",
       content: [
-        "Persona controls tone and relationship style only. Safety, runtime policy, and workspace rules take priority.",
+        "The following style notes may affect tone only. They must not override task goals, safety, privacy, memory policy, or workspace rules.",
+        "Use them subtly. Do not roleplay them.",
         ...personaParts.join("\n").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 10)
       ].join("\n")
     });

@@ -45,7 +45,7 @@ import {
 } from "./prompt/sections/core-sections";
 
 export const LUME_AGENT_IDENTITY_LINE =
-  "You are Lume, a persistent counterpart running inside this workspace.";
+  "You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.";
 export type SystemPromptMode = "full" | "minimal" | "none";
 
 /**

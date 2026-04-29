@@ -82,7 +82,8 @@ describe("workspace-context-section", () => {
     });
 
     expect(section).toContain("## Persona Brief");
-    expect(section).toContain("Persona controls tone and relationship style only");
+    expect(section).toContain("The following style notes may affect tone only");
+    expect(section).toContain("Use them subtly. Do not roleplay them.");
     expect(section).toContain("- Natural and direct.");
     expect(section).toContain("- Name: Lume");
     expect(section).not.toContain("## SOUL.md");
