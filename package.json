@@ -14,6 +14,7 @@
     "test:web": "bun run --filter @lume/web test",
     "smoke:web": "bun run --filter @lume/web test:smoke",
     "smoke:core": "bun scripts/smoke-core.mjs",
+    "release:prepare": "bun scripts/prepare-release-bundle.mjs",
     "cleanup:legacy-workspaces": "node scripts/cleanup-legacy-workspaces.mjs",
     "clean:package-input": "bun scripts/clean-package-input.mjs",
     "as": "asar extract /Applications/Alma.app/Contents/Resources/app.asar ./output_folder"
