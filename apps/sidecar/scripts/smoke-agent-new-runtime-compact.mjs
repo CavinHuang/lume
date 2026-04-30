@@ -10,8 +10,8 @@ import {
 } from "./lib/agent-runtime-compact-smoke";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const STREAM_EVENT_METHOD = "agent:stream:event";
-const STREAM_COMPLETE_METHOD = "agent:stream:complete";
+const RUNTIME_STATUS_METHOD = "agent:runtime-status-changed";
+const RUN_EVENT_METHOD = "agent:run:event";
 const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
 const SEED_TURN_COUNT = Number(process.env.LUME_SMOKE_COMPACT_TURN_COUNT || 6);
 const SEED_PAYLOAD_REPEATS = Number(process.env.LUME_SMOKE_COMPACT_PAYLOAD_REPEATS || 4);
@@ -174,18 +174,19 @@ async function run() {
       });
 
       await sidecar.waitForNotification(
-        STREAM_COMPLETE_METHOD,
-        (params) => params?.threadId === session.id,
+        RUN_EVENT_METHOD,
+        (params) => params?.threadId === session.id && params?.event?.type === "run_completed",
         12000
       );
       completedSeedTurns += 1;
     }
 
     const streamComplete = sidecar.waitForNotification(
-      STREAM_COMPLETE_METHOD,
-      (params) => params?.threadId === session.id,
+      RUN_EVENT_METHOD,
+      (params) => params?.threadId === session.id && params?.event?.type === "run_completed",
       12000
     );
+    const compactNotificationStartIndex = sidecar.notifications.length;
 
     await sidecar.call("agent:send-thread-message", {
       threadId: session.id,
@@ -198,12 +199,16 @@ async function run() {
 
     await streamComplete;
 
-    const compactEvents = sidecar.notifications.filter(
-      (item) =>
-        item.method === STREAM_EVENT_METHOD
-        && item.params?.threadId === session.id
-        && (item.params?.event?.type === "compacting" || item.params?.event?.type === "compact_complete")
-    );
+    const compactEvents = sidecar.notifications
+      .slice(compactNotificationStartIndex)
+      .filter((item) => item.method === RUNTIME_STATUS_METHOD && item.params?.status?.threadId === session.id)
+      .map((item) => {
+        const phase = item.params?.status?.phase;
+        if (phase === "compacting") return { type: "compacting" };
+        if (phase === "completed") return { type: "compact_complete" };
+        return null;
+      })
+      .filter(Boolean);
 
     await sidecar.close();
     sidecar = createSidecarProcess(configHome);

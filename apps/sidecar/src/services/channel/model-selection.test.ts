@@ -458,7 +458,6 @@ describe("model-selection", () => {
       threadId: thread.id,
       userMessage: "hello inherited runtime"
     }, {
-      onSdkMessage: () => undefined,
       onMessageAppended: () => undefined,
       onComplete: () => undefined,
       onError: () => undefined,
@@ -506,7 +505,6 @@ describe("model-selection", () => {
       userMessage: "hello explicit override",
       modelRef: "openai/gpt-5-mini"
     }, {
-      onSdkMessage: () => undefined,
       onMessageAppended: () => undefined,
       onComplete: () => undefined,
       onError: () => undefined,

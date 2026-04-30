@@ -6,8 +6,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const STREAM_EVENT_METHOD = "agent:stream:event";
-const STREAM_COMPLETE_METHOD = "agent:stream:complete";
+const RUN_EVENT_METHOD = "agent:run:event";
 const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
 
 function createSidecarProcess(configHome) {
@@ -127,13 +126,13 @@ async function run() {
     assert(typeof session?.id === "string", "agent session create failed");
 
     const firstTextDelta = sidecar.waitForNotification(
-      STREAM_EVENT_METHOD,
-      (params) => params?.threadId === session.id && params?.event?.type === "text_delta",
+      RUN_EVENT_METHOD,
+      (params) => params?.threadId === session.id && params?.event?.type === "assistant_delta",
       12000
     );
     const firstComplete = sidecar.waitForNotification(
-      STREAM_COMPLETE_METHOD,
-      (params) => params?.threadId === session.id,
+      RUN_EVENT_METHOD,
+      (params) => params?.threadId === session.id && params?.event?.type === "run_completed",
       12000
     );
 
@@ -150,13 +149,13 @@ async function run() {
     await firstComplete;
 
     const secondTextDelta = sidecar.waitForNotification(
-      STREAM_EVENT_METHOD,
-      (params) => params?.threadId === session.id && params?.event?.type === "text_delta",
+      RUN_EVENT_METHOD,
+      (params) => params?.threadId === session.id && params?.event?.type === "assistant_delta",
       12000
     );
     const secondComplete = sidecar.waitForNotification(
-      STREAM_COMPLETE_METHOD,
-      (params) => params?.threadId === session.id,
+      RUN_EVENT_METHOD,
+      (params) => params?.threadId === session.id && params?.event?.type === "run_completed",
       12000
     );
 

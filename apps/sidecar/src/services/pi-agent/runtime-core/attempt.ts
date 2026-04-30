@@ -26,6 +26,7 @@ import { LumeGuardrailRunner } from "../../agent-runtime/guardrails/guardrail-ru
 import { LumeRunner } from "../../agent-runtime/runner/lume-runner";
 import { evaluateToolApprovalPolicy } from "../../agent-runtime/tools/tool-policy";
 import { prepareRuntimeCoreAttempt, type PreparedRuntimeCoreAttempt } from "./prepare-attempt";
+import { persistToolApprovalInterruption } from "../../agent-runtime/interruption/approval-service";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -93,7 +94,8 @@ function createCanUseToolHandler(
   params: PiAgentRunParams,
   prepared: PreparedRuntimeCoreAttempt,
   emit: PiAgentRuntimeEmitter,
-  askUserSignal: AbortSignal
+  askUserSignal: AbortSignal,
+  runId?: string
 ): CanUseToolFn {
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
@@ -105,6 +107,7 @@ function createCanUseToolHandler(
     const subagentRunId = params.runtime.subagentRunId;
     const subagentLabel = resolveSubagentInteractiveLabel(subagentRunId);
     const automationExecution = isAutomationExecution(params.input.messageMetadata);
+    const requestRunId = runId;
     if (mode === "plan" && !isToolAllowedInPlanMode(toolName)) {
       return {
         behavior: "deny",
@@ -150,6 +153,7 @@ function createCanUseToolHandler(
           }
           emit.onAskUserQuestion({
             ...request,
+            ...(requestRunId ? { runId: requestRunId } : {}),
             threadId: approvalThreadId,
             ...(originThreadId ? { originThreadId } : {}),
             ...(subagentRunId ? { subagentRunId } : {}),
@@ -157,6 +161,7 @@ function createCanUseToolHandler(
           });
         },
         {
+          ...(requestRunId ? { runId: requestRunId } : {}),
           originThreadId,
           subagentRunId,
           subagentLabel
@@ -197,6 +202,7 @@ function createCanUseToolHandler(
 
     const request = {
       threadId: params.runtime.sessionId,
+      ...(requestRunId ? { runId: requestRunId } : {}),
       ...(originThreadId ? { originThreadId } : {}),
       ...(subagentRunId ? { subagentRunId } : {}),
       ...(subagentLabel ? { subagentLabel } : {}),
@@ -206,8 +212,32 @@ function createCanUseToolHandler(
       risk: (getToolMetadata(toolName) ?? inferToolMetadata(toolName)).riskLevel,
       reason: approvalPolicy.reason,
       input: sanitizeToolInput(input),
-      ...(automationExecution ? { interruptionType: "automation_approval" as const } : {})
+      ...(automationExecution ? {
+        interruptionType: "automation_approval" as const,
+        ...(typeof params.input.messageMetadata?.automationJobId === "string"
+          ? { automationJobId: params.input.messageMetadata.automationJobId }
+          : {}),
+        ...(typeof params.input.messageMetadata?.automationTrigger === "string"
+          ? { automationTrigger: params.input.messageMetadata.automationTrigger }
+          : {})
+      } : {})
     } as const;
+
+    if (automationExecution) {
+      await persistToolApprovalInterruption(request);
+      emit.onToolPermissionRequest({
+        ...request,
+        threadId: approvalThreadId,
+        ...(originThreadId ? { originThreadId } : {}),
+        ...(subagentRunId ? { subagentRunId } : {}),
+        ...(subagentLabel ? { subagentLabel } : {})
+      });
+      return {
+        behavior: "deny",
+        message: `自动化任务已暂停，等待用户确认工具执行: ${toolName}`
+      };
+    }
+
     const decision = await waitForToolPermissionDecision(
       request,
       new AbortController().signal,
@@ -285,7 +315,7 @@ export async function runRuntimeCoreAttempt(
     prepared,
     options,
     createCanUseTool: (askUserSignal) =>
-      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal)
+      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId())
   });
 }
 

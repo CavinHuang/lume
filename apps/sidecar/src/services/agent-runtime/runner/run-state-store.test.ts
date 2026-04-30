@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileBackedLumeRunStateStore } from "./run-state-store";
@@ -72,6 +72,12 @@ describe("run-state-store", () => {
     ]);
 
     await store.create(makeState("run-2", "completed"));
+    writeFileSync(join(dir, "runs", "run-2.continuation.json"), JSON.stringify({
+      version: 1,
+      runId: "run-2",
+      threadId: "thread-1",
+      status: "ready_to_resume"
+    }));
     const byThread = await store.listByThread("thread-1");
     expect(byThread.map((state) => state.runId)).toEqual(["run-1", "run-2"]);
     expect((await store.findActiveByThread("thread-1"))?.runId).toBe("run-1");

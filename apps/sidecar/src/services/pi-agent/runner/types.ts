@@ -2,9 +2,11 @@ import type { SDKMessage } from "@lume/agent-sdk";
 import type { AgentSendInput } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
 import type { AgentToolPermissionRequest } from "@lume/shared";
+import type { LumeRunEvent } from "@lume/shared";
 
 export interface PiAgentRuntimeEmitter {
   onSdkMessage: (message: SDKMessage) => void;
+  onRunEvent?: (event: LumeRunEvent) => void;
   onComplete: () => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;

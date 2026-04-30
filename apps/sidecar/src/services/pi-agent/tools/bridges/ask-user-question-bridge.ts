@@ -57,17 +57,17 @@ export function waitForPiAskUserQuestionAnswers(
   questions: AgentAskUserQuestionQuestion[],
   signal: AbortSignal,
   emit: (request: AgentAskUserQuestionRequest) => void,
-  requestMeta?: Pick<AgentAskUserQuestionRequest, "originThreadId" | "subagentRunId" | "subagentLabel">
+  requestMeta?: Pick<AgentAskUserQuestionRequest, "runId" | "originThreadId" | "subagentRunId" | "subagentLabel">
 ): Promise<AskUserQuestionWaitResult> {
   return new Promise((resolve) => {
-    const done = (result: AskUserQuestionWaitResult): void => {
+    const done = async (result: AskUserQuestionWaitResult): Promise<void> => {
       const pending = pendingPiAskUserQuestionResolvers.get(toolUseId);
       if (pending?.timeout) {
         clearTimeout(pending.timeout);
       }
       pendingPiAskUserQuestionResolvers.delete(toolUseId);
       signal.removeEventListener("abort", onAbort);
-      void resolveAskUserInterruption({
+      await resolveAskUserInterruption({
         threadId,
         toolUseId,
         canceled: result.status !== "answered",
@@ -99,6 +99,7 @@ export function waitForPiAskUserQuestionAnswers(
     }
     const request: AgentAskUserQuestionRequest = {
       threadId,
+      ...(requestMeta?.runId ? { runId: requestMeta.runId } : {}),
       ...(requestMeta?.originThreadId ? { originThreadId: requestMeta.originThreadId } : {}),
       ...(requestMeta?.subagentRunId ? { subagentRunId: requestMeta.subagentRunId } : {}),
       ...(requestMeta?.subagentLabel ? { subagentLabel: requestMeta.subagentLabel } : {}),

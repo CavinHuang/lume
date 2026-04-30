@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { assertBridgeSmokeOutcome } from "./lib/agent-runtime-bridges-smoke";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const STREAM_COMPLETE_METHOD = "agent:stream:complete";
+const RUN_EVENT_METHOD = "agent:run:event";
 const TOOL_PERMISSION_REQUEST_METHOD = "agent:tool-permission-request";
 const ASK_USER_QUESTION_METHOD = "agent:ask-user-question";
 const SUBAGENT_COMPLETED_METHOD = "agent:subagent-completed";
@@ -158,9 +158,9 @@ async function run() {
       (params) => params?.threadId === session.id && typeof params?.runId === "string",
       12000
     );
-    const streamCompletePromise = sidecar.waitForNotification(
-      STREAM_COMPLETE_METHOD,
-      (params) => params?.threadId === session.id,
+    const runCompletedPromise = sidecar.waitForNotification(
+      RUN_EVENT_METHOD,
+      (params) => params?.threadId === session.id && params?.event?.type === "run_completed",
       12000
     );
 
@@ -197,7 +197,7 @@ async function run() {
     });
 
     const subagentCompletedEvent = await subagentCompletedPromise;
-    await streamCompletePromise;
+    await runCompletedPromise;
     const completedStatus = await completedStatusPromise;
 
     const listSubagentRuns = await sidecar.call("agent:list-subagent-runs", {

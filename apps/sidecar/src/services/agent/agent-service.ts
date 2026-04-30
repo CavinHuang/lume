@@ -15,7 +15,8 @@ import type {
   AgentToolPolicy,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
-  AgentGenerateTitleInput
+  AgentGenerateTitleInput,
+  LumeRunEvent
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
@@ -59,7 +60,7 @@ import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { runStructuredMemoryFlush } from "../memory/memory-flush-runner";
 
 type AgentStreamEmitter = {
-  onSdkMessage: (message: SDKMessage) => void;
+  onRunEvent?: (event: LumeRunEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
   onComplete: () => void;
   onError: (error: string) => void;
@@ -540,10 +541,12 @@ export async function sendAgentMessage(
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
         persistedSdkMessages.push(stampedMessage);
       }
-      emit.onSdkMessage(stampedMessage);
     },
     onComplete: () => {
       runtimeCompleted = true;
+    },
+    onRunEvent: (event) => {
+      emit.onRunEvent?.(event);
     },
     onError: (error) => {
       runtimeStatusManager.markErrored(threadId, error);

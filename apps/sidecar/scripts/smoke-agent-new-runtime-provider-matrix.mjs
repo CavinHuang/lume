@@ -6,7 +6,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const STREAM_COMPLETE_METHOD = "agent:stream:complete";
+const RUN_EVENT_METHOD = "agent:run:event";
 const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
 
 function createSidecarProcess(configHome) {
@@ -98,8 +98,8 @@ function assert(condition, message) {
 
 async function sendAndWait(sidecar, payload) {
   const completion = sidecar.waitForNotification(
-    STREAM_COMPLETE_METHOD,
-    (params) => params?.threadId === payload.threadId,
+    RUN_EVENT_METHOD,
+    (params) => params?.threadId === payload.threadId && params?.event?.type === "run_completed",
     12000
   );
   await sidecar.call("agent:send-thread-message", payload);

@@ -239,7 +239,6 @@ async function dispatchThreadMessage(input: SendCliThreadMessageInput): Promise<
       threadId: input.threadId,
       userMessage: input.text
     }, {
-      onSdkMessage: () => undefined,
       onMessageAppended: (event) => {
         if (event.threadId === input.threadId && event.message.role === "assistant") {
           finalAssistantText = event.message.content;

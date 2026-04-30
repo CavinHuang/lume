@@ -591,6 +591,8 @@ export interface AgentAskUserQuestionQuestion {
 
 export interface AgentAskUserQuestionRequest {
   threadId: string
+  /** 所属 runtime runId，用于 cold-start resume 关联 checkpoint。 */
+  runId?: string
   /** 原始触发线程（用于子任务代理路由） */
   originThreadId?: string
   /** 子任务 runId（用于 Team 面板定位） */
@@ -614,6 +616,8 @@ export type AgentToolPermissionDecision = 'allow_once' | 'allow_always' | 'deny'
 
 export interface AgentToolPermissionRequest {
   threadId: string
+  /** 所属 runtime runId，用于 durable interruption / checkpoint 关联。 */
+  runId?: string
   /** 原始触发线程（用于子任务代理路由） */
   originThreadId?: string
   /** 子任务 runId（用于 Team 面板定位） */
@@ -628,6 +632,10 @@ export interface AgentToolPermissionRequest {
   input: Record<string, unknown>
   /** 持久化 interruption 类型；自动化运行高风险工具时使用 automation_approval。 */
   interruptionType?: 'tool_approval' | 'automation_approval'
+  /** 自动化任务 ID（仅 automation_approval 使用，用于管理页定位任务）。 */
+  automationJobId?: string
+  /** 自动化触发来源（仅 automation_approval 使用）。 */
+  automationTrigger?: string
 }
 
 export interface AgentToolPermissionResponseInput {
@@ -640,6 +648,241 @@ export interface AgentPendingInteractiveState {
   threadId: string
   askUserQuestions?: AgentAskUserQuestionRequest[]
   toolPermissions?: AgentToolPermissionRequest[]
+  planApprovals?: AgentPlanApprovalRequest[]
+}
+
+export interface AgentPendingInteractiveInput {
+  threadId?: string
+}
+
+export interface AgentPlanApprovalRequest {
+  threadId: string
+  runId?: string
+  requestId: string
+  planId: string
+  title: string
+  message: string
+  summary?: string
+  stepCount: number
+  expectedChanges?: {
+    files?: string[]
+    commands?: string[]
+    tools?: string[]
+    memoryWrites?: string[]
+  }
+}
+
+export interface AgentPlanApprovalResponseInput {
+  threadId: string
+  planId: string
+  decision: 'approve' | 'reject'
+}
+
+export type AgentResumeRunStatus =
+  | 'resumed'
+  | 'waiting_for_approval'
+  | 'waiting_for_user'
+  | 'not_resumable'
+  | 'failed'
+
+export interface AgentResumeRunInput {
+  threadId: string
+  runId?: string
+  interruptionId?: string
+}
+
+export interface AgentResumeRunResult {
+  status: AgentResumeRunStatus
+  finalOutput?: string
+  error?: string
+}
+
+export type AgentTraceRedactionLevel = 'safe_summary' | 'diagnostic'
+
+export type AgentRunTraceStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface AgentRunTraceSpan {
+  id: string
+  traceId: string
+  parentId?: string
+  type: string
+  name: string
+  status: AgentRunTraceStatus
+  startedAt: string
+  endedAt?: string
+  durationMs?: number
+  input?: unknown
+  output?: unknown
+  error?: {
+    message: string
+    code?: string
+    stack?: string
+  }
+  metadata?: Record<string, unknown>
+}
+
+export interface AgentRunTrace {
+  id: string
+  threadId: string
+  runId: string
+  workspaceId?: string
+  name: string
+  status: AgentRunTraceStatus
+  startedAt: string
+  endedAt?: string
+  spans: AgentRunTraceSpan[]
+  metadata?: Record<string, unknown>
+}
+
+export interface AgentRunTraceInput {
+  threadId: string
+  runId?: string
+  traceId?: string
+  redactionLevel?: AgentTraceRedactionLevel
+}
+
+export interface AgentRunTraceResult {
+  trace: AgentRunTrace | null
+}
+
+export type AgentRunStateStatus =
+  | 'created'
+  | 'running'
+  | 'waiting_for_approval'
+  | 'waiting_for_user'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type AgentRunContinuationStatus =
+  | 'ready_to_resume'
+  | 'waiting_for_interruption'
+  | 'tool_running'
+  | 'resumed'
+  | 'not_resumable'
+
+export interface AgentRunStateSummary {
+  runId: string
+  threadId: string
+  workspaceId?: string
+  workspaceSlug?: string
+  status: AgentRunStateStatus
+  currentStep?: {
+    id: string
+    type: string
+    status: string
+    startedAt?: string
+    endedAt?: string
+    error?: string
+  }
+  traceId: string
+  planId?: string
+  model: {
+    provider: string
+    modelId: string
+    modelRef?: string
+    channelId?: string
+  }
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    costUSD?: number
+  }
+  pendingInterruptionCount: number
+  generatedItemCount: number
+  continuation?: {
+    status: AgentRunContinuationStatus
+    checkpoint: {
+      step: 'before_model_call' | 'waiting_for_tool_result' | 'after_tool_result'
+      interruptionId?: string
+      toolCallId?: string
+      toolName?: string
+      toolKind?: string
+    }
+    reason?: string
+    updatedAt: string
+  }
+  error?: {
+    code: string
+    message: string
+    retryable?: boolean
+  }
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
+
+export interface AgentListRunStatesInput {
+  threadId: string
+}
+
+export interface AgentListRunStatesResult {
+  runs: AgentRunStateSummary[]
+}
+
+export type AgentStructuredPlanStatus =
+  | 'draft'
+  | 'needs_user_input'
+  | 'needs_approval'
+  | 'approved'
+  | 'executing'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+
+export type AgentStructuredPlanStepStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+
+export interface AgentStructuredPlanStep {
+  id: string
+  title: string
+  description: string
+  type: 'read' | 'analyze' | 'edit' | 'execute' | 'ask_user' | 'memory' | 'subagent'
+  status: AgentStructuredPlanStepStatus
+  expectedTools?: string[]
+  expectedFiles?: string[]
+  result?: string
+  error?: string
+  traceSpanId?: string
+  currentStepId?: string
+}
+
+export interface AgentStructuredPlan {
+  id: string
+  runId: string
+  threadId: string
+  goal: string
+  summary: string
+  assumptions: string[]
+  questions: unknown[]
+  risks: unknown[]
+  steps: AgentStructuredPlanStep[]
+  expectedChanges: {
+    files?: string[]
+    commands?: string[]
+    tools?: string[]
+    memoryWrites?: string[]
+  }
+  status: AgentStructuredPlanStatus
+  currentStepId?: string
+  traceSpanId?: string
+  createdAt: string
+  updatedAt: string
+  approvedAt?: string
+}
+
+export interface AgentStructuredPlansInput {
+  threadId: string
+}
+
+export interface AgentStructuredPlansResult {
+  plans: AgentStructuredPlan[]
 }
 
 // ===== Plan 模式 =====
@@ -686,17 +929,17 @@ export interface PlanStateChangedEvent {
 
 // ===== Agent 流式事件载荷 =====
 
-/**
- * Agent 流式事件（主进程 → 渲染进程推送）
- */
-export interface AgentStreamEvent {
-  threadId: string
-  /** SDK 原始流消息 */
-  message: SDKMessage
-}
-
 export type LumeRunEvent =
+  | { type: 'user_message_submitted'; text: string; createdAt: string }
   | { type: 'assistant_delta'; text: string }
+  | { type: 'assistant_thinking_delta'; text: string }
+  | {
+      type: 'assistant_message_final'
+      blocks: Array<
+        | { type: 'text'; text: string }
+        | { type: 'thinking'; text: string }
+      >
+    }
   | {
       type: 'tool_call_started'
       item: {
@@ -726,6 +969,37 @@ export type LumeRunEvent =
     }
   | { type: 'interruption_created'; interruption: unknown }
   | { type: 'interruption_resolved'; interruption: unknown }
+  | {
+      type: 'subagent_updated'
+      item: {
+        type: 'subagent'
+        id: string
+        runId: string
+        parentRunId?: string
+        parentToolCallId?: string
+        agentId?: string
+        task: string
+        status: 'running' | 'completed' | 'failed' | 'cancelled'
+        childThreadId: string
+        traceSpanId?: string
+        output?: string
+        error?: string
+        createdAt: string
+      }
+    }
+  | {
+      type: 'handoff_updated'
+      item: {
+        type: 'handoff'
+        id: string
+        fromAgentId: string
+        toAgentId: string
+        reason?: string
+        status: 'requested' | 'accepted' | 'completed' | 'failed' | 'cancelled'
+        traceSpanId?: string
+        createdAt: string
+      }
+    }
   | { type: 'run_completed'; result: { status: 'completed'; finalOutput?: string } }
   | { type: 'run_failed'; error: { code: string; message: string; stack?: string; retryable?: boolean } }
 
@@ -734,9 +1008,13 @@ export interface AgentRunEventNotification {
   event: LumeRunEvent
 }
 
-export interface AgentThreadSDKMessagesResult {
+export interface AgentThreadRunEventsInput {
   threadId: string
-  messages: SDKMessage[]
+}
+
+export interface AgentThreadRunEventsResult {
+  threadId: string
+  events: LumeRunEvent[]
 }
 
 export interface AgentMessageAppendedEvent {
@@ -909,8 +1187,8 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_THREAD: 'agent:create-thread',
   /** 获取线程消息 */
   GET_THREAD_MESSAGES: 'agent:get-thread-messages',
-  /** 获取线程原始 SDK 消息 */
-  GET_THREAD_SDK_MESSAGES: 'agent:get-thread-sdk-messages',
+  /** 获取线程结构化 runtime 事件历史 */
+  GET_THREAD_RUN_EVENTS: 'agent:get-thread-run-events',
   /** 获取线程单个消息版本组 */
   GET_THREAD_MESSAGE_VERSIONS: 'agent:get-thread-message-versions',
   /** 获取最近 N 条线程消息（分页） */
@@ -995,14 +1273,8 @@ export const AGENT_IPC_CHANNELS = {
   INSTALL_GITHUB_SKILL_TO_WORKSPACE: 'agent:install-github-skill-to-workspace',
 
   // 流式事件（主进程 → 渲染进程推送）
-  /** Agent 流式事件 */
-  STREAM_EVENT: 'agent:stream:event',
   /** Agent runtime 结构化事件 */
   RUN_EVENT: 'agent:run:event',
-  /** Agent 流式完成 */
-  STREAM_COMPLETE: 'agent:stream:complete',
-  /** Agent 流式错误 */
-  STREAM_ERROR: 'agent:stream:error',
   /** 线程消息追加通知 */
   MESSAGE_APPENDED: 'agent:message-appended',
   /** subagent 完成通知（不落独立 transcript message） */
@@ -1019,10 +1291,20 @@ export const AGENT_IPC_CHANNELS = {
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */
   SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
+  /** 结构化 plan 审批结果（web -> sidecar） */
+  SUBMIT_PLAN_APPROVAL: 'agent:submit-plan-approval',
   /** 获取当前待处理的交互请求（用于冷启动恢复） */
   GET_PENDING_INTERACTIVE: 'agent:get-pending-interactive',
   /** runtime status 变化通知（sidecar -> web） */
   RUNTIME_STATUS_CHANGED: 'agent:runtime-status-changed',
+  /** 尝试恢复可恢复的 runtime run */
+  RESUME_RUN: 'agent:resume-run',
+  /** 列出线程 runtime run state 摘要 */
+  LIST_RUN_STATES: 'agent:list-run-states',
+  /** 获取 runtime trace（默认 safe_summary 脱敏） */
+  GET_RUN_TRACE: 'agent:get-run-trace',
+  /** 获取结构化 plan state */
+  LIST_STRUCTURED_PLANS: 'agent:list-structured-plans',
 
   // 附件
   /** 保存文件到 Agent thread 工作目录 */

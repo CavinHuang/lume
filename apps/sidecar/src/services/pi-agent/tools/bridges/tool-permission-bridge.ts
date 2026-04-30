@@ -17,7 +17,7 @@ const pendingToolPermissionResolvers = new Map<
     threadId: string;
     approvalSessionId: string;
     request: AgentToolPermissionRequest;
-    resolve: (decision: AgentToolPermissionDecision | null) => void;
+    resolve: (decision: AgentToolPermissionDecision | null) => void | Promise<void>;
     timeout?: ReturnType<typeof setTimeout>;
   }
 >();
@@ -74,14 +74,14 @@ export function waitForToolPermissionDecision(
   emit: (request: AgentToolPermissionRequest) => void
 ): Promise<AgentToolPermissionDecision | null> {
   return new Promise((resolve) => {
-    const done = (decision: AgentToolPermissionDecision | null): void => {
+    const done = async (decision: AgentToolPermissionDecision | null): Promise<void> => {
       const pending = pendingToolPermissionResolvers.get(request.requestId);
       if (pending?.timeout) {
         clearTimeout(pending.timeout);
       }
       pendingToolPermissionResolvers.delete(request.requestId);
       signal.removeEventListener("abort", onAbort);
-      void resolveToolApprovalInterruption({
+      await resolveToolApprovalInterruption({
         threadId: request.threadId,
         requestId: request.requestId,
         decision
@@ -90,16 +90,16 @@ export function waitForToolPermissionDecision(
     };
 
     const onAbort = (): void => {
-      done(null);
+      void done(null);
     };
 
     const existing = pendingToolPermissionResolvers.get(request.requestId);
     if (existing) {
-      existing.resolve(null);
+      void existing.resolve(null);
     }
 
     const timeout = setTimeout(() => {
-      done(null);
+      void done(null);
     }, resolveTimeoutMs());
     if (typeof timeout === "object" && "unref" in timeout && typeof timeout.unref === "function") {
       timeout.unref();
@@ -121,16 +121,21 @@ export function waitForToolPermissionDecision(
 export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): boolean {
   const pending = pendingToolPermissionResolvers.get(input.requestId);
   if (!pending) {
-    return resolvePersistedToolApprovalInterruption({
+    const persisted = findPersistedToolPermissionRequest(input.threadId, input.requestId);
+    const handled = resolvePersistedToolApprovalInterruption({
       approvalThreadId: input.threadId,
       requestId: input.requestId,
       decision: input.decision
     });
+    if (handled && input.decision === "allow_always" && persisted?.toolName) {
+      markToolAlwaysAllowed(persisted.originThreadId ?? persisted.threadId, persisted.toolName);
+    }
+    return handled;
   }
   if (pending.approvalSessionId !== input.threadId) {
     throw new Error("工具权限确认会话不匹配");
   }
-  pending.resolve(input.decision);
+  void pending.resolve(input.decision);
   return true;
 }
 
@@ -142,7 +147,7 @@ export function cancelPendingToolPermissionBySession(threadId: string): void {
       requestId,
       decision: null
     });
-    pending.resolve(null);
+    void pending.resolve(null);
     pendingToolPermissionResolvers.delete(requestId);
   }
 }
@@ -159,6 +164,17 @@ export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[
   }));
   mergePersistedToolPermissionRequests(liveRequests);
   return liveRequests;
+}
+
+function findPersistedToolPermissionRequest(threadId: string, requestId: string): AgentToolPermissionRequest | null {
+  for (const interruption of listPendingRuntimeCoreInterruptions()) {
+    if (interruption.type !== "tool_approval" && interruption.type !== "automation_approval") continue;
+    const payload = interruption.payload as AgentToolPermissionRequest;
+    if (payload?.requestId === requestId && interruption.threadId === threadId) {
+      return payload;
+    }
+  }
+  return null;
 }
 
 function mergePersistedToolPermissionRequests(target: AgentToolPermissionRequest[]): void {

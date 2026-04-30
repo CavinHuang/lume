@@ -105,7 +105,7 @@ export interface AutomationDeleteJobInput {
 export type AutomationRunTrigger = 'schedule' | 'manual'
 
 /** 运行状态 */
-export type AutomationRunStatus = 'success' | 'failed' | 'skipped'
+export type AutomationRunStatus = 'success' | 'failed' | 'skipped' | 'waiting_for_approval'
 
 /** 自动化任务运行记录 */
 export interface AutomationRun {

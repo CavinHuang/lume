@@ -149,62 +149,67 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
         `promotedToGlobal=${result.promotedToGlobal.length}`
       ].join(" · ");
     } else {
-    const { channelId, modelId, modelRef } = pickExecutionChannel();
-    const boundThreadId = job.threadId?.trim();
-    if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
-      threadId = boundThreadId;
-    } else {
-      const thread = createAgentThreadWithModelRef(
-        `[自动化] ${job.name}`,
-        modelRef,
-        channelId,
-        job.workspaceId,
-        undefined,
-        modelId
+      const { channelId, modelId, modelRef } = pickExecutionChannel();
+      const boundThreadId = job.threadId?.trim();
+      if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
+        threadId = boundThreadId;
+      } else {
+        const thread = createAgentThreadWithModelRef(
+          `[自动化] ${job.name}`,
+          modelRef,
+          channelId,
+          job.workspaceId,
+          undefined,
+          modelId
+        );
+        threadId = thread.id;
+      }
+      if (!threadId) {
+        throw new Error("自动化执行缺少可用线程");
+      }
+
+      let runtimeError: string | null = null;
+      let waitingForApproval = false;
+      await sendAgentMessage(
+        {
+          threadId,
+          userMessage: job.prompt,
+          workspaceId: job.workspaceId,
+          modelRef,
+          channelId,
+          modelId,
+          permissionMode: "bypassPermissions",
+          messageMetadata: {
+            automationJobId: job.id,
+            automationTrigger: trigger
+          }
+        },
+        {
+          onComplete: () => {},
+          onError: (error) => {
+            runtimeError = error;
+          },
+          onTitleUpdated: () => {},
+          onAskUserQuestion: () => {
+            runtimeError = "任务执行需要用户交互，自动化模式当前不支持";
+          },
+          onToolPermissionRequest: () => {
+            waitingForApproval = true;
+          }
+        },
+        { appendUserMessage: true }
       );
-      threadId = thread.id;
-    }
-    if (!threadId) {
-      throw new Error("自动化执行缺少可用线程");
-    }
 
-    let runtimeError: string | null = null;
-    await sendAgentMessage(
-      {
-        threadId,
-        userMessage: job.prompt,
-        workspaceId: job.workspaceId,
-        modelRef,
-        channelId,
-        modelId,
-        permissionMode: "bypassPermissions",
-        messageMetadata: {
-          automationJobId: job.id,
-          automationTrigger: trigger
-        }
-      },
-      {
-        onSdkMessage: () => {},
-        onComplete: () => {},
-        onError: (error) => {
-          runtimeError = error;
-        },
-        onTitleUpdated: () => {},
-        onAskUserQuestion: () => {
-          runtimeError = "任务执行需要用户交互，自动化模式当前不支持";
-        },
-        onToolPermissionRequest: () => {
-          runtimeError = "任务执行需要工具权限确认，自动化模式当前不支持";
-        }
-      },
-      { appendUserMessage: true }
-    );
+      if (runtimeError) {
+        throw new Error(runtimeError);
+      }
 
-    if (runtimeError) {
-      throw new Error(runtimeError);
-    }
-
-    runMessage = `任务执行完成，线程: ${threadId}`;
+      if (waitingForApproval) {
+        runStatus = "waiting_for_approval";
+        runMessage = `任务暂停：等待工具权限确认，线程: ${threadId}`;
+      } else {
+        runMessage = `任务执行完成，线程: ${threadId}`;
+      }
     }
   } catch (error) {
     runStatus = "failed";

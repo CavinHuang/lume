@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRuntimeCoreSessionDir } from "../../runtime-core/session-store";
 import { createFileBackedLumeInterruptionStore } from "../../../agent-runtime/interruption/interruption-store";
+import { createFileBackedRunContinuationStore } from "../../../agent-runtime/runner/run-continuation-store";
 import {
   isToolAlwaysAllowed,
   listPendingToolPermissionRequests,
@@ -143,6 +144,47 @@ describe("tool-permission-bridge", () => {
     expect(resolved?.resolution?.rememberDecision).toBeTrue();
   });
 
+  test("工具审批解决后不应生成会重新发起模型调用的 cold-start checkpoint", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-continuation-"));
+    const threadId = "continuation-thread";
+    const runId = "run-continuation";
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId,
+        runId,
+        requestId: "continuation-req",
+        toolUseId: "continuation-tool",
+        toolName: "Bash",
+        risk: "high",
+        reason: "needs approval",
+        input: { command: "git status" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+
+    const continuationStore = createFileBackedRunContinuationStore(getRuntimeCoreSessionDir(threadId));
+    expect((await continuationStore.get(runId))?.status).toBe("waiting_for_interruption");
+
+    submitToolPermissionDecision({
+      threadId,
+      requestId: "continuation-req",
+      decision: "allow_once"
+    });
+    expect(await waitPromise).toBe("allow_once");
+
+    const continuation = await continuationStore.get(runId);
+    expect(continuation).toMatchObject({
+      status: "not_resumable",
+      checkpoint: {
+        step: "before_model_call",
+        toolCallId: "continuation-tool",
+        toolName: "Bash"
+      }
+    });
+    expect(continuation?.reason).toContain("工具审批已解决");
+  });
+
   test("自动化执行的工具审批应持久化为 automation_approval", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-automation-"));
     const threadId = "automation-thread";
@@ -155,7 +197,9 @@ describe("tool-permission-bridge", () => {
         risk: "high",
         reason: "automation needs approval",
         input: { command: "deploy" },
-        interruptionType: "automation_approval"
+        interruptionType: "automation_approval",
+        automationJobId: "job-1",
+        automationTrigger: "schedule"
       },
       new AbortController().signal,
       () => {}
@@ -164,7 +208,10 @@ describe("tool-permission-bridge", () => {
     const store = createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(threadId));
     const [pending] = await store.listPendingByThread(threadId);
     expect(pending?.type).toBe("automation_approval");
-    expect(listPendingToolPermissionRequests().some((request) => request.requestId === "automation-req")).toBeTrue();
+    expect(listPendingToolPermissionRequests().find((request) => request.requestId === "automation-req")).toMatchObject({
+      automationJobId: "job-1",
+      automationTrigger: "schedule"
+    });
 
     submitToolPermissionDecision({
       threadId,
@@ -250,5 +297,69 @@ describe("tool-permission-bridge", () => {
 
     expect(handled).toBeTrue();
     expect((await store.get("tool_approval:cold-req"))?.status).toBe("rejected");
+  });
+
+  test("冷启动批准落盘工具审批后只记录结果，不触发重新规划恢复", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-cold-continuation-"));
+    const threadId = "cold-continuation-thread";
+    const runId = "cold-continuation-run";
+    const store = createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(threadId));
+    const continuationStore = createFileBackedRunContinuationStore(getRuntimeCoreSessionDir(threadId));
+    await continuationStore.upsert({
+      version: 1,
+      runId,
+      threadId,
+      status: "waiting_for_interruption",
+      checkpoint: {
+        step: "before_model_call",
+        interruptionId: "tool_approval:cold-continuation-req",
+        toolCallId: "cold-continuation-tool",
+        toolName: "Bash"
+      },
+      reason: "等待工具审批。",
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+    await store.upsert({
+      id: "tool_approval:cold-continuation-req",
+      runId,
+      threadId,
+      type: "tool_approval",
+      status: "pending",
+      title: "确认执行 Bash",
+      message: "needs approval",
+      payload: {
+        threadId,
+        runId,
+        requestId: "cold-continuation-req",
+        toolUseId: "cold-continuation-tool",
+        toolName: "Bash",
+        risk: "high",
+        reason: "needs approval",
+        input: { command: "git status" }
+      },
+      source: {
+        toolName: "Bash",
+        toolCallId: "cold-continuation-tool"
+      },
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    const handled = submitToolPermissionDecision({
+      threadId,
+      requestId: "cold-continuation-req",
+      decision: "allow_always"
+    });
+
+    expect(handled).toBeTrue();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(isToolAlwaysAllowed(threadId, "Bash")).toBeTrue();
+    expect(await continuationStore.get(runId)).toMatchObject({
+      status: "not_resumable",
+      checkpoint: {
+        step: "before_model_call"
+      }
+    });
   });
 });

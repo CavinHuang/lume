@@ -109,7 +109,7 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
     if (!existsSync(this.runsDir)) return [];
     const states: LumeRunState[] = [];
     for (const file of readdirSync(this.runsDir)) {
-      if (!file.endsWith(".json") || file.endsWith(".items.json")) continue;
+      if (!file.endsWith(".json") || file.endsWith(".items.json") || file.endsWith(".continuation.json")) continue;
       const runId = file.slice(0, -".json".length);
       const state = await this.get(runId);
       if (state?.threadId === threadId) {

@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { SDKMessage } from "@lume/shared";
 import {
   consumeRuntimeCoreQueryStream,
+  createObservedRuntimeEmitter,
   getRuntimeCoreStreamError,
   normalizeRuntimeCoreQueryPermissionMode
 } from "./run-loop";
+import type { LumeRunObserver } from "./run-observer";
 
 async function* stream(messages: SDKMessage[]): AsyncIterable<SDKMessage> {
   for (const message of messages) {
@@ -13,7 +15,7 @@ async function* stream(messages: SDKMessage[]): AsyncIterable<SDKMessage> {
 }
 
 describe("runtime-core run loop", () => {
-  test("forwards stream messages and completes when output is renderable", async () => {
+  test("forwards raw messages for observer persistence", async () => {
     const emitted: SDKMessage[] = [];
     const assistantMessage = {
       type: "assistant",
@@ -88,5 +90,33 @@ describe("runtime-core run loop", () => {
     expect(normalizeRuntimeCoreQueryPermissionMode("plan")).toBe("plan");
     expect(normalizeRuntimeCoreQueryPermissionMode(undefined)).toBe("default");
     expect(normalizeRuntimeCoreQueryPermissionMode("default")).toBe("default");
+  });
+
+  test("observed emitter emits run events from observer-recorded run items", () => {
+    const runEvents: unknown[] = [];
+    const sdkMessages: SDKMessage[] = [];
+    const observer = {
+      recordSdkMessage: (_message: SDKMessage, emitRunEvent?: (event: unknown) => void) => {
+        emitRunEvent?.({ type: "assistant_delta", text: "from run item" });
+      }
+    } as unknown as LumeRunObserver;
+
+    const emit = createObservedRuntimeEmitter({
+      onSdkMessage: (message) => sdkMessages.push(message),
+      onRunEvent: (event) => runEvents.push(event),
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    }, observer);
+
+    const message = {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "hello" }] }
+    } as SDKMessage;
+    emit.onSdkMessage(message);
+
+    expect(sdkMessages).toEqual([message]);
+    expect(runEvents).toEqual([{ type: "assistant_delta", text: "from run item" }]);
   });
 });

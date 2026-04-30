@@ -51,6 +51,13 @@ function createEmitter(events: string[]): PiAgentRuntimeEmitter {
   };
 }
 
+function createRunEventEmitter(events: string[]): PiAgentRuntimeEmitter {
+  return {
+    ...createEmitter(events),
+    onRunEvent: (event) => events.push(`run:${event.type}`)
+  };
+}
+
 async function* stream(messages: SDKMessage[]): AsyncIterable<SDKMessage> {
   for (const message of messages) {
     yield message;
@@ -120,6 +127,33 @@ describe("LumeRunner", () => {
     expect(result).toEqual({ status: "completed" });
     expect(events).toEqual(["complete"]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
+  });
+
+  test("complete waits for observed run events before terminal event", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-complete-order-"));
+    dirs.push(agentDir);
+    const events: string[] = [];
+    const runner = await LumeRunner.create({
+      params: createTestParams("thread-1"),
+      prepared: createPrepared(agentDir),
+      emit: createRunEventEmitter(events)
+    });
+
+    await runner.runQueryStream(stream([{
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }]
+      }
+    } as SDKMessage]));
+    await runner.complete();
+
+    expect(events).toEqual([
+      "sdk:assistant",
+      "run:assistant_delta",
+      "run:run_completed",
+      "complete"
+    ]);
   });
 
   test("fail emits error and finalizes run state", async () => {

@@ -9,8 +9,10 @@ const runPiAgentCalls: unknown[] = [];
 
 function emitSuccessfulRun(emit: {
   onSdkMessage: (message: SDKMessage) => void;
+  onRunEvent?: (event: unknown) => void;
   onComplete: () => void;
 }): void {
+  emit.onRunEvent?.({ type: "assistant_delta", text: "mock assistant output" });
   emit.onSdkMessage({
     type: "assistant",
     message: {
@@ -115,6 +117,7 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
     params: unknown,
     emit: {
       onSdkMessage: (message: SDKMessage) => void;
+      onRunEvent?: (event: unknown) => void;
       onComplete: () => void;
       onError: (error: string) => void;
     }
@@ -201,6 +204,7 @@ describe("agent-service", () => {
     const { sendAgentMessage } = await import("./agent-service");
     const thread = createAgentThread("send lifecycle", "channel-test");
     const appended: AgentMessageAppendedEvent[] = [];
+    const runEvents: unknown[] = [];
 
     await sendAgentMessage({
       threadId: thread.id,
@@ -208,7 +212,9 @@ describe("agent-service", () => {
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
-      onSdkMessage: () => undefined,
+      onRunEvent: (event) => {
+        runEvents.push(event);
+      },
       onMessageAppended: (event) => {
         appended.push(event);
       },
@@ -223,6 +229,7 @@ describe("agent-service", () => {
     const sdkMessages = getAgentThreadSDKMessages(thread.id);
 
     expect(appended).toHaveLength(2);
+    expect(runEvents).toContainEqual({ type: "assistant_delta", text: "mock assistant output" });
     expect(appended[0]?.message.role).toBe("user");
     expect(appended[0]?.message.sdkMessages?.[0]?.type).toBe("user");
     expect(appended[1]?.message.role).toBe("assistant");
@@ -247,7 +254,6 @@ describe("agent-service", () => {
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
-      onSdkMessage: () => undefined,
       onMessageAppended: () => undefined,
       onComplete: () => undefined,
       onError: () => undefined,
@@ -273,7 +279,6 @@ describe("agent-service", () => {
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
-      onSdkMessage: () => undefined,
       onMessageAppended: () => undefined,
       onComplete: () => undefined,
       onError: () => undefined,
@@ -304,7 +309,6 @@ describe("agent-service", () => {
     const thread = createAgentThread("queue lifecycle", "channel-test");
     const appended: AgentMessageAppendedEvent[] = [];
     const createEmit = () => ({
-      onSdkMessage: () => undefined,
       onMessageAppended: (event: AgentMessageAppendedEvent) => {
         appended.push(event);
       },
@@ -355,7 +359,6 @@ describe("agent-service", () => {
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
-      onSdkMessage: () => undefined,
       onMessageAppended: () => undefined,
       onComplete: () => undefined,
       onError: () => undefined,
@@ -393,7 +396,6 @@ describe("agent-service", () => {
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
-      onSdkMessage: () => undefined,
       onMessageAppended: () => undefined,
       onComplete: () => {
         events.completed += 1;

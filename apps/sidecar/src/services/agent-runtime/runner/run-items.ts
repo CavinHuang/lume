@@ -6,7 +6,8 @@ export type LumeRunItem =
   | LumeModelStreamItem
   | LumeSystemEventItem
   | LumeApprovalItem
-  | LumeSubagentItem;
+  | LumeSubagentItem
+  | LumeHandoffItem;
 
 export interface LumeUserMessageItem {
   type: "user_message";
@@ -82,5 +83,16 @@ export interface LumeSubagentItem {
   traceSpanId?: string;
   output?: string;
   error?: string;
+  createdAt: string;
+}
+
+export interface LumeHandoffItem {
+  type: "handoff";
+  id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  reason?: string;
+  status: "requested" | "accepted" | "completed" | "failed" | "cancelled";
+  traceSpanId?: string;
   createdAt: string;
 }

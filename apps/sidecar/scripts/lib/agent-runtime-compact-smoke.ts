@@ -45,11 +45,11 @@ export function assertCompactSmokeOutcome(input: {
   }
 
   if (!input.compactEvents.some((event) => event?.type === "compacting")) {
-    throw new Error("compacting event missing from stream notifications");
+    throw new Error("compacting event missing from runtime notifications");
   }
 
   if (!input.compactEvents.some((event) => event?.type === "compact_complete")) {
-    throw new Error("compact_complete event missing from stream notifications");
+    throw new Error("compact_complete event missing from runtime notifications");
   }
 
   const joinedPersistedContents = input.persistedJsonlContents.join("\n");

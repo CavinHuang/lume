@@ -1,24 +1,20 @@
 import { describe, expect, mock, test } from "bun:test";
-import { AGENT_IPC_CHANNELS, type SDKMessage } from "@lume/shared";
+import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 
 mock.module("../services/agent/agent-service", () => ({
   appendAgentMessage: async (_input: unknown, emit: {
-    onSdkMessage: (message: SDKMessage) => void;
+    onRunEvent?: (event: unknown) => void;
     onComplete: () => void;
   }) => {
-    emit.onSdkMessage({
-      type: "assistant",
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "hello" }]
+    emit.onRunEvent?.({ type: "assistant_delta", text: "hello" });
+    emit.onRunEvent?.({
+      type: "run_completed",
+      result: {
+        status: "completed",
+        finalOutput: "done"
       }
-    } as SDKMessage);
-    emit.onSdkMessage({
-      type: "result",
-      subtype: "success",
-      result: "done"
-    } as SDKMessage);
+    });
     emit.onComplete();
     return { queued: false };
   },
@@ -41,7 +37,7 @@ function createTestPlanStateTracker(): PlanStateTracker {
 }
 
 describe("agent-handlers run events", () => {
-  test("SEND_THREAD_MESSAGE emits structured run events alongside raw SDK stream events", async () => {
+  test("SEND_THREAD_MESSAGE forwards native structured run events without mapping raw SDK events", async () => {
     const notifications: Array<{ method: string; params: unknown }> = [];
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
@@ -55,7 +51,6 @@ describe("agent-handlers run events", () => {
       userMessage: "hi"
     });
 
-    expect(notifications.filter((item) => item.method === AGENT_IPC_CHANNELS.STREAM_EVENT)).toHaveLength(2);
     expect(notifications.filter((item) => item.method === AGENT_IPC_CHANNELS.RUN_EVENT).map((item) => item.params)).toEqual([
       {
         threadId: "thread-1",
@@ -69,13 +64,6 @@ describe("agent-handlers run events", () => {
             status: "completed",
             finalOutput: "done"
           }
-        }
-      },
-      {
-        threadId: "thread-1",
-        event: {
-          type: "run_completed",
-          result: { status: "completed" }
         }
       }
     ]);

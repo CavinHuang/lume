@@ -11,7 +11,6 @@ import type {
   InstallSkillMarketItemToWorkspaceInput,
   InstallGlobalPluginInput,
   PlanStep,
-  SDKMessage,
   WorkspaceMcpConfig
 } from "@lume/shared";
 import {
@@ -19,7 +18,6 @@ import {
   deleteAgentThread,
   getAgentThreadMeta,
   getAgentThreadMessages,
-  getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
   listAgentThreads,
   migrateChatToAgentThread,
@@ -33,6 +31,7 @@ import { getAgentMessageVersions } from "../services/agent/agent-message-version
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import {
   appendAgentMessage,
+  sendAgentMessage,
   generateAgentTitle,
   stopAgent,
   submitAgentToolPermission,
@@ -107,7 +106,26 @@ import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attempt";
-import { mapSdkMessageToRunEvents } from "../services/agent-runtime/runner/run-events";
+import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
+import {
+  buildColdStartContinuationMessage,
+  LumeResumeService
+} from "../services/agent-runtime/interruption/resume-service";
+import {
+  listPendingPlanApprovalRequests,
+  resolvePlanApproval
+} from "../services/agent-runtime/plan/plan-approval-service";
+import {
+  markStructuredPlanExecutionCompleted,
+  markStructuredPlanExecutionFailed,
+  markStructuredPlanExecutionStarted
+} from "../services/agent-runtime/plan/plan-execution-service";
+import { createFileBackedLumePlanStore } from "../services/agent-runtime/plan/plan-store";
+import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
+import { projectRunStateToRunEvents } from "../services/agent-runtime/runner/run-item-events";
+import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
+import { redactTraceForLevel, type TraceRedactionLevel } from "../services/agent-runtime/trace/trace-redaction";
+import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
 import { listPendingPiAskUserQuestionRequests } from "../services/pi-agent/tools/bridges/ask-user-question-bridge";
 import { listPendingToolPermissionRequests } from "../services/pi-agent/tools/bridges/tool-permission-bridge";
@@ -152,16 +170,22 @@ import {
   promoteFileToWorkspaceInputSchema,
   proxySettingsInputSchema,
   readBootstrapFileInputSchema,
+  listRunStatesInputSchema,
   renameAttachedFileInputSchema,
   renameFileInputSchema,
+  resumeRunInputSchema,
+  runTraceInputSchema,
   saveFilesToWorkspaceInputSchema,
   saveFilesToThreadInputSchema,
   saveToolPolicyInputSchema,
   searchWorkspaceFilesInputSchema,
   skillMarketCatalogInputSchema,
   skillMarketDetailInputSchema,
+  structuredPlansInputSchema,
+  threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
+  submitPlanApprovalInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
@@ -196,39 +220,61 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return resolvedWorkspaceSlug;
   };
 
+  const resolveRuntimeSessionDir = (threadId: string) => getRuntimeCoreSessionDir(threadId);
+
+  const resolveRunIdForThread = async (threadId: string, runId?: string): Promise<string | null> => {
+    if (runId) return runId;
+    const runStore = createFileBackedLumeRunStateStore(resolveRuntimeSessionDir(threadId));
+    const active = await runStore.findActiveByThread(threadId);
+    if (active) return active.runId;
+    const runs = await runStore.listByThread(threadId);
+    return runs.at(-1)?.runId ?? null;
+  };
+
   const createExecutionStartCallback = (input: { threadId: string; userMessage: string }) => () => {
     if (!context.planStateTracker.isLikelyExecutionRequest(input)) {
       return;
     }
     const steps = context.planStateTracker.syncExecutionFromUserMessage(input.threadId, input.userMessage);
+    void markStructuredPlanExecutionStarted({
+      sessionDir: resolveRuntimeSessionDir(input.threadId),
+      threadId: input.threadId,
+      stepText: steps?.find((step) => step.status === "in_progress")?.text
+    });
     context.notifyPlanStateChange(input.threadId, "executing", steps ? { steps } : undefined);
   };
 
   const createAgentStreamEmitter = (threadId: string) => ({
-    onSdkMessage: (message: unknown) => {
-      context.writeNotification(AGENT_IPC_CHANNELS.STREAM_EVENT, {
+    onRunEvent: (event: unknown) => {
+      context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
         threadId,
-        message
+        event
       });
-      for (const event of mapSdkMessageToRunEvents(message as SDKMessage)) {
-        context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
-          threadId,
-          event
-        });
-      }
     },
     onMessageAppended: (event: unknown) => {
       context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+      const appended = event as {
+        threadId?: string;
+        message?: {
+          role?: string;
+          content?: string;
+          createdAt?: number;
+        };
+      };
+      if (appended.message?.role === "user" && typeof appended.message.content === "string") {
+        context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+          threadId,
+          event: {
+            type: "user_message_submitted",
+            text: appended.message.content,
+            createdAt: new Date(appended.message.createdAt ?? Date.now()).toISOString()
+          }
+        });
+      }
     },
     onComplete: () => {
-      context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
-        threadId,
-        event: {
-          type: "run_completed",
-          result: { status: "completed" }
-        }
-      });
-      context.writeNotification(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {
+      void markStructuredPlanExecutionCompleted({
+        sessionDir: resolveRuntimeSessionDir(threadId),
         threadId
       });
       if (context.planStateTracker.getPhase(threadId) === "executing") {
@@ -237,6 +283,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
     },
     onError: (error: string) => {
+      void markStructuredPlanExecutionFailed({
+        sessionDir: resolveRuntimeSessionDir(threadId),
+        threadId,
+        error
+      });
       context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
         threadId,
         event: {
@@ -246,10 +297,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             message: error
           }
         }
-      });
-      context.writeNotification(AGENT_IPC_CHANNELS.STREAM_ERROR, {
-        threadId,
-        error
       });
       if (context.planStateTracker.getPhase(threadId) === "executing") {
         const steps = context.planStateTracker.markCurrentStepFailed(threadId, error);
@@ -284,11 +331,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES);
       return getAgentThreadMessages(input.threadId);
     },
-    [AGENT_IPC_CHANNELS.GET_THREAD_SDK_MESSAGES]: async (params) => {
-      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_SDK_MESSAGES);
+    [AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS]: async (params) => {
+      const input = validateInput(threadRunEventsInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS);
+      const runs = await createFileBackedLumeRunStateStore(resolveRuntimeSessionDir(input.threadId))
+        .listByThread(input.threadId);
       return {
         threadId: input.threadId,
-        messages: getAgentThreadSDKMessages(input.threadId)
+        events: runs.flatMap((run) => projectRunStateToRunEvents(run))
       };
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS]: async (params) => {
@@ -413,22 +462,170 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       const askRequests = listPendingPiAskUserQuestionRequests();
       const toolRequests = listPendingToolPermissionRequests();
+      const planRequests = await listPendingPlanApprovalRequests();
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
       for (const request of toolRequests) threadIds.add(request.threadId);
+      for (const request of planRequests) threadIds.add(request.threadId);
 
       const result: AgentPendingInteractiveState[] = [];
       for (const threadId of threadIds) {
         if (input.threadId && input.threadId !== threadId) continue;
         const askUserQuestions = askRequests.filter((request) => request.threadId === threadId);
         const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
+        const planApprovals = planRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
           ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
-          ...(toolPermissions.length > 0 ? { toolPermissions } : {})
+          ...(toolPermissions.length > 0 ? { toolPermissions } : {}),
+          ...(planApprovals.length > 0 ? { planApprovals } : {})
         });
       }
       return result;
+    },
+    [AGENT_IPC_CHANNELS.RESUME_RUN]: async (params) => {
+      const input = validateInput(resumeRunInputSchema, params, AGENT_IPC_CHANNELS.RESUME_RUN);
+      const sessionDir = resolveRuntimeSessionDir(input.threadId);
+      const runId = await resolveRunIdForThread(input.threadId, input.runId);
+      if (!runId) {
+        return {
+          status: "not_resumable",
+          error: "找不到可恢复 run。"
+        };
+      }
+      const service = new LumeResumeService({
+        runStateStore: createFileBackedLumeRunStateStore(sessionDir),
+        continuationStore: createFileBackedRunContinuationStore(sessionDir)
+      }, async (checkpoint, state) => {
+        let finalOutput = "";
+        await sendAgentMessage({
+          threadId: state.threadId,
+          userMessage: buildColdStartContinuationMessage(checkpoint),
+          ...(state.workspaceId ? { workspaceId: state.workspaceId } : {}),
+          ...(state.model.modelRef ? { modelRef: state.model.modelRef } : {}),
+          ...(state.model.channelId ? { channelId: state.model.channelId } : {}),
+          modelId: state.model.modelId,
+          chatType: state.input.chatType as never,
+          threadType: state.input.threadType as never,
+          permissionMode: state.input.permissionMode,
+          messageMetadata: {
+            ...(state.input.messageMetadata ?? {}),
+            runtimeContinuation: {
+              sourceRunId: state.runId,
+              checkpoint: checkpoint.checkpoint,
+              reason: checkpoint.reason
+            }
+          }
+        }, {
+          onRunEvent: (event) => {
+            context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+              threadId: state.threadId,
+              event
+            });
+          },
+          onMessageAppended: (event) => {
+            context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+            if (event.message.role === "assistant") {
+              finalOutput = event.message.content;
+            }
+          },
+          onComplete: () => undefined,
+          onError: (error) => {
+            throw new Error(error);
+          },
+          onTitleUpdated: (title) => {
+            context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
+              threadId: state.threadId,
+              title
+            });
+          },
+          onAskUserQuestion: (request) => {
+            context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
+          },
+          onToolPermissionRequest: (request) => {
+            context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
+          }
+        }, { appendUserMessage: false });
+        return { finalOutput };
+      });
+      return service.resumeRun({
+        runId,
+        interruptionId: input.interruptionId
+      });
+    },
+    [AGENT_IPC_CHANNELS.LIST_RUN_STATES]: async (params) => {
+      const input = validateInput(listRunStatesInputSchema, params, AGENT_IPC_CHANNELS.LIST_RUN_STATES);
+      const sessionDir = resolveRuntimeSessionDir(input.threadId);
+      const runStore = createFileBackedLumeRunStateStore(sessionDir);
+      const continuationStore = createFileBackedRunContinuationStore(sessionDir);
+      const runs = await runStore.listByThread(input.threadId);
+      return {
+        runs: await Promise.all(runs.map(async (run) => {
+          const continuation = await continuationStore.get(run.runId);
+          return {
+            runId: run.runId,
+            threadId: run.threadId,
+            workspaceId: run.workspaceId,
+            workspaceSlug: run.workspaceSlug,
+            status: run.status,
+            currentStep: run.currentStep,
+            traceId: run.traceId,
+            planId: run.planId,
+            model: run.model,
+            usage: run.usage,
+            pendingInterruptionCount: run.pendingInterruptions.length,
+            generatedItemCount: run.generatedItems.length,
+            continuation: continuation
+              ? {
+                  status: continuation.status,
+                  checkpoint: {
+                    step: continuation.checkpoint.step,
+                    interruptionId: continuation.checkpoint.interruptionId,
+                    toolCallId: continuation.checkpoint.toolCallId,
+                    toolName: continuation.checkpoint.toolName,
+                    toolKind: continuation.checkpoint.toolKind
+                  },
+                  reason: continuation.reason,
+                  updatedAt: continuation.updatedAt
+                }
+              : undefined,
+            error: run.error
+              ? {
+                  code: run.error.code,
+                  message: run.error.message,
+                  retryable: run.error.retryable
+                }
+              : undefined,
+            createdAt: run.createdAt,
+            updatedAt: run.updatedAt,
+            completedAt: run.completedAt
+          };
+        }))
+      };
+    },
+    [AGENT_IPC_CHANNELS.GET_RUN_TRACE]: async (params) => {
+      const input = validateInput(runTraceInputSchema, params, AGENT_IPC_CHANNELS.GET_RUN_TRACE);
+      const sessionDir = resolveRuntimeSessionDir(input.threadId);
+      const traceStore = createFileBackedLumeTraceStore(sessionDir);
+      let traceId = input.traceId;
+      if (!traceId && input.runId) {
+        const run = await createFileBackedLumeRunStateStore(sessionDir).get(input.runId);
+        traceId = run?.traceId;
+      }
+      const trace = traceId
+        ? await traceStore.get(traceId)
+        : (await traceStore.listByThread(input.threadId)).at(-1) ?? null;
+      return {
+        trace: trace
+          ? redactTraceForLevel(trace, (input.redactionLevel ?? "safe_summary") as TraceRedactionLevel)
+          : null
+      };
+    },
+    [AGENT_IPC_CHANNELS.LIST_STRUCTURED_PLANS]: async (params) => {
+      const input = validateInput(structuredPlansInputSchema, params, AGENT_IPC_CHANNELS.LIST_STRUCTURED_PLANS);
+      const plans = await createFileBackedLumePlanStore(resolveRuntimeSessionDir(input.threadId))
+        .listByThread(input.threadId);
+      return { plans };
     },
     [AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM]: async (params) => {
       const input = validateInput(agentTruncateThreadInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM);
@@ -773,6 +970,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_THREAD);
       stopAgent(input.threadId);
+      void markStructuredPlanExecutionFailed({
+        sessionDir: resolveRuntimeSessionDir(input.threadId),
+        threadId: input.threadId,
+        error: "用户已停止当前执行"
+      });
       if (context.planStateTracker.getPhase(input.threadId) === "executing") {
         const steps = context.planStateTracker.markCurrentStepFailed(input.threadId, "用户已停止当前执行");
         context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
@@ -803,6 +1005,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         requestId: input.requestId,
         decision: input.decision
       });
+    },
+    [AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL]: async (params) => {
+      const input = validateInput(
+        submitPlanApprovalInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL
+      );
+      const ok = await resolvePlanApproval({
+        sessionDir: resolveRuntimeSessionDir(input.threadId),
+        threadId: input.threadId,
+        planId: input.planId,
+        decision: input.decision
+      });
+      return { ok };
     },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
     "agent:read-bootstrap-file": async (params) => {

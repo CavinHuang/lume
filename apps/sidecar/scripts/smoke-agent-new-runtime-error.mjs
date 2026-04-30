@@ -6,7 +6,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const STREAM_ERROR_METHOD = "agent:stream:error";
+const RUN_EVENT_METHOD = "agent:run:event";
 const SIDECAR_EXECUTABLE = process.env.LUME_SMOKE_EXECUTABLE || process.execPath;
 
 function createSidecarProcess(configHome) {
@@ -135,15 +135,16 @@ async function run() {
     });
 
     const errorEvent = await sidecar.waitForNotification(
-      STREAM_ERROR_METHOD,
-      (params) => params?.threadId === session.id,
+      RUN_EVENT_METHOD,
+      (params) => params?.threadId === session.id && params?.event?.type === "run_failed",
       12000
     );
+    const errorMessage = errorEvent?.event?.error?.message;
     assert(
-      typeof errorEvent?.error === "string"
+      typeof errorMessage === "string"
       && (
-        errorEvent.error.includes("smoke-new-runtime-error")
-        || errorEvent.error.includes("Pi Agent runtime 执行失败")
+        errorMessage.includes("smoke-new-runtime-error")
+        || errorMessage.includes("Pi Agent runtime 执行失败")
       ),
       "unexpected new runtime error payload"
     );

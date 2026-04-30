@@ -86,6 +86,10 @@ export class LumeRunner {
     return new LumeRunner(observer, input.emit);
   }
 
+  getRunId(): string {
+    return this.observer.getRunId();
+  }
+
   async finalizeResult(result: PiAgentRunResult): Promise<PiAgentRunResult> {
     const lumeResult = fromPiAgentRunResult(result);
     await this.observer.finalize(lumeResult.status, lumeResult.error);
@@ -102,6 +106,14 @@ export class LumeRunner {
       emit: this.emit
     });
     if (result.status !== "completed") {
+      await this.observer.flush();
+      this.emit.onRunEvent?.({
+        type: "run_failed",
+        error: {
+          code: "runtime_error",
+          message: result.errorMessage
+        }
+      });
       return this.finalizeResult(result);
     }
     return result;
@@ -223,16 +235,23 @@ export class LumeRunner {
   }
 
   async complete(): Promise<PiAgentRunResult> {
+    await this.observer.flush();
+    this.emit.onRunEvent?.({
+      type: "run_completed",
+      result: { status: "completed" }
+    });
     this.emit.onComplete();
     return this.finalizeResult({ status: "completed" });
   }
 
   async abort(): Promise<PiAgentRunResult> {
+    await this.observer.flush();
     this.emit.onComplete();
     return this.finalizeResult({ status: "aborted" });
   }
 
   async fail(errorMessage: string): Promise<PiAgentRunResult> {
+    await this.observer.flush();
     this.emit.onError(errorMessage);
     return this.finalizeResult({ status: "errored", errorMessage });
   }

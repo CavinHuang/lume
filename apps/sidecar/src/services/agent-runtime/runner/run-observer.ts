@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SDKMessage } from "@lume/shared";
+import type { LumeRunEvent, SDKMessage } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
 import type { ContextAssemblyInput } from "../context/context-assembler";
 import { TraceRecorder } from "../trace/trace-recorder";
@@ -7,6 +7,7 @@ import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redacti
 import { createFileBackedLumeTraceStore } from "../trace/trace-store";
 import type { LumeTraceSpan } from "../trace/trace-types";
 import type { LumeRunItem } from "./run-items";
+import { projectAssistantMessageFinalEvent, projectRunItemToRunEvents } from "./run-item-events";
 import type { LumeRunState, LumeRunStatus } from "./run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "./run-state-store";
 
@@ -31,6 +32,8 @@ export class LumeRunObserver {
   private readonly toolSpanIds = new Map<string, string>();
   private readonly subagentSpanIds = new Map<string, string>();
   private readonly subagentParentToolCallIds = new Map<string, string>();
+  private emittedModelStreamText = false;
+  private emittedModelStreamThinking = false;
 
   private constructor(
     private readonly state: LumeRunState,
@@ -105,16 +108,35 @@ export class LumeRunObserver {
     return observer;
   }
 
-  recordSdkMessage(message: SDKMessage): void {
+  recordSdkMessage(message: SDKMessage, emitRunEvent?: (event: LumeRunEvent) => void): void {
     this.enqueue(async () => {
       this.rememberSubagentParentToolCall(message as SDKMessage & Record<string, unknown>);
-      const item = mapSdkMessageToRunItem(message, {
+      const items = mapSdkMessageToRunItems(message, {
         currentAgentId: this.state.currentAgentId,
         parentRunId: this.state.runId,
         subagentParentToolCallIds: this.subagentParentToolCallIds
       });
-      if (item) {
+      for (const item of items) {
         await this.stateStore.appendItem(this.state.runId, item);
+        if (item.type === "assistant_message" && (this.emittedModelStreamText || this.emittedModelStreamThinking)) {
+          const finalEvent = projectAssistantMessageFinalEvent(item);
+          if (finalEvent) emitRunEvent?.(finalEvent);
+          continue;
+        }
+        const events = projectRunItemToRunEvents(item, {
+          includeAssistantText: !this.emittedModelStreamText,
+          includeAssistantThinking: !this.emittedModelStreamThinking,
+          includeModelStreamText: true
+        });
+        for (const event of events) {
+          if (event.type === "assistant_delta" && item.type === "model_stream") {
+            this.emittedModelStreamText = true;
+          }
+          if (event.type === "assistant_thinking_delta" && item.type === "model_stream") {
+            this.emittedModelStreamThinking = true;
+          }
+          emitRunEvent?.(event);
+        }
       }
       await this.recordSdkMessageTrace(message);
       if (message.type === "result" && message.usage) {
@@ -318,28 +340,37 @@ export class LumeRunObserver {
   }
 }
 
-function mapSdkMessageToRunItem(
+function mapSdkMessageToRunItems(
   message: SDKMessage,
   context: {
     currentAgentId: string;
     parentRunId: string;
     subagentParentToolCallIds: ReadonlyMap<string, string>;
   }
-): LumeRunItem | null {
+): LumeRunItem[] {
   const createdAt = new Date().toISOString();
   const id = "uuid" in message && typeof message.uuid === "string" ? message.uuid : randomUUID();
   if (message.type === "user") {
-    return {
+    return [{
       type: "user_message",
       id,
       content: message.message.content,
       createdAt
-    };
+    }];
   }
   if (message.type === "assistant") {
-    const toolUse = message.message.content.find((block) => block.type === "tool_use");
-    if (toolUse) {
-      return {
+    const items: LumeRunItem[] = [];
+    const textContent = message.message.content.filter((block) => block.type === "text" || block.type === "thinking");
+    if (textContent.length > 0) {
+      items.push({
+        type: "assistant_message",
+        id,
+        content: textContent,
+        createdAt
+      });
+    }
+    for (const toolUse of message.message.content.filter((block) => block.type === "tool_use")) {
+      items.push({
         type: "tool_call",
         id: toolUse.id,
         toolName: toolUse.name,
@@ -348,29 +379,24 @@ function mapSdkMessageToRunItem(
         parentToolCallId: message.parent_tool_use_id ?? undefined,
         status: "pending",
         createdAt
-      };
+      });
     }
-    return {
-      type: "assistant_message",
-      id,
-      content: message.message.content,
-      createdAt
-    };
+    return items;
   }
   if (message.type === "tool_result") {
-    return {
+    return [{
       type: "tool_result",
       id,
       toolCallId: message.result.tool_use_id,
       toolName: message.result.tool_name,
       output: message.result.output,
       createdAt
-    };
+    }];
   }
   if (message.type === "system" && message.subtype === "task_notification") {
     const subagentRunId = typeof message.subagent_run_id === "string" ? message.subagent_run_id : "";
     if (subagentRunId) {
-      return {
+      return [{
         type: "subagent",
         id,
         runId: subagentRunId,
@@ -385,27 +411,27 @@ function mapSdkMessageToRunItem(
           ? message.message
           : undefined,
         createdAt
-      };
+      }];
     }
   }
   if (message.type === "stream_event" || message.type === "partial_message") {
-    return {
+    return [{
       type: "model_stream",
       id,
       event: message,
       createdAt
-    };
+    }];
   }
   if (message.type === "system" || message.type === "result") {
-    return {
+    return [{
       type: "system_event",
       id,
       name: message.type === "system" ? message.subtype : "result",
       payload: message,
       createdAt
-    };
+    }];
   }
-  return null;
+  return [];
 }
 
 function extractSubagentParentToolCallId(message: SDKMessage & Record<string, unknown>): string | undefined {

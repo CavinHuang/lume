@@ -9,6 +9,7 @@ import {
   createFileBackedLumeInterruptionStore,
   resolveFileBackedInterruptionSync
 } from "./interruption-store";
+import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 
 export function toolApprovalInterruptionId(requestId: string): string {
   return `tool_approval:${requestId}`;
@@ -19,6 +20,7 @@ export async function persistToolApprovalInterruption(request: AgentToolPermissi
   const type = request.interruptionType ?? "tool_approval";
   const interruption: LumeInterruption = {
     id: toolApprovalInterruptionId(request.requestId),
+    runId: request.runId,
     threadId: request.threadId,
     originThreadId: request.originThreadId,
     type,
@@ -37,7 +39,28 @@ export async function persistToolApprovalInterruption(request: AgentToolPermissi
     createdAt: now,
     updatedAt: now
   };
-  await createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(request.threadId)).upsert(interruption);
+  const sessionDir = getRuntimeCoreSessionDir(request.threadId);
+  const writes: Array<Promise<void>> = [
+    createFileBackedLumeInterruptionStore(sessionDir).upsert(interruption)
+  ];
+  if (request.runId) {
+    writes.push(createFileBackedRunContinuationStore(sessionDir).upsert({
+      version: 1,
+      runId: request.runId,
+      threadId: request.threadId,
+      status: "waiting_for_interruption",
+      checkpoint: {
+        step: "before_model_call",
+        interruptionId: interruption.id,
+        toolCallId: request.toolUseId,
+        toolName: request.toolName
+      },
+      reason: "等待工具审批。",
+      createdAt: now,
+      updatedAt: now
+    }));
+  }
+  await Promise.all(writes);
   return interruption;
 }
 
@@ -47,7 +70,10 @@ export async function resolveToolApprovalInterruption(input: {
   decision: AgentToolPermissionDecision | null;
 }): Promise<void> {
   const approved = input.decision === "allow_once" || input.decision === "allow_always";
-  await createFileBackedLumeInterruptionStore(getRuntimeCoreSessionDir(input.threadId)).resolve(
+  const sessionDir = getRuntimeCoreSessionDir(input.threadId);
+  const store = createFileBackedLumeInterruptionStore(sessionDir);
+  const current = await store.get(toolApprovalInterruptionId(input.requestId));
+  await store.resolve(
     toolApprovalInterruptionId(input.requestId),
     {
       status: approved ? "approved" : "rejected",
@@ -57,6 +83,27 @@ export async function resolveToolApprovalInterruption(input: {
       }
     }
   );
+  if (current?.runId) {
+    const payload = current.payload as AgentToolPermissionRequest;
+    await createFileBackedRunContinuationStore(sessionDir).update(current.runId, {
+      status: "not_resumable",
+      checkpoint: {
+        step: "before_model_call",
+        interruptionId: current.id,
+        toolCallId: payload.toolUseId,
+        toolName: payload.toolName,
+        syntheticToolResult: {
+          status: approved ? "approved" : "rejected",
+          decision: input.decision ?? "deny",
+          rememberDecision: input.decision === "allow_always",
+          note: "工具审批已解决，但原工具调用尚未在冷启动恢复路径中执行。"
+        }
+      },
+      reason: approved
+        ? "工具审批已解决；当前进程内 live resolver 会继续执行，冷启动不重新发起模型调用。"
+        : "工具审批已拒绝；当前进程内 live resolver 会返回拒绝结果，冷启动不重新发起模型调用。"
+    });
+  }
 }
 
 export async function updateToolApprovalSession(input: {
@@ -93,7 +140,7 @@ export function resolvePersistedToolApprovalInterruption(input: {
       && record.interruption.threadId === input.approvalThreadId;
   });
   if (!matched) return false;
-  return resolveFileBackedInterruptionSync(
+  const resolved = resolveFileBackedInterruptionSync(
     matched.sessionDir,
     toolApprovalInterruptionId(input.requestId),
     {
@@ -104,4 +151,27 @@ export function resolvePersistedToolApprovalInterruption(input: {
       }
     }
   );
+  if (resolved && matched.interruption.runId) {
+    const payload = matched.interruption.payload as AgentToolPermissionRequest;
+    const approved = input.decision === "allow_once" || input.decision === "allow_always";
+    void createFileBackedRunContinuationStore(matched.sessionDir).update(matched.interruption.runId, {
+      status: "not_resumable",
+      checkpoint: {
+        step: "before_model_call",
+        interruptionId: matched.interruption.id,
+        toolCallId: payload.toolUseId,
+        toolName: payload.toolName,
+        syntheticToolResult: {
+          status: approved ? "approved" : "rejected",
+          decision: input.decision,
+          rememberDecision: input.decision === "allow_always",
+          note: "工具审批已解决，但原工具调用尚未在冷启动恢复路径中执行。"
+        }
+      },
+      reason: approved
+        ? "工具审批已解决；不通过 cold-start resume 伪造重新规划。"
+        : "工具审批已拒绝；不通过 cold-start resume 伪造重新规划。"
+    });
+  }
+  return resolved;
 }

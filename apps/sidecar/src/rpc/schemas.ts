@@ -612,8 +612,39 @@ export const submitToolPermissionInputSchema = z.object({
   decision: z.enum(["allow_once", "allow_always", "deny"])
 });
 
+export const submitPlanApprovalInputSchema = z.object({
+  threadId: idSchema,
+  planId: idSchema,
+  decision: z.enum(["approve", "reject"])
+});
+
 export const pendingInteractiveInputSchema = z.object({
   threadId: z.string().optional()
+});
+
+export const resumeRunInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema.optional(),
+  interruptionId: idSchema.optional()
+});
+
+export const listRunStatesInputSchema = z.object({
+  threadId: idSchema
+});
+
+export const threadRunEventsInputSchema = z.object({
+  threadId: idSchema
+});
+
+export const runTraceInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema.optional(),
+  traceId: idSchema.optional(),
+  redactionLevel: z.enum(["safe_summary", "diagnostic"]).optional()
+});
+
+export const structuredPlansInputSchema = z.object({
+  threadId: idSchema
 });
 
 const bootstrapFileTypeSchema = z.enum([
