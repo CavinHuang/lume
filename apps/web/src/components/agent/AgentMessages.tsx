@@ -1,20 +1,18 @@
 import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState } from 'react'
 import { ArrowDown } from 'lucide-react'
-import type { SDKMessage } from '@lume/shared'
-import { SDKContentBlock } from './SDKContentBlock'
-import { useSetAtom } from 'jotai'
-import { agentSubagentRunsAtom, agentSDKMessagesAtom, agentSubagentMessagesAtom } from '@/atoms'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { agentRunEventsAtom, agentSubagentRunsAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useScrollPositionMemory } from '@/hooks/useScrollPositionMemory'
-import { getThreadSDKMessages } from '@/lib/desktop-api'
-import { sidecarCall } from '@/lib/desktop-api'
-import type { AgentListSubagentRunsResult } from '@lume/shared'
+import { getThreadRunEvents, sidecarCall } from '@/lib/desktop-api'
+import { AGENT_IPC_CHANNELS, type AgentListSubagentRunsResult } from '@lume/shared'
 import { cn } from '@/lib/utils'
-import { projectRenderableAgentMessages } from './agent-message-projection'
+import { hydrateRunEvents } from '@/hooks/run-event-state'
+import { projectRunEventMessages } from './run-event-message-projection'
+import { RunEventContentBlock } from './RunEventContentBlock'
 
 interface AgentMessagesProps {
   threadId: string
-  sdkMessages: SDKMessage[]
   streaming: boolean
 }
 
@@ -23,26 +21,15 @@ function isNearBottom(el: HTMLElement | null): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 100
 }
 
-function getFollowSignal(messages: SDKMessage[]): string {
-  const lastMessage = messages.at(-1)
-  if (!lastMessage) return 'empty'
-
-  return JSON.stringify({
-    length: messages.length,
-    type: lastMessage.type,
-    uuid: (lastMessage as { uuid?: string }).uuid ?? null,
-    message: 'message' in lastMessage ? lastMessage.message : null,
-  })
-}
-
-export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessagesProps) {
+export function AgentMessages({ threadId, streaming }: AgentMessagesProps) {
+  const liveRunEvents = useAtomValue(agentRunEventsAtom)[threadId]?.events ?? []
+  const setRunEvents = useSetAtom(agentRunEventsAtom)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const prevThreadIdRef = useRef(threadId)
-  const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
-  const setSubagentMessages = useSetAtom(agentSubagentMessagesAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
+  const loadedRunEventThreadsRef = useRef<Set<string>>(new Set())
   const wasNearBottomRef = useRef(true)
   const prevStreamingRef = useRef(streaming)
   const pendingRestoreThreadIdRef = useRef<string | null>(threadId)
@@ -56,8 +43,8 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
 
   const { save, restore, hasSavedPosition } = useScrollPositionMemory()
-  const followSignal = getFollowSignal(sdkMessages)
-  const renderMessages = useMemo(() => projectRenderableAgentMessages(sdkMessages), [sdkMessages])
+  const liveMessages = useMemo(() => projectRunEventMessages(liveRunEvents), [liveRunEvents])
+  const followSignal = JSON.stringify(liveMessages.at(-1) ?? null)
   const getScrollElement = useCallback(() => {
     const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
     return viewport instanceof HTMLDivElement ? viewport : null
@@ -166,18 +153,18 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   }, [getScrollElement, save, threadId])
   const restoreCurrentThread = useCallback(() => {
     const scrollElement = getScrollElement()
-    if (shouldFollowInitialBottomRef.current && scrollElement && sdkMessages.length > 0) {
+    if (shouldFollowInitialBottomRef.current && scrollElement && liveMessages.length > 0) {
       startInitialBottomFollow()
       return
     }
     const restored = restore(threadId, scrollElement)
-    if (!restored && scrollElement && sdkMessages.length > 0) {
+    if (!restored && scrollElement && liveMessages.length > 0) {
       startInitialBottomFollow()
       return
     }
     wasNearBottomRef.current = isNearBottom(scrollElement)
     setShowJumpToBottom(!wasNearBottomRef.current)
-  }, [getScrollElement, restore, sdkMessages.length, startInitialBottomFollow, threadId])
+  }, [getScrollElement, liveMessages.length, restore, startInitialBottomFollow, threadId])
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     bottomRef.current?.scrollIntoView({ behavior, block: 'end' })
     wasNearBottomRef.current = true
@@ -189,51 +176,30 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
     }
   }, [getScrollElement, save, threadId])
 
-  // 首次访问线程时拉取历史 SDK 消息 + subagent runs
+  // 首次访问线程时拉取 subagent runs
   useEffect(() => {
     if (loadedThreadsRef.current.has(threadId)) return
-    if (sdkMessages.length > 0) {
-      loadedThreadsRef.current.add(threadId)
-      return
-    }
     loadedThreadsRef.current.add(threadId)
-    getThreadSDKMessages(threadId)
-      .then((r) => {
-        const list = r.messages ?? []
-        if (list.length === 0) return
-        const mainMessages: SDKMessage[] = []
-        const subagentByRun: Record<string, SDKMessage[]> = {}
-        for (const msg of list) {
-          const runId = (msg as { subagent_run_id?: string }).subagent_run_id
-          if (runId) {
-            ;(subagentByRun[runId] ??= []).push(msg)
-          } else {
-            mainMessages.push(msg)
-          }
-        }
-        setSDKMessages((prev) => ({ ...prev, [threadId]: [...mainMessages, ...(prev[threadId] ?? [])] }))
-        if (Object.keys(subagentByRun).length > 0) {
-          setSubagentMessages((prev) => {
-            const threadMap = { ...(prev[threadId] ?? {}) }
-            for (const [runId, msgs] of Object.entries(subagentByRun)) {
-              threadMap[runId] = [...(threadMap[runId] ?? []), ...msgs]
-            }
-            return { ...prev, [threadId]: threadMap }
-          })
-        }
-      })
-      .catch((err) => {
-        console.error('[AgentMessages] 加载历史失败:', err)
-        loadedThreadsRef.current.delete(threadId)
-      })
-    // 拉取 subagent runs（进行中的和已完成的）
-    sidecarCall<AgentListSubagentRunsResult>('agent:list-subagent-runs', { ownerThreadId: threadId })
+    sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, { ownerThreadId: threadId })
       .then((r) => {
         if (!r.runs?.length) return
         setSubagentRuns((prev) => ({ ...prev, [threadId]: r.runs }))
       })
       .catch((err) => console.error('[AgentMessages] 加载 subagent runs 失败:', err))
-  }, [threadId, sdkMessages.length, setSDKMessages, setSubagentRuns])
+  }, [threadId, setSubagentRuns])
+
+  useEffect(() => {
+    if (liveRunEvents.length > 0 || loadedRunEventThreadsRef.current.has(threadId)) return
+    loadedRunEventThreadsRef.current.add(threadId)
+    getThreadRunEvents(threadId)
+      .then((result) => {
+        setRunEvents((prev) => hydrateRunEvents(prev, result))
+      })
+      .catch((err) => {
+        console.error('[AgentMessages] 加载 run events 失败:', err)
+        loadedRunEventThreadsRef.current.delete(threadId)
+      })
+  }, [liveRunEvents.length, setRunEvents, threadId])
 
   useEffect(() => {
     const scrollElement = getScrollElement()
@@ -286,17 +252,17 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         ) {
           return
         }
-        const hasMessages = sdkMessages.length > 0
+        const hasMessages = liveMessages.length > 0
         restoreCurrentThread()
         if (hasMessages && !shouldFollowInitialBottomRef.current) {
           pendingRestoreThreadIdRef.current = null
         }
       })
     }
-  }, [cancelScheduledRestores, hasSavedPosition, restoreCurrentThread, sdkMessages.length, threadId])
+  }, [cancelScheduledRestores, hasSavedPosition, liveMessages.length, restoreCurrentThread, threadId])
 
   useLayoutEffect(() => {
-    if (pendingRestoreThreadIdRef.current !== threadId || sdkMessages.length === 0) return
+    if (pendingRestoreThreadIdRef.current !== threadId || liveMessages.length === 0) return
 
     if (contentRestoreRafRef.current !== null) {
       cancelAnimationFrame(contentRestoreRafRef.current)
@@ -316,14 +282,14 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         pendingRestoreThreadIdRef.current = null
       }
     })
-  }, [restoreCurrentThread, sdkMessages.length, threadId])
+  }, [liveMessages.length, restoreCurrentThread, threadId])
 
   useEffect(() => {
     if (!shouldFollowInitialBottomRef.current) return
-    if (sdkMessages.length === 0) return
+    if (liveMessages.length === 0) return
     startInitialBottomFollow()
     pendingRestoreThreadIdRef.current = null
-  }, [sdkMessages.length, startInitialBottomFollow])
+  }, [liveMessages.length, startInitialBottomFollow])
 
   useEffect(() => cancelScheduledRestores, [cancelScheduledRestores])
 
@@ -338,20 +304,18 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
   }, [followSignal, scrollToBottom, streaming])
 
   const items: React.ReactNode[] = []
-  for (let i = 0; i < renderMessages.length; i++) {
-    const msg = renderMessages[i]
+  for (let i = 0; i < liveMessages.length; i++) {
+    const msg = liveMessages[i]
     items.push(
-      <SDKContentBlock
-        key={(msg as { uuid?: string }).uuid ?? `msg-${i}`}
+      <RunEventContentBlock
+        key={`run-event-${msg.id}`}
         message={msg}
-        index={i}
-        animate={streaming && i === renderMessages.length - 1}
-        allMessages={sdkMessages}
-        isStreaming={streaming}
+        animate={streaming && i === liveMessages.length - 1}
         threadId={threadId}
       />
     )
   }
+  const hasRenderableMessages = liveMessages.length > 0
 
   return (
     <ScrollArea className="flex-1 min-h-0">
@@ -359,10 +323,10 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
         ref={containerRef}
         className={cn(
           'min-h-full w-full px-3 py-5',
-          renderMessages.length === 0 ? 'flex items-center justify-center' : 'space-y-7'
+          !hasRenderableMessages ? 'flex items-center justify-center' : 'space-y-7'
         )}
       >
-        {renderMessages.length === 0 ? (
+        {!hasRenderableMessages ? (
           <div className="text-center space-y-1">
             <p className="text-foreground/50 text-sm font-medium">Agent 已就绪</p>
             <p className="text-foreground/30 text-xs">输入任务开始</p>
@@ -374,7 +338,7 @@ export function AgentMessages({ threadId, sdkMessages, streaming }: AgentMessage
           </>
         )}
       </div>
-      {showJumpToBottom && renderMessages.length > 0 && (
+      {showJumpToBottom && hasRenderableMessages && (
         <button
           type="button"
           onClick={() => scrollToBottom('smooth')}

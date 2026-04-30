@@ -1,10 +1,25 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentSendInput, SDKMessage } from '@lume/shared'
+import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import type {
+  AgentResumeRunInput,
+  AgentResumeRunResult,
+  AgentListRunStatesInput,
+  AgentListRunStatesResult,
+  AgentPendingInteractiveInput,
+  AgentPendingInteractiveState,
+  AgentPlanApprovalResponseInput,
+  AgentRunTraceInput,
+  AgentRunTraceResult,
+  AgentSendInput,
+  AgentStructuredPlansInput,
+  AgentStructuredPlansResult,
+  AgentThreadRunEventsResult,
+} from '@lume/shared'
 
 export const agentSend = (input: AgentSendInput) =>
   invoke<{ ok: true }>('sidecar_call', {
-    method: 'agent:send-thread-message',
+    method: AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE,
     params: input,
   })
 
@@ -15,14 +30,49 @@ export const onSidecarEvent = (
 )
 
 export const listThreads = () =>
-  invoke('sidecar_call', { method: 'agent:list-threads', params: null })
+  invoke('sidecar_call', { method: AGENT_IPC_CHANNELS.LIST_THREADS, params: null })
 
 export const createThread = (workspaceId?: string) =>
-  invoke('sidecar_call', { method: 'agent:create-thread', params: { workspaceId } })
+  invoke('sidecar_call', { method: AGENT_IPC_CHANNELS.CREATE_THREAD, params: { workspaceId } })
 
-/** 获取线程的原始 SDK 消息（用于恢复历史） */
-export const getThreadSDKMessages = (threadId: string) =>
-  invoke<{ messages: SDKMessage[] }>('sidecar_call', {
-    method: 'agent:get-thread-sdk-messages',
+export const getThreadRunEvents = (threadId: string) =>
+  invoke<AgentThreadRunEventsResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS,
     params: { threadId },
+  })
+
+export const getPendingInteractive = (input: AgentPendingInteractiveInput = {}) =>
+  invoke<AgentPendingInteractiveState[]>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE,
+    params: input,
+  })
+
+export const resumeAgentRun = (input: AgentResumeRunInput) =>
+  invoke<AgentResumeRunResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.RESUME_RUN,
+    params: input,
+  })
+
+export const listAgentRunStates = (input: AgentListRunStatesInput) =>
+  invoke<AgentListRunStatesResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.LIST_RUN_STATES,
+    params: input,
+  })
+
+export const submitPlanApproval = (input: AgentPlanApprovalResponseInput) =>
+  invoke<{ ok: boolean }>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL,
+    params: input,
+  })
+
+export const getAgentRunTrace = (input: AgentRunTraceInput) =>
+  invoke<AgentRunTraceResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_RUN_TRACE,
+    params: input,
+  })
+
+export const listStructuredPlans = (input: AgentStructuredPlansInput) =>
+  invoke<AgentStructuredPlansResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.LIST_STRUCTURED_PLANS,
+    params: input,
   })

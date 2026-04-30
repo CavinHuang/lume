@@ -1,7 +1,7 @@
 import { useAtom, useAtomValue } from 'jotai'
-import { FolderOpen, ListTodo } from 'lucide-react'
+import { ActivitySquare, FolderOpen, ListTodo } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, agentSDKMessagesAtom, type SidePanelView } from '@/atoms'
+import { agentRunEventsAtom, agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, type SidePanelView } from '@/atoms'
 import { WorkspacePicker } from './WorkspacePicker'
 import type { AgentRuntimePhase } from '@lume/shared'
 
@@ -23,7 +23,7 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const thread = threads.find((t) => t.id === threadId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusAtom)[threadId]
-  const sdkMessages = useAtomValue(agentSDKMessagesAtom)[threadId] ?? []
+  const runEvents = useAtomValue(agentRunEventsAtom)[threadId]?.events ?? []
   const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
   const currentView = sidePanelViews[threadId] ?? null
 
@@ -40,12 +40,7 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
   const phase = runtimeStatus?.phase
   const phaseStyle = phase && phase !== 'idle' ? PHASE_STYLE[phase] : null
 
-  // 当前步骤数 = 已完成的 tool_use 块数量
-  const toolStepCount = sdkMessages.reduce((n, msg) => {
-    if (msg.type !== 'assistant') return n
-    const blocks = (msg.message?.content ?? []) as Array<{ type: string }>
-    return n + blocks.filter((b) => b.type === 'tool_use').length
-  }, 0)
+  const toolStepCount = runEvents.filter((event) => event.type === 'tool_call_started').length
 
   const isStreaming = phase === 'streaming'
   const toolName = runtimeStatus?.toolName
@@ -96,6 +91,18 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
           title="Plan 步骤"
         >
           <ListTodo size={16} />
+        </button>
+        <button
+          onClick={() => toggle('trace')}
+          className={cn(
+            'p-1.5 rounded-lg transition-colors',
+            currentView === 'trace'
+              ? 'bg-foreground/10 text-foreground'
+              : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
+          )}
+          title="Runtime Trace"
+        >
+          <ActivitySquare size={16} />
         </button>
       </div>
     </div>

@@ -3,8 +3,8 @@ import { ShieldAlert, Shield } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { AgentToolPermissionRequest } from '@lume/shared'
-import { removePendingToolPermission } from '@/hooks/pending-interactive-state'
+import { AGENT_IPC_CHANNELS, type AgentToolPermissionRequest } from '@lume/shared'
+import { removePendingToolPermissionEverywhere } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 
 interface PermissionBannerProps {
@@ -23,11 +23,12 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
 
   const respond = async (decision: 'allow_once' | 'allow_always' | 'deny') => {
-    await sidecarCall('agent:submit-tool-permission', { threadId, requestId: request.requestId, decision })
-    setPending((prev) => {
-      const next = { ...prev }
-      return removePendingToolPermission(next, threadId, request.requestId)
+    await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION, {
+      threadId,
+      requestId: request.requestId,
+      decision,
     })
+    setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId))
   }
 
   const Icon = riskIcon[request.risk]

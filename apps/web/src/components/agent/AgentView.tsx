@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useAtomValue } from 'jotai'
-import { agentSDKMessagesAtom, agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentPlanStateAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentPlanStateAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput } from './AgentInput'
@@ -13,13 +13,13 @@ import { Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { sidecarCall } from '@/lib/desktop-api'
+import { AGENT_IPC_CHANNELS } from '@lume/shared'
 
 interface AgentViewProps {
   threadId: string
 }
 
 export function AgentView({ threadId }: AgentViewProps) {
-  const sdkMessages = useAtomValue(agentSDKMessagesAtom)[threadId] ?? []
   const streamingState = useAtomValue(agentStreamingStatesAtom)[threadId] ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
@@ -87,7 +87,7 @@ export function AgentView({ threadId }: AgentViewProps) {
         })
         fileEntries.push({ filename: file.name, data })
       }
-      await sidecarCall('agent:save-files-to-thread', {
+      await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
         ...(workspaceSlug ? { workspaceSlug } : {}),
         threadId,
         files: fileEntries
@@ -110,7 +110,7 @@ export function AgentView({ threadId }: AgentViewProps) {
       {/* 主列 */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <AgentHeader threadId={threadId} />
-        <AgentMessages threadId={threadId} sdkMessages={sdkMessages} streaming={streamingState === 'streaming'} />
+        <AgentMessages threadId={threadId} streaming={streamingState === 'streaming'} />
         {isReview && <ExitPlanModeBanner threadId={threadId} />}
         {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
         {pendingToolPermissions.map((request) => (

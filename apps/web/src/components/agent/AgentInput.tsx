@@ -8,14 +8,19 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
-import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, agentSDKMessagesAtom } from '@/atoms'
-import type { SDKMessage, LumeConfigThinkingLevel } from '@lume/shared'
+import { agentRunEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import {
+  AGENT_IPC_CHANNELS,
+  type LumeConfigThinkingLevel,
+  type SkillMeta,
+  type WorkspaceMcpConfig,
+} from '@lume/shared'
+import { appendRunEvent } from '@/hooks/run-event-state'
 import { MentionList } from './MentionList'
 import { ModelPicker } from './ModelPicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 import type { MentionItem, MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
-import type { SkillMeta, WorkspaceMcpConfig } from '@lume/shared'
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
@@ -34,7 +39,7 @@ async function fetchSuggestions(
 ): Promise<MentionItem[]> {
   try {
     if (trigger === '@') {
-      const result = await sidecarCall('agent:list-directory', { threadId, path: '.' }) as {
+      const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_DIRECTORY, { threadId, path: '.' }) as {
         entries: Array<{ name: string; type: string }>
       }
       const entries = result?.entries ?? []
@@ -46,7 +51,7 @@ async function fetchSuggestions(
 
     if (trigger === '/') {
       if (!workspaceSlug) return []
-      const skills = await sidecarCall<SkillMeta[]>('agent:get-skills', { workspaceSlug })
+      const skills = await sidecarCall<SkillMeta[]>(AGENT_IPC_CHANNELS.GET_SKILLS, { workspaceSlug })
       const list = Array.isArray(skills) ? skills : []
       return list
         .filter((s) => {
@@ -59,7 +64,7 @@ async function fetchSuggestions(
 
     if (trigger === '#') {
       if (!workspaceSlug) return []
-      const result = await sidecarCall<WorkspaceMcpConfig>('agent:get-mcp-config', { workspaceSlug })
+      const result = await sidecarCall<WorkspaceMcpConfig>(AGENT_IPC_CHANNELS.GET_MCP_CONFIG, { workspaceSlug })
       const entries = Object.entries(result?.servers ?? {})
       return entries
         .filter(([name, entry]) => entry.enabled && name.toLowerCase().includes(query.toLowerCase()))
@@ -137,7 +142,8 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
-  const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
+  const setRunEvents = useSetAtom(agentRunEventsAtom)
+  const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const workspaceIdRef = useRef<string | null>(null)
   const workspaceSlugRef = useRef<string | null>(null)
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
@@ -219,22 +225,15 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
     if (!text) return
     editor.commands.clearContent()
     setEditorText('')
-    const now = Date.now()
-    const userMsg = {
-      type: 'user' as const,
-      uuid: `user:${threadId}:${now}`,
-      session_id: threadId,
-      timestamp: new Date(now).toISOString(),
-      parent_tool_use_id: null,
-      message: {
-        role: 'user' as const,
-        content: [{ type: 'text' as const, text }]
-      }
-    } as unknown as SDKMessage
-    setSDKMessages((prev) => ({
-      ...prev,
-      [threadId]: [...(prev[threadId] ?? []), userMsg],
+    setRunEvents((prev) => appendRunEvent(prev, {
+      threadId,
+      event: {
+        type: 'user_message_submitted',
+        text,
+        createdAt: new Date().toISOString(),
+      },
     }))
+    setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
     await agentSend({
       threadId,
       userMessage: text,
@@ -245,7 +244,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
 
   const handleStop = async () => {
     try {
-      await sidecarCall('agent:stop-thread', { threadId })
+      await sidecarCall(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId })
     } catch (error) {
       console.error('[AgentInput] 停止失败:', error)
     }
@@ -264,7 +263,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
       const result = await openFileDialog()
       if (result.files.length === 0) return
 
-      await sidecarCall('agent:save-files-to-thread', {
+      await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
         threadId,
         files: result.files.map((f) => ({
           filename: f.filename,

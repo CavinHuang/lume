@@ -4,7 +4,7 @@ import { MessageCircle, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { AgentAskUserQuestionRequest } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest } from '@lume/shared'
 import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 
@@ -23,7 +23,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   }
 
   const submit = async () => {
-    await sidecarCall('agent:submit-ask-user-question', { threadId, toolUseId: request.toolUseId, answers })
+    await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, answers })
     dismiss()
   }
 
@@ -37,7 +37,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   const close = async () => {
     dismiss()
     try {
-      await sidecarCall('agent:submit-ask-user-question', { threadId, toolUseId: request.toolUseId, canceled: true })
+      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, canceled: true })
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes('未找到待确认的 AskUserQuestion 请求')) {
         throw error

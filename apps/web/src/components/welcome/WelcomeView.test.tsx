@@ -9,6 +9,7 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
 } from '@/atoms'
+import { AGENT_IPC_CHANNELS } from '@lume/shared'
 
 let editorText = ''
 let latestSurfaceProps: any = null
@@ -29,7 +30,7 @@ const mockEditor = {
 
 const sidecarCallMock = mock(async (command: string, payload?: Record<string, unknown>) => {
   switch (command) {
-    case 'agent:create-thread':
+    case AGENT_IPC_CHANNELS.CREATE_THREAD:
       return {
         id: 'created-thread',
         title: '新会话',
@@ -38,7 +39,7 @@ const sidecarCallMock = mock(async (command: string, payload?: Record<string, un
         createdAt: 100,
         updatedAt: 100,
       }
-    case 'agent:save-files-to-thread':
+    case AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD:
       return undefined
     default:
       throw new Error(`Unexpected sidecarCall: ${command}`)
@@ -389,7 +390,7 @@ describe('WelcomeView', () => {
       })
 
       expect(sidecarCallMock).toHaveBeenCalledWith(
-        'agent:create-thread',
+        AGENT_IPC_CHANNELS.CREATE_THREAD,
         expect.objectContaining({ workspaceId: 'workspace-2' }),
       )
       expect(agentSendMock).toHaveBeenCalledTimes(1)
@@ -450,7 +451,7 @@ describe('WelcomeView', () => {
       })
 
       expect(sidecarCallMock).toHaveBeenCalledWith(
-        'agent:create-thread',
+        AGENT_IPC_CHANNELS.CREATE_THREAD,
         expect.objectContaining({
           workspaceId: 'workspace-1',
           modelRef: 'openai/gpt-5-mini',

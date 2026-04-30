@@ -10,14 +10,15 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
   activeTabIdAtom,
-  agentSDKMessagesAtom,
+  agentRunEventsAtom,
 } from '@/atoms'
 import { sidecarCall, agentSend, openFileDialog } from '@/lib/desktop-api'
+import { appendRunEvent } from '@/hooks/run-event-state'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
-import type { AgentThreadMeta, LumeConfigThinkingLevel } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentThreadMeta, type LumeConfigThinkingLevel } from '@lume/shared'
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
@@ -34,7 +35,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
   const setActiveTabId = useAtom(activeTabIdAtom)[1]
-  const setSDKMessages = useSetAtom(agentSDKMessagesAtom)
+  const setRunEvents = useSetAtom(agentRunEventsAtom)
   const setCurrentWorkspaceId = useAtom(currentWorkspaceIdAtom)[1]
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
@@ -125,7 +126,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
 
     setSending(true)
     try {
-      const meta = await sidecarCall<AgentThreadMeta>('agent:create-thread', {
+      const meta = await sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.CREATE_THREAD, {
         workspaceId: selectedWorkspaceId ?? undefined,
         modelRef,
         channelId,
@@ -133,28 +134,20 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       })
 
       if (pendingFiles.length > 0) {
-        await sidecarCall('agent:save-files-to-thread', {
+        await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
           threadId: meta.id,
           files: pendingFiles,
           workspaceSlug,
         })
       }
 
-      const now = Date.now()
-      const userMsg = {
-        type: 'user' as const,
-        uuid: `user:${meta.id}:${now}`,
-        session_id: meta.id,
-        timestamp: new Date(now).toISOString(),
-        parent_tool_use_id: null,
-        message: {
-          role: 'user' as const,
-          content: [{ type: 'text' as const, text }],
+      setRunEvents((prev) => appendRunEvent(prev, {
+        threadId: meta.id,
+        event: {
+          type: 'user_message_submitted',
+          text,
+          createdAt: new Date().toISOString(),
         },
-      }
-      setSDKMessages((prev) => ({
-        ...prev,
-        [meta.id]: [...(prev[meta.id] ?? []), userMsg as any],
       }))
 
       await agentSend({

@@ -1,4 +1,5 @@
 import { sidecarCall } from '@/lib/desktop-api'
+import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { CheckCheck, X } from 'lucide-react'
 
 interface ExitPlanModeBannerProps {
@@ -7,10 +8,10 @@ interface ExitPlanModeBannerProps {
 
 export function ExitPlanModeBanner({ threadId }: ExitPlanModeBannerProps) {
   const approve = () =>
-    sidecarCall('agent:send-thread-message', { threadId, userMessage: '', permissionMode: 'acceptEdits' })
+    sidecarCall(AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE, { threadId, userMessage: '', permissionMode: 'acceptEdits' })
 
   const cancel = () =>
-    sidecarCall('agent:stop-thread', { threadId })
+    sidecarCall(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId })
 
   return (
     <div className="animate-in slide-in-from-bottom-2 duration-200 mx-4 mb-3 rounded-xl border border-primary/30 bg-primary/5 shadow-lg">

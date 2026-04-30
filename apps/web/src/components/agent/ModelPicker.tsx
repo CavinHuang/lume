@@ -19,7 +19,7 @@ import {
   getThreadSelectionSummary,
 } from '@/components/model-selection/model-selection-state'
 import type { ModelOptionGroup, ModelSelectionOption } from '@/components/model-selection/model-selection-state'
-import type { AgentThreadMeta, Channel, LumeConfigAgentDefaultStrategy } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentThreadMeta, type Channel, type LumeConfigAgentDefaultStrategy } from '@lume/shared'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 
 interface ModelPickerProps {
@@ -131,7 +131,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     setOpen(false)
 
     try {
-      const updatedThread = await sidecarCall<AgentThreadMeta>('agent:update-thread-model-selection', {
+      const updatedThread = await sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION, {
         threadId,
         channelId: input.channelId,
         modelRef: input.modelRef,
@@ -147,7 +147,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     setOpen(false)
 
     try {
-      const updatedThread = await sidecarCall<AgentThreadMeta>('agent:update-thread-model-selection', {
+      const updatedThread = await sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION, {
         threadId,
         channelId: null,
         modelRef: null,

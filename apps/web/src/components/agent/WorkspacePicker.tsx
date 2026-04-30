@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { useAtom } from 'jotai'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom, agentWorkspaceCapabilitiesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import type { WorkspaceCapabilities } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type WorkspaceCapabilities } from '@lume/shared'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 
 export function WorkspacePicker() {
@@ -31,7 +31,7 @@ export function WorkspacePicker() {
   useEffect(() => {
     if (!current?.slug) return
     let cancelled = false
-    sidecarCall<WorkspaceCapabilities>('agent:get-capabilities', { workspaceSlug: current.slug })
+    sidecarCall<WorkspaceCapabilities>(AGENT_IPC_CHANNELS.GET_CAPABILITIES, { workspaceSlug: current.slug })
       .then((caps) => {
         if (cancelled || !current?.slug) return
         setCapabilities((prev) => ({ ...prev, [current.slug]: caps }))
@@ -57,7 +57,7 @@ export function WorkspacePicker() {
     let cancelled = false
     Promise.all(
       missing.map((w) =>
-        sidecarCall<WorkspaceCapabilities>('agent:get-capabilities', { workspaceSlug: w.slug })
+        sidecarCall<WorkspaceCapabilities>(AGENT_IPC_CHANNELS.GET_CAPABILITIES, { workspaceSlug: w.slug })
           .then((caps) => ({ slug: w.slug, caps }))
           .catch(() => null)
       )

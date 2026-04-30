@@ -1,6 +1,7 @@
 import type {
   AgentAskUserQuestionRequest,
   AgentPendingInteractiveState,
+  AgentPlanApprovalRequest,
   AgentToolPermissionRequest,
 } from "@lume/shared"
 
@@ -50,6 +51,21 @@ export function upsertPendingToolPermission(
   }
 }
 
+export function upsertPendingPlanApproval(
+  prev: Record<string, AgentPendingInteractiveState>,
+  request: AgentPlanApprovalRequest,
+): Record<string, AgentPendingInteractiveState> {
+  const current = prev[request.threadId] ?? { threadId: request.threadId }
+  return {
+    ...prev,
+    [request.threadId]: {
+      ...current,
+      threadId: request.threadId,
+      planApprovals: upsertByKey(current.planApprovals, request, (item) => item.planId),
+    },
+  }
+}
+
 export function removePendingAskUserQuestion(
   prev: Record<string, AgentPendingInteractiveState>,
   threadId: string,
@@ -78,6 +94,37 @@ export function removePendingToolPermission(
     [threadId]: {
       ...current,
       toolPermissions: (current.toolPermissions ?? []).filter((item) => item.requestId !== requestId),
+    },
+  }
+}
+
+export function removePendingToolPermissionEverywhere(
+  prev: Record<string, AgentPendingInteractiveState>,
+  requestId: string,
+): Record<string, AgentPendingInteractiveState> {
+  let changed = false
+  const next: Record<string, AgentPendingInteractiveState> = {}
+  for (const [threadId, state] of Object.entries(prev)) {
+    const currentPermissions = state.toolPermissions ?? []
+    const toolPermissions = currentPermissions.filter((item) => item.requestId !== requestId)
+    changed ||= toolPermissions.length !== currentPermissions.length
+    next[threadId] = { ...state, toolPermissions }
+  }
+  return changed ? next : prev
+}
+
+export function removePendingPlanApproval(
+  prev: Record<string, AgentPendingInteractiveState>,
+  threadId: string,
+  planId: string,
+): Record<string, AgentPendingInteractiveState> {
+  const current = prev[threadId]
+  if (!current) return prev
+  return {
+    ...prev,
+    [threadId]: {
+      ...current,
+      planApprovals: (current.planApprovals ?? []).filter((item) => item.planId !== planId),
     },
   }
 }

@@ -7,6 +7,7 @@ import {
   Clock3,
   Code2,
   Database,
+  ExternalLink,
   FileText,
   Folder,
   Globe2,
@@ -24,6 +25,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { agentWorkspacesAtom } from '@/atoms'
+import { agentPendingInteractiveAtom } from '@/atoms'
 import { automationJobsAtom, automationRunsAtom } from '@/atoms/automation-atoms'
 import { useAutomationListeners } from '@/hooks/useAutomationListeners'
 import {
@@ -37,6 +39,7 @@ import type {
   AutomationSchedule,
   AutomationTriggerMode,
 } from '@lume/shared'
+import { buildAutomationApprovalSummaries, type AutomationApprovalSummary } from './automation-approval-state'
 
 type ResourceId = 'file' | 'web' | 'code' | 'knowledge' | 'prd' | 'design' | 'project'
 
@@ -179,6 +182,7 @@ export function AutomationManagementView() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const jobs = useAtomValue(automationJobsAtom)
   const runs = useAtomValue(automationRunsAtom)
+  const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)
   const setJobs = useSetAtom(automationJobsAtom)
   const setRuns = useSetAtom(automationRunsAtom)
   const [selectedTaskId, setSelectedTaskId] = useState(TEMPLATE_TASKS[0].id)
@@ -198,6 +202,10 @@ export function AutomationManagementView() {
     [jobs, runs, workspaceOptions],
   )
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0]
+  const pendingApprovals = useMemo(
+    () => buildAutomationApprovalSummaries(pendingInteractive, jobs),
+    [jobs, pendingInteractive],
+  )
   const effectiveDraft = detailDraft ?? (selectedTask ? toDraft(selectedTask, workspaceOptions[0]?.id ?? '') : null)
   const selectedRuns = selectedTask?.job
     ? runs.filter((run) => run.jobId === selectedTask.job?.id).slice(0, 2)
@@ -332,6 +340,10 @@ export function AutomationManagementView() {
             </button>
           </header>
 
+          {pendingApprovals.length > 0 && (
+            <AutomationApprovalBanner approvals={pendingApprovals} />
+          )}
+
           <div className="grid min-h-[690px] grid-cols-[280px_minmax(640px,1fr)] gap-6">
             <AutomationTaskList
               tasks={tasks}
@@ -365,6 +377,33 @@ export function AutomationManagementView() {
         onSubmit={handleCreateFromModal}
       />
     </div>
+  )
+}
+
+function AutomationApprovalBanner({ approvals }: { approvals: AutomationApprovalSummary[] }) {
+  return (
+    <section className="rounded-[10px] border border-amber-400/35 bg-amber-400/[0.08] px-4 py-3 text-[13px] text-[var(--text-2)]">
+      <div className="flex items-start gap-3">
+        <span className="mt-1 size-2 rounded-full bg-amber-500" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-[var(--text-1)]">有 {approvals.length} 个自动化任务等待确认</p>
+          <p className="mt-1 leading-5 text-[var(--text-2)]">
+            高风险动作已暂停。请到对应 Agent 线程里的确认卡片处理，确认后任务会尝试继续。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {approvals.slice(0, 4).map((approval) => (
+              <span
+                key={approval.requestId}
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/25 bg-[var(--surface-1)] px-2.5 py-1 text-[12px] text-[var(--text-2)]"
+              >
+                <ExternalLink size={12} />
+                {approval.jobName ?? approval.jobId ?? approval.threadId} · {approval.toolName}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
   )
 }
 

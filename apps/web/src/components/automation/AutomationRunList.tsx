@@ -1,15 +1,20 @@
-import { CheckCircle2, XCircle, MinusCircle, ExternalLink } from 'lucide-react'
-import type { AutomationRun } from '@lume/shared'
+import { CheckCircle2, XCircle, MinusCircle, ExternalLink, Clock3 } from 'lucide-react'
+import type { AutomationRun, AutomationRunStatus } from '@lume/shared'
 
 interface AutomationRunListProps {
   runs: AutomationRun[]
   onViewThread?: (threadId: string) => void
 }
 
-const statusConfig = {
+const statusConfig: Record<AutomationRunStatus, {
+  icon: typeof CheckCircle2
+  label: string
+  color: string
+}> = {
   success: { icon: CheckCircle2, label: '成功', color: 'text-green-500' },
   failed: { icon: XCircle, label: '失败', color: 'text-red-500' },
   skipped: { icon: MinusCircle, label: '跳过', color: 'text-yellow-500' },
+  waiting_for_approval: { icon: Clock3, label: '等待确认', color: 'text-amber-500' },
 }
 
 export function AutomationRunList({ runs, onViewThread }: AutomationRunListProps) {

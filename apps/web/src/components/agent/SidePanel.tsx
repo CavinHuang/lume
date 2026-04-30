@@ -4,6 +4,7 @@ import { FileBrowser } from '@/components/file-browser/FileBrowser'
 import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
 import { FileDropZone } from '@/components/file-browser/FileDropZone'
 import { PlanPanel } from './PlanPanel'
+import { TracePanel } from './TracePanel'
 import { cn } from '@/lib/utils'
 import type { SidePanelView } from '@/atoms'
 
@@ -71,6 +72,7 @@ export function SidePanel({ threadId, view, workspaceSlug }: SidePanelProps) {
         </>
       )}
       {view === 'plan' && <PlanPanel threadId={threadId} />}
+      {view === 'trace' && <TracePanel threadId={threadId} />}
     </div>
   )
 }
