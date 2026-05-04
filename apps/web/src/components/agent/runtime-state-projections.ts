@@ -104,6 +104,28 @@ function formatRunEvent(event: LumeRunEvent): Omit<LiveRunEventRow, 'id'> {
   if (event.type === 'run_completed') {
     return { label: 'Run completed', detail: event.result.finalOutput ?? 'completed', tone: 'success' }
   }
+  if (event.type === 'plan_execution_status') {
+    return {
+      label: 'Plan execution',
+      detail: event.text,
+      tone: event.status === 'failed'
+        ? 'danger'
+        : event.status === 'completed'
+          ? 'success'
+        : 'active',
+    }
+  }
+  if (event.type === 'plan_progress') {
+    return {
+      label: 'Plan progress',
+      detail: event.message ?? event.status,
+      tone: event.status === 'failed'
+        ? 'danger'
+        : event.status === 'completed'
+          ? 'success'
+          : 'active',
+    }
+  }
   return { label: 'Run failed', detail: event.error.message, tone: 'danger' }
 }
 
@@ -187,6 +209,9 @@ export function buildTraceRows(trace: AgentRunTrace | null): TraceRow[] {
 }
 
 function formatStructuredPlanStep(step: AgentStructuredPlanStep): string {
+  if (step.status === 'completed' && step.result?.trim()) {
+    return `${step.title || step.description || step.id}\n${truncate(step.result)}`
+  }
   return step.title || step.description || step.id
 }
 

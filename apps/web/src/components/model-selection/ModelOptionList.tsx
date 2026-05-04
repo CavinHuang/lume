@@ -1,4 +1,5 @@
 import { Brain, Check, Eye, Wrench } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { formatContextWindow, formatPricing, type ModelCapabilities, type ModelMeta } from '@lume/shared'
 import { ChannelProviderIcon } from './provider-icon-map'
@@ -7,6 +8,7 @@ import type { ModelOptionGroup, ModelSelectionOption } from './model-selection-s
 interface ModelOptionListProps {
   groups: ModelOptionGroup[]
   onSelect: (option: ModelSelectionOption) => void
+  renderBadge?: (option: ModelSelectionOption) => ReactNode
 }
 
 function CapabilityIcon({ capability }: { capability: 'vision' | 'toolUse' | 'reasoning' }) {
@@ -47,7 +49,7 @@ function ModelMetaRow({ meta }: { meta: ModelMeta }) {
   )
 }
 
-export function ModelOptionList({ groups, onSelect }: ModelOptionListProps) {
+export function ModelOptionList({ groups, onSelect, renderBadge }: ModelOptionListProps) {
   return (
     <div className="py-1">
       {groups.map((group) => (
@@ -61,39 +63,46 @@ export function ModelOptionList({ groups, onSelect }: ModelOptionListProps) {
           </div>
 
           {/* Model items */}
-          {group.options.map((option) => (
-            <button
-              key={`${option.channelId}-${option.modelId}`}
-              onClick={() => onSelect(option)}
-              className={cn(
-                'flex items-start gap-2 px-2 py-1.5 text-sm rounded-sm cursor-pointer select-none transition-colors w-full text-left',
-                option.active
-                  ? 'bg-primary/15 dark:bg-primary/25'
-                  : 'hover:bg-muted/50'
-              )}
-            >
-              <Check
+          {group.options.map((option) => {
+            const badge = renderBadge?.(option)
+
+            return (
+              <button
+                key={`${option.channelId}-${option.modelId}`}
+                onClick={() => onSelect(option)}
                 className={cn(
-                  'h-4 w-4 shrink-0 mt-0.5',
-                  option.active ? 'opacity-100 text-primary' : 'opacity-0'
+                  'flex items-start gap-2 px-2 py-1.5 text-sm rounded-sm cursor-pointer select-none transition-colors w-full text-left',
+                  option.active
+                    ? 'bg-primary/15 dark:bg-primary/25'
+                    : 'hover:bg-muted/50'
                 )}
-              />
-              <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                <span className="truncate">{option.label}</span>
-                <div className="flex items-center justify-between">
-                  {option.meta ? (
-                    <ModelMetaRow meta={option.meta} />
-                  ) : option.inferredCapabilities ? (
-                    <CapabilityRow capabilities={option.inferredCapabilities} />
-                  ) : (
-                    <span className="text-muted-foreground/50 font-mono text-[10px] scale-[0.75] origin-left">
-                      {option.modelId}
-                    </span>
+              >
+                <Check
+                  className={cn(
+                    'h-4 w-4 shrink-0 mt-0.5',
+                    option.active ? 'opacity-100 text-primary' : 'opacity-0'
                   )}
+                />
+                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                    {badge}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    {option.meta ? (
+                      <ModelMetaRow meta={option.meta} />
+                    ) : option.inferredCapabilities ? (
+                      <CapabilityRow capabilities={option.inferredCapabilities} />
+                    ) : (
+                      <span className="text-muted-foreground/50 font-mono text-[10px] scale-[0.75] origin-left">
+                        {option.modelId}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </button>
-          ))}
+              </button>
+            )
+          })}
         </div>
       ))}
     </div>

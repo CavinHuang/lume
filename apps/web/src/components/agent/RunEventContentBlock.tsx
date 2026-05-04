@@ -1,11 +1,13 @@
-import { useState, useSyncExternalStore } from 'react'
-import { ChevronDown, ChevronRight, Copy, Loader2, Sparkles, Terminal, Wrench } from 'lucide-react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { Check, CheckCircle, ChevronDown, ChevronRight, Circle, ClipboardList, Copy, Edit3, History, Loader2, Sparkles, Terminal, Wrench, X, XCircle } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import type { RunEventAssistantBlock, RunEventMessageView, RunEventToolCallView } from './run-event-message-projection'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
+import { agentSend, getThreadMessageVersions } from '@/lib/desktop-api'
+import type { AgentMessage, LumeRunEvent } from '@lume/shared'
 
 interface RunEventContentBlockProps {
   message: RunEventMessageView
@@ -17,16 +19,7 @@ export function RunEventContentBlock({ message, animate, threadId }: RunEventCon
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
   if (message.type === 'user') {
-    return (
-      <div className={cn('flex justify-end gap-2', cls)}>
-        <div className="max-w-[520px] rounded-[12px] rounded-tr-[10px] bg-[#e4ddff] px-3 py-2 text-[15px] font-medium leading-[22px] text-[#34384c] shadow-[0_1px_0_rgba(101,91,255,0.08)]">
-          <div className="whitespace-pre-wrap">{message.text}</div>
-        </div>
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#9377f4] text-[15px] font-semibold text-white shadow-[0_4px_10px_rgba(118,97,230,0.18)]">
-          L
-        </div>
-      </div>
-    )
+    return <UserMessageBlock message={message} threadId={threadId} className={cls} />
   }
 
   const hasVisibleWorkBlock = message.blocks.some((block) => block.type === 'text' || block.type === 'tool_call')
@@ -39,12 +32,16 @@ export function RunEventContentBlock({ message, animate, threadId }: RunEventCon
         <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
       </div>
       <div className="min-w-0 flex-1 space-y-4 pt-2">
-        {message.blocks.map((block) => (
+        {message.blocks.map((block, index) => (
           <RunEventAssistantBlockItem
             key={block.id}
             block={block}
             threadId={threadId}
             isStreaming={animate === true && message.status === 'streaming'}
+            isActiveThinking={block.type === 'thinking'
+              && animate === true
+              && message.status === 'streaming'
+              && index === message.blocks.length - 1}
           />
         ))}
         {shouldShowStreamingProgress && (
@@ -64,28 +61,268 @@ export function RunEventContentBlock({ message, animate, threadId }: RunEventCon
   )
 }
 
+function UserMessageBlock({
+  message,
+  threadId,
+  className,
+}: {
+  message: Extract<RunEventMessageView, { type: 'user' }>
+  threadId: string
+  className: string
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(message.text)
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [versions, setVersions] = useState<AgentMessage[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const canEdit = Boolean(message.messageId)
+  const canShowVersions = Boolean(message.versionGroupId && (message.versionCount ?? 0) > 1)
+
+  const loadVersions = async () => {
+    if (!message.versionGroupId) return
+    setVersionsOpen((value) => !value)
+    if (versions.length > 0 || versionsLoading) return
+    setVersionsLoading(true)
+    try {
+      const result = await getThreadMessageVersions({ threadId, versionGroupId: message.versionGroupId })
+      setVersions(result.messages)
+    } catch (error) {
+      console.error('[RunEventContentBlock] 加载消息版本失败:', error)
+    } finally {
+      setVersionsLoading(false)
+    }
+  }
+
+  const submitEdit = async () => {
+    const nextText = draft.trim()
+    if (!message.messageId || !nextText || nextText === message.text) {
+      setEditing(false)
+      setDraft(message.text)
+      return
+    }
+    setSubmitting(true)
+    try {
+      await agentSend({
+        threadId,
+        userMessage: nextText,
+        editFromMessageId: message.messageId,
+      })
+      setEditing(false)
+    } catch (error) {
+      console.error('[RunEventContentBlock] 编辑消息后重新发送失败:', error)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className={cn('group flex justify-end gap-2', className)}>
+      <div className="flex max-w-[560px] flex-col items-end gap-1.5">
+        <div className="rounded-[12px] rounded-tr-[10px] bg-[#e4ddff] px-3 py-2 text-[15px] font-medium leading-[22px] text-[#34384c] shadow-[0_1px_0_rgba(101,91,255,0.08)]">
+          {editing ? (
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              className="min-h-20 w-[min(520px,70vw)] resize-y rounded-lg border border-[#c8c0fb] bg-white/80 px-2 py-1.5 text-[14px] leading-6 text-[#34384c] outline-none focus:border-[#8d7af5]"
+              autoFocus
+            />
+          ) : (
+            <div className="whitespace-pre-wrap">{message.text}</div>
+          )}
+        </div>
+        <div className="flex items-center gap-1 text-[#8b8fa3] opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          {canShowVersions && (
+            <button
+              type="button"
+              onClick={() => void loadVersions()}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff]"
+              title="查看历史版本"
+            >
+              <History size={13} />
+              v{message.versionIndex}/{message.versionCount}
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="复制消息"
+            onClick={() => void navigator.clipboard?.writeText(message.text)}
+            className="rounded-md p-1 transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff]"
+            title="复制"
+          >
+            <Copy size={14} />
+          </button>
+          {editing ? (
+            <>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void submitEdit()}
+                className="rounded-md p-1 transition-colors hover:bg-emerald-500/10 hover:text-emerald-600 disabled:opacity-50"
+                title="保存并重新发送"
+              >
+                {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  setEditing(false)
+                  setDraft(message.text)
+                }}
+                className="rounded-md p-1 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                title="取消"
+              >
+                <X size={14} />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={!canEdit}
+              onClick={() => {
+                setDraft(message.text)
+                setEditing(true)
+              }}
+              className="rounded-md p-1 transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff] disabled:cursor-not-allowed disabled:opacity-40"
+              title={canEdit ? '编辑并重新发送' : '旧消息暂不支持编辑'}
+            >
+              <Edit3 size={14} />
+            </button>
+          )}
+        </div>
+        {versionsOpen && (
+          <div className="w-[min(520px,70vw)] rounded-xl border border-[#e5e0ff] bg-white p-2 text-left shadow-[0_12px_32px_rgba(57,48,120,0.12)]">
+            {versionsLoading ? (
+              <div className="flex items-center gap-2 px-2 py-1.5 text-[12px] text-[#8b8fa3]">
+                <Loader2 size={13} className="animate-spin" />
+                加载版本...
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {versions.map((version) => (
+                  <div key={version.id} className="rounded-lg bg-[#f8f7ff] px-2 py-1.5">
+                    <div className="mb-1 text-[11px] font-medium text-[#786ef0]">版本 {version.versionIndex}</div>
+                    <div className="whitespace-pre-wrap text-[12px] leading-5 text-[#4d5368]">{version.content}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#9377f4] text-[15px] font-semibold text-white shadow-[0_4px_10px_rgba(118,97,230,0.18)]">
+        L
+      </div>
+    </div>
+  )
+}
+
 function RunEventAssistantBlockItem({
   block,
   threadId,
   isStreaming,
+  isActiveThinking,
 }: {
   block: RunEventAssistantBlock
   threadId: string
   isStreaming: boolean
+  isActiveThinking: boolean
 }) {
   if (block.type === 'text') {
     return <SmoothText text={block.text} isStreaming={isStreaming} />
   }
 
   if (block.type === 'thinking') {
-    return <RunEventThinkingBlock text={block.text} />
+    return <RunEventThinkingBlock text={block.text} active={isActiveThinking} />
+  }
+
+  if (block.type === 'plan_progress') {
+    return <RunEventPlanProgressBlock event={block.event} />
   }
 
   return <RunEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
 }
 
-function RunEventThinkingBlock({ text }: { text: string }) {
-  const [collapsed, setCollapsed] = useState(true)
+function RunEventPlanProgressBlock({ event }: { event: Extract<LumeRunEvent, { type: 'plan_progress' }> }) {
+  const total = event.steps.length
+  const completed = event.steps.filter((step) => step.status === 'completed' || step.status === 'skipped').length
+  const failed = event.steps.filter((step) => step.status === 'failed').length
+  const current = event.currentStepId
+    ? event.steps.find((step) => step.id === event.currentStepId)
+    : event.steps.find((step) => step.status === 'running')
+  const tone = failed > 0 || event.status === 'failed'
+    ? 'danger'
+    : event.status === 'completed'
+      ? 'success'
+      : 'active'
+
+  return (
+    <div className={cn(
+      'max-w-[680px] rounded-lg border bg-white px-3 py-3 shadow-[0_8px_24px_rgba(53,48,85,0.06)]',
+      tone === 'active' && 'border-[#d9d2ff]',
+      tone === 'success' && 'border-emerald-500/20',
+      tone === 'danger' && 'border-destructive/20 bg-destructive/5',
+    )}>
+      <div className="flex items-start gap-2">
+        <span className={cn(
+          'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
+          tone === 'success' ? 'bg-emerald-500/10 text-emerald-600' : tone === 'danger' ? 'bg-destructive/10 text-destructive' : 'bg-[#f1efff] text-[#675cff]',
+        )}>
+          {tone === 'success' ? <CheckCircle size={15} /> : tone === 'danger' ? <XCircle size={15} /> : <ClipboardList size={15} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="truncate text-[13px] font-semibold text-[#34384c]">
+              {event.status === 'completed' ? '计划执行完成' : event.status === 'failed' ? '计划步骤失败' : '正在执行计划'}
+            </div>
+            <div className="shrink-0 text-[11px] text-[#8a92a6]">
+              {completed}/{total}
+            </div>
+          </div>
+          {current && (
+            <div className="mt-1 text-[12px] leading-5 text-[#5c6275]">
+              {current.title || current.description || current.id}
+            </div>
+          )}
+          {event.message && event.message !== (current?.title || current?.description) && (
+            <div className="mt-1 text-[11px] leading-5 text-[#8a92a6]">
+              {event.message}
+            </div>
+          )}
+          <div className="mt-2 flex gap-1.5">
+            {event.steps.slice(0, 8).map((step) => (
+              <span key={step.id} title={step.title || step.description || step.id} className="text-[#9aa0b2]">
+                {step.status === 'completed' || step.status === 'skipped'
+                  ? <CheckCircle size={12} className="text-emerald-500" />
+                  : step.status === 'running'
+                    ? <Loader2 size={12} className="animate-spin text-[#675cff]" />
+                    : step.status === 'failed'
+                      ? <XCircle size={12} className="text-destructive" />
+                      : <Circle size={12} />}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RunEventThinkingBlock({ text, active }: { text: string; active: boolean }) {
+  const [collapsed, setCollapsed] = useState(!active)
+
+  useEffect(() => {
+    if (active) {
+      setCollapsed(false)
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCollapsed(true)
+    }, 650)
+    return () => window.clearTimeout(timeoutId)
+  }, [active])
 
   return (
     <div className="border-l-2 border-dashed border-foreground/20 pl-3">
@@ -97,9 +334,16 @@ function RunEventThinkingBlock({ text }: { text: string }) {
         <ChevronRight size={12} className={cn('transition-transform', !collapsed && 'rotate-90')} />
         思考过程
       </button>
-      {!collapsed && (
-        <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-[#8a91a6]">{text}</p>
-      )}
+      <div
+        className={cn(
+          'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+          collapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100',
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-[#8a91a6]">{text}</p>
+        </div>
+      </div>
     </div>
   )
 }
@@ -237,9 +481,18 @@ function RunEventToolCallBlock({ toolCall, threadId }: { toolCall: RunEventToolC
           />
         )}
       </button>
-      {!isRunning && !collapsed && (
-        <div className="border-t border-[#edf0f5] p-3">
-          <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+      {!isRunning && (
+        <div
+          className={cn(
+            'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+            collapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100',
+          )}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="border-t border-[#edf0f5] p-3">
+              <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+            </div>
+          </div>
         </div>
       )}
     </div>

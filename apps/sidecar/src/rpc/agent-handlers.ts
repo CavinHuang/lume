@@ -13,6 +13,7 @@ import type {
   PlanStep,
   WorkspaceMcpConfig
 } from "@lume/shared";
+import type { AgentSendInput } from "@lume/shared";
 import {
   createAgentThreadWithModelRef,
   deleteAgentThread,
@@ -115,12 +116,22 @@ import {
   listPendingPlanApprovalRequests,
   resolvePlanApproval
 } from "../services/agent-runtime/plan/plan-approval-service";
+import { persistFallbackPlanFromText } from "../services/agent-runtime/plan/plan-fallback-service";
 import {
-  markStructuredPlanExecutionCompleted,
   markStructuredPlanExecutionFailed,
-  markStructuredPlanExecutionStarted
+  markStructuredPlanExecutionWaiting,
+  markStructuredPlanInteractionResolved
 } from "../services/agent-runtime/plan/plan-execution-service";
+import {
+  buildCurrentPlanStepSendInput,
+  markCurrentPlanStepUnreported,
+  skipCurrentPlanStep,
+  startNextPlanStep,
+  type PlanExecutionIntent
+} from "../services/agent-runtime/plan/plan-execution-controller";
+import { projectPlanEventToProgressEvent, projectPlanToProgressEvents } from "../services/agent-runtime/plan/plan-progress-events";
 import { createFileBackedLumePlanStore } from "../services/agent-runtime/plan/plan-store";
+import type { LumePlan } from "../services/agent-runtime/plan/plan-types";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { projectRunStateToRunEvents } from "../services/agent-runtime/runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
@@ -151,6 +162,7 @@ import {
   agentTruncateThreadInputSchema,
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
+  executePlanInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
@@ -211,6 +223,18 @@ interface AgentHandlersContext {
   ) => void;
 }
 
+function isPlanContinuationUserMessage(userMessage: string): boolean {
+  const text = userMessage.trim();
+  if (!text) return false;
+  return text === "继续"
+    || text === "继续执行"
+    || text === "继续计划"
+    || text === "继续执行计划"
+    || text === "请继续"
+    || text === "继续吧"
+    || /^继续(执行)?(当前|这个|该)?计划/.test(text);
+}
+
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
   const resolveRequiredWorkspaceSlug = (threadId: string, workspaceSlug?: string) => {
     const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugByThreadId(threadId);
@@ -231,88 +255,310 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return runs.at(-1)?.runId ?? null;
   };
 
-  const createExecutionStartCallback = (input: { threadId: string; userMessage: string }) => () => {
+  const resolveExecutablePlan = async (input: { threadId: string; planId?: string }) => {
+    const plans = await createFileBackedLumePlanStore(resolveRuntimeSessionDir(input.threadId)).listByThread(input.threadId);
+    const candidates = input.planId
+      ? plans.filter((plan) => plan.id === input.planId)
+      : plans
+        .filter((plan) => plan.status === "approved" || plan.status === "executing" || plan.status === "failed")
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return candidates[0] ?? null;
+  };
+
+  const resolvePlanContinuationInput = async (input: AgentSendInput): Promise<AgentSendInput> => {
+    return input;
+  };
+
+  const dispatchPlanExecution = (input: {
+    threadId: string;
+    planId?: string;
+    permissionMode?: AgentSendInput["permissionMode"];
+    intent?: PlanExecutionIntent;
+  }) => async () => {
+    const sessionDir = resolveRuntimeSessionDir(input.threadId);
+    const plan = await resolveExecutablePlan({ threadId: input.threadId, planId: input.planId });
+    if (!plan) {
+      return {
+        ok: false,
+        status: "not_found" as const,
+        error: "找不到可执行计划。"
+      };
+    }
+    if (plan.status !== "approved" && plan.status !== "executing" && plan.status !== "failed") {
+      return {
+        ok: false,
+        status: "not_executable" as const,
+        planId: plan.id,
+        error: "计划尚未批准或不可继续执行。"
+      };
+    }
+    if (input.intent === "skip") {
+      const skipped = await skipCurrentPlanStep({
+        sessionDir,
+        threadId: input.threadId,
+        planId: plan.id
+      });
+      if (skipped) {
+        emitLatestPlanProgress(input.threadId, skipped);
+        context.notifyPlanStateChange(input.threadId, skipped.status === "completed" ? "executed" : "executing");
+      }
+      return {
+        ok: Boolean(skipped),
+        status: skipped ? "sent" as const : "not_executable" as const,
+        planId: plan.id,
+        ...(skipped ? {} : { error: "当前计划步骤不可跳过。" })
+      };
+    }
+    const started = await startNextPlanStep({
+      sessionDir,
+      threadId: input.threadId,
+      planId: plan.id,
+      intent: input.intent ?? "execute"
+    });
+    if (!started) {
+      return {
+        ok: false,
+        status: "not_executable" as const,
+        planId: plan.id,
+        error: "计划没有剩余可执行步骤。"
+      };
+    }
+    const sendInput = buildCurrentPlanStepSendInput({
+      threadId: input.threadId,
+      plan: started.plan,
+      step: started.step,
+      permissionMode: input.permissionMode,
+      controlEvent: input.intent === "retry" ? "retry_plan_step" : input.intent === "continue" ? "continue_plan_step" : "execute_plan_step"
+    });
+    emitLatestPlanProgress(input.threadId, started.plan);
+    const dispatch = appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId, { planId: started.plan.id }), {
+      onExecutionStarted: () => {
+        context.notifyPlanStateChange(input.threadId, "executing");
+      }
+    });
+    return {
+      ok: true,
+      status: dispatch.mode,
+      queuedCount: dispatch.queuedCount,
+      planId: plan.id
+    };
+  };
+
+  const emitLatestPlanProgress = (threadId: string, plan: LumePlan | null) => {
+    if (!plan) return;
+    const latestEvent = plan.events?.at(-1);
+    if (!latestEvent) return;
+    context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+      threadId,
+      event: projectPlanEventToProgressEvent(plan, latestEvent)
+    });
+  };
+
+  const createExecutionStartCallback = (input: AgentSendInput) => () => {
     if (!context.planStateTracker.isLikelyExecutionRequest(input)) {
       return;
     }
-    const steps = context.planStateTracker.syncExecutionFromUserMessage(input.threadId, input.userMessage);
-    void markStructuredPlanExecutionStarted({
-      sessionDir: resolveRuntimeSessionDir(input.threadId),
-      threadId: input.threadId,
-      stepText: steps?.find((step) => step.status === "in_progress")?.text
-    });
+    const steps = context.planStateTracker.syncExecutionFromSendInput(input);
     context.notifyPlanStateChange(input.threadId, "executing", steps ? { steps } : undefined);
+    if (steps?.length) {
+      emitPlanExecutionStatusMessage(input.threadId, buildPlanExecutionStartedText(steps), "running");
+    }
   };
 
-  const createAgentStreamEmitter = (threadId: string) => ({
-    onRunEvent: (event: unknown) => {
-      context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
-        threadId,
-        event
-      });
-    },
-    onMessageAppended: (event: unknown) => {
-      context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
-      const appended = event as {
-        threadId?: string;
-        message?: {
-          role?: string;
-          content?: string;
-          createdAt?: number;
+  const emitPlanExecutionStatusMessage = (
+    threadId: string,
+    text: string,
+    status: "running" | "waiting" | "completed" | "failed"
+  ) => {
+    context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+      threadId,
+      event: {
+        type: "plan_execution_status",
+        text,
+        status,
+        createdAt: new Date().toISOString()
+      }
+    });
+  };
+
+  const buildPlanExecutionStartedText = (steps: PlanStep[]): string => {
+    const currentIndex = steps.findIndex((step) => step.status === "in_progress");
+    const currentStep = currentIndex >= 0 ? steps[currentIndex] : steps[0];
+    const totalCount = steps.length;
+    const completedCount = steps.filter((step) => step.status === "completed").length;
+    const remainingCount = steps.filter((step) => step.status === "pending" || step.status === "in_progress" || step.status === "failed").length;
+    const previewSteps = steps.slice(0, 6).map((step, index) => {
+      const marker = step.status === "completed"
+        ? "✓"
+        : step.status === "in_progress"
+          ? "→"
+          : step.status === "failed"
+            ? "!"
+            : "○";
+      return `- ${marker} ${index + 1}. ${step.text}`;
+    });
+    return [
+      `**开始执行计划**`,
+      `第 **${currentIndex >= 0 ? currentIndex + 1 : 1} / ${totalCount}** 步`,
+      `已完成 ${completedCount} 步，剩余 ${remainingCount} 步。`,
+      currentStep ? `当前执行：**${currentStep.text}**` : "",
+      previewSteps.length > 0 ? `步骤概览：\n\n${previewSteps.join("\n")}` : "",
+      steps.length > previewSteps.length ? `...另有 ${steps.length - previewSteps.length} 步` : "",
+      "执行过程中会继续在这里输出进展；需要你确认时会暂停并提示。"
+    ].filter(Boolean).join("\n\n");
+  };
+
+  const createAgentStreamEmitter = (threadId: string, options?: { planId?: string }) => {
+    let finalOutput: string | undefined;
+    let structuredPlanWritten = false;
+    return {
+      onRunEvent: (event: unknown) => {
+        const runEvent = event as { type?: string; result?: { finalOutput?: unknown } };
+        if (runEvent.type === "run_completed" && typeof runEvent.result?.finalOutput === "string") {
+          finalOutput = runEvent.result.finalOutput;
+        }
+        context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+          threadId,
+          event
+        });
+      },
+      onMessageAppended: (event: unknown) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+        const appended = event as {
+          threadId?: string;
+          message?: {
+            id?: string;
+            role?: string;
+            content?: string;
+            createdAt?: number;
+            versionGroupId?: string;
+            versionIndex?: number;
+            versionCount?: number;
+          };
         };
-      };
-      if (appended.message?.role === "user" && typeof appended.message.content === "string") {
+        if (appended.message?.role === "user" && typeof appended.message.content === "string") {
+          context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+            threadId,
+            event: {
+              type: "user_message_submitted",
+              text: appended.message.content,
+              createdAt: new Date(appended.message.createdAt ?? Date.now()).toISOString(),
+              messageId: appended.message.id,
+              versionGroupId: appended.message.versionGroupId,
+              versionIndex: appended.message.versionIndex,
+              versionCount: appended.message.versionCount
+            }
+          });
+        }
+      },
+      onComplete: () => {
+        const sessionDir = resolveRuntimeSessionDir(threadId);
+        if (
+          !structuredPlanWritten
+          && context.planStateTracker.getPhase(threadId) === "planning"
+          && finalOutput?.trim()
+        ) {
+          void persistFallbackPlanFromText({
+            sessionDir,
+            threadId,
+            runId: threadId,
+            text: finalOutput,
+            onPlanUpdated: () => {
+              context.notifyPlanStateChange(threadId, "review");
+            }
+          });
+        }
+        if (options?.planId) {
+          void (async () => {
+            const store = createFileBackedLumePlanStore(sessionDir);
+            let plan = await store.get(options.planId!);
+            if (plan?.status === "executing" && plan.currentStepId) {
+              const current = plan.steps.find((step) => step.id === plan?.currentStepId);
+              if (current?.status === "running") {
+                plan = await markCurrentPlanStepUnreported({
+                  sessionDir,
+                  threadId,
+                  planId: options.planId
+                });
+              }
+            }
+            emitLatestPlanProgress(threadId, plan);
+            if (plan?.status === "approved") {
+              void dispatchPlanExecution({
+                threadId,
+                planId: plan.id,
+                intent: "continue"
+              })();
+              return;
+            }
+            if (plan?.status === "completed") {
+              context.notifyPlanStateChange(threadId, "executed");
+            }
+          })();
+          return;
+        }
+        if (context.planStateTracker.getPhase(threadId) === "executing") {
+          const steps = context.planStateTracker.markCurrentStepCompleted(threadId);
+          context.notifyPlanStateChange(threadId, "executed", steps ? { steps } : undefined);
+        }
+      },
+      onError: (error: string) => {
+        void markStructuredPlanExecutionFailed({
+          sessionDir: resolveRuntimeSessionDir(threadId),
+          threadId,
+          error
+        });
         context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
           threadId,
           event: {
-            type: "user_message_submitted",
-            text: appended.message.content,
-            createdAt: new Date(appended.message.createdAt ?? Date.now()).toISOString()
+            type: "run_failed",
+            error: {
+              code: "runtime_error",
+              message: error
+            }
           }
         });
-      }
-    },
-    onComplete: () => {
-      void markStructuredPlanExecutionCompleted({
-        sessionDir: resolveRuntimeSessionDir(threadId),
-        threadId
-      });
-      if (context.planStateTracker.getPhase(threadId) === "executing") {
-        const steps = context.planStateTracker.markCurrentStepCompleted(threadId);
-        context.notifyPlanStateChange(threadId, "executed", steps ? { steps } : undefined);
-      }
-    },
-    onError: (error: string) => {
-      void markStructuredPlanExecutionFailed({
-        sessionDir: resolveRuntimeSessionDir(threadId),
-        threadId,
-        error
-      });
-      context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
-        threadId,
-        event: {
-          type: "run_failed",
-          error: {
-            code: "runtime_error",
-            message: error
-          }
+        if (context.planStateTracker.getPhase(threadId) === "executing") {
+          const steps = context.planStateTracker.markCurrentStepFailed(threadId, error);
+          context.notifyPlanStateChange(threadId, "review", steps ? { steps } : undefined);
         }
-      });
-      if (context.planStateTracker.getPhase(threadId) === "executing") {
-        const steps = context.planStateTracker.markCurrentStepFailed(threadId, error);
-        context.notifyPlanStateChange(threadId, "review", steps ? { steps } : undefined);
+      },
+      onTitleUpdated: (title: string) =>
+        context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
+          threadId,
+          title
+        }),
+      onAskUserQuestion: (request: unknown) =>
+        {
+          const message = (request as { questions?: Array<{ question?: string }> })?.questions
+            ?.map((item) => item.question)
+            .filter(Boolean)
+            .join("\n");
+          void markStructuredPlanExecutionWaiting({
+            sessionDir: resolveRuntimeSessionDir(threadId),
+            threadId,
+            status: "needs_user_input",
+            reason: message || "等待用户回答"
+          }).then((plan) => emitLatestPlanProgress(threadId, plan));
+          context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
+        },
+      onToolPermissionRequest: (request: unknown) =>
+        {
+          const toolRequest = request as { toolName?: string; reason?: string };
+          void markStructuredPlanExecutionWaiting({
+            sessionDir: resolveRuntimeSessionDir(threadId),
+            threadId,
+            status: "needs_approval",
+            reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
+          }).then((plan) => emitLatestPlanProgress(threadId, plan));
+          context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
+        },
+      onPlanUpdated: () => {
+        structuredPlanWritten = true;
+        context.notifyPlanStateChange(threadId, "review");
       }
-    },
-    onTitleUpdated: (title: string) =>
-      context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-        threadId,
-        title
-      }),
-    onAskUserQuestion: (request: unknown) =>
-      context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request),
-    onToolPermissionRequest: (request: unknown) =>
-      context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request)
-  });
+    };
+  };
 
   const handlers: Record<string, RpcHandler> = {
     [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),
@@ -333,11 +579,16 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS]: async (params) => {
       const input = validateInput(threadRunEventsInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS);
-      const runs = await createFileBackedLumeRunStateStore(resolveRuntimeSessionDir(input.threadId))
+      const sessionDir = resolveRuntimeSessionDir(input.threadId);
+      const runs = await createFileBackedLumeRunStateStore(sessionDir)
         .listByThread(input.threadId);
+      const plans = await createFileBackedLumePlanStore(sessionDir).listByThread(input.threadId);
       return {
         threadId: input.threadId,
-        events: runs.flatMap((run) => projectRunStateToRunEvents(run))
+        events: [
+          ...runs.flatMap((run) => projectRunStateToRunEvents(run)),
+          ...plans.flatMap((plan) => projectPlanToProgressEvents(plan))
+        ]
       };
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS]: async (params) => {
@@ -987,12 +1238,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION
       );
-      return submitAskUserQuestionAnswers({
+      const result = submitAskUserQuestionAnswers({
         threadId: input.threadId,
         toolUseId: input.toolUseId,
         canceled: input.canceled === true,
         answers: input.answers
       });
+      void markStructuredPlanInteractionResolved({
+        sessionDir: resolveRuntimeSessionDir(input.threadId),
+        threadId: input.threadId
+      });
+      return result;
     },
     [AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION]: async (params) => {
       const input = validateInput(
@@ -1000,11 +1256,16 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION
       );
-      return submitAgentToolPermission({
+      const result = submitAgentToolPermission({
         threadId: input.threadId,
         requestId: input.requestId,
         decision: input.decision
       });
+      void markStructuredPlanInteractionResolved({
+        sessionDir: resolveRuntimeSessionDir(input.threadId),
+        threadId: input.threadId
+      });
+      return result;
     },
     [AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL]: async (params) => {
       const input = validateInput(
@@ -1018,7 +1279,24 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         planId: input.planId,
         decision: input.decision
       });
-      return { ok };
+      if (!ok || input.decision !== "approve" || input.execute !== true) {
+        return { ok };
+      }
+      const execution = await dispatchPlanExecution({
+        threadId: input.threadId,
+        planId: input.planId,
+        intent: "execute"
+      })();
+      return { ok, execution };
+    },
+    [AGENT_IPC_CHANNELS.EXECUTE_PLAN]: async (params) => {
+      const input = validateInput(executePlanInputSchema, params, AGENT_IPC_CHANNELS.EXECUTE_PLAN);
+      return dispatchPlanExecution({
+        threadId: input.threadId,
+        planId: input.planId,
+        permissionMode: input.permissionMode,
+        intent: input.intent
+      })();
     },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
     "agent:read-bootstrap-file": async (params) => {
@@ -1032,8 +1310,23 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
-      return appendAgentMessage(input, createAgentStreamEmitter(input.threadId), {
-        onExecutionStarted: createExecutionStartCallback(input)
+      if (isPlanContinuationUserMessage(input.userMessage) && typeof input.messageMetadata?.planExecutionKey !== "string") {
+        const latestContinuablePlan = await resolveExecutablePlan({ threadId: input.threadId });
+        if (latestContinuablePlan) {
+          return dispatchPlanExecution({
+            threadId: input.threadId,
+            planId: latestContinuablePlan.id,
+            permissionMode: input.permissionMode,
+            intent: "continue"
+          })();
+        }
+      }
+      const sendInput = await resolvePlanContinuationInput(input);
+      if (sendInput.permissionMode === "plan") {
+        context.notifyPlanStateChange(sendInput.threadId, "planning");
+      }
+      return appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId), {
+        onExecutionStarted: createExecutionStartCallback(sendInput)
       });
     },
     [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {

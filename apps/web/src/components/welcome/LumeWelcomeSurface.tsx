@@ -23,6 +23,7 @@ interface LumeWelcomeSurfaceProps {
   workspaceSelector: ReactNode
   modelPicker: ReactNode
   composerModelPicker: ReactNode
+  permissionModePicker: ReactNode
   thinkingLevelPicker: ReactNode
   editor: Editor | null
   pendingFiles: PendingFile[]
@@ -40,6 +41,7 @@ export function LumeWelcomeSurface({
   workspaceSelector,
   modelPicker,
   composerModelPicker,
+  permissionModePicker,
   thinkingLevelPicker,
   editor,
   pendingFiles,
@@ -210,8 +212,9 @@ export function LumeWelcomeSurface({
               }
               trailingTools={
                 <>
-                  {thinkingLevelPicker}
                   {composerModelPicker}
+                  {permissionModePicker}
+                  {thinkingLevelPicker}
                   <button
                     type="button"
                     disabled

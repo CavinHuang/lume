@@ -1,12 +1,12 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useAtomValue } from 'jotai'
-import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentPlanStateAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
-import { ExitPlanModeBanner } from './ExitPlanModeBanner'
+import { PlanApprovalBanner } from './PlanApprovalBanner'
 import { ErrorBanner } from './ErrorBanner'
 import { SidePanel } from './SidePanel'
 import { Upload } from 'lucide-react'
@@ -24,12 +24,10 @@ export function AgentView({ threadId }: AgentViewProps) {
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
+  const pendingPlanApprovals = pendingInteractive?.planApprovals ?? []
 
   const sidePanelViews = useAtomValue(agentSidePanelViewAtom)
   const sidePanelView = sidePanelViews[threadId] ?? null
-
-  const planState = useAtomValue(agentPlanStateAtom)[threadId]
-  const isReview = planState?.phase === 'review'
 
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -111,13 +109,15 @@ export function AgentView({ threadId }: AgentViewProps) {
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <AgentHeader threadId={threadId} />
         <AgentMessages threadId={threadId} streaming={streamingState === 'streaming'} />
-        {isReview && <ExitPlanModeBanner threadId={threadId} />}
         {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
         {pendingToolPermissions.map((request) => (
           <PermissionBanner key={request.requestId} threadId={threadId} request={request} />
         ))}
         {pendingAskUserQuestions.map((request) => (
           <AskUserBanner key={request.toolUseId} threadId={threadId} request={request} />
+        ))}
+        {pendingPlanApprovals.map((request) => (
+          <PlanApprovalBanner key={request.planId} threadId={threadId} request={request} />
         ))}
         <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
       </div>

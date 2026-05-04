@@ -25,4 +25,20 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("automation_query")).toBeTrue();
     expect(isToolAllowedInPlanMode("automation_set")).toBeFalse();
   });
+
+  test("allows PlanWrite in plan mode without treating it as a risky write", () => {
+    expect(getToolMetadata("PlanWrite")).toMatchObject({
+      category: "control",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(isToolAllowedInPlanMode("PlanWrite")).toBeTrue();
+  });
+
+  test("treats PlanStepUpdate as a low-risk control tool", () => {
+    expect(getToolMetadata("PlanStepUpdate")).toMatchObject({
+      category: "control",
+      riskLevel: "low"
+    });
+  });
 });

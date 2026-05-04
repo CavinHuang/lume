@@ -32,6 +32,25 @@ export interface LumePlanStep {
   currentStepId?: string;
   result?: string;
   error?: string;
+  attemptCount?: number;
+  startedAt?: string;
+  endedAt?: string;
+  blockedReason?: string;
+}
+
+export interface LumePlanEvent {
+  type:
+    | "plan_started"
+    | "step_started"
+    | "step_completed"
+    | "step_failed"
+    | "step_skipped"
+    | "plan_waiting"
+    | "plan_completed";
+  planId: string;
+  stepId?: string;
+  message?: string;
+  createdAt: string;
 }
 
 export interface LumePlan {
@@ -50,6 +69,7 @@ export interface LumePlan {
     tools?: string[];
     memoryWrites?: string[];
   };
+  events?: LumePlanEvent[];
   status: LumePlanStatus;
   currentStepId?: string;
   traceSpanId?: string;

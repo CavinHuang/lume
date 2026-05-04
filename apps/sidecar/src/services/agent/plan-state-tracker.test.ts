@@ -41,6 +41,24 @@ describe("plan-state-tracker", () => {
     expect(completed?.[0]?.status).toBe("completed");
   });
 
+  test("应将整计划执行请求在完成后标记所有步骤 completed", () => {
+    const tracker = new PlanStateTracker();
+    const steps = tracker.syncExecutionFromSendInput({
+      threadId: "s-all",
+      userMessage: "请按顺序自动执行已批准计划的全部剩余任务。",
+      permissionMode: "acceptEdits",
+      messageMetadata: {
+        planExecutionKey: "plan-1",
+        planExecutionMode: "all",
+        planExecutionSteps: ["读代码", "修改实现", "验证结果"]
+      }
+    });
+
+    expect(steps?.map((step) => step.status)).toEqual(["in_progress", "pending", "pending"]);
+    const completed = tracker.markCurrentStepCompleted("s-all");
+    expect(completed?.map((step) => step.status)).toEqual(["completed", "completed", "completed"]);
+  });
+
   test("应在失败时累计 failCount 并回填错误", () => {
     const tracker = new PlanStateTracker();
     const threadId = "s-fail";
@@ -60,4 +78,3 @@ describe("plan-state-tracker", () => {
     expect(second).toBeNull();
   });
 });
-

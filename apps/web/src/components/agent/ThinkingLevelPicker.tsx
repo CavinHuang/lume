@@ -16,6 +16,11 @@ import {
   type ThinkingLevelOption,
 } from '@/components/settings/agent-settings-state'
 import type { LumeConfigThinkingLevel } from '@lume/shared'
+import {
+  composerControlChevronClassName,
+  composerControlMenuClassName,
+  composerControlTriggerClassName,
+} from './composer-control-styles'
 
 export interface ThinkingLevelPickerProps {
   value: LumeConfigThinkingLevel
@@ -57,15 +62,15 @@ export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPi
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] text-foreground/60 hover:bg-muted/50 hover:text-foreground/80 transition-colors"
+        className={composerControlTriggerClassName}
       >
-        <Brain size={13} />
+        <Brain size={14} />
         <span>思考: {current.label}</span>
-        <ChevronDown size={12} className="text-muted-foreground/50" />
+        <ChevronDown size={12} className={composerControlChevronClassName} />
       </button>
 
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 z-50 min-w-[240px] rounded-lg border border-border/60 bg-popover shadow-lg p-1.5">
+        <div className={cn(composerControlMenuClassName, 'min-w-[240px] p-1.5')}>
           <ThinkingLevelCards value={value} onSelect={handleSelect} />
         </div>
       )}

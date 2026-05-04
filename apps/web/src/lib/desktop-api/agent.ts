@@ -9,11 +9,16 @@ import type {
   AgentPendingInteractiveInput,
   AgentPendingInteractiveState,
   AgentPlanApprovalResponseInput,
+  AgentExecutePlanInput,
+  AgentExecutePlanResult,
   AgentRunTraceInput,
   AgentRunTraceResult,
   AgentSendInput,
   AgentStructuredPlansInput,
   AgentStructuredPlansResult,
+  AgentGetMessageVersionsInput,
+  AgentMessageVersionsResult,
+  AgentMessage,
   AgentThreadRunEventsResult,
 } from '@lume/shared'
 
@@ -41,6 +46,18 @@ export const getThreadRunEvents = (threadId: string) =>
     params: { threadId },
   })
 
+export const getThreadMessages = (threadId: string) =>
+  invoke<AgentMessage[]>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES,
+    params: { threadId },
+  })
+
+export const getThreadMessageVersions = (input: AgentGetMessageVersionsInput) =>
+  invoke<AgentMessageVersionsResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS,
+    params: input,
+  })
+
 export const getPendingInteractive = (input: AgentPendingInteractiveInput = {}) =>
   invoke<AgentPendingInteractiveState[]>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE,
@@ -62,6 +79,12 @@ export const listAgentRunStates = (input: AgentListRunStatesInput) =>
 export const submitPlanApproval = (input: AgentPlanApprovalResponseInput) =>
   invoke<{ ok: boolean }>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL,
+    params: input,
+  })
+
+export const executePlan = (input: AgentExecutePlanInput) =>
+  invoke<AgentExecutePlanResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.EXECUTE_PLAN,
     params: input,
   })
 

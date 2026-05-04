@@ -15,6 +15,11 @@ import { cn } from '@/lib/utils'
 import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
 import {
+  composerControlChevronClassName,
+  composerControlMenuClassName,
+  composerControlTriggerClassName,
+} from './composer-control-styles'
+import {
   buildModelSelectionGroups,
   getThreadSelectionSummary,
 } from '@/components/model-selection/model-selection-state'
@@ -54,6 +59,17 @@ function filterGroups(
       ),
     }))
     .filter((group) => group.options.length > 0)
+}
+
+function isDefaultModelOption(
+  option: ModelSelectionOption,
+  defaultStrategy: LumeConfigAgentDefaultStrategy
+): boolean {
+  const defaultModelRef = defaultStrategy.defaultModelRef?.trim()
+  if (!defaultModelRef || option.modelRef !== defaultModelRef) return false
+
+  const defaultChannelId = defaultStrategy.defaultChannelId?.trim()
+  return !defaultChannelId || option.channelId === defaultChannelId
 }
 
 export function ModelPicker({ threadId }: ModelPickerProps) {
@@ -164,27 +180,22 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
   }
 
   return (
-    <div className="relative flex items-center gap-1.5">
+    <div ref={menuRef} className="relative flex items-center gap-1.5">
       {/* Trigger button */}
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] text-foreground/60 hover:bg-muted/50 hover:text-foreground/80 transition-colors"
+        className={composerControlTriggerClassName}
         title={summary.isUnavailable ? '当前线程模型不可用，点击重新选择' : '切换模型'}
       >
         {activeChannel && (
-          <ChannelProviderIcon provider={activeChannel.provider} size={11} />
+          <ChannelProviderIcon provider={activeChannel.provider} size={14} />
         )}
-        <span className="truncate max-w-[160px]">{summary.label}</span>
-        <ChevronDown size={10} className="text-foreground/40" />
+        <span className="max-w-[160px] truncate">{summary.label}</span>
+        <ChevronDown size={12} className={composerControlChevronClassName} />
       </button>
 
-      {canRestoreDefault && (
-        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-          已覆盖默认
-        </span>
-      )}
       {summary.hasLoadedChannels && summary.isUnavailable && (
-        <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-400">
+        <span className="inline-flex h-6 items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 text-[10.5px] font-medium text-amber-700 dark:text-amber-400">
           当前模型不可用
         </span>
       )}
@@ -192,12 +203,11 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
       {/* Dropdown */}
       {open && (
         <div
-          ref={menuRef}
-          className="absolute bottom-full left-0 z-[120] mb-2 min-w-[260px] max-h-[360px] overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-lg"
+          className={cn(composerControlMenuClassName, 'z-[120] max-h-[360px] min-w-[260px] overflow-y-auto')}
         >
           {/* Search */}
-          <div className="p-1.5 border-b border-border/40">
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50">
+          <div className="border-b border-[var(--border)] p-1.5">
+            <div className="flex items-center gap-1.5 rounded-lg bg-[var(--surface-2)] px-2 py-1">
               <Search size={13} className="text-muted-foreground/50 shrink-0" />
               <input
                 ref={searchInputRef}
@@ -211,7 +221,19 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
           </div>
 
           {filteredGroups.length > 0 ? (
-            <ModelOptionList groups={filteredGroups} onSelect={handleSelect} />
+            <ModelOptionList
+              groups={filteredGroups}
+              onSelect={handleSelect}
+              renderBadge={(option) => (
+                isDefaultModelOption(option, defaultStrategy)
+                  ? (
+                      <span className="shrink-0 rounded-full border border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--brand)]">
+                        默认
+                      </span>
+                    )
+                  : null
+              )}
+            />
           ) : (
             <div className="py-6 text-center text-xs text-muted-foreground/50">
               没有匹配的模型

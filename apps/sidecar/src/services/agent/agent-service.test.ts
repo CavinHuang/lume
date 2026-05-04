@@ -241,6 +241,42 @@ describe("agent-service", () => {
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
   });
 
+  test("sendAgentMessage 不应把隐藏的 plan 控制输入追加为可见用户消息", async () => {
+    const { createAgentThread, getAgentThreadMessages, getAgentThreadSDKMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("hidden plan control", "channel-test");
+    const appended: AgentMessageAppendedEvent[] = [];
+    const runEvents: unknown[] = [];
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "请按顺序自动继续执行当前未完成计划。",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      messageMetadata: {
+        hiddenFromChat: true,
+        planControlEvent: "continue_plan"
+      }
+    }, {
+      onRunEvent: (event) => {
+        runEvents.push(event);
+      },
+      onMessageAppended: (event) => {
+        appended.push(event);
+      },
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    expect(appended.some((event) => event.message.role === "user")).toBe(false);
+    expect(runEvents).toContainEqual({ type: "assistant_delta", text: "mock assistant output" });
+    expect(getAgentThreadMessages(thread.id).some((message) => message.role === "user")).toBe(false);
+    expect(getAgentThreadSDKMessages(thread.id).map((message) => message.type)).toEqual(["assistant", "result"]);
+  });
+
   test("sendAgentMessage 应继承线程工作区传给 runtime", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { createAgentWorkspace } = await import("./agent-workspace-manager");

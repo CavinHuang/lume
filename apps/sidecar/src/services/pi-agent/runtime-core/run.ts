@@ -4,8 +4,6 @@ import {
   BashTool,
   createAgent,
   createProvider,
-  EnterPlanModeTool,
-  ExitPlanModeTool,
   FileEditTool,
   FileReadTool,
   FileWriteTool,
@@ -63,6 +61,8 @@ import {
 import { ContextAssembler } from "../../agent-runtime/context/context-assembler";
 import type { ContextAssemblyInput } from "../../agent-runtime/context/context-assembler";
 import { createPlanWriteTool } from "../../agent-runtime/plan/plan-write-tool";
+import { createPlanStepUpdateTool } from "../../agent-runtime/plan/plan-step-update-tool";
+import type { LumePlan } from "../../agent-runtime/plan/plan-types";
 
 const log = createLogger("runtime-core-prompt");
 
@@ -95,6 +95,7 @@ export interface CreateRuntimeCoreSessionInput {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+  emitPlanUpdated?: (plan: LumePlan) => void;
   runId?: string;
   trace?: ContextAssemblyInput["trace"];
 }
@@ -466,8 +467,6 @@ function createBaseSdkAlignedTools(
     return [
       ...readOnlyTools,
       ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
-      EnterPlanModeTool,
-      ExitPlanModeTool,
       SkillTool
     ];
   }
@@ -481,9 +480,7 @@ function createBaseSdkAlignedTools(
     NotebookEditTool,
     SkillTool,
     TodoWriteTool,
-    LSPTool,
-    EnterPlanModeTool,
-    ExitPlanModeTool
+    LSPTool
   ];
 }
 
@@ -501,6 +498,7 @@ function buildRuntimeCoreTools(input: {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+  emitPlanUpdated?: (plan: LumePlan) => void;
   runId?: string;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
@@ -513,13 +511,16 @@ function buildRuntimeCoreTools(input: {
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
     includeAskUserQuestion: automationExecution !== true
   });
-  const planWriteTool = permissionMode === "plan"
-    ? createPlanWriteTool({
-        sessionDir: getRuntimeCoreSessionDir(input.sessionId),
-        threadId: input.sessionId,
-        runId: input.runId ?? input.sessionId
-      })
-    : null;
+  const planWriteTool = createPlanWriteTool({
+    sessionDir: getRuntimeCoreSessionDir(input.sessionId),
+    threadId: input.sessionId,
+    runId: input.runId ?? input.sessionId,
+    onPlanUpdated: input.emitPlanUpdated
+  });
+  const planStepUpdateTool = createPlanStepUpdateTool({
+    sessionDir: getRuntimeCoreSessionDir(input.sessionId),
+    threadId: input.sessionId
+  });
   const lumeTools = createLumePiTools({
     threadId: input.sessionId,
     workspaceId: input.workspaceId,
@@ -652,7 +653,8 @@ function buildRuntimeCoreTools(input: {
 
   const tools = [
     ...filteredBaseTools,
-    ...(planWriteTool ? [planWriteTool] : []),
+    planWriteTool,
+    planStepUpdateTool,
     ...customTools,
     sidecarAgentTool
   ];
@@ -740,6 +742,7 @@ export async function createRuntimeCoreSession(
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
+    emitPlanUpdated: input.emitPlanUpdated,
     runId: input.runId
   });
 

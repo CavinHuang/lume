@@ -401,7 +401,7 @@ export async function sendAgentMessage(
     : effectiveSelection.modelRef;
   const hasExplicitSendSelection = input.modelRef !== undefined || input.channelId !== undefined || input.modelId !== undefined;
 
-  const shouldAppendUserMessage = options.appendUserMessage ?? true;
+  const shouldAppendUserMessage = (options.appendUserMessage ?? true) && input.messageMetadata?.hiddenFromChat !== true;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
@@ -428,6 +428,7 @@ export async function sendAgentMessage(
     capabilityRoutingReason: routingTrace.reason,
     toolPolicy: mergeToolPolicies(existingToolPolicy, routingToolPolicy)
   };
+  let runtimeMessageMetadata: Record<string, unknown> = effectiveMessageMetadata;
 
   log.info("[Agent 会话] 开始发送消息", buildAgentSendStartLogData({
     threadId,
@@ -452,10 +453,21 @@ export async function sendAgentMessage(
       sessionId: threadId,
       content: userMessage,
       createdAt: (userSdkMessage as SDKMessage & { _createdAt?: number })._createdAt ?? Date.now(),
-      metadata: effectiveMessageMetadata,
+      metadata: {
+        ...effectiveMessageMetadata,
+        ...(sourceMessageId ? { sourceMessageId } : {})
+      },
       sourceMessageId,
       sdkMessages: [userSdkMessage]
     });
+    runtimeMessageMetadata = {
+      ...effectiveMessageMetadata,
+      messageId: createdUserVersion.message.id,
+      versionGroupId: createdUserVersion.message.versionGroupId,
+      versionIndex: createdUserVersion.message.versionIndex,
+      versionCount: createdUserVersion.message.versionCount,
+      ...(sourceMessageId ? { sourceMessageId } : {})
+    };
     activeTurnId = createdUserVersion.turnId;
     if (sourceMessageId) {
       replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
@@ -500,7 +512,7 @@ export async function sendAgentMessage(
     input: {
       ...input,
       ...(effectiveWorkspaceId ? { workspaceId: effectiveWorkspaceId } : {}),
-      messageMetadata: effectiveMessageMetadata,
+      messageMetadata: runtimeMessageMetadata,
       channelId: resolvedChannelId,
       modelId: resolvedModelId,
       ...(input.thinkingLevel === undefined && configThinkingLevel

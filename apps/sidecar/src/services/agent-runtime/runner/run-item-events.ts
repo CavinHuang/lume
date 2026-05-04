@@ -8,11 +8,16 @@ export function projectRunStateToRunEvents(run: LumeRunState): LumeRunEvent[] {
   }
   const events: LumeRunEvent[] = [];
   const userMessage = typeof run.input.userMessage === "string" ? run.input.userMessage : "";
-  if (userMessage.trim()) {
+  if (userMessage.trim() && !isHiddenFromChatRun(run)) {
+    const metadata = run.input.messageMetadata;
     events.push({
       type: "user_message_submitted",
       text: userMessage,
-      createdAt: run.createdAt
+      createdAt: run.createdAt,
+      ...(typeof metadata?.messageId === "string" ? { messageId: metadata.messageId } : {}),
+      ...(typeof metadata?.versionGroupId === "string" ? { versionGroupId: metadata.versionGroupId } : {}),
+      ...(typeof metadata?.versionIndex === "number" ? { versionIndex: metadata.versionIndex } : {}),
+      ...(typeof metadata?.versionCount === "number" ? { versionCount: metadata.versionCount } : {})
     });
   }
 
@@ -56,6 +61,10 @@ export function projectRunStateToRunEvents(run: LumeRunState): LumeRunEvent[] {
 function isRuntimeContinuationRun(run: LumeRunState): boolean {
   const metadata = run.input.messageMetadata;
   return Boolean(metadata?.runtimeContinuation && typeof metadata.runtimeContinuation === "object");
+}
+
+function isHiddenFromChatRun(run: LumeRunState): boolean {
+  return run.input.messageMetadata?.hiddenFromChat === true;
 }
 
 export function projectRunItemToRunEvent(

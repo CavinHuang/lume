@@ -10,6 +10,7 @@ import {
   agentPlanStateAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
+  agentSidePanelViewAtom,
 } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
@@ -37,6 +38,7 @@ export function useGlobalAgentListeners() {
   const setPlanState = useSetAtom(agentPlanStateAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
+  const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
 
   useEffect(() => {
     sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE)
@@ -71,9 +73,19 @@ export function useGlobalAgentListeners() {
             event.type === 'assistant_delta' ||
             event.type === 'assistant_thinking_delta' ||
             event.type === 'tool_call_started' ||
-            event.type === 'tool_call_completed'
+            event.type === 'tool_call_completed' ||
+            (event.type === 'plan_progress' && event.status !== 'completed' && event.status !== 'failed') ||
+            (event.type === 'plan_execution_status' && event.status === 'running')
           ) {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
+            break
+          }
+          if (event.type === 'plan_progress' && (event.status === 'completed' || event.status === 'failed')) {
+            setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
+            break
+          }
+          if (event.type === 'plan_execution_status' && (event.status === 'waiting' || event.status === 'completed' || event.status === 'failed')) {
+            setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
             break
           }
           if (event.type === 'run_completed') {
@@ -145,6 +157,24 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.PLAN_STATE_CHANGED: {
           const e = params as PlanStateChangedEvent
           setPlanState((prev) => ({ ...prev, [e.threadId]: e }))
+          if (e.phase === 'planning' || e.phase === 'review') {
+            setSidePanelViews((prev) => ({ ...prev, [e.threadId]: 'plan' }))
+            void sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE, { threadId: e.threadId })
+              .then((states) => {
+                setPendingInteractive((prev) => {
+                  let next = prev
+                  for (const state of states ?? []) {
+                    for (const request of state.planApprovals ?? []) {
+                      next = upsertPendingPlanApproval(next, request)
+                    }
+                  }
+                  return next
+                })
+              })
+              .catch((error) => {
+                console.error('[useGlobalAgentListeners] 刷新 plan approval 失败:', error)
+              })
+          }
           break
         }
         case AGENT_IPC_CHANNELS.TITLE_UPDATED: {
@@ -155,5 +185,5 @@ export function useGlobalAgentListeners() {
       }
     })
     return () => { unlisten.then((fn) => fn()) }
-  }, [setStreamingStates, setRuntimeStatus, setRunEvents, setPendingInteractive, setSubagentRuns, setPlanState, setThreads, setErrorMessages])
+  }, [setStreamingStates, setRuntimeStatus, setRunEvents, setPendingInteractive, setSubagentRuns, setPlanState, setThreads, setErrorMessages, setSidePanelViews])
 }

@@ -4,6 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Provider, createStore } from 'jotai'
 import {
   activeTabIdAtom,
+  agentPlanStateAtom,
+  agentSidePanelViewAtom,
+  agentStreamingStatesAtom,
   agentThreadsAtom,
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
@@ -14,6 +17,7 @@ import { AGENT_IPC_CHANNELS } from '@lume/shared'
 let editorText = ''
 let latestSurfaceProps: any = null
 let effectiveThinkingLevel: 'off' | 'low' | 'medium' | 'high' | 'max' | undefined
+let effectivePermissionMode: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | undefined
 
 const mockEditor = {
   getText: () => editorText,
@@ -79,7 +83,10 @@ mock.module('@/lib/desktop-api', () => ({
 
 mock.module('@/lib/desktop-api/lume-config', () => ({
   getEffectiveLumeConfig: async () => ({
-    agent: effectiveThinkingLevel ? { thinkingLevel: effectiveThinkingLevel } : {},
+    agent: {
+      ...(effectiveThinkingLevel ? { thinkingLevel: effectiveThinkingLevel } : {}),
+      ...(effectivePermissionMode ? { permissionMode: effectivePermissionMode } : {}),
+    },
   }),
   updateAgentThinkingLevel: async (value: string) => {
     effectiveThinkingLevel = value as typeof effectiveThinkingLevel
@@ -89,6 +96,10 @@ mock.module('@/lib/desktop-api/lume-config', () => ({
 
 mock.module('@/components/agent/ThinkingLevelPicker', () => ({
   ThinkingLevelPicker: () => <div>thinking-level-picker</div>,
+}))
+
+mock.module('@/components/agent/PermissionModePicker', () => ({
+  PermissionModePicker: (props: unknown) => <div data-permission-picker={JSON.stringify(props)}>permission-mode-picker</div>,
 }))
 
 mock.module('@/components/workspace/CreateWorkspaceDialog', () => ({
@@ -301,6 +312,7 @@ describe('WelcomeView', () => {
     editorText = ''
     latestSurfaceProps = null
     effectiveThinkingLevel = undefined
+    effectivePermissionMode = undefined
     sidecarCallMock.mockClear()
     agentSendMock.mockClear()
   })
@@ -522,6 +534,76 @@ describe('WelcomeView', () => {
         userMessage: '用高思考等级开始',
         thinkingLevel: 'high',
       }))
+    } finally {
+      if (root) {
+        await act(async () => {
+          root!.unmount()
+          await flush()
+        })
+        root = null
+      }
+    }
+  })
+
+  test('uses the selected permission mode for the welcome send without persisting it globally', async () => {
+    effectivePermissionMode = 'acceptEdits'
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      {
+        id: 'workspace-1',
+        name: '默认工作区',
+        slug: 'default-workspace',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
+    store.set(activeTabIdAtom, '__welcome__')
+
+    const { container } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <WelcomeView workspaceId="workspace-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      const permissionPickerProps = latestSurfaceProps.permissionModePicker.props
+      expect(permissionPickerProps.value).toBe('acceptEdits')
+
+      await act(async () => {
+        permissionPickerProps.onChange('plan')
+        await flush()
+      })
+
+      expect(effectivePermissionMode).toBe('acceptEdits')
+      expect(latestSurfaceProps.permissionModePicker.props.value).toBe('plan')
+
+      editorText = '先规划欢迎页任务'
+
+      await act(async () => {
+        await latestSurfaceProps.onSend()
+        await flush()
+      })
+
+      expect(agentSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: 'created-thread',
+        userMessage: '先规划欢迎页任务',
+        permissionMode: 'plan',
+      }))
+      expect(store.get(activeTabIdAtom)).toBe('created-thread')
+      expect(store.get(agentStreamingStatesAtom)['created-thread']).toBe('streaming')
+      expect(store.get(agentPlanStateAtom)['created-thread']).toEqual({
+        threadId: 'created-thread',
+        phase: 'planning',
+      })
+      expect(store.get(agentSidePanelViewAtom)['created-thread']).toBe('plan')
     } finally {
       if (root) {
         await act(async () => {

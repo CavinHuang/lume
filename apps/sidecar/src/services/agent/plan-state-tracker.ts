@@ -3,6 +3,7 @@ import type { AgentSendInput, PlanPhase, PlanStateChangedEvent, PlanStep } from 
 interface PlanExecutionSnapshot {
   steps: PlanStep[];
   currentIndex: number | null;
+  mode?: "single" | "all";
 }
 
 interface PlanPhaseUpdateExtras {
@@ -25,6 +26,7 @@ export class PlanStateTracker {
 
   isLikelyExecutionRequest(input: AgentSendInput): boolean {
     if (input.permissionMode === "plan") return false;
+    if (input.messageMetadata?.planExecutionMode === "all") return true;
     if (typeof input.messageMetadata?.planExecutionKey === "string") return true;
     const content = (input.userMessage ?? "").trim();
     if (!content) return false;
@@ -101,14 +103,50 @@ export class PlanStateTracker {
     });
     this.executionBySession.set(sessionId, {
       steps: nextSteps,
-      currentIndex: parsed.index
+      currentIndex: parsed.index,
+      mode: "single"
     });
     return nextSteps;
+  }
+
+  syncExecutionFromSendInput(input: AgentSendInput): PlanStep[] | undefined {
+    if (input.messageMetadata?.planExecutionMode !== "all") {
+      return this.syncExecutionFromUserMessage(input.threadId, input.userMessage);
+    }
+    const rawSteps = input.messageMetadata.planExecutionSteps;
+    const stepTexts = Array.isArray(rawSteps)
+      ? rawSteps.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    if (stepTexts.length === 0) {
+      return this.syncExecutionFromUserMessage(input.threadId, input.userMessage);
+    }
+    const steps = stepTexts.map((text, index): PlanStep => ({
+      id: `step-${index + 1}`,
+      text,
+      status: index === 0 ? "in_progress" : "pending",
+      failCount: 0,
+      lastError: null
+    }));
+    this.executionBySession.set(input.threadId, {
+      steps,
+      currentIndex: 0,
+      mode: "all"
+    });
+    return steps;
   }
 
   markCurrentStepCompleted(sessionId: string): PlanStep[] | undefined {
     const current = this.executionBySession.get(sessionId);
     if (!current || current.currentIndex === null) return current?.steps;
+    if (current.mode === "all") {
+      const nextSteps = current.steps.map((step) => (
+        step.status === "failed"
+          ? step
+          : { ...step, status: "completed" as const, lastError: null }
+      ));
+      this.executionBySession.set(sessionId, { steps: nextSteps, currentIndex: null, mode: current.mode });
+      return nextSteps;
+    }
     const nextSteps = current.steps.map((step, idx) => (
       idx === current.currentIndex
         ? { ...step, status: "completed" as const, lastError: null }
@@ -173,4 +211,3 @@ export class PlanStateTracker {
     return null;
   }
 }
-

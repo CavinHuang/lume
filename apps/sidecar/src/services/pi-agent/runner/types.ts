@@ -3,6 +3,7 @@ import type { AgentSendInput } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
 import type { AgentToolPermissionRequest } from "@lume/shared";
 import type { LumeRunEvent } from "@lume/shared";
+import type { LumePlan } from "../../agent-runtime/plan/plan-types";
 
 export interface PiAgentRuntimeEmitter {
   onSdkMessage: (message: SDKMessage) => void;
@@ -11,6 +12,7 @@ export interface PiAgentRuntimeEmitter {
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
+  onPlanUpdated?: (plan: LumePlan) => void;
 }
 
 export type PiAgentRunStatus = "completed" | "aborted" | "errored";

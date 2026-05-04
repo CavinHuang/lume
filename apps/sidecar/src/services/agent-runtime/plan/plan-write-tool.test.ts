@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listPendingPlanApprovalRequests } from "./plan-approval-service";
 import { createFileBackedLumePlanStore } from "./plan-store";
 import { createPlanWriteTool } from "./plan-write-tool";
 
@@ -15,6 +16,7 @@ describe("PlanWriteTool", () => {
       traceSpanId: "trace-span-1",
       now: () => "2026-04-29T00:00:00.000Z"
     });
+    expect(tool.isReadOnly?.()).toBeTrue();
 
     const created = await tool.call({
       id: "plan-1",
@@ -47,6 +49,47 @@ describe("PlanWriteTool", () => {
         id: "step-1",
         traceSpanId: "span-step-1"
       }]
+    });
+    expect(await listPendingPlanApprovalRequests(dir)).toMatchObject([{
+      threadId: "thread-1",
+      runId: "run-1",
+      planId: "plan-1",
+      title: "确认执行计划",
+      message: "Add structured runtime plan",
+      stepCount: 1
+    }]);
+  });
+
+  test("accepts common step shapes from model output", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-plan-write-tool-shapes-"));
+    const tool = createPlanWriteTool({
+      sessionDir: dir,
+      threadId: "thread-1",
+      runId: "run-1",
+      now: () => "2026-04-29T00:00:00.000Z"
+    });
+
+    const created = await tool.call({
+      id: "plan-1",
+      goal: "Ship runtime",
+      summary: "Accept model step shapes",
+      status: "needs_approval",
+      steps: [
+        "Inspect code",
+        { id: "step-2", text: "Patch code", type: "edit" }
+      ]
+    }, {} as any);
+
+    expect(JSON.parse(String(created.content))).toMatchObject({
+      planId: "plan-1",
+      status: "needs_approval",
+      stepCount: 2
+    });
+    expect(await createFileBackedLumePlanStore(dir).get("plan-1")).toMatchObject({
+      steps: [
+        { id: "step-1", title: "Inspect code", status: "pending" },
+        { id: "step-2", title: "Patch code", type: "edit", status: "pending" }
+      ]
     });
   });
 });

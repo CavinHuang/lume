@@ -8,6 +8,11 @@ import type { ModelSelectionOption, ModelOptionGroup } from '@/components/model-
 import type { Channel, LumeConfigAgentDefaultStrategy } from '@lume/shared'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 import { cn } from '@/lib/utils'
+import {
+  composerControlChevronClassName,
+  composerControlMenuClassName,
+  composerControlTriggerClassName,
+} from '@/components/agent/composer-control-styles'
 
 interface WelcomeModelPickerProps {
   onModelChange: (modelRef?: string, channelId?: string, modelId?: string) => void
@@ -31,6 +36,17 @@ function findSelectedOption(
   return channelGroups
     .flatMap((group) => group.options)
     .find((option) => option.modelRef === modelRef || option.modelId === modelRef)
+}
+
+function isDefaultModelOption(
+  option: ModelSelectionOption,
+  defaultStrategy: LumeConfigAgentDefaultStrategy
+): boolean {
+  const defaultModelRef = defaultStrategy.defaultModelRef?.trim()
+  if (!defaultModelRef || option.modelRef !== defaultModelRef) return false
+
+  const defaultChannelId = defaultStrategy.defaultChannelId?.trim()
+  return !defaultChannelId || option.channelId === defaultChannelId
 }
 
 export function WelcomeModelPicker({
@@ -171,11 +187,11 @@ export function WelcomeModelPicker({
   const modelLabel = summary.label || '选择模型'
   const buttonClassName =
     variant === 'composer'
-      ? 'inline-flex h-10 min-w-[150px] items-center gap-2 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] px-3 text-[13px] font-semibold text-[var(--text-1)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)]'
+      ? composerControlTriggerClassName
       : 'inline-flex h-9 min-w-[168px] items-center gap-2 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] px-3 text-[13px] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_20%,var(--border-strong))] hover:text-[var(--text-1)]'
   const menuClassName =
     variant === 'composer'
-      ? 'absolute bottom-full right-0 z-50 mb-2 min-w-[300px] max-h-[320px] overflow-y-auto rounded-[1.1rem] border border-[color:color-mix(in_oklab,var(--border-strong)_74%,transparent)] bg-[var(--surface-1)] shadow-[0_28px_52px_-34px_hsl(var(--shadow-panel)/0.48)]'
+      ? cn(composerControlMenuClassName, 'right-0 left-auto max-h-[320px] min-w-[300px] overflow-y-auto')
       : 'absolute left-0 top-full z-50 mt-3 min-w-[300px] max-h-[380px] overflow-y-auto rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_74%,transparent)] bg-[var(--surface-1)] shadow-[0_28px_52px_-34px_hsl(var(--shadow-panel)/0.48)]'
 
   return (
@@ -185,7 +201,7 @@ export function WelcomeModelPicker({
         onClick={() => setOpen((v) => !v)}
         className={cn(
           buttonClassName,
-          open && 'border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))]',
+          variant === 'hero' && open && 'border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))]',
         )}
         title="切换模型"
       >
@@ -197,10 +213,13 @@ export function WelcomeModelPicker({
           <Box size={14} className="shrink-0 text-[var(--text-2)]" />
         )}
         {variant === 'hero' && <span className="shrink-0 text-[var(--text-2)]">模型：</span>}
-        <span className={cn('min-w-0 flex-1 truncate', variant === 'hero' ? 'font-semibold text-[var(--text-1)]' : 'text-[var(--text-1)]')}>
+        <span className={cn('min-w-0 truncate', variant === 'hero' ? 'flex-1 font-semibold text-[var(--text-1)]' : 'max-w-[160px]')}>
           {modelLabel}
         </span>
-        <ChevronDown size={13} className="shrink-0 text-[var(--text-3)]" />
+        <ChevronDown
+          size={variant === 'hero' ? 13 : 12}
+          className={cn('shrink-0', variant === 'hero' ? 'text-[var(--text-3)]' : composerControlChevronClassName)}
+        />
       </button>
 
       {open && (
@@ -220,7 +239,19 @@ export function WelcomeModelPicker({
           </div>
 
           {filteredGroups.length > 0 ? (
-            <ModelOptionList groups={filteredGroups} onSelect={handleSelect} />
+            <ModelOptionList
+              groups={filteredGroups}
+              onSelect={handleSelect}
+              renderBadge={(option) => (
+                isDefaultModelOption(option, defaultStrategy)
+                  ? (
+                      <span className="shrink-0 rounded-full border border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--brand)]">
+                        默认
+                      </span>
+                    )
+                  : null
+              )}
+            />
           ) : (
             <div className="py-6 text-center text-[12px] text-[var(--text-3)]">
               没有匹配的模型

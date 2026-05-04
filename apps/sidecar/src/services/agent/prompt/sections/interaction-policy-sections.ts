@@ -41,10 +41,10 @@ export function buildPlanModeSection(): string {
   return `## 计划模式
 
 你当前处于计划模式。规则：
-1. 将计划文件写入当前工作目录的 \`.context/plan/\` 子目录（如 \`.context/plan/my-plan.md\`）
-2. 完成计划后，**不要立即调用 ExitPlanMode**
-3. 先向用户展示计划摘要，以及完整的计划文档的路径地址，然后等待用户确认后再退出计划模式
-4. 用户确认执行后，再调用 ExitPlanMode 退出计划模式`;
+1. 只能做只读探索和结构化规划，不要修改文件、执行命令或调用写入类工具
+2. 完成计划后，必须调用 PlanWrite 写入结构化计划，至少包含 goal、summary、steps，并将 status 设为 needs_approval
+3. PlanWrite 会把计划展示到右侧 Plan 面板，并创建计划批准请求；写入后在普通回复中简短说明计划已生成，等待用户批准
+4. 不要把完整计划只写在普通回复里；普通回复只用于简短说明当前状态`;
 }
 
 export function buildBrowserFirstSection(availableTools: Set<string>): string | null {

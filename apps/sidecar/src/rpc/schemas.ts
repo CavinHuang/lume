@@ -615,7 +615,15 @@ export const submitToolPermissionInputSchema = z.object({
 export const submitPlanApprovalInputSchema = z.object({
   threadId: idSchema,
   planId: idSchema,
-  decision: z.enum(["approve", "reject"])
+  decision: z.enum(["approve", "reject"]),
+  execute: z.boolean().optional()
+});
+
+export const executePlanInputSchema = z.object({
+  threadId: idSchema,
+  planId: idSchema.optional(),
+  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions"]).optional(),
+  intent: z.enum(["execute", "continue", "retry", "skip"]).optional()
 });
 
 export const pendingInteractiveInputSchema = z.object({

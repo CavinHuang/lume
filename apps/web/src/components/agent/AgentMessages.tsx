@@ -4,11 +4,11 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { agentRunEventsAtom, agentSubagentRunsAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useScrollPositionMemory } from '@/hooks/useScrollPositionMemory'
-import { getThreadRunEvents, sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentListSubagentRunsResult } from '@lume/shared'
+import { getThreadMessages, getThreadRunEvents, sidecarCall } from '@/lib/desktop-api'
+import { AGENT_IPC_CHANNELS, type AgentListSubagentRunsResult, type AgentMessage } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { hydrateRunEvents } from '@/hooks/run-event-state'
-import { projectRunEventMessages } from './run-event-message-projection'
+import { projectRunEventMessages, type RunEventMessageView } from './run-event-message-projection'
 import { RunEventContentBlock } from './RunEventContentBlock'
 
 interface AgentMessagesProps {
@@ -19,6 +19,44 @@ interface AgentMessagesProps {
 function isNearBottom(el: HTMLElement | null): boolean {
   if (!el) return true
   return el.scrollHeight - el.scrollTop - el.clientHeight < 100
+}
+
+export function reconcileUserMessageVersions(
+  messages: RunEventMessageView[],
+  visibleThreadMessages: AgentMessage[],
+): RunEventMessageView[] {
+  const visibleUsers = visibleThreadMessages.filter((message) => message.role === 'user')
+  if (visibleUsers.length === 0) return messages
+  const usedVisibleIds = new Set<string>()
+
+  return messages.map((message) => {
+    if (message.type === 'user') {
+      if (message.messageId) {
+        return message
+      }
+
+      const visible = visibleUsers.find((item) => (
+        !usedVisibleIds.has(item.id)
+        && item.content === message.text
+        && Math.abs(item.createdAt - Date.parse(message.createdAt)) < 10_000
+      )) ?? visibleUsers.find((item) => !usedVisibleIds.has(item.id) && item.content === message.text)
+
+      if (visible) {
+        usedVisibleIds.add(visible.id)
+        return {
+          ...message,
+          id: visible.id,
+          messageId: visible.id,
+          versionGroupId: visible.versionGroupId,
+          versionIndex: visible.versionIndex,
+          versionCount: visible.versionCount,
+        }
+      }
+      return message
+    }
+
+    return message
+  })
 }
 
 export function AgentMessages({ threadId, streaming }: AgentMessagesProps) {
@@ -41,9 +79,21 @@ export function AgentMessages({ threadId, streaming }: AgentMessagesProps) {
   const suppressProgrammaticSaveRef = useRef(false)
   const userScrollIntentRef = useRef(false)
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
+  const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
 
   const { save, restore, hasSavedPosition } = useScrollPositionMemory()
-  const liveMessages = useMemo(() => projectRunEventMessages(liveRunEvents), [liveRunEvents])
+  const projectedMessages = useMemo(() => projectRunEventMessages(liveRunEvents), [liveRunEvents])
+  const liveMessages = useMemo(
+    () => reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
+    [projectedMessages, visibleThreadMessages],
+  )
+  const userVersionRefreshKey = useMemo(
+    () => projectedMessages
+      .filter((message) => message.type === 'user')
+      .map((message) => `${message.messageId ?? ''}:${message.createdAt}:${message.text}`)
+      .join('|'),
+    [projectedMessages],
+  )
   const followSignal = JSON.stringify(liveMessages.at(-1) ?? null)
   const getScrollElement = useCallback(() => {
     const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
@@ -200,6 +250,12 @@ export function AgentMessages({ threadId, streaming }: AgentMessagesProps) {
         loadedRunEventThreadsRef.current.delete(threadId)
       })
   }, [liveRunEvents.length, setRunEvents, threadId])
+
+  useEffect(() => {
+    getThreadMessages(threadId)
+      .then((messages) => setVisibleThreadMessages(messages))
+      .catch((err) => console.error('[AgentMessages] 加载线程消息失败:', err))
+  }, [threadId, userVersionRefreshKey])
 
   useEffect(() => {
     const scrollElement = getScrollElement()

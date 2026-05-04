@@ -45,7 +45,7 @@ export const EnterPlanModeTool: ToolDefinition = {
     return {
       type: 'tool_result',
       tool_use_id: '',
-      content: 'Entered plan mode. Focus on exploration and implementation design only. Do not start editing files until you exit plan mode.',
+      content: 'Entered plan mode. Focus on exploration and implementation design only. Do not start editing files until you exit plan mode. When the plan is ready, call PlanWrite with status "needs_approval" so the user can review it in the Plan panel.',
     }
   },
 }

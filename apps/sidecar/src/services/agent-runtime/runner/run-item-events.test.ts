@@ -215,6 +215,45 @@ describe("projectRunStateToRunEvents", () => {
     }))).toEqual([]);
   });
 
+  test("hides plan control input while keeping execution output visible", () => {
+    expect(projectRunStateToRunEvents(baseRun({
+      input: {
+        userMessage: "请按顺序自动继续执行当前未完成计划。",
+        messageMetadata: {
+          hiddenFromChat: true,
+          planControlEvent: "continue_plan"
+        }
+      },
+      generatedItems: [
+        {
+          type: "assistant_message",
+          id: "assistant-plan-output",
+          content: [{ type: "text", text: "plan execution output" }],
+          createdAt: "2026-04-30T00:00:01.000Z"
+        },
+        {
+          type: "tool_call",
+          id: "tool-plan",
+          toolName: "Edit",
+          input: { file_path: "app.ts" },
+          parentAgentId: "runtime-core",
+          status: "pending",
+          createdAt: "2026-04-30T00:00:02.000Z"
+        }
+      ]
+    }))).toEqual([
+      { type: "assistant_delta", text: "plan execution output" },
+      {
+        type: "tool_call_started",
+        item: expect.objectContaining({ id: "tool-plan", toolName: "Edit" })
+      },
+      {
+        type: "run_completed",
+        result: { status: "completed", finalOutput: "plan execution output" }
+      }
+    ]);
+  });
+
   test("filters whitespace-only thinking stream deltas because they create empty thinking blocks", () => {
     expect(projectRunStateToRunEvents(baseRun({
       status: "running",

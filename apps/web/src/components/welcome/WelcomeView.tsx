@@ -11,9 +11,13 @@ import {
   tabsAtom,
   activeTabIdAtom,
   agentRunEventsAtom,
+  agentStreamingStatesAtom,
+  agentPlanStateAtom,
+  agentSidePanelViewAtom,
 } from '@/atoms'
 import { sidecarCall, agentSend, openFileDialog } from '@/lib/desktop-api'
 import { appendRunEvent } from '@/hooks/run-event-state'
+import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WelcomeModelPicker } from './WelcomeModelPicker'
@@ -22,6 +26,7 @@ import { AGENT_IPC_CHANNELS, type AgentThreadMeta, type LumeConfigThinkingLevel 
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
+import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 
 interface WelcomeViewProps {
   workspaceId?: string
@@ -36,6 +41,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [tabs, setTabs] = useAtom(tabsAtom)
   const setActiveTabId = useAtom(activeTabIdAtom)[1]
   const setRunEvents = useSetAtom(agentRunEventsAtom)
+  const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
+  const setPlanState = useSetAtom(agentPlanStateAtom)
+  const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setCurrentWorkspaceId = useAtom(currentWorkspaceIdAtom)[1]
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
@@ -45,6 +53,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [channelId, setChannelId] = useState<string | undefined>()
   const [modelId, setModelId] = useState<string | undefined>()
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+  const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
   const [sending, setSending] = useState(false)
   const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<Array<{ filename: string; sourcePath: string }>>([])
@@ -54,6 +63,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     getEffectiveLumeConfig()
       .then((config) => {
         if (config.agent?.thinkingLevel) setThinkingLevel(config.agent.thinkingLevel)
+        if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
       })
       .catch(() => {})
   }, [])
@@ -141,6 +151,21 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         })
       }
 
+      setTabs((prev) => {
+        const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
+        return [
+          { id: meta.id, type: 'agent' as const, title: meta.title, threadId: meta.id, workspaceId: meta.workspaceId },
+          ...withoutWelcome,
+        ]
+      })
+      setActiveTabId(meta.id)
+      setThreads((prev) => [meta, ...prev])
+      setStreamingStates((prev) => ({ ...prev, [meta.id]: 'streaming' }))
+      if (permissionMode === 'plan') {
+        setPlanState((prev) => ({ ...prev, [meta.id]: { threadId: meta.id, phase: 'planning' } }))
+        setSidePanelViews((prev) => ({ ...prev, [meta.id]: 'plan' }))
+      }
+
       setRunEvents((prev) => appendRunEvent(prev, {
         threadId: meta.id,
         event: {
@@ -154,21 +179,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         threadId: meta.id,
         userMessage: text,
         thinkingLevel,
+        permissionMode,
         ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
       } as any)
       editor.commands.clearContent()
       setEditorText('')
       setPendingFiles([])
-
-      setTabs((prev) => {
-        const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
-        return [
-          { id: meta.id, type: 'agent' as const, title: meta.title, threadId: meta.id, workspaceId: meta.workspaceId },
-          ...withoutWelcome,
-        ]
-      })
-      setActiveTabId(meta.id)
-      setThreads((prev) => [meta, ...prev])
     } catch (err) {
       console.error('[WelcomeView] 发送失败:', err)
       toast.error('发送失败，请重试')
@@ -274,6 +290,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         }
         thinkingLevelPicker={
           <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
+        }
+        permissionModePicker={
+          <PermissionModePicker value={permissionMode} onChange={setPermissionMode} />
         }
         editor={editor}
         pendingFiles={pendingFiles}

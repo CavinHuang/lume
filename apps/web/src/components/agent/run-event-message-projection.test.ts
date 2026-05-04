@@ -38,6 +38,7 @@ describe('run-event-message-projection', () => {
       id: 'user:2026-04-30T00:00:00.000Z',
       type: 'user',
       text: 'hi',
+      createdAt: '2026-04-30T00:00:00.000Z',
     }, {
       id: 'assistant:2026-04-30T00:00:00.000Z',
       type: 'assistant',
@@ -96,6 +97,7 @@ describe('run-event-message-projection', () => {
         id: 'user:2026-04-30T00:00:00.000Z',
         type: 'user',
         text: 'start',
+        createdAt: '2026-04-30T00:00:00.000Z',
       },
       {
         id: 'assistant:2026-04-30T00:00:00.000Z',
@@ -106,6 +108,59 @@ describe('run-event-message-projection', () => {
         status: 'streaming',
         toolCalls: [],
       },
+    ])
+  })
+
+  test('projects user message version metadata for edit controls', () => {
+    expect(projectRunEventMessages([
+      {
+        type: 'user_message_submitted',
+        text: 'edited prompt',
+        createdAt: '2026-04-30T00:00:00.000Z',
+        messageId: 'message-2',
+        versionGroupId: 'group-1',
+        versionIndex: 2,
+        versionCount: 2,
+      },
+    ])[0]).toEqual({
+      id: 'message-2',
+      type: 'user',
+      text: 'edited prompt',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      messageId: 'message-2',
+      versionGroupId: 'group-1',
+      versionIndex: 2,
+      versionCount: 2,
+    })
+  })
+
+  test('keeps only the latest visible turn for edited user message versions', () => {
+    expect(projectRunEventMessages([
+      {
+        type: 'user_message_submitted',
+        text: 'old prompt',
+        createdAt: '2026-04-30T00:00:00.000Z',
+        messageId: 'message-1',
+        versionGroupId: 'group-1',
+        versionIndex: 1,
+        versionCount: 2,
+      },
+      { type: 'assistant_delta', text: 'old answer' },
+      { type: 'run_completed', result: { status: 'completed' } },
+      {
+        type: 'user_message_submitted',
+        text: 'new prompt',
+        createdAt: '2026-04-30T00:01:00.000Z',
+        messageId: 'message-2',
+        versionGroupId: 'group-1',
+        versionIndex: 2,
+        versionCount: 2,
+      },
+      { type: 'assistant_delta', text: 'new answer' },
+      { type: 'run_completed', result: { status: 'completed' } },
+    ]).map((message) => ({ type: message.type, text: message.text }))).toEqual([
+      { type: 'user', text: 'new prompt' },
+      { type: 'assistant', text: 'new answer' },
     ])
   })
 
@@ -123,6 +178,57 @@ describe('run-event-message-projection', () => {
       { type: 'assistant', text: 'one' },
       { type: 'user', text: 'second' },
       { type: 'assistant', text: 'two' },
+    ])
+  })
+
+  test('shows structured plan progress after a completed hidden control run without a new user message', () => {
+    const messages = projectRunEventMessages([
+      { type: 'user_message_submitted', text: 'make a plan', createdAt: '2026-04-30T00:00:00.000Z' },
+      { type: 'assistant_delta', text: 'plan ready' },
+      { type: 'run_completed', result: { status: 'completed' } },
+      {
+        type: 'plan_progress',
+        planId: 'plan-1',
+        status: 'executing',
+        currentStepId: 'step-1',
+        steps: [
+          {
+            id: 'step-1',
+            title: '修改实现',
+            description: '修改实现',
+            type: 'edit',
+            status: 'running',
+          },
+          {
+            id: 'step-2',
+            title: '验证',
+            description: '验证',
+            type: 'execute',
+            status: 'pending',
+          },
+        ],
+        message: '修改实现',
+        createdAt: '2026-04-30T00:01:00.000Z',
+      },
+    ])
+
+    expect(messages.map((message) => ({ type: message.type, text: message.text }))).toEqual([
+      { type: 'user', text: 'make a plan' },
+      { type: 'assistant', text: 'plan ready' },
+      { type: 'assistant', text: '修改实现' },
+    ])
+    const planMessage = messages[2]
+    expect(planMessage?.type).toBe('assistant')
+    if (planMessage?.type !== 'assistant') throw new Error('expected assistant')
+    expect(planMessage.blocks).toEqual([
+      {
+        type: 'plan_progress',
+        id: 'plan:plan-1:2026-04-30T00:01:00.000Z',
+        event: expect.objectContaining({
+          planId: 'plan-1',
+          currentStepId: 'step-1',
+        }),
+      },
     ])
   })
 
@@ -263,6 +369,61 @@ describe('run-event-message-projection', () => {
     expect(assistant?.type).toBe('assistant')
     if (assistant?.type !== 'assistant') throw new Error('expected assistant')
     expect(assistant.blocks.map((block) => block.type)).toEqual(['tool_call', 'text'])
+  })
+
+  test('final assistant content only replaces the current segment after the latest tool call', () => {
+    const [, assistant] = projectRunEventMessages([
+      { type: 'user_message_submitted', text: 'write file', createdAt: '2026-04-30T00:00:00.000Z' },
+      { type: 'assistant_thinking_delta', text: '工具前思考。' },
+      {
+        type: 'assistant_message_final',
+        blocks: [{ type: 'thinking', text: '工具前最终思考。' }],
+      },
+      {
+        type: 'tool_call_started',
+        item: {
+          type: 'tool_call',
+          id: 'tool-1',
+          toolName: 'Write',
+          input: { file_path: 'story.txt' },
+          parentAgentId: 'runtime-core',
+          status: 'running',
+          createdAt: '2026-04-30T00:00:01.000Z',
+        },
+      },
+      {
+        type: 'tool_call_completed',
+        item: {
+          type: 'tool_result',
+          id: 'tool-1-result',
+          toolCallId: 'tool-1',
+          toolName: 'Write',
+          output: 'saved',
+          createdAt: '2026-04-30T00:00:02.000Z',
+        },
+      },
+      { type: 'assistant_thinking_delta', text: '工具后流式思考。' },
+      { type: 'assistant_delta', text: '工具后流式正文。' },
+      {
+        type: 'assistant_message_final',
+        blocks: [
+          { type: 'thinking', text: '工具后最终思考。' },
+          { type: 'text', text: '工具后最终正文。' },
+        ],
+      },
+      { type: 'run_completed', result: { status: 'completed' } },
+    ])
+
+    expect(assistant?.type).toBe('assistant')
+    if (assistant?.type !== 'assistant') throw new Error('expected assistant')
+    expect(assistant.blocks).toMatchObject([
+      { type: 'thinking', text: '工具前最终思考。' },
+      { type: 'tool_call', id: 'tool:tool-1' },
+      { type: 'thinking', text: '工具后最终思考。' },
+      { type: 'text', text: '工具后最终正文。' },
+    ])
+    expect(assistant.thinking).toBe('工具前最终思考。工具后最终思考。')
+    expect(assistant.text).toBe('工具后最终正文。')
   })
 
   test('preserves arrival order when a tool call arrives before thinking', () => {

@@ -26,6 +26,7 @@ describe('LumeWelcomeSurface', () => {
         workspaceSelector={<span>workspace-pill</span>}
         modelPicker={<span>model-pill</span>}
         composerModelPicker={<span>composer-model-pill</span>}
+        permissionModePicker={<span>permission-pill</span>}
         thinkingLevelPicker={<span>thinking-pill</span>}
         editor={null}
         pendingFiles={[]}
@@ -45,7 +46,7 @@ describe('LumeWelcomeSurface', () => {
     expect(html).toContain('最近文件')
   })
 
-  test('locks prompt-seed and composer interactions while sending', () => {
+  test('locks workflow and composer interactions while sending', () => {
     const model = buildWelcomeSurfaceViewModel({
       workspaceName: 'Lume 主路径',
       recentThreads: [],
@@ -57,6 +58,7 @@ describe('LumeWelcomeSurface', () => {
       workspaceSelector: <span>workspace-pill</span>,
       modelPicker: <span>model-pill</span>,
       composerModelPicker: <span>composer-model-pill</span>,
+      permissionModePicker: <span>permission-pill</span>,
       thinkingLevelPicker: <span>thinking-pill</span>,
       editor: null,
       pendingFiles: [{ filename: 'spec.md', sourcePath: 'C:/tmp/spec.md' }],
@@ -68,21 +70,16 @@ describe('LumeWelcomeSurface', () => {
       onChoosePromptSeed() {},
       onRemovePendingFile() {},
     }))
-    const disabledPromptSeedButtons = model.primaryCards.filter((card) =>
-      new RegExp(`<button type="button" disabled=""[^>]*>[\\s\\S]*?${card.title}[\\s\\S]*?<\\/button>`).test(html),
-    )
     const workflowItems = model.lowerPanels.find((panel) => panel.id === 'recommended-workflows')?.items ?? []
     const disabledWorkflowButtons = workflowItems.filter((item) =>
       new RegExp(`<button type="button" disabled=""[^>]*>[\\s\\S]*?${item.title}[\\s\\S]*?<\\/button>`).test(html),
     )
 
     expect(html).toContain('data-welcome-lock="hero-controls"')
-    expect(html).toContain('data-welcome-lock="primary-cards"')
     expect(html).toContain('data-welcome-lock="composer"')
     expect(html).toContain('inert=""')
     expect(html).toMatch(/<button type="button" aria-label="添加文件" title="添加文件" disabled=""/)
     expect(html).toMatch(/<button type="button" disabled=""[^>]*>×<\/button>/)
-    expect(disabledPromptSeedButtons).toHaveLength(model.primaryCards.length)
     expect(disabledWorkflowButtons).toHaveLength(workflowItems.length)
   })
 })

@@ -195,6 +195,21 @@ registerToolMetadata({
   description: "向用户提问"
 });
 
+registerToolMetadata({
+  name: "PlanWrite",
+  category: "control",
+  riskLevel: "low",
+  description: "写入结构化执行计划",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "PlanStepUpdate",
+  category: "control",
+  riskLevel: "low",
+  description: "写入当前计划步骤执行结果"
+});
+
 // 记忆工具
 registerToolMetadata({
   name: "memory_search",

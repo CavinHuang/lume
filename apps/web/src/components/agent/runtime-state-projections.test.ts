@@ -123,7 +123,7 @@ describe('runtime-state projections', () => {
       questions: [],
       risks: [],
       steps: [
-        { id: 'step-1', title: 'Read code', description: 'Read code', type: 'read', status: 'completed' },
+        { id: 'step-1', title: 'Read code', description: 'Read code', type: 'read', status: 'completed', result: 'Final result' },
         { id: 'step-2', title: 'Patch', description: 'Patch runtime', type: 'edit', status: 'running' },
       ],
       expectedChanges: {},
@@ -133,7 +133,7 @@ describe('runtime-state projections', () => {
     }]
 
     expect(buildStructuredPlanSteps(plans)).toEqual([
-      { id: 'step-1', text: 'Read code', status: 'completed', failCount: 0, lastError: null },
+      { id: 'step-1', text: 'Read code\nFinal result', status: 'completed', failCount: 0, lastError: null },
       { id: 'step-2', text: 'Patch', status: 'in_progress', failCount: 0, lastError: null },
     ])
   })

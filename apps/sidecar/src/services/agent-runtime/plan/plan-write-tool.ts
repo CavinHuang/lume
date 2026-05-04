@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { defineTool, type ToolDefinition } from "@lume/agent-sdk";
+import { persistPlanApprovalInterruption } from "./plan-approval-service";
 import { createFileBackedLumePlanStore } from "./plan-store";
 import type { LumePlan, LumePlanStep } from "./plan-types";
 
@@ -9,6 +10,7 @@ export interface CreatePlanWriteToolInput {
   runId: string;
   traceSpanId?: string;
   now?: () => string;
+  onPlanUpdated?: (plan: LumePlan) => void | Promise<void>;
 }
 
 export function createPlanWriteTool(input: CreatePlanWriteToolInput): ToolDefinition {
@@ -34,7 +36,7 @@ export function createPlanWriteTool(input: CreatePlanWriteToolInput): ToolDefini
       },
       required: ["goal", "summary", "steps"]
     },
-    isReadOnly: false,
+    isReadOnly: true,
     isConcurrencySafe: false,
     async call(rawInput) {
       const record = rawInput && typeof rawInput === "object" ? rawInput as Record<string, unknown> : {};
@@ -62,6 +64,13 @@ export function createPlanWriteTool(input: CreatePlanWriteToolInput): ToolDefini
         approvedAt: existing?.approvedAt
       };
       await store.upsert(plan);
+      if (plan.status === "needs_approval") {
+        await persistPlanApprovalInterruption({
+          sessionDir: input.sessionDir,
+          plan
+        });
+      }
+      await input.onPlanUpdated?.(plan);
       return {
         data: {
           planId: plan.id,
@@ -77,9 +86,20 @@ function normalizeSteps(value: unknown, fallback: LumePlanStep[]): LumePlanStep[
   if (!Array.isArray(value)) return fallback;
   return value
     .map((item, index) => {
+      if (typeof item === "string" && item.trim()) {
+        return {
+          id: `step-${index + 1}`,
+          title: item.trim(),
+          description: item.trim(),
+          type: "analyze" as const,
+          status: "pending" as const
+        } satisfies LumePlanStep;
+      }
       if (!item || typeof item !== "object") return null;
       const record = item as Record<string, unknown>;
-      const title = toNonEmptyString(record.title);
+      const title = toNonEmptyString(record.title)
+        ?? toNonEmptyString(record.text)
+        ?? toNonEmptyString(record.description);
       if (!title) return null;
       const expectedTools = toStringArray(record.expectedTools);
       const expectedFiles = toStringArray(record.expectedFiles);

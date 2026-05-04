@@ -8,7 +8,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
-import { agentRunEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentPlanStateAtom, agentRunEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
   type LumeConfigThinkingLevel,
@@ -18,12 +18,16 @@ import {
 import { appendRunEvent } from '@/hooks/run-event-state'
 import { MentionList } from './MentionList'
 import { ModelPicker } from './ModelPicker'
+import { PermissionModePicker } from './PermissionModePicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 import type { MentionItem, MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
+import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
+import { composerControlTriggerClassName } from './composer-control-styles'
+import { syncPermissionModeWithPlanPhase } from './agent-input-state'
 
 interface AgentInputProps {
   threadId: string
@@ -142,11 +146,15 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const planState = useAtomValue(agentPlanStateAtom)[threadId]
   const setRunEvents = useSetAtom(agentRunEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const workspaceIdRef = useRef<string | null>(null)
   const workspaceSlugRef = useRef<string | null>(null)
+  const defaultPermissionModeRef = useRef<PermissionModeValue>('default')
+  const autoSelectedPlanModeRef = useRef(false)
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+  const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
   const [editorText, setEditorText] = useState('')
 
   useEffect(() => {
@@ -155,9 +163,26 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
         if (config.agent?.thinkingLevel) {
           setThinkingLevel(config.agent.thinkingLevel)
         }
+        if (config.agent?.permissionMode) {
+          defaultPermissionModeRef.current = config.agent.permissionMode
+          setPermissionMode(config.agent.permissionMode)
+        }
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    setPermissionMode((current) => {
+      const next = syncPermissionModeWithPlanPhase({
+        permissionMode: current,
+        defaultPermissionMode: defaultPermissionModeRef.current,
+        planPhase: planState?.phase,
+        autoSelectedPlan: autoSelectedPlanModeRef.current,
+      })
+      autoSelectedPlanModeRef.current = next.autoSelectedPlan
+      return next.permissionMode
+    })
+  }, [planState?.phase, threadId])
 
   useEffect(() => {
     const thread = threads.find((t) => t.id === threadId)
@@ -238,6 +263,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
       threadId,
       userMessage: text,
       thinkingLevel,
+      permissionMode,
       ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
     })
   }
@@ -256,6 +282,11 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
       console.error('[AgentInput] 保存思考等级失败:', error)
       toast.error('保存思考等级失败')
     })
+  }
+
+  const handlePermissionModeChange = (value: PermissionModeValue) => {
+    autoSelectedPlanModeRef.current = false
+    setPermissionMode(value)
   }
 
   const handleAttach = async () => {
@@ -293,7 +324,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
           <>
             <button
               onClick={handleAttach}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-3.5 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+              className={composerControlTriggerClassName}
               title="附加文件"
               type="button"
             >
@@ -301,6 +332,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
               文件
             </button>
             <ModelPicker threadId={threadId} />
+            <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
             <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
           </>
         }

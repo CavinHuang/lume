@@ -676,6 +676,22 @@ export interface AgentPlanApprovalResponseInput {
   threadId: string
   planId: string
   decision: 'approve' | 'reject'
+  execute?: boolean
+}
+
+export interface AgentExecutePlanInput {
+  threadId: string
+  planId?: string
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions'
+  intent?: 'execute' | 'continue' | 'retry' | 'skip'
+}
+
+export interface AgentExecutePlanResult {
+  ok: boolean
+  status: 'sent' | 'queued' | 'not_found' | 'not_executable'
+  queuedCount?: number
+  planId?: string
+  error?: string
 }
 
 export type AgentResumeRunStatus =
@@ -851,6 +867,25 @@ export interface AgentStructuredPlanStep {
   error?: string
   traceSpanId?: string
   currentStepId?: string
+  attemptCount?: number
+  startedAt?: string
+  endedAt?: string
+  blockedReason?: string
+}
+
+export interface AgentStructuredPlanEvent {
+  type:
+    | 'plan_started'
+    | 'step_started'
+    | 'step_completed'
+    | 'step_failed'
+    | 'step_skipped'
+    | 'plan_waiting'
+    | 'plan_completed'
+  planId: string
+  stepId?: string
+  message?: string
+  createdAt: string
 }
 
 export interface AgentStructuredPlan {
@@ -869,6 +904,7 @@ export interface AgentStructuredPlan {
     tools?: string[]
     memoryWrites?: string[]
   }
+  events?: AgentStructuredPlanEvent[]
   status: AgentStructuredPlanStatus
   currentStepId?: string
   traceSpanId?: string
@@ -930,7 +966,15 @@ export interface PlanStateChangedEvent {
 // ===== Agent 流式事件载荷 =====
 
 export type LumeRunEvent =
-  | { type: 'user_message_submitted'; text: string; createdAt: string }
+  | {
+      type: 'user_message_submitted'
+      text: string
+      createdAt: string
+      messageId?: string
+      versionGroupId?: string
+      versionIndex?: number
+      versionCount?: number
+    }
   | { type: 'assistant_delta'; text: string }
   | { type: 'assistant_thinking_delta'; text: string }
   | {
@@ -999,6 +1043,21 @@ export type LumeRunEvent =
         traceSpanId?: string
         createdAt: string
       }
+    }
+  | {
+      type: 'plan_progress'
+      planId: string
+      status: AgentStructuredPlanStatus
+      currentStepId?: string
+      steps: AgentStructuredPlanStep[]
+      message?: string
+      createdAt: string
+    }
+  | {
+      type: 'plan_execution_status'
+      text: string
+      status: 'running' | 'waiting' | 'completed' | 'failed'
+      createdAt: string
     }
   | { type: 'run_completed'; result: { status: 'completed'; finalOutput?: string } }
   | { type: 'run_failed'; error: { code: string; message: string; stack?: string; retryable?: boolean } }
@@ -1293,6 +1352,8 @@ export const AGENT_IPC_CHANNELS = {
   SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
   /** 结构化 plan 审批结果（web -> sidecar） */
   SUBMIT_PLAN_APPROVAL: 'agent:submit-plan-approval',
+  /** 执行或继续结构化 plan（web -> sidecar） */
+  EXECUTE_PLAN: 'agent:execute-plan',
   /** 获取当前待处理的交互请求（用于冷启动恢复） */
   GET_PENDING_INTERACTIVE: 'agent:get-pending-interactive',
   /** runtime status 变化通知（sidecar -> web） */

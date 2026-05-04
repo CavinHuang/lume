@@ -109,8 +109,8 @@ const planPrompt = buildSystemPromptAppend({
 });
 
 check("P0-3: 计划模式 — 禁止 AskUserQuestion", planPrompt, "严禁调用 AskUserQuestion");
-check("P0-3: 计划模式 — 增强计划章节", planPrompt, ".context/plan/");
-check("P0-3: 计划模式 — 展示摘要后等确认", planPrompt, "等待用户确认");
+check("P0-3: 计划模式 — 使用结构化计划工具", planPrompt, "PlanWrite");
+check("P0-3: 计划模式 — 等待计划批准", planPrompt, "needs_approval");
 // 计划模式不应包含原始 Planning Protocol，而是使用增强版计划章节
 const planHasPlanningProtocol = planPrompt.includes("Planning Protocol");
 if (!planHasPlanningProtocol) {

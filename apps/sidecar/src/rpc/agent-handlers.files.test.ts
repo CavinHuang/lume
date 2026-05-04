@@ -13,6 +13,7 @@ function createTestPlanStateTracker(): PlanStateTracker {
   return {
     isLikelyExecutionRequest: () => false,
     syncExecutionFromUserMessage: () => undefined,
+    syncExecutionFromSendInput: () => undefined,
     getPhase: () => "idle",
     markCurrentStepCompleted: () => undefined,
     markCurrentStepFailed: () => undefined,
