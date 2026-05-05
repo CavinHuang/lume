@@ -8,7 +8,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
-import { agentPlanStateAtom, agentRunEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentPlanModePhaseAtom, agentRunEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
   type LumeConfigThinkingLevel,
@@ -27,7 +27,7 @@ import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/component
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { composerControlTriggerClassName } from './composer-control-styles'
-import { syncPermissionModeWithPlanPhase } from './agent-input-state'
+import { syncPermissionModeWithPlanModePhase } from './agent-input-state'
 
 interface AgentInputProps {
   threadId: string
@@ -146,7 +146,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
-  const planState = useAtomValue(agentPlanStateAtom)[threadId]
+  const planModePhase = useAtomValue(agentPlanModePhaseAtom)[threadId]
   const setRunEvents = useSetAtom(agentRunEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const workspaceIdRef = useRef<string | null>(null)
@@ -173,16 +173,16 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
 
   useEffect(() => {
     setPermissionMode((current) => {
-      const next = syncPermissionModeWithPlanPhase({
+      const next = syncPermissionModeWithPlanModePhase({
         permissionMode: current,
         defaultPermissionMode: defaultPermissionModeRef.current,
-        planPhase: planState?.phase,
+        planPhase: planModePhase?.phase,
         autoSelectedPlan: autoSelectedPlanModeRef.current,
       })
       autoSelectedPlanModeRef.current = next.autoSelectedPlan
       return next.permissionMode
     })
-  }, [planState?.phase, threadId])
+  }, [planModePhase?.phase, threadId])
 
   useEffect(() => {
     const thread = threads.find((t) => t.id === threadId)

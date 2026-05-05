@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentSendInput } from "@lume/shared";
-import { PlanStateTracker } from "./plan-state-tracker";
+import { PlanModePhaseTracker } from "./plan-mode-phase-tracker";
 
 function makeSendInput(userMessage: string, metadata?: Record<string, unknown>): AgentSendInput {
   return {
@@ -11,9 +11,9 @@ function makeSendInput(userMessage: string, metadata?: Record<string, unknown>):
   };
 }
 
-describe("plan-state-tracker", () => {
+describe("plan-mode-phase-tracker", () => {
   test("应识别执行请求", () => {
-    const tracker = new PlanStateTracker();
+    const tracker = new PlanModePhaseTracker();
     expect(tracker.isLikelyExecutionRequest(makeSendInput("执行当前任务", {
       taskRunId: "taskrun-1",
       taskId: "task-1"
@@ -22,7 +22,7 @@ describe("plan-state-tracker", () => {
   });
 
   test("phase 未变化且无附加信息时不应重复发事件", () => {
-    const tracker = new PlanStateTracker();
+    const tracker = new PlanModePhaseTracker();
     const first = tracker.updatePhase("s-phase", "planning");
     const second = tracker.updatePhase("s-phase", "planning");
     expect(first?.phase).toBe("planning");

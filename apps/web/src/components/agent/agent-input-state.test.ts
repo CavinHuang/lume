@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { syncPermissionModeWithPlanPhase } from './agent-input-state'
+import { syncPermissionModeWithPlanModePhase } from './agent-input-state'
 
-describe('syncPermissionModeWithPlanPhase', () => {
+describe('syncPermissionModeWithPlanModePhase', () => {
   test('auto-selects plan while the thread is planning', () => {
-    expect(syncPermissionModeWithPlanPhase({
+    expect(syncPermissionModeWithPlanModePhase({
       permissionMode: 'default',
       defaultPermissionMode: 'default',
       planPhase: 'planning',
@@ -15,7 +15,7 @@ describe('syncPermissionModeWithPlanPhase', () => {
   })
 
   test('restores the default mode after an automatic plan selection leaves review', () => {
-    expect(syncPermissionModeWithPlanPhase({
+    expect(syncPermissionModeWithPlanModePhase({
       permissionMode: 'plan',
       defaultPermissionMode: 'acceptEdits',
       planPhase: 'executing',
@@ -27,7 +27,7 @@ describe('syncPermissionModeWithPlanPhase', () => {
   })
 
   test('keeps a manually selected plan mode after the plan phase ends', () => {
-    expect(syncPermissionModeWithPlanPhase({
+    expect(syncPermissionModeWithPlanModePhase({
       permissionMode: 'plan',
       defaultPermissionMode: 'default',
       planPhase: 'executed',

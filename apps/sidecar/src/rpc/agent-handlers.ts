@@ -101,7 +101,7 @@ import {
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
-import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
+import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attempt";
 import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
 import {
@@ -215,8 +215,8 @@ type PlanExecutionIntent = "execute" | "continue" | "retry" | "skip";
 
 interface AgentHandlersContext {
   writeNotification: NotificationWriter;
-  planStateTracker: PlanStateTracker;
-  notifyPlanStateChange: (
+  planModePhaseTracker: PlanModePhaseTracker;
+  notifyPlanModePhaseChange: (
     threadId: string,
     phase: "idle" | "planning" | "review" | "executing" | "executed"
   ) => void;
@@ -302,7 +302,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       });
       if (skipped) {
         emitLatestTaskProgress(input.threadId, skipped);
-        context.notifyPlanStateChange(input.threadId, skipped.status === "completed" ? "executed" : "executing");
+        context.notifyPlanModePhaseChange(input.threadId, skipped.status === "completed" ? "executed" : "executing");
       }
       return {
         ok: Boolean(skipped),
@@ -336,7 +336,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     emitLatestTaskProgress(input.threadId, started.taskRun);
     const dispatch = appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId, { taskRunId: started.taskRun.id, contractId: contract.id }), {
       onExecutionStarted: () => {
-        context.notifyPlanStateChange(input.threadId, "executing");
+        context.notifyPlanModePhaseChange(input.threadId, "executing");
       }
     });
     return {
@@ -358,10 +358,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   };
 
   const createExecutionStartCallback = (input: AgentSendInput) => () => {
-    if (!context.planStateTracker.isLikelyExecutionRequest(input)) {
+    if (!context.planModePhaseTracker.isLikelyExecutionRequest(input)) {
       return;
     }
-    context.notifyPlanStateChange(input.threadId, "executing");
+    context.notifyPlanModePhaseChange(input.threadId, "executing");
   };
 
   const createAgentStreamEmitter = (threadId: string, options?: { contractId?: string; taskRunId?: string }) => {
@@ -411,7 +411,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         const sessionDir = resolveRuntimeSessionDir(threadId);
         if (
           !taskContractWritten
-          && context.planStateTracker.getPhase(threadId) === "planning"
+          && context.planModePhaseTracker.getPhase(threadId) === "planning"
           && finalOutput?.trim()
         ) {
           void persistFallbackTaskContractFromText({
@@ -420,7 +420,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             runId: threadId,
             text: finalOutput,
             onTaskContractUpdated: () => {
-              context.notifyPlanStateChange(threadId, "review");
+              context.notifyPlanModePhaseChange(threadId, "review");
             }
           });
         }
@@ -448,13 +448,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
               return;
             }
             if (taskRun?.status === "completed") {
-              context.notifyPlanStateChange(threadId, "executed");
+              context.notifyPlanModePhaseChange(threadId, "executed");
             }
           })();
           return;
         }
-        if (context.planStateTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanStateChange(threadId, "executed");
+        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+          context.notifyPlanModePhaseChange(threadId, "executed");
         }
       },
       onError: (error: string) => {
@@ -473,8 +473,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             }
           }
         });
-        if (context.planStateTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanStateChange(threadId, "review");
+        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+          context.notifyPlanModePhaseChange(threadId, "review");
         }
       },
       onTitleUpdated: (title: string) =>
@@ -529,7 +529,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         },
       onTaskContractUpdated: () => {
         taskContractWritten = true;
-        context.notifyPlanStateChange(threadId, "review");
+        context.notifyPlanModePhaseChange(threadId, "review");
       }
     };
   };
@@ -668,7 +668,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.DELETE_THREAD);
       deleteAgentThread(input.threadId);
       getAgentRuntimeStatusManager().clearSession(input.threadId);
-      context.planStateTracker.clearSession(input.threadId);
+      context.planModePhaseTracker.clearSession(input.threadId);
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS]: async (params) => {
@@ -1176,8 +1176,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         threadId: input.threadId,
         error: "用户已停止当前执行"
       });
-      if (context.planStateTracker.getPhase(input.threadId) === "executing") {
-        context.notifyPlanStateChange(input.threadId, "review");
+      if (context.planModePhaseTracker.getPhase(input.threadId) === "executing") {
+        context.notifyPlanModePhaseChange(input.threadId, "review");
       }
       return { ok: true };
     },
@@ -1272,7 +1272,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
       const sendInput = await resolvePlanContinuationInput(input);
       if (sendInput.permissionMode === "plan") {
-        context.notifyPlanStateChange(sendInput.threadId, "planning");
+        context.notifyPlanModePhaseChange(sendInput.threadId, "planning");
       }
       return appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId), {
         onExecutionStarted: createExecutionStartCallback(sendInput)

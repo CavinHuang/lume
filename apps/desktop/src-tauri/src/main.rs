@@ -1013,8 +1013,13 @@ fn get_logs_dir() -> PathBuf {
 fn main() {
     // 获取日志目录
     let logs_dir = get_logs_dir();
+    let updater_pubkey = option_env!("LUME_UPDATER_PUBLIC_KEY")
+        .unwrap_or("__LUME_UPDATER_PUBLIC_KEY__")
+        .to_string();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().pubkey(updater_pubkey).build())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([

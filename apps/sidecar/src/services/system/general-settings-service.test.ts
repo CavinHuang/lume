@@ -47,6 +47,12 @@ describe("general-settings-service", () => {
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false
+      },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null
       }
     });
   });
@@ -70,6 +76,12 @@ describe("general-settings-service", () => {
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false
+      },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null
       }
     });
 
@@ -87,6 +99,12 @@ describe("general-settings-service", () => {
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true
+      },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null
       }
     });
 
@@ -101,6 +119,12 @@ describe("general-settings-service", () => {
           minimizeToTray?: boolean;
           closeToTray?: boolean;
         };
+        updateSettings?: {
+          autoCheckUpdates?: boolean;
+          notifyAfterDownload?: boolean;
+          installOnlyWhenIdle?: boolean;
+          lastUpdateCheckAt?: string | null;
+        };
       };
     };
     expect(raw.proxy?.enabled).toBeTrue();
@@ -112,6 +136,12 @@ describe("general-settings-service", () => {
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true
+      },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null
       }
     });
     expect(existsSync(join(tempConfigDir, "settings.json.tmp"))).toBeFalse();
@@ -175,6 +205,12 @@ describe("general-settings-service", () => {
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false
+      },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null
       }
     });
 
@@ -203,6 +239,35 @@ describe("general-settings-service", () => {
       };
     };
     expect(raw.generalSettings?.userProfile?.displayName).toBe("Minator Huang");
+  });
+
+  test("更新版本偏好时保留未传入的同级选项", () => {
+    const first = updatePersistedGeneralSettings({
+      updateSettings: {
+        autoCheckUpdates: false,
+        lastUpdateCheckAt: "2026-05-05T03:00:00.000Z"
+      }
+    });
+
+    expect(first.updateSettings).toEqual({
+      autoCheckUpdates: false,
+      notifyAfterDownload: true,
+      installOnlyWhenIdle: true,
+      lastUpdateCheckAt: "2026-05-05T03:00:00.000Z"
+    });
+
+    const second = updatePersistedGeneralSettings({
+      updateSettings: {
+        notifyAfterDownload: false
+      }
+    });
+
+    expect(second.updateSettings).toEqual({
+      autoCheckUpdates: false,
+      notifyAfterDownload: false,
+      installOnlyWhenIdle: true,
+      lastUpdateCheckAt: "2026-05-05T03:00:00.000Z"
+    });
   });
 
   test("清理缓存仅删除安全缓存目录并保留会话线程工作区与配置", () => {

@@ -81,10 +81,10 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
           <FolderOpen size={16} />
         </button>
         <button
-          onClick={() => toggle('plan')}
+          onClick={() => toggle('task-progress')}
           className={cn(
             'p-1.5 rounded-lg transition-colors',
-            currentView === 'plan'
+            currentView === 'task-progress'
               ? 'bg-foreground/10 text-foreground'
               : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
           )}

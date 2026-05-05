@@ -120,6 +120,15 @@ export function mergeGeneralSettings(
       minimizeToTray: updates.windowBehavior?.minimizeToTray ?? base.windowBehavior.minimizeToTray,
       closeToTray: updates.windowBehavior?.closeToTray ?? base.windowBehavior.closeToTray,
     },
+    updateSettings: {
+      autoCheckUpdates: updates.updateSettings?.autoCheckUpdates ?? base.updateSettings.autoCheckUpdates,
+      notifyAfterDownload: updates.updateSettings?.notifyAfterDownload ?? base.updateSettings.notifyAfterDownload,
+      installOnlyWhenIdle: updates.updateSettings?.installOnlyWhenIdle ?? base.updateSettings.installOnlyWhenIdle,
+      lastUpdateCheckAt:
+        updates.updateSettings && 'lastUpdateCheckAt' in updates.updateSettings
+          ? updates.updateSettings.lastUpdateCheckAt ?? null
+          : base.updateSettings.lastUpdateCheckAt,
+    },
   }
 }
 

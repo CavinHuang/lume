@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Provider, createStore } from 'jotai'
 import {
   activeTabIdAtom,
-  agentPlanStateAtom,
+  agentPlanModePhaseAtom,
   agentSidePanelViewAtom,
   agentStreamingStatesAtom,
   agentThreadsAtom,
@@ -599,11 +599,11 @@ describe('WelcomeView', () => {
       }))
       expect(store.get(activeTabIdAtom)).toBe('created-thread')
       expect(store.get(agentStreamingStatesAtom)['created-thread']).toBe('streaming')
-      expect(store.get(agentPlanStateAtom)['created-thread']).toEqual({
+      expect(store.get(agentPlanModePhaseAtom)['created-thread']).toEqual({
         threadId: 'created-thread',
         phase: 'planning',
       })
-      expect(store.get(agentSidePanelViewAtom)['created-thread']).toBe('plan')
+      expect(store.get(agentSidePanelViewAtom)['created-thread']).toBe('task-progress')
     } finally {
       if (root) {
         await act(async () => {

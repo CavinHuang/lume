@@ -7,7 +7,7 @@ import {
   agentRunEventsAtom,
   agentPendingInteractiveAtom,
   agentSubagentRunsAtom,
-  agentPlanStateAtom,
+  agentPlanModePhaseAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
   agentSidePanelViewAtom,
@@ -20,7 +20,7 @@ import {
   type AgentAskUserQuestionRequest,
   type AgentToolPermissionRequest,
   type AgentSubagentCompletionEvent,
-  type PlanStateChangedEvent,
+  type PlanModePhaseChangedEvent,
 } from '@lume/shared'
 import {
   upsertPendingAskUserQuestion,
@@ -35,7 +35,7 @@ export function useGlobalAgentListeners() {
   const setRunEvents = useSetAtom(agentRunEventsAtom)
   const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
-  const setPlanState = useSetAtom(agentPlanStateAtom)
+  const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
@@ -149,11 +149,11 @@ export function useGlobalAgentListeners() {
           })
           break
         }
-        case AGENT_IPC_CHANNELS.PLAN_STATE_CHANGED: {
-          const e = params as PlanStateChangedEvent
-          setPlanState((prev) => ({ ...prev, [e.threadId]: e }))
+        case AGENT_IPC_CHANNELS.PLAN_MODE_PHASE_CHANGED: {
+          const e = params as PlanModePhaseChangedEvent
+          setPlanModePhase((prev) => ({ ...prev, [e.threadId]: e }))
           if (e.phase === 'planning' || e.phase === 'review') {
-            setSidePanelViews((prev) => ({ ...prev, [e.threadId]: 'plan' }))
+            setSidePanelViews((prev) => ({ ...prev, [e.threadId]: 'task-progress' }))
             void sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE, { threadId: e.threadId })
               .then((states) => {
                 setPendingInteractive((prev) => {
@@ -180,5 +180,5 @@ export function useGlobalAgentListeners() {
       }
     })
     return () => { unlisten.then((fn) => fn()) }
-  }, [setStreamingStates, setRuntimeStatus, setRunEvents, setPendingInteractive, setSubagentRuns, setPlanState, setThreads, setErrorMessages, setSidePanelViews])
+  }, [setStreamingStates, setRuntimeStatus, setRunEvents, setPendingInteractive, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews])
 }

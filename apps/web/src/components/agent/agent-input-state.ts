@@ -1,10 +1,10 @@
-import type { PlanPhase } from '@lume/shared'
+import type { PlanModePhase } from '@lume/shared'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 
 interface PermissionPlanSyncInput {
   permissionMode: PermissionModeValue
   defaultPermissionMode: PermissionModeValue
-  planPhase?: PlanPhase
+  planPhase?: PlanModePhase
   autoSelectedPlan: boolean
 }
 
@@ -13,7 +13,7 @@ interface PermissionPlanSyncOutput {
   autoSelectedPlan: boolean
 }
 
-export function syncPermissionModeWithPlanPhase(input: PermissionPlanSyncInput): PermissionPlanSyncOutput {
+export function syncPermissionModeWithPlanModePhase(input: PermissionPlanSyncInput): PermissionPlanSyncOutput {
   const planActive = input.planPhase === 'planning' || input.planPhase === 'review'
   if (planActive) {
     return {

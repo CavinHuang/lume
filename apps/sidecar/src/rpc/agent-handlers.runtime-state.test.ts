@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { AgentTaskContractsResult } from "@lume/shared";
-import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
+import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { persistTaskApprovalInterruption } from "../services/agent-runtime/plan/task-approval-service";
 import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
@@ -35,12 +35,12 @@ mock.module("../services/agent/agent-service", () => ({
   submitAskUserQuestionAnswers: () => false
 }));
 
-function createTestPlanStateTracker(): PlanStateTracker {
+function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
     isLikelyExecutionRequest: () => false,
     getPhase: () => "idle",
     clearSession: () => undefined
-  } as unknown as PlanStateTracker;
+  } as unknown as PlanModePhaseTracker;
 }
 
 describe("agent-handlers runtime state", () => {
@@ -166,8 +166,8 @@ describe("agent-handlers runtime state", () => {
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
     });
 
     const resume = await handlers[AGENT_IPC_CHANNELS.RESUME_RUN]!({ threadId, runId });
@@ -300,8 +300,8 @@ describe("agent-handlers runtime state", () => {
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
     });
 
     const resume = await handlers[AGENT_IPC_CHANNELS.RESUME_RUN]!({ threadId, runId });

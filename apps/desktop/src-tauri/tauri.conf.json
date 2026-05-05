@@ -20,6 +20,30 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Local-first AI Agent desktop app",
+    "longDescription": "Lume is a local-first AI Agent desktop app.",
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "__LUME_UPDATER_PUBLIC_KEY__",
+      "endpoints": [
+        "https://github.com/CavinHUang/Lume/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

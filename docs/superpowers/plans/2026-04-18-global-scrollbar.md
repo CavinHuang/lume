@@ -23,7 +23,7 @@
 
 - Modify: `apps/web/src/components/agent/AgentMessages.tsx`
   - Replace the native scroll container while preserving chat auto-scroll and scroll memory.
-- Modify: `apps/web/src/components/agent/PlanPanel.tsx`
+- Modify: `apps/web/src/components/agent/TaskProgressPanel.tsx`
   - Use the shared scroll primitive for the plan step list.
 - Modify: `apps/web/src/components/app-shell/LeftSidebar.tsx`
   - Use the shared scroll primitive for the thread list area.
@@ -174,7 +174,7 @@ git commit -m "feat: unify shared scrollbar behavior"
 
 **Files:**
 - Modify: `apps/web/src/components/agent/AgentMessages.tsx`
-- Modify: `apps/web/src/components/agent/PlanPanel.tsx`
+- Modify: `apps/web/src/components/agent/TaskProgressPanel.tsx`
 - Modify: `apps/web/src/components/app-shell/LeftSidebar.tsx`
 - Modify: `apps/web/src/components/file-browser/FileBrowser.tsx`
 
@@ -221,9 +221,9 @@ restore(threadId, viewportRef.current)
 el.scrollHeight - el.scrollTop - el.clientHeight < 100
 ```
 
-- [ ] **Step 3: Migrate `PlanPanel` to the shared `ScrollArea`**
+- [ ] **Step 3: Migrate `TaskProgressPanel` to the shared `ScrollArea`**
 
-Update `apps/web/src/components/agent/PlanPanel.tsx`:
+Update `apps/web/src/components/agent/TaskProgressPanel.tsx`:
 
 ```tsx
 <ScrollArea className="flex-1">
@@ -290,7 +290,7 @@ Expected: all five behaviors work and the scrollbar is only obvious on hover or 
 - [ ] **Step 8: Commit the vertical-panel migration**
 
 ```bash
-git add apps/web/src/components/agent/AgentMessages.tsx apps/web/src/components/agent/PlanPanel.tsx apps/web/src/components/app-shell/LeftSidebar.tsx apps/web/src/components/file-browser/FileBrowser.tsx
+git add apps/web/src/components/agent/AgentMessages.tsx apps/web/src/components/agent/TaskProgressPanel.tsx apps/web/src/components/app-shell/LeftSidebar.tsx apps/web/src/components/file-browser/FileBrowser.tsx
 git commit -m "feat: migrate app panels to shared scroll area"
 ```
 
@@ -365,7 +365,7 @@ git commit -m "feat: migrate tab overflow to shared scroll area"
 **Files:**
 - Modify: `apps/web/src/index.css`
 - Modify: `apps/web/src/components/agent/AgentMessages.tsx`
-- Modify: `apps/web/src/components/agent/PlanPanel.tsx`
+- Modify: `apps/web/src/components/agent/TaskProgressPanel.tsx`
 - Modify: `apps/web/src/components/app-shell/LeftSidebar.tsx`
 - Modify: `apps/web/src/components/file-browser/FileBrowser.tsx`
 - Modify: `apps/web/src/components/tabs/TabBar.tsx`
@@ -419,7 +419,7 @@ Expected: all seven checks pass.
 - [ ] **Step 5: Commit the cleanup pass**
 
 ```bash
-git add apps/web/src/index.css apps/web/src/components/agent/AgentMessages.tsx apps/web/src/components/agent/PlanPanel.tsx apps/web/src/components/app-shell/LeftSidebar.tsx apps/web/src/components/file-browser/FileBrowser.tsx apps/web/src/components/tabs/TabBar.tsx apps/web/src/components/ui/scroll-area.tsx
+git add apps/web/src/index.css apps/web/src/components/agent/AgentMessages.tsx apps/web/src/components/agent/TaskProgressPanel.tsx apps/web/src/components/app-shell/LeftSidebar.tsx apps/web/src/components/file-browser/FileBrowser.tsx apps/web/src/components/tabs/TabBar.tsx apps/web/src/components/ui/scroll-area.tsx
 git commit -m "chore: clean up global scrollbar styling"
 ```
 

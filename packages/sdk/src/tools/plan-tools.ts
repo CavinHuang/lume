@@ -9,14 +9,14 @@ import type { ToolDefinition, ToolResult } from '../types.js'
 
 // Track plan mode state
 let planModeActive = false
-let currentPlan: string | null = null
+let currentTaskContract: string | null = null
 
 export function isPlanModeActive(): boolean {
   return planModeActive
 }
 
-export function getCurrentPlan(): string | null {
-  return currentPlan
+export function getCurrentTaskContract(): string | null {
+  return currentTaskContract
 }
 
 export const EnterPlanModeTool: ToolDefinition = {
@@ -40,7 +40,7 @@ export const EnterPlanModeTool: ToolDefinition = {
     }
 
     planModeActive = true
-    currentPlan = null
+    currentTaskContract = null
 
     return {
       type: 'tool_result',
@@ -52,15 +52,15 @@ export const EnterPlanModeTool: ToolDefinition = {
 
 export const ExitPlanModeTool: ToolDefinition = {
   name: 'ExitPlanMode',
-  description: 'Exit plan mode and present the task contract for implementation.',
+  description: 'Exit plan mode after publishing an approvable task contract.',
   inputSchema: {
     type: 'object',
     properties: {
-      plan: { type: 'string', description: 'The completed plan' },
-      approved: { type: 'boolean', description: 'Whether the plan is approved for execution' },
+      taskContract: { type: 'string', description: 'The completed task contract' },
+      approved: { type: 'boolean', description: 'Whether the task contract is approved for execution' },
       allowedPrompts: {
         type: 'array',
-        description: 'Optional semantic permissions required to implement the plan',
+        description: 'Optional semantic permissions required to implement the task contract',
         items: {
           type: 'object',
           properties: {
@@ -75,7 +75,7 @@ export const ExitPlanModeTool: ToolDefinition = {
   isReadOnly: () => false,
   isConcurrencySafe: () => false,
   isEnabled: () => true,
-  async prompt() { return 'Exit plan mode with a completed plan.' },
+  async prompt() { return 'Exit plan mode after publishing a completed task contract.' },
   async call(input: any): Promise<ToolResult> {
     if (!planModeActive) {
       return {
@@ -87,7 +87,7 @@ export const ExitPlanModeTool: ToolDefinition = {
     }
 
     planModeActive = false
-    currentPlan = input.plan || currentPlan
+    currentTaskContract = input.taskContract || currentTaskContract
 
     const status = input.approved !== false ? 'approved' : 'pending approval'
     const allowedPrompts = Array.isArray(input.allowedPrompts) && input.allowedPrompts.length > 0
@@ -97,7 +97,7 @@ export const ExitPlanModeTool: ToolDefinition = {
     return {
       type: 'tool_result',
       tool_use_id: '',
-      content: `User has approved exiting plan mode. You can now start coding. Plan status: ${status}.${currentPlan ? `\n\nApproved Plan:\n${currentPlan}` : ''}${allowedPrompts}`,
+      content: `User has approved exiting plan mode. You can now start coding. Task contract status: ${status}.${currentTaskContract ? `\n\nApproved task contract:\n${currentTaskContract}` : ''}${allowedPrompts}`,
     }
   },
 }

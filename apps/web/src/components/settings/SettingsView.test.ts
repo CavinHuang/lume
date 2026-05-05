@@ -12,8 +12,10 @@ describe('SettingsView metadata', () => {
       'files',
       'shortcuts',
       'integrations',
+      'updates',
     ])
     expect(SETTINGS_PAGE_TITLES.memory).toBe('记忆')
     expect(SETTINGS_PAGE_SUBTITLES.memory).toContain('工作区与全局记忆')
+    expect(SETTINGS_PAGE_TITLES.updates).toBe('版本与更新')
   })
 })

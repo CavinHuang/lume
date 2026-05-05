@@ -58,6 +58,12 @@ describe('general settings state', () => {
         minimizeToTray: false,
         closeToTray: false,
       },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null,
+      },
     })
   })
 
@@ -75,6 +81,12 @@ describe('general settings state', () => {
         minimizeToTray: false,
         closeToTray: true,
       },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null,
+      },
     })
   })
 
@@ -87,6 +99,12 @@ describe('general settings state', () => {
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,
+      },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null,
       },
     }, {
       userProfile: {
@@ -101,6 +119,26 @@ describe('general settings state', () => {
         minimizeToTray: true,
         closeToTray: false,
       },
+      updateSettings: {
+        autoCheckUpdates: true,
+        notifyAfterDownload: true,
+        installOnlyWhenIdle: true,
+        lastUpdateCheckAt: null,
+      },
+    })
+  })
+
+  test('mergeGeneralSettings applies partial update settings without losing sibling flags', () => {
+    expect(mergeGeneralSettings(GENERAL_SETTINGS_DEFAULTS, {
+      updateSettings: {
+        notifyAfterDownload: false,
+        lastUpdateCheckAt: '2026-05-05T03:30:00.000Z',
+      },
+    }).updateSettings).toEqual({
+      autoCheckUpdates: true,
+      notifyAfterDownload: false,
+      installOnlyWhenIdle: true,
+      lastUpdateCheckAt: '2026-05-05T03:30:00.000Z',
     })
   })
 

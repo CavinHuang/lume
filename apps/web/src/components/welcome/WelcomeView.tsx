@@ -12,7 +12,7 @@ import {
   activeTabIdAtom,
   agentRunEventsAtom,
   agentStreamingStatesAtom,
-  agentPlanStateAtom,
+  agentPlanModePhaseAtom,
   agentSidePanelViewAtom,
 } from '@/atoms'
 import { sidecarCall, agentSend, openFileDialog } from '@/lib/desktop-api'
@@ -42,7 +42,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const setActiveTabId = useAtom(activeTabIdAtom)[1]
   const setRunEvents = useSetAtom(agentRunEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
-  const setPlanState = useSetAtom(agentPlanStateAtom)
+  const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setCurrentWorkspaceId = useAtom(currentWorkspaceIdAtom)[1]
 
@@ -162,8 +162,8 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       setThreads((prev) => [meta, ...prev])
       setStreamingStates((prev) => ({ ...prev, [meta.id]: 'streaming' }))
       if (permissionMode === 'plan') {
-        setPlanState((prev) => ({ ...prev, [meta.id]: { threadId: meta.id, phase: 'planning' } }))
-        setSidePanelViews((prev) => ({ ...prev, [meta.id]: 'plan' }))
+        setPlanModePhase((prev) => ({ ...prev, [meta.id]: { threadId: meta.id, phase: 'planning' } }))
+        setSidePanelViews((prev) => ({ ...prev, [meta.id]: 'task-progress' }))
       }
 
       setRunEvents((prev) => appendRunEvent(prev, {

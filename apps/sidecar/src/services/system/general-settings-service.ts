@@ -48,7 +48,8 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
     return {
       ...GENERAL_SETTINGS_DEFAULTS,
       userProfile: { ...GENERAL_SETTINGS_DEFAULTS.userProfile },
-      windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior }
+      windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior },
+      updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings }
     };
   }
 
@@ -60,6 +61,10 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
   const windowBehavior =
     typeof value.windowBehavior === "object" && value.windowBehavior !== null
       ? value.windowBehavior
+      : undefined;
+  const updateSettings =
+    typeof value.updateSettings === "object" && value.updateSettings !== null
+      ? value.updateSettings
       : undefined;
   const displayName = typeof userProfile?.displayName === "string"
     ? userProfile.displayName.trim()
@@ -79,6 +84,24 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
         typeof windowBehavior?.closeToTray === "boolean"
           ? windowBehavior.closeToTray
           : GENERAL_SETTINGS_DEFAULTS.windowBehavior.closeToTray
+    },
+    updateSettings: {
+      autoCheckUpdates:
+        typeof updateSettings?.autoCheckUpdates === "boolean"
+          ? updateSettings.autoCheckUpdates
+          : GENERAL_SETTINGS_DEFAULTS.updateSettings.autoCheckUpdates,
+      notifyAfterDownload:
+        typeof updateSettings?.notifyAfterDownload === "boolean"
+          ? updateSettings.notifyAfterDownload
+          : GENERAL_SETTINGS_DEFAULTS.updateSettings.notifyAfterDownload,
+      installOnlyWhenIdle:
+        typeof updateSettings?.installOnlyWhenIdle === "boolean"
+          ? updateSettings.installOnlyWhenIdle
+          : GENERAL_SETTINGS_DEFAULTS.updateSettings.installOnlyWhenIdle,
+      lastUpdateCheckAt:
+        typeof updateSettings?.lastUpdateCheckAt === "string"
+          ? updateSettings.lastUpdateCheckAt
+          : null
     }
   };
 }
@@ -139,7 +162,8 @@ export function getPersistedGeneralSettings(): GeneralSettings {
       return {
         ...GENERAL_SETTINGS_DEFAULTS,
         userProfile: { ...GENERAL_SETTINGS_DEFAULTS.userProfile },
-        windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior }
+        windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior },
+        updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings }
       };
     }
     throw error;
@@ -160,6 +184,15 @@ export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput
     windowBehavior: {
       minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
       closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray
+    },
+    updateSettings: {
+      autoCheckUpdates: input.updateSettings?.autoCheckUpdates ?? current.updateSettings.autoCheckUpdates,
+      notifyAfterDownload: input.updateSettings?.notifyAfterDownload ?? current.updateSettings.notifyAfterDownload,
+      installOnlyWhenIdle: input.updateSettings?.installOnlyWhenIdle ?? current.updateSettings.installOnlyWhenIdle,
+      lastUpdateCheckAt:
+        input.updateSettings && "lastUpdateCheckAt" in input.updateSettings
+          ? input.updateSettings.lastUpdateCheckAt ?? null
+          : current.updateSettings.lastUpdateCheckAt
     }
   };
   settings.generalSettings = next;

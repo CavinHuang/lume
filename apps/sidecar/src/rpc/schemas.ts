@@ -773,6 +773,12 @@ export const updateGeneralSettingsInputSchema = z.object({
   windowBehavior: z.object({
     minimizeToTray: z.boolean().optional(),
     closeToTray: z.boolean().optional()
+  }).optional(),
+  updateSettings: z.object({
+    autoCheckUpdates: z.boolean().optional(),
+    notifyAfterDownload: z.boolean().optional(),
+    installOnlyWhenIdle: z.boolean().optional(),
+    lastUpdateCheckAt: z.string().nullable().optional()
   }).optional()
 });
 

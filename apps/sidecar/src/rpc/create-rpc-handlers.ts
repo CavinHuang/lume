@@ -1,6 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
-import { PlanStateTracker } from "../services/agent/plan-state-tracker";
+import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { createAgentHandlers } from "./agent-handlers";
 import { createAutomationHandlers } from "./automation-handlers";
 import { createChannelHandlers } from "./channel-handlers";
@@ -14,17 +14,17 @@ export interface CreateRpcHandlersContext {
 }
 
 export function createRpcHandlers(context: CreateRpcHandlersContext): Record<string, RpcHandler> {
-  const planStateTracker = new PlanStateTracker();
+  const planModePhaseTracker = new PlanModePhaseTracker();
   const runtimeStatusManager = getAgentRuntimeStatusManager();
-  const notifyPlanStateChange = (
+  const notifyPlanModePhaseChange = (
     sessionId: string,
     phase: "idle" | "planning" | "review" | "executing" | "executed"
   ): void => {
-    const event = planStateTracker.updatePhase(sessionId, phase);
+    const event = planModePhaseTracker.updatePhase(sessionId, phase);
     if (!event) {
       return;
     }
-    context.writeNotification(AGENT_IPC_CHANNELS.PLAN_STATE_CHANGED, event);
+    context.writeNotification(AGENT_IPC_CHANNELS.PLAN_MODE_PHASE_CHANGED, event);
   };
   runtimeStatusManager.subscribe((status) => {
     context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED, {
@@ -46,8 +46,8 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     createAutomationHandlers(),
     createAgentHandlers({
       writeNotification: context.writeNotification,
-      planStateTracker,
-      notifyPlanStateChange
+      planModePhaseTracker,
+      notifyPlanModePhaseChange
     })
   );
   return handlers;

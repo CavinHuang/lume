@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { AGENT_IPC_CHANNELS } from "@lume/shared"
-import type { PlanStateTracker } from "../services/agent/plan-state-tracker"
+import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker"
 import { createAgentHandlers } from "./agent-handlers"
 import {
   setAskUserQuestionApprovalSession,
@@ -13,12 +13,12 @@ import {
   waitForToolPermissionDecision
 } from "../services/pi-agent/tools/bridges/tool-permission-bridge"
 
-function createTestPlanStateTracker(): PlanStateTracker {
+function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
     isLikelyExecutionRequest: () => false,
     getPhase: () => "idle",
     clearSession: () => undefined,
-  } as unknown as PlanStateTracker
+  } as unknown as PlanModePhaseTracker
 }
 
 describe("agent-handlers pending interactive aggregation", () => {
@@ -94,8 +94,8 @@ describe("agent-handlers pending interactive aggregation", () => {
 
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
     })
 
     const result = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE]!({ threadId: "parent-thread" }) as Array<{

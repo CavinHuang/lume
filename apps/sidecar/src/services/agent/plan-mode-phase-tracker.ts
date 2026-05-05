@@ -1,9 +1,9 @@
-import type { AgentSendInput, PlanPhase, PlanStateChangedEvent } from "@lume/shared";
+import type { AgentSendInput, PlanModePhase, PlanModePhaseChangedEvent } from "@lume/shared";
 
-export class PlanStateTracker {
-  private readonly phaseBySession = new Map<string, PlanPhase>();
+export class PlanModePhaseTracker {
+  private readonly phaseBySession = new Map<string, PlanModePhase>();
 
-  getPhase(sessionId: string): PlanPhase | undefined {
+  getPhase(sessionId: string): PlanModePhase | undefined {
     return this.phaseBySession.get(sessionId);
   }
 
@@ -19,8 +19,8 @@ export class PlanStateTracker {
 
   updatePhase(
     sessionId: string,
-    phase: PlanPhase
-  ): PlanStateChangedEvent | null {
+    phase: PlanModePhase
+  ): PlanModePhaseChangedEvent | null {
     const prev = this.phaseBySession.get(sessionId);
     const phaseChanged = prev !== phase;
     if (phaseChanged) {

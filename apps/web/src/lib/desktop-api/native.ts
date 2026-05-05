@@ -1,4 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
+import { relaunch } from '@tauri-apps/plugin-process'
+import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater'
+
+export interface DesktopUpdateInfo {
+  currentVersion: string
+  version: string
+  date?: string
+  body?: string
+}
+
+export type DesktopUpdateDownloadEvent = DownloadEvent
 
 export const healthcheck = () => invoke('healthcheck')
 export const sidecarHealthcheck = () => invoke('sidecar_healthcheck')
@@ -7,3 +18,39 @@ export const openFileDialog = () =>
 export const openFolderDialog = () =>
   invoke<{ path: string | null }>('open_folder_dialog')
 export const openExternal = (url: string) => invoke('open_external', { url })
+
+let pendingDesktopUpdate: Update | null = null
+
+function toDesktopUpdateInfo(update: Update): DesktopUpdateInfo {
+  return {
+    currentVersion: update.currentVersion,
+    version: update.version,
+    ...(update.date ? { date: update.date } : {}),
+    ...(update.body ? { body: update.body } : {}),
+  }
+}
+
+export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
+  pendingDesktopUpdate = await check()
+  return pendingDesktopUpdate ? toDesktopUpdateInfo(pendingDesktopUpdate) : null
+}
+
+export async function downloadDesktopUpdate(
+  onEvent?: (event: DesktopUpdateDownloadEvent) => void
+): Promise<void> {
+  if (!pendingDesktopUpdate) {
+    pendingDesktopUpdate = await check()
+  }
+  if (!pendingDesktopUpdate) {
+    throw new Error('当前没有可下载的更新')
+  }
+  await pendingDesktopUpdate.download(onEvent)
+}
+
+export async function installDesktopUpdateAndRelaunch(): Promise<void> {
+  if (!pendingDesktopUpdate) {
+    throw new Error('更新尚未下载')
+  }
+  await pendingDesktopUpdate.install()
+  await relaunch()
+}

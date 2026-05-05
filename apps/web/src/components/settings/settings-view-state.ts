@@ -6,6 +6,7 @@ import {
   Keyboard,
   Palette,
   Puzzle,
+  RefreshCw,
   Users,
   type LucideIcon,
 } from 'lucide-react'
@@ -19,6 +20,7 @@ export type SettingsViewTab =
   | 'files'
   | 'shortcuts'
   | 'integrations'
+  | 'updates'
 
 export const SETTINGS_NAV_ITEMS: Array<{
   id: SettingsViewTab
@@ -33,6 +35,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'files', label: '文件与同步', icon: Cloud },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'integrations', label: 'MCP 与集成', icon: Puzzle },
+  { id: 'updates', label: '版本与更新', icon: RefreshCw },
 ]
 
 export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
@@ -44,6 +47,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   files: '文件与同步',
   shortcuts: '快捷键',
   integrations: 'MCP 与集成',
+  updates: '版本与更新',
 }
 
 export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
@@ -55,4 +59,5 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   files: '管理文件接入、同步状态与资料上下文',
   shortcuts: '管理键盘快捷键与常用自动化操作',
   integrations: '管理 MCP 服务发现、连接状态与集成能力',
+  updates: '管理 Lume 的版本检查、下载与安装体验',
 }

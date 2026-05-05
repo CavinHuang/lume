@@ -71,7 +71,7 @@ export function SidePanel({ threadId, view, workspaceSlug }: SidePanelProps) {
           )}
         </>
       )}
-      {view === 'plan' && <TaskProgressPanel threadId={threadId} />}
+      {view === 'task-progress' && <TaskProgressPanel threadId={threadId} />}
       {view === 'trace' && <TracePanel threadId={threadId} />}
     </div>
   )

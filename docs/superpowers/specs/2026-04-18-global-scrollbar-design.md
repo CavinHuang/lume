@@ -13,7 +13,7 @@ This change applies to `apps/web` application UI surfaces that currently use nat
 Initial rollout targets:
 
 - `apps/web/src/components/agent/AgentMessages.tsx`
-- `apps/web/src/components/agent/PlanPanel.tsx`
+- `apps/web/src/components/agent/TaskProgressPanel.tsx`
 - `apps/web/src/components/app-shell/LeftSidebar.tsx`
 - `apps/web/src/components/file-browser/FileBrowser.tsx`
 - `apps/web/src/components/tabs/TabBar.tsx`
@@ -102,7 +102,7 @@ Requirements:
 
 ### Plan Panel
 
-`PlanPanel.tsx` should move cleanly to the shared scroll area with low risk.
+`TaskProgressPanel.tsx` should move cleanly to the shared scroll area with low risk.
 
 ### Left Sidebar
 

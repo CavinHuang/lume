@@ -1,10 +1,10 @@
-# Plan Contract + Task Progress Implementation Plan
+# Task Contract + Task Progress Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Redesign agent planning so Plan Mode only produces an approval contract, approval automatically switches to execution with `acceptEdits`, and the UI shows task progress instead of a plan execution state.
 
-**Architecture:** Split the current overloaded plan model into `PlanContract` for pre-execution approval and `TaskRun` for post-approval progress. Keep one durable execution state for task progress, remove legacy `PlanStep`/`PlanStateTracker.steps`/`plan_execution_status`, and project both the side panel and message list from the same `TaskRun` state/events.
+**Architecture:** Split the current overloaded plan model into `TaskContract` for pre-execution approval and `TaskRun` for post-approval progress. Keep one durable execution state for task progress, remove legacy step tracking and `legacy plan execution text event`, and project both the side panel and message list from the same `TaskRun` state/events.
 
 **Tech Stack:** TypeScript, Bun tests, existing sidecar file stores, existing IPC/RPC channels, React/Jotai web UI, no new dependencies.
 
@@ -15,7 +15,7 @@
 Plan Mode is not an execution mode. It is a planning-only mode:
 
 - User asks to plan first.
-- Agent can only create a plan contract: goal, summary, tasks, risks, expected changes, approval request.
+- Agent can only create a task contract: goal, summary, tasks, risks, expected changes, approval request.
 - Agent must not execute edits, commands, or side-effecting tools while permission mode is `plan`.
 - User clicks `批准并执行`.
 - System automatically exits Plan Mode, switches execution permission mode to `acceptEdits`, creates a task run from the approved contract, and starts execution.
@@ -34,7 +34,7 @@ Execution remains framework-driven:
 
 - Prefer deletion over compatibility bridges.
 - Do not keep two task status models.
-- Do not preserve `plan_execution_status` as a parallel text stream.
+- Do not preserve `legacy plan execution text event` as a parallel text stream.
 - Keep old exported IPC names only where needed to avoid a large renderer bridge migration; internally rename concepts to contract/task.
 - Do not introduce a full task editor in this pass.
 
@@ -42,8 +42,8 @@ Execution remains framework-driven:
 
 ### Sidecar Plan/Task Runtime
 
-- Create: `apps/sidecar/src/services/agent-runtime/plan/plan-contract-types.ts`
-  - Defines `PlanContract`, `PlanContractTask`, contract status, approval metadata.
+- Create: `apps/sidecar/src/services/agent-runtime/plan/task-contract-types.ts`
+  - Defines `TaskContract`, `TaskContractTask`, contract status, approval metadata.
 - Create: `apps/sidecar/src/services/agent-runtime/task-run/task-run-types.ts`
   - Defines `TaskRun`, `TaskRunTask`, `TaskRunEvent`, task statuses.
 - Create: `apps/sidecar/src/services/agent-runtime/task-run/task-run-store.ts`
@@ -57,19 +57,19 @@ Execution remains framework-driven:
 
 ### Sidecar Files To Shrink Or Delete
 
-- Modify: `apps/sidecar/src/services/agent-runtime/plan/plan-write-tool.ts`
+- Modify: `apps/sidecar/src/services/agent-runtime/plan/task-contract-write-tool.ts`
   - Reframe as contract creation.
-  - Keep tool name temporarily if prompt/tool registration churn is too large, but output must be a `PlanContract`.
+  - Keep tool name temporarily if prompt/tool registration churn is too large, but output must be a `TaskContract`.
 - Modify: `apps/sidecar/src/services/agent-runtime/plan/plan-approval-service.ts`
   - Approving a contract creates a `TaskRun`.
-- Delete or reduce to compatibility shim: `apps/sidecar/src/services/agent-runtime/plan/plan-execution-service.ts`
+- Delete or reduce to compatibility shim: `apps/sidecar/src/services/agent-runtime/plan/task-contract-fallback-execution-service.ts`
   - Remove full-plan hidden prompt builders and legacy mark functions.
-- Delete: `apps/sidecar/src/services/agent/plan-state-tracker.ts`
+- Delete: `apps/sidecar/src/services/agent/plan-mode-phase-tracker.ts`
   - Or first remove all step tracking and then delete once consumers are gone.
 - Modify: `apps/sidecar/src/rpc/agent-handlers.ts`
   - Approval calls task run controller with `acceptEdits`.
-  - `EXECUTE_PLAN` becomes a thin compatibility wrapper around task run intents.
-  - Remove `plan_execution_status` emission.
+  - `EXECUTE_TASK_CONTRACT` becomes a thin compatibility wrapper around task run intents.
+  - Remove `legacy plan execution text event` emission.
   - `GET_THREAD_RUN_EVENTS` hydrates from task run events.
 - Modify: `apps/sidecar/src/services/pi-agent/runtime-core/run.ts`
   - Register `TaskReport`.
@@ -79,20 +79,20 @@ Execution remains framework-driven:
 ### Shared Types
 
 - Modify: `packages/shared/src/types/agent.ts`
-  - Add `AgentPlanContract`, `AgentTaskRun`, `AgentTaskRunTask`, `AgentTaskRunEvent`.
+  - Add `AgentTaskContract`, `AgentTaskRun`, `AgentTaskRunTask`, `AgentTaskRunEvent`.
   - Add `LumeRunEvent` variant `task_progress`.
-  - Remove legacy `PlanStep` and `PlanStateChangedEvent.steps` after renderer consumers are migrated.
-  - Keep `AgentExecutePlanInput` temporarily if IPC channel names remain, but change semantics to task-run intents.
+  - Remove legacy `legacy plan step` and `PlanModePhaseChangedEvent` after renderer consumers are migrated.
+  - Keep `AgentExecuteTaskContractInput` temporarily if IPC channel names remain, but change semantics to task-run intents.
 
 ### Web UI
 
-- Rename or replace: `apps/web/src/components/agent/PlanPanel.tsx`
+- Rename or replace: `apps/web/src/components/agent/TaskProgressPanel.tsx`
   - Target component: `TaskProgressPanel`.
-  - Before approval: show approval card from plan contract.
+  - Before approval: show approval card from task contract.
   - After approval: show task progress from `AgentTaskRun`.
-  - No dependency on `agentPlanStateAtom.steps`.
+  - No dependency on plan-mode phase state for task steps.
 - Modify: `apps/web/src/components/agent/run-event-message-projection.ts`
-  - Render `task_progress`, remove `plan_execution_status`.
+  - Render `task_progress`, remove `legacy plan execution text event`.
 - Modify: `apps/web/src/components/agent/RunEventContentBlock.tsx`
   - Add compact task progress block.
 - Modify: `apps/web/src/hooks/useGlobalAgentListeners.ts`
@@ -105,7 +105,7 @@ Execution remains framework-driven:
 ## Chunk 1: Define The New Contracts
 
 **Files:**
-- Create: `apps/sidecar/src/services/agent-runtime/plan/plan-contract-types.ts`
+- Create: `apps/sidecar/src/services/agent-runtime/plan/task-contract-types.ts`
 - Create: `apps/sidecar/src/services/agent-runtime/task-run/task-run-types.ts`
 - Modify: `packages/shared/src/types/agent.ts`
 - Test: `apps/sidecar/src/services/agent-runtime/task-run/task-run-types.test.ts`
@@ -114,8 +114,8 @@ Execution remains framework-driven:
 
 Create fixtures that describe:
 
-- A draft plan contract with tasks and expected changes.
-- An approved plan contract.
+- A draft task contract with tasks and expected changes.
+- An approved task contract.
 - A task run created from that contract.
 - A task run event sequence.
 
@@ -132,9 +132,9 @@ Expected: fails because the new modules do not exist.
 Implement only the fields required by the product contract:
 
 ```ts
-export type PlanContractStatus = "draft" | "needs_approval" | "approved" | "rejected";
+export type TaskContractStatus = "draft" | "needs_approval" | "approved" | "rejected";
 
-export interface PlanContractTask {
+export interface TaskContractTask {
   id: string;
   title: string;
   description?: string;
@@ -142,13 +142,13 @@ export interface PlanContractTask {
   expectedTools?: string[];
 }
 
-export interface PlanContract {
+export interface TaskContract {
   id: string;
   threadId: string;
   runId: string;
   goal: string;
   summary: string;
-  tasks: PlanContractTask[];
+  tasks: TaskContractTask[];
   risks: Array<{ id: string; description: string; severity?: "low" | "medium" | "high" }>;
   expectedChanges: {
     files?: string[];
@@ -156,7 +156,7 @@ export interface PlanContract {
     tools?: string[];
     memoryWrites?: string[];
   };
-  status: PlanContractStatus;
+  status: TaskContractStatus;
   createdAt: string;
   updatedAt: string;
   approvedAt?: string;
@@ -276,7 +276,7 @@ Use existing tool creation patterns. Tool input:
 
 - [ ] **Step 3: Register TaskReport**
 
-Register as a low-risk control tool. Keep `PlanStepUpdate` only until RPC execution is migrated, then delete it in Chunk 6.
+Register as a low-risk control tool. Delete the old step-update execution tool once RPC execution is migrated.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -300,9 +300,9 @@ Expected: pass.
 
 Cover:
 
-- `SUBMIT_PLAN_APPROVAL` with `execute=true` approves contract, creates task run, switches permission mode to `acceptEdits`, and dispatches only current task.
+- `SUBMIT_TASK_APPROVAL` with `execute=true` approves contract, creates task run, switches permission mode to `acceptEdits`, and dispatches only current task.
 - Hidden message contains current task id and requires `TaskReport`.
-- `EXECUTE_PLAN` compatibility path maps to task run continue/retry/skip.
+- `EXECUTE_TASK_CONTRACT` compatibility path maps to task run continue/retry/skip.
 - AskUser/tool permission during task execution updates task run waiting state.
 - Run completion without `TaskReport` marks the task failed.
 
@@ -336,13 +336,13 @@ Expected: pass.
 ## Chunk 5: Web UI Becomes Task Progress
 
 **Files:**
-- Rename or replace: `apps/web/src/components/agent/PlanPanel.tsx`
+- Rename or replace: `apps/web/src/components/agent/TaskProgressPanel.tsx`
 - Modify: `apps/web/src/components/agent/AgentView.tsx`
 - Modify: `apps/web/src/components/agent/run-event-message-projection.ts`
 - Modify: `apps/web/src/components/agent/RunEventContentBlock.tsx`
 - Modify: `apps/web/src/hooks/useGlobalAgentListeners.ts`
 - Modify: `apps/web/src/lib/desktop-api/agent.ts`
-- Test: `apps/web/src/components/agent/PlanPanel.test.ts`
+- Test: `apps/web/src/components/agent/TaskProgressPanel.test.ts`
 - Test: `apps/web/src/components/agent/run-event-message-projection.test.ts`
 
 - [ ] **Step 1: Write failing UI projection tests**
@@ -351,7 +351,7 @@ Cover:
 
 - `task_progress` creates a structured progress block in the message list.
 - Refresh/hydration preserves task progress blocks.
-- Legacy `plan_execution_status` is no longer needed by the projection tests.
+- Legacy `legacy plan execution text event` is no longer needed by the projection tests.
 
 - [ ] **Step 2: Replace side panel mental model**
 
@@ -366,14 +366,14 @@ The right panel should show:
 
 - [ ] **Step 3: Remove legacy step dependency**
 
-Remove side panel refresh/render dependency on `PlanStateChangedEvent.steps`.
+Remove side panel refresh/render dependency on `PlanModePhaseChangedEvent`.
 
 - [ ] **Step 4: Run focused web tests**
 
 Run:
 
 ```bash
-bun test apps/web/src/components/agent/run-event-message-projection.test.ts apps/web/src/components/agent/PlanPanel.test.ts
+bun test apps/web/src/components/agent/run-event-message-projection.test.ts apps/web/src/components/agent/TaskProgressPanel.test.ts
 ```
 
 Expected: pass.
@@ -381,10 +381,10 @@ Expected: pass.
 ## Chunk 6: Delete Legacy Bridges
 
 **Files:**
-- Delete: `apps/sidecar/src/services/agent/plan-state-tracker.ts`
-- Delete or reduce: `apps/sidecar/src/services/agent/plan-state-tracker.test.ts`
-- Delete or reduce: `apps/sidecar/src/services/agent-runtime/plan/plan-execution-service.ts`
-- Delete or reduce: `apps/sidecar/src/services/agent-runtime/plan/plan-execution-service.test.ts`
+- Delete: `apps/sidecar/src/services/agent/plan-mode-phase-tracker.ts`
+- Delete or reduce: `apps/sidecar/src/services/agent/plan-mode-phase-tracker.test.ts`
+- Delete or reduce: `apps/sidecar/src/services/agent-runtime/plan/task-contract-fallback-execution-service.ts`
+- Delete or reduce: `apps/sidecar/src/services/agent-runtime/plan/task-contract-fallback-execution-service.test.ts`
 - Modify: `packages/shared/src/types/agent.ts`
 - Modify any imports found by `rg`.
 
@@ -393,7 +393,7 @@ Expected: pass.
 Run:
 
 ```bash
-rg "PlanStateTracker|PlanStep|plan_execution_status|planExecutionMode|PlanStepUpdate|buildPlanExecutionSendInput|markStructuredPlanExecution" apps packages
+rg "legacy plan step|legacy plan execution text event|planExecutionMode|legacy step update tool|buildPlanExecutionSendInput|markStructuredPlanExecution" apps packages
 ```
 
 Expected: only references intentionally queued for deletion remain.
@@ -406,12 +406,12 @@ Remove modules once imports are gone. Do not keep no-op shims unless a public IP
 
 Remove:
 
-- `PlanStep`
-- `PlanStepStatus`
-- `PlanStateChangedEvent.steps`
-- `plan_execution_status`
+- `legacy plan step`
+- `legacy plan step status`
+- `PlanModePhaseChangedEvent.steps`
+- `legacy plan execution text event`
 
-Keep `PlanPhase` only if UI still needs a high-level planning/review indicator.
+Keep `PlanModePhase` only if UI still needs a high-level planning/review indicator.
 
 - [ ] **Step 4: Run focused typechecks**
 
@@ -444,7 +444,7 @@ Expected: pass.
 Run:
 
 ```bash
-bun test apps/web/src/components/agent/run-event-message-projection.test.ts apps/web/src/components/agent/PlanPanel.test.ts
+bun test apps/web/src/components/agent/run-event-message-projection.test.ts apps/web/src/components/agent/TaskProgressPanel.test.ts
 ```
 
 Expected: pass.
@@ -472,5 +472,5 @@ Use a local app run if available:
 ## Remaining Risks
 
 - Existing dirty worktree contains unrelated changes. Implementers must avoid reverting or formatting unrelated files.
-- IPC naming may remain `EXECUTE_PLAN` for one migration step even though semantics become task-run execution.
-- A data migration may be needed if users already have `LumePlan` files with embedded execution state; first pass can tolerate old files read-only or map them to contracts.
+- IPC naming may remain `EXECUTE_TASK_CONTRACT` for one migration step even though semantics become task-run execution.
+- A data migration may be needed if users already have old embedded execution-state files; first pass can tolerate old files read-only or map them to contracts.

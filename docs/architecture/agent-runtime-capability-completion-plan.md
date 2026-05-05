@@ -28,7 +28,7 @@ Lume 不迁移到 `openai-agents-js`。本轮实现只借鉴其 Runner、RunStat
   - `sessions/{threadId}/interruptions/{interruptionId}.json`
 - Added minimal guardrail framework and migrated runtime tool safety into builtin tool input guardrails.
 - Added builtin guardrails for file write workspace boundaries and sensitive memory writes.
-- Added minimal structured plan store and markdown/front matter/`PlanStateTracker` step mapping for later Plan UI/runtime integration.
+- Added minimal structured plan store and markdown/front matter/`PlanModePhaseTracker` step mapping for later Plan UI/runtime integration.
 - Added context budget and moved existing system/dynamic/memory prompt assembly into `ContextAssembler`.
 - Added `LumeRunEvent` types. SDK stream is normalized once into RunItems; UI events are projected from those RunItems.
 - Added sidecar `agent:run:event` live emission for assistant/tool/interruption/run terminal events.
@@ -51,11 +51,11 @@ Lume 不迁移到 `openai-agents-js`。本轮实现只借鉴其 Runner、RunStat
   - approval/rejection resolves into a `before_model_call` checkpoint
   - recovery explicitly tells the model the original tool was not replayed
   - execute tools are still not process-restored; they must be re-issued or replanned
-- Added `PlanWriteTool` in plan mode and plan approval interruption persistence.
-- Added plan approval as a first-class pending interactive item:
-  - `agent:get-pending-interactive` returns `planApprovals`
-  - `agent:submit-plan-approval` resolves the persistent interruption
-  - `PlanStore` updates to `approved` / `cancelled`
+- Added `TaskContractWrite` in plan mode and task approval interruption persistence.
+- Added task approval as a first-class pending interactive item:
+  - `agent:get-pending-interactive` returns `taskApprovals`
+  - `agent:submit-task-approval` resolves the persistent interruption
+  - `TaskContractStore` updates to `approved` / `cancelled`
 - Added parent RunState subagent items and trace spans for subagent lifecycle events.
 - Added explicit background subagent execution path that returns immediately and persists completion through the existing subagent registry/announcement flow.
 - Added `subagent_updated` and `handoff_updated` `LumeRunEvent` projections from persisted RunItems so reload-safe history includes these runtime facts.
@@ -74,11 +74,11 @@ Lume 不迁移到 `openai-agents-js`。本轮实现只借鉴其 Runner、RunStat
 - Added run-state summary projection for UI/debug consumers, including continuation checkpoint summaries and interruption/item counts without exposing full generated item payloads.
 - Added RunState/RunItems to `LumeRunEvent` projection for reload-safe history rendering without raw SDK transcript reads.
 - Added default `safe_summary` trace projection for UI-facing trace reads.
-- Added structured plan projection from `PlanStore` without forcing historical markdown plan migration.
+- Added structured plan projection from `TaskContractStore` without forcing historical markdown plan migration.
 - Added internal handoff recording API that persists a `handoff` run item and trace span without changing current conversation control flow.
 - Added typed web desktop API wrappers for resume, trace reads, and structured plan reads.
-- Added PlanPanel structured-plan fallback so existing Plan UI can render `PlanStore` data when legacy `PlanStateTracker` state is absent.
-- Added PlanPanel approval actions for structured plans that are waiting on `plan_approval`; approval reuses the existing best-effort `resume-run` path.
+- Added TaskProgressPanel structured-plan fallback so existing Plan UI can render `TaskContractStore` data when legacy `PlanModePhaseTracker` state is absent.
+- Added TaskProgressPanel approval actions for structured plans that are waiting on `plan_approval`; approval reuses the existing best-effort `resume-run` path.
 - Added TracePanel and side-panel trace entry. UI reads `safe_summary` traces by default.
 - Added TracePanel redaction-level switch. UI-facing trace reads only support `safe_summary` and `diagnostic`; `raw_internal` remains sidecar-internal only.
 - Added TracePanel run selector backed by `agent:list-run-states`, so users can inspect historical runs instead of only the latest trace.

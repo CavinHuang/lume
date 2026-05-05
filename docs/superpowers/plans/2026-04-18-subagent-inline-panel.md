@@ -115,7 +115,7 @@ import {
   agentPendingInteractiveAtom,
   agentSubagentRunsAtom,
   agentSubagentMessagesAtom,
-  agentPlanStateAtom,
+  agentPlanModePhaseAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
 } from '@/atoms'

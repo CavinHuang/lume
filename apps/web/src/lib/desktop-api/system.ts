@@ -3,9 +3,11 @@ import { clearHighlightCache } from '@lume/ui'
 import {
   AGENT_IPC_CHANNELS,
   GENERAL_SETTINGS_IPC_CHANNELS,
+  GITHUB_RELEASE_IPC_CHANNELS,
   type AgentProxySettings,
   type AgentProxyStatus,
   type GeneralSettings,
+  type GitHubRelease,
   type UpdateGeneralSettingsInput,
 } from '@lume/shared'
 
@@ -79,6 +81,9 @@ export const getProxySettings = () =>
 
 export const saveProxySettings = (input: AgentProxySettings) =>
   sidecarCall<AgentProxyStatus>(AGENT_IPC_CHANNELS.SAVE_PROXY_SETTINGS, input)
+
+export const getLatestGitHubRelease = () =>
+  sidecarCall<GitHubRelease | null>(GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE, {})
 
 export const openLogsDir = () =>
   sidecarCall<{ ok: boolean }>(GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR, {})

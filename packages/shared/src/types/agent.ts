@@ -987,13 +987,13 @@ export interface AgentTaskRun {
 // ===== Plan 模式 =====
 
 /** Plan 阶段 */
-export type PlanPhase = 'idle' | 'planning' | 'review' | 'executing' | 'executed'
+export type PlanModePhase = 'idle' | 'planning' | 'review' | 'executing' | 'executed'
 
 /** Plan 状态变化事件 */
-export interface PlanStateChangedEvent {
+export interface PlanModePhaseChangedEvent {
   threadId: string
   /** 当前阶段 */
-  phase: PlanPhase
+  phase: PlanModePhase
 }
 
 // ===== Agent 流式事件载荷 =====
@@ -1469,7 +1469,7 @@ export const AGENT_IPC_CHANNELS = {
 
   // Plan 模式
   /** Plan 状态变化通知（主进程 → 渲染进程推送） */
-  PLAN_STATE_CHANGED: 'agent:plan-state-changed',
+  PLAN_MODE_PHASE_CHANGED: 'agent:plan-mode-phase-changed',
 
   // 工作区路径
   /** 获取工作区根路径 */

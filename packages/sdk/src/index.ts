@@ -355,7 +355,7 @@ export type { AgentMessage } from './tools/send-message.js'
 
 export {
   isPlanModeActive,
-  getCurrentPlan,
+  getCurrentTaskContract,
 } from './tools/plan-tools.js'
 
 export {

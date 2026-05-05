@@ -3,18 +3,18 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
+import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { createAgentHandlers } from "./agent-handlers";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
 import { createAgentThread } from "../services/agent/agent-thread-manager";
 import { getAgentSessionWorkspacePath, getWorkspaceResourcesPath } from "../services/infra/config-paths";
 
-function createTestPlanStateTracker(): PlanStateTracker {
+function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
     isLikelyExecutionRequest: () => false,
     getPhase: () => "idle",
     clearSession: () => undefined,
-  } as unknown as PlanStateTracker;
+  } as unknown as PlanModePhaseTracker;
 }
 
 describe("agent-handlers file operations", () => {
@@ -39,8 +39,8 @@ describe("agent-handlers file operations", () => {
 
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
     });
 
     const result = await handlers[AGENT_IPC_CHANNELS.LIST_DIRECTORY]!({
@@ -62,8 +62,8 @@ describe("agent-handlers file operations", () => {
 
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
     });
 
     const result = await handlers[AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]!({
@@ -90,8 +90,8 @@ describe("agent-handlers file operations", () => {
     const thread = createAgentThread("meta thread", undefined, workspace.id);
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
     });
 
     const externalThreadSource = join(configDir, "thread-source.txt");
@@ -131,8 +131,8 @@ describe("agent-handlers file operations", () => {
     const thread = createAgentThread("attach file thread", undefined, workspace.id);
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
     });
 
     const resourcesDir = getWorkspaceResourcesPath(workspace.slug);
@@ -159,8 +159,8 @@ describe("agent-handlers file operations", () => {
     const thread = createAgentThread("attach folder thread", undefined, workspace.id);
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
     });
 
     const resourcesDir = getWorkspaceResourcesPath(workspace.slug);

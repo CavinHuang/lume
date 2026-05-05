@@ -307,12 +307,12 @@ describe("model-selection", () => {
 
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: {
+      planModePhaseTracker: {
         isLikelyExecutionRequest: () => false,
         getPhase: () => "idle",
         clearSession: () => undefined
       } as any,
-      notifyPlanStateChange: () => undefined
+      notifyPlanModePhaseChange: () => undefined
     });
 
     const updated = await handlers[AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION]!({
@@ -344,12 +344,12 @@ describe("model-selection", () => {
     const thread = createAgentThread("partial update", "channel-1", undefined, undefined, "provider/model-1");
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: {
+      planModePhaseTracker: {
         isLikelyExecutionRequest: () => false,
         getPhase: () => "idle",
         clearSession: () => undefined
       } as any,
-      notifyPlanStateChange: () => undefined
+      notifyPlanModePhaseChange: () => undefined
     });
 
     const partialUpdated = await handlers[AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION]!({

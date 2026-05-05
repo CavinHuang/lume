@@ -18,6 +18,7 @@ import type {
   NormalizedTool,
   NormalizedResponseBlock,
 } from './types.js'
+import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from '../utils/retry.js'
 
 // --------------------------------------------------------------------------
 // OpenAI-specific types (minimal, just what we need)
@@ -113,10 +114,12 @@ export class OpenAIProvider implements LLMProvider {
   readonly apiType: ApiType = 'openai-completions'
   private apiKey: string
   private baseURL: string
+  private retryConfig: RetryConfig
 
-  constructor(opts: { apiKey?: string; baseURL?: string }) {
+  constructor(opts: { apiKey?: string; baseURL?: string; retryConfig?: RetryConfig }) {
     this.apiKey = opts.apiKey || ''
     this.baseURL = (opts.baseURL || 'https://api.openai.com/v1').replace(/\/$/, '')
+    this.retryConfig = opts.retryConfig ?? DEFAULT_RETRY_CONFIG
   }
 
   async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
@@ -160,24 +163,7 @@ export class OpenAIProvider implements LLMProvider {
 
     this.prepareChatCompletionBody(body)
 
-    // Make API call
-    const response = await fetch(`${this.baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    })
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '')
-      const err: any = new Error(
-        `OpenAI API error: ${response.status} ${response.statusText}: ${errBody}`,
-      )
-      err.status = response.status
-      throw err
-    }
+    const response = await this.fetchChatCompletion(body)
 
     const data = (await response.json()) as OpenAIChatResponse
 
@@ -228,23 +214,7 @@ export class OpenAIProvider implements LLMProvider {
 
     this.prepareChatCompletionBody(body)
 
-    const response = await fetch(`${this.baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    })
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '')
-      const err: any = new Error(
-        `OpenAI API error: ${response.status} ${response.statusText}: ${errBody}`,
-      )
-      err.status = response.status
-      throw err
-    }
+    const response = await this.fetchChatCompletion(body)
 
     if (!response.body) {
       throw new Error('OpenAI API returned no response body for streaming request')
@@ -421,6 +391,30 @@ export class OpenAIProvider implements LLMProvider {
         output_tokens: completionTokens,
       },
     }
+  }
+
+  private async fetchChatCompletion(body: Record<string, any>): Promise<Response> {
+    return withRetry(async () => {
+      const response = await fetch(`${this.baseURL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+      })
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '')
+        const err: any = new Error(
+          `OpenAI API error: ${response.status} ${response.statusText}: ${errBody}`,
+        )
+        err.status = response.status
+        throw err
+      }
+
+      return response
+    }, this.retryConfig)
   }
 
   // --------------------------------------------------------------------------

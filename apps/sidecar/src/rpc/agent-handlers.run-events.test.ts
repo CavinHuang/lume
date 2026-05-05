@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
+import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
 
@@ -38,12 +38,12 @@ mock.module("../services/agent/agent-service", () => ({
   submitAskUserQuestionAnswers: () => false
 }));
 
-function createTestPlanStateTracker(): PlanStateTracker {
+function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
     isLikelyExecutionRequest: () => false,
     getPhase: () => "idle",
     clearSession: () => undefined
-  } as unknown as PlanStateTracker;
+  } as unknown as PlanModePhaseTracker;
 }
 
 describe("agent-handlers run events", () => {
@@ -116,12 +116,12 @@ describe("agent-handlers run events", () => {
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
       writeNotification: (method, params) => notifications.push({ method, params }),
-      planStateTracker: {
-        ...createTestPlanStateTracker(),
+      planModePhaseTracker: {
+        ...createTestPlanModePhaseTracker(),
         isLikelyExecutionRequest: () => true,
         getPhase: () => "executing"
-      } as unknown as PlanStateTracker,
-      notifyPlanStateChange: () => undefined
+      } as unknown as PlanModePhaseTracker,
+      notifyPlanModePhaseChange: () => undefined
     });
 
     await handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!({
@@ -171,12 +171,12 @@ describe("agent-handlers run events", () => {
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
       writeNotification: (method, params) => notifications.push({ method, params }),
-      planStateTracker: {
-        ...createTestPlanStateTracker(),
+      planModePhaseTracker: {
+        ...createTestPlanModePhaseTracker(),
         isLikelyExecutionRequest: () => true,
         getPhase: () => "executing"
-      } as unknown as PlanStateTracker,
-      notifyPlanStateChange: () => undefined
+      } as unknown as PlanModePhaseTracker,
+      notifyPlanModePhaseChange: () => undefined
     });
 
     await expect(handlers[AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT]!({
@@ -245,8 +245,8 @@ describe("agent-handlers run events", () => {
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
     });
 
     await expect(handlers[AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL]!({
@@ -275,12 +275,12 @@ describe("agent-handlers run events", () => {
   });
 
   test("SEND_THREAD_MESSAGE switches to planning when plan permission mode is selected", async () => {
-    const planStateChanges: Array<{ threadId: string; phase: string }> = [];
+    const planModePhaseChanges: Array<{ threadId: string; phase: string }> = [];
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: (threadId, phase) => planStateChanges.push({ threadId, phase })
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: (threadId, phase) => planModePhaseChanges.push({ threadId, phase })
     });
 
     await handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!({
@@ -289,7 +289,7 @@ describe("agent-handlers run events", () => {
       permissionMode: "plan"
     });
 
-    expect(planStateChanges).toContainEqual({
+    expect(planModePhaseChanges).toContainEqual({
       threadId: "thread-1",
       phase: "planning"
     });
@@ -310,15 +310,15 @@ describe("agent-handlers run events", () => {
         ].join("\n")
       }
     });
-    const planStateChanges: Array<{ threadId: string; phase: string }> = [];
+    const planModePhaseChanges: Array<{ threadId: string; phase: string }> = [];
     const { createAgentHandlers } = await import("./agent-handlers");
     const { listPendingTaskApprovalRequests } = await import("../services/agent-runtime/plan/task-approval-service");
-    const tracker = createTestPlanStateTracker();
+    const tracker = createTestPlanModePhaseTracker();
     tracker.getPhase = () => "planning";
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
-      planStateTracker: tracker,
-      notifyPlanStateChange: (id, phase) => planStateChanges.push({ threadId: id, phase })
+      planModePhaseTracker: tracker,
+      notifyPlanModePhaseChange: (id, phase) => planModePhaseChanges.push({ threadId: id, phase })
     });
 
     await handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!({
@@ -334,7 +334,7 @@ describe("agent-handlers run events", () => {
       threadId,
       stepCount: 2
     });
-    expect(planStateChanges).toContainEqual({
+    expect(planModePhaseChanges).toContainEqual({
       threadId,
       phase: "review"
     });
@@ -345,8 +345,8 @@ describe("agent-handlers run events", () => {
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
       writeNotification: (method, params) => notifications.push({ method, params }),
-      planStateTracker: createTestPlanStateTracker(),
-      notifyPlanStateChange: () => undefined
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
     });
 
     await handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!({
