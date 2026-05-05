@@ -196,18 +196,18 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "PlanWrite",
+  name: "TaskContractWrite",
   category: "control",
   riskLevel: "low",
-  description: "写入结构化执行计划",
+  description: "写入待审批任务清单",
   allowedInPlanMode: true
 });
 
 registerToolMetadata({
-  name: "PlanStepUpdate",
+  name: "TaskReport",
   category: "control",
   riskLevel: "low",
-  description: "写入当前计划步骤执行结果"
+  description: "写入当前任务执行结果"
 });
 
 // 记忆工具

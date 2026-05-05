@@ -13,7 +13,7 @@ export type RunEventAssistantBlock =
   | { type: 'text'; id: string; text: string }
   | { type: 'thinking'; id: string; text: string }
   | { type: 'tool_call'; id: string; toolCall: RunEventToolCallView }
-  | { type: 'plan_progress'; id: string; event: Extract<LumeRunEvent, { type: 'plan_progress' }> }
+  | { type: 'task_progress'; id: string; event: Extract<LumeRunEvent, { type: 'task_progress' }> }
 
 export interface RunEventAssistantMessageView {
   id: string
@@ -63,31 +63,14 @@ export function projectRunEventMessages(events: LumeRunEvent[]): RunEventMessage
       return
     }
 
-    if (event.type === 'plan_execution_status') {
+    if (event.type === 'task_progress') {
       if (terminalClosed || !currentAssistant) {
-        currentAssistant = createAssistantMessage(`assistant:plan:${event.createdAt}`)
-      }
-      terminalClosed = false
-      appendAssistantTextBlock(currentAssistant, event.text)
-      currentAssistant.text += event.text
-      if (event.status === 'completed') {
-        currentAssistant.status = 'completed'
-      }
-      if (event.status === 'failed') {
-        currentAssistant.status = 'failed'
-        currentAssistant.error = event.text
-      }
-      return
-    }
-
-    if (event.type === 'plan_progress') {
-      if (terminalClosed || !currentAssistant) {
-        currentAssistant = createAssistantMessage(`assistant:plan:${event.createdAt}`)
+        currentAssistant = createAssistantMessage(`assistant:task:${event.createdAt}`)
       }
       terminalClosed = false
       currentAssistant.blocks.push({
-        type: 'plan_progress',
-        id: `plan:${event.planId}:${event.createdAt}`,
+        type: 'task_progress',
+        id: `task:${event.taskRunId}:${event.createdAt}`,
         event,
       })
       currentAssistant.text += event.message ?? ''

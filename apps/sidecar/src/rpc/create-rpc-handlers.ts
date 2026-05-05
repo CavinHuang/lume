@@ -1,5 +1,4 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import type { PlanStep } from "@lume/shared";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import { PlanStateTracker } from "../services/agent/plan-state-tracker";
 import { createAgentHandlers } from "./agent-handlers";
@@ -19,10 +18,9 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
   const runtimeStatusManager = getAgentRuntimeStatusManager();
   const notifyPlanStateChange = (
     sessionId: string,
-    phase: "idle" | "planning" | "review" | "executing" | "executed",
-    extras?: { planPath?: string; steps?: PlanStep[] }
+    phase: "idle" | "planning" | "review" | "executing" | "executed"
   ): void => {
-    const event = planStateTracker.updatePhase(sessionId, phase, extras);
+    const event = planStateTracker.updatePhase(sessionId, phase);
     if (!event) {
       return;
     }

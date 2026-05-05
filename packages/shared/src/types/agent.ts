@@ -648,18 +648,18 @@ export interface AgentPendingInteractiveState {
   threadId: string
   askUserQuestions?: AgentAskUserQuestionRequest[]
   toolPermissions?: AgentToolPermissionRequest[]
-  planApprovals?: AgentPlanApprovalRequest[]
+  taskApprovals?: AgentTaskApprovalRequest[]
 }
 
 export interface AgentPendingInteractiveInput {
   threadId?: string
 }
 
-export interface AgentPlanApprovalRequest {
+export interface AgentTaskApprovalRequest {
   threadId: string
   runId?: string
   requestId: string
-  planId: string
+  contractId: string
   title: string
   message: string
   summary?: string
@@ -672,25 +672,25 @@ export interface AgentPlanApprovalRequest {
   }
 }
 
-export interface AgentPlanApprovalResponseInput {
+export interface AgentTaskApprovalResponseInput {
   threadId: string
-  planId: string
+  contractId: string
   decision: 'approve' | 'reject'
   execute?: boolean
 }
 
-export interface AgentExecutePlanInput {
+export interface AgentExecuteTaskContractInput {
   threadId: string
-  planId?: string
+  contractId?: string
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions'
   intent?: 'execute' | 'continue' | 'retry' | 'skip'
 }
 
-export interface AgentExecutePlanResult {
+export interface AgentExecuteTaskContractResult {
   ok: boolean
   status: 'sent' | 'queued' | 'not_found' | 'not_executable'
   queuedCount?: number
-  planId?: string
+  contractId?: string
   error?: string
 }
 
@@ -793,7 +793,7 @@ export interface AgentRunStateSummary {
     error?: string
   }
   traceId: string
-  planId?: string
+  contractId?: string
   model: {
     provider: string
     modelId: string
@@ -838,7 +838,7 @@ export interface AgentListRunStatesResult {
   runs: AgentRunStateSummary[]
 }
 
-export type AgentStructuredPlanStatus =
+export type AgentTaskContractStatus =
   | 'draft'
   | 'needs_user_input'
   | 'needs_approval'
@@ -848,19 +848,19 @@ export type AgentStructuredPlanStatus =
   | 'cancelled'
   | 'failed'
 
-export type AgentStructuredPlanStepStatus =
+export type AgentTaskContractItemStatus =
   | 'pending'
   | 'running'
   | 'completed'
   | 'failed'
   | 'skipped'
 
-export interface AgentStructuredPlanStep {
+export interface AgentTaskContractItem {
   id: string
   title: string
   description: string
   type: 'read' | 'analyze' | 'edit' | 'execute' | 'ask_user' | 'memory' | 'subagent'
-  status: AgentStructuredPlanStepStatus
+  status: AgentTaskContractItemStatus
   expectedTools?: string[]
   expectedFiles?: string[]
   result?: string
@@ -873,22 +873,22 @@ export interface AgentStructuredPlanStep {
   blockedReason?: string
 }
 
-export interface AgentStructuredPlanEvent {
+export interface AgentTaskContractEvent {
   type:
-    | 'plan_started'
-    | 'step_started'
-    | 'step_completed'
-    | 'step_failed'
-    | 'step_skipped'
-    | 'plan_waiting'
-    | 'plan_completed'
-  planId: string
-  stepId?: string
+    | 'contract_started'
+    | 'task_started'
+    | 'task_completed'
+    | 'task_failed'
+    | 'task_skipped'
+    | 'contract_waiting'
+    | 'contract_completed'
+  contractId: string
+  taskId?: string
   message?: string
   createdAt: string
 }
 
-export interface AgentStructuredPlan {
+export interface AgentTaskContract {
   id: string
   runId: string
   threadId: string
@@ -897,15 +897,15 @@ export interface AgentStructuredPlan {
   assumptions: string[]
   questions: unknown[]
   risks: unknown[]
-  steps: AgentStructuredPlanStep[]
+  steps: AgentTaskContractItem[]
   expectedChanges: {
     files?: string[]
     commands?: string[]
     tools?: string[]
     memoryWrites?: string[]
   }
-  events?: AgentStructuredPlanEvent[]
-  status: AgentStructuredPlanStatus
+  events?: AgentTaskContractEvent[]
+  status: AgentTaskContractStatus
   currentStepId?: string
   traceSpanId?: string
   createdAt: string
@@ -913,12 +913,75 @@ export interface AgentStructuredPlan {
   approvedAt?: string
 }
 
-export interface AgentStructuredPlansInput {
+export interface AgentTaskContractsInput {
   threadId: string
 }
 
-export interface AgentStructuredPlansResult {
-  plans: AgentStructuredPlan[]
+export interface AgentTaskContractsResult {
+  contracts: AgentTaskContract[]
+}
+
+export type AgentTaskRunStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_for_user'
+  | 'waiting_for_permission'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type AgentTaskRunTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+
+export interface AgentTaskRunTask {
+  id: string
+  title: string
+  description?: string
+  expectedTools?: string[]
+  expectedFiles?: string[]
+  status: AgentTaskRunTaskStatus
+  attemptCount: number
+  result?: string
+  error?: string
+  startedAt?: string
+  endedAt?: string
+  blockedReason?: string
+}
+
+export interface AgentTaskRunEvent {
+  type:
+    | 'task_run_created'
+    | 'task_started'
+    | 'task_completed'
+    | 'task_failed'
+    | 'task_skipped'
+    | 'task_waiting'
+    | 'task_run_completed'
+  taskRunId: string
+  contractId?: string
+  taskId?: string
+  message?: string
+  createdAt: string
+}
+
+export interface AgentTaskRun {
+  id: string
+  contractId: string
+  runId: string
+  threadId: string
+  goal: string
+  summary: string
+  status: AgentTaskRunStatus
+  currentTaskId?: string
+  tasks: AgentTaskRunTask[]
+  events: AgentTaskRunEvent[]
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
 }
 
 // ===== Plan 模式 =====
@@ -926,41 +989,11 @@ export interface AgentStructuredPlansResult {
 /** Plan 阶段 */
 export type PlanPhase = 'idle' | 'planning' | 'review' | 'executing' | 'executed'
 
-/** Plan 步骤状态 */
-export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
-
-/** Plan 步骤 */
-export interface PlanStep {
-  id: string
-  text: string
-  status: PlanStepStatus
-  failCount: number
-  lastError: string | null
-}
-
-/** Plan 文件元数据 */
-export interface PlanFileMeta {
-  /** 文件名 */
-  name: string
-  /** 完整路径 */
-  path: string
-  /** 创建时间 */
-  createdAt: number
-  /** 文件大小（字节） */
-  size: number
-  /** 摘要（从 front matter 提取） */
-  summary?: string
-}
-
 /** Plan 状态变化事件 */
 export interface PlanStateChangedEvent {
   threadId: string
   /** 当前阶段 */
   phase: PlanPhase
-  /** Plan 文件路径 */
-  planPath?: string
-  /** 执行步骤 */
-  steps?: PlanStep[]
 }
 
 // ===== Agent 流式事件载荷 =====
@@ -1045,18 +1078,13 @@ export type LumeRunEvent =
       }
     }
   | {
-      type: 'plan_progress'
-      planId: string
-      status: AgentStructuredPlanStatus
-      currentStepId?: string
-      steps: AgentStructuredPlanStep[]
+      type: 'task_progress'
+      taskRunId: string
+      contractId: string
+      status: AgentTaskRunStatus
+      currentTaskId?: string
+      tasks: AgentTaskRunTask[]
       message?: string
-      createdAt: string
-    }
-  | {
-      type: 'plan_execution_status'
-      text: string
-      status: 'running' | 'waiting' | 'completed' | 'failed'
       createdAt: string
     }
   | { type: 'run_completed'; result: { status: 'completed'; finalOutput?: string } }
@@ -1350,10 +1378,10 @@ export const AGENT_IPC_CHANNELS = {
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */
   SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
-  /** 结构化 plan 审批结果（web -> sidecar） */
-  SUBMIT_PLAN_APPROVAL: 'agent:submit-plan-approval',
-  /** 执行或继续结构化 plan（web -> sidecar） */
-  EXECUTE_PLAN: 'agent:execute-plan',
+  /** 任务清单审批结果（web -> sidecar） */
+  SUBMIT_TASK_APPROVAL: 'agent:submit-task-approval',
+  /** 执行或继续任务清单（web -> sidecar） */
+  EXECUTE_TASK_CONTRACT: 'agent:execute-task-contract',
   /** 获取当前待处理的交互请求（用于冷启动恢复） */
   GET_PENDING_INTERACTIVE: 'agent:get-pending-interactive',
   /** runtime status 变化通知（sidecar -> web） */
@@ -1364,8 +1392,8 @@ export const AGENT_IPC_CHANNELS = {
   LIST_RUN_STATES: 'agent:list-run-states',
   /** 获取 runtime trace（默认 safe_summary 脱敏） */
   GET_RUN_TRACE: 'agent:get-run-trace',
-  /** 获取结构化 plan state */
-  LIST_STRUCTURED_PLANS: 'agent:list-structured-plans',
+  /** 获取结构化任务清单 */
+  LIST_TASK_CONTRACTS: 'agent:list-task-contracts',
 
   // 附件
   /** 保存文件到 Agent thread 工作目录 */
@@ -1440,12 +1468,6 @@ export const AGENT_IPC_CHANNELS = {
   WORKSPACE_FILES_CHANGED: 'agent:workspace-files-changed',
 
   // Plan 模式
-  /** 获取 Plan 文件列表 */
-  LIST_PLANS: 'agent:list-plans',
-  /** 读取 Plan 文件内容 */
-  READ_PLAN: 'agent:read-plan',
-  /** 删除 Plan 文件 */
-  DELETE_PLAN: 'agent:delete-plan',
   /** Plan 状态变化通知（主进程 → 渲染进程推送） */
   PLAN_STATE_CHANGED: 'agent:plan-state-changed',
 

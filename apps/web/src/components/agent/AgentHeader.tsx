@@ -88,7 +88,7 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
               ? 'bg-foreground/10 text-foreground'
               : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
           )}
-          title="Plan 步骤"
+          title="任务进度"
         >
           <ListTodo size={16} />
         </button>

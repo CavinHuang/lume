@@ -237,20 +237,20 @@ function RunEventAssistantBlockItem({
     return <RunEventThinkingBlock text={block.text} active={isActiveThinking} />
   }
 
-  if (block.type === 'plan_progress') {
-    return <RunEventPlanProgressBlock event={block.event} />
+  if (block.type === 'task_progress') {
+    return <RunEventTaskProgressBlock event={block.event} />
   }
 
   return <RunEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
 }
 
-function RunEventPlanProgressBlock({ event }: { event: Extract<LumeRunEvent, { type: 'plan_progress' }> }) {
-  const total = event.steps.length
-  const completed = event.steps.filter((step) => step.status === 'completed' || step.status === 'skipped').length
-  const failed = event.steps.filter((step) => step.status === 'failed').length
-  const current = event.currentStepId
-    ? event.steps.find((step) => step.id === event.currentStepId)
-    : event.steps.find((step) => step.status === 'running')
+function RunEventTaskProgressBlock({ event }: { event: Extract<LumeRunEvent, { type: 'task_progress' }> }) {
+  const total = event.tasks.length
+  const completed = event.tasks.filter((task) => task.status === 'completed' || task.status === 'skipped').length
+  const failed = event.tasks.filter((task) => task.status === 'failed').length
+  const current = event.currentTaskId
+    ? event.tasks.find((task) => task.id === event.currentTaskId)
+    : event.tasks.find((task) => task.status === 'running')
   const tone = failed > 0 || event.status === 'failed'
     ? 'danger'
     : event.status === 'completed'
@@ -274,7 +274,7 @@ function RunEventPlanProgressBlock({ event }: { event: Extract<LumeRunEvent, { t
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
             <div className="truncate text-[13px] font-semibold text-[#34384c]">
-              {event.status === 'completed' ? '计划执行完成' : event.status === 'failed' ? '计划步骤失败' : '正在执行计划'}
+              {event.status === 'completed' ? '任务全部完成' : event.status === 'failed' ? '任务执行失败' : '正在执行任务'}
             </div>
             <div className="shrink-0 text-[11px] text-[#8a92a6]">
               {completed}/{total}
@@ -291,13 +291,13 @@ function RunEventPlanProgressBlock({ event }: { event: Extract<LumeRunEvent, { t
             </div>
           )}
           <div className="mt-2 flex gap-1.5">
-            {event.steps.slice(0, 8).map((step) => (
-              <span key={step.id} title={step.title || step.description || step.id} className="text-[#9aa0b2]">
-                {step.status === 'completed' || step.status === 'skipped'
+            {event.tasks.slice(0, 8).map((task) => (
+              <span key={task.id} title={task.title || task.description || task.id} className="text-[#9aa0b2]">
+                {task.status === 'completed' || task.status === 'skipped'
                   ? <CheckCircle size={12} className="text-emerald-500" />
-                  : step.status === 'running'
+                  : task.status === 'running'
                     ? <Loader2 size={12} className="animate-spin text-[#675cff]" />
-                    : step.status === 'failed'
+                    : task.status === 'failed'
                       ? <XCircle size={12} className="text-destructive" />
                       : <Circle size={12} />}
               </span>

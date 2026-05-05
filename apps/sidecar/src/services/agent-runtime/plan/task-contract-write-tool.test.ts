@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listPendingPlanApprovalRequests } from "./plan-approval-service";
-import { createFileBackedLumePlanStore } from "./plan-store";
-import { createPlanWriteTool } from "./plan-write-tool";
+import { listPendingTaskApprovalRequests } from "./task-approval-service";
+import { createFileBackedTaskContractStore } from "./task-contract-store";
+import { createTaskContractWriteTool } from "./task-contract-write-tool";
 
-describe("PlanWriteTool", () => {
-  test("creates and updates structured plans with runtime linkage", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "lume-plan-write-tool-"));
-    const tool = createPlanWriteTool({
+describe("TaskContractWriteTool", () => {
+  test("creates and updates task contracts with runtime linkage", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-task-contract-write-tool-"));
+    const tool = createTaskContractWriteTool({
       sessionDir: dir,
       threadId: "thread-1",
       runId: "run-1",
@@ -29,40 +29,44 @@ describe("PlanWriteTool", () => {
         description: "Read runtime files",
         type: "read",
         status: "completed",
+        result: "already done",
+        error: "should not persist",
         traceSpanId: "span-step-1"
       }]
     }, {} as any);
 
     expect(JSON.parse(String(created.content))).toEqual({
-      planId: "plan-1",
+      contractId: "plan-1",
       status: "needs_approval",
       stepCount: 1
     });
 
-    const store = createFileBackedLumePlanStore(dir);
-    expect(await store.get("plan-1")).toMatchObject({
+    const store = createFileBackedTaskContractStore(dir);
+    const saved = await store.get("plan-1");
+    expect(saved).toMatchObject({
       id: "plan-1",
       threadId: "thread-1",
       runId: "run-1",
       traceSpanId: "trace-span-1",
       steps: [{
         id: "step-1",
-        traceSpanId: "span-step-1"
+        status: "pending"
       }]
     });
-    expect(await listPendingPlanApprovalRequests(dir)).toMatchObject([{
+    expect(saved?.currentStepId).toBeUndefined();
+    expect(await listPendingTaskApprovalRequests(dir)).toMatchObject([{
       threadId: "thread-1",
       runId: "run-1",
-      planId: "plan-1",
-      title: "确认执行计划",
+      contractId: "plan-1",
+      title: "确认任务清单",
       message: "Add structured runtime plan",
       stepCount: 1
     }]);
   });
 
   test("accepts common step shapes from model output", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "lume-plan-write-tool-shapes-"));
-    const tool = createPlanWriteTool({
+    const dir = mkdtempSync(join(tmpdir(), "lume-task-contract-write-tool-shapes-"));
+    const tool = createTaskContractWriteTool({
       sessionDir: dir,
       threadId: "thread-1",
       runId: "run-1",
@@ -81,11 +85,11 @@ describe("PlanWriteTool", () => {
     }, {} as any);
 
     expect(JSON.parse(String(created.content))).toMatchObject({
-      planId: "plan-1",
+      contractId: "plan-1",
       status: "needs_approval",
       stepCount: 2
     });
-    expect(await createFileBackedLumePlanStore(dir).get("plan-1")).toMatchObject({
+    expect(await createFileBackedTaskContractStore(dir).get("plan-1")).toMatchObject({
       steps: [
         { id: "step-1", title: "Inspect code", status: "pending" },
         { id: "step-2", title: "Patch code", type: "edit", status: "pending" }

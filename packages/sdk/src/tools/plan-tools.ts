@@ -29,7 +29,7 @@ export const EnterPlanModeTool: ToolDefinition = {
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
   isEnabled: () => true,
-  async prompt() { return 'Enter plan mode for structured planning.' },
+  async prompt() { return 'Enter plan mode to produce an approvable task contract before execution.' },
   async call(): Promise<ToolResult> {
     if (planModeActive) {
       return {
@@ -45,14 +45,14 @@ export const EnterPlanModeTool: ToolDefinition = {
     return {
       type: 'tool_result',
       tool_use_id: '',
-      content: 'Entered plan mode. Focus on exploration and implementation design only. Do not start editing files until you exit plan mode. When the plan is ready, call PlanWrite with status "needs_approval" so the user can review it in the Plan panel.',
+      content: 'Entered plan mode. Focus on exploration and implementation design only. Do not start editing files in plan mode. When the task contract is ready, call TaskContractWrite with status "needs_approval" so the user can review the task list before automatic execution.',
     }
   },
 }
 
 export const ExitPlanModeTool: ToolDefinition = {
   name: 'ExitPlanMode',
-  description: 'Exit plan mode and present the plan for implementation.',
+  description: 'Exit plan mode and present the task contract for implementation.',
   inputSchema: {
     type: 'object',
     properties: {

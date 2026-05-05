@@ -1,27 +1,27 @@
 import { useSetAtom } from 'jotai'
 import { ClipboardCheck } from 'lucide-react'
 import { agentPendingInteractiveAtom } from '@/atoms'
-import { submitPlanApproval } from '@/lib/desktop-api'
-import { removePendingPlanApproval } from '@/hooks/pending-interactive-state'
-import type { AgentPlanApprovalRequest } from '@lume/shared'
+import { submitTaskApproval } from '@/lib/desktop-api'
+import { removePendingTaskApproval } from '@/hooks/pending-interactive-state'
+import type { AgentTaskApprovalRequest } from '@lume/shared'
 
-interface PlanApprovalBannerProps {
+interface TaskApprovalBannerProps {
   threadId: string
-  request: AgentPlanApprovalRequest
+  request: AgentTaskApprovalRequest
 }
 
-export function PlanApprovalBanner({ threadId, request }: PlanApprovalBannerProps) {
+export function TaskApprovalBanner({ threadId, request }: TaskApprovalBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
 
   const respond = async (decision: 'approve' | 'reject') => {
-    const result = await submitPlanApproval({
+    const result = await submitTaskApproval({
       threadId,
-      planId: request.planId,
+      contractId: request.contractId,
       decision,
       execute: decision === 'approve',
     })
     if (result.ok) {
-      setPending((prev) => removePendingPlanApproval(prev, threadId, request.planId))
+      setPending((prev) => removePendingTaskApproval(prev, threadId, request.contractId))
     }
   }
 
@@ -35,7 +35,7 @@ export function PlanApprovalBanner({ threadId, request }: PlanApprovalBannerProp
             {request.summary || request.message}
           </p>
           <p className="mt-1 text-[11px] text-foreground/45">
-            {request.stepCount} 个步骤等待批准
+            {request.stepCount} 个任务等待批准
           </p>
         </div>
       </div>

@@ -26,17 +26,17 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("automation_set")).toBeFalse();
   });
 
-  test("allows PlanWrite in plan mode without treating it as a risky write", () => {
-    expect(getToolMetadata("PlanWrite")).toMatchObject({
+  test("allows TaskContractWrite in plan mode without treating it as a risky write", () => {
+    expect(getToolMetadata("TaskContractWrite")).toMatchObject({
       category: "control",
       riskLevel: "low",
       allowedInPlanMode: true
     });
-    expect(isToolAllowedInPlanMode("PlanWrite")).toBeTrue();
+    expect(isToolAllowedInPlanMode("TaskContractWrite")).toBeTrue();
   });
 
-  test("treats PlanStepUpdate as a low-risk control tool", () => {
-    expect(getToolMetadata("PlanStepUpdate")).toMatchObject({
+  test("treats TaskReport as a low-risk control tool", () => {
+    expect(getToolMetadata("TaskReport")).toMatchObject({
       category: "control",
       riskLevel: "low"
     });

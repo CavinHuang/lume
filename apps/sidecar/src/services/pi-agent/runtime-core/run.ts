@@ -60,9 +60,9 @@ import {
 } from "./session-store";
 import { ContextAssembler } from "../../agent-runtime/context/context-assembler";
 import type { ContextAssemblyInput } from "../../agent-runtime/context/context-assembler";
-import { createPlanWriteTool } from "../../agent-runtime/plan/plan-write-tool";
-import { createPlanStepUpdateTool } from "../../agent-runtime/plan/plan-step-update-tool";
-import type { LumePlan } from "../../agent-runtime/plan/plan-types";
+import { createTaskContractWriteTool } from "../../agent-runtime/plan/task-contract-write-tool";
+import { createTaskReportTool } from "../../agent-runtime/task-run/task-report-tool";
+import type { TaskContractRecord } from "../../agent-runtime/plan/task-contract-record-types";
 
 const log = createLogger("runtime-core-prompt");
 
@@ -95,7 +95,7 @@ export interface CreateRuntimeCoreSessionInput {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitPlanUpdated?: (plan: LumePlan) => void;
+  emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   runId?: string;
   trace?: ContextAssemblyInput["trace"];
 }
@@ -498,7 +498,7 @@ function buildRuntimeCoreTools(input: {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitPlanUpdated?: (plan: LumePlan) => void;
+  emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   runId?: string;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
@@ -511,13 +511,13 @@ function buildRuntimeCoreTools(input: {
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
     includeAskUserQuestion: automationExecution !== true
   });
-  const planWriteTool = createPlanWriteTool({
+  const planWriteTool = createTaskContractWriteTool({
     sessionDir: getRuntimeCoreSessionDir(input.sessionId),
     threadId: input.sessionId,
     runId: input.runId ?? input.sessionId,
-    onPlanUpdated: input.emitPlanUpdated
+    onTaskContractUpdated: input.emitTaskContractUpdated
   });
-  const planStepUpdateTool = createPlanStepUpdateTool({
+  const taskReportTool = createTaskReportTool({
     sessionDir: getRuntimeCoreSessionDir(input.sessionId),
     threadId: input.sessionId
   });
@@ -654,7 +654,7 @@ function buildRuntimeCoreTools(input: {
   const tools = [
     ...filteredBaseTools,
     planWriteTool,
-    planStepUpdateTool,
+    taskReportTool,
     ...customTools,
     sidecarAgentTool
   ];
@@ -742,7 +742,7 @@ export async function createRuntimeCoreSession(
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
-    emitPlanUpdated: input.emitPlanUpdated,
+    emitTaskContractUpdated: input.emitTaskContractUpdated,
     runId: input.runId
   });
 

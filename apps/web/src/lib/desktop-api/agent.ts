@@ -8,14 +8,14 @@ import type {
   AgentListRunStatesResult,
   AgentPendingInteractiveInput,
   AgentPendingInteractiveState,
-  AgentPlanApprovalResponseInput,
-  AgentExecutePlanInput,
-  AgentExecutePlanResult,
+  AgentTaskApprovalResponseInput,
+  AgentExecuteTaskContractInput,
+  AgentExecuteTaskContractResult,
   AgentRunTraceInput,
   AgentRunTraceResult,
   AgentSendInput,
-  AgentStructuredPlansInput,
-  AgentStructuredPlansResult,
+  AgentTaskContractsInput,
+  AgentTaskContractsResult,
   AgentGetMessageVersionsInput,
   AgentMessageVersionsResult,
   AgentMessage,
@@ -76,15 +76,15 @@ export const listAgentRunStates = (input: AgentListRunStatesInput) =>
     params: input,
   })
 
-export const submitPlanApproval = (input: AgentPlanApprovalResponseInput) =>
+export const submitTaskApproval = (input: AgentTaskApprovalResponseInput) =>
   invoke<{ ok: boolean }>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL,
+    method: AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL,
     params: input,
   })
 
-export const executePlan = (input: AgentExecutePlanInput) =>
-  invoke<AgentExecutePlanResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.EXECUTE_PLAN,
+export const executeTaskContract = (input: AgentExecuteTaskContractInput) =>
+  invoke<AgentExecuteTaskContractResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT,
     params: input,
   })
 
@@ -94,8 +94,8 @@ export const getAgentRunTrace = (input: AgentRunTraceInput) =>
     params: input,
   })
 
-export const listStructuredPlans = (input: AgentStructuredPlansInput) =>
-  invoke<AgentStructuredPlansResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.LIST_STRUCTURED_PLANS,
+export const listTaskContracts = (input: AgentTaskContractsInput) =>
+  invoke<AgentTaskContractsResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS,
     params: input,
   })

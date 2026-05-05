@@ -1,21 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { persistPlanApprovalInterruption } from "./plan-approval-service";
-import { createFileBackedLumePlanStore } from "./plan-store";
-import type { LumePlan, LumePlanStep } from "./plan-types";
+import { persistTaskApprovalInterruption } from "./task-approval-service";
+import { createFileBackedTaskContractStore } from "./task-contract-store";
+import type { TaskContractRecord, TaskContractRecordItem } from "./task-contract-record-types";
 
-export async function persistFallbackPlanFromText(input: {
+export async function persistFallbackTaskContractFromText(input: {
   sessionDir: string;
   threadId: string;
   runId: string;
   text: string;
   now?: () => string;
-  onPlanUpdated?: (plan: LumePlan) => void | Promise<void>;
-}): Promise<LumePlan | null> {
+  onTaskContractUpdated?: (contract: TaskContractRecord) => void | Promise<void>;
+}): Promise<TaskContractRecord | null> {
   const text = input.text.trim();
   if (!text) return null;
   const now = input.now ?? (() => new Date().toISOString());
   const createdAt = now();
-  const plan: LumePlan = {
+  const contract: TaskContractRecord = {
     id: randomUUID(),
     runId: input.runId,
     threadId: input.threadId,
@@ -31,14 +31,14 @@ export async function persistFallbackPlanFromText(input: {
     updatedAt: createdAt
   };
 
-  await createFileBackedLumePlanStore(input.sessionDir).upsert(plan);
-  await persistPlanApprovalInterruption({
+  await createFileBackedTaskContractStore(input.sessionDir).upsert(contract);
+  await persistTaskApprovalInterruption({
     sessionDir: input.sessionDir,
-    plan,
-    message: "Agent 未调用 PlanWrite；Lume 已将回复内容整理为待审批计划。"
+    contract,
+    message: "Agent 未调用 TaskContractWrite；Lume 已将回复内容整理为待审批任务清单。"
   });
-  await input.onPlanUpdated?.(plan);
-  return plan;
+  await input.onTaskContractUpdated?.(contract);
+  return contract;
 }
 
 function inferGoal(text: string): string {
@@ -46,7 +46,7 @@ function inferGoal(text: string): string {
     .split(/\r?\n/)
     .map((line) => line.replace(/^#+\s*/, "").trim())
     .find((line) => line.length > 0 && line.length <= 80);
-  return title ?? "执行当前计划";
+  return title ?? "执行当前任务清单";
 }
 
 function inferSummary(text: string): string {
@@ -55,11 +55,11 @@ function inferSummary(text: string): string {
     .split(/\n\s*\n/)
     .map((item) => item.trim())
     .find(Boolean);
-  if (!paragraph) return "根据 agent 的计划回复生成的待审批计划。";
+  if (!paragraph) return "根据 agent 的计划回复生成的待审批任务清单。";
   return paragraph.length > 240 ? `${paragraph.slice(0, 237)}...` : paragraph;
 }
 
-function inferSteps(text: string): LumePlanStep[] {
+function inferSteps(text: string): TaskContractRecordItem[] {
   const steps = text
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -67,7 +67,7 @@ function inferSteps(text: string): LumePlanStep[] {
     .filter((line): line is string => Boolean(line));
 
   const uniqueSteps = Array.from(new Set(steps)).slice(0, 12);
-  const finalSteps = uniqueSteps.length > 0 ? uniqueSteps : ["根据计划文本完成调研与整理"];
+  const finalSteps = uniqueSteps.length > 0 ? uniqueSteps : ["根据任务清单完成调研与整理"];
   return finalSteps.map((title, index) => ({
     id: `step-${index + 1}`,
     title,

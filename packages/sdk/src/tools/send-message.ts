@@ -15,7 +15,7 @@ export interface AgentMessage {
   to: string
   content: string
   timestamp: string
-  type: 'text' | 'shutdown_request' | 'shutdown_response' | 'plan_approval_response'
+  type: 'text' | 'shutdown_request' | 'shutdown_response' | 'task_approval_response'
 }
 
 const mailboxes = new Map<string, AgentMessage[]>()
@@ -55,7 +55,7 @@ export const SendMessageTool: ToolDefinition = {
       content: { type: 'string', description: 'Message content' },
       type: {
         type: 'string',
-        enum: ['text', 'shutdown_request', 'shutdown_response', 'plan_approval_response'],
+        enum: ['text', 'shutdown_request', 'shutdown_response', 'task_approval_response'],
         description: 'Message type (default: text)',
       },
     },

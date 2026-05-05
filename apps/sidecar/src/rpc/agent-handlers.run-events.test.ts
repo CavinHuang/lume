@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
-import { createFileBackedLumePlanStore } from "../services/agent-runtime/plan/plan-store";
+import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
 
 const appendedInputs: unknown[] = [];
@@ -41,11 +41,7 @@ mock.module("../services/agent/agent-service", () => ({
 function createTestPlanStateTracker(): PlanStateTracker {
   return {
     isLikelyExecutionRequest: () => false,
-    syncExecutionFromUserMessage: () => undefined,
-    syncExecutionFromSendInput: () => undefined,
     getPhase: () => "idle",
-    markCurrentStepCompleted: () => undefined,
-    markCurrentStepFailed: () => undefined,
     clearSession: () => undefined
   } as unknown as PlanStateTracker;
 }
@@ -75,10 +71,10 @@ describe("agent-handlers run events", () => {
     }
   });
 
-  test("SEND_THREAD_MESSAGE maps continue into latest unfinished plan execution", async () => {
+  test("SEND_THREAD_MESSAGE maps continue into latest unfinished task execution", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-continue-plan-rpc-"));
     const threadId = "thread-continue-plan";
-    await createFileBackedLumePlanStore(getRuntimeCoreSessionDir(threadId)).upsert({
+    await createFileBackedTaskContractStore(getRuntimeCoreSessionDir(threadId)).upsert({
       id: "plan-1",
       runId: "run-1",
       threadId,
@@ -123,13 +119,6 @@ describe("agent-handlers run events", () => {
       planStateTracker: {
         ...createTestPlanStateTracker(),
         isLikelyExecutionRequest: () => true,
-        syncExecutionFromSendInput: () => [{
-          id: "step-1",
-          text: "Patch",
-          status: "in_progress",
-          failCount: 0,
-          lastError: null
-        }],
         getPhase: () => "executing"
       } as unknown as PlanStateTracker,
       notifyPlanStateChange: () => undefined
@@ -145,18 +134,17 @@ describe("agent-handlers run events", () => {
       permissionMode: "acceptEdits",
       messageMetadata: {
         hiddenFromChat: true,
-        planControlEvent: "continue_plan_step",
-        planExecutionKey: "plan-1",
-        planExecutionMode: "step",
-        planExecutionStepId: "step-2"
+        taskControlEvent: "continue_task",
+        taskRunId: "taskrun-plan-1",
+        taskId: "step-2"
       }
     });
   });
 
-  test("EXECUTE_PLAN starts latest approved structured plan through a plan control dispatch", async () => {
+  test("EXECUTE_TASK_CONTRACT starts latest approved task contract through a task control dispatch", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-execute-plan-rpc-"));
     const threadId = "thread-execute-plan";
-    await createFileBackedLumePlanStore(getRuntimeCoreSessionDir(threadId)).upsert({
+    await createFileBackedTaskContractStore(getRuntimeCoreSessionDir(threadId)).upsert({
       id: "plan-1",
       runId: "run-1",
       threadId,
@@ -186,26 +174,19 @@ describe("agent-handlers run events", () => {
       planStateTracker: {
         ...createTestPlanStateTracker(),
         isLikelyExecutionRequest: () => true,
-        syncExecutionFromSendInput: () => [{
-          id: "step-1",
-          text: "Patch",
-          status: "in_progress",
-          failCount: 0,
-          lastError: null
-        }],
         getPhase: () => "executing"
       } as unknown as PlanStateTracker,
       notifyPlanStateChange: () => undefined
     });
 
-    await expect(handlers[AGENT_IPC_CHANNELS.EXECUTE_PLAN]!({
+    await expect(handlers[AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT]!({
       threadId,
-      planId: "plan-1",
+      contractId: "plan-1",
       intent: "execute"
     })).resolves.toMatchObject({
       ok: true,
       status: "sent",
-      planId: "plan-1"
+      contractId: "plan-1"
     });
 
     expect(appendedInputs[0]).toMatchObject({
@@ -213,10 +194,9 @@ describe("agent-handlers run events", () => {
       permissionMode: "acceptEdits",
       messageMetadata: {
         hiddenFromChat: true,
-        planControlEvent: "execute_plan_step",
-        planExecutionKey: "plan-1",
-        planExecutionMode: "step",
-        planExecutionStepId: "step-1"
+        taskControlEvent: "execute_task",
+        taskRunId: "taskrun-plan-1",
+        taskId: "step-1"
       }
     });
     expect(notifications).toContainEqual({
@@ -224,19 +204,19 @@ describe("agent-handlers run events", () => {
       params: {
         threadId,
         event: expect.objectContaining({
-          type: "plan_progress",
-          planId: "plan-1",
-          status: "executing",
-          currentStepId: "step-1"
+          type: "task_progress",
+          taskRunId: "taskrun-plan-1",
+          status: "running",
+          currentTaskId: "step-1"
         })
       }
     });
   });
 
-  test("SUBMIT_PLAN_APPROVAL can approve and execute in one control flow", async () => {
+  test("SUBMIT_TASK_APPROVAL can approve and execute in one control flow", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-approve-execute-plan-rpc-"));
     const threadId = "thread-approve-execute-plan";
-    await createFileBackedLumePlanStore(getRuntimeCoreSessionDir(threadId)).upsert({
+    await createFileBackedTaskContractStore(getRuntimeCoreSessionDir(threadId)).upsert({
       id: "plan-approval",
       runId: "run-1",
       threadId,
@@ -257,10 +237,10 @@ describe("agent-handlers run events", () => {
       createdAt: "2026-05-01T00:00:00.000Z",
       updatedAt: "2026-05-01T00:00:00.000Z"
     });
-    const { persistPlanApprovalInterruption } = await import("../services/agent-runtime/plan/plan-approval-service");
-    await persistPlanApprovalInterruption({
+    const { persistTaskApprovalInterruption } = await import("../services/agent-runtime/plan/task-approval-service");
+    await persistTaskApprovalInterruption({
       sessionDir: getRuntimeCoreSessionDir(threadId),
-      plan: (await createFileBackedLumePlanStore(getRuntimeCoreSessionDir(threadId)).get("plan-approval"))!
+      contract: (await createFileBackedTaskContractStore(getRuntimeCoreSessionDir(threadId)).get("plan-approval"))!
     });
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
@@ -269,9 +249,9 @@ describe("agent-handlers run events", () => {
       notifyPlanStateChange: () => undefined
     });
 
-    await expect(handlers[AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL]!({
+    await expect(handlers[AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL]!({
       threadId,
-      planId: "plan-approval",
+      contractId: "plan-approval",
       decision: "approve",
       execute: true
     })).resolves.toMatchObject({
@@ -279,7 +259,7 @@ describe("agent-handlers run events", () => {
       execution: {
         ok: true,
         status: "sent",
-        planId: "plan-approval"
+        contractId: "plan-approval"
       }
     });
 
@@ -287,10 +267,9 @@ describe("agent-handlers run events", () => {
       threadId,
       messageMetadata: {
         hiddenFromChat: true,
-        planControlEvent: "execute_plan_step",
-        planExecutionKey: "plan-approval",
-        planExecutionMode: "step",
-        planExecutionStepId: "step-1"
+        taskControlEvent: "execute_task",
+        taskRunId: "taskrun-plan-approval",
+        taskId: "step-1"
       }
     });
   });
@@ -316,7 +295,7 @@ describe("agent-handlers run events", () => {
     });
   });
 
-  test("plain final output in planning mode is persisted as a fallback structured plan", async () => {
+  test("plain final output in planning mode is persisted as a fallback task contract", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-fallback-plan-rpc-"));
     const threadId = "thread-fallback-plan";
     mockRunEvents.splice(0, mockRunEvents.length, {
@@ -333,7 +312,7 @@ describe("agent-handlers run events", () => {
     });
     const planStateChanges: Array<{ threadId: string; phase: string }> = [];
     const { createAgentHandlers } = await import("./agent-handlers");
-    const { listPendingPlanApprovalRequests } = await import("../services/agent-runtime/plan/plan-approval-service");
+    const { listPendingTaskApprovalRequests } = await import("../services/agent-runtime/plan/task-approval-service");
     const tracker = createTestPlanStateTracker();
     tracker.getPhase = () => "planning";
     const handlers = createAgentHandlers({
@@ -349,7 +328,7 @@ describe("agent-handlers run events", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const approvals = await listPendingPlanApprovalRequests(getRuntimeCoreSessionDir(threadId));
+    const approvals = await listPendingTaskApprovalRequests(getRuntimeCoreSessionDir(threadId));
     expect(approvals).toHaveLength(1);
     expect(approvals[0]).toMatchObject({
       threadId,

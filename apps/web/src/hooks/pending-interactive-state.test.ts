@@ -2,16 +2,16 @@ import { describe, expect, test } from "bun:test"
 import type {
   AgentAskUserQuestionRequest,
   AgentPendingInteractiveState,
-  AgentPlanApprovalRequest,
+  AgentTaskApprovalRequest,
   AgentToolPermissionRequest,
 } from "@lume/shared"
 import {
   removePendingAskUserQuestion,
-  removePendingPlanApproval,
+  removePendingTaskApproval,
   removePendingToolPermission,
   removePendingToolPermissionEverywhere,
   upsertPendingAskUserQuestion,
-  upsertPendingPlanApproval,
+  upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from "./pending-interactive-state"
 
@@ -131,29 +131,29 @@ describe("pending interactive state helpers", () => {
     expect(next["child-thread"]?.toolPermissions).toEqual([])
   })
 
-  test("同一线程应能累计多个 plan approval 请求，并可按 planId 删除", () => {
-    const first: AgentPlanApprovalRequest = {
+  test("同一线程应能累计多个任务审批请求，并可按 contractId 删除", () => {
+    const first: AgentTaskApprovalRequest = {
       threadId: "parent-thread",
-      requestId: "plan_approval:plan-1",
-      planId: "plan-1",
-      title: "确认执行计划",
+      requestId: "task_approval:plan-1",
+      contractId: "plan-1",
+      title: "确认任务清单",
       message: "Approve plan 1",
       stepCount: 1
     }
-    const second: AgentPlanApprovalRequest = {
+    const second: AgentTaskApprovalRequest = {
       threadId: "parent-thread",
-      requestId: "plan_approval:plan-2",
-      planId: "plan-2",
-      title: "确认执行计划",
+      requestId: "task_approval:plan-2",
+      contractId: "plan-2",
+      title: "确认任务清单",
       message: "Approve plan 2",
       stepCount: 2
     }
 
-    const next = upsertPendingPlanApproval({}, first)
-    const merged = upsertPendingPlanApproval(next, second)
-    const removed = removePendingPlanApproval(merged, "parent-thread", "plan-1")
+    const next = upsertPendingTaskApproval({}, first)
+    const merged = upsertPendingTaskApproval(next, second)
+    const removed = removePendingTaskApproval(merged, "parent-thread", "plan-1")
 
-    expect(merged["parent-thread"]?.planApprovals?.map((item) => item.planId)).toEqual(["plan-1", "plan-2"])
-    expect(removed["parent-thread"]?.planApprovals?.map((item) => item.planId)).toEqual(["plan-2"])
+    expect(merged["parent-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-1", "plan-2"])
+    expect(removed["parent-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-2"])
   })
 })

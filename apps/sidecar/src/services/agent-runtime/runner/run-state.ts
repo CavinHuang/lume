@@ -61,7 +61,7 @@ export interface LumeRunState {
   generatedItems: LumeRunItem[];
   pendingInterruptions: LumeInterruption[];
   approvals: LumeApprovalState;
-  planId?: string;
+  contractId?: string;
   traceId: string;
   model: {
     provider: string;

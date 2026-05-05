@@ -10,7 +10,6 @@ import type {
   ImportLocalSkillDirectoryToWorkspaceInput,
   InstallSkillMarketItemToWorkspaceInput,
   InstallGlobalPluginInput,
-  PlanStep,
   WorkspaceMcpConfig
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
@@ -44,12 +43,10 @@ import {
   copyFolderToSession,
   deleteAgentFile,
   deleteWorkspaceFile,
-  deleteAgentPlan,
   getAgentThreadPath,
   getWorkspaceResourcesDirectory,
   listAgentDirectory,
   listAttachedDirectory,
-  listAgentPlans,
   listWorkspaceDirectory,
   moveAgentFile,
   moveWorkspaceFile,
@@ -59,7 +56,6 @@ import {
   openWorkspacePath,
   previewAgentPath,
   previewWorkspacePath,
-  readAgentPlan,
   renameAgentFile,
   renameWorkspaceFile,
   renameAttachedPath,
@@ -113,25 +109,29 @@ import {
   LumeResumeService
 } from "../services/agent-runtime/interruption/resume-service";
 import {
-  listPendingPlanApprovalRequests,
-  resolvePlanApproval
-} from "../services/agent-runtime/plan/plan-approval-service";
-import { persistFallbackPlanFromText } from "../services/agent-runtime/plan/plan-fallback-service";
+  listPendingTaskApprovalRequests,
+  resolveTaskApproval
+} from "../services/agent-runtime/plan/task-approval-service";
+import { persistFallbackTaskContractFromText } from "../services/agent-runtime/plan/task-contract-fallback-service";
 import {
-  markStructuredPlanExecutionFailed,
-  markStructuredPlanExecutionWaiting,
-  markStructuredPlanInteractionResolved
-} from "../services/agent-runtime/plan/plan-execution-service";
+  markTaskContractFallbackExecutionFailed,
+  markTaskContractFallbackExecutionWaiting,
+  markTaskContractInteractionResolved
+} from "../services/agent-runtime/plan/task-contract-fallback-execution-service";
+import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
+import type { TaskContractRecord } from "../services/agent-runtime/plan/task-contract-record-types";
+import type { TaskContract } from "../services/agent-runtime/plan/task-contract-types";
 import {
-  buildCurrentPlanStepSendInput,
-  markCurrentPlanStepUnreported,
-  skipCurrentPlanStep,
-  startNextPlanStep,
-  type PlanExecutionIntent
-} from "../services/agent-runtime/plan/plan-execution-controller";
-import { projectPlanEventToProgressEvent, projectPlanToProgressEvents } from "../services/agent-runtime/plan/plan-progress-events";
-import { createFileBackedLumePlanStore } from "../services/agent-runtime/plan/plan-store";
-import type { LumePlan } from "../services/agent-runtime/plan/plan-types";
+  buildCurrentTaskRunSendInput,
+  createTaskRunFromContract,
+  markCurrentTaskUnreported,
+  markTaskRunWaiting,
+  skipCurrentTask,
+  startNextTaskRunTask
+} from "../services/agent-runtime/task-run/task-run-controller";
+import { projectTaskRunEventToProgressEvent, projectTaskRunToProgressEvents } from "../services/agent-runtime/task-run/task-progress-events";
+import { createFileBackedTaskRunStore } from "../services/agent-runtime/task-run/task-run-store";
+import type { TaskRun } from "../services/agent-runtime/task-run/task-run-types";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { projectRunStateToRunEvents } from "../services/agent-runtime/runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
@@ -162,7 +162,7 @@ import {
   agentTruncateThreadInputSchema,
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
-  executePlanInputSchema,
+  executeTaskContractInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
@@ -177,8 +177,6 @@ import {
   moveFileInputSchema,
   pendingInteractiveInputSchema,
   pathFileInputSchema,
-  plansListInputSchema,
-  plansReadDeleteInputSchema,
   promoteFileToWorkspaceInputSchema,
   proxySettingsInputSchema,
   readBootstrapFileInputSchema,
@@ -193,11 +191,11 @@ import {
   searchWorkspaceFilesInputSchema,
   skillMarketCatalogInputSchema,
   skillMarketDetailInputSchema,
-  structuredPlansInputSchema,
+  taskContractsInputSchema,
   threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
-  submitPlanApprovalInputSchema,
+  submitTaskApprovalInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
@@ -213,13 +211,14 @@ import {
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, asString, validateInput } from "./validation";
 
+type PlanExecutionIntent = "execute" | "continue" | "retry" | "skip";
+
 interface AgentHandlersContext {
   writeNotification: NotificationWriter;
   planStateTracker: PlanStateTracker;
   notifyPlanStateChange: (
     threadId: string,
-    phase: "idle" | "planning" | "review" | "executing" | "executed",
-    extras?: { planPath?: string; steps?: PlanStep[] }
+    phase: "idle" | "planning" | "review" | "executing" | "executed"
   ) => void;
 }
 
@@ -230,9 +229,11 @@ function isPlanContinuationUserMessage(userMessage: string): boolean {
     || text === "继续执行"
     || text === "继续计划"
     || text === "继续执行计划"
+    || text === "继续任务"
+    || text === "继续执行任务"
     || text === "请继续"
     || text === "继续吧"
-    || /^继续(执行)?(当前|这个|该)?计划/.test(text);
+    || /^继续(执行)?(当前|这个|该)?(计划|任务)$/.test(text);
 }
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
@@ -255,12 +256,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return runs.at(-1)?.runId ?? null;
   };
 
-  const resolveExecutablePlan = async (input: { threadId: string; planId?: string }) => {
-    const plans = await createFileBackedLumePlanStore(resolveRuntimeSessionDir(input.threadId)).listByThread(input.threadId);
-    const candidates = input.planId
-      ? plans.filter((plan) => plan.id === input.planId)
-      : plans
-        .filter((plan) => plan.status === "approved" || plan.status === "executing" || plan.status === "failed")
+  const resolveExecutableTaskContract = async (input: { threadId: string; contractId?: string }) => {
+    const contracts = await createFileBackedTaskContractStore(resolveRuntimeSessionDir(input.threadId)).listByThread(input.threadId);
+    const candidates = input.contractId
+      ? contracts.filter((contract) => contract.id === input.contractId)
+      : contracts
+        .filter((contract) => contract.status === "approved" || contract.status === "executing" || contract.status === "failed")
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return candidates[0] ?? null;
   };
@@ -269,69 +270,71 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return input;
   };
 
-  const dispatchPlanExecution = (input: {
+  const dispatchTaskExecution = (input: {
     threadId: string;
-    planId?: string;
+    contractId?: string;
     permissionMode?: AgentSendInput["permissionMode"];
     intent?: PlanExecutionIntent;
   }) => async () => {
     const sessionDir = resolveRuntimeSessionDir(input.threadId);
-    const plan = await resolveExecutablePlan({ threadId: input.threadId, planId: input.planId });
-    if (!plan) {
+    const contract = await resolveExecutableTaskContract({ threadId: input.threadId, contractId: input.contractId });
+    if (!contract) {
       return {
         ok: false,
         status: "not_found" as const,
-        error: "找不到可执行计划。"
+        error: "找不到可执行任务。"
       };
     }
-    if (plan.status !== "approved" && plan.status !== "executing" && plan.status !== "failed") {
+    if (contract.status !== "approved" && contract.status !== "executing" && contract.status !== "failed") {
       return {
         ok: false,
         status: "not_executable" as const,
-        planId: plan.id,
-        error: "计划尚未批准或不可继续执行。"
+        contractId: contract.id,
+        error: "任务清单尚未批准或不可继续执行。"
       };
     }
     if (input.intent === "skip") {
-      const skipped = await skipCurrentPlanStep({
+      const taskRun = await createTaskRunFromTaskContractRecord(sessionDir, contract);
+      const skipped = await skipCurrentTask({
         sessionDir,
         threadId: input.threadId,
-        planId: plan.id
+        taskRunId: taskRun.id
       });
       if (skipped) {
-        emitLatestPlanProgress(input.threadId, skipped);
+        emitLatestTaskProgress(input.threadId, skipped);
         context.notifyPlanStateChange(input.threadId, skipped.status === "completed" ? "executed" : "executing");
       }
       return {
         ok: Boolean(skipped),
         status: skipped ? "sent" as const : "not_executable" as const,
-        planId: plan.id,
-        ...(skipped ? {} : { error: "当前计划步骤不可跳过。" })
+        contractId: contract.id,
+        ...(skipped ? {} : { error: "当前任务不可跳过。" })
       };
     }
-    const started = await startNextPlanStep({
+    const taskRun = await createTaskRunFromTaskContractRecord(sessionDir, contract);
+    const started = await startNextTaskRunTask({
       sessionDir,
       threadId: input.threadId,
-      planId: plan.id,
+      taskRunId: taskRun.id,
       intent: input.intent ?? "execute"
     });
     if (!started) {
       return {
         ok: false,
         status: "not_executable" as const,
-        planId: plan.id,
-        error: "计划没有剩余可执行步骤。"
+        contractId: contract.id,
+        error: "任务清单没有剩余可执行任务。"
       };
     }
-    const sendInput = buildCurrentPlanStepSendInput({
+    const sendInput = buildCurrentTaskRunSendInput({
       threadId: input.threadId,
-      plan: started.plan,
-      step: started.step,
-      permissionMode: input.permissionMode,
-      controlEvent: input.intent === "retry" ? "retry_plan_step" : input.intent === "continue" ? "continue_plan_step" : "execute_plan_step"
+      taskRun: started.taskRun,
+      task: started.task,
+      permissionMode: input.permissionMode ?? "acceptEdits",
+      controlEvent: input.intent === "retry" ? "retry_task" : input.intent === "continue" ? "continue_task" : "execute_task"
     });
-    emitLatestPlanProgress(input.threadId, started.plan);
-    const dispatch = appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId, { planId: started.plan.id }), {
+    emitLatestTaskProgress(input.threadId, started.taskRun);
+    const dispatch = appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId, { taskRunId: started.taskRun.id, contractId: contract.id }), {
       onExecutionStarted: () => {
         context.notifyPlanStateChange(input.threadId, "executing");
       }
@@ -340,17 +343,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       ok: true,
       status: dispatch.mode,
       queuedCount: dispatch.queuedCount,
-      planId: plan.id
+      contractId: contract.id
     };
   };
 
-  const emitLatestPlanProgress = (threadId: string, plan: LumePlan | null) => {
-    if (!plan) return;
-    const latestEvent = plan.events?.at(-1);
+  const emitLatestTaskProgress = (threadId: string, taskRun: TaskRun | null) => {
+    if (!taskRun) return;
+    const latestEvent = taskRun.events.at(-1);
     if (!latestEvent) return;
     context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
       threadId,
-      event: projectPlanEventToProgressEvent(plan, latestEvent)
+      event: projectTaskRunEventToProgressEvent(taskRun, latestEvent)
     });
   };
 
@@ -358,59 +361,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     if (!context.planStateTracker.isLikelyExecutionRequest(input)) {
       return;
     }
-    const steps = context.planStateTracker.syncExecutionFromSendInput(input);
-    context.notifyPlanStateChange(input.threadId, "executing", steps ? { steps } : undefined);
-    if (steps?.length) {
-      emitPlanExecutionStatusMessage(input.threadId, buildPlanExecutionStartedText(steps), "running");
-    }
+    context.notifyPlanStateChange(input.threadId, "executing");
   };
 
-  const emitPlanExecutionStatusMessage = (
-    threadId: string,
-    text: string,
-    status: "running" | "waiting" | "completed" | "failed"
-  ) => {
-    context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
-      threadId,
-      event: {
-        type: "plan_execution_status",
-        text,
-        status,
-        createdAt: new Date().toISOString()
-      }
-    });
-  };
-
-  const buildPlanExecutionStartedText = (steps: PlanStep[]): string => {
-    const currentIndex = steps.findIndex((step) => step.status === "in_progress");
-    const currentStep = currentIndex >= 0 ? steps[currentIndex] : steps[0];
-    const totalCount = steps.length;
-    const completedCount = steps.filter((step) => step.status === "completed").length;
-    const remainingCount = steps.filter((step) => step.status === "pending" || step.status === "in_progress" || step.status === "failed").length;
-    const previewSteps = steps.slice(0, 6).map((step, index) => {
-      const marker = step.status === "completed"
-        ? "✓"
-        : step.status === "in_progress"
-          ? "→"
-          : step.status === "failed"
-            ? "!"
-            : "○";
-      return `- ${marker} ${index + 1}. ${step.text}`;
-    });
-    return [
-      `**开始执行计划**`,
-      `第 **${currentIndex >= 0 ? currentIndex + 1 : 1} / ${totalCount}** 步`,
-      `已完成 ${completedCount} 步，剩余 ${remainingCount} 步。`,
-      currentStep ? `当前执行：**${currentStep.text}**` : "",
-      previewSteps.length > 0 ? `步骤概览：\n\n${previewSteps.join("\n")}` : "",
-      steps.length > previewSteps.length ? `...另有 ${steps.length - previewSteps.length} 步` : "",
-      "执行过程中会继续在这里输出进展；需要你确认时会暂停并提示。"
-    ].filter(Boolean).join("\n\n");
-  };
-
-  const createAgentStreamEmitter = (threadId: string, options?: { planId?: string }) => {
+  const createAgentStreamEmitter = (threadId: string, options?: { contractId?: string; taskRunId?: string }) => {
     let finalOutput: string | undefined;
-    let structuredPlanWritten = false;
+    let taskContractWritten = false;
     return {
       onRunEvent: (event: unknown) => {
         const runEvent = event as { type?: string; result?: { finalOutput?: unknown } };
@@ -454,56 +410,55 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       onComplete: () => {
         const sessionDir = resolveRuntimeSessionDir(threadId);
         if (
-          !structuredPlanWritten
+          !taskContractWritten
           && context.planStateTracker.getPhase(threadId) === "planning"
           && finalOutput?.trim()
         ) {
-          void persistFallbackPlanFromText({
+          void persistFallbackTaskContractFromText({
             sessionDir,
             threadId,
             runId: threadId,
             text: finalOutput,
-            onPlanUpdated: () => {
+            onTaskContractUpdated: () => {
               context.notifyPlanStateChange(threadId, "review");
             }
           });
         }
-        if (options?.planId) {
+        if (options?.taskRunId) {
           void (async () => {
-            const store = createFileBackedLumePlanStore(sessionDir);
-            let plan = await store.get(options.planId!);
-            if (plan?.status === "executing" && plan.currentStepId) {
-              const current = plan.steps.find((step) => step.id === plan?.currentStepId);
+            const store = createFileBackedTaskRunStore(sessionDir);
+            let taskRun = await store.get(options.taskRunId!);
+            if (taskRun?.status === "running" && taskRun.currentTaskId) {
+              const current = taskRun.tasks.find((task) => task.id === taskRun?.currentTaskId);
               if (current?.status === "running") {
-                plan = await markCurrentPlanStepUnreported({
+                taskRun = await markCurrentTaskUnreported({
                   sessionDir,
                   threadId,
-                  planId: options.planId
+                  taskRunId: options.taskRunId
                 });
               }
             }
-            emitLatestPlanProgress(threadId, plan);
-            if (plan?.status === "approved") {
-              void dispatchPlanExecution({
+            emitLatestTaskProgress(threadId, taskRun);
+            if (taskRun?.status === "pending") {
+              void dispatchTaskExecution({
                 threadId,
-                planId: plan.id,
+                contractId: options.contractId,
                 intent: "continue"
               })();
               return;
             }
-            if (plan?.status === "completed") {
+            if (taskRun?.status === "completed") {
               context.notifyPlanStateChange(threadId, "executed");
             }
           })();
           return;
         }
         if (context.planStateTracker.getPhase(threadId) === "executing") {
-          const steps = context.planStateTracker.markCurrentStepCompleted(threadId);
-          context.notifyPlanStateChange(threadId, "executed", steps ? { steps } : undefined);
+          context.notifyPlanStateChange(threadId, "executed");
         }
       },
       onError: (error: string) => {
-        void markStructuredPlanExecutionFailed({
+        void markTaskContractFallbackExecutionFailed({
           sessionDir: resolveRuntimeSessionDir(threadId),
           threadId,
           error
@@ -519,8 +474,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           }
         });
         if (context.planStateTracker.getPhase(threadId) === "executing") {
-          const steps = context.planStateTracker.markCurrentStepFailed(threadId, error);
-          context.notifyPlanStateChange(threadId, "review", steps ? { steps } : undefined);
+          context.notifyPlanStateChange(threadId, "review");
         }
       },
       onTitleUpdated: (title: string) =>
@@ -534,27 +488,47 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             ?.map((item) => item.question)
             .filter(Boolean)
             .join("\n");
-          void markStructuredPlanExecutionWaiting({
-            sessionDir: resolveRuntimeSessionDir(threadId),
-            threadId,
-            status: "needs_user_input",
-            reason: message || "等待用户回答"
-          }).then((plan) => emitLatestPlanProgress(threadId, plan));
+          if (options?.taskRunId) {
+            void markTaskRunWaiting({
+              sessionDir: resolveRuntimeSessionDir(threadId),
+              threadId,
+              taskRunId: options.taskRunId,
+              waitingFor: "user",
+              reason: message || "等待用户回答"
+            }).then((taskRun) => emitLatestTaskProgress(threadId, taskRun));
+          } else {
+            void markTaskContractFallbackExecutionWaiting({
+              sessionDir: resolveRuntimeSessionDir(threadId),
+              threadId,
+              status: "needs_user_input",
+              reason: message || "等待用户回答"
+            });
+          }
           context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
         },
       onToolPermissionRequest: (request: unknown) =>
         {
           const toolRequest = request as { toolName?: string; reason?: string };
-          void markStructuredPlanExecutionWaiting({
-            sessionDir: resolveRuntimeSessionDir(threadId),
-            threadId,
-            status: "needs_approval",
-            reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
-          }).then((plan) => emitLatestPlanProgress(threadId, plan));
+          if (options?.taskRunId) {
+            void markTaskRunWaiting({
+              sessionDir: resolveRuntimeSessionDir(threadId),
+              threadId,
+              taskRunId: options.taskRunId,
+              waitingFor: "permission",
+              reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
+            }).then((taskRun) => emitLatestTaskProgress(threadId, taskRun));
+          } else {
+            void markTaskContractFallbackExecutionWaiting({
+              sessionDir: resolveRuntimeSessionDir(threadId),
+              threadId,
+              status: "needs_approval",
+              reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
+            });
+          }
           context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
         },
-      onPlanUpdated: () => {
-        structuredPlanWritten = true;
+      onTaskContractUpdated: () => {
+        taskContractWritten = true;
         context.notifyPlanStateChange(threadId, "review");
       }
     };
@@ -582,12 +556,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const sessionDir = resolveRuntimeSessionDir(input.threadId);
       const runs = await createFileBackedLumeRunStateStore(sessionDir)
         .listByThread(input.threadId);
-      const plans = await createFileBackedLumePlanStore(sessionDir).listByThread(input.threadId);
+      const taskRuns = await createFileBackedTaskRunStore(sessionDir).listByThread(input.threadId);
       return {
         threadId: input.threadId,
         events: [
           ...runs.flatMap((run) => projectRunStateToRunEvents(run)),
-          ...plans.flatMap((plan) => projectPlanToProgressEvents(plan))
+          ...taskRuns.flatMap((taskRun) => projectTaskRunToProgressEvents(taskRun))
         ]
       };
     },
@@ -713,23 +687,23 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       const askRequests = listPendingPiAskUserQuestionRequests();
       const toolRequests = listPendingToolPermissionRequests();
-      const planRequests = await listPendingPlanApprovalRequests();
+      const taskApprovalRequests = await listPendingTaskApprovalRequests();
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
       for (const request of toolRequests) threadIds.add(request.threadId);
-      for (const request of planRequests) threadIds.add(request.threadId);
+      for (const request of taskApprovalRequests) threadIds.add(request.threadId);
 
       const result: AgentPendingInteractiveState[] = [];
       for (const threadId of threadIds) {
         if (input.threadId && input.threadId !== threadId) continue;
         const askUserQuestions = askRequests.filter((request) => request.threadId === threadId);
         const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
-        const planApprovals = planRequests.filter((request) => request.threadId === threadId);
+        const taskApprovals = taskApprovalRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
           ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
           ...(toolPermissions.length > 0 ? { toolPermissions } : {}),
-          ...(planApprovals.length > 0 ? { planApprovals } : {})
+          ...(taskApprovals.length > 0 ? { taskApprovals } : {})
         });
       }
       return result;
@@ -821,7 +795,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             status: run.status,
             currentStep: run.currentStep,
             traceId: run.traceId,
-            planId: run.planId,
+            contractId: run.contractId,
             model: run.model,
             usage: run.usage,
             pendingInterruptionCount: run.pendingInterruptions.length,
@@ -872,11 +846,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           : null
       };
     },
-    [AGENT_IPC_CHANNELS.LIST_STRUCTURED_PLANS]: async (params) => {
-      const input = validateInput(structuredPlansInputSchema, params, AGENT_IPC_CHANNELS.LIST_STRUCTURED_PLANS);
-      const plans = await createFileBackedLumePlanStore(resolveRuntimeSessionDir(input.threadId))
+    [AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS]: async (params) => {
+      const input = validateInput(taskContractsInputSchema, params, AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS);
+      const plans = await createFileBackedTaskContractStore(resolveRuntimeSessionDir(input.threadId))
         .listByThread(input.threadId);
-      return { plans };
+      return { contracts: plans };
     },
     [AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM]: async (params) => {
       const input = validateInput(agentTruncateThreadInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM);
@@ -1161,30 +1135,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         input.rootPath
       );
     },
-    [AGENT_IPC_CHANNELS.LIST_PLANS]: async (params) => {
-      const input = validateInput(plansListInputSchema, params, AGENT_IPC_CHANNELS.LIST_PLANS);
-      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
-      if (!resolvedWorkspaceSlug) {
-        throw new Error("未找到线程对应的 workspace");
-      }
-      return listAgentPlans(resolvedWorkspaceSlug, input.threadId);
-    },
-    [AGENT_IPC_CHANNELS.READ_PLAN]: async (params) => {
-      const input = validateInput(plansReadDeleteInputSchema, params, AGENT_IPC_CHANNELS.READ_PLAN);
-      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
-      if (!resolvedWorkspaceSlug) {
-        throw new Error("未找到线程对应的 workspace");
-      }
-      return readAgentPlan(resolvedWorkspaceSlug, input.threadId, input.planPath);
-    },
-    [AGENT_IPC_CHANNELS.DELETE_PLAN]: async (params) => {
-      const input = validateInput(plansReadDeleteInputSchema, params, AGENT_IPC_CHANNELS.DELETE_PLAN);
-      const resolvedWorkspaceSlug = input.workspaceSlug ?? resolveWorkspaceSlugByThreadId(input.threadId);
-      if (!resolvedWorkspaceSlug) {
-        throw new Error("未找到线程对应的 workspace");
-      }
-      return deleteAgentPlan(resolvedWorkspaceSlug, input.threadId, input.planPath);
-    },
     [AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]: async (params) =>
       saveFilesToAgentThread(
         (() => {
@@ -1221,14 +1171,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_THREAD);
       stopAgent(input.threadId);
-      void markStructuredPlanExecutionFailed({
+      void markTaskContractFallbackExecutionFailed({
         sessionDir: resolveRuntimeSessionDir(input.threadId),
         threadId: input.threadId,
         error: "用户已停止当前执行"
       });
       if (context.planStateTracker.getPhase(input.threadId) === "executing") {
-        const steps = context.planStateTracker.markCurrentStepFailed(input.threadId, "用户已停止当前执行");
-        context.notifyPlanStateChange(input.threadId, "review", steps ? { steps } : undefined);
+        context.notifyPlanStateChange(input.threadId, "review");
       }
       return { ok: true };
     },
@@ -1244,7 +1193,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         canceled: input.canceled === true,
         answers: input.answers
       });
-      void markStructuredPlanInteractionResolved({
+      void markTaskContractInteractionResolved({
         sessionDir: resolveRuntimeSessionDir(input.threadId),
         threadId: input.threadId
       });
@@ -1261,39 +1210,39 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         requestId: input.requestId,
         decision: input.decision
       });
-      void markStructuredPlanInteractionResolved({
+      void markTaskContractInteractionResolved({
         sessionDir: resolveRuntimeSessionDir(input.threadId),
         threadId: input.threadId
       });
       return result;
     },
-    [AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL]: async (params) => {
+    [AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL]: async (params) => {
       const input = validateInput(
-        submitPlanApprovalInputSchema,
+        submitTaskApprovalInputSchema,
         params,
-        AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL
+        AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL
       );
-      const ok = await resolvePlanApproval({
+      const ok = await resolveTaskApproval({
         sessionDir: resolveRuntimeSessionDir(input.threadId),
         threadId: input.threadId,
-        planId: input.planId,
+        contractId: input.contractId,
         decision: input.decision
       });
       if (!ok || input.decision !== "approve" || input.execute !== true) {
         return { ok };
       }
-      const execution = await dispatchPlanExecution({
+      const execution = await dispatchTaskExecution({
         threadId: input.threadId,
-        planId: input.planId,
+        contractId: input.contractId,
         intent: "execute"
       })();
       return { ok, execution };
     },
-    [AGENT_IPC_CHANNELS.EXECUTE_PLAN]: async (params) => {
-      const input = validateInput(executePlanInputSchema, params, AGENT_IPC_CHANNELS.EXECUTE_PLAN);
-      return dispatchPlanExecution({
+    [AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT]: async (params) => {
+      const input = validateInput(executeTaskContractInputSchema, params, AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT);
+      return dispatchTaskExecution({
         threadId: input.threadId,
-        planId: input.planId,
+        contractId: input.contractId,
         permissionMode: input.permissionMode,
         intent: input.intent
       })();
@@ -1311,11 +1260,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
       if (isPlanContinuationUserMessage(input.userMessage) && typeof input.messageMetadata?.planExecutionKey !== "string") {
-        const latestContinuablePlan = await resolveExecutablePlan({ threadId: input.threadId });
-        if (latestContinuablePlan) {
-          return dispatchPlanExecution({
+        const latestContinuableTaskContract = await resolveExecutableTaskContract({ threadId: input.threadId });
+        if (latestContinuableTaskContract) {
+          return dispatchTaskExecution({
             threadId: input.threadId,
-            planId: latestContinuablePlan.id,
+            contractId: latestContinuableTaskContract.id,
             permissionMode: input.permissionMode,
             intent: "continue"
           })();
@@ -1372,4 +1321,65 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   };
 
   return handlers;
+}
+
+function taskContractRecordToTaskContract(contract: TaskContractRecord): TaskContract {
+  return {
+    id: contract.id,
+    runId: contract.runId,
+    threadId: contract.threadId,
+    goal: contract.goal,
+    summary: contract.summary,
+    tasks: contract.steps.map((step) => ({
+      id: step.id,
+      title: step.title,
+      description: step.description,
+      ...(step.expectedTools ? { expectedTools: step.expectedTools } : {}),
+      ...(step.expectedFiles ? { expectedFiles: step.expectedFiles } : {})
+    })),
+    risks: contract.risks,
+    expectedChanges: contract.expectedChanges,
+    status: contract.status === "approved" ? "approved" : contract.status === "cancelled" ? "rejected" : "draft",
+    createdAt: contract.createdAt,
+    updatedAt: contract.updatedAt,
+    ...(contract.approvedAt ? { approvedAt: contract.approvedAt } : {})
+  };
+}
+
+async function createTaskRunFromTaskContractRecord(sessionDir: string, contract: TaskContractRecord): Promise<TaskRun> {
+  const store = createFileBackedTaskRunStore(sessionDir);
+  const existing = await store.get(`taskrun-${contract.id}`);
+  if (existing) return existing;
+  const created = await createTaskRunFromContract({
+    sessionDir,
+    contract: taskContractRecordToTaskContract(contract)
+  });
+  const tasks = created.tasks.map((task) => {
+    const step = contract.steps.find((item) => item.id === task.id);
+    if (!step) return task;
+    return {
+      ...task,
+      status: step.status === "running" ? "running" as const : step.status,
+      attemptCount: step.attemptCount ?? task.attemptCount,
+      ...(step.result ? { result: step.result } : {}),
+      ...(step.error ? { error: step.error } : {}),
+      ...(step.startedAt ? { startedAt: step.startedAt } : {}),
+      ...(step.endedAt ? { endedAt: step.endedAt } : {}),
+      ...(step.blockedReason ? { blockedReason: step.blockedReason } : {})
+    };
+  });
+  const saved: TaskRun = {
+    ...created,
+    status: contract.status === "failed"
+      ? "failed"
+      : contract.status === "executing"
+        ? "running"
+        : contract.status === "completed"
+          ? "completed"
+          : "pending",
+    currentTaskId: contract.currentStepId,
+    tasks
+  };
+  await store.upsert(saved);
+  return saved;
 }

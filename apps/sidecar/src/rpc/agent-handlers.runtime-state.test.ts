@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import type { AgentStructuredPlansResult } from "@lume/shared";
+import type { AgentTaskContractsResult } from "@lume/shared";
 import type { PlanStateTracker } from "../services/agent/plan-state-tracker";
-import { persistPlanApprovalInterruption } from "../services/agent-runtime/plan/plan-approval-service";
-import { createFileBackedLumePlanStore } from "../services/agent-runtime/plan/plan-store";
+import { persistTaskApprovalInterruption } from "../services/agent-runtime/plan/task-approval-service";
+import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
@@ -38,11 +38,7 @@ mock.module("../services/agent/agent-service", () => ({
 function createTestPlanStateTracker(): PlanStateTracker {
   return {
     isLikelyExecutionRequest: () => false,
-    syncExecutionFromUserMessage: () => undefined,
-    syncExecutionFromSendInput: () => undefined,
     getPhase: () => "idle",
-    markCurrentStepCompleted: () => undefined,
-    markCurrentStepFailed: () => undefined,
     clearSession: () => undefined
   } as unknown as PlanStateTracker;
 }
@@ -61,7 +57,7 @@ describe("agent-handlers runtime state", () => {
     }
   });
 
-  test("exposes resume, run summaries, redacted trace, and structured plans through IPC handlers", async () => {
+  test("exposes resume, run summaries, redacted trace, and task contracts through IPC handlers", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-state-rpc-"));
     const threadId = "thread-runtime-state";
     const runId = "run-1";
@@ -128,12 +124,12 @@ describe("agent-handlers runtime state", () => {
       }]
     });
 
-    await createFileBackedLumePlanStore(sessionDir).upsert({
+    await createFileBackedTaskContractStore(sessionDir).upsert({
       id: "plan-1",
       runId,
       threadId,
       goal: "Finish runtime state",
-      summary: "Expose structured plans",
+      summary: "Expose task contracts",
       assumptions: [],
       questions: [],
       risks: [],
@@ -164,8 +160,8 @@ describe("agent-handlers runtime state", () => {
       createdAt: "2026-04-30T00:00:00.000Z",
       updatedAt: "2026-04-30T00:00:00.000Z"
     };
-    await createFileBackedLumePlanStore(sessionDir).upsert(planNeedingApproval);
-    await persistPlanApprovalInterruption({ sessionDir, plan: planNeedingApproval });
+    await createFileBackedTaskContractStore(sessionDir).upsert(planNeedingApproval);
+    await persistTaskApprovalInterruption({ sessionDir, contract: planNeedingApproval });
 
     const { createAgentHandlers } = await import("./agent-handlers");
     const handlers = createAgentHandlers({
@@ -222,8 +218,8 @@ describe("agent-handlers runtime state", () => {
       }
     });
 
-    const plans = await handlers[AGENT_IPC_CHANNELS.LIST_STRUCTURED_PLANS]!({ threadId }) as AgentStructuredPlansResult;
-    expect(plans.plans).toContainEqual(expect.objectContaining({
+    const contracts = await handlers[AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS]!({ threadId }) as AgentTaskContractsResult;
+    expect(contracts.contracts).toContainEqual(expect.objectContaining({
         id: "plan-1",
         goal: "Finish runtime state",
         steps: [expect.objectContaining({ id: "step-1", status: "completed" })]
@@ -232,16 +228,16 @@ describe("agent-handlers runtime state", () => {
     const pending = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE]!({ threadId });
     expect(pending).toMatchObject([{
       threadId,
-      planApprovals: [{
-        planId: "plan-needs-approval",
-        requestId: "plan_approval:plan-needs-approval",
+      taskApprovals: [{
+        contractId: "plan-needs-approval",
+        requestId: "task_approval:plan-needs-approval",
         message: "Needs approval"
       }]
     }]);
 
-    expect(await handlers[AGENT_IPC_CHANNELS.SUBMIT_PLAN_APPROVAL]!({
+    expect(await handlers[AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL]!({
       threadId,
-      planId: "plan-needs-approval",
+      contractId: "plan-needs-approval",
       decision: "approve"
     })).toEqual({ ok: true });
   });

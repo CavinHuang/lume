@@ -309,11 +309,7 @@ describe("model-selection", () => {
       writeNotification: () => undefined,
       planStateTracker: {
         isLikelyExecutionRequest: () => false,
-        syncExecutionFromUserMessage: () => undefined,
-    syncExecutionFromSendInput: () => undefined,
         getPhase: () => "idle",
-        markCurrentStepCompleted: () => undefined,
-        markCurrentStepFailed: () => undefined,
         clearSession: () => undefined
       } as any,
       notifyPlanStateChange: () => undefined
@@ -350,11 +346,7 @@ describe("model-selection", () => {
       writeNotification: () => undefined,
       planStateTracker: {
         isLikelyExecutionRequest: () => false,
-        syncExecutionFromUserMessage: () => undefined,
-    syncExecutionFromSendInput: () => undefined,
         getPhase: () => "idle",
-        markCurrentStepCompleted: () => undefined,
-        markCurrentStepFailed: () => undefined,
         clearSession: () => undefined
       } as any,
       notifyPlanStateChange: () => undefined

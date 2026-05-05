@@ -2,11 +2,7 @@ import type {
   AgentRunStateSummary,
   AgentRunTrace,
   AgentRunTraceSpan,
-  AgentStructuredPlan,
-  AgentStructuredPlanStep,
   LumeRunEvent,
-  PlanStep,
-  PlanStepStatus,
 } from '@lume/shared'
 
 export interface TraceRow {
@@ -104,20 +100,9 @@ function formatRunEvent(event: LumeRunEvent): Omit<LiveRunEventRow, 'id'> {
   if (event.type === 'run_completed') {
     return { label: 'Run completed', detail: event.result.finalOutput ?? 'completed', tone: 'success' }
   }
-  if (event.type === 'plan_execution_status') {
+  if (event.type === 'task_progress') {
     return {
-      label: 'Plan execution',
-      detail: event.text,
-      tone: event.status === 'failed'
-        ? 'danger'
-        : event.status === 'completed'
-          ? 'success'
-        : 'active',
-    }
-  }
-  if (event.type === 'plan_progress') {
-    return {
-      label: 'Plan progress',
+      label: 'Task progress',
       detail: event.message ?? event.status,
       tone: event.status === 'failed'
         ? 'danger'
@@ -136,18 +121,6 @@ export function buildRunRows(runs: AgentRunStateSummary[]): RunRow[] {
     status: run.status,
     detail: formatRunDetail(run),
     createdAt: formatIsoMinute(run.createdAt),
-  }))
-}
-
-export function buildStructuredPlanSteps(plans: AgentStructuredPlan[]): PlanStep[] {
-  const plan = [...plans].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).at(-1)
-  if (!plan) return []
-  return plan.steps.map((step) => ({
-    id: step.id,
-    text: formatStructuredPlanStep(step),
-    status: mapStructuredStepStatus(step.status),
-    failCount: step.status === 'failed' ? 1 : 0,
-    lastError: step.error ?? null,
   }))
 }
 
@@ -206,19 +179,6 @@ export function buildTraceRows(trace: AgentRunTrace | null): TraceRow[] {
 
   for (const root of roots) visit(root, 0)
   return rows
-}
-
-function formatStructuredPlanStep(step: AgentStructuredPlanStep): string {
-  if (step.status === 'completed' && step.result?.trim()) {
-    return `${step.title || step.description || step.id}\n${truncate(step.result)}`
-  }
-  return step.title || step.description || step.id
-}
-
-function mapStructuredStepStatus(status: AgentStructuredPlanStep['status']): PlanStepStatus {
-  if (status === 'running') return 'in_progress'
-  if (status === 'completed' || status === 'failed') return status
-  return 'pending'
 }
 
 function formatDuration(span: AgentRunTraceSpan): string {

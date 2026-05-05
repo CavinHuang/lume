@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentPendingInteractiveAtom, agentPlanStateAtom, agentRunEventsAtom } from '@/atoms'
+import { agentPendingInteractiveAtom, agentRunEventsAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { executePlan, getPendingInteractive, listStructuredPlans, submitPlanApproval } from '@/lib/desktop-api'
+import { executeTaskContract, getPendingInteractive, listTaskContracts, submitTaskApproval } from '@/lib/desktop-api'
 import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, SkipForward, XCircle } from 'lucide-react'
-import { removePendingPlanApproval, upsertPendingPlanApproval } from '@/hooks/pending-interactive-state'
-import type { AgentStructuredPlan, AgentStructuredPlanStep } from '@lume/shared'
+import { removePendingTaskApproval, upsertPendingTaskApproval } from '@/hooks/pending-interactive-state'
+import type { AgentTaskContract, AgentTaskContractItem, AgentTaskRunTask, LumeRunEvent } from '@lume/shared'
 
-interface PlanPanelProps {
+interface TaskProgressPanelProps {
   threadId: string
 }
 
@@ -28,69 +28,67 @@ const statusLabel = {
   skipped: '已跳过',
 }
 
-export function canContinueStructuredPlan(plan: AgentStructuredPlan | undefined): boolean {
-  if (!plan) return false
-  if (plan.status !== 'approved' && plan.status !== 'executing' && plan.status !== 'failed') return false
-  return plan.steps.some((step) => step.status === 'pending' || step.status === 'running' || step.status === 'failed')
+export function canContinueTaskContract(contract: AgentTaskContract | undefined): boolean {
+  if (!contract) return false
+  if (contract.status !== 'approved' && contract.status !== 'executing' && contract.status !== 'failed') return false
+  return contract.steps.some((step) => step.status === 'pending' || step.status === 'running' || step.status === 'failed')
 }
 
-export function canRetryStructuredPlan(plan: AgentStructuredPlan | undefined): boolean {
-  if (!plan || plan.status !== 'failed') return false
-  return plan.steps.some((step) => step.status === 'failed')
+export function canRetryTaskContract(contract: AgentTaskContract | undefined): boolean {
+  if (!contract || contract.status !== 'failed') return false
+  return contract.steps.some((step) => step.status === 'failed')
 }
 
-export function canSkipStructuredPlan(plan: AgentStructuredPlan | undefined): boolean {
-  if (!plan || (plan.status !== 'approved' && plan.status !== 'failed')) return false
-  return plan.steps.some((step) => step.status === 'failed' || step.status === 'pending')
+export function canSkipTaskContract(contract: AgentTaskContract | undefined): boolean {
+  if (!contract || (contract.status !== 'approved' && contract.status !== 'failed')) return false
+  return contract.steps.some((step) => step.status === 'failed' || step.status === 'pending')
 }
 
-export function shouldShowPlanEmptyState(
-  plan: AgentStructuredPlan | undefined,
+export function shouldShowTaskEmptyState(
+  contract: AgentTaskContract | undefined,
   pendingApproval: unknown,
 ): boolean {
-  return !plan && !pendingApproval
+  return !contract && !pendingApproval
 }
 
-export function PlanPanel({ threadId }: PlanPanelProps) {
+export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
-  const planState = useAtomValue(agentPlanStateAtom)[threadId]
   const runEventState = useAtomValue(agentRunEventsAtom)[threadId]
   const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
-  const activeStepRef = useRef<HTMLDivElement>(null)
-  const [structuredPlans, setStructuredPlans] = useState<AgentStructuredPlan[]>([])
+  const activeItemRef = useRef<HTMLDivElement>(null)
+  const [taskContracts, setTaskContracts] = useState<AgentTaskContract[]>([])
   const [approvalBusy, setApprovalBusy] = useState(false)
   const [continueBusy, setContinueBusy] = useState(false)
 
-  const planRefreshKey = useMemo(() => {
+  const taskRefreshKey = useMemo(() => {
     return (runEventState?.events ?? [])
       .filter((event) => (
         event.type === 'run_completed'
-        || event.type === 'plan_progress'
-        || (event.type === 'tool_call_completed' && event.item.toolName === 'PlanWrite')
+        || event.type === 'task_progress'
+        || (event.type === 'tool_call_completed' && event.item.toolName === 'TaskContractWrite')
       ))
-      .map((event) => event.type === 'tool_call_completed' ? event.item.createdAt : event.type === 'plan_progress' ? event.createdAt : event.type)
+      .map((event) => event.type === 'tool_call_completed' ? event.item.createdAt : event.type === 'task_progress' ? event.createdAt : event.type)
       .join('|')
   }, [runEventState?.events])
-  const planStateRefreshKey = `${planState?.phase ?? 'none'}:${planState?.steps?.length ?? 0}`
 
-  const loadStructuredPlans = useCallback(() => {
+  const loadTaskContracts = useCallback(() => {
     let cancelled = false
-    void listStructuredPlans({ threadId })
+    void listTaskContracts({ threadId })
       .then((result) => {
         if (!cancelled) {
-          setStructuredPlans(result.plans)
+          setTaskContracts(result.contracts)
         }
       })
       .catch((error) => {
-        console.error('[PlanPanel] 加载结构化 Plan 失败:', error)
-        if (!cancelled) setStructuredPlans([])
+        console.error('[TaskProgressPanel] 加载任务清单失败:', error)
+        if (!cancelled) setTaskContracts([])
       })
     return () => {
       cancelled = true
     }
   }, [threadId])
 
-  const loadPendingPlanApprovals = useCallback(() => {
+  const loadPendingTaskApprovals = useCallback(() => {
     let cancelled = false
     void getPendingInteractive({ threadId })
       .then((states) => {
@@ -98,65 +96,75 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
         setPendingInteractive((prev) => {
           let next = prev
           for (const state of states) {
-            for (const request of state.planApprovals ?? []) {
-              next = upsertPendingPlanApproval(next, request)
+            for (const request of state.taskApprovals ?? []) {
+              next = upsertPendingTaskApproval(next, request)
             }
           }
           return next
         })
       })
-      .catch((error) => console.error('[PlanPanel] 加载 plan approval 失败:', error))
+      .catch((error) => console.error('[TaskProgressPanel] 加载任务审批失败:', error))
     return () => {
       cancelled = true
     }
   }, [setPendingInteractive, threadId])
 
-  useEffect(() => loadStructuredPlans(), [loadStructuredPlans, planRefreshKey, planStateRefreshKey])
+  useEffect(() => loadTaskContracts(), [loadTaskContracts, taskRefreshKey])
 
-  useEffect(() => loadPendingPlanApprovals(), [loadPendingPlanApprovals, planRefreshKey, planStateRefreshKey])
+  useEffect(() => loadPendingTaskApprovals(), [loadPendingTaskApprovals, taskRefreshKey])
 
-  const latestStructuredPlan = [...structuredPlans].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-  const steps = latestStructuredPlan?.steps ?? []
-  const pendingPlanApproval = pendingInteractive?.planApprovals?.find((item) => (
-    item.planId === latestStructuredPlan?.id
-  )) ?? pendingInteractive?.planApprovals?.[0]
-  const completedCount = steps.filter((step) => step.status === 'completed' || step.status === 'skipped').length
-  const failedCount = steps.filter((step) => step.status === 'failed').length
-  const progressValue = steps.length > 0 ? Math.round((completedCount / steps.length) * 100) : 0
-  const activeStep = steps.find((step) => step.status === 'running')
-  const canContinuePlan = !pendingPlanApproval && canContinueStructuredPlan(latestStructuredPlan)
-  const canRetryPlan = !pendingPlanApproval && canRetryStructuredPlan(latestStructuredPlan)
-  const canSkipPlan = !pendingPlanApproval && canSkipStructuredPlan(latestStructuredPlan)
+  const latestTaskContract = [...taskContracts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+  const latestTaskProgress = [...(runEventState?.events ?? [])]
+    .reverse()
+    .find((event): event is Extract<LumeRunEvent, { type: 'task_progress' }> => event.type === 'task_progress')
+  const progressItems = latestTaskProgress?.tasks ?? latestTaskContract?.steps ?? []
+  const pendingTaskApproval = pendingInteractive?.taskApprovals?.find((item) => (
+    item.contractId === latestTaskContract?.id
+  )) ?? pendingInteractive?.taskApprovals?.[0]
+  const completedCount = progressItems.filter((item) => item.status === 'completed' || item.status === 'skipped').length
+  const failedCount = progressItems.filter((item) => item.status === 'failed').length
+  const progressValue = progressItems.length > 0 ? Math.round((completedCount / progressItems.length) * 100) : 0
+  const activeItem = progressItems.find((item) => item.status === 'running')
+  const canContinueTasks = !pendingTaskApproval && (latestTaskProgress
+    ? latestTaskProgress.status === 'pending' || latestTaskProgress.status === 'running' || latestTaskProgress.status === 'failed'
+    : canContinueTaskContract(latestTaskContract))
+  const canRetryTasks = !pendingTaskApproval && (latestTaskProgress
+    ? latestTaskProgress.status === 'failed' && latestTaskProgress.tasks.some((task) => task.status === 'failed')
+    : canRetryTaskContract(latestTaskContract))
+  const canSkipTasks = !pendingTaskApproval && (latestTaskProgress
+    ? (latestTaskProgress.status === 'pending' || latestTaskProgress.status === 'failed') && latestTaskProgress.tasks.some((task) => task.status === 'failed' || task.status === 'pending')
+    : canSkipTaskContract(latestTaskContract))
 
-  const runPlanIntent = async (intent: 'continue' | 'retry' | 'skip') => {
-    if (!latestStructuredPlan) return
+  const runTaskIntent = async (intent: 'continue' | 'retry' | 'skip') => {
+    const contractId = latestTaskProgress?.contractId ?? latestTaskContract?.id
+    if (!contractId) return
     setContinueBusy(true)
     try {
-      await executePlan({
+      await executeTaskContract({
         threadId,
-        planId: latestStructuredPlan.id,
+        contractId,
         intent,
       })
     } catch (error) {
-      console.error('[PlanPanel] 继续执行计划失败:', error)
+      console.error('[TaskProgressPanel] 继续执行任务失败:', error)
     } finally {
       setContinueBusy(false)
     }
   }
 
   const resolveApproval = async (decision: 'approve' | 'reject') => {
-    if (!pendingPlanApproval) return
+    if (!pendingTaskApproval) return
     setApprovalBusy(true)
     try {
-      const result = await submitPlanApproval({
+      const result = await submitTaskApproval({
         threadId,
-        planId: pendingPlanApproval.planId,
+        contractId: pendingTaskApproval.contractId,
         decision,
         execute: decision === 'approve',
       })
       if (result.ok) {
-        setPendingInteractive((prev) => removePendingPlanApproval(prev, threadId, pendingPlanApproval.planId))
-        setStructuredPlans((prev) => prev.map((item) => item.id === pendingPlanApproval.planId
+        setPendingInteractive((prev) => removePendingTaskApproval(prev, threadId, pendingTaskApproval.contractId))
+        setTaskContracts((prev) => prev.map((item) => item.id === pendingTaskApproval.contractId
           ? {
               ...item,
               status: decision === 'approve' ? 'approved' : 'cancelled',
@@ -166,27 +174,27 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
           : item))
       }
     } catch (error) {
-      console.error('[PlanPanel] 提交 plan approval 失败:', error)
+      console.error('[TaskProgressPanel] 提交任务审批失败:', error)
     } finally {
       setApprovalBusy(false)
     }
   }
 
-  // 自动滚动到当前执行步骤
+  // 自动滚动到当前执行任务
   useEffect(() => {
-    activeStepRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [steps])
+    activeItemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [progressItems])
 
-  if (shouldShowPlanEmptyState(latestStructuredPlan, pendingPlanApproval)) {
+  if (shouldShowTaskEmptyState(latestTaskContract, pendingTaskApproval) && !latestTaskProgress) {
     return (
       <div className="flex h-full flex-col bg-[var(--surface-2)]">
-        <PlanPanelHeader />
+        <TaskProgressPanelHeader />
         <div className="flex flex-1 items-center justify-center px-6 text-center">
           <div className="space-y-2">
             <div className="mx-auto flex size-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-3)]">
               <ClipboardList size={17} />
             </div>
-            <p className="text-[13px] font-medium text-[var(--text-2)]">暂无计划</p>
+            <p className="text-[13px] font-medium text-[var(--text-2)]">暂无任务</p>
           </div>
         </div>
       </div>
@@ -195,7 +203,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
 
   return (
     <div className="flex h-full flex-col bg-[var(--surface-2)]">
-      <PlanPanelHeader />
+      <TaskProgressPanelHeader />
       <div className="border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-3">
         <div className="rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_90%,transparent)] p-3 shadow-[0_18px_40px_-34px_hsl(var(--shadow-panel)/0.34)]">
           <div className="flex items-start gap-2">
@@ -204,18 +212,18 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
             </span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[12.5px] font-semibold text-[var(--text-1)]">
-                {latestStructuredPlan?.goal || pendingPlanApproval?.title || '执行计划'}
+                {pendingTaskApproval ? '待批准任务' : latestTaskContract?.goal || '任务进度'}
               </div>
-              {(latestStructuredPlan?.summary || pendingPlanApproval?.summary || pendingPlanApproval?.message) && (
+              {(latestTaskContract?.summary || pendingTaskApproval?.summary || pendingTaskApproval?.message) && (
                 <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[var(--text-3)]">
-                  {latestStructuredPlan?.summary || pendingPlanApproval?.summary || pendingPlanApproval?.message}
+                  {latestTaskProgress?.message || latestTaskContract?.summary || pendingTaskApproval?.summary || pendingTaskApproval?.message}
                 </p>
               )}
             </div>
           </div>
           <div className="mt-3 flex items-center justify-between text-[10.5px] text-[var(--text-3)]">
-            <span>{completedCount}/{steps.length} 已完成</span>
-            <span>{failedCount > 0 ? `${failedCount} 个失败` : activeStep ? '正在执行' : statusLabel[steps[0]?.status ?? 'pending']}</span>
+            <span>{completedCount}/{progressItems.length} 已完成</span>
+            <span>{failedCount > 0 ? `${failedCount} 个失败` : activeItem ? '正在执行' : statusLabel[progressItems[0]?.status ?? 'pending']}</span>
           </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--surface-3)]">
             <div
@@ -223,34 +231,34 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
               style={{ width: `${progressValue}%` }}
             />
           </div>
-          {canContinuePlan && (
+          {canContinueTasks && (
             <button
               type="button"
               disabled={continueBusy}
-              onClick={() => void runPlanIntent('continue')}
+              onClick={() => void runTaskIntent('continue')}
               className="mt-3 h-8 w-full rounded-lg bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] px-2 text-[11px] font-medium text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_14%,var(--surface-1))] disabled:opacity-50"
             >
               {continueBusy ? '继续中...' : '继续执行'}
             </button>
           )}
-          {(canRetryPlan || canSkipPlan) && (
+          {(canRetryTasks || canSkipTasks) && (
             <div className="mt-2 grid grid-cols-2 gap-2">
-              {canRetryPlan && (
+              {canRetryTasks && (
                 <button
                   type="button"
                   disabled={continueBusy}
-                  onClick={() => void runPlanIntent('retry')}
+                  onClick={() => void runTaskIntent('retry')}
                   className="inline-flex h-8 items-center justify-center gap-1 rounded-lg bg-amber-500/10 px-2 text-[11px] font-medium text-amber-600 transition-colors hover:bg-amber-500/15 disabled:opacity-50"
                 >
                   <RotateCcw size={12} />
                   重试
                 </button>
               )}
-              {canSkipPlan && (
+              {canSkipTasks && (
                 <button
                   type="button"
                   disabled={continueBusy}
-                  onClick={() => void runPlanIntent('skip')}
+                  onClick={() => void runTaskIntent('skip')}
                   className="inline-flex h-8 items-center justify-center gap-1 rounded-lg bg-[var(--surface-2)] px-2 text-[11px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-3)] disabled:opacity-50"
                 >
                   <SkipForward size={12} />
@@ -261,12 +269,12 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
           )}
         </div>
       </div>
-      {pendingPlanApproval && (
+      {pendingTaskApproval && (
         <div className="border-b border-[var(--border)] bg-amber-500/[0.055] px-3 py-3">
           <div className="rounded-xl border border-amber-500/20 bg-[color:color-mix(in_oklab,var(--surface-1)_86%,transparent)] p-3">
-            <div className="text-[12.5px] font-semibold text-[var(--text-1)]">{pendingPlanApproval.title}</div>
+            <div className="text-[12.5px] font-semibold text-[var(--text-1)]">{pendingTaskApproval.title}</div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-3)]">
-              {pendingPlanApproval.message}
+              {pendingTaskApproval.message}
             </p>
           </div>
           <div className="mt-2 flex gap-2">
@@ -276,7 +284,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
               onClick={() => void resolveApproval('approve')}
               className="h-8 flex-1 rounded-lg bg-emerald-500/12 px-2 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/18 disabled:opacity-50"
             >
-              批准执行
+              批准并执行
             </button>
             <button
               type="button"
@@ -291,15 +299,15 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
       )}
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-2 px-3 py-3">
-          {steps.length === 0 && (
+          {progressItems.length === 0 && (
             <div className="rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[var(--surface-1)] px-3 py-3 text-[12px] leading-relaxed text-[var(--text-3)]">
-              计划已生成，正在等待批准。当前计划未包含可展示步骤。
+              任务清单已生成，正在等待批准。当前清单未包含可展示任务。
             </div>
           )}
-          {steps.map((step, index) => (
+          {progressItems.map((step, index) => (
             <div
               key={step.id}
-              ref={step.status === 'running' ? activeStepRef : undefined}
+              ref={step.status === 'running' ? activeItemRef : undefined}
               className={cn(
                 'flex items-start gap-2.5 rounded-xl border bg-[var(--surface-1)] px-3 py-3 text-[12px] transition-colors',
                 step.status === 'running'
@@ -323,7 +331,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
                     'block min-w-0 flex-1 leading-relaxed',
                     (step.status === 'completed' || step.status === 'skipped') ? 'text-[var(--text-3)] line-through' : 'text-[var(--text-1)]'
                   )}>
-                    {formatStructuredStepText(step)}
+                    {formatProgressItemText(step)}
                   </span>
                   <span className={cn(
                     'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
@@ -355,18 +363,18 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
   )
 }
 
-function PlanPanelHeader() {
+function TaskProgressPanelHeader() {
   return (
     <div className="border-b border-[var(--border)] bg-[var(--surface-1)] px-4 py-3">
       <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
         <ClipboardList size={15} className="text-[var(--brand)]" />
-        计划
+        任务进度
       </div>
     </div>
   )
 }
 
-function formatStructuredStepText(step: AgentStructuredPlanStep): string {
+function formatProgressItemText(step: AgentTaskContractItem | AgentTaskRunTask): string {
   if (step.status === 'completed' && step.result?.trim()) {
     return `${step.title || step.description || step.id}\n${step.result}`
   }

@@ -82,8 +82,8 @@ describe("runtime-core run", () => {
     expect(toolNames).toContain("Grep");
     expect(toolNames).toContain("WebSearch");
     expect(toolNames).toContain("WebFetch");
-    expect(toolNames).toContain("PlanWrite");
-    expect(toolNames).toContain("PlanStepUpdate");
+    expect(toolNames).toContain("TaskContractWrite");
+    expect(toolNames).toContain("TaskReport");
     expect(toolNames).not.toContain("read");
     expect(toolNames).not.toContain("write");
     expect(toolNames).not.toContain("edit");

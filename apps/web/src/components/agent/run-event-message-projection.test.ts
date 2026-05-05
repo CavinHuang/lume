@@ -181,52 +181,51 @@ describe('run-event-message-projection', () => {
     ])
   })
 
-  test('shows structured plan progress after a completed hidden control run without a new user message', () => {
+  test('shows structured task progress after approving a task contract', () => {
     const messages = projectRunEventMessages([
-      { type: 'user_message_submitted', text: 'make a plan', createdAt: '2026-04-30T00:00:00.000Z' },
-      { type: 'assistant_delta', text: 'plan ready' },
+      { type: 'user_message_submitted', text: '先计划', createdAt: '2026-04-30T00:00:00.000Z' },
+      { type: 'assistant_delta', text: '任务清单已准备' },
       { type: 'run_completed', result: { status: 'completed' } },
       {
-        type: 'plan_progress',
-        planId: 'plan-1',
-        status: 'executing',
-        currentStepId: 'step-1',
-        steps: [
+        type: 'task_progress',
+        taskRunId: 'taskrun-plan-1',
+        contractId: 'plan-1',
+        status: 'running',
+        currentTaskId: 'task-1',
+        tasks: [
           {
-            id: 'step-1',
+            id: 'task-1',
             title: '修改实现',
-            description: '修改实现',
-            type: 'edit',
             status: 'running',
+            attemptCount: 1,
           },
           {
-            id: 'step-2',
+            id: 'task-2',
             title: '验证',
-            description: '验证',
-            type: 'execute',
             status: 'pending',
+            attemptCount: 0,
           },
         ],
-        message: '修改实现',
+        message: '开始执行：修改实现',
         createdAt: '2026-04-30T00:01:00.000Z',
       },
     ])
 
     expect(messages.map((message) => ({ type: message.type, text: message.text }))).toEqual([
-      { type: 'user', text: 'make a plan' },
-      { type: 'assistant', text: 'plan ready' },
-      { type: 'assistant', text: '修改实现' },
+      { type: 'user', text: '先计划' },
+      { type: 'assistant', text: '任务清单已准备' },
+      { type: 'assistant', text: '开始执行：修改实现' },
     ])
-    const planMessage = messages[2]
-    expect(planMessage?.type).toBe('assistant')
-    if (planMessage?.type !== 'assistant') throw new Error('expected assistant')
-    expect(planMessage.blocks).toEqual([
+    const taskMessage = messages[2]
+    expect(taskMessage?.type).toBe('assistant')
+    if (taskMessage?.type !== 'assistant') throw new Error('expected assistant')
+    expect(taskMessage.blocks).toEqual([
       {
-        type: 'plan_progress',
-        id: 'plan:plan-1:2026-04-30T00:01:00.000Z',
+        type: 'task_progress',
+        id: 'task:taskrun-plan-1:2026-04-30T00:01:00.000Z',
         event: expect.objectContaining({
-          planId: 'plan-1',
-          currentStepId: 'step-1',
+          taskRunId: 'taskrun-plan-1',
+          currentTaskId: 'task-1',
         }),
       },
     ])

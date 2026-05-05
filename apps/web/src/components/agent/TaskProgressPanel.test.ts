@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { canContinueStructuredPlan, canRetryStructuredPlan, canSkipStructuredPlan, shouldShowPlanEmptyState } from './PlanPanel'
+import { canContinueTaskContract, canRetryTaskContract, canSkipTaskContract, shouldShowTaskEmptyState } from './TaskProgressPanel'
 
-describe('PlanPanel', () => {
-  test('detects whether a structured plan can be continued', () => {
-    expect(canContinueStructuredPlan({
+describe('TaskProgressPanel', () => {
+  test('detects whether a task contract can be continued', () => {
+    expect(canContinueTaskContract({
       id: 'plan-1',
       runId: 'run-1',
       threadId: 'thread-1',
@@ -14,8 +14,8 @@ describe('PlanPanel', () => {
       risks: [],
       steps: [{
         id: 'step-1',
-        title: '失败步骤',
-        description: '失败步骤',
+        title: '失败任务',
+        description: '失败任务',
         type: 'edit',
         status: 'failed',
       }],
@@ -26,14 +26,14 @@ describe('PlanPanel', () => {
     })).toBe(true)
   })
 
-  test('does not show the empty state for a pending no-step plan approval', () => {
-    expect(shouldShowPlanEmptyState(undefined, {
-      planId: 'plan-1',
+  test('does not show the empty state for a pending empty task approval', () => {
+    expect(shouldShowTaskEmptyState(undefined, {
+      contractId: 'plan-1',
       stepCount: 0,
     })).toBe(false)
   })
 
-  test('detects retry and skip controls for failed structured plans', () => {
+  test('detects retry and skip controls for failed task contracts', () => {
     const plan = {
       id: 'plan-1',
       runId: 'run-1',
@@ -45,8 +45,8 @@ describe('PlanPanel', () => {
       risks: [],
       steps: [{
         id: 'step-1',
-        title: '失败步骤',
-        description: '失败步骤',
+        title: '失败任务',
+        description: '失败任务',
         type: 'edit' as const,
         status: 'failed' as const,
         attemptCount: 1,
@@ -59,7 +59,7 @@ describe('PlanPanel', () => {
       updatedAt: '2026-05-01T00:00:00.000Z',
     }
 
-    expect(canRetryStructuredPlan(plan)).toBe(true)
-    expect(canSkipStructuredPlan(plan)).toBe(true)
+    expect(canRetryTaskContract(plan)).toBe(true)
+    expect(canSkipTaskContract(plan)).toBe(true)
   })
 })

@@ -1,60 +1,59 @@
 import { defineTool, type ToolDefinition } from "@lume/agent-sdk";
-import { updateCurrentStep } from "./plan-execution-controller";
+import { reportCurrentTask } from "./task-run-controller";
 
-export interface CreatePlanStepUpdateToolInput {
+export interface CreateTaskReportToolInput {
   sessionDir: string;
   threadId: string;
   now?: () => string;
-  onPlanUpdated?: () => void | Promise<void>;
+  onTaskRunUpdated?: () => void | Promise<void>;
 }
 
-export function createPlanStepUpdateTool(input: CreatePlanStepUpdateToolInput): ToolDefinition {
+export function createTaskReportTool(input: CreateTaskReportToolInput): ToolDefinition {
   return defineTool({
-    name: "PlanStepUpdate",
-    description: "Report the structured result for the current running Lume plan step.",
+    name: "TaskReport",
+    description: "Report the structured result for the current running Lume task.",
     inputSchema: {
       type: "object",
       properties: {
-        planId: { type: "string" },
-        stepId: { type: "string" },
+        taskRunId: { type: "string" },
+        taskId: { type: "string" },
         status: { type: "string", enum: ["completed", "failed", "blocked"] },
         result: { type: "string" },
         error: { type: "string" }
       },
-      required: ["planId", "stepId", "status"]
+      required: ["taskRunId", "taskId", "status"]
     },
     isReadOnly: true,
     isConcurrencySafe: false,
     async call(rawInput) {
       const record = rawInput && typeof rawInput === "object" ? rawInput as Record<string, unknown> : {};
-      const planId = toNonEmptyString(record.planId);
-      const stepId = toNonEmptyString(record.stepId);
+      const taskRunId = toNonEmptyString(record.taskRunId);
+      const taskId = toNonEmptyString(record.taskId);
       const status = normalizeStatus(record.status);
-      if (!planId || !stepId || !status) {
-        throw new Error("PlanStepUpdate 需要 planId、stepId 和有效 status");
+      if (!taskRunId || !taskId || !status) {
+        throw new Error("TaskReport 需要 taskRunId、taskId 和有效 status");
       }
       const message = status === "failed"
         ? toNonEmptyString(record.error) ?? toNonEmptyString(record.result)
         : toNonEmptyString(record.result) ?? toNonEmptyString(record.error);
-      const plan = await updateCurrentStep({
+      const taskRun = await reportCurrentTask({
         sessionDir: input.sessionDir,
         threadId: input.threadId,
-        planId
-      }, {
-        stepId,
+        taskRunId,
+        taskId,
         status,
         message,
         now: input.now
       });
-      if (!plan) {
-        throw new Error("找不到可更新的当前计划步骤");
+      if (!taskRun) {
+        throw new Error("找不到可更新的当前任务");
       }
-      await input.onPlanUpdated?.();
+      await input.onTaskRunUpdated?.();
       return {
         data: {
           ok: true,
-          planId,
-          stepId,
+          taskRunId,
+          taskId,
           status
         }
       };

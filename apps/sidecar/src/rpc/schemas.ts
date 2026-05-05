@@ -553,17 +553,6 @@ export const searchWorkspaceFilesInputSchema = z.object({
   rootPath: z.string().optional()
 });
 
-export const plansReadDeleteInputSchema = z.object({
-  workspaceSlug: optionalIdSchema,
-  threadId: idSchema,
-  planPath: idSchema
-});
-
-export const plansListInputSchema = z.object({
-  workspaceSlug: optionalIdSchema,
-  threadId: idSchema
-});
-
 export const saveFilesToThreadInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
   threadId: idSchema,
@@ -612,16 +601,16 @@ export const submitToolPermissionInputSchema = z.object({
   decision: z.enum(["allow_once", "allow_always", "deny"])
 });
 
-export const submitPlanApprovalInputSchema = z.object({
+export const submitTaskApprovalInputSchema = z.object({
   threadId: idSchema,
-  planId: idSchema,
+  contractId: idSchema,
   decision: z.enum(["approve", "reject"]),
   execute: z.boolean().optional()
 });
 
-export const executePlanInputSchema = z.object({
+export const executeTaskContractInputSchema = z.object({
   threadId: idSchema,
-  planId: idSchema.optional(),
+  contractId: idSchema.optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions"]).optional(),
   intent: z.enum(["execute", "continue", "retry", "skip"]).optional()
 });
@@ -651,7 +640,7 @@ export const runTraceInputSchema = z.object({
   redactionLevel: z.enum(["safe_summary", "diagnostic"]).optional()
 });
 
-export const structuredPlansInputSchema = z.object({
+export const taskContractsInputSchema = z.object({
   threadId: idSchema
 });
 

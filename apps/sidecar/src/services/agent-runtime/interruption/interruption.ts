@@ -1,7 +1,7 @@
 export type LumeInterruptionType =
   | "tool_approval"
   | "ask_user"
-  | "plan_approval"
+  | "task_approval"
   | "memory_approval"
   | "automation_approval"
   | "subagent_approval";

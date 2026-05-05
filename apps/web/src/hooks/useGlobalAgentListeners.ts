@@ -24,7 +24,7 @@ import {
 } from '@lume/shared'
 import {
   upsertPendingAskUserQuestion,
-  upsertPendingPlanApproval,
+  upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from './pending-interactive-state'
 import { appendRunEvent } from './run-event-state'
@@ -52,8 +52,8 @@ export function useGlobalAgentListeners() {
             for (const request of state.toolPermissions ?? []) {
               next = upsertPendingToolPermission(next, request)
             }
-            for (const request of state.planApprovals ?? []) {
-              next = upsertPendingPlanApproval(next, request)
+            for (const request of state.taskApprovals ?? []) {
+              next = upsertPendingTaskApproval(next, request)
             }
           }
           return next
@@ -74,17 +74,12 @@ export function useGlobalAgentListeners() {
             event.type === 'assistant_thinking_delta' ||
             event.type === 'tool_call_started' ||
             event.type === 'tool_call_completed' ||
-            (event.type === 'plan_progress' && event.status !== 'completed' && event.status !== 'failed') ||
-            (event.type === 'plan_execution_status' && event.status === 'running')
+            (event.type === 'task_progress' && event.status !== 'completed' && event.status !== 'failed')
           ) {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
             break
           }
-          if (event.type === 'plan_progress' && (event.status === 'completed' || event.status === 'failed')) {
-            setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
-            break
-          }
-          if (event.type === 'plan_execution_status' && (event.status === 'waiting' || event.status === 'completed' || event.status === 'failed')) {
+          if (event.type === 'task_progress' && (event.status === 'completed' || event.status === 'failed')) {
             setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
             break
           }
@@ -164,15 +159,15 @@ export function useGlobalAgentListeners() {
                 setPendingInteractive((prev) => {
                   let next = prev
                   for (const state of states ?? []) {
-                    for (const request of state.planApprovals ?? []) {
-                      next = upsertPendingPlanApproval(next, request)
+                    for (const request of state.taskApprovals ?? []) {
+                      next = upsertPendingTaskApproval(next, request)
                     }
                   }
                   return next
                 })
               })
               .catch((error) => {
-                console.error('[useGlobalAgentListeners] 刷新 plan approval 失败:', error)
+                console.error('[useGlobalAgentListeners] 刷新任务审批失败:', error)
               })
           }
           break

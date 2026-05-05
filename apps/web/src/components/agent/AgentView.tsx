@@ -6,7 +6,7 @@ import { AgentMessages } from './AgentMessages'
 import { AgentInput } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
-import { PlanApprovalBanner } from './PlanApprovalBanner'
+import { TaskApprovalBanner } from './TaskApprovalBanner'
 import { ErrorBanner } from './ErrorBanner'
 import { SidePanel } from './SidePanel'
 import { Upload } from 'lucide-react'
@@ -24,7 +24,7 @@ export function AgentView({ threadId }: AgentViewProps) {
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
-  const pendingPlanApprovals = pendingInteractive?.planApprovals ?? []
+  const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
 
   const sidePanelViews = useAtomValue(agentSidePanelViewAtom)
   const sidePanelView = sidePanelViews[threadId] ?? null
@@ -116,8 +116,8 @@ export function AgentView({ threadId }: AgentViewProps) {
         {pendingAskUserQuestions.map((request) => (
           <AskUserBanner key={request.toolUseId} threadId={threadId} request={request} />
         ))}
-        {pendingPlanApprovals.map((request) => (
-          <PlanApprovalBanner key={request.planId} threadId={threadId} request={request} />
+        {pendingTaskApprovals.map((request) => (
+          <TaskApprovalBanner key={request.contractId} threadId={threadId} request={request} />
         ))}
         <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
       </div>

@@ -1,4 +1,4 @@
-export type LumePlanStatus =
+export type TaskContractRecordStatus =
   | "draft"
   | "needs_user_input"
   | "needs_approval"
@@ -8,19 +8,19 @@ export type LumePlanStatus =
   | "cancelled"
   | "failed";
 
-export interface LumePlanQuestion {
+export interface TaskContractQuestion {
   id: string;
   question: string;
   options?: string[];
 }
 
-export interface LumePlanRisk {
+export interface TaskContractRiskRecord {
   id: string;
   description: string;
   severity?: "low" | "medium" | "high";
 }
 
-export interface LumePlanStep {
+export interface TaskContractRecordItem {
   id: string;
   title: string;
   description: string;
@@ -38,39 +38,39 @@ export interface LumePlanStep {
   blockedReason?: string;
 }
 
-export interface LumePlanEvent {
+export interface TaskContractRecordEvent {
   type:
-    | "plan_started"
-    | "step_started"
-    | "step_completed"
-    | "step_failed"
-    | "step_skipped"
-    | "plan_waiting"
-    | "plan_completed";
-  planId: string;
-  stepId?: string;
+    | "contract_started"
+    | "task_started"
+    | "task_completed"
+    | "task_failed"
+    | "task_skipped"
+    | "contract_waiting"
+    | "contract_completed";
+  contractId: string;
+  taskId?: string;
   message?: string;
   createdAt: string;
 }
 
-export interface LumePlan {
+export interface TaskContractRecord {
   id: string;
   runId: string;
   threadId: string;
   goal: string;
   summary: string;
   assumptions: string[];
-  questions: LumePlanQuestion[];
-  risks: LumePlanRisk[];
-  steps: LumePlanStep[];
+  questions: TaskContractQuestion[];
+  risks: TaskContractRiskRecord[];
+  steps: TaskContractRecordItem[];
   expectedChanges: {
     files?: string[];
     commands?: string[];
     tools?: string[];
     memoryWrites?: string[];
   };
-  events?: LumePlanEvent[];
-  status: LumePlanStatus;
+  events?: TaskContractRecordEvent[];
+  status: TaskContractRecordStatus;
   currentStepId?: string;
   traceSpanId?: string;
   createdAt: string;

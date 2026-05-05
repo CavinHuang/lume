@@ -2,11 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import {
   buildLiveRunEventRows,
   buildRunRows,
-  buildStructuredPlanSteps,
   buildTraceRows,
   getDefaultRunId,
 } from './runtime-state-projections'
-import type { AgentStructuredPlan, AgentRunTrace, AgentRunStateSummary } from '@lume/shared'
+import type { AgentRunTrace, AgentRunStateSummary } from '@lume/shared'
 
 describe('runtime-state projections', () => {
   test('maps live run events into readable rows', () => {
@@ -109,32 +108,6 @@ describe('runtime-state projections', () => {
         detail: 'gpt-old · 4 items',
         createdAt: '2026-04-30 00:00',
       },
-    ])
-  })
-
-  test('maps structured plan steps into existing plan panel rows', () => {
-    const plans: AgentStructuredPlan[] = [{
-      id: 'plan-1',
-      runId: 'run-1',
-      threadId: 'thread-1',
-      goal: 'Ship runtime',
-      summary: 'Finish runtime work',
-      assumptions: [],
-      questions: [],
-      risks: [],
-      steps: [
-        { id: 'step-1', title: 'Read code', description: 'Read code', type: 'read', status: 'completed', result: 'Final result' },
-        { id: 'step-2', title: 'Patch', description: 'Patch runtime', type: 'edit', status: 'running' },
-      ],
-      expectedChanges: {},
-      status: 'executing',
-      createdAt: '2026-04-30T00:00:00.000Z',
-      updatedAt: '2026-04-30T00:01:00.000Z',
-    }]
-
-    expect(buildStructuredPlanSteps(plans)).toEqual([
-      { id: 'step-1', text: 'Read code\nFinal result', status: 'completed', failCount: 0, lastError: null },
-      { id: 'step-2', text: 'Patch', status: 'in_progress', failCount: 0, lastError: null },
     ])
   })
 

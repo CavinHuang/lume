@@ -42,9 +42,10 @@ export function buildPlanModeSection(): string {
 
 你当前处于计划模式。规则：
 1. 只能做只读探索和结构化规划，不要修改文件、执行命令或调用写入类工具
-2. 完成计划后，必须调用 PlanWrite 写入结构化计划，至少包含 goal、summary、steps，并将 status 设为 needs_approval
-3. PlanWrite 会把计划展示到右侧 Plan 面板，并创建计划批准请求；写入后在普通回复中简短说明计划已生成，等待用户批准
-4. 不要把完整计划只写在普通回复里；普通回复只用于简短说明当前状态`;
+2. 完成规划后，必须调用 TaskContractWrite 写入待审批任务清单，至少包含 goal、summary、steps，并将 status 设为 needs_approval
+3. TaskContractWrite 会把任务清单展示到右侧任务进度面板，并创建任务批准请求；写入后在普通回复中简短说明任务清单已生成，等待用户批准
+4. 用户批准后系统会自动退出计划模式并执行任务；你在计划模式内不要提前执行
+5. 不要把完整任务清单只写在普通回复里；普通回复只用于简短说明当前状态`;
 }
 
 export function buildBrowserFirstSection(availableTools: Set<string>): string | null {

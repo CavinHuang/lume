@@ -221,7 +221,7 @@ export class LumeRunner {
       emitSdkMessage: this.emit.onSdkMessage,
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitToolPermissionRequest: this.emit.onToolPermissionRequest,
-      emitPlanUpdated: this.emit.onPlanUpdated,
+      emitTaskContractUpdated: this.emit.onTaskContractUpdated,
       runId: this.observer.getRunId(),
       trace: this.observer.getContextAssemblyTrace()
     });

@@ -1,9 +1,8 @@
 import { basename } from "node:path";
-import type { PlanStep } from "@lume/shared";
-import type { LumePlan, LumePlanStatus, LumePlanStep } from "./plan-types";
-import type { LumePlanStore } from "./plan-store";
+import type { TaskContractRecord, TaskContractRecordStatus, TaskContractRecordItem } from "./task-contract-record-types";
+import type { TaskContractStore } from "./task-contract-store";
 
-interface MarkdownPlanInput {
+interface MarkdownTaskContractInput {
   runId: string;
   threadId: string;
   content: string;
@@ -11,17 +10,7 @@ interface MarkdownPlanInput {
   createdAt?: string;
 }
 
-interface PlanStateStepsInput {
-  runId: string;
-  threadId: string;
-  steps: PlanStep[];
-  goal?: string;
-  summary?: string;
-  planPath?: string;
-  createdAt?: string;
-}
-
-const VALID_PLAN_STATUSES = new Set<LumePlanStatus>([
+const VALID_TASK_CONTRACT_STATUSES = new Set<TaskContractRecordStatus>([
   "draft",
   "needs_user_input",
   "needs_approval",
@@ -32,15 +21,15 @@ const VALID_PLAN_STATUSES = new Set<LumePlanStatus>([
   "failed"
 ]);
 
-export function mapMarkdownPlanToLumePlan(input: MarkdownPlanInput): LumePlan {
+export function mapMarkdownTaskContractToRecord(input: MarkdownTaskContractInput): TaskContractRecord {
   const { frontmatter, body } = parseFrontmatter(input.content);
   const now = input.createdAt ?? new Date().toISOString();
   const id = readString(frontmatter.slug)
     || readString(frontmatter.id)
-    || derivePlanId(input.path, input.threadId, now);
-  const title = firstHeading(body) || readString(frontmatter.title) || "Execution plan";
+    || deriveTaskContractId(input.path, input.threadId, now);
+  const title = firstHeading(body) || readString(frontmatter.title) || "Task contract";
   const summary = readString(frontmatter.summary) || firstParagraph(body) || title;
-  const status = normalizePlanStatus(readString(frontmatter.status));
+  const status = normalizeTaskContractStatus(readString(frontmatter.status));
 
   return {
     id,
@@ -62,54 +51,13 @@ export function mapMarkdownPlanToLumePlan(input: MarkdownPlanInput): LumePlan {
   };
 }
 
-export async function importMarkdownPlan(
-  store: LumePlanStore,
-  input: MarkdownPlanInput
-): Promise<LumePlan> {
-  const plan = mapMarkdownPlanToLumePlan(input);
-  await store.upsert(plan);
-  return plan;
-}
-
-export function mapPlanStateStepsToLumePlan(input: PlanStateStepsInput): LumePlan {
-  const now = input.createdAt ?? new Date().toISOString();
-  const steps = input.steps.map((step, index): LumePlanStep => ({
-    id: step.id || `step-${index + 1}`,
-    title: step.text,
-    description: step.text,
-    type: inferStepType(step.text),
-    status: mapPlanStepStatus(step.status),
-    ...(step.lastError ? { error: step.lastError } : {})
-  }));
-  const hasRunning = steps.some((step) => step.status === "running");
-  const hasFailed = steps.some((step) => step.status === "failed");
-  const allCompleted = steps.length > 0 && steps.every((step) => step.status === "completed");
-  const status: LumePlanStatus = hasFailed
-    ? "failed"
-    : hasRunning
-      ? "executing"
-      : allCompleted
-        ? "completed"
-        : "approved";
-
-  return {
-    id: derivePlanId(input.planPath, input.threadId, now),
-    runId: input.runId,
-    threadId: input.threadId,
-    goal: input.goal ?? "Execute approved plan",
-    summary: input.summary ?? input.goal ?? "Execute approved plan",
-    assumptions: [],
-    questions: [],
-    risks: [],
-    steps,
-    expectedChanges: {
-      ...(input.planPath ? { files: [input.planPath] } : {})
-    },
-    status,
-    createdAt: now,
-    updatedAt: now,
-    ...(status === "approved" || status === "executing" || status === "completed" ? { approvedAt: now } : {})
-  };
+export async function importMarkdownTaskContract(
+  store: TaskContractStore,
+  input: MarkdownTaskContractInput
+): Promise<TaskContractRecord> {
+  const contract = mapMarkdownTaskContractToRecord(input);
+  await store.upsert(contract);
+  return contract;
 }
 
 function parseFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
@@ -140,8 +88,8 @@ function firstParagraph(body: string): string | undefined {
     .find((part) => part.length > 0 && !part.startsWith("#") && !isStepLine(part));
 }
 
-function extractSteps(body: string): LumePlanStep[] {
-  const steps: LumePlanStep[] = [];
+function extractSteps(body: string): TaskContractRecordItem[] {
+  const steps: TaskContractRecordItem[] = [];
   for (const line of body.split("\n")) {
     const taskMatch = line.match(/^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$/);
     const orderedMatch = line.match(/^\s*\d+[.)]\s+(.+?)\s*$/);
@@ -164,7 +112,7 @@ function isStepLine(value: string): boolean {
   return /^\s*[-*]\s+\[[ xX]\]\s+/.test(value) || /^\s*\d+[.)]\s+/.test(value);
 }
 
-function inferStepType(title: string): LumePlanStep["type"] {
+function inferStepType(title: string): TaskContractRecordItem["type"] {
   const normalized = title.toLowerCase();
   if (/ask|question|确认|提问/.test(normalized)) return "ask_user";
   if (/edit|write|implement|修改|实现|写入/.test(normalized)) return "edit";
@@ -173,22 +121,17 @@ function inferStepType(title: string): LumePlanStep["type"] {
   return "analyze";
 }
 
-function normalizePlanStatus(value: string | undefined): LumePlanStatus {
-  return value && VALID_PLAN_STATUSES.has(value as LumePlanStatus)
-    ? value as LumePlanStatus
+function normalizeTaskContractStatus(value: string | undefined): TaskContractRecordStatus {
+  return value && VALID_TASK_CONTRACT_STATUSES.has(value as TaskContractRecordStatus)
+    ? value as TaskContractRecordStatus
     : "draft";
-}
-
-function mapPlanStepStatus(status: PlanStep["status"]): LumePlanStep["status"] {
-  if (status === "in_progress") return "running";
-  return status;
 }
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function derivePlanId(path: string | undefined, threadId: string, createdAt: string): string {
+function deriveTaskContractId(path: string | undefined, threadId: string, createdAt: string): string {
   const name = path ? basename(path).replace(/\.[^.]+$/, "") : "";
   return (name || `${threadId}-${createdAt}`).replace(/[^a-zA-Z0-9._:-]/g, "_");
 }
