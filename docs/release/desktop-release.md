@@ -23,3 +23,9 @@ The checked-in `tauri.conf.json` uses `__LUME_UPDATER_PUBLIC_KEY__` as a placeho
 - `bun run build:desktop`: build web, sidecar, shared packages, and the Tauri desktop bundle.
 - `bun run package:desktop`: alias for the desktop packaging flow.
 - `bun run release:desktop`: local release packaging entrypoint.
+
+## Bundled Sidecar
+
+Release builds compile `apps/sidecar/src/index.ts` into a standalone Bun executable before Tauri packaging. The generated file is written to `apps/desktop/src-tauri/binaries/lume-sidecar-<target-triple>` and is ignored by git.
+
+The Tauri bundle lists `binaries/lume-sidecar` in `externalBin`; Tauri adds the target triple during packaging and copies the binary into the app resources. At runtime, release builds start this bundled binary first. Development builds still use the Bun source entrypoint so local iteration remains fast.

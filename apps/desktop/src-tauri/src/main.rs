@@ -724,6 +724,105 @@ fn resolve_mac_sidecar_bridge_path() -> Option<PathBuf> {
     None
 }
 
+fn bundled_sidecar_relative_path() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "lume-sidecar.exe"
+    } else {
+        "lume-sidecar"
+    }
+}
+
+fn resolve_bundled_sidecar_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(executable_dir) = current_exe.parent() {
+            let sidecar_path = executable_dir.join(bundled_sidecar_relative_path());
+            if sidecar_path.exists() {
+                return Some(sidecar_path);
+            }
+        }
+    }
+
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|resource_dir| resource_dir.join(bundled_sidecar_relative_path()))
+        .filter(|path| path.exists())
+}
+
+fn resolve_default_skills_archive(app: &tauri::AppHandle) -> Option<String> {
+    if let Ok(configured) = std::env::var("LUME_DEFAULT_SKILLS_ARCHIVE") {
+        if !configured.trim().is_empty() && PathBuf::from(&configured).exists() {
+            return Some(configured);
+        }
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        for packaged_archive in [
+            resource_dir.join("default-skills.tar"),
+            resource_dir.join("resources").join("default-skills.tar"),
+        ] {
+            if packaged_archive.exists() {
+                return Some(packaged_archive.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn apply_default_skills_env(
+    process: &mut Command,
+    app: &tauri::AppHandle,
+    sidecar_dir: &PathBuf,
+) -> (Option<String>, Option<String>) {
+    let archive = resolve_default_skills_archive(app);
+    let directory = if archive.is_none() {
+        resolve_default_skills_dir(app, sidecar_dir)
+    } else {
+        None
+    };
+
+    if let Some(archive_path) = archive.as_ref() {
+        process.env("LUME_DEFAULT_SKILLS_ARCHIVE", archive_path);
+    }
+    if let Some(directory_path) = directory.as_ref() {
+        process.env("LUME_DEFAULT_SKILLS_DIR", directory_path);
+    }
+
+    (archive, directory)
+}
+
+fn spawn_bundled_sidecar(app: &tauri::AppHandle) -> Option<Child> {
+    let sidecar_path = resolve_bundled_sidecar_path(app)?;
+    let mut process = Command::new(&sidecar_path);
+    process
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let (skills_archive, skills_dir) =
+        apply_default_skills_env(&mut process, app, &PathBuf::from(""));
+
+    match process.spawn() {
+        Ok(child) => {
+            info!(
+                "[desktop] sidecar process booted from bundled binary: {} (default-skills-archive={}, default-skills-dir={})",
+                sidecar_path.display(),
+                skills_archive.as_deref().unwrap_or("not-found"),
+                skills_dir.as_deref().unwrap_or("not-found")
+            );
+            Some(child)
+        }
+        Err(error) => {
+            error!(
+                "[desktop] failed to spawn bundled sidecar {}: {error}",
+                sidecar_path.display()
+            );
+            None
+        }
+    }
+}
+
 fn build_mac_sidecar_bridge_args(
     bridge_path: &PathBuf,
     bun_bin: &str,
@@ -748,9 +847,11 @@ fn resolve_default_skills_dir(app: &tauri::AppHandle, sidecar_dir: &PathBuf) -> 
         }
     }
 
-    let dev_dir = sidecar_dir.join("default-skills");
-    if dev_dir.exists() {
-        return Some(dev_dir.to_string_lossy().to_string());
+    if !sidecar_dir.as_os_str().is_empty() {
+        let dev_dir = sidecar_dir.join("default-skills");
+        if dev_dir.exists() {
+            return Some(dev_dir.to_string_lossy().to_string());
+        }
     }
 
     if let Ok(resource_dir) = app.path().resource_dir() {
@@ -764,6 +865,13 @@ fn resolve_default_skills_dir(app: &tauri::AppHandle, sidecar_dir: &PathBuf) -> 
 }
 
 fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
+    if !cfg!(debug_assertions) {
+        if let Some(child) = spawn_bundled_sidecar(app) {
+            return Some(child);
+        }
+        warn!("[desktop] bundled sidecar not found, falling back to development sidecar path");
+    }
+
     let sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar");
     if !sidecar_dir.exists() {
         warn!(
@@ -783,7 +891,6 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
     } else {
         src_entry
     };
-    let default_skills_dir = resolve_default_skills_dir(app, &sidecar_dir);
     let use_mac_node_bridge = cfg!(target_os = "macos");
 
     if use_mac_node_bridge {
@@ -798,19 +905,19 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            if let Some(skills_dir) = default_skills_dir.as_ref() {
-                process.env("LUME_DEFAULT_SKILLS_DIR", skills_dir);
-            }
+            let (skills_archive, default_skills_dir) =
+                apply_default_skills_env(&mut process, app, &sidecar_dir);
 
             match process.spawn() {
                 Ok(child) => {
                     info!(
-                        "[desktop] sidecar process booted from default path: {} (runtime=node-bridge-macos, entry={}, bun={}, node={}, bridge={}, default-skills={})",
+                        "[desktop] sidecar process booted from default path: {} (runtime=node-bridge-macos, entry={}, bun={}, node={}, bridge={}, default-skills-archive={}, default-skills-dir={})",
                         sidecar_dir.display(),
                         sidecar_entry.display(),
                         bun_bin,
                         node_bin,
                         bridge_path.display(),
+                        skills_archive.as_deref().unwrap_or("not-found"),
                         default_skills_dir.as_deref().unwrap_or("not-found")
                     );
                     return Some(child);
@@ -833,17 +940,17 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(skills_dir) = default_skills_dir.as_ref() {
-        process.env("LUME_DEFAULT_SKILLS_DIR", skills_dir);
-    }
+    let (skills_archive, default_skills_dir) =
+        apply_default_skills_env(&mut process, app, &sidecar_dir);
 
     match process.spawn() {
         Ok(child) => {
             info!(
-                "[desktop] sidecar process booted from default path: {} (runtime=bun-direct, entry={}, bun={}, default-skills={})",
+                "[desktop] sidecar process booted from default path: {} (runtime=bun-direct, entry={}, bun={}, default-skills-archive={}, default-skills-dir={})",
                 sidecar_dir.display(),
                 sidecar_entry.display(),
                 bun_bin,
+                skills_archive.as_deref().unwrap_or("not-found"),
                 default_skills_dir.as_deref().unwrap_or("not-found")
             );
             Some(child)

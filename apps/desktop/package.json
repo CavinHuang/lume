@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build",
-    "package": "tauri build",
+    "build": "bun ../../scripts/build-sidecar-binary.mjs && bun ../../scripts/build-default-skills-archive.mjs && tauri build",
+    "package": "bun ../../scripts/build-sidecar-binary.mjs && bun ../../scripts/build-default-skills-archive.mjs && tauri build",
     "typecheck": "echo \"desktop has no ts sources yet\""
   },
   "devDependencies": {

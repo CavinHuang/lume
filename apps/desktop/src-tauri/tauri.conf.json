@@ -21,6 +21,12 @@
   },
   "bundle": {
     "active": true,
+    "externalBin": [
+      "binaries/lume-sidecar"
+    ],
+    "resources": [
+      "resources/default-skills.tar"
+    ],
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "Local-first AI Agent desktop app",

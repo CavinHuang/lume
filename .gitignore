@@ -7,6 +7,8 @@ target
 *.log
 *.tsbuildinfo
 apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/resources/
 .cursor
 .omx/
 .codex/*

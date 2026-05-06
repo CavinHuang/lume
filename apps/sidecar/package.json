@@ -11,6 +11,8 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "build:binary": "bun ../../scripts/build-sidecar-binary.mjs",
+    "build:resources": "bun ../../scripts/build-default-skills-archive.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke:rpc": "bun scripts/smoke-rpc.mjs",
     "smoke:agent-new-runtime": "bun scripts/smoke-agent-new-runtime.mjs",
