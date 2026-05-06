@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\core\src\providers\openai-adapter.ts
- * Adaptation:
- * - Kept logic parity for MIG-003.
- */
 
 /**
  * OpenAI 兼容供应商适配器

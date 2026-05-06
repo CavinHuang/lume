@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\agent-thread-manager.ts
- * Adaptation:
- * - Shared imports updated to `@lume/shared`.
- * - Config root and paths are resolved by sidecar `config-paths` (`~/.lume`).
- */
 
 import {
   appendFileSync,

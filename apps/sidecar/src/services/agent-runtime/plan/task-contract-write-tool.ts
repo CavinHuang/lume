@@ -19,7 +19,18 @@ export function createTaskContractWriteTool(input: CreateTaskContractWriteToolIn
 
   return defineTool({
     name: "TaskContractWrite",
-    description: "Create or update an approvable task contract for the current Lume run.",
+    description: `Create or update an approvable task contract for the current Lume run.
+
+IMPORTANT: Before setting status to "needs_approval", you MUST use the write tool to create a detailed plan document in Markdown format at:
+  sessions/{threadId}/plans/{YYYY-MM-DD}-{short-title-slug}.md
+
+The plan document should include:
+- YAML frontmatter with contractId and status: draft
+- # Goal section
+- ## Steps section with numbered items
+- ## Risks & Assumptions section
+
+Then pass the file path via the planFilePath parameter.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -32,7 +43,8 @@ export function createTaskContractWriteTool(input: CreateTaskContractWriteToolIn
         steps: { type: "array" },
         expectedChanges: { type: "object" },
         status: { type: "string" },
-        currentStepId: { type: "string" }
+        currentStepId: { type: "string" },
+        planFilePath: { type: "string" }
       },
       required: ["goal", "summary", "steps"]
     },
@@ -58,6 +70,7 @@ export function createTaskContractWriteTool(input: CreateTaskContractWriteToolIn
           : existing?.expectedChanges ?? {},
         status: normalizeTaskContractStatus(record.status) ?? existing?.status ?? "draft",
         traceSpanId: input.traceSpanId ?? existing?.traceSpanId,
+        planFilePath: toNonEmptyString(record.planFilePath) ?? existing?.planFilePath,
         createdAt: existing?.createdAt ?? createdAt,
         updatedAt: createdAt,
         approvedAt: existing?.approvedAt

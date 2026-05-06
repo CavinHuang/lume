@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\channel-manager.ts
- * Adaptation:
- * - Replaced Electron safeStorage with Node crypto AES-256-GCM for sidecar.
- * - Kept channel CRUD and model/test APIs for MIG-004 compatibility.
- */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

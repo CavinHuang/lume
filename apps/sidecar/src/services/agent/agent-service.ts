@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\agent-service.ts
- * Adaptation:
- * - Route all agent execution through Pi Agent runtime.
- * - Keep sidecar event emitter contract (no Electron webContents dependency).
- */
 
 import type { SDKMessage } from "@lume/agent-sdk";
 import type {

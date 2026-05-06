@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\config-paths.ts
- * Adaptation:
- * - Switched config root from `~/.proma` to `~/.lume`.
- * - Removed Electron-specific default-skills seeding logic from path utility.
- */
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";

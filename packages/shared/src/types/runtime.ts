@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\shared\src\types\runtime.ts
- * Adaptation:
- * - Kept as-is for MIG-002 contract parity.
- */
 
 /**
  * 运行时相关类型定义

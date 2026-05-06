@@ -1,11 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\agent-prompt-builder.ts
- * Adaptation:
- * - Removed user-profile dependency; default to generic user label.
- * - Updated paths and branding to Lume.
- * - Integrated Soul/Memory system from OpenClaw design.
- */
 
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";

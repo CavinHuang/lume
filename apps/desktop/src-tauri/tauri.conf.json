@@ -11,8 +11,8 @@
     "windows": [
       {
         "title": "Lume",
-        "width": 1440,
-        "height": 900
+        "width": 1640,
+        "height": 960
       }
     ],
     "security": {
@@ -21,6 +21,10 @@
   },
   "bundle": {
     "active": true,
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
     "externalBin": [
       "binaries/lume-sidecar"
     ],

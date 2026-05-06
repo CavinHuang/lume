@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\chat-service.ts
- * Adaptation:
- * - Extracted tool schema construction from chat send flow.
- */
 
 import type { ChatToolMeta } from "@lume/shared";
 import type { ToolDefinition } from "../../providers";

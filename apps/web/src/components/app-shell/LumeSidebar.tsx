@@ -47,6 +47,9 @@ interface LumeSidebarProps {
   onToggleThreadPin: (threadId: string) => void
   onDeleteThread: (threadId: string) => void
   onRenameThread: (threadId: string, title: string) => void
+  onToggleWorkspacePin: (workspaceId: string) => void
+  onRenameWorkspace: (workspaceId: string, name: string) => void
+  onDeleteWorkspace: (workspaceId: string) => void
 }
 
 export function LumeSidebar({
@@ -64,6 +67,9 @@ export function LumeSidebar({
   onToggleThreadPin,
   onDeleteThread,
   onRenameThread,
+  onToggleWorkspacePin,
+  onRenameWorkspace,
+  onDeleteWorkspace,
 }: LumeSidebarProps) {
   if (collapsed) {
     const topItems = model.collapsedItems.filter((item) => item.kind === 'top-action')
@@ -269,6 +275,9 @@ export function LumeSidebar({
               onToggleThreadPin={onToggleThreadPin}
               onDeleteThread={onDeleteThread}
               onRenameThread={onRenameThread}
+              onToggleWorkspacePin={onToggleWorkspacePin}
+              onRenameWorkspace={onRenameWorkspace}
+              onDeleteWorkspace={onDeleteWorkspace}
             />
           ))}
         </div>
@@ -341,6 +350,9 @@ function WorkspaceTree({
   onToggleThreadPin,
   onDeleteThread,
   onRenameThread,
+  onToggleWorkspacePin,
+  onRenameWorkspace,
+  onDeleteWorkspace,
 }: {
   workspace: LumeSidebarWorkspaceItem
   onToggleWorkspace: (workspaceId: string) => void
@@ -348,34 +360,173 @@ function WorkspaceTree({
   onToggleThreadPin: (threadId: string) => void
   onDeleteThread: (threadId: string) => void
   onRenameThread: (threadId: string, title: string) => void
+  onToggleWorkspacePin: (workspaceId: string) => void
+  onRenameWorkspace: (workspaceId: string, name: string) => void
+  onDeleteWorkspace: (workspaceId: string) => void
 }) {
-  return (
-    <section className="mb-2.5">
-      <button
-        type="button"
-        onClick={() => {
-          onToggleWorkspace(workspace.id)
-        }}
-        className={cn(
-          'flex h-7 w-full items-center gap-2 rounded-md px-0 text-left transition-colors',
-          workspace.isCurrent
-            ? 'text-[var(--text-1)]'
-            : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-        )}
-      >
-        <ChevronRight
-          size={13}
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(workspace.name)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (shouldCloseThreadMenuForTarget(menuRef.current, triggerRef.current, event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [menuOpen])
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.select()
+    }
+  }, [editing])
+
+  const submitRename = () => {
+    const next = draft.trim()
+    if (next && next !== workspace.name) {
+      onRenameWorkspace(workspace.id, next)
+    }
+    setEditing(false)
+  }
+
+  const renderHeader = () => {
+    if (editing) {
+      return (
+        <div className="flex h-7 items-center gap-1 rounded-md border border-[color:color-mix(in_oklab,var(--brand)_22%,transparent)] bg-[var(--surface-2)] px-2">
+          <ChevronRight size={13} className="ml-0.5 shrink-0 text-[var(--text-3)]" />
+          <WorkspaceIcon workspace={workspace} />
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') submitRename()
+              if (event.key === 'Escape') {
+                setDraft(workspace.name)
+                setEditing(false)
+              }
+            }}
+            className="flex-1 bg-transparent text-[13px] font-semibold text-[var(--text-1)] outline-none"
+          />
+          <button
+            type="button"
+            onClick={submitRename}
+            className="flex size-5 items-center justify-center rounded-full text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)]"
+          >
+            <Check size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() => { setDraft(workspace.name); setEditing(false) }}
+            className="flex size-5 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-1)]"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )
+    }
+
+    return (
+      <>
+        <div className="group/ws relative">
+        <button
+          type="button"
+          onClick={() => onToggleWorkspace(workspace.id)}
           className={cn(
-            'ml-0.5 shrink-0 text-[var(--text-3)] transition-transform duration-150',
-            workspace.isExpanded && 'rotate-90',
+            'flex h-7 w-full items-center gap-2 rounded-md px-0 text-left transition-colors',
+            workspace.isCurrent
+              ? 'text-[var(--text-1)]'
+              : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
           )}
-        />
-        <WorkspaceIcon workspace={workspace} />
-        <span className="flex-1 truncate text-[13px] font-semibold">{workspace.name}</span>
-        <span className="pr-2 text-[12px] font-medium leading-none text-[var(--text-3)]">
-          {workspace.count}
-        </span>
-      </button>
+        >
+          <ChevronRight
+            size={13}
+            className={cn(
+              'ml-0.5 shrink-0 text-[var(--text-3)] transition-transform duration-150',
+              workspace.isExpanded && 'rotate-90',
+            )}
+          />
+          <WorkspaceIcon workspace={workspace} />
+          <span className="flex-1 truncate text-[13px] font-semibold">{workspace.name}</span>
+          <span
+            className={cn(
+              'shrink-0 pr-2 text-[12px] font-medium leading-none text-[var(--text-3)]',
+              'group-hover/ws:opacity-0',
+              menuOpen && 'opacity-0',
+            )}
+          >
+            {workspace.count}
+          </span>
+        </button>
+
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            setMenuOpen((current) => !current)
+          }}
+          className={cn(
+            'absolute right-0 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center text-[var(--text-3)] transition-all hover:text-[var(--text-1)]',
+            'opacity-0 group-hover/ws:opacity-100',
+            menuOpen && 'opacity-100',
+          )}
+        >
+          <MoreHorizontal size={14} />
+        </button>
+        </div>
+
+        {menuOpen && (
+          <div
+            ref={menuRef}
+            className="absolute right-1 top-full z-50 mt-1 min-w-[148px] rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)]"
+          >
+            <ThreadMenuItem
+              icon={workspace.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+              onClick={() => {
+                onToggleWorkspacePin(workspace.id)
+                setMenuOpen(false)
+              }}
+            >
+              {workspace.pinned ? '取消置顶' : '置顶'}
+            </ThreadMenuItem>
+            <ThreadMenuItem
+              icon={<Pencil size={13} />}
+              onClick={() => {
+                setEditing(true)
+                setMenuOpen(false)
+              }}
+            >
+              重命名
+            </ThreadMenuItem>
+            <ThreadMenuItem
+              icon={<Trash2 size={13} />}
+              destructive
+              onClick={() => {
+                onDeleteWorkspace(workspace.id)
+                setMenuOpen(false)
+              }}
+            >
+              删除
+            </ThreadMenuItem>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  return (
+    <section className="relative mb-2.5">
+      {renderHeader()}
 
       {workspace.isExpanded && (
         <div className="mt-1 pl-4">

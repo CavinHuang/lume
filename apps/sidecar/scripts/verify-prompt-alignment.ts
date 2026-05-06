@@ -1,5 +1,4 @@
 /**
- * 验证 Proma → Lume P0/P1 功能对齐的 System Prompt 和 Dynamic Context 输出。
  * 运行: cd apps/sidecar && bun run scripts/verify-prompt-alignment.ts
  */
 import { buildSystemPromptAppend, buildDynamicContext } from "../src/services/agent/agent-prompt-builder";

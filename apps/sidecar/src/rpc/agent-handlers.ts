@@ -1229,7 +1229,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         decision: input.decision
       });
       if (!ok || input.decision !== "approve" || input.execute !== true) {
-        return { ok };
+        return { ok, ...(input.feedback ? { feedback: input.feedback } : {}) };
       }
       const execution = await dispatchTaskExecution({
         threadId: input.threadId,

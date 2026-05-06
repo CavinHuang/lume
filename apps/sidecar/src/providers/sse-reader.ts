@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\core\src\providers\sse-reader.ts
- * Adaptation:
- * - Kept logic parity for MIG-003.
- */
 
 /**
  * 共享 SSE 流式读取器

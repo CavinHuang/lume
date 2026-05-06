@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\system-prompt-manager.ts
- * Adaptation:
- * - Switched storage path from ~/.proma to ~/.lume.
- * - Added config version field and atomic write for MVP durability.
- */
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";

@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\conversation-manager.ts
- * Adaptation:
- * - Shared imports updated to `@lume/shared`.
- * - Attachment hooks mapped to sidecar attachment helpers.
- */
 
 import { appendFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";

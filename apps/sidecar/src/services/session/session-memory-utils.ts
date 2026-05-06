@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * earlier session memory extraction implementation
- * Adaptation:
- * - Keep core extraction logic for memory session text flattening.
- * - Support both earlier wrapped records and Lume's plain AgentMessage JSONL rows.
- */
 
 export interface ParsedSessionMessage {
   role: "user" | "assistant";

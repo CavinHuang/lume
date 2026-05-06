@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\core\src\providers\google-adapter.ts
- * Adaptation:
- * - Kept logic parity for MIG-003.
- */
 
 /**
  * Google Generative AI 供应商适配器

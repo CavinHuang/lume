@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useAtomValue } from 'jotai'
 import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
@@ -96,6 +96,19 @@ export function AgentView({ threadId }: AgentViewProps) {
       toast.error('文件上传失败')
     }
   }, [threadId, workspaceSlug, dragCounter])
+
+  // 自动打开计划文件
+  useEffect(() => {
+    for (const approval of pendingTaskApprovals) {
+      if (approval.planFilePath) {
+        void sidecarCall(AGENT_IPC_CHANNELS.OPEN_FILE, {
+          path: approval.planFilePath,
+        }).catch((error) => {
+          console.error('[AgentView] 打开计划文件失败:', error)
+        })
+      }
+    }
+  }, [pendingTaskApprovals])
 
   return (
     <div

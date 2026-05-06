@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\chat-service.ts
- * Adaptation:
- * - Replaced Electron webContents with callback emitter.
- * - Provider imports switched to local sidecar providers.
- */
 
 import type {
   ChatToolActivity,

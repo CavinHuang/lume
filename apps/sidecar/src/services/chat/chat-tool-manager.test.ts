@@ -279,7 +279,7 @@ describe("chat-tool-manager", () => {
     expect(append).toBeUndefined();
   });
 
-  test("应兼容 Proma 旧工具 ID 并迁移开关与凭据", () => {
+  test("应兼容 Lume 旧工具 ID 并迁移开关与凭据", () => {
     const legacyConfig = {
       version: 1,
       toolStates: {

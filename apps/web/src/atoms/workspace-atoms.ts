@@ -7,3 +7,6 @@ export const currentWorkspaceIdAtom = atomWithStorage<string | null>('current-wo
 
 /** 工作区能力缓存：按 workspaceSlug 索引（MCP 服务器 + Skill 摘要） */
 export const agentWorkspaceCapabilitiesAtom = atom<Record<string, WorkspaceCapabilities>>({})
+
+/** 置顶的工作区 ID 列表（localStorage 持久化） */
+export const workspacePinnedIdsAtom = atomWithStorage<string[]>('workspace-pinned-ids', [])

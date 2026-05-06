@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * earlier memory path utility implementation
- * Adaptation:
- * - Expose memory path helpers for Lume memory services.
- * - Keep behavior aligned with existing Lume memory path rules.
- */
 
 import { resolve, relative } from "node:path";
 import { existsSync, lstatSync, readdirSync } from "node:fs";

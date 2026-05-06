@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\shared\src\types\github.ts
- * Adaptation:
- * - Repo-specific implementation is handled in Lume sidecar service.
- */
 
 /** GitHub Release 资源（简化版） */
 export interface GitHubRelease {

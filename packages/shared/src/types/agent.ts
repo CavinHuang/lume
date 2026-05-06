@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\shared\src\types\agent.ts
- * Adaptation:
- * - Kept as-is for MIG-002 contract parity.
- */
 
 /**
  * Agent 相关类型定义
@@ -60,7 +54,7 @@ export type AgentModelSelectionSource = 'inherited' | 'thread-override'
 /**
  * Agent 线程轻量索引项
  *
- * 存储在 ~/.proma/agent-sessions.json 中，
+ * 存储在 ~/.lume/agent-sessions.json 中，
  * 类似 ConversationMeta，独立存储。
  */
 export interface AgentThreadMeta {
@@ -95,7 +89,7 @@ export interface AgentThreadMeta {
 /**
  * Agent 持久化消息
  *
- * 存储在 ~/.proma/agent-sessions/{id}.jsonl 中。
+ * 存储在 ~/.lume/agent-sessions/{id}.jsonl 中。
  */
 export interface AgentThreadMessage {
   /** 消息唯一标识 */
@@ -670,6 +664,7 @@ export interface AgentTaskApprovalRequest {
     tools?: string[]
     memoryWrites?: string[]
   }
+  planFilePath?: string
 }
 
 export interface AgentTaskApprovalResponseInput {
@@ -677,6 +672,7 @@ export interface AgentTaskApprovalResponseInput {
   contractId: string
   decision: 'approve' | 'reject'
   execute?: boolean
+  feedback?: string
 }
 
 export interface AgentExecuteTaskContractInput {

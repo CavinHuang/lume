@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * earlier memory sync implementation
- * Adaptation:
- * - Keep lightweight sync helpers for Lume's built-in memory manager.
- */
 
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";

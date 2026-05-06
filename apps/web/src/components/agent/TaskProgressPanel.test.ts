@@ -26,11 +26,8 @@ describe('TaskProgressPanel', () => {
     })).toBe(true)
   })
 
-  test('does not show the empty state for a pending empty task approval', () => {
-    expect(shouldShowTaskEmptyState(undefined, {
-      contractId: 'plan-1',
-      stepCount: 0,
-    })).toBe(false)
+  test('shows empty state when no contract is provided', () => {
+    expect(shouldShowTaskEmptyState(undefined)).toBe(true)
   })
 
   test('detects retry and skip controls for failed task contracts', () => {

@@ -1,5 +1,5 @@
 /**
- * @proma/ui - 共享 UI 组件和 Hooks
+ * @lume/ui - 共享 UI 组件和 Hooks
  */
 
 export { CodeBlock } from './code-block/index'

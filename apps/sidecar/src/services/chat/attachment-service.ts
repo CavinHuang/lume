@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\attachment-service.ts
- * Adaptation:
- * - Sidecar-only filesystem helper subset for MIG-004.
- */
 
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";

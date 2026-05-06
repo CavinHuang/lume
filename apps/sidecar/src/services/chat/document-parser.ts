@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\document-parser.ts
- * Adaptation:
- * - Minimal parser for MIG-004: text-like files only.
- * - Non-text formats return placeholder text.
- */
 
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";

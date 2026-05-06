@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
-import { agentPendingInteractiveAtom, agentRunEventsAtom } from '@/atoms'
+import { useAtomValue } from 'jotai'
+import { agentRunEventsAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { executeTaskContract, getPendingInteractive, listTaskContracts, submitTaskApproval } from '@/lib/desktop-api'
+import { executeTaskContract, listTaskContracts } from '@/lib/desktop-api'
 import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, SkipForward, XCircle } from 'lucide-react'
-import { removePendingTaskApproval, upsertPendingTaskApproval } from '@/hooks/pending-interactive-state'
+
 import type { AgentTaskContract, AgentTaskContractItem, AgentTaskRunTask, LumeRunEvent } from '@lume/shared'
 
 interface TaskProgressPanelProps {
@@ -46,18 +46,14 @@ export function canSkipTaskContract(contract: AgentTaskContract | undefined): bo
 
 export function shouldShowTaskEmptyState(
   contract: AgentTaskContract | undefined,
-  pendingApproval: unknown,
 ): boolean {
-  return !contract && !pendingApproval
+  return !contract
 }
 
 export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
-  const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
   const runEventState = useAtomValue(agentRunEventsAtom)[threadId]
-  const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
   const activeItemRef = useRef<HTMLDivElement>(null)
   const [taskContracts, setTaskContracts] = useState<AgentTaskContract[]>([])
-  const [approvalBusy, setApprovalBusy] = useState(false)
   const [continueBusy, setContinueBusy] = useState(false)
 
   const taskRefreshKey = useMemo(() => {
@@ -88,52 +84,26 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
     }
   }, [threadId])
 
-  const loadPendingTaskApprovals = useCallback(() => {
-    let cancelled = false
-    void getPendingInteractive({ threadId })
-      .then((states) => {
-        if (cancelled) return
-        setPendingInteractive((prev) => {
-          let next = prev
-          for (const state of states) {
-            for (const request of state.taskApprovals ?? []) {
-              next = upsertPendingTaskApproval(next, request)
-            }
-          }
-          return next
-        })
-      })
-      .catch((error) => console.error('[TaskProgressPanel] 加载任务审批失败:', error))
-    return () => {
-      cancelled = true
-    }
-  }, [setPendingInteractive, threadId])
-
   useEffect(() => loadTaskContracts(), [loadTaskContracts, taskRefreshKey])
-
-  useEffect(() => loadPendingTaskApprovals(), [loadPendingTaskApprovals, taskRefreshKey])
 
   const latestTaskContract = [...taskContracts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
   const latestTaskProgress = [...(runEventState?.events ?? [])]
     .reverse()
     .find((event): event is Extract<LumeRunEvent, { type: 'task_progress' }> => event.type === 'task_progress')
   const progressItems = latestTaskProgress?.tasks ?? latestTaskContract?.steps ?? []
-  const pendingTaskApproval = pendingInteractive?.taskApprovals?.find((item) => (
-    item.contractId === latestTaskContract?.id
-  )) ?? pendingInteractive?.taskApprovals?.[0]
   const completedCount = progressItems.filter((item) => item.status === 'completed' || item.status === 'skipped').length
   const failedCount = progressItems.filter((item) => item.status === 'failed').length
   const progressValue = progressItems.length > 0 ? Math.round((completedCount / progressItems.length) * 100) : 0
   const activeItem = progressItems.find((item) => item.status === 'running')
-  const canContinueTasks = !pendingTaskApproval && (latestTaskProgress
+  const canContinueTasks = latestTaskProgress
     ? latestTaskProgress.status === 'pending' || latestTaskProgress.status === 'running' || latestTaskProgress.status === 'failed'
-    : canContinueTaskContract(latestTaskContract))
-  const canRetryTasks = !pendingTaskApproval && (latestTaskProgress
+    : canContinueTaskContract(latestTaskContract)
+  const canRetryTasks = latestTaskProgress
     ? latestTaskProgress.status === 'failed' && latestTaskProgress.tasks.some((task) => task.status === 'failed')
-    : canRetryTaskContract(latestTaskContract))
-  const canSkipTasks = !pendingTaskApproval && (latestTaskProgress
+    : canRetryTaskContract(latestTaskContract)
+  const canSkipTasks = latestTaskProgress
     ? (latestTaskProgress.status === 'pending' || latestTaskProgress.status === 'failed') && latestTaskProgress.tasks.some((task) => task.status === 'failed' || task.status === 'pending')
-    : canSkipTaskContract(latestTaskContract))
+    : canSkipTaskContract(latestTaskContract)
 
   const runTaskIntent = async (intent: 'continue' | 'retry' | 'skip') => {
     const contractId = latestTaskProgress?.contractId ?? latestTaskContract?.id
@@ -152,40 +122,12 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
     }
   }
 
-  const resolveApproval = async (decision: 'approve' | 'reject') => {
-    if (!pendingTaskApproval) return
-    setApprovalBusy(true)
-    try {
-      const result = await submitTaskApproval({
-        threadId,
-        contractId: pendingTaskApproval.contractId,
-        decision,
-        execute: decision === 'approve',
-      })
-      if (result.ok) {
-        setPendingInteractive((prev) => removePendingTaskApproval(prev, threadId, pendingTaskApproval.contractId))
-        setTaskContracts((prev) => prev.map((item) => item.id === pendingTaskApproval.contractId
-          ? {
-              ...item,
-              status: decision === 'approve' ? 'approved' : 'cancelled',
-              approvedAt: decision === 'approve' ? new Date().toISOString() : item.approvedAt,
-              updatedAt: new Date().toISOString(),
-            }
-          : item))
-      }
-    } catch (error) {
-      console.error('[TaskProgressPanel] 提交任务审批失败:', error)
-    } finally {
-      setApprovalBusy(false)
-    }
-  }
-
   // 自动滚动到当前执行任务
   useEffect(() => {
     activeItemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [progressItems])
 
-  if (shouldShowTaskEmptyState(latestTaskContract, pendingTaskApproval) && !latestTaskProgress) {
+  if (shouldShowTaskEmptyState(latestTaskContract) && !latestTaskProgress) {
     return (
       <div className="flex h-full flex-col bg-[var(--surface-2)]">
         <TaskProgressPanelHeader />
@@ -212,11 +154,11 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
             </span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[12.5px] font-semibold text-[var(--text-1)]">
-                {pendingTaskApproval ? '待批准任务' : latestTaskContract?.goal || '任务进度'}
+                {latestTaskContract?.goal || '任务进度'}
               </div>
-              {(latestTaskContract?.summary || pendingTaskApproval?.summary || pendingTaskApproval?.message) && (
+              {latestTaskContract?.summary && (
                 <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[var(--text-3)]">
-                  {latestTaskProgress?.message || latestTaskContract?.summary || pendingTaskApproval?.summary || pendingTaskApproval?.message}
+                  {latestTaskProgress?.message || latestTaskContract?.summary}
                 </p>
               )}
             </div>
@@ -269,34 +211,6 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
           )}
         </div>
       </div>
-      {pendingTaskApproval && (
-        <div className="border-b border-[var(--border)] bg-amber-500/[0.055] px-3 py-3">
-          <div className="rounded-xl border border-amber-500/20 bg-[color:color-mix(in_oklab,var(--surface-1)_86%,transparent)] p-3">
-            <div className="text-[12.5px] font-semibold text-[var(--text-1)]">{pendingTaskApproval.title}</div>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-3)]">
-              {pendingTaskApproval.message}
-            </p>
-          </div>
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              disabled={approvalBusy}
-              onClick={() => void resolveApproval('approve')}
-              className="h-8 flex-1 rounded-lg bg-emerald-500/12 px-2 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/18 disabled:opacity-50"
-            >
-              批准并执行
-            </button>
-            <button
-              type="button"
-              disabled={approvalBusy}
-              onClick={() => void resolveApproval('reject')}
-              className="h-8 flex-1 rounded-lg bg-destructive/10 px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-50"
-            >
-              拒绝
-            </button>
-          </div>
-        </div>
-      )}
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-2 px-3 py-3">
           {progressItems.length === 0 && (

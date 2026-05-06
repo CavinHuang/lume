@@ -605,7 +605,8 @@ export const submitTaskApprovalInputSchema = z.object({
   threadId: idSchema,
   contractId: idSchema,
   decision: z.enum(["approve", "reject"]),
-  execute: z.boolean().optional()
+  execute: z.boolean().optional(),
+  feedback: z.string().optional()
 });
 
 export const executeTaskContractInputSchema = z.object({

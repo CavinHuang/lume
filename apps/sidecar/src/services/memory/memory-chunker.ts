@@ -119,9 +119,6 @@ export function chunkMarkdown(content: string, path: string, input?: Partial<Chu
 /**
  * Remap chunk startLine/endLine from content-relative positions to original
  * source file positions using a lineMap.
- *
- * Migrated from:
- * earlier memory internal chunking implementation
  */
 export function remapChunkLines(
   chunks: Array<{ startLine: number; endLine: number }>,

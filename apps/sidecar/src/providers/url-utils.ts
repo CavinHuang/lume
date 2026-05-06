@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\core\src\providers\url-utils.ts
- * Adaptation:
- * - Kept logic parity for MIG-003.
- */
 
 /**
  * URL 规范化工具

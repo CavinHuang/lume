@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\shared\src\types\channel.ts
- * Adaptation:
- * - Kept as-is for MIG-002 contract parity.
- */
 
 /**
  * 渠道（Channel）相关类型定义
@@ -213,7 +207,7 @@ export function getSuggestedProviderModels(provider: ProviderType): ChannelModel
 /**
  * 渠道配置
  *
- * 存储在 ~/.proma/channels.json 中，apiKey 字段为加密后的 base64 字符串
+ * 存储在 ~/.lume/channels.json 中，apiKey 字段为加密后的 base64 字符串
  */
 export interface Channel {
   /** 渠道唯一标识 */

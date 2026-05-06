@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * earlier memory search implementation
- * Adaptation:
- * - Keep Bun sqlite API style used in Lume sidecar.
- */
 
 import { Database } from "bun:sqlite";
 

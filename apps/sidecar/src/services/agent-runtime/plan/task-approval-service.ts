@@ -60,7 +60,8 @@ export async function listPendingTaskApprovalRequests(sessionDir?: string): Prom
       message: record.interruption.message,
       summary: contract?.summary,
       stepCount: contract?.steps.length ?? payload.stepCount ?? 0,
-      expectedChanges: contract?.expectedChanges ?? payload.expectedChanges
+      expectedChanges: contract?.expectedChanges ?? payload.expectedChanges,
+      planFilePath: contract?.planFilePath
     });
   }
 

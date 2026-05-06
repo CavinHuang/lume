@@ -12,6 +12,7 @@ export interface BuildLumeSidebarViewModelInput {
   activeTabId: string | null
   streamingStates: Record<string, AgentRuntimePhase | undefined>
   expandedWorkspaceIds: string[]
+  pinnedWorkspaceIds: string[]
 }
 
 export interface LumeSidebarAction<TId extends string> {
@@ -60,6 +61,7 @@ export interface LumeSidebarWorkspaceItem {
   count: number
   isCurrent: boolean
   isExpanded: boolean
+  pinned: boolean
   rows: LumeSidebarWorkspaceRow[]
 }
 
@@ -103,9 +105,11 @@ export function buildLumeSidebarViewModel({
   activeTabId,
   streamingStates,
   expandedWorkspaceIds,
+  pinnedWorkspaceIds,
 }: BuildLumeSidebarViewModelInput): LumeSidebarViewModel {
   const selectedWorkspaceId = currentWorkspaceId ?? workspaces[0]?.id ?? null
   const expandedSet = new Set(expandedWorkspaceIds)
+  const pinnedSet = new Set(pinnedWorkspaceIds)
 
   const topActions: LumeSidebarTopAction[] = [
     { id: 'new-chat', label: '新建聊天', icon: 'square-pen', kind: 'button', shortcut: 'Ctrl N' },
@@ -156,6 +160,7 @@ export function buildLumeSidebarViewModel({
       count: workspaceThreads.length,
       isCurrent: workspace.id === selectedWorkspaceId,
       isExpanded: expandedSet.has(workspace.id),
+      pinned: pinnedSet.has(workspace.id),
       rows,
     }
   })
@@ -170,6 +175,7 @@ export function buildLumeSidebarViewModel({
       count: unassignedThreads.length,
       isCurrent: false,
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
+      pinned: false,
       rows: groupThreadsByDate(unassignedThreads).map<LumeSidebarThreadGroup>((group) => ({
         type: 'thread-group',
         id: `${UNASSIGNED_THREADS_WORKSPACE_ID}:${group.label}`,
@@ -185,6 +191,8 @@ export function buildLumeSidebarViewModel({
       })),
     })
   }
+
+  workspaceItems.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1))
 
   const collapsedItems: LumeSidebarCollapsedItem[] = [
     ...topActions.map((action) => ({

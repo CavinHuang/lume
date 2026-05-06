@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\shared\src\types\system-prompt.ts
- * Adaptation:
- * - Kept Chat system prompt contract for parity with Proma.
- * - Branding text switched from Proma to Lume in builtin prompt.
- */
 
 /**
  * 系统提示词类型定义

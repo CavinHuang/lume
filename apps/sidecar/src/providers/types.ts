@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\packages\core\src\providers\types.ts
- * Adaptation:
- * - Replaced shared import scope `@proma/shared` -> `@lume/shared`.
- */
 
 /**
  * Provider 适配器类型定义

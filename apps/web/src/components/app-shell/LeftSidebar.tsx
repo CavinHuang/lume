@@ -10,11 +10,14 @@ import {
   currentWorkspaceIdAtom,
   sidebarCollapsedAtom,
   tabsAtom,
+  workspacePinnedIdsAtom,
 } from '@/atoms'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { Tab } from '@/atoms/tab-atoms'
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
+import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { LumeSidebar } from './LumeSidebar'
 import {
   buildLumeSidebarViewModel,
@@ -37,9 +40,18 @@ export function LeftSidebar() {
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom)
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
+  const [pinnedIds, setPinnedIds] = useAtom(workspacePinnedIdsAtom)
   const setOpenCommandPalette = useSetAtom(commandPaletteOpenAtom)
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean
+    title: string
+    description: string
+    confirmLabel: string
+    destructive: boolean
+    onConfirm: () => void
+  }>({ open: false, title: '', description: '', confirmLabel: '确认', destructive: false, onConfirm: () => {} })
 
   const hasUnassignedThreads = threads.some((thread) => thread.workspaceId == null)
   const workspaceIds = hasUnassignedThreads
@@ -66,6 +78,7 @@ export function LeftSidebar() {
     activeTabId,
     streamingStates,
     expandedWorkspaceIds,
+    pinnedWorkspaceIds: pinnedIds,
   })
 
   const openThread = (threadId: string, workspaceId?: string) => {
@@ -137,23 +150,31 @@ export function LeftSidebar() {
     }
   }
 
-  const deleteThread = async (threadId: string) => {
+  const deleteThread = (threadId: string) => {
     const thread = threads.find((item) => item.id === threadId)
     if (!thread) return
-    if (!confirm(`确认删除会话「${thread.title}」？`)) return
 
-    try {
-      await sidecarCall('agent:delete-thread', { threadId: thread.id })
-      setThreads((previous) => previous.filter((item) => item.id !== thread.id))
-      setTabs((previous) => previous.filter((tab) => tab.id !== thread.id))
-      if (activeTabId === thread.id) {
-        setActiveTabId(null)
-      }
-      toast.success('已删除')
-    } catch (error) {
-      console.error('[LeftSidebar] 删除失败:', error)
-      toast.error('删除失败')
-    }
+    setConfirmState({
+      open: true,
+      title: '删除会话',
+      description: `确认删除会话「${thread.title}」？此操作不可撤销。`,
+      confirmLabel: '删除',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await sidecarCall('agent:delete-thread', { threadId: thread.id })
+          setThreads((previous) => previous.filter((item) => item.id !== thread.id))
+          setTabs((previous) => previous.filter((tab) => tab.id !== thread.id))
+          if (activeTabId === thread.id) {
+            setActiveTabId(null)
+          }
+          toast.success('已删除')
+        } catch (error) {
+          console.error('[LeftSidebar] 删除失败:', error)
+          toast.error('删除失败')
+        }
+      },
+    })
   }
 
   const renameThread = async (threadId: string, title: string) => {
@@ -174,6 +195,58 @@ export function LeftSidebar() {
       console.error('[LeftSidebar] 重命名失败:', error)
       toast.error('重命名失败')
     }
+  }
+
+  const toggleWorkspacePin = (workspaceId: string) => {
+    setPinnedIds((previous) =>
+      previous.includes(workspaceId)
+        ? previous.filter((id) => id !== workspaceId)
+        : [...previous, workspaceId],
+    )
+  }
+
+  const renameWorkspace = async (workspaceId: string, name: string) => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+
+    try {
+      const updated = await sidecarCall<AgentWorkspace>(AGENT_IPC_CHANNELS.UPDATE_WORKSPACE, {
+        id: workspaceId,
+        name: trimmed,
+      })
+      setWorkspaces((previous) =>
+        previous.map((ws) => (ws.id === workspaceId ? updated : ws)),
+      )
+    } catch (error) {
+      console.error('[LeftSidebar] 重命名工作区失败:', error)
+      toast.error('重命名失败')
+    }
+  }
+
+  const deleteWorkspace = (workspaceId: string) => {
+    const ws = workspaces.find((w) => w.id === workspaceId)
+    if (!ws) return
+
+    setConfirmState({
+      open: true,
+      title: '删除工作区',
+      description: `确认删除工作区「${ws.name}」？其下所有会话也将被删除，此操作不可撤销。`,
+      confirmLabel: '删除',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE, { id: workspaceId })
+          setWorkspaces((previous) => previous.filter((w) => w.id !== workspaceId))
+          if (currentWorkspaceId === workspaceId) {
+            setCurrentWorkspaceId(workspaces.find((w) => w.id !== workspaceId)?.id ?? null)
+          }
+          toast.success('已删除')
+        } catch (error) {
+          console.error('[LeftSidebar] 删除工作区失败:', error)
+          toast.error('删除失败')
+        }
+      },
+    })
   }
 
   const handleTopAction = (actionId: LumeSidebarTopActionId) => {
@@ -250,12 +323,25 @@ export function LeftSidebar() {
         onToggleThreadPin={togglePin}
         onDeleteThread={deleteThread}
         onRenameThread={renameThread}
+        onToggleWorkspacePin={toggleWorkspacePin}
+        onRenameWorkspace={renameWorkspace}
+        onDeleteWorkspace={deleteWorkspace}
       />
 
       <CreateWorkspaceDialog
         open={createWorkspaceOpen}
         onOpenChange={setCreateWorkspaceOpen}
         onCreated={handleWorkspaceCreated}
+      />
+
+      <ConfirmDialog
+        open={confirmState.open}
+        onOpenChange={(open) => setConfirmState((prev) => ({ ...prev, open }))}
+        title={confirmState.title}
+        description={confirmState.description}
+        confirmLabel={confirmState.confirmLabel}
+        destructive={confirmState.destructive}
+        onConfirm={confirmState.onConfirm}
       />
     </>
   )

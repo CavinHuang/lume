@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\workspace-watcher.ts
- * Adaptation:
- * - Replaced Electron webContents.send with sidecar notification emitter callback.
- * - Watch target switched to Lume sidecar workspace path utility.
- */
 
 import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";

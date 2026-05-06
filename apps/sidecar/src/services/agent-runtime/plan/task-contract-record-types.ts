@@ -75,5 +75,6 @@ export interface TaskContractRecord {
   traceSpanId?: string;
   createdAt: string;
   updatedAt: string;
+  planFilePath?: string;
   approvedAt?: string;
 }

@@ -1,10 +1,3 @@
-/**
- * Migrated from:
- * E:\projects\ai-projects\Proma\apps\electron\src\main\lib\chat-tools\nano-banana-tool.ts
- * Adaptation:
- * - Chat 模式对齐生图闭环（请求 Gemini Image Generation + 保存图片附件）。
- * - 保留最小会话级历史，支持多轮编辑的 thought signature 续接。
- */
 
 import { randomUUID } from "node:crypto";
 import type { ChatToolTestResult, FileAttachment } from "@lume/shared";

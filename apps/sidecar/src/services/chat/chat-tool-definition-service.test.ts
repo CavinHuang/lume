@@ -48,7 +48,7 @@ describe("chat-tool-definition-service", () => {
             type: "string",
             description: "项目 key",
             required: false,
-            enum: ["LUME", "PROMA"]
+            enum: ["LUME"]
           }
         ]
       }
@@ -61,7 +61,7 @@ describe("chat-tool-definition-service", () => {
     expect(definition?.parameters.properties.project).toEqual({
       type: "string",
       description: "项目 key",
-      enum: ["LUME", "PROMA"]
+      enum: ["LUME"] 
     });
   });
 });

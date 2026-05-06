@@ -1,9 +1,3 @@
-/**
- * Migrated from:
- * internal workspace template helper from an earlier migration source
- * Adaptation:
- * - Keep only frontmatter stripping utility needed by Lume bootstrap service.
- */
 
 export function stripFrontMatter(content: string): string {
   if (!content.startsWith("---")) {

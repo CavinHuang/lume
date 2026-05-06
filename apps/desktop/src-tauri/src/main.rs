@@ -684,6 +684,13 @@ fn spawn_sidecar_from_env() -> Option<Child> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        process.creation_flags(CREATE_NO_WINDOW);
+    }
+
     match process.spawn() {
         Ok(child) => {
             info!("[desktop] sidecar process booted from LUME_SIDECAR_CMD");
@@ -799,6 +806,13 @@ fn spawn_bundled_sidecar(app: &tauri::AppHandle) -> Option<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        process.creation_flags(CREATE_NO_WINDOW);
+    }
 
     let (skills_archive, skills_dir) =
         apply_default_skills_env(&mut process, app, &PathBuf::from(""));
