@@ -496,6 +496,44 @@ export function previewWorkspacePath(
   return { ok: true };
 }
 
+function readPreviewableText(resolvedPath: string): { content: string; truncated: boolean } {
+  const bytes = readFileSync(resolvedPath);
+  const limit = 512 * 1024;
+  const sampled = bytes.subarray(0, Math.min(bytes.length, 2048));
+  if (sampled.includes(0)) {
+    throw new Error("暂不支持预览二进制文件");
+  }
+  const truncated = bytes.length > limit;
+  return {
+    content: bytes.subarray(0, limit).toString("utf-8"),
+    truncated,
+  };
+}
+
+export function readAgentPath(
+  workspaceSlug: string,
+  sessionId: string,
+  targetPath: string
+): { content: string; truncated: boolean } {
+  const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+  return readPreviewableText(resolved);
+}
+
+export function readWorkspacePath(
+  workspaceSlug: string,
+  targetPath: string
+): { content: string; truncated: boolean } {
+  const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
+  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+  return readPreviewableText(resolved);
+}
+
 export function showAgentPathInFolder(
   workspaceSlug: string,
   sessionId: string,

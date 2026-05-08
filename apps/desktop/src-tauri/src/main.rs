@@ -469,6 +469,22 @@ fn open_external(url: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn read_text_file(path: String) -> Result<serde_json::Value, String> {
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read selected file failed ({}): {e}", path))?;
+    let truncated = text.len() > 512 * 1024;
+    let content = if truncated {
+        text.chars().take(512 * 1024).collect::<String>()
+    } else {
+        text
+    };
+    Ok(serde_json::json!({
+        "content": content,
+        "truncated": truncated
+    }))
+}
+
 async fn sidecar_call_internal(
     state: &tauri::State<'_, SidecarProcess>,
     method: &str,
@@ -1199,7 +1215,8 @@ fn main() {
             desktop_sync_window_behavior,
             open_file_dialog,
             open_folder_dialog,
-            open_external
+            open_external,
+            read_text_file
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

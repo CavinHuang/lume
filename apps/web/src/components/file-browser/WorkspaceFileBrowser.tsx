@@ -10,9 +10,20 @@ import { normalizeDirectoryEntriesResponse } from './FileBrowser'
 interface WorkspaceFileBrowserProps {
   workspaceSlug?: string
   refreshToken?: number
+  selectedPath?: string
+  onOpenFile?: (path: string) => void
+  showHeader?: boolean
+  searchQuery?: string
 }
 
-export function WorkspaceFileBrowser({ workspaceSlug, refreshToken = 0 }: WorkspaceFileBrowserProps) {
+export function WorkspaceFileBrowser({
+  workspaceSlug,
+  refreshToken = 0,
+  selectedPath,
+  onOpenFile,
+  showHeader = true,
+  searchQuery = '',
+}: WorkspaceFileBrowserProps) {
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [rootTick, setRootTick] = useState(0)
@@ -44,39 +55,47 @@ export function WorkspaceFileBrowser({ workspaceSlug, refreshToken = 0 }: Worksp
   if (!workspaceSlug) {
     return (
       <div className="flex flex-col h-full">
-        <div className="px-3 py-2.5 border-b border-border/50">
-          <span className="text-[12px] font-medium text-foreground/60">工作区共享</span>
-        </div>
-        <p className="px-3 py-6 text-center text-[11px] text-foreground/30">请先选择工作区</p>
+        {showHeader && (
+          <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
+            <span className="text-[12px] font-medium text-[var(--text-3)]">工作区共享</span>
+          </div>
+        )}
+        <p className="px-3 py-6 text-center text-[11px] text-[var(--text-3)]">请先选择工作区</p>
       </div>
     )
   }
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-3 py-2.5 border-b border-border/50 flex items-center justify-between">
-        <span className="text-[12px] font-medium text-foreground/60">工作区共享</span>
-        <button
-          onClick={handleRefresh}
-          className="p-1 rounded hover:bg-muted/50 text-foreground/40 hover:text-foreground/70 transition-colors"
-          title="刷新"
-        >
-          <RefreshCw size={12} className={cn(loading && 'animate-spin')} />
-        </button>
-      </div>
+      {showHeader && (
+        <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
+          <span className="text-[12px] font-medium text-[var(--text-3)]">工作区共享</span>
+          <button
+            onClick={handleRefresh}
+            className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+            title="刷新"
+          >
+            <RefreshCw size={12} className={cn(loading && 'animate-spin')} />
+          </button>
+        </div>
+      )}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="px-2 py-2">
-          {entries.map((entry) => (
+        <div className={cn('py-2', showHeader ? 'px-2' : 'px-4')}>
+          {entries.filter((entry) => matchesSearch(entry, searchQuery)).map((entry) => (
             <WorkspaceFileTreeItem
               key={entry.path}
               entry={entry}
               depth={0}
               workspaceSlug={workspaceSlug}
               parentRefreshTick={rootTick}
+              selectedPath={selectedPath}
+              onOpenFile={onOpenFile}
+              searchQuery={searchQuery}
+              largeRows={!showHeader}
             />
           ))}
           {!loading && entries.length === 0 && (
-            <p className="px-3 py-6 text-center text-[11px] text-foreground/30">目录为空</p>
+            <p className="px-3 py-6 text-center text-[13px] text-[var(--text-3)]">目录为空</p>
           )}
         </div>
       </ScrollArea>
@@ -89,11 +108,19 @@ function WorkspaceFileTreeItem({
   depth,
   workspaceSlug,
   parentRefreshTick,
+  selectedPath,
+  onOpenFile,
+  searchQuery,
+  largeRows,
 }: {
   entry: FileEntry
   depth: number
   workspaceSlug: string
   parentRefreshTick: number
+  selectedPath?: string
+  onOpenFile?: (path: string) => void
+  searchQuery: string
+  largeRows: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [children, setChildren] = useState<FileEntry[]>([])
@@ -106,7 +133,10 @@ function WorkspaceFileTreeItem({
   }, [parentRefreshTick])
 
   const toggle = async () => {
-    if (!entry.isDirectory) return
+    if (!entry.isDirectory) {
+      onOpenFile?.(entry.path)
+      return
+    }
     if (!open && !childrenLoaded) {
       try {
         const r = await sidecarCall<{ entries: FileEntry[] }>('agent:list-workspace-directory', {
@@ -122,22 +152,30 @@ function WorkspaceFileTreeItem({
     setOpen((v) => !v)
   }
 
+  if (!matchesSearch(entry, searchQuery) && children.every((child) => !matchesSearch(child, searchQuery))) {
+    return null
+  }
+
   return (
     <div>
       <button
         onClick={toggle}
-        className="w-full flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-muted/50 transition-colors text-left"
-        style={{ paddingLeft: `${8 + depth * 12}px` }}
+        className={cn(
+          'w-full flex h-9 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-[var(--surface-2)]',
+          !largeRows && 'h-auto gap-1.5 rounded-lg py-1',
+          !entry.isDirectory && selectedPath === entry.path && 'bg-[color:color-mix(in_oklab,var(--brand)_26%,transparent)] text-[var(--brand-2)]',
+        )}
+        style={{ paddingLeft: `${8 + depth * (largeRows ? 16 : 12)}px` }}
       >
         {entry.isDirectory
-          ? <ChevronRight size={12} className={cn('text-foreground/40 transition-transform flex-shrink-0', open && 'rotate-90')} />
-          : <span className="w-3 flex-shrink-0" />
+          ? <ChevronRight size={largeRows ? 16 : 12} className={cn('text-[var(--text-3)] transition-transform flex-shrink-0', open && 'rotate-90')} />
+          : <span className={cn('flex-shrink-0', largeRows ? 'w-4' : 'w-3')} />
         }
         {entry.isDirectory
-          ? <Folder size={13} className="text-foreground/50 flex-shrink-0" />
-          : <FileTypeIcon filename={entry.name} size={13} />
+          ? <Folder size={largeRows ? 17 : 13} className="text-[var(--text-3)] flex-shrink-0" />
+          : <FileTypeIcon filename={entry.name} size={largeRows ? 16 : 13} />
         }
-        <span className="text-[12px] text-foreground/70 truncate">{entry.name}</span>
+        <span className={cn('truncate text-[var(--text-2)]', largeRows ? 'text-[13px]' : 'text-[12px]', !entry.isDirectory && selectedPath === entry.path && 'text-[var(--brand-2)]')}>{entry.name}</span>
       </button>
       {open && children.map((child) => (
         <WorkspaceFileTreeItem
@@ -146,8 +184,19 @@ function WorkspaceFileTreeItem({
           depth={depth + 1}
           workspaceSlug={workspaceSlug}
           parentRefreshTick={parentRefreshTick}
+          selectedPath={selectedPath}
+          onOpenFile={onOpenFile}
+          searchQuery={searchQuery}
+          largeRows={largeRows}
         />
       ))}
     </div>
   )
+}
+
+function matchesSearch(entry: FileEntry, searchQuery: string): boolean {
+  const query = searchQuery.trim().toLowerCase()
+  if (!query) return true
+  if (entry.name.toLowerCase().includes(query)) return true
+  return (entry.children ?? []).some((child) => matchesSearch(child, query))
 }

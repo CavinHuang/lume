@@ -14,6 +14,7 @@ import {
   agentStreamingStatesAtom,
   agentPlanModePhaseAtom,
   agentSidePanelViewAtom,
+  welcomePromptSeedAtom,
 } from '@/atoms'
 import { sidecarCall, agentSend, openFileDialog } from '@/lib/desktop-api'
 import { appendRunEvent } from '@/hooks/run-event-state'
@@ -45,6 +46,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setCurrentWorkspaceId = useAtom(currentWorkspaceIdAtom)[1]
+  const [welcomePromptSeed, setWelcomePromptSeed] = useAtom(welcomePromptSeedAtom)
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
     initialWorkspaceId ?? currentWorkspaceId ?? null
@@ -128,6 +130,14 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       setEditorText(editor.getText())
     },
   })
+
+  useEffect(() => {
+    if (!editor || !welcomePromptSeed) return
+    editor.commands.clearContent()
+    editor.commands.insertContent(welcomePromptSeed)
+    editor.commands.focus('end')
+    setWelcomePromptSeed(null)
+  }, [editor, setWelcomePromptSeed, welcomePromptSeed])
 
   const handleSend = async () => {
     if (!editor || sending) return

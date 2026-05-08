@@ -55,7 +55,7 @@ function log(message) {
 }
 
 function spawnDesktopProcess() {
-  child = spawn(tauriBin, ["dev"], {
+  child = spawn(tauriBin, ["dev", "--config", "src-tauri/tauri.dev.conf.json"], {
     cwd: desktopDir,
     env,
     stdio: "inherit",

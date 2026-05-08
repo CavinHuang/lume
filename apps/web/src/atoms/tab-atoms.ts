@@ -1,8 +1,9 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 
-export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills'
+export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills' | 'file' | 'browser'
 export type SettingsTab = 'channel' | 'agent' | 'mcp' | 'about'
+export type FileTabSource = 'workspace' | 'thread' | 'local'
 
 export interface Tab {
   id: string
@@ -11,8 +12,14 @@ export interface Tab {
   threadId?: string
   settingsTab?: SettingsTab
   workspaceId?: string
+  filePath?: string
+  fileSource?: FileTabSource
+  workspaceSlug?: string
+  sourcePath?: string
+  browserUrl?: string
 }
 
 export const tabsAtom = atom<Tab[]>([])
 export const activeTabIdAtom = atomWithStorage<string | null>('active-tab-id', null)
 export const sidebarCollapsedAtom = atomWithStorage('sidebar-collapsed', false)
+export const welcomePromptSeedAtom = atom<string | null>(null)

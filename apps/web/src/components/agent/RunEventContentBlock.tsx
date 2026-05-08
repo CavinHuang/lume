@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Check, CheckCircle, ChevronDown, ChevronRight, Circle, ClipboardList, Copy, Edit3, History, Loader2, Sparkles, Terminal, Wrench, X, XCircle } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
@@ -13,6 +13,31 @@ interface RunEventContentBlockProps {
   message: RunEventMessageView
   animate?: boolean
   threadId: string
+}
+
+export interface CopyFeedbackState {
+  resetTimeoutId: ReturnType<typeof setTimeout> | null
+}
+
+interface CopyFeedbackDeps {
+  setCopied: (next: boolean) => void
+  setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
+  clearTimer: (handle: ReturnType<typeof setTimeout>) => void
+  delayMs?: number
+}
+
+export function showTemporaryCopiedFeedback(
+  state: CopyFeedbackState,
+  { setCopied, setTimer, clearTimer, delayMs = 3000 }: CopyFeedbackDeps,
+): void {
+  setCopied(true)
+  if (state.resetTimeoutId !== null) {
+    clearTimer(state.resetTimeoutId)
+  }
+  state.resetTimeoutId = setTimer(() => {
+    state.resetTimeoutId = null
+    setCopied(false)
+  }, delayMs)
 }
 
 export function RunEventContentBlock({ message, animate, threadId }: RunEventContentBlockProps) {
@@ -143,15 +168,11 @@ function UserMessageBlock({
               v{message.versionIndex}/{message.versionCount}
             </button>
           )}
-          <button
-            type="button"
-            aria-label="复制消息"
-            onClick={() => void navigator.clipboard?.writeText(message.text)}
-            className="rounded-md p-1 transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff]"
-            title="复制"
-          >
-            <Copy size={14} />
-          </button>
+          <CopyMessageButton
+            text={message.text}
+            className="rounded-md p-1 transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff] data-[state=copied]:text-emerald-600"
+            iconSize={14}
+          />
           {editing ? (
             <>
               <button
@@ -504,15 +525,66 @@ function MessageFeedbackActions({ text }: { text: string }) {
 
   return (
     <div className="flex items-center pt-2 text-[#9aa1b3]">
-      <button
-        type="button"
-        aria-label="复制消息"
-        onClick={() => void navigator.clipboard?.writeText(text)}
-        className="rounded-md p-0.5 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff]"
-      >
-        <Copy size={15} strokeWidth={1.8} />
-      </button>
+      <CopyMessageButton
+        text={text}
+        className="rounded-md p-0.5 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff] data-[state=copied]:text-emerald-600"
+        iconSize={15}
+        strokeWidth={1.8}
+      />
     </div>
+  )
+}
+
+function CopyMessageButton({
+  text,
+  className,
+  iconSize,
+  strokeWidth,
+}: {
+  text: string
+  className: string
+  iconSize: number
+  strokeWidth?: number
+}) {
+  const [copied, setCopied] = useState(false)
+  const feedbackStateRef = useRef<CopyFeedbackState>({ resetTimeoutId: null })
+
+  useEffect(() => () => {
+    if (feedbackStateRef.current.resetTimeoutId !== null) {
+      window.clearTimeout(feedbackStateRef.current.resetTimeoutId)
+      feedbackStateRef.current.resetTimeoutId = null
+    }
+  }, [])
+
+  const handleCopy = async () => {
+    const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard)
+    if (!writeText) return
+
+    try {
+      await writeText(text)
+      showTemporaryCopiedFeedback(feedbackStateRef.current, {
+        setCopied,
+        setTimer: window.setTimeout,
+        clearTimer: window.clearTimeout,
+      })
+    } catch (error) {
+      console.error('[RunEventContentBlock] 复制消息失败:', error)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={copied ? '复制成功' : '复制消息'}
+      data-state={copied ? 'copied' : 'idle'}
+      onClick={() => void handleCopy()}
+      className={className}
+      title={copied ? '已复制' : '复制'}
+    >
+      {copied
+        ? <Check size={iconSize} strokeWidth={strokeWidth} />
+        : <Copy size={iconSize} strokeWidth={strokeWidth} />}
+    </button>
   )
 }
 

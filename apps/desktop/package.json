@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "build": "bun ../../scripts/build-sidecar-binary.mjs && bun ../../scripts/build-default-skills-archive.mjs && tauri build",
     "package": "bun ../../scripts/build-sidecar-binary.mjs && bun ../../scripts/build-default-skills-archive.mjs && tauri build",
     "typecheck": "echo \"desktop has no ts sources yet\""

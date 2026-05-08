@@ -27,12 +27,12 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
   const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
   const currentView = sidePanelViews[threadId] ?? null
 
-  const toggle = (view: SidePanelView) => {
+  const openSidePanel = (view: Exclude<SidePanelView, null>) => {
     setSidePanelViews((prev) => {
       const next = { ...prev }
       const keys = Object.keys(next)
       if (keys.length > 50) delete next[keys[0]]
-      next[threadId] = next[threadId] === view ? null : view
+      next[threadId] = view
       return next
     })
   }
@@ -69,38 +69,38 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">
         <button
-          onClick={() => toggle('files')}
+          onClick={() => openSidePanel('files')}
           className={cn(
             'p-1.5 rounded-lg transition-colors',
             currentView === 'files'
               ? 'bg-foreground/10 text-foreground'
               : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
           )}
-          title="文件浏览器"
+          title="展开文件面板"
         >
           <FolderOpen size={16} />
         </button>
         <button
-          onClick={() => toggle('task-progress')}
+          onClick={() => openSidePanel('task-progress')}
           className={cn(
             'p-1.5 rounded-lg transition-colors',
             currentView === 'task-progress'
               ? 'bg-foreground/10 text-foreground'
               : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
           )}
-          title="任务进度"
+          title="展开任务进度"
         >
           <ListTodo size={16} />
         </button>
         <button
-          onClick={() => toggle('trace')}
+          onClick={() => openSidePanel('trace')}
           className={cn(
             'p-1.5 rounded-lg transition-colors',
             currentView === 'trace'
               ? 'bg-foreground/10 text-foreground'
               : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
           )}
-          title="Runtime Trace"
+          title="展开 Runtime Trace"
         >
           <ActivitySquare size={16} />
         </button>

@@ -55,7 +55,9 @@ import {
   openAttachedPath,
   openWorkspacePath,
   previewAgentPath,
+  readAgentPath,
   previewWorkspacePath,
+  readWorkspacePath,
   renameAgentFile,
   renameWorkspaceFile,
   renameAttachedPath,
@@ -1050,6 +1052,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         input.path
       );
     },
+    [AGENT_IPC_CHANNELS.READ_FILE]: async (params) => {
+      const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.READ_FILE);
+      return readAgentPath(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path
+      );
+    },
     [AGENT_IPC_CHANNELS.PREVIEW_WORKSPACE_FILE]: async (params) => {
       const input = validateInput(
         workspaceRequiredPathInputSchema,
@@ -1057,6 +1067,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.PREVIEW_WORKSPACE_FILE
       );
       return previewWorkspacePath(input.workspaceSlug, input.path);
+    },
+    [AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE]: async (params) => {
+      const input = validateInput(
+        workspaceRequiredPathInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE
+      );
+      return readWorkspacePath(input.workspaceSlug, input.path);
     },
     [AGENT_IPC_CHANNELS.RENAME_FILE]: async (params) => {
       const input = validateInput(renameFileInputSchema, params, AGENT_IPC_CHANNELS.RENAME_FILE);

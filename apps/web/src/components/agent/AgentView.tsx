@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
-import { useAtomValue } from 'jotai'
-import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { useAtom, useAtomValue } from 'jotai'
+import { activeTabIdAtom, agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput } from './AgentInput'
@@ -14,12 +14,15 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { buildFileTab, upsertTab } from '@/components/tabs/file-tabs'
 
 interface AgentViewProps {
   threadId: string
 }
 
 export function AgentView({ threadId }: AgentViewProps) {
+  const [, setTabs] = useAtom(tabsAtom)
+  const [, setActiveTabId] = useAtom(activeTabIdAtom)
   const streamingState = useAtomValue(agentStreamingStatesAtom)[threadId] ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
@@ -41,6 +44,7 @@ export function AgentView({ threadId }: AgentViewProps) {
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useState({ current: 0 })[0]
+  const openedPlanPathsRef = useRef<Set<string>>(new Set())
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -100,15 +104,18 @@ export function AgentView({ threadId }: AgentViewProps) {
   // 自动打开计划文件
   useEffect(() => {
     for (const approval of pendingTaskApprovals) {
-      if (approval.planFilePath) {
-        void sidecarCall(AGENT_IPC_CHANNELS.OPEN_FILE, {
-          path: approval.planFilePath,
-        }).catch((error) => {
-          console.error('[AgentView] 打开计划文件失败:', error)
+      if (approval.planFilePath && !openedPlanPathsRef.current.has(approval.planFilePath)) {
+        openedPlanPathsRef.current.add(approval.planFilePath)
+        const nextTab = buildFileTab({
+          filePath: approval.planFilePath,
+          fileSource: 'workspace',
+          ...(workspaceSlug ? { workspaceSlug } : {}),
         })
+        setTabs((prev) => upsertTab(prev, nextTab))
+        setActiveTabId(nextTab.id)
       }
     }
-  }, [pendingTaskApprovals])
+  }, [pendingTaskApprovals, setActiveTabId, setTabs, workspaceSlug])
 
   return (
     <div

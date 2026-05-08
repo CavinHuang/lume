@@ -18,6 +18,8 @@ export const openFileDialog = () =>
 export const openFolderDialog = () =>
   invoke<{ path: string | null }>('open_folder_dialog')
 export const openExternal = (url: string) => invoke('open_external', { url })
+export const readTextFile = (path: string) =>
+  invoke<{ content: string; truncated: boolean }>('read_text_file', { path })
 
 let pendingDesktopUpdate: Update | null = null
 

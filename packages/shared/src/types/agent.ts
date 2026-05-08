@@ -1414,6 +1414,8 @@ export const AGENT_IPC_CHANNELS = {
   SHOW_IN_FOLDER: 'agent:show-in-folder',
   /** 在新窗口中预览文件 */
   PREVIEW_FILE: 'agent:preview-file',
+  /** 读取 thread 文件内容用于内嵌预览 */
+  READ_FILE: 'agent:read-file',
   /** 重命名文件/目录 */
   RENAME_FILE: 'agent:rename-file',
   /** 移动文件/目录到目标目录 */
@@ -1442,6 +1444,8 @@ export const AGENT_IPC_CHANNELS = {
   SHOW_WORKSPACE_IN_FOLDER: 'agent:show-workspace-in-folder',
   /** 预览工作区共享文件 */
   PREVIEW_WORKSPACE_FILE: 'agent:preview-workspace-file',
+  /** 读取工作区共享文件内容用于内嵌预览 */
+  READ_WORKSPACE_FILE: 'agent:read-workspace-file',
   /** 重命名工作区共享文件/目录 */
   RENAME_WORKSPACE_FILE: 'agent:rename-workspace-file',
   /** 移动工作区共享文件/目录 */
