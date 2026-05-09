@@ -20,7 +20,7 @@ import { MentionList } from './MentionList'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
-import type { MentionItem, MentionListRef } from './MentionList'
+import type { MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
@@ -28,6 +28,7 @@ import { deriveLumeComposerState } from '@/components/composer/lume-composer-sta
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { composerControlTriggerClassName } from './composer-control-styles'
 import { syncPermissionModeWithPlanModePhase } from './agent-input-state'
+import { buildSlashSuggestionItems, type MentionItem } from './slash-command-state'
 
 interface AgentInputProps {
   threadId: string
@@ -57,13 +58,7 @@ async function fetchSuggestions(
       if (!workspaceSlug) return []
       const skills = await sidecarCall<SkillMeta[]>(AGENT_IPC_CHANNELS.GET_SKILLS, { workspaceSlug })
       const list = Array.isArray(skills) ? skills : []
-      return list
-        .filter((s) => {
-          const q = query.toLowerCase()
-          return s.name.toLowerCase().includes(q) || s.slug.toLowerCase().includes(q)
-        })
-        .slice(0, 10)
-        .map((s) => ({ id: s.slug, label: s.name ?? s.slug, type: 'skill' as const }))
+      return buildSlashSuggestionItems(list, query)
     }
 
     if (trigger === '#') {
@@ -103,17 +98,17 @@ function createSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props,
+            props: { ...props, trigger: char as '@' | '/' | '#' },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
 
-          updatePosition(wrapper, props)
+          updatePosition(wrapper, props, char)
         },
 
         onUpdate: (props: SuggestionProps) => {
           component?.updateProps(props)
-          if (wrapper) updatePosition(wrapper, props)
+          if (wrapper) updatePosition(wrapper, props, char)
         },
 
         onKeyDown: (props: SuggestionKeyDownProps) => {
@@ -133,11 +128,28 @@ function createSuggestionRenderer(
   }
 }
 
-function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps) {
+function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: string) {
   const rect = props.clientRect?.()
   if (!rect) return
+
+  if (char === '/') {
+    const editorEl = props.editor.view.dom
+    const anchor = editorEl.closest('[data-agent-composer-anchor]') as HTMLElement | null
+    const anchorRect = anchor?.getBoundingClientRect()
+    if (anchorRect) {
+      wrapper.style.left = `${Math.max(12, anchorRect.left)}px`
+      wrapper.style.width = `${Math.min(anchorRect.width, window.innerWidth - 24)}px`
+      wrapper.style.bottom = `${window.innerHeight - anchorRect.top + 8}px`
+      wrapper.style.top = 'auto'
+      return
+    }
+  }
+
   // 面板显示在光标上方
-  wrapper.style.left = `${rect.left}px`
+  const estimatedWidth = 360
+  const safeLeft = Math.min(rect.left, window.innerWidth - estimatedWidth - 16)
+  wrapper.style.left = `${Math.max(12, safeLeft)}px`
+  wrapper.style.width = ''
   wrapper.style.bottom = `${window.innerHeight - rect.top + 4}px`
   wrapper.style.top = 'auto'
 }
@@ -309,61 +321,65 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   }
 
   return (
-    <div className="px-4 pb-4 pt-2">
-      <LumeComposer
-        tone={composerState.tone}
-        scale="compact"
-        className="rounded-[1.6rem]"
-        editorSlot={
-          <EditorContent
-            editor={editor}
-            className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
+    <div className="px-3 pb-4 pt-2">
+      <div className="w-full px-14">
+        <div data-agent-composer-anchor>
+          <LumeComposer
+            tone={composerState.tone}
+            scale="compact"
+            className="rounded-[1.6rem]"
+            editorSlot={
+              <EditorContent
+                editor={editor}
+                className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
+              />
+            }
+            leadingTools={
+              <>
+                <button
+                  onClick={handleAttach}
+                  className={composerControlTriggerClassName}
+                  title="附加文件"
+                  type="button"
+                >
+                  <Paperclip size={13} />
+                  文件
+                </button>
+                <ModelPicker threadId={threadId} />
+                <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
+                <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
+              </>
+            }
+            actionSlot={
+              composerState.showStop ? (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="inline-flex h-8 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--brand-2)_26%,transparent)] bg-[color:color-mix(in_oklab,var(--brand-2)_14%,var(--surface-2))] px-3 text-[11.5px] font-medium text-[var(--text-1)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand-2)_34%,transparent)]"
+                  title="停止"
+                >
+                  <Square size={12} />
+                  停止
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!composerState.canSend}
+                  className={getLumeComposerPrimaryActionClassName({
+                    enabled: composerState.canSend,
+                    size: 'compact',
+                  })}
+                  title="发送"
+                >
+                  发送
+                  <Send size={12} />
+                </button>
+              )
+            }
           />
-        }
-        leadingTools={
-          <>
-            <button
-              onClick={handleAttach}
-              className={composerControlTriggerClassName}
-              title="附加文件"
-              type="button"
-            >
-              <Paperclip size={14} />
-              文件
-            </button>
-            <ModelPicker threadId={threadId} />
-            <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
-            <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
-          </>
-        }
-        actionSlot={
-          composerState.showStop ? (
-            <button
-              type="button"
-              onClick={handleStop}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--brand-2)_26%,transparent)] bg-[color:color-mix(in_oklab,var(--brand-2)_14%,var(--surface-2))] px-4 text-[12px] font-medium text-[var(--text-1)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand-2)_34%,transparent)]"
-              title="停止"
-            >
-              <Square size={13} />
-              停止
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!composerState.canSend}
-              className={getLumeComposerPrimaryActionClassName({
-                enabled: composerState.canSend,
-                size: 'compact',
-              })}
-              title="发送"
-            >
-              发送
-              <Send size={13} />
-            </button>
-          )
-        }
-      />
+        </div>
+      </div>
     </div>
   )
 }

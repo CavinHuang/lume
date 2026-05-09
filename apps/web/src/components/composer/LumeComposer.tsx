@@ -88,18 +88,18 @@ const scaleClasses: Record<
   compact: {
     shell: 'rounded-[1.45rem]',
     editor: 'px-4 pt-3 pb-2',
-    footer: 'px-3 pb-3 pt-3',
+    footer: 'px-3 py-1.5',
   },
   hero: {
     shell: 'rounded-[1rem]',
     editor: 'px-4 pt-4 pb-2',
-    footer: 'px-3 pb-3 pt-3',
+    footer: 'px-3 py-1.5',
   },
 }
 
 const actionSizeClasses: Record<LumeComposerActionSize, string> = {
-  compact: 'h-10 px-4 text-[12px]',
-  hero: 'h-11 px-5 text-[13px]',
+  compact: 'h-8 px-3 text-[11.5px]',
+  hero: 'h-8 px-3 text-[12px]',
 }
 
 export function getLumeComposerPrimaryActionClassName({
@@ -158,17 +158,17 @@ export function LumeComposer({
 
         <div
           className={cn(
-            'relative flex flex-wrap items-center gap-3 border-t',
+            'relative flex flex-wrap items-center gap-2.5 border-t',
             sizing.footer,
             footerClassName,
           )}
           style={{ borderColor: palette.dividerColor }}
         >
           {hasToolbarContent ? (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{leadingTools}</div>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{leadingTools}</div>
           ) : null}
           {trailingTools ? (
-            <div className="flex items-center gap-2">{trailingTools}</div>
+            <div className="flex items-center gap-1.5">{trailingTools}</div>
           ) : null}
           <div className={cn('shrink-0', hasToolbarContent && 'ml-auto')}>{actionSlot}</div>
         </div>

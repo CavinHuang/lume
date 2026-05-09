@@ -1,5 +1,5 @@
 export const composerControlTriggerClassName =
-  'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-medium text-foreground/60 transition-colors hover:bg-muted/50 hover:text-foreground/80'
+  'inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium text-foreground/60 transition-colors hover:bg-muted/50 hover:text-foreground/80'
 
 export const composerControlChevronClassName = 'text-muted-foreground/50'
 

@@ -164,7 +164,7 @@ export function LumeWelcomeSurface({
                 boxShadow: '0 22px 48px -38px color-mix(in oklab, var(--brand) 42%, transparent)',
               }}
               editorClassName="px-4 pb-2 pt-4"
-              footerClassName="px-3 pb-3 pt-3"
+              footerClassName="px-3 py-1.5"
               editorSlot={
                 <EditorContent
                   editor={editor}
@@ -201,9 +201,9 @@ export function LumeWelcomeSurface({
                     title="添加文件"
                     onClick={onAttach}
                     disabled={sending}
-                    className="inline-flex size-10 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+                    className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
                   >
-                    <Paperclip size={17} />
+                    <Paperclip size={15} />
                   </button>
                   <ToolbarChip>@ 文件</ToolbarChip>
                   <ToolbarChip>/Skill</ToolbarChip>
@@ -218,7 +218,7 @@ export function LumeWelcomeSurface({
                   <button
                     type="button"
                     disabled
-                    className="inline-flex h-10 items-center gap-2 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] px-3 text-[12px] font-medium text-[var(--text-3)]"
+                    className="inline-flex h-8 items-center gap-2 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] px-2.5 text-[11.5px] font-medium text-[var(--text-3)]"
                   >
                     ⌘ ↵
                   </button>
@@ -226,8 +226,8 @@ export function LumeWelcomeSurface({
               }
               actionSlot={
                 composerState.showBusy ? (
-                  <div className="inline-flex size-10 items-center justify-center rounded-lg bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)]">
-                    <Loader2 size={17} className="animate-spin" />
+                  <div className="inline-flex size-8 items-center justify-center rounded-lg bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)]">
+                    <Loader2 size={15} className="animate-spin" />
                   </div>
                 ) : (
                   <button
@@ -237,13 +237,13 @@ export function LumeWelcomeSurface({
                     onClick={onSend}
                     disabled={!composerState.canSend}
                     className={cn(
-                      'inline-flex size-10 items-center justify-center rounded-lg font-medium transition-all',
+                      'inline-flex size-8 items-center justify-center rounded-lg font-medium transition-all',
                       composerState.canSend
                         ? 'bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)] shadow-[0_16px_30px_-22px_color-mix(in_oklab,var(--brand)_82%,transparent)] hover:translate-y-[-1px]'
                         : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
                     )}
                   >
-                    <Send size={17} />
+                    <Send size={15} />
                   </button>
                 )
               }
@@ -370,7 +370,7 @@ function ToolbarChip({ children }: { children: ReactNode }) {
   return (
     <button
       type="button"
-      className="inline-flex h-10 items-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] px-3 text-[13px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+      className="inline-flex h-8 items-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] px-2.5 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
     >
       {children}
     </button>

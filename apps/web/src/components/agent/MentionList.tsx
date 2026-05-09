@@ -1,25 +1,12 @@
-/**
- * MentionSuggestion - AgentInput 的 mention 下拉建议列表
- *
- * 支持三种 mention 触发：
- * - @ → 文件 mention（从当前线程工作目录列出文件）
- * - / → Skill mention（命令提示）
- * - # → MCP 工具 mention
- */
-
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { File, Slash, Hash } from 'lucide-react'
-
-export interface MentionItem {
-  id: string
-  label: string
-  type: 'file' | 'skill' | 'mcp'
-}
+import { Blocks, Box, File, Hash, TerminalSquare } from 'lucide-react'
+import { normalizeSlashSuggestionItems, type MentionItem } from './slash-command-state'
 
 interface MentionListProps {
   items: MentionItem[]
   command: (item: { id: string; label: string }) => void
+  trigger?: '@' | '/' | '#'
 }
 
 export interface MentionListRef {
@@ -27,24 +14,26 @@ export interface MentionListRef {
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
-  function MentionList({ items, command }, ref) {
+  function MentionList({ items, command, trigger = '/' }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0)
+    const displayItems = trigger === '/' ? normalizeSlashSuggestionItems(items) : items
 
     useEffect(() => setSelectedIndex(0), [items])
 
     const selectItem = useCallback((index: number) => {
-      const item = items[index]
+      const item = displayItems[index]
       if (item) command({ id: item.id, label: item.label })
-    }, [items, command])
+    }, [displayItems, command])
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
+        if (displayItems.length === 0) return false
         if (event.key === 'ArrowUp') {
-          setSelectedIndex((i) => (i + items.length - 1) % items.length)
+          setSelectedIndex((i) => (i + displayItems.length - 1) % displayItems.length)
           return true
         }
         if (event.key === 'ArrowDown') {
-          setSelectedIndex((i) => (i + 1) % items.length)
+          setSelectedIndex((i) => (i + 1) % displayItems.length)
           return true
         }
         if (event.key === 'Enter') {
@@ -55,37 +44,154 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       },
     }))
 
-    if (items.length === 0) {
+    if (displayItems.length === 0) {
+      const emptyLabel = trigger === '@'
+        ? '继续输入关键词搜索文件'
+        : trigger === '#'
+          ? '继续输入关键词搜索 MCP 服务'
+          : '继续输入关键词搜索技能或 slash 能力'
       return (
-        <div className="rounded-lg border border-border/60 bg-popover shadow-lg p-2 text-[12px] text-muted-foreground">
-          无匹配结果
+        <div className="min-w-[280px] rounded-[1.25rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] p-3 shadow-[0_22px_52px_-32px_hsl(var(--shadow-panel)/0.45)]">
+          <p className="text-[12px] font-medium text-[var(--text-2)]">没有匹配项</p>
+          <p className="mt-1 text-[11px] text-[var(--text-3)]">{emptyLabel}</p>
         </div>
       )
     }
 
     const iconMap = {
       file: <File size={13} className="text-blue-500" />,
-      skill: <Slash size={13} className="text-orange-500" />,
+      skill: <Box size={16} className="text-[var(--text-2)]" />,
       mcp: <Hash size={13} className="text-purple-500" />,
+      command: <TerminalSquare size={16} className="text-[var(--text-2)]" />,
     }
 
+    if (trigger === '/') {
+      let previousSection: MentionItem['section'] | undefined
+
+      return (
+        <div className="w-full overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_98%,transparent)] shadow-[0_18px_46px_-34px_hsl(var(--shadow-panel)/0.42)]">
+          <div className="flex max-h-[420px] flex-col gap-0.5 overflow-y-auto p-2">
+            {displayItems.map((item, index) => {
+              const showSectionHeader = item.section && item.section !== previousSection
+              previousSection = item.section
+
+              return (
+                <div key={`${item.type}:${item.id}`}>
+                  {showSectionHeader && item.section === 'skill' ? (
+                    <div className="px-0.5 py-1 text-[12px] font-medium text-[var(--text-3)]">
+                      技能
+                    </div>
+                  ) : null}
+                  <button
+                    className={cn(
+                      'grid min-h-8 w-full grid-cols-[24px_minmax(0,auto)_minmax(0,1fr)_auto] items-center gap-2 rounded-[0.75rem] py-1 pl-0.5 pr-1 text-left transition-colors',
+                      index === selectedIndex
+                        ? 'bg-[color:color-mix(in_oklab,var(--surface-3)_72%,transparent)]'
+                        : 'hover:bg-[color:color-mix(in_oklab,var(--surface-3)_42%,transparent)]'
+                    )}
+                    onClick={() => selectItem(index)}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                  >
+                    <span className="flex h-6 w-6 items-center justify-center text-[var(--text-2)]">
+                      {iconMap[item.type]}
+                    </span>
+                    <span className="truncate text-[12px] font-medium leading-none text-[var(--text-1)]">
+                      {item.title ?? item.label}
+                    </span>
+                    {item.subtitle ? (
+                      <span className="truncate text-[12px] leading-none text-[var(--text-3)]">
+                        {item.subtitle}
+                      </span>
+                    ) : (
+                      <span />
+                    )}
+                    {item.section === 'skill' && item.meta ? (
+                      <span className="pl-2 text-[12px] leading-none text-[var(--text-3)]">
+                        {item.meta}
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )
+    }
+
+    const panelTitle = trigger === '@' ? 'File Mentions' : trigger === '#' ? 'MCP Servers' : 'Slash Commands'
+    const panelDescription = trigger === '@'
+      ? '从当前工作区快速引用文件'
+      : trigger === '#'
+        ? '选择可用的 MCP 服务与工具入口'
+        : '常用能力和工作区技能都可以在这里快速插入'
+    let previousSection: MentionItem['section'] | undefined
+
     return (
-      <div className="rounded-lg border border-border/60 bg-popover shadow-lg py-1 max-h-[200px] overflow-y-auto min-w-[200px]">
-        {items.map((item, index) => (
-          <button
-            key={item.id}
-            className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left transition-colors',
-              index === selectedIndex
-                ? 'bg-accent text-accent-foreground'
-                : 'text-foreground/70 hover:bg-muted/50'
-            )}
-            onClick={() => selectItem(index)}
-          >
-            {iconMap[item.type]}
-            <span className="truncate">{item.label}</span>
-          </button>
-        ))}
+      <div className="min-w-[320px] max-w-[380px] overflow-hidden rounded-[1.35rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] shadow-[0_26px_64px_-34px_hsl(var(--shadow-panel)/0.52)]">
+        <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-3">
+          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.24em] text-[var(--text-3)]">
+            <Blocks size={12} />
+            {panelTitle}
+          </div>
+          <p className="mt-1 text-[11px] text-[var(--text-3)]">{panelDescription}</p>
+        </div>
+
+        <div className="max-h-[320px] overflow-y-auto px-2 py-2">
+          {displayItems.map((item, index) => {
+            const showSectionHeader = item.section && item.section !== previousSection
+            previousSection = item.section
+
+            return (
+              <div key={`${item.type}:${item.id}`} className="mb-1 last:mb-0">
+                {showSectionHeader ? (
+                  <div className="px-2 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-3)]">
+                    {item.section === 'capability' ? '常用能力' : 'Workspace Skills'}
+                  </div>
+                ) : null}
+                <button
+                  className={cn(
+                    'group w-full rounded-[1rem] border px-3 py-2.5 text-left transition-all',
+                    index === selectedIndex
+                      ? 'border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))] bg-[linear-gradient(135deg,color-mix(in_oklab,var(--brand)_9%,var(--surface-2)),color-mix(in_oklab,var(--surface-1)_96%,transparent))] shadow-[0_18px_36px_-32px_color-mix(in_oklab,var(--brand)_62%,transparent)]'
+                      : 'border-transparent text-foreground/80 hover:border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-3)_74%,transparent)]'
+                  )}
+                  onClick={() => selectItem(index)}
+                  onMouseEnter={() => setSelectedIndex(index)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--surface-3)_74%,transparent)]">
+                      {iconMap[item.type]}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-[12.5px] font-medium text-[var(--text-1)]">
+                          {item.title ?? item.label}
+                        </span>
+                        {item.type === 'command' ? (
+                          <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-emerald-600">
+                            Quick
+                          </span>
+                        ) : null}
+                      </div>
+                      {item.subtitle ? (
+                        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--text-3)]">
+                          {item.subtitle}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-2 text-[10px] text-[var(--text-3)]">
+          <span>↑↓ 选择</span>
+          <span>Enter 插入</span>
+          <span>Esc 关闭</span>
+        </div>
       </div>
     )
   }
