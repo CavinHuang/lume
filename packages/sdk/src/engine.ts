@@ -421,6 +421,7 @@ export class QueryEngine {
     let turnsRemaining = this.config.maxTurns
     let budgetExceeded = false
     let structuredOutputRetriesExceeded = false
+    let completedNaturally = false
     let maxOutputRecoveryAttempts = 0
     const MAX_OUTPUT_RECOVERY = 3
     let structuredOutputRetryAttempts = 0
@@ -709,6 +710,7 @@ export class QueryEngine {
       }
 
       if (toolUseBlocks.length === 0) {
+        completedNaturally = true
         break // No tool calls - agent is done
       }
 
@@ -776,7 +778,7 @@ export class QueryEngine {
       ? 'error_max_budget_usd'
       : structuredOutputRetriesExceeded
         ? 'error_max_structured_output_retries'
-      : turnsRemaining <= 0
+      : turnsRemaining <= 0 && !completedNaturally
         ? 'error_max_turns'
         : 'success'
 

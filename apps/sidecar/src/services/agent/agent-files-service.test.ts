@@ -18,6 +18,7 @@ import {
   moveWorkspaceFile,
   renameAgentFile,
   renameWorkspaceFile,
+  readAgentPath,
   resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
   saveFilesToWorkspace,
@@ -98,6 +99,21 @@ describe("agent-files-service file ops", () => {
     const result = searchAgentWorkspaceFiles(workspaceSlug, sessionId, "ag", 20, sessionDir);
     expect(result.total).toBeGreaterThan(0);
     expect(result.entries.some((entry) => entry.name === "agent-guide.md")).toBeTrue();
+  });
+
+  test("readAgentPath 应支持线程工作区相对路径并拒绝越界路径", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-plan-relative";
+    const sessionId = "session-plan-relative";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    mkdirSync(join(sessionDir, "plans"), { recursive: true });
+    writeFileSync(join(sessionDir, "plans", "plan.md"), "# plan", "utf-8");
+
+    expect(readAgentPath(workspaceSlug, sessionId, "plans/plan.md")).toEqual({
+      content: "# plan",
+      truncated: false
+    });
+    expect(() => readAgentPath(workspaceSlug, sessionId, "../plan.md")).toThrow("目标路径超出线程工作目录");
   });
 
   test("应支持附加目录列出/重命名/移动", () => {

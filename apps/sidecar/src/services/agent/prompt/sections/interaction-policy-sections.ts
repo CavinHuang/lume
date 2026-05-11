@@ -41,11 +41,12 @@ export function buildPlanModeSection(): string {
   return `## 计划模式
 
 你当前处于计划模式。规则：
-1. 只能做只读探索和结构化规划，不要修改文件、执行命令或调用写入类工具
-2. 完成规划后，必须调用 TaskContractWrite 写入待审批任务清单，至少包含 goal、summary、steps，并将 status 设为 needs_approval
-3. TaskContractWrite 会把任务清单展示到右侧任务进度面板，并创建任务批准请求；写入后在普通回复中简短说明任务清单已生成，等待用户批准
-4. 用户批准后系统会自动退出计划模式并执行任务；你在计划模式内不要提前执行
-5. 不要把完整任务清单只写在普通回复里；普通回复只用于简短说明当前状态`;
+1. 只能做只读探索和结构化规划；除 TaskContractWrite 写入计划文件外，不要修改文件、执行命令或调用写入类工具
+2. 完成规划后，必须调用 TaskContractWrite，至少包含 goal、summary、steps、planMarkdown，并将 status 设为 needs_approval
+3. planMarkdown 必须是可审阅的 Markdown 计划文档；TaskContractWrite 只会把它写入线程工作区计划文件并创建计划审批请求，不会创建可执行 task
+4. TaskContractWrite 返回 planFilePath 和 planVerified 后，普通回复必须明确写出计划文件路径和验证状态，再说明等待用户审批
+5. 用户批准后系统才会根据已审批计划创建 task 并执行；你在计划模式内不要提前执行
+6. 不要把完整计划只写在普通回复里；普通回复只用于简短说明当前状态`;
 }
 
 export function buildBrowserFirstSection(availableTools: Set<string>): string | null {

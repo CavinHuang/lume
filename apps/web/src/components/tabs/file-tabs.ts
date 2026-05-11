@@ -28,6 +28,19 @@ export function buildFileTab(input: {
   }
 }
 
+export function buildThreadPlanFileTab(input: {
+  threadId: string
+  planFilePath: string
+  workspaceSlug?: string
+}): Tab {
+  return buildFileTab({
+    filePath: input.planFilePath,
+    fileSource: 'thread',
+    threadId: input.threadId,
+    ...(input.workspaceSlug ? { workspaceSlug: input.workspaceSlug } : {}),
+  })
+}
+
 export function upsertTab(tabs: Tab[], nextTab: Tab): Tab[] {
   const existingIndex = tabs.findIndex((tab) => tab.id === nextTab.id)
   if (existingIndex === -1) {

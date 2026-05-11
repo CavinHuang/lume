@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { defineTool, type ToolDefinition } from "@lume/agent-sdk";
+import {
+  normalizeThreadPlanFilePath,
+  verifyThreadPlanMarkdownFile,
+  writeThreadPlanMarkdownFile
+} from "./plan-markdown-file-service";
 import { persistTaskApprovalInterruption } from "./task-approval-service";
 import { createFileBackedTaskContractStore } from "./task-contract-store";
 import type { TaskContractRecord, TaskContractRecordItem } from "./task-contract-record-types";
@@ -8,6 +13,7 @@ export interface CreateTaskContractWriteToolInput {
   sessionDir: string;
   threadId: string;
   runId: string;
+  threadWorkspaceDir?: string;
   traceSpanId?: string;
   now?: () => string;
   onTaskContractUpdated?: (contract: TaskContractRecord) => void | Promise<void>;
@@ -19,10 +25,12 @@ export function createTaskContractWriteTool(input: CreateTaskContractWriteToolIn
 
   return defineTool({
     name: "TaskContractWrite",
-    description: `Create or update an approvable task contract for the current Lume run.
+    description: `Create or update a reviewable Markdown plan draft for the current Lume run.
 
-IMPORTANT: Before setting status to "needs_approval", you MUST use the write tool to create a detailed plan document in Markdown format at:
-  sessions/{threadId}/plans/{YYYY-MM-DD}-{short-title-slug}.md
+IMPORTANT: Before setting status to "needs_approval", you MUST provide a detailed Markdown plan via planMarkdown. Lume will write it to the thread workspace at:
+  plans/{contractId}.md
+
+TaskContractWrite does not create an executable task run while the plan is pending review. Lume creates the task contract from this draft only after the user approves the plan.
 
 The plan document should include:
 - YAML frontmatter with contractId and status: draft
@@ -30,7 +38,7 @@ The plan document should include:
 - ## Steps section with numbered items
 - ## Risks & Assumptions section
 
-Then pass the file path via the planFilePath parameter.`,
+If you provide planFilePath, it must be a thread-workspace relative path. Do not pass an absolute path.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -44,7 +52,8 @@ Then pass the file path via the planFilePath parameter.`,
         expectedChanges: { type: "object" },
         status: { type: "string" },
         currentStepId: { type: "string" },
-        planFilePath: { type: "string" }
+        planFilePath: { type: "string" },
+        planMarkdown: { type: "string" }
       },
       required: ["goal", "summary", "steps"]
     },
@@ -55,6 +64,23 @@ Then pass the file path via the planFilePath parameter.`,
       const createdAt = now();
       const id = toNonEmptyString(record.id) ?? randomUUID();
       const existing = await store.get(id);
+      const planMarkdown = toMarkdownString(record.planMarkdown);
+      const status = normalizeTaskContractStatus(record.status) ?? existing?.status ?? "draft";
+      const planFilePath = planMarkdown && input.threadWorkspaceDir
+        ? writeThreadPlanMarkdownFile({
+            threadWorkspaceDir: input.threadWorkspaceDir,
+            contractId: id,
+            markdown: planMarkdown,
+            planFilePath: record.planFilePath
+          })
+        : normalizeThreadPlanFilePath(record.planFilePath, existing?.planFilePath);
+      const planVerification = resolvePlanVerification({
+        status,
+        threadWorkspaceDir: input.threadWorkspaceDir,
+        planFilePath,
+        existingVerification: existing?.planVerification,
+        now
+      });
       const contract: TaskContractRecord = {
         id,
         runId: input.runId,
@@ -68,29 +94,53 @@ Then pass the file path via the planFilePath parameter.`,
         expectedChanges: record.expectedChanges && typeof record.expectedChanges === "object"
           ? record.expectedChanges as TaskContractRecord["expectedChanges"]
           : existing?.expectedChanges ?? {},
-        status: normalizeTaskContractStatus(record.status) ?? existing?.status ?? "draft",
+        status,
         traceSpanId: input.traceSpanId ?? existing?.traceSpanId,
-        planFilePath: toNonEmptyString(record.planFilePath) ?? existing?.planFilePath,
+        planFilePath,
+        planVerification,
         createdAt: existing?.createdAt ?? createdAt,
         updatedAt: createdAt,
         approvedAt: existing?.approvedAt
       };
-      await store.upsert(contract);
       if (contract.status === "needs_approval") {
         await persistTaskApprovalInterruption({
           sessionDir: input.sessionDir,
           contract
         });
+      } else {
+        await store.upsert(contract);
       }
       await input.onTaskContractUpdated?.(contract);
       return {
         data: {
           contractId: contract.id,
           status: contract.status,
-          stepCount: contract.steps.length
+          stepCount: contract.steps.length,
+          ...(contract.planFilePath ? { planFilePath: contract.planFilePath } : {}),
+          ...(contract.planVerification ? { planVerified: contract.planVerification.verified } : {})
         }
       };
     }
+  });
+}
+
+function resolvePlanVerification(input: {
+  status: TaskContractRecord["status"];
+  threadWorkspaceDir?: string;
+  planFilePath?: string;
+  existingVerification?: TaskContractRecord["planVerification"];
+  now: () => string;
+}): TaskContractRecord["planVerification"] {
+  if (input.status !== "needs_approval") {
+    return input.existingVerification;
+  }
+  if (!input.threadWorkspaceDir || !input.planFilePath) {
+    throw new Error("提交审批前必须生成并验证 Markdown 计划文件");
+  }
+  return verifyThreadPlanMarkdownFile({
+    threadWorkspaceDir: input.threadWorkspaceDir,
+    planFilePath: input.planFilePath,
+    now: input.now
   });
 }
 
@@ -130,6 +180,10 @@ function normalizeSteps(value: unknown, fallback: TaskContractRecordItem[]): Tas
 
 function toNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function toMarkdownString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function toStringArray(value: unknown): string[] | undefined {

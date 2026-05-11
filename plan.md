@@ -6,33 +6,53 @@
 
 ## 当前半成品盘点
 
-### 1. Plan / Task 执行闭环
+### 1. Plan 审批闭环
 
 现状：
-- 任务审批、TaskRun、TaskReport 已经存在。
-- 旧的 PlanModePhase / fallback 执行桥接仍在和新 TaskRun 模型并存。
-- 审批横幅已支持拒绝反馈输入，但 sidecar 目前只返回 feedback，没有把反馈喂回 agent 触发重新规划。
-- `查看计划`按钮有 UI，但缺少点击行为。
+- 结构化任务审批、TaskRun、TaskReport 已经存在。
+- Agent 已经可以通过 TaskContractWrite 提交待审批任务契约。
+- 审批横幅已支持批准、拒绝和反馈输入。
+- 计划文件预览已经有雏形：前端会根据 `planFilePath` 自动打开一个文件 tab。
 
 风险：
-- 用户以为“拒绝并反馈”会让 agent 修改计划，但实际可能只是关闭审批。
-- Plan 与 TaskRun 的状态来源分散，后续容易出现 UI 显示和 runtime 状态不一致。
+- 审批阶段还没有形成稳定的“可阅读计划 -> 批准/拒绝 -> 执行/重规划”闭环。
+- 用户拒绝并填写反馈后，sidecar 目前只是返回 feedback，没有把反馈喂回 agent 触发重新规划。
+- `查看计划`按钮有 UI，但缺少点击行为。
+- 审批、计划预览、执行进度的职责边界还不够清楚。
 
-### 2. Plan 文件路径契约
+目标契约：
+- Plan 模式下，agent 先收集信息，再通过 TaskContractWrite 提交 `planMarkdown` 和结构化 TaskContract。
+- TaskContractWrite 负责把 `planMarkdown` 写成线程工作区内的 Markdown 计划文件，读回验证后才创建审批请求。
+- 普通回复和审批横幅都必须暴露计划文件路径与验证状态，不能只显示工具调用。
+- 审批横幅只负责审批动作：查看计划、批准执行、拒绝并反馈。
+- 批准后创建或继续 TaskRun，TaskProgressPanel 只展示执行进度。
+- 拒绝并反馈后，系统把反馈作为重新规划输入交回 agent，而不是只关闭审批。
+- 旧 PlanModePhase / fallback 桥接只作为兼容边界存在，不能继续承担新执行模型的主状态来源。
+
+### 2. plan.md 文件契约
 
 现状：
-- `TaskContractWrite` 要求 agent 在 `sessions/{threadId}/plans/...` 写 Markdown 计划。
-- SDK `Write` 工具描述要求写绝对路径。
-- 前端自动打开 `planFilePath` 时把它当 workspace 文件处理。
+- `TaskContractWrite` 要求 agent 提供 `planMarkdown`，sidecar 负责写入线程计划文件。
+- Plan 模式不需要开放通用 `Write` 工具来生成计划文件。
+- 前端自动打开 `planFilePath` 时把它当 thread 文件处理，并在审批横幅展示路径。
 
 风险：
 - agent 可能写到错误位置。
 - 前端可能打不开真实 plan 文件。
 - 审批流程的“可读计划文件”体验不稳定。
 
-需要先决策：
-- plan.md 是线程工作区文件、workspace shared 文件，还是 runtime session 文件？
-- `planFilePath` 应该存绝对路径还是受控相对路径？
+目标契约：
+- Markdown 计划属于线程工作区文件，不属于 workspace shared resources，也不属于 runtime 内部 session dir。
+- 推荐路径：线程工作区内的 `plans/{contractId}.md`，必要时可扩展为 `plans/{YYYY-MM-DD}-{short-title}.md`。
+- `planFilePath` 存线程内受控相对路径，例如 `plans/contract-123.md`。
+- `planVerified` 来自 sidecar 读回验证结果；没有 verified plan file 时不能进入审批。
+- 前端打开计划时使用 `fileSource: 'thread'`，传入 `threadId` 和 `planFilePath`。
+- sidecar 负责把 `planFilePath` 解析到线程工作目录，并做路径越界保护。
+
+取舍：
+- 不选 runtime session dir：它是运行时内部状态，适合存 RunState / Trace / Interruption，不适合暴露成用户要审阅的文件。
+- 不选 workspace shared resources：plan 是某次线程任务的审批产物，默认不应该污染跨线程共享资料区。
+- 选择线程工作区：最符合“计划属于这次任务”的心智，也能复用现有 thread file preview 能力。
 
 ### 3. Runtime 恢复、handoff、后台子代理管理
 
@@ -82,18 +102,20 @@
 
 ## 推荐优先级
 
-### P0: 收束 Plan / Task / plan.md 审批闭环
+### P0: 收束基于线程 plan.md 的审批闭环
 
 这是当前最值得先做的一条线，因为它连接了 agent 规划、用户审批、任务执行、进度展示和文件预览，是 Lume 的核心体验。
 
 目标：
-- 明确 plan 文件存储契约。
-- 让 `查看计划`和自动打开计划文件可靠工作。
-- 让拒绝反馈真正触发重新规划。
+- 将 Markdown 计划固定为线程工作区内的受控文件。
+- 让 `查看计划`和自动打开计划文件都走 thread file preview。
+- 让拒绝反馈真正触发 agent 重新规划。
+- 审批阶段只处理“审阅/批准/拒绝”，执行阶段只由 TaskRun / TaskProgressPanel 表达。
 - 减少旧 Plan execution fallback 和新 TaskRun 的状态分叉。
 
 成功标准：
 - Plan 模式下 agent 生成可读 Markdown 计划。
+- TaskContractWrite 返回 `planFilePath` 和 `planVerified: true`，agent 普通回复必须告诉用户这个路径。
 - 用户能在审批前打开并阅读计划。
 - 批准后自动进入 TaskRun 执行。
 - 拒绝并填写反馈后，agent 能基于反馈重新生成计划。
@@ -125,10 +147,10 @@
 ## 建议下一份正式 spec
 
 题目：
-`Plan 文件与任务审批闭环`
+`线程 plan.md 与任务审批闭环`
 
 范围：
-- plan 文件路径与打开逻辑。
+- 线程工作区内 plan 文件路径与打开逻辑。
 - 审批横幅交互。
 - 拒绝反馈到 agent 重新规划。
 - TaskProgressPanel 职责收束。
@@ -142,15 +164,16 @@
 
 ## 初步实施顺序
 
-1. 先写清 plan 文件契约。
-2. 修正 sidecar / web 对 `planFilePath` 的读写和打开方式。
-3. 补上 `查看计划`点击行为。
-4. 让 reject feedback 触发 agent 重新规划。
-5. 收束 TaskProgressPanel 的审批残留语义。
-6. 针对 Plan / Task 相关逻辑跑 focused tests。
+1. 先把 plan 文件契约固定为线程工作区相对路径。
+2. 修正 TaskContractWrite 的工具说明、`planMarkdown` 写入和 `planFilePath` 校验语义。
+3. 修正前端自动打开计划文件：从 workspace file tab 改为 thread file tab。
+4. 补上 `查看计划`点击行为。
+5. 让 reject feedback 触发 agent 重新规划。
+6. 收束 TaskProgressPanel 的审批残留语义。
+7. 针对 Plan / Task 相关逻辑跑 focused tests。
 
 ## 剩余风险
 
 - 当前仓库已有一个未跟踪文件 `.deleted-files.txt`，后续改动时不要误处理。
 - 旧文档中很多 checklist 仍是 unchecked，但代码已经部分实现，不能只按文档判断完成度。
-- 如果 plan 文件位置选错，后续会影响文件预览、历史追溯和 runtime session 清理策略。
+- 如果线程工作区后续有清理策略，需要明确 plan.md 是否跟随线程一起归档或删除。

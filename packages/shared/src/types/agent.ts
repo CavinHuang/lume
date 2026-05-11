@@ -665,6 +665,7 @@ export interface AgentTaskApprovalRequest {
     memoryWrites?: string[]
   }
   planFilePath?: string
+  planVerified?: boolean
 }
 
 export interface AgentTaskApprovalResponseInput {
@@ -983,7 +984,7 @@ export interface AgentTaskRun {
 // ===== Plan 模式 =====
 
 /** Plan 阶段 */
-export type PlanModePhase = 'idle' | 'planning' | 'review' | 'executing' | 'executed'
+export type PlanModePhase = 'idle' | 'planning' | 'awaiting_approval' | 'executing' | 'completed'
 
 /** Plan 状态变化事件 */
 export interface PlanModePhaseChangedEvent {

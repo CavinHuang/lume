@@ -76,5 +76,11 @@ export interface TaskContractRecord {
   createdAt: string;
   updatedAt: string;
   planFilePath?: string;
+  planVerification?: {
+    verified: boolean;
+    planFilePath: string;
+    bytes: number;
+    checkedAt: string;
+  };
   approvedAt?: string;
 }

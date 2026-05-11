@@ -199,7 +199,7 @@ registerToolMetadata({
   name: "TaskContractWrite",
   category: "control",
   riskLevel: "low",
-  description: "写入待审批任务清单",
+  description: "写入待审阅计划",
   allowedInPlanMode: true
 });
 

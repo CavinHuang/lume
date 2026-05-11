@@ -12,7 +12,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { spawn } from "node:child_process";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AttachWorkspaceResourceToThreadInput,
   AttachWorkspaceResourceToThreadResult,
@@ -116,12 +116,7 @@ export const resolveWorkspaceSlugByThreadId = resolveWorkspaceSlugBySessionId;
 
 function resolveSafeTarget(workspaceSlug: string, sessionId: string, targetPath?: string): string {
   const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
-  if (!targetPath || targetPath.trim().length === 0) return sessionDir;
-  const resolved = resolve(targetPath);
-  if (!isWithin(sessionDir, resolved)) {
-    throw new Error("目标路径超出线程工作目录");
-  }
-  return resolved;
+  return resolveSafePathWithin(sessionDir, targetPath, "目标路径超出线程工作目录");
 }
 
 function resolveAttachedTarget(targetPath: string): string {
@@ -133,9 +128,15 @@ function resolveAttachedTarget(targetPath: string): string {
 }
 
 function resolveSafePath(basePath: string, targetPath?: string, errorMessage = "目标路径超出允许范围"): string {
-  if (!targetPath || targetPath.trim().length === 0) return resolve(basePath);
-  const resolved = resolve(targetPath);
-  if (!isWithin(basePath, resolved)) {
+  return resolveSafePathWithin(basePath, targetPath, errorMessage);
+}
+
+function resolveSafePathWithin(basePath: string, targetPath?: string, errorMessage = "目标路径超出允许范围"): string {
+  const base = resolve(basePath);
+  if (!targetPath || targetPath.trim().length === 0) return base;
+  const trimmed = targetPath.trim();
+  const resolved = resolve(isAbsolute(trimmed) ? trimmed : join(base, trimmed));
+  if (!isWithin(base, resolved)) {
     throw new Error(errorMessage);
   }
   return resolved;

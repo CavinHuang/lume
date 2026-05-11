@@ -55,7 +55,7 @@ import { runStructuredMemoryFlush } from "../memory/memory-flush-runner";
 type AgentStreamEmitter = {
   onRunEvent?: (event: LumeRunEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: () => void;
+  onComplete: (payload?: { reason?: "max_turns" }) => void;
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
@@ -582,7 +582,7 @@ export async function sendAgentMessage(
   if (memoryFlushTasks.length > 0) {
     await Promise.allSettled(memoryFlushTasks);
   }
-  if (piResult.status === "completed" && activeTurnId) {
+  if ((piResult.status === "completed" || piResult.status === "turn_limited") && activeTurnId) {
     const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
       threadId,
       sdkMessages: persistedSdkMessages,
@@ -611,6 +611,14 @@ export async function sendAgentMessage(
     });
     runtimeStatusManager.markCompleted(threadId);
     emit.onComplete();
+  }
+  if (piResult.status === "turn_limited") {
+    log.info("[Agent 会话] 运行达到最大回合数，等待继续执行", {
+      threadId: threadId.slice(0, 8),
+      persistedSdkMessageCount: persistedSdkMessages.length
+    });
+    runtimeStatusManager.markCompleted(threadId);
+    emit.onComplete({ reason: "max_turns" });
   }
   if (piResult.status === "aborted") {
     log.warn("[Agent 会话] 运行中止", {

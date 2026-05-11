@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { showTemporaryCopiedFeedback, type CopyFeedbackState } from './RunEventContentBlock'
+import { normalizeThreadFilePathCandidate } from './thread-file-links'
 
 describe('showTemporaryCopiedFeedback', () => {
   test('sets copied immediately, clears the previous timer, and resets after 3 seconds', () => {
@@ -46,5 +47,17 @@ describe('showTemporaryCopiedFeedback', () => {
 
     expect(copiedStates).toEqual([true, true, false])
     expect(state.resetTimeoutId).toBeNull()
+  })
+})
+
+describe('normalizeThreadFilePathCandidate', () => {
+  test('accepts relative thread file paths and rejects external or unsafe paths', () => {
+    expect(normalizeThreadFilePathCandidate('plans/deepseek-open-source-research.md')).toBe('plans/deepseek-open-source-research.md')
+    expect(normalizeThreadFilePathCandidate('files/My Report.md')).toBe('files/My Report.md')
+    expect(normalizeThreadFilePathCandidate('files\\notes\\brief.md')).toBe('files/notes/brief.md')
+    expect(normalizeThreadFilePathCandidate('https://example.com/report.md')).toBeNull()
+    expect(normalizeThreadFilePathCandidate('/Users/me/report.md')).toBeNull()
+    expect(normalizeThreadFilePathCandidate('../report.md')).toBeNull()
+    expect(normalizeThreadFilePathCandidate('report.md')).toBeNull()
   })
 })

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import { activeTabIdAtom, agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
-import { buildFileTab, upsertTab } from '@/components/tabs/file-tabs'
+import { buildThreadPlanFileTab, upsertTab } from '@/components/tabs/file-tabs'
 
 interface AgentViewProps {
   threadId: string
@@ -29,7 +29,7 @@ export function AgentView({ threadId }: AgentViewProps) {
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
   const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
 
-  const sidePanelViews = useAtomValue(agentSidePanelViewAtom)
+  const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
   const sidePanelView = sidePanelViews[threadId] ?? null
 
   const threads = useAtomValue(agentThreadsAtom)
@@ -44,7 +44,10 @@ export function AgentView({ threadId }: AgentViewProps) {
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useState({ current: 0 })[0]
-  const openedPlanPathsRef = useRef<Set<string>>(new Set())
+  const pendingPlanFilePath = pendingTaskApprovals.find((request) => request.planFilePath)?.planFilePath
+  const [threadFilePreview, setThreadFilePreview] = useState<{ path: string; key: number } | null>(null)
+  const threadFilePathToPreview = threadFilePreview?.path ?? pendingPlanFilePath
+  const threadFilePreviewKey = threadFilePreview?.key ?? 0
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -101,21 +104,40 @@ export function AgentView({ threadId }: AgentViewProps) {
     }
   }, [threadId, workspaceSlug, dragCounter])
 
-  // 自动打开计划文件
+  const openPlanFile = useCallback((planFilePath: string) => {
+    const nextTab = buildThreadPlanFileTab({
+      threadId,
+      planFilePath,
+      ...(workspaceSlug ? { workspaceSlug } : {}),
+    })
+    setTabs((prev) => upsertTab(prev, nextTab))
+    setActiveTabId(nextTab.id)
+  }, [setActiveTabId, setTabs, threadId, workspaceSlug])
+
+  const openThreadFilePreview = useCallback((path: string) => {
+    setThreadFilePreview((prev) => ({
+      path,
+      key: (prev?.key ?? 0) + 1,
+    }))
+    setSidePanelViews((prev) => (
+      prev[threadId] === 'files'
+        ? prev
+        : { ...prev, [threadId]: 'files' }
+    ))
+  }, [setSidePanelViews, threadId])
+
   useEffect(() => {
-    for (const approval of pendingTaskApprovals) {
-      if (approval.planFilePath && !openedPlanPathsRef.current.has(approval.planFilePath)) {
-        openedPlanPathsRef.current.add(approval.planFilePath)
-        const nextTab = buildFileTab({
-          filePath: approval.planFilePath,
-          fileSource: 'workspace',
-          ...(workspaceSlug ? { workspaceSlug } : {}),
-        })
-        setTabs((prev) => upsertTab(prev, nextTab))
-        setActiveTabId(nextTab.id)
-      }
-    }
-  }, [pendingTaskApprovals, setActiveTabId, setTabs, workspaceSlug])
+    setThreadFilePreview(null)
+  }, [threadId, pendingPlanFilePath])
+
+  useEffect(() => {
+    if (!pendingPlanFilePath) return
+    setSidePanelViews((prev) => (
+      prev[threadId] === 'files'
+        ? prev
+        : { ...prev, [threadId]: 'files' }
+    ))
+  }, [pendingPlanFilePath, setSidePanelViews, threadId])
 
   return (
     <div
@@ -128,7 +150,11 @@ export function AgentView({ threadId }: AgentViewProps) {
       {/* 主列 */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <AgentHeader threadId={threadId} />
-        <AgentMessages threadId={threadId} streaming={streamingState === 'streaming'} />
+        <AgentMessages
+          threadId={threadId}
+          streaming={streamingState === 'streaming'}
+          onOpenThreadFile={openThreadFilePreview}
+        />
         {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
         {pendingToolPermissions.map((request) => (
           <PermissionBanner key={request.requestId} threadId={threadId} request={request} />
@@ -137,14 +163,25 @@ export function AgentView({ threadId }: AgentViewProps) {
           <AskUserBanner key={request.toolUseId} threadId={threadId} request={request} />
         ))}
         {pendingTaskApprovals.map((request) => (
-          <TaskApprovalBanner key={request.contractId} threadId={threadId} request={request} />
+          <TaskApprovalBanner
+            key={request.contractId}
+            threadId={threadId}
+            request={request}
+            onOpenPlan={request.planFilePath ? () => openPlanFile(request.planFilePath!) : undefined}
+          />
         ))}
         <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
       </div>
 
       {/* 右侧面板 */}
       {sidePanelView && (
-        <SidePanel threadId={threadId} view={sidePanelView} workspaceSlug={workspaceSlug} />
+        <SidePanel
+          threadId={threadId}
+          view={sidePanelView}
+          workspaceSlug={workspaceSlug}
+          threadFilePathToPreview={threadFilePathToPreview}
+          threadFilePreviewKey={threadFilePreviewKey}
+        />
       )}
 
       {/* 拖拽覆盖层 */}

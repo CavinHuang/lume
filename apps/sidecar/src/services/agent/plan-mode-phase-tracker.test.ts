@@ -28,4 +28,15 @@ describe("plan-mode-phase-tracker", () => {
     expect(first?.phase).toBe("planning");
     expect(second).toBeNull();
   });
+
+  test("awaiting_approval 即使 phase 未变化也应发事件以刷新待审批计划", () => {
+    const tracker = new PlanModePhaseTracker();
+    const first = tracker.updatePhase("s-phase", "awaiting_approval");
+    const second = tracker.updatePhase("s-phase", "awaiting_approval");
+    expect(first?.phase).toBe("awaiting_approval");
+    expect(second).toEqual({
+      threadId: "s-phase",
+      phase: "awaiting_approval"
+    });
+  });
 });

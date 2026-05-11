@@ -26,7 +26,7 @@ export class PlanModePhaseTracker {
     if (phaseChanged) {
       this.phaseBySession.set(sessionId, phase);
     }
-    if (!phaseChanged) {
+    if (!phaseChanged && phase !== "awaiting_approval") {
       return null;
     }
     return {

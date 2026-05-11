@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
@@ -48,6 +48,9 @@ describe("runtime-core run", () => {
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
     expect(result.session.getActiveToolNames()).toContain("ls");
+    expect(result.session.getActiveToolNames()).toContain("TaskContractWrite");
+    expect(result.session.getActiveToolNames()).not.toContain("Write");
+    expect(result.session.getActiveToolNames()).not.toContain("Bash");
     const init = await result.agent.getInitializationResult();
     expect(init.agents.map((agent) => agent.name)).toEqual([
       "explorer",
@@ -136,6 +139,41 @@ describe("runtime-core run", () => {
     const first = getRuntimeCoreSessionDir("agent:main:test", agentDir);
     const second = getRuntimeCoreSessionDir("agent:main:test", agentDir);
     expect(first).toBe(second);
+  });
+
+  test("plan mode TaskContractWrite writes markdown plans into the thread workspace", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-plan-md-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-plan-md-thread-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "plan-md-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug: "plan-md-workspace"
+    });
+
+    const tool = result.tools.find((item) => item.name === "TaskContractWrite");
+    expect(tool).toBeTruthy();
+    await tool!.call({
+      id: "plan-md-contract",
+      goal: "Plan with markdown",
+      summary: "Persist readable markdown",
+      status: "needs_approval",
+      planMarkdown: "# Plan with markdown",
+      steps: ["Inspect"]
+    }, {} as any);
+
+    expect(readFileSync(join(cwd, "plans", "plan-md-contract.md"), "utf-8")).toBe("# Plan with markdown");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
   });
 
   test("同一个 Lume session 应恢复既有 transcript", async () => {

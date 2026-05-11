@@ -14,7 +14,7 @@ interface PermissionPlanSyncOutput {
 }
 
 export function syncPermissionModeWithPlanModePhase(input: PermissionPlanSyncInput): PermissionPlanSyncOutput {
-  const planActive = input.planPhase === 'planning' || input.planPhase === 'review'
+  const planActive = input.planPhase === 'planning' || input.planPhase === 'awaiting_approval'
   if (planActive) {
     return {
       permissionMode: 'plan',

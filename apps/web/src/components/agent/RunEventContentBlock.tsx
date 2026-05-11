@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
 import { Check, CheckCircle, ChevronDown, ChevronRight, Circle, ClipboardList, Copy, Edit3, History, Loader2, Sparkles, Terminal, Wrench, X, XCircle } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
@@ -7,12 +7,15 @@ import { cn } from '@/lib/utils'
 import type { RunEventAssistantBlock, RunEventMessageView, RunEventToolCallView } from './run-event-message-projection'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions } from '@/lib/desktop-api'
+import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
+import { normalizeThreadFilePathCandidate } from './thread-file-links'
 import type { AgentMessage, LumeRunEvent } from '@lume/shared'
 
 interface RunEventContentBlockProps {
   message: RunEventMessageView
   animate?: boolean
   threadId: string
+  onOpenThreadFile?: (path: string) => void
 }
 
 export interface CopyFeedbackState {
@@ -40,7 +43,7 @@ export function showTemporaryCopiedFeedback(
   }, delayMs)
 }
 
-export function RunEventContentBlock({ message, animate, threadId }: RunEventContentBlockProps) {
+export function RunEventContentBlock({ message, animate, threadId, onOpenThreadFile }: RunEventContentBlockProps) {
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
   if (message.type === 'user') {
@@ -62,6 +65,7 @@ export function RunEventContentBlock({ message, animate, threadId }: RunEventCon
             key={block.id}
             block={block}
             threadId={threadId}
+            onOpenThreadFile={onOpenThreadFile}
             isStreaming={animate === true && message.status === 'streaming'}
             isActiveThinking={block.type === 'thinking'
               && animate === true
@@ -242,16 +246,18 @@ function UserMessageBlock({
 function RunEventAssistantBlockItem({
   block,
   threadId,
+  onOpenThreadFile,
   isStreaming,
   isActiveThinking,
 }: {
   block: RunEventAssistantBlock
   threadId: string
+  onOpenThreadFile?: (path: string) => void
   isStreaming: boolean
   isActiveThinking: boolean
 }) {
   if (block.type === 'text') {
-    return <SmoothText text={block.text} isStreaming={isStreaming} />
+    return <SmoothText text={block.text} isStreaming={isStreaming} onOpenThreadFile={onOpenThreadFile} />
   }
 
   if (block.type === 'thinking') {
@@ -380,7 +386,15 @@ function useIsDark(): boolean {
   )
 }
 
-function SmoothText({ text, isStreaming }: { text: string; isStreaming: boolean }) {
+function SmoothText({
+  text,
+  isStreaming,
+  onOpenThreadFile,
+}: {
+  text: string
+  isStreaming: boolean
+  onOpenThreadFile?: (path: string) => void
+}) {
   const { displayedContent } = useSmoothStream({
     content: text,
     isStreaming,
@@ -403,6 +417,12 @@ function SmoothText({ text, isStreaming }: { text: string; isStreaming: boolean 
           },
         }}
         components={{
+          code: (props) => (
+            <MarkdownCode
+              {...(props as MarkdownCodeProps)}
+              onOpenThreadFile={onOpenThreadFile}
+            />
+          ),
           'incomplete-link': IncompleteLink,
           'incomplete-image': IncompleteImage,
           'incomplete-table': IncompleteTable,
@@ -412,6 +432,62 @@ function SmoothText({ text, isStreaming }: { text: string; isStreaming: boolean 
       </XMarkdown>
     </div>
   )
+}
+
+type MarkdownCodeProps = HTMLAttributes<HTMLElement> & {
+  children?: ReactNode
+  block?: boolean
+  lang?: string
+  domNode?: unknown
+  streamStatus?: unknown
+}
+
+export function MarkdownCode({
+  children,
+  block,
+  lang: _lang,
+  domNode: _domNode,
+  streamStatus: _streamStatus,
+  onOpenThreadFile,
+  ...rest
+}: MarkdownCodeProps & { onOpenThreadFile?: (path: string) => void }) {
+  const text = flattenText(children)
+  const filePath = !block ? normalizeThreadFilePathCandidate(text) : null
+
+  if (filePath && onOpenThreadFile) {
+    return (
+      <button
+        type="button"
+        data-thread-file-link="true"
+        data-file-link-highlight="true"
+        aria-label={`在右侧预览文件 ${filePath}`}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onOpenThreadFile(filePath)
+        }}
+        className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-[#d9d2ff] bg-[#f4f1ff] px-1.5 py-0.5 align-baseline font-mono text-[0.92em] font-medium text-[#4f46e5] shadow-[0_1px_0_rgba(103,92,255,0.12)] transition-colors hover:border-[#b9afff] hover:bg-[#edeaff] hover:text-[#4338ca] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/35"
+        title="在右侧预览文件"
+      >
+        <span
+          aria-hidden="true"
+          data-file-link-icon="true"
+          className="inline-flex shrink-0 items-center"
+        >
+          <FileTypeIcon filename={filePath} size={13} />
+        </span>
+        <span className="truncate">{children}</span>
+      </button>
+    )
+  }
+
+  return <code {...rest}>{children}</code>
+}
+
+function flattenText(value: ReactNode): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (Array.isArray(value)) return value.map(flattenText).join('')
+  return ''
 }
 
 function IncompleteLink() {
@@ -590,7 +666,15 @@ function CopyMessageButton({
 
 function summarizeInput(input: unknown): string {
   const record = asRecord(input)
-  const value = record.command ?? record.file_path ?? record.path ?? record.query ?? record.description ?? record.prompt
+  const value = record.command
+    ?? record.file_path
+    ?? record.path
+    ?? record.query
+    ?? record.planFilePath
+    ?? record.summary
+    ?? record.goal
+    ?? record.description
+    ?? record.prompt
   if (typeof value === 'string') return value.length > 48 ? `${value.slice(0, 45)}...` : value
   if (value === undefined) return '正在执行工具调用'
   return JSON.stringify(value)

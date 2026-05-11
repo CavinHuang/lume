@@ -24,6 +24,8 @@ interface SidePanelProps {
   threadId: string
   view: SidePanelView
   workspaceSlug?: string
+  threadFilePathToPreview?: string
+  threadFilePreviewKey?: number
 }
 
 interface PreviewPayload {
@@ -31,7 +33,7 @@ interface PreviewPayload {
   truncated: boolean
 }
 
-export function SidePanel({ threadId, view, workspaceSlug }: SidePanelProps) {
+export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPreview, threadFilePreviewKey }: SidePanelProps) {
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const refreshToken = 0
   const [fileTab, setFileTab] = useState<FileTab>('thread')
@@ -92,18 +94,28 @@ export function SidePanel({ threadId, view, workspaceSlug }: SidePanelProps) {
   }, [])
 
   useEffect(() => {
+    if (threadFilePathToPreview && fileTab === 'thread') return
     setSelectedPath(null)
     setPreviewContent('')
     setPreviewError(null)
     setPreviewTruncated(false)
     setSearchQuery('')
-  }, [fileTab, threadId, workspaceSlug])
+  }, [fileTab, threadId, workspaceSlug, threadFilePathToPreview])
 
   useEffect(() => {
     if (!view) return
     setPanelTabs((prev) => (prev.includes(view) ? prev : [...prev, view]))
     setActivePanelView(view)
   }, [view])
+
+  useEffect(() => {
+    if (!threadFilePathToPreview) return
+    setFileTab('thread')
+    setSelectedPath(threadFilePathToPreview)
+    setPreviewError(null)
+    setPreviewTruncated(false)
+    setSearchQuery('')
+  }, [threadFilePathToPreview, threadFilePreviewKey, threadId])
 
   useEffect(() => {
     writeStoredPanelWidth(SIDE_PANEL_WIDTH_STORAGE_KEY, sidePanelWidth)

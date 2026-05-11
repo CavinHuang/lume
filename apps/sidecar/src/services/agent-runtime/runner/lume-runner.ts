@@ -50,6 +50,23 @@ interface PreparedRuntimeCoreRunInput {
   createRuntimeSession?: (input: CreateRuntimeCoreSessionInput) => Promise<CreateRuntimeCoreSessionResult>;
 }
 
+export function resolveRuntimeCoreMaxTurns(input: PiAgentRunParams["input"]): number | undefined {
+  const metadata = input.messageMetadata ?? {};
+  const taskControlEvent = metadata.taskControlEvent;
+  if (
+    typeof metadata.taskRunId === "string"
+    || taskControlEvent === "execute_task"
+    || taskControlEvent === "continue_task"
+    || taskControlEvent === "retry_task"
+  ) {
+    return 20;
+  }
+  if (input.permissionMode === "plan") {
+    return 12;
+  }
+  return undefined;
+}
+
 export class LumeRunner {
   readonly emit: PiAgentRuntimeEmitter;
 
@@ -105,6 +122,14 @@ export class LumeRunner {
       query,
       emit: this.emit
     });
+    if (result.status === "turn_limited") {
+      await this.observer.flush();
+      this.emit.onRunEvent?.({
+        type: "run_completed",
+        result: { status: "completed" }
+      });
+      return this.finalizeResult(result);
+    }
     if (result.status !== "completed") {
       await this.observer.flush();
       this.emit.onRunEvent?.({
@@ -155,11 +180,13 @@ export class LumeRunner {
         input.thinkingLevel
       );
       await applyResolvedThinkingLevel(agent, thinkingLevel);
+      const maxTurns = resolveRuntimeCoreMaxTurns(input);
 
       const query = agent.query(input.userMessage, {
         canUseTool: createCanUseTool(askUserAbortController.signal),
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
-        includePartialMessages: true
+        includePartialMessages: true,
+        ...(maxTurns === undefined ? {} : { maxTurns })
       });
 
       const streamResult = await this.runQueryStream(query);

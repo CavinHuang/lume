@@ -515,6 +515,7 @@ function buildRuntimeCoreTools(input: {
     sessionDir: getRuntimeCoreSessionDir(input.sessionId),
     threadId: input.sessionId,
     runId: input.runId ?? input.sessionId,
+    ...(input.workspaceSlug ? { threadWorkspaceDir: input.cwd } : {}),
     onTaskContractUpdated: input.emitTaskContractUpdated
   });
   const taskReportTool = createTaskReportTool({

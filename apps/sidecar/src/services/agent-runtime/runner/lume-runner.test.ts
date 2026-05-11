@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { SDKMessage } from "@lume/shared";
 import type { PiAgentRunParams, PiAgentRuntimeEmitter } from "../../pi-agent/runner/types";
 import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
-import { LumeRunner } from "./lume-runner";
+import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
 
 function createTestParams(threadId: string): PiAgentRunParams {
@@ -116,6 +116,28 @@ describe("LumeRunner", () => {
     }
   });
 
+  test("uses larger turn budgets for planning and task execution", () => {
+    expect(resolveRuntimeCoreMaxTurns({
+      threadId: "thread-1",
+      userMessage: "plan",
+      permissionMode: "plan"
+    })).toBe(12);
+    expect(resolveRuntimeCoreMaxTurns({
+      threadId: "thread-1",
+      userMessage: "task",
+      permissionMode: "acceptEdits",
+      messageMetadata: {
+        taskRunId: "taskrun-1",
+        taskControlEvent: "execute_task"
+      }
+    })).toBe(20);
+    expect(resolveRuntimeCoreMaxTurns({
+      threadId: "thread-1",
+      userMessage: "hello",
+      permissionMode: "default"
+    })).toBeUndefined();
+  });
+
   test("complete emits completion and finalizes run state", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-complete-"));
     dirs.push(agentDir);
@@ -187,6 +209,31 @@ describe("LumeRunner", () => {
     expect(result).toEqual({ status: "errored", errorMessage: "stream failed" });
     expect(events).toEqual(["sdk:result"]);
     expect(readOnlyRunState(agentDir).status).toBe("failed");
+  });
+
+  test("runQueryStream treats max-turn results as continuable completion", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-max-turns-"));
+    dirs.push(agentDir);
+    const events: string[] = [];
+    const runner = await LumeRunner.create({
+      params: createTestParams("thread-1"),
+      prepared: createPrepared(agentDir),
+      emit: createRunEventEmitter(events)
+    });
+
+    const result = await runner.runQueryStream(stream([{
+      type: "result",
+      subtype: "error_max_turns",
+      is_error: true,
+      num_turns: 20
+    } as SDKMessage]));
+
+    expect(result).toEqual({
+      status: "turn_limited",
+      errorMessage: "Agent SDK 达到最大回合数（20），本轮需要继续执行。"
+    });
+    expect(events).toEqual(["sdk:result", "run:run_completed"]);
+    expect(readOnlyRunState(agentDir).status).toBe("completed");
   });
 
   test("records tool call spans from SDK stream messages", async () => {

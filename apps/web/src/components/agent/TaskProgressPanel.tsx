@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { agentRunEventsAtom } from '@/atoms'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { executeTaskContract, listTaskContracts } from '@/lib/desktop-api'
 import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, SkipForward, XCircle } from 'lucide-react'
@@ -50,6 +49,15 @@ export function shouldShowTaskEmptyState(
   return !contract
 }
 
+export function getTaskProgressItems(
+  contract: AgentTaskContract | undefined,
+  progress: Extract<LumeRunEvent, { type: 'task_progress' }> | undefined,
+): Array<AgentTaskContractItem | AgentTaskRunTask> {
+  if (progress) return progress.tasks
+  if (contract?.status === 'needs_approval') return []
+  return contract?.steps ?? []
+}
+
 export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
   const runEventState = useAtomValue(agentRunEventsAtom)[threadId]
   const activeItemRef = useRef<HTMLDivElement>(null)
@@ -76,7 +84,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
         }
       })
       .catch((error) => {
-        console.error('[TaskProgressPanel] 加载任务清单失败:', error)
+        console.error('[TaskProgressPanel] 加载任务进度失败:', error)
         if (!cancelled) setTaskContracts([])
       })
     return () => {
@@ -90,7 +98,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
   const latestTaskProgress = [...(runEventState?.events ?? [])]
     .reverse()
     .find((event): event is Extract<LumeRunEvent, { type: 'task_progress' }> => event.type === 'task_progress')
-  const progressItems = latestTaskProgress?.tasks ?? latestTaskContract?.steps ?? []
+  const progressItems = getTaskProgressItems(latestTaskContract, latestTaskProgress)
   const completedCount = progressItems.filter((item) => item.status === 'completed' || item.status === 'skipped').length
   const failedCount = progressItems.filter((item) => item.status === 'failed').length
   const progressValue = progressItems.length > 0 ? Math.round((completedCount / progressItems.length) * 100) : 0
@@ -137,6 +145,25 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
               <ClipboardList size={17} />
             </div>
             <p className="text-[13px] font-medium text-[var(--text-2)]">暂无任务</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (latestTaskContract?.status === 'needs_approval' && !latestTaskProgress) {
+    return (
+      <div className="flex h-full flex-col bg-[var(--surface-2)]">
+        <TaskProgressPanelHeader />
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <div className="space-y-2">
+            <div className="mx-auto flex size-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-3)]">
+              <ClipboardList size={17} />
+            </div>
+            <p className="text-[13px] font-medium text-[var(--text-2)]">等待审阅计划</p>
+            <p className="max-w-[220px] text-[11px] leading-relaxed text-[var(--text-3)]">
+              计划文档已生成。请在主区域审阅后继续执行，任务进度会在批准后显示。
+            </p>
           </div>
         </div>
       </div>
@@ -211,11 +238,11 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
           )}
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-2 px-3 py-3">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+        <div className="space-y-2">
           {progressItems.length === 0 && (
             <div className="rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[var(--surface-1)] px-3 py-3 text-[12px] leading-relaxed text-[var(--text-3)]">
-              任务清单已生成，正在等待批准。当前清单未包含可展示任务。
+              任务进度尚未生成。批准计划后会在这里显示执行任务。
             </div>
           )}
           {progressItems.map((step, index) => (
@@ -223,7 +250,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
               key={step.id}
               ref={step.status === 'running' ? activeItemRef : undefined}
               className={cn(
-                'flex items-start gap-2.5 rounded-xl border bg-[var(--surface-1)] px-3 py-3 text-[12px] transition-colors',
+                'flex items-center gap-2.5 rounded-xl border bg-[var(--surface-1)] px-3 py-2.5 text-[12px] transition-colors',
                 step.status === 'running'
                   ? 'border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] shadow-[0_18px_40px_-36px_color-mix(in_oklab,var(--brand)_60%,transparent)]'
                   : 'border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)]',
@@ -231,7 +258,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
               )}
             >
               <span className={cn(
-                'mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-[10.5px] font-semibold',
+                'flex size-6 shrink-0 items-center justify-center rounded-full border text-[10.5px] font-semibold',
                 step.status === 'completed' && 'border-emerald-500/18 bg-emerald-500/8',
                 step.status === 'running' && 'border-[color:color-mix(in_oklab,var(--brand)_24%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]',
                 step.status === 'pending' && 'border-[var(--border)] bg-[var(--surface-2)]',
@@ -239,13 +266,13 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
               )}>
                 {step.status === 'pending' ? index + 1 : statusIcon[step.status]}
               </span>
-              <div className="flex-1 min-w-0 space-y-1">
-                <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
                   <span className={cn(
-                    'block min-w-0 flex-1 leading-relaxed',
-                    (step.status === 'completed' || step.status === 'skipped') ? 'text-[var(--text-3)] line-through' : 'text-[var(--text-1)]'
+                    'block min-w-0 flex-1 truncate text-[12.5px] font-medium leading-5',
+                    (step.status === 'completed' || step.status === 'skipped') ? 'text-[var(--text-3)]' : 'text-[var(--text-1)]'
                   )}>
-                    {formatProgressItemText(step)}
+                    {formatProgressItemTitle(step)}
                   </span>
                   <span className={cn(
                     'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
@@ -258,21 +285,11 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
                     {statusLabel[step.status]}
                   </span>
                 </div>
-                {step.status === 'failed' && step.error && (
-                  <p className="break-words text-[11px] leading-relaxed text-destructive/80">
-                    {step.error}
-                  </p>
-                )}
-                {(step.attemptCount ?? 0) > 0 && step.status !== 'completed' && (
-                  <p className="text-[10px] text-amber-600/70 dark:text-amber-400/70">
-                    已尝试 {step.attemptCount} 次
-                  </p>
-                )}
               </div>
             </div>
           ))}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
@@ -288,9 +305,6 @@ function TaskProgressPanelHeader() {
   )
 }
 
-function formatProgressItemText(step: AgentTaskContractItem | AgentTaskRunTask): string {
-  if (step.status === 'completed' && step.result?.trim()) {
-    return `${step.title || step.description || step.id}\n${step.result}`
-  }
+export function formatProgressItemTitle(step: AgentTaskContractItem | AgentTaskRunTask): string {
   return step.title || step.description || step.id
 }

@@ -8,14 +8,14 @@ import type { TaskContractRecord } from "../../agent-runtime/plan/task-contract-
 export interface PiAgentRuntimeEmitter {
   onSdkMessage: (message: SDKMessage) => void;
   onRunEvent?: (event: LumeRunEvent) => void;
-  onComplete: () => void;
+  onComplete: (payload?: { reason?: "max_turns" }) => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
   onTaskContractUpdated?: (contract: TaskContractRecord) => void;
 }
 
-export type PiAgentRunStatus = "completed" | "aborted" | "errored";
+export type PiAgentRunStatus = "completed" | "aborted" | "errored" | "turn_limited";
 
 export interface PiAgentRunResult {
   status: PiAgentRunStatus;

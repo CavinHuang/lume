@@ -38,6 +38,12 @@ export async function consumeRuntimeCoreQueryStream({
 
     const errorMessage = getRuntimeCoreStreamError(message);
     if (message.type === "result" && message.is_error) {
+      if (message.subtype === "error_max_turns") {
+        return {
+          status: "turn_limited" as const,
+          errorMessage: errorMessage || "Agent SDK 达到最大回合数，本轮需要继续执行。"
+        };
+      }
       return {
         status: "errored" as const,
         errorMessage: errorMessage || "Agent SDK 执行失败"
@@ -59,6 +65,10 @@ export function getRuntimeCoreStreamError(message: SDKMessage): string | null {
   if (message.type === "result" && message.is_error) {
     const firstError = Array.isArray(message.errors) ? message.errors[0] : undefined;
     const detailedResult = typeof message.result === "string" ? message.result.trim() : "";
+    if (message.subtype === "error_max_turns") {
+      const turns = typeof message.num_turns === "number" ? `（${message.num_turns}）` : "";
+      return `Agent SDK 达到最大回合数${turns}，本轮需要继续执行。`;
+    }
     return typeof firstError === "string" && firstError.trim()
       ? firstError
       : detailedResult || "Agent SDK 执行失败";

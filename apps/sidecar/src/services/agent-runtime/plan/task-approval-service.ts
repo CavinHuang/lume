@@ -5,6 +5,16 @@ import { listPendingRuntimeCoreInterruptionRecords } from "../interruption/inter
 import type { TaskContractRecord } from "./task-contract-record-types";
 import { createFileBackedTaskContractStore } from "./task-contract-store";
 
+interface TaskApprovalPayload {
+  contractId?: string;
+  stepCount?: number;
+  expectedChanges?: TaskContractRecord["expectedChanges"];
+  summary?: string;
+  planFilePath?: string;
+  planVerified?: boolean;
+  contract?: TaskContractRecord;
+}
+
 export function taskApprovalInterruptionId(contractId: string): string {
   return `task_approval:${contractId}`;
 }
@@ -21,12 +31,16 @@ export async function persistTaskApprovalInterruption(input: {
     threadId: input.contract.threadId,
     type: "task_approval",
     status: "pending",
-    title: "确认任务清单",
+    title: "审阅计划",
     message: input.message ?? input.contract.summary,
     payload: {
       contractId: input.contract.id,
       stepCount: input.contract.steps.length,
-      expectedChanges: input.contract.expectedChanges
+      expectedChanges: input.contract.expectedChanges,
+      summary: input.contract.summary,
+      ...(input.contract.planFilePath ? { planFilePath: input.contract.planFilePath } : {}),
+      ...(input.contract.planVerification ? { planVerified: input.contract.planVerification.verified } : {}),
+      contract: input.contract
     },
     source: {},
     createdAt: now,
@@ -47,10 +61,11 @@ export async function listPendingTaskApprovalRequests(sessionDir?: string): Prom
 
   for (const record of records) {
     if (record.interruption.type !== "task_approval") continue;
-    const payload = record.interruption.payload as { contractId?: string; stepCount?: number; expectedChanges?: TaskContractRecord["expectedChanges"] };
+    const payload = record.interruption.payload as TaskApprovalPayload;
     const contractId = payload?.contractId;
     if (!contractId) continue;
-    const contract = await createFileBackedTaskContractStore(record.sessionDir).get(contractId);
+    const storedContract = await createFileBackedTaskContractStore(record.sessionDir).get(contractId);
+    const contract = storedContract ?? payload.contract;
     requests.push({
       threadId: record.interruption.threadId,
       runId: record.interruption.runId,
@@ -58,10 +73,15 @@ export async function listPendingTaskApprovalRequests(sessionDir?: string): Prom
       contractId,
       title: record.interruption.title,
       message: record.interruption.message,
-      summary: contract?.summary,
+      summary: contract?.summary ?? payload.summary,
       stepCount: contract?.steps.length ?? payload.stepCount ?? 0,
       expectedChanges: contract?.expectedChanges ?? payload.expectedChanges,
-      planFilePath: contract?.planFilePath
+      ...(contract?.planFilePath ?? payload.planFilePath
+        ? {
+            planFilePath: contract?.planFilePath ?? payload.planFilePath,
+            planVerified: contract?.planVerification?.verified === true || payload.planVerified === true
+          }
+        : {})
     });
   }
 
@@ -81,21 +101,35 @@ export async function resolveTaskApproval(input: {
   }
 
   const approved = input.decision === "approve";
+  const contractStore = createFileBackedTaskContractStore(input.sessionDir);
+  const storedContract = await contractStore.get(input.contractId);
+  const payload = interruption.payload as TaskApprovalPayload;
+  const contract = storedContract ?? payload.contract;
+  const timestamp = new Date().toISOString();
+
+  if (approved && !contract) {
+    return false;
+  }
+
+  if (approved && contract) {
+    await contractStore.upsert({
+      ...contract,
+      status: "approved",
+      approvedAt: timestamp,
+      updatedAt: timestamp
+    });
+  } else if (!approved && storedContract) {
+    await contractStore.upsert({
+      ...storedContract,
+      status: "cancelled",
+      updatedAt: timestamp
+    });
+  }
+
   await store.resolve(interruption.id, {
     status: approved ? "approved" : "rejected",
     resolution: { decision: approved ? "approve" : "reject" }
   });
-
-  const contractStore = createFileBackedTaskContractStore(input.sessionDir);
-  const contract = await contractStore.get(input.contractId);
-  if (contract) {
-    await contractStore.upsert({
-      ...contract,
-      status: approved ? "approved" : "cancelled",
-      approvedAt: approved ? new Date().toISOString() : contract.approvedAt,
-      updatedAt: new Date().toISOString()
-    });
-  }
 
   return true;
 }

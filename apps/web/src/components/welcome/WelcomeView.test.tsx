@@ -603,7 +603,7 @@ describe('WelcomeView', () => {
         threadId: 'created-thread',
         phase: 'planning',
       })
-      expect(store.get(agentSidePanelViewAtom)['created-thread']).toBe('task-progress')
+      expect(store.get(agentSidePanelViewAtom)['created-thread']).toBeUndefined()
     } finally {
       if (root) {
         await act(async () => {

@@ -220,22 +220,38 @@ interface AgentHandlersContext {
   planModePhaseTracker: PlanModePhaseTracker;
   notifyPlanModePhaseChange: (
     threadId: string,
-    phase: "idle" | "planning" | "review" | "executing" | "executed"
+    phase: "idle" | "planning" | "awaiting_approval" | "executing" | "completed"
   ) => void;
 }
 
-function isPlanContinuationUserMessage(userMessage: string): boolean {
+function isPlanExecutionApprovalUserMessage(userMessage: string): boolean {
   const text = userMessage.trim();
   if (!text) return false;
-  return text === "继续"
-    || text === "继续执行"
-    || text === "继续计划"
-    || text === "继续执行计划"
-    || text === "继续任务"
-    || text === "继续执行任务"
-    || text === "请继续"
-    || text === "继续吧"
-    || /^继续(执行)?(当前|这个|该)?(计划|任务)$/.test(text);
+  return [
+    "继续",
+    "继续实现",
+    "继续执行",
+    "继续执行计划",
+    "继续执行任务",
+    "批准执行",
+    "批准并执行",
+    "按计划执行",
+    "按计划实现",
+    "开始执行",
+    "开始实现"
+  ].includes(text);
+}
+
+function buildTaskApprovalReplanningMessage(input: {
+  contractId: string;
+  feedback: string;
+}): string {
+  return [
+    "用户对当前计划提出了反馈，请根据反馈重新规划。",
+    `Contract ID: ${input.contractId}`,
+    `反馈：${input.feedback}`,
+    "请沿用这个 contractId 更新线程工作区内的 plan.md，并重新调用 TaskContractWrite 提交待审批任务契约。"
+  ].join("\n\n");
 }
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
@@ -245,6 +261,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       throw new Error("未找到线程对应的 workspace");
     }
     return resolvedWorkspaceSlug;
+  };
+
+  const resolveOptionalThreadWorkspaceDir = (threadId: string): string | undefined => {
+    const workspaceSlug = resolveWorkspaceSlugByThreadId(threadId);
+    return workspaceSlug ? getAgentThreadPath(workspaceSlug, threadId) : undefined;
   };
 
   const resolveRuntimeSessionDir = (threadId: string) => getRuntimeCoreSessionDir(threadId);
@@ -269,9 +290,40 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   };
 
   const resolvePlanContinuationInput = async (input: AgentSendInput): Promise<AgentSendInput> => {
-    return input;
+    const feedback = input.userMessage.trim();
+    if (input.permissionMode !== "plan" || !feedback) {
+      return input;
+    }
+    const sessionDir = resolveRuntimeSessionDir(input.threadId);
+    const [pendingApproval] = await listPendingTaskApprovalRequests(sessionDir);
+    if (!pendingApproval || pendingApproval.threadId !== input.threadId) {
+      return input;
+    }
+    const ok = await resolveTaskApproval({
+      sessionDir,
+      threadId: input.threadId,
+      contractId: pendingApproval.contractId,
+      decision: "reject"
+    });
+    if (!ok) {
+      return input;
+    }
+    context.notifyPlanModePhaseChange(input.threadId, "planning");
+    return {
+      ...input,
+      userMessage: buildTaskApprovalReplanningMessage({
+        contractId: pendingApproval.contractId,
+        feedback
+      }),
+      permissionMode: "plan",
+      messageMetadata: {
+        ...input.messageMetadata,
+        taskApprovalRejected: {
+          contractId: pendingApproval.contractId
+        }
+      }
+    };
   };
-
   const dispatchTaskExecution = (input: {
     threadId: string;
     contractId?: string;
@@ -304,7 +356,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       });
       if (skipped) {
         emitLatestTaskProgress(input.threadId, skipped);
-        context.notifyPlanModePhaseChange(input.threadId, skipped.status === "completed" ? "executed" : "executing");
+        context.notifyPlanModePhaseChange(input.threadId, skipped.status === "completed" ? "completed" : "executing");
       }
       return {
         ok: Boolean(skipped),
@@ -409,8 +461,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           });
         }
       },
-      onComplete: () => {
+      onComplete: (payload?: { reason?: "max_turns" }) => {
         const sessionDir = resolveRuntimeSessionDir(threadId);
+        const turnLimited = payload?.reason === "max_turns";
         if (
           !taskContractWritten
           && context.planModePhaseTracker.getPhase(threadId) === "planning"
@@ -421,8 +474,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             threadId,
             runId: threadId,
             text: finalOutput,
+            threadWorkspaceDir: resolveOptionalThreadWorkspaceDir(threadId),
             onTaskContractUpdated: () => {
-              context.notifyPlanModePhaseChange(threadId, "review");
+              context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
             }
           });
         }
@@ -430,7 +484,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           void (async () => {
             const store = createFileBackedTaskRunStore(sessionDir);
             let taskRun = await store.get(options.taskRunId!);
-            if (taskRun?.status === "running" && taskRun.currentTaskId) {
+            if (!turnLimited && taskRun?.status === "running" && taskRun.currentTaskId) {
               const current = taskRun.tasks.find((task) => task.id === taskRun?.currentTaskId);
               if (current?.status === "running") {
                 taskRun = await markCurrentTaskUnreported({
@@ -450,13 +504,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
               return;
             }
             if (taskRun?.status === "completed") {
-              context.notifyPlanModePhaseChange(threadId, "executed");
+              context.notifyPlanModePhaseChange(threadId, "completed");
             }
           })();
           return;
         }
         if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanModePhaseChange(threadId, "executed");
+          context.notifyPlanModePhaseChange(threadId, "completed");
         }
       },
       onError: (error: string) => {
@@ -476,7 +530,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           }
         });
         if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanModePhaseChange(threadId, "review");
+          context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
         }
       },
       onTitleUpdated: (title: string) =>
@@ -529,9 +583,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           }
           context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
         },
-      onTaskContractUpdated: () => {
+      onTaskContractUpdated: (contract?: { status?: string }) => {
         taskContractWritten = true;
-        context.notifyPlanModePhaseChange(threadId, "review");
+        if (contract?.status === "needs_approval") {
+          context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
+        }
       }
     };
   };
@@ -1195,7 +1251,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         error: "用户已停止当前执行"
       });
       if (context.planModePhaseTracker.getPhase(input.threadId) === "executing") {
-        context.notifyPlanModePhaseChange(input.threadId, "review");
+        context.notifyPlanModePhaseChange(input.threadId, "awaiting_approval");
       }
       return { ok: true };
     },
@@ -1246,8 +1302,36 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         contractId: input.contractId,
         decision: input.decision
       });
-      if (!ok || input.decision !== "approve" || input.execute !== true) {
-        return { ok, ...(input.feedback ? { feedback: input.feedback } : {}) };
+      const feedback = input.feedback?.trim();
+      if (!ok) {
+        return { ok, ...(feedback ? { feedback } : {}) };
+      }
+      if (input.decision === "reject") {
+        if (!feedback) return { ok };
+        context.notifyPlanModePhaseChange(input.threadId, "planning");
+        const dispatch = appendAgentMessage({
+          threadId: input.threadId,
+          userMessage: buildTaskApprovalReplanningMessage({
+            contractId: input.contractId,
+            feedback
+          }),
+          permissionMode: "plan",
+          messageMetadata: {
+            taskApprovalRejected: {
+              contractId: input.contractId
+            }
+          }
+        }, createAgentStreamEmitter(input.threadId));
+        return {
+          ok,
+          feedback,
+          replanning: {
+            status: dispatch.mode
+          }
+        };
+      }
+      if (input.execute !== true) {
+        return { ok };
       }
       const execution = await dispatchTaskExecution({
         threadId: input.threadId,
@@ -1277,7 +1361,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
-      if (isPlanContinuationUserMessage(input.userMessage) && typeof input.messageMetadata?.planExecutionKey !== "string") {
+      if (isPlanExecutionApprovalUserMessage(input.userMessage) && typeof input.messageMetadata?.planExecutionKey !== "string") {
         const latestContinuableTaskContract = await resolveExecutableTaskContract({ threadId: input.threadId });
         if (latestContinuableTaskContract) {
           return dispatchTaskExecution({

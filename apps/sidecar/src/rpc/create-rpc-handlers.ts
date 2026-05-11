@@ -18,7 +18,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
   const runtimeStatusManager = getAgentRuntimeStatusManager();
   const notifyPlanModePhaseChange = (
     sessionId: string,
-    phase: "idle" | "planning" | "review" | "executing" | "executed"
+    phase: "idle" | "planning" | "awaiting_approval" | "executing" | "completed"
   ): void => {
     const event = planModePhaseTracker.updatePhase(sessionId, phase);
     if (!event) {

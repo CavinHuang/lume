@@ -8,7 +8,7 @@ export interface LumeRunResult {
 }
 
 export function fromPiAgentRunResult(result: PiAgentRunResult): LumeRunResult {
-  if (result.status === "completed") {
+  if (result.status === "completed" || result.status === "turn_limited") {
     return { status: "completed" };
   }
   if (result.status === "aborted") {

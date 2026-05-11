@@ -55,6 +55,25 @@ describe("runtime-core run loop", () => {
     });
   });
 
+  test("returns max-turn SDK results as continuable instead of errored", async () => {
+    const result = await consumeRuntimeCoreQueryStream({
+      query: stream([{
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        num_turns: 10
+      } as SDKMessage]),
+      emit: {
+        onSdkMessage: () => {}
+      }
+    });
+
+    expect(result).toEqual({
+      status: "turn_limited",
+      errorMessage: "Agent SDK 达到最大回合数（10），本轮需要继续执行。"
+    });
+  });
+
   test("rejects usage-only streams without renderable output", async () => {
     const result = await consumeRuntimeCoreQueryStream({
       query: stream([{

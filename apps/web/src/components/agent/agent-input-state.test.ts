@@ -14,7 +14,19 @@ describe('syncPermissionModeWithPlanModePhase', () => {
     })
   })
 
-  test('restores the default mode after an automatic plan selection leaves review', () => {
+  test('auto-selects plan while the thread is awaiting approval', () => {
+    expect(syncPermissionModeWithPlanModePhase({
+      permissionMode: 'default',
+      defaultPermissionMode: 'default',
+      planPhase: 'awaiting_approval',
+      autoSelectedPlan: false,
+    })).toEqual({
+      permissionMode: 'plan',
+      autoSelectedPlan: true,
+    })
+  })
+
+  test('restores the default mode after an automatic plan selection starts executing', () => {
     expect(syncPermissionModeWithPlanModePhase({
       permissionMode: 'plan',
       defaultPermissionMode: 'acceptEdits',
@@ -30,7 +42,7 @@ describe('syncPermissionModeWithPlanModePhase', () => {
     expect(syncPermissionModeWithPlanModePhase({
       permissionMode: 'plan',
       defaultPermissionMode: 'default',
-      planPhase: 'executed',
+      planPhase: 'completed',
       autoSelectedPlan: false,
     })).toEqual({
       permissionMode: 'plan',

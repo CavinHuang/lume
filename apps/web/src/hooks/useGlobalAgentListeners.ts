@@ -69,6 +69,9 @@ export function useGlobalAgentListeners() {
           const notification = params as AgentRunEventNotification
           const { threadId, event } = notification
           setRunEvents((prev) => appendRunEvent(prev, notification))
+          if (event.type === 'task_progress') {
+            setSidePanelViews((prev) => ({ ...prev, [threadId]: 'task-progress' }))
+          }
           if (
             event.type === 'assistant_delta' ||
             event.type === 'assistant_thinking_delta' ||
@@ -152,8 +155,10 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.PLAN_MODE_PHASE_CHANGED: {
           const e = params as PlanModePhaseChangedEvent
           setPlanModePhase((prev) => ({ ...prev, [e.threadId]: e }))
-          if (e.phase === 'planning' || e.phase === 'review') {
-            setSidePanelViews((prev) => ({ ...prev, [e.threadId]: 'task-progress' }))
+          if (e.phase === 'awaiting_approval') {
+            setSidePanelViews((prev) => prev[e.threadId] === 'task-progress' ? { ...prev, [e.threadId]: null } : prev)
+          }
+          if (e.phase === 'planning' || e.phase === 'awaiting_approval') {
             void sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE, { threadId: e.threadId })
               .then((states) => {
                 setPendingInteractive((prev) => {
