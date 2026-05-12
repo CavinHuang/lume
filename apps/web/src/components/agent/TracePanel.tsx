@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { Activity, CircleAlert, Clock3, ShieldCheck } from 'lucide-react'
-import { agentRunEventsAtom } from '@/atoms'
+import { agentRuntimeEventsAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { getAgentRunTrace, listAgentRunStates } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import {
-  buildLiveRunEventRows,
+  buildLiveRuntimeEventRows,
   buildRunRows,
   buildTraceRows,
   getDefaultRunId,
-  type LiveRunEventRow,
+  type LiveRuntimeEventRow,
   type RunRow,
   type TraceRow,
 } from './runtime-state-projections'
@@ -28,7 +28,7 @@ const statusStyle: Record<string, string> = {
 }
 
 export function TracePanel({ threadId }: TracePanelProps) {
-  const liveRunEvents = useAtomValue(agentRunEventsAtom)[threadId]?.events ?? []
+  const liveRuntimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const [runRows, setRunRows] = useState<RunRow[]>([])
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [rows, setRows] = useState<TraceRow[]>([])
@@ -104,13 +104,13 @@ export function TracePanel({ threadId }: TracePanelProps) {
           </div>
         </div>
       )}
-      <LiveRunEvents rows={buildLiveRunEventRows(liveRunEvents)} />
+      <LiveRuntimeEvents rows={buildLiveRuntimeEventRows(liveRuntimeEvents)} />
       <TraceContent state={state} rows={rows} />
     </div>
   )
 }
 
-function LiveRunEvents({ rows }: { rows: LiveRunEventRow[] }) {
+function LiveRuntimeEvents({ rows }: { rows: LiveRuntimeEventRow[] }) {
   if (rows.length === 0) return null
 
   return (
@@ -211,7 +211,7 @@ function runStatusDotClass(status: string): string {
   return 'bg-foreground/25'
 }
 
-function eventToneClass(tone: LiveRunEventRow['tone']): string {
+function eventToneClass(tone: LiveRuntimeEventRow['tone']): string {
   if (tone === 'active') return 'bg-blue-500'
   if (tone === 'success') return 'bg-green-500'
   if (tone === 'danger') return 'bg-destructive'

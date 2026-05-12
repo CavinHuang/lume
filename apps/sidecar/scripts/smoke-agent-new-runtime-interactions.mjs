@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { assertBridgeSmokeOutcome } from "./lib/agent-runtime-bridges-smoke";
+import { assertInteractionSmokeOutcome } from "./lib/agent-runtime-interactions-smoke";
 
 const SCRIPT_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const RUN_EVENT_METHOD = "agent:run:event";
@@ -21,7 +21,7 @@ function createSidecarProcess(configHome) {
   env.USERPROFILE = configHome;
   env.LUME_AGENT_RUNTIME = "pi_agent";
   env.LUME_PI_AGENT_MOCK_SUCCESS = "1";
-  env.LUME_PI_AGENT_MOCK_TEXT = "smoke-new-runtime-bridges";
+  env.LUME_PI_AGENT_MOCK_TEXT = "smoke-new-runtime-interactions";
   env.LUME_PI_AGENT_MOCK_TOOL_PERMISSION = "1";
   env.LUME_PI_AGENT_MOCK_ASK_USER_QUESTION = "1";
   env.LUME_PI_AGENT_MOCK_SUBAGENT_ANNOUNCE = "1";
@@ -105,7 +105,7 @@ function assert(condition, message) {
 }
 
 async function run() {
-  const configHome = mkdtempSync(join(tmpdir(), "lume-sidecar-agent-new-runtime-bridges-"));
+  const configHome = mkdtempSync(join(tmpdir(), "lume-sidecar-agent-new-runtime-interactions-"));
   let sidecar = null;
 
   try {
@@ -117,7 +117,7 @@ async function run() {
     assert(typeof workspace?.id === "string", "default workspace not ready");
 
     const channel = await sidecar.call("channel:create", {
-      name: "smoke-anthropic-new-runtime-bridges",
+      name: "smoke-anthropic-new-runtime-interactions",
       provider: "anthropic",
       baseUrl: "https://api.anthropic.com",
       apiKey: "sk-smoke-dummy",
@@ -127,7 +127,7 @@ async function run() {
     assert(typeof channel?.id === "string", "channel create failed");
 
     const session = await sidecar.call("agent:create-thread", {
-      title: "smoke-agent-new-runtime-bridges",
+      title: "smoke-agent-new-runtime-interactions",
       workspaceId: workspace.id,
       channelId: channel.id
     });
@@ -166,7 +166,7 @@ async function run() {
 
     await sidecar.call("agent:send-thread-message", {
       threadId: session.id,
-      userMessage: "smoke new runtime bridges",
+      userMessage: "smoke new runtime interactions",
       workspaceId: workspace.id,
       channelId: channel.id,
       modelId: "claude-sonnet-4-5-20250929",
@@ -214,9 +214,9 @@ async function run() {
     });
     const restoredRuntimeStatus = await sidecar.call("agent:get-runtime-status", { threadId: session.id });
     const messages = await sidecar.call("agent:get-thread-messages", { threadId: session.id });
-    assert(Array.isArray(messages), "messages not readable after bridges restart");
+    assert(Array.isArray(messages), "messages not readable after interactions restart");
 
-    assertBridgeSmokeOutcome({
+    assertInteractionSmokeOutcome({
       permissionRequest,
       askUserRequest,
       statusPhases: [

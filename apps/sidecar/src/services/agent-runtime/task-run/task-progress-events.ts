@@ -1,12 +1,22 @@
-import type { LumeRunEvent } from "@lume/shared";
+import type { LumeRuntimeEvent } from "@lume/shared";
 import type { TaskRun, TaskRunEvent } from "./task-run-types";
 
-export function projectTaskRunEventToProgressEvent(
+export function projectTaskRunEventToRuntimeEvent(
+  threadId: string,
   taskRun: TaskRun,
   event: TaskRunEvent
-): Extract<LumeRunEvent, { type: "task_progress" }> {
+): Extract<LumeRuntimeEvent, { type: "task.progress" }> {
   return {
-    type: "task_progress",
+    id: [
+      "task.progress",
+      taskRun.id,
+      event.createdAt,
+      event.type,
+      event.taskId ?? "run"
+    ].join(":"),
+    type: "task.progress",
+    threadId,
+    runId: taskRun.runId,
     taskRunId: taskRun.id,
     contractId: taskRun.contractId,
     status: taskRun.status,
@@ -17,8 +27,11 @@ export function projectTaskRunEventToProgressEvent(
   };
 }
 
-export function projectTaskRunToProgressEvents(taskRun: TaskRun): Array<Extract<LumeRunEvent, { type: "task_progress" }>> {
-  return taskRun.events.map((event) => projectTaskRunEventToProgressEvent(taskRun, event));
+export function projectTaskRunToRuntimeEvents(
+  threadId: string,
+  taskRun: TaskRun
+): Array<Extract<LumeRuntimeEvent, { type: "task.progress" }>> {
+  return taskRun.events.map((event) => projectTaskRunEventToRuntimeEvent(threadId, taskRun, event));
 }
 
 function defaultTaskProgressMessage(taskRun: TaskRun, event: TaskRunEvent): string {

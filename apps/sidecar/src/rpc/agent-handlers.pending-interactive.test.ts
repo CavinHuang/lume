@@ -6,12 +6,12 @@ import {
   setAskUserQuestionApprovalSession,
   submitPiAskUserQuestionAnswers,
   waitForPiAskUserQuestionAnswers
-} from "../services/pi-agent/tools/bridges/ask-user-question-bridge"
+} from "../services/agent-runtime/interruption/ask-user-question-session"
 import {
   setToolPermissionApprovalSession,
   submitToolPermissionDecision,
   waitForToolPermissionDecision
-} from "../services/pi-agent/tools/bridges/tool-permission-bridge"
+} from "../services/agent-runtime/interruption/tool-permission-session"
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {

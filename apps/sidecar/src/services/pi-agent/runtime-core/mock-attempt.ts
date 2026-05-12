@@ -3,8 +3,8 @@ import {
   createAgentStreamAccumulatorState
 } from "../../agent/agent-stream-accumulator";
 import { createLogger } from "../../infra/logger";
-import { waitForPiAskUserQuestionAnswers } from "../tools/bridges/ask-user-question-bridge";
-import { waitForToolPermissionDecision } from "../tools/bridges/tool-permission-bridge";
+import { waitForPiAskUserQuestionAnswers } from "../../agent-runtime/interruption/ask-user-question-session";
+import { waitForToolPermissionDecision } from "../../agent-runtime/interruption/tool-permission-session";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
 import { createRuntimeCoreSession } from "./run";
@@ -134,7 +134,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
     content: [{ type: "text", text: mockText }],
     timestamp: Date.now()
   });
-  const interactiveResult = await runMockInteractiveBridges(runtime.sessionId, emit);
+  const interactiveResult = await runMockInteractiveSessions(runtime.sessionId, emit);
   if (interactiveResult.status !== "ok") {
     session.dispose();
     return {
@@ -168,7 +168,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
   return { status: "completed" };
 }
 
-export async function runMockInteractiveBridges(
+export async function runMockInteractiveSessions(
   threadId: string,
   emit: PiAgentRuntimeEmitter
 ): Promise<{ status: "ok" } | { status: "errored"; error: string }> {
@@ -203,7 +203,7 @@ export async function runMockInteractiveBridges(
       [
         {
           header: "范围",
-          question: "是否继续执行 smoke bridge？",
+          question: "是否继续执行 smoke interruption？",
           options: [
             { label: "继续", description: "继续后续步骤" }
           ],
@@ -500,4 +500,3 @@ export function logMockSessionPersistence(kind: string, threadId: string, sessio
     sessionFile: sessionManager.getSessionFile()
   });
 }
-

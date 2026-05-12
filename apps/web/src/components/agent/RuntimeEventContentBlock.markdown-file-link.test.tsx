@@ -22,7 +22,7 @@ mock.module('./tool-result-renderers', () => ({
   ToolResultRenderer: () => null,
 }))
 
-const { MarkdownCode } = await import('./RunEventContentBlock')
+const { MarkdownCode } = await import('./RuntimeEventContentBlock')
 
 function renderFileLink(path: string): string {
   return renderToStaticMarkup(
@@ -34,7 +34,7 @@ function renderFileLink(path: string): string {
   )
 }
 
-describe('RunEventContentBlock markdown file links', () => {
+describe('RuntimeEventContentBlock markdown file links', () => {
   test('renders thread file paths with an icon and highlighted link treatment', () => {
     const markup = renderFileLink('plans/deepseek-open-source-research.md')
 

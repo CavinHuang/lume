@@ -6,6 +6,7 @@
  */
 
 import type { SDKMessage } from "@lume/agent-sdk"
+import type { LumeRuntimeEvent } from "./runtime-event"
 export type { SDKMessage } from "@lume/agent-sdk"
 
 // ===== Agent 工作区 =====
@@ -995,110 +996,14 @@ export interface PlanModePhaseChangedEvent {
 
 // ===== Agent 流式事件载荷 =====
 
-export type LumeRunEvent =
-  | {
-      type: 'user_message_submitted'
-      text: string
-      createdAt: string
-      messageId?: string
-      versionGroupId?: string
-      versionIndex?: number
-      versionCount?: number
-    }
-  | { type: 'assistant_delta'; text: string }
-  | { type: 'assistant_thinking_delta'; text: string }
-  | {
-      type: 'assistant_message_final'
-      blocks: Array<
-        | { type: 'text'; text: string }
-        | { type: 'thinking'; text: string }
-      >
-    }
-  | {
-      type: 'tool_call_started'
-      item: {
-        type: 'tool_call'
-        id: string
-        toolName: string
-        input: unknown
-        parentAgentId: string
-        parentToolCallId?: string
-        status: 'pending' | 'approved' | 'running' | 'completed' | 'failed' | 'denied'
-        traceSpanId?: string
-        createdAt: string
-      }
-    }
-  | {
-      type: 'tool_call_completed'
-      item: {
-        type: 'tool_result'
-        id: string
-        toolCallId: string
-        toolName?: string
-        output: unknown
-        isError?: boolean
-        traceSpanId?: string
-        createdAt: string
-      }
-    }
-  | { type: 'interruption_created'; interruption: unknown }
-  | { type: 'interruption_resolved'; interruption: unknown }
-  | {
-      type: 'subagent_updated'
-      item: {
-        type: 'subagent'
-        id: string
-        runId: string
-        parentRunId?: string
-        parentToolCallId?: string
-        agentId?: string
-        task: string
-        status: 'running' | 'completed' | 'failed' | 'cancelled'
-        childThreadId: string
-        traceSpanId?: string
-        output?: string
-        error?: string
-        createdAt: string
-      }
-    }
-  | {
-      type: 'handoff_updated'
-      item: {
-        type: 'handoff'
-        id: string
-        fromAgentId: string
-        toAgentId: string
-        reason?: string
-        status: 'requested' | 'accepted' | 'completed' | 'failed' | 'cancelled'
-        traceSpanId?: string
-        createdAt: string
-      }
-    }
-  | {
-      type: 'task_progress'
-      taskRunId: string
-      contractId: string
-      status: AgentTaskRunStatus
-      currentTaskId?: string
-      tasks: AgentTaskRunTask[]
-      message?: string
-      createdAt: string
-    }
-  | { type: 'run_completed'; result: { status: 'completed'; finalOutput?: string } }
-  | { type: 'run_failed'; error: { code: string; message: string; stack?: string; retryable?: boolean } }
-
-export interface AgentRunEventNotification {
+export interface AgentRuntimeEventNotification {
   threadId: string
-  event: LumeRunEvent
+  event: LumeRuntimeEvent
 }
 
-export interface AgentThreadRunEventsInput {
+export interface AgentThreadRuntimeEventsResult {
   threadId: string
-}
-
-export interface AgentThreadRunEventsResult {
-  threadId: string
-  events: LumeRunEvent[]
+  events: LumeRuntimeEvent[]
 }
 
 export interface AgentMessageAppendedEvent {
@@ -1271,8 +1176,10 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_THREAD: 'agent:create-thread',
   /** 获取线程消息 */
   GET_THREAD_MESSAGES: 'agent:get-thread-messages',
-  /** 获取线程结构化 runtime 事件历史 */
-  GET_THREAD_RUN_EVENTS: 'agent:get-thread-run-events',
+  /** 获取线程产品级 RuntimeEvent 历史 */
+  GET_THREAD_RUNTIME_EVENTS: 'agent:get-thread-runtime-events',
+  /** 产品级 RuntimeEvent 实时通知 */
+  RUNTIME_EVENT: 'agent:runtime-event',
   /** 获取线程单个消息版本组 */
   GET_THREAD_MESSAGE_VERSIONS: 'agent:get-thread-message-versions',
   /** 获取最近 N 条线程消息（分页） */
@@ -1357,8 +1264,6 @@ export const AGENT_IPC_CHANNELS = {
   INSTALL_GITHUB_SKILL_TO_WORKSPACE: 'agent:install-github-skill-to-workspace',
 
   // 流式事件（主进程 → 渲染进程推送）
-  /** Agent runtime 结构化事件 */
-  RUN_EVENT: 'agent:run:event',
   /** 线程消息追加通知 */
   MESSAGE_APPENDED: 'agent:message-appended',
   /** subagent 完成通知（不落独立 transcript message） */

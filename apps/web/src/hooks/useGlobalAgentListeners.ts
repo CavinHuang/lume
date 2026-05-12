@@ -4,7 +4,7 @@ import { onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
   agentRuntimeStatusAtom,
-  agentRunEventsAtom,
+  agentRuntimeEventsAtom,
   agentPendingInteractiveAtom,
   agentSubagentRunsAtom,
   agentPlanModePhaseAtom,
@@ -15,7 +15,7 @@ import {
 import {
   AGENT_IPC_CHANNELS,
   type AgentPendingInteractiveState,
-  type AgentRunEventNotification,
+  type AgentRuntimeEventNotification,
   type AgentRuntimeStatusChangedEvent,
   type AgentAskUserQuestionRequest,
   type AgentToolPermissionRequest,
@@ -27,12 +27,12 @@ import {
   upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from './pending-interactive-state'
-import { appendRunEvent } from './run-event-state'
+import { appendRuntimeEvent } from './runtime-event-state'
 
 export function useGlobalAgentListeners() {
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setRuntimeStatus = useSetAtom(agentRuntimeStatusAtom)
-  const setRunEvents = useSetAtom(agentRunEventsAtom)
+  const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
@@ -65,32 +65,33 @@ export function useGlobalAgentListeners() {
 
     const unlisten = onSidecarEvent((method, params) => {
       switch (method) {
-        case AGENT_IPC_CHANNELS.RUN_EVENT: {
-          const notification = params as AgentRunEventNotification
+        case AGENT_IPC_CHANNELS.RUNTIME_EVENT: {
+          const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
-          setRunEvents((prev) => appendRunEvent(prev, notification))
-          if (event.type === 'task_progress') {
+          setRuntimeEvents((prev) => appendRuntimeEvent(prev, event))
+          if (event.type === 'task.progress') {
             setSidePanelViews((prev) => ({ ...prev, [threadId]: 'task-progress' }))
           }
           if (
-            event.type === 'assistant_delta' ||
-            event.type === 'assistant_thinking_delta' ||
-            event.type === 'tool_call_started' ||
-            event.type === 'tool_call_completed' ||
-            (event.type === 'task_progress' && event.status !== 'completed' && event.status !== 'failed')
+            event.type === 'assistant.delta' ||
+            event.type === 'assistant.thinking_delta' ||
+            event.type === 'tool.started' ||
+            event.type === 'tool.completed' ||
+            event.type === 'tool.failed' ||
+            (event.type === 'task.progress' && event.status !== 'completed' && event.status !== 'failed' && event.status !== 'cancelled')
           ) {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
             break
           }
-          if (event.type === 'task_progress' && (event.status === 'completed' || event.status === 'failed')) {
+          if (event.type === 'task.progress' && (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled')) {
             setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
             break
           }
-          if (event.type === 'run_completed') {
+          if (event.type === 'run.completed' || event.type === 'run.turn_limited' || event.type === 'run.cancelled') {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
             break
           }
-          if (event.type === 'run_failed') {
+          if (event.type === 'run.failed') {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
             setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
           }
@@ -185,5 +186,5 @@ export function useGlobalAgentListeners() {
       }
     })
     return () => { unlisten.then((fn) => fn()) }
-  }, [setStreamingStates, setRuntimeStatus, setRunEvents, setPendingInteractive, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews])
 }

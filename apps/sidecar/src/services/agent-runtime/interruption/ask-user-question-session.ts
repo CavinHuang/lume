@@ -8,8 +8,8 @@ import {
   resolvePersistedAskUserInterruption,
   resolveAskUserInterruption,
   updateAskUserApprovalSession
-} from "../../../agent-runtime/interruption/ask-user-service";
-import { listPendingRuntimeCoreInterruptions } from "../../../agent-runtime/interruption/interruption-index";
+} from "./ask-user-service";
+import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
 
 const pendingPiAskUserQuestionResolvers = new Map<
   string,

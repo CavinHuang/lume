@@ -19,7 +19,7 @@ import {
   listGitHubReleases
 } from "../services/system/github-release-service";
 import { fetchWithProxy } from "../services/infra/proxy-fetch";
-import { getLogsDir } from "../services/infra/logger";
+import { createLogger, getLogsDir } from "../services/infra/logger";
 import { getChatToolCredentials } from "../services/chat/chat-tool-manager";
 import { getLumeConfigYamlPath } from "../services/infra/config-paths";
 import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/system/lume-config-service";
@@ -42,6 +42,8 @@ import {
 } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
+
+const log = createLogger("system-handlers");
 
 interface SystemHandlersContext {
   getMethodNames: () => string[];
@@ -123,14 +125,15 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
         validateInput(updateUiStateInputSchema, params, UI_STATE_IPC_CHANNELS.UPDATE) as UpdateUiStateInput
       ),
     [GENERAL_SETTINGS_IPC_CHANNELS.GET]: async () => getPersistedGeneralSettings(),
-    [GENERAL_SETTINGS_IPC_CHANNELS.UPDATE]: async (params) =>
-      updatePersistedGeneralSettings(
-        validateInput(
-          updateGeneralSettingsInputSchema,
-          params ?? {},
-          GENERAL_SETTINGS_IPC_CHANNELS.UPDATE
-        ) as UpdateGeneralSettingsInput
-      ),
+    [GENERAL_SETTINGS_IPC_CHANNELS.UPDATE]: async (params) => {
+      const input = validateInput(
+        updateGeneralSettingsInputSchema,
+        params ?? {},
+        GENERAL_SETTINGS_IPC_CHANNELS.UPDATE
+      ) as UpdateGeneralSettingsInput;
+      log.info("[Agent 设置] 更新通用设置", { keys: Object.keys(input) });
+      return updatePersistedGeneralSettings(input);
+    },
     [GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR]: async () => {
       openInSystem(getLogsDir());
       return { ok: true };
@@ -157,6 +160,7 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
         params,
         LUME_CONFIG_IPC_CHANNELS.UPDATE_SECTION
       );
+      log.info("[Agent 设置] 更新 lume 配置", { path: input.path });
       return updateLumeConfigSection(input);
     },
     [LUME_CONFIG_IPC_CHANNELS.GET_SOURCE_PATH]: async () => ({
@@ -180,6 +184,7 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
         params,
         SYSTEM_CONFIG_IPC_CHANNELS.UPDATE_SECTION
       );
+      log.info("[Agent 设置] 更新系统配置", { path: input.path });
       return updatePrimarySystemConfigSection(input);
     },
     [SYSTEM_CONFIG_IPC_CHANNELS.NETWORK_DIAGNOSTIC]: async () => runNetworkDiagnostic(),

@@ -16,7 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke:rpc": "bun scripts/smoke-rpc.mjs",
     "smoke:agent-new-runtime": "bun scripts/smoke-agent-new-runtime.mjs",
-    "smoke:agent-new-runtime:bridges": "bun scripts/smoke-agent-new-runtime-bridges.mjs",
+    "smoke:agent-new-runtime:interactions": "bun scripts/smoke-agent-new-runtime-interactions.mjs",
     "smoke:agent-new-runtime:compact": "bun scripts/smoke-agent-new-runtime-compact.mjs",
     "smoke:agent-new-runtime:error": "bun scripts/smoke-agent-new-runtime-error.mjs",
     "smoke:agent-new-runtime:provider-matrix": "bun scripts/smoke-agent-new-runtime-provider-matrix.mjs",

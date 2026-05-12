@@ -10,25 +10,36 @@ import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/sess
 
 const appendedInputs: unknown[] = [];
 let mockCompletePayload: { reason?: "max_turns" } | undefined;
-const mockRunEvents: unknown[] = [
-  { type: "assistant_delta", text: "hello" },
+const mockRuntimeEvents: unknown[] = [
   {
-    type: "run_completed",
-    result: {
-      status: "completed",
-      finalOutput: "done"
-    }
+    id: "runtime-1",
+    type: "assistant.delta",
+    threadId: "thread-1",
+    runId: "run-1",
+    createdAt: "2026-05-11T00:00:00.000Z",
+    delta: "hello"
+  },
+  {
+    id: "runtime-2",
+    type: "run.completed",
+    threadId: "thread-1",
+    runId: "run-1",
+    createdAt: "2026-05-11T00:00:01.000Z",
+    finalOutput: "done"
   }
 ];
 mock.module("../services/agent/agent-service", () => ({
   appendAgentMessage: (input: unknown, emit: {
-    onRunEvent?: (event: unknown) => void;
+    onRuntimeEvent?: (event: unknown) => void;
     onComplete: (payload?: { reason?: "max_turns" }) => void;
   }, options?: { onExecutionStarted?: () => void }) => {
     appendedInputs.push(input);
     options?.onExecutionStarted?.();
-    for (const event of mockRunEvents) {
-      emit.onRunEvent?.(event);
+    for (const event of mockRuntimeEvents) {
+      emit.onRuntimeEvent?.({
+        ...(event as Record<string, unknown>),
+        threadId: (input as { threadId?: string }).threadId ?? "thread-1"
+      });
     }
     emit.onComplete(mockCompletePayload);
     return { ok: true, mode: "sent", queuedCount: 0 };
@@ -54,14 +65,22 @@ describe("agent-handlers run events", () => {
   afterEach(() => {
     appendedInputs.length = 0;
     mockCompletePayload = undefined;
-    mockRunEvents.splice(0, mockRunEvents.length,
-      { type: "assistant_delta", text: "hello" },
+    mockRuntimeEvents.splice(0, mockRuntimeEvents.length,
       {
-        type: "run_completed",
-        result: {
-          status: "completed",
-          finalOutput: "done"
-        }
+        id: "runtime-1",
+        type: "assistant.delta",
+        threadId: "thread-1",
+        runId: "run-1",
+        createdAt: "2026-05-11T00:00:00.000Z",
+        delta: "hello"
+      },
+      {
+        id: "runtime-2",
+        type: "run.completed",
+        threadId: "thread-1",
+        runId: "run-1",
+        createdAt: "2026-05-11T00:00:01.000Z",
+        finalOutput: "done"
       }
     );
     if (process.env.LUME_CONFIG_DIR) {
@@ -310,11 +329,11 @@ describe("agent-handlers run events", () => {
       }
     });
     expect(notifications).toContainEqual({
-      method: AGENT_IPC_CHANNELS.RUN_EVENT,
+      method: AGENT_IPC_CHANNELS.RUNTIME_EVENT,
       params: {
         threadId,
         event: expect.objectContaining({
-          type: "task_progress",
+          type: "task.progress",
           taskRunId: "taskrun-plan-1",
           status: "running",
           currentTaskId: "step-1"
@@ -374,8 +393,8 @@ describe("agent-handlers run events", () => {
     });
     expect(taskRun?.events.map((event) => event.type)).not.toContain("task_failed");
     expect(notifications.some((item) => (
-      item.method === AGENT_IPC_CHANNELS.RUN_EVENT
-      && (item.params as { event?: { type?: string; status?: string } }).event?.type === "task_progress"
+      item.method === AGENT_IPC_CHANNELS.RUNTIME_EVENT
+      && (item.params as { event?: { type?: string; status?: string } }).event?.type === "task.progress"
       && (item.params as { event?: { status?: string } }).event?.status === "running"
     ))).toBeTrue();
   });
@@ -523,17 +542,18 @@ describe("agent-handlers run events", () => {
   test("plain final output in planning mode is persisted as a fallback task contract", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-fallback-plan-rpc-"));
     const threadId = "thread-fallback-plan";
-    mockRunEvents.splice(0, mockRunEvents.length, {
-      type: "run_completed",
-      result: {
-        status: "completed",
-        finalOutput: [
-          "# DeepSeek 开源计划调研方案",
-          "",
-          "1. 调研目标",
-          "2. 调研范围"
-        ].join("\n")
-      }
+    mockRuntimeEvents.splice(0, mockRuntimeEvents.length, {
+      id: "runtime-plan-completed",
+      type: "run.completed",
+      threadId,
+      runId: "run-1",
+      createdAt: "2026-05-11T00:00:00.000Z",
+      finalOutput: [
+        "# DeepSeek 开源计划调研方案",
+        "",
+        "1. 调研目标",
+        "2. 调研范围"
+      ].join("\n")
     });
     const planModePhaseChanges: Array<{ threadId: string; phase: string }> = [];
     const { createAgentHandlers } = await import("./agent-handlers");
@@ -579,21 +599,43 @@ describe("agent-handlers run events", () => {
       userMessage: "hi"
     });
 
-    expect(notifications.filter((item) => item.method === AGENT_IPC_CHANNELS.RUN_EVENT).map((item) => item.params)).toEqual([
+    expect(notifications.filter((item) => item.method === AGENT_IPC_CHANNELS.RUNTIME_EVENT).map((item) => item.params)).toEqual([
       {
         threadId: "thread-1",
-        event: { type: "assistant_delta", text: "hello" }
+        event: {
+          id: "runtime-1",
+          type: "assistant.delta",
+          threadId: "thread-1",
+          runId: "run-1",
+          createdAt: "2026-05-11T00:00:00.000Z",
+          delta: "hello"
+        }
       },
       {
         threadId: "thread-1",
         event: {
-          type: "run_completed",
-          result: {
-            status: "completed",
-            finalOutput: "done"
-          }
+          id: "runtime-2",
+          type: "run.completed",
+          threadId: "thread-1",
+          runId: "run-1",
+          createdAt: "2026-05-11T00:00:01.000Z",
+          finalOutput: "done"
         }
       }
     ]);
+    expect(notifications).toContainEqual({
+      method: "agent:runtime-event",
+      params: {
+        threadId: "thread-1",
+        event: {
+          id: "runtime-1",
+          type: "assistant.delta",
+          threadId: "thread-1",
+          runId: "run-1",
+          createdAt: "2026-05-11T00:00:00.000Z",
+          delta: "hello"
+        }
+      }
+    });
   });
 });

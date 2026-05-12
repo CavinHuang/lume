@@ -2,12 +2,12 @@ import type { SDKMessage } from "@lume/agent-sdk";
 import type { AgentSendInput } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
 import type { AgentToolPermissionRequest } from "@lume/shared";
-import type { LumeRunEvent } from "@lume/shared";
+import type { LumeRuntimeEvent } from "@lume/shared";
 import type { TaskContractRecord } from "../../agent-runtime/plan/task-contract-record-types";
 
 export interface PiAgentRuntimeEmitter {
   onSdkMessage: (message: SDKMessage) => void;
-  onRunEvent?: (event: LumeRunEvent) => void;
+  onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onComplete: (payload?: { reason?: "max_turns" }) => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;

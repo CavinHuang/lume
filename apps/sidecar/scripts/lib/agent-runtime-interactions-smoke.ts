@@ -17,7 +17,7 @@ interface MessageLike {
   metadata?: Record<string, unknown>;
 }
 
-export function assertBridgeSmokeOutcome(input: {
+export function assertInteractionSmokeOutcome(input: {
   permissionRequest: PermissionRequestLike | null;
   askUserRequest: AskUserRequestLike | null;
   statusPhases: string[];

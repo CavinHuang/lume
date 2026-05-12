@@ -4,15 +4,15 @@ import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
-import type { RunEventAssistantBlock, RunEventMessageView, RunEventToolCallView } from './run-event-message-projection'
+import type { RuntimeAssistantBlock, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
-import type { AgentMessage, LumeRunEvent } from '@lume/shared'
+import type { AgentMessage } from '@lume/shared'
 
-interface RunEventContentBlockProps {
-  message: RunEventMessageView
+interface RuntimeEventContentBlockProps {
+  message: RuntimeMessageView
   animate?: boolean
   threadId: string
   onOpenThreadFile?: (path: string) => void
@@ -43,7 +43,7 @@ export function showTemporaryCopiedFeedback(
   }, delayMs)
 }
 
-export function RunEventContentBlock({ message, animate, threadId, onOpenThreadFile }: RunEventContentBlockProps) {
+export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThreadFile }: RuntimeEventContentBlockProps) {
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
   if (message.type === 'user') {
@@ -61,7 +61,7 @@ export function RunEventContentBlock({ message, animate, threadId, onOpenThreadF
       </div>
       <div className="min-w-0 flex-1 space-y-4 pt-2">
         {message.blocks.map((block, index) => (
-          <RunEventAssistantBlockItem
+          <RuntimeEventAssistantBlockItem
             key={block.id}
             block={block}
             threadId={threadId}
@@ -95,7 +95,7 @@ function UserMessageBlock({
   threadId,
   className,
 }: {
-  message: Extract<RunEventMessageView, { type: 'user' }>
+  message: Extract<RuntimeMessageView, { type: 'user' }>
   threadId: string
   className: string
 }) {
@@ -117,7 +117,7 @@ function UserMessageBlock({
       const result = await getThreadMessageVersions({ threadId, versionGroupId: message.versionGroupId })
       setVersions(result.messages)
     } catch (error) {
-      console.error('[RunEventContentBlock] 加载消息版本失败:', error)
+      console.error('[RuntimeEventContentBlock] 加载消息版本失败:', error)
     } finally {
       setVersionsLoading(false)
     }
@@ -139,7 +139,7 @@ function UserMessageBlock({
       })
       setEditing(false)
     } catch (error) {
-      console.error('[RunEventContentBlock] 编辑消息后重新发送失败:', error)
+      console.error('[RuntimeEventContentBlock] 编辑消息后重新发送失败:', error)
     } finally {
       setSubmitting(false)
     }
@@ -243,14 +243,14 @@ function UserMessageBlock({
   )
 }
 
-function RunEventAssistantBlockItem({
+function RuntimeEventAssistantBlockItem({
   block,
   threadId,
   onOpenThreadFile,
   isStreaming,
   isActiveThinking,
 }: {
-  block: RunEventAssistantBlock
+  block: RuntimeAssistantBlock
   threadId: string
   onOpenThreadFile?: (path: string) => void
   isStreaming: boolean
@@ -261,17 +261,17 @@ function RunEventAssistantBlockItem({
   }
 
   if (block.type === 'thinking') {
-    return <RunEventThinkingBlock text={block.text} active={isActiveThinking} />
+    return <RuntimeEventThinkingBlock text={block.text} active={isActiveThinking} />
   }
 
   if (block.type === 'task_progress') {
-    return <RunEventTaskProgressBlock event={block.event} />
+    return <RuntimeEventTaskProgressBlock event={block.event} />
   }
 
-  return <RunEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
+  return <RuntimeEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
 }
 
-function RunEventTaskProgressBlock({ event }: { event: Extract<LumeRunEvent, { type: 'task_progress' }> }) {
+function RuntimeEventTaskProgressBlock({ event }: { event: TaskProgressViewEvent }) {
   const total = event.tasks.length
   const completed = event.tasks.filter((task) => task.status === 'completed' || task.status === 'skipped').length
   const failed = event.tasks.filter((task) => task.status === 'failed').length
@@ -336,7 +336,7 @@ function RunEventTaskProgressBlock({ event }: { event: Extract<LumeRunEvent, { t
   )
 }
 
-function RunEventThinkingBlock({ text, active }: { text: string; active: boolean }) {
+function RuntimeEventThinkingBlock({ text, active }: { text: string; active: boolean }) {
   const [collapsed, setCollapsed] = useState(!active)
 
   useEffect(() => {
@@ -524,7 +524,7 @@ function IncompleteTable() {
   )
 }
 
-function RunEventToolCallBlock({ toolCall, threadId }: { toolCall: RunEventToolCallView; threadId: string }) {
+function RuntimeEventToolCallBlock({ toolCall, threadId }: { toolCall: RuntimeToolCallView; threadId: string }) {
   const [collapsed, setCollapsed] = useState(true)
   const isRunning = toolCall.status === 'running'
   const input = asRecord(toolCall.input)
@@ -644,7 +644,7 @@ function CopyMessageButton({
         clearTimer: window.clearTimeout,
       })
     } catch (error) {
-      console.error('[RunEventContentBlock] 复制消息失败:', error)
+      console.error('[RuntimeEventContentBlock] 复制消息失败:', error)
     }
   }
 

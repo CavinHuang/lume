@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { LumeRunEvent, SDKMessage } from "@lume/shared";
+import type { LumeRuntimeEvent, SDKMessage } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
 import type { ContextAssemblyInput } from "../context/context-assembler";
 import { TraceRecorder } from "../trace/trace-recorder";
@@ -7,7 +7,10 @@ import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redacti
 import { createFileBackedLumeTraceStore } from "../trace/trace-store";
 import type { LumeTraceSpan } from "../trace/trace-types";
 import type { LumeRunItem } from "./run-items";
-import { projectAssistantMessageFinalEvent, projectRunItemToRunEvents } from "./run-item-events";
+import {
+  projectAssistantMessageFinalRuntimeEvent,
+  projectRunItemToRuntimeEvents
+} from "./run-item-events";
 import type { LumeRunState, LumeRunStatus } from "./run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "./run-state-store";
 
@@ -108,7 +111,10 @@ export class LumeRunObserver {
     return observer;
   }
 
-  recordSdkMessage(message: SDKMessage, emitRunEvent?: (event: LumeRunEvent) => void): void {
+  recordSdkMessage(
+    message: SDKMessage,
+    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
+  ): void {
     this.enqueue(async () => {
       this.rememberSubagentParentToolCall(message as SDKMessage & Record<string, unknown>);
       const items = mapSdkMessageToRunItems(message, {
@@ -119,23 +125,23 @@ export class LumeRunObserver {
       for (const item of items) {
         await this.stateStore.appendItem(this.state.runId, item);
         if (item.type === "assistant_message" && (this.emittedModelStreamText || this.emittedModelStreamThinking)) {
-          const finalEvent = projectAssistantMessageFinalEvent(item);
-          if (finalEvent) emitRunEvent?.(finalEvent);
+          const finalRuntimeEvent = projectAssistantMessageFinalRuntimeEvent(this.state, item);
+          if (finalRuntimeEvent) emitRuntimeEvent?.(finalRuntimeEvent);
           continue;
         }
-        const events = projectRunItemToRunEvents(item, {
+        const runtimeEvents = projectRunItemToRuntimeEvents(this.state, item, {
           includeAssistantText: !this.emittedModelStreamText,
           includeAssistantThinking: !this.emittedModelStreamThinking,
           includeModelStreamText: true
         });
-        for (const event of events) {
-          if (event.type === "assistant_delta" && item.type === "model_stream") {
+        for (const event of runtimeEvents) {
+          if (event.type === "assistant.delta" && item.type === "model_stream") {
             this.emittedModelStreamText = true;
           }
-          if (event.type === "assistant_thinking_delta" && item.type === "model_stream") {
+          if (event.type === "assistant.thinking_delta" && item.type === "model_stream") {
             this.emittedModelStreamThinking = true;
           }
-          emitRunEvent?.(event);
+          emitRuntimeEvent?.(event);
         }
       }
       await this.recordSdkMessageTrace(message);
@@ -196,6 +202,10 @@ export class LumeRunObserver {
 
   getRunId(): string {
     return this.state.runId;
+  }
+
+  getThreadId(): string {
+    return this.state.threadId;
   }
 
   async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string): Promise<void> {

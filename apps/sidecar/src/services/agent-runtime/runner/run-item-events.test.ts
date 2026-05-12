@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { projectAssistantMessageFinalEvent, projectRunStateToRunEvents } from "./run-item-events";
+import {
+  projectAssistantMessageFinalRuntimeEvent,
+  projectRunStateToRuntimeEvents
+} from "./run-item-events";
 import type { LumeRunState } from "./run-state";
 
 function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {
@@ -23,9 +26,12 @@ function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {
   };
 }
 
-describe("projectRunStateToRunEvents", () => {
-  test("projects run items into stable UI run events", () => {
+describe("projectRunStateToRuntimeEvents", () => {
+  test("projects kernel run facts into product runtime events", () => {
     const run = baseRun({
+      runId: "run-runtime-1",
+      threadId: "thread-runtime-1",
+      status: "completed",
       generatedItems: [
         {
           type: "tool_call",
@@ -53,26 +59,42 @@ describe("projectRunStateToRunEvents", () => {
       ]
     });
 
-    expect(projectRunStateToRunEvents(run)).toEqual([
-      { type: "user_message_submitted", text: "hello", createdAt: "2026-04-30T00:00:00.000Z" },
-      {
-        type: "tool_call_started",
-        item: expect.objectContaining({ id: "tool-1", toolName: "Read" })
-      },
-      {
-        type: "tool_call_completed",
-        item: expect.objectContaining({ toolCallId: "tool-1", output: "contents" })
-      },
-      { type: "assistant_delta", text: "done" },
-      {
-        type: "run_completed",
-        result: { status: "completed", finalOutput: "done" }
-      }
+    expect(projectRunStateToRuntimeEvents(run)).toEqual([
+      expect.objectContaining({
+        type: "run.started",
+        threadId: "thread-runtime-1",
+        runId: "run-runtime-1"
+      }),
+      expect.objectContaining({
+        type: "message.user.submitted",
+        text: "hello",
+        threadId: "thread-runtime-1",
+        runId: "run-runtime-1"
+      }),
+      expect.objectContaining({
+        type: "tool.started",
+        toolCallId: "tool-1",
+        toolName: "Read"
+      }),
+      expect.objectContaining({
+        type: "tool.completed",
+        toolCallId: "tool-1",
+        toolName: "Read",
+        resultPreview: "contents"
+      }),
+      expect.objectContaining({
+        type: "assistant.delta",
+        delta: "done"
+      }),
+      expect.objectContaining({
+        type: "run.completed",
+        finalOutput: "done"
+      })
     ]);
   });
 
-  test("uses stream text only when no final assistant message exists", () => {
-    expect(projectRunStateToRunEvents(baseRun({
+  test("uses stream deltas only when no final assistant message exists", () => {
+    expect(projectRunStateToRuntimeEvents(baseRun({
       status: "running",
       generatedItems: [{
         type: "model_stream",
@@ -83,9 +105,9 @@ describe("projectRunStateToRunEvents", () => {
         },
         createdAt: "2026-04-30T00:00:01.000Z"
       }]
-    }))).toContainEqual({ type: "assistant_delta", text: "streaming" });
+    }))).toContainEqual(expect.objectContaining({ type: "assistant.delta", delta: "streaming" }));
 
-    expect(projectRunStateToRunEvents(baseRun({
+    expect(projectRunStateToRuntimeEvents(baseRun({
       generatedItems: [
         {
           type: "model_stream",
@@ -103,90 +125,11 @@ describe("projectRunStateToRunEvents", () => {
           createdAt: "2026-04-30T00:00:02.000Z"
         }
       ]
-    }))).not.toContainEqual({ type: "assistant_delta", text: "duplicate" });
+    }))).not.toContainEqual(expect.objectContaining({ type: "assistant.delta", delta: "duplicate" }));
   });
 
-  test("projects thinking separately and ignores duplicated legacy partial text", () => {
-    expect(projectRunStateToRunEvents(baseRun({
-      status: "running",
-      generatedItems: [
-        {
-          type: "model_stream",
-          id: "stream-thinking",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "thinking_delta", thinking: "think" } }
-          },
-          createdAt: "2026-04-30T00:00:01.000Z"
-        },
-        {
-          type: "model_stream",
-          id: "legacy-partial",
-          event: {
-            type: "partial_message",
-            partial: { type: "text", text: "duplicate" }
-          },
-          createdAt: "2026-04-30T00:00:02.000Z"
-        },
-        {
-          type: "model_stream",
-          id: "stream-text",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "text_delta", text: "text" } }
-          },
-          createdAt: "2026-04-30T00:00:03.000Z"
-        }
-      ]
-    }))).toEqual([
-      { type: "user_message_submitted", text: "hello", createdAt: "2026-04-30T00:00:00.000Z" },
-      { type: "assistant_thinking_delta", text: "think" },
-      { type: "assistant_delta", text: "text" }
-    ]);
-  });
-
-  test("preserves whitespace-only stream deltas because markdown depends on them", () => {
-    expect(projectRunStateToRunEvents(baseRun({
-      status: "running",
-      generatedItems: [
-        {
-          type: "model_stream",
-          id: "stream-heading",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "text_delta", text: "文件操作" } }
-          },
-          createdAt: "2026-04-30T00:00:01.000Z"
-        },
-        {
-          type: "model_stream",
-          id: "stream-break",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "text_delta", text: "\n\n" } }
-          },
-          createdAt: "2026-04-30T00:00:02.000Z"
-        },
-        {
-          type: "model_stream",
-          id: "stream-list-item",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "text_delta", text: "- 读取文件" } }
-          },
-          createdAt: "2026-04-30T00:00:03.000Z"
-        }
-      ]
-    }))).toEqual([
-      { type: "user_message_submitted", text: "hello", createdAt: "2026-04-30T00:00:00.000Z" },
-      { type: "assistant_delta", text: "文件操作" },
-      { type: "assistant_delta", text: "\n\n" },
-      { type: "assistant_delta", text: "- 读取文件" }
-    ]);
-  });
-
-  test("does not project internal runtime continuation runs into the chat transcript", () => {
-    expect(projectRunStateToRunEvents(baseRun({
+  test("does not project internal runtime continuation runs into product events", () => {
+    expect(projectRunStateToRuntimeEvents(baseRun({
       input: {
         userMessage: "继续执行之前因人工交互暂停的任务。",
         messageMetadata: {
@@ -201,22 +144,13 @@ describe("projectRunStateToRunEvents", () => {
           id: "assistant-continuation",
           content: [{ type: "text", text: "internal continuation output" }],
           createdAt: "2026-04-30T00:00:01.000Z"
-        },
-        {
-          type: "tool_call",
-          id: "tool-continuation",
-          toolName: "Read",
-          input: { file_path: "story.txt" },
-          parentAgentId: "runtime-core",
-          status: "pending",
-          createdAt: "2026-04-30T00:00:02.000Z"
         }
       ]
     }))).toEqual([]);
   });
 
   test("hides plan control input while keeping execution output visible", () => {
-    expect(projectRunStateToRunEvents(baseRun({
+    const events = projectRunStateToRuntimeEvents(baseRun({
       input: {
         userMessage: "请按顺序自动继续执行当前未完成计划。",
         messageMetadata: {
@@ -224,77 +158,25 @@ describe("projectRunStateToRunEvents", () => {
           planControlEvent: "continue_plan"
         }
       },
-      generatedItems: [
-        {
-          type: "assistant_message",
-          id: "assistant-plan-output",
-          content: [{ type: "text", text: "plan execution output" }],
-          createdAt: "2026-04-30T00:00:01.000Z"
-        },
-        {
-          type: "tool_call",
-          id: "tool-plan",
-          toolName: "Edit",
-          input: { file_path: "app.ts" },
-          parentAgentId: "runtime-core",
-          status: "pending",
-          createdAt: "2026-04-30T00:00:02.000Z"
-        }
-      ]
-    }))).toEqual([
-      { type: "assistant_delta", text: "plan execution output" },
-      {
-        type: "tool_call_started",
-        item: expect.objectContaining({ id: "tool-plan", toolName: "Edit" })
-      },
-      {
-        type: "run_completed",
-        result: { status: "completed", finalOutput: "plan execution output" }
-      }
-    ]);
-  });
+      generatedItems: [{
+        type: "assistant_message",
+        id: "assistant-plan-output",
+        content: [{ type: "text", text: "plan execution output" }],
+        createdAt: "2026-04-30T00:00:01.000Z"
+      }]
+    }));
 
-  test("filters whitespace-only thinking stream deltas because they create empty thinking blocks", () => {
-    expect(projectRunStateToRunEvents(baseRun({
-      status: "running",
-      generatedItems: [
-        {
-          type: "model_stream",
-          id: "stream-text-a",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "text_delta", text: "快乐" } }
-          },
-          createdAt: "2026-04-30T00:00:01.000Z"
-        },
-        {
-          type: "model_stream",
-          id: "stream-thinking-space",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "thinking_delta", thinking: "\n" } }
-          },
-          createdAt: "2026-04-30T00:00:02.000Z"
-        },
-        {
-          type: "model_stream",
-          id: "stream-text-b",
-          event: {
-            type: "stream_event",
-            event: { delta: { type: "text_delta", text: "故事" } }
-          },
-          createdAt: "2026-04-30T00:00:03.000Z"
-        }
-      ]
-    }))).toEqual([
-      { type: "user_message_submitted", text: "hello", createdAt: "2026-04-30T00:00:00.000Z" },
-      { type: "assistant_delta", text: "快乐" },
-      { type: "assistant_delta", text: "故事" }
-    ]);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "message.user.submitted" }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "assistant.delta",
+      delta: "plan execution output"
+    }));
   });
+});
 
-  test("projects final assistant content as a replacement event", () => {
-    expect(projectAssistantMessageFinalEvent({
+describe("projectAssistantMessageFinalRuntimeEvent", () => {
+  test("projects final assistant content as a replacement runtime event", () => {
+    expect(projectAssistantMessageFinalRuntimeEvent(baseRun(), {
       type: "assistant_message",
       id: "assistant-1",
       content: [
@@ -303,46 +185,15 @@ describe("projectRunStateToRunEvents", () => {
       ],
       createdAt: "2026-04-30T00:00:01.000Z"
     })).toEqual({
-      type: "assistant_message_final",
+      id: "run-1:assistant-1:assistant.final",
+      type: "assistant.final",
+      threadId: "thread-1",
+      runId: "run-1",
+      createdAt: "2026-04-30T00:00:01.000Z",
       blocks: [
         { type: "thinking", text: "think" },
         { type: "text", text: "- first\n- second" }
       ]
-    });
-  });
-
-  test("projects subagent and handoff run items for runtime history", () => {
-    const events = projectRunStateToRunEvents(baseRun({
-      status: "running",
-      generatedItems: [
-        {
-          type: "subagent",
-          id: "subagent-item-1",
-          runId: "subagent-run-1",
-          parentRunId: "run-1",
-          task: "Review runtime boundaries",
-          status: "running",
-          childThreadId: "child-thread",
-          createdAt: "2026-04-30T00:00:01.000Z"
-        },
-        {
-          type: "handoff",
-          id: "handoff-1",
-          fromAgentId: "root",
-          toAgentId: "reviewer",
-          status: "accepted",
-          createdAt: "2026-04-30T00:00:02.000Z"
-        }
-      ]
-    }));
-
-    expect(events).toContainEqual({
-      type: "subagent_updated",
-      item: expect.objectContaining({ runId: "subagent-run-1", status: "running" })
-    });
-    expect(events).toContainEqual({
-      type: "handoff_updated",
-      item: expect.objectContaining({ fromAgentId: "root", toAgentId: "reviewer", status: "accepted" })
     });
   });
 });

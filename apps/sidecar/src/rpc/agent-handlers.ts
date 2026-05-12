@@ -121,27 +121,18 @@ import {
   markTaskContractInteractionResolved
 } from "../services/agent-runtime/plan/task-contract-fallback-execution-service";
 import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
-import type { TaskContractRecord } from "../services/agent-runtime/plan/task-contract-record-types";
-import type { TaskContract } from "../services/agent-runtime/plan/task-contract-types";
-import {
-  buildCurrentTaskRunSendInput,
-  createTaskRunFromContract,
-  markCurrentTaskUnreported,
-  markTaskRunWaiting,
-  skipCurrentTask,
-  startNextTaskRunTask
-} from "../services/agent-runtime/task-run/task-run-controller";
-import { projectTaskRunEventToProgressEvent, projectTaskRunToProgressEvents } from "../services/agent-runtime/task-run/task-progress-events";
-import { createFileBackedTaskRunStore } from "../services/agent-runtime/task-run/task-run-store";
-import type { TaskRun } from "../services/agent-runtime/task-run/task-run-types";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
-import { projectRunStateToRunEvents } from "../services/agent-runtime/runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
+import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
+import {
+  createRuntimeOrchestrator,
+  type RuntimeOrchestrator
+} from "../services/agent-runtime/runtime-orchestrator";
 import { redactTraceForLevel, type TraceRedactionLevel } from "../services/agent-runtime/trace/trace-redaction";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
-import { listPendingPiAskUserQuestionRequests } from "../services/pi-agent/tools/bridges/ask-user-question-bridge";
-import { listPendingToolPermissionRequests } from "../services/pi-agent/tools/bridges/tool-permission-bridge";
+import { listPendingPiAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
+import { listPendingToolPermissionRequests } from "../services/agent-runtime/interruption/tool-permission-session";
 import {
   getAgentRuntimeToolPolicyConfig,
   saveAgentRuntimeToolPolicyConfig
@@ -213,7 +204,7 @@ import {
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, asString, validateInput } from "./validation";
 
-type PlanExecutionIntent = "execute" | "continue" | "retry" | "skip";
+const log = createLogger("agent-handlers");
 
 interface AgentHandlersContext {
   writeNotification: NotificationWriter;
@@ -279,16 +270,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return runs.at(-1)?.runId ?? null;
   };
 
-  const resolveExecutableTaskContract = async (input: { threadId: string; contractId?: string }) => {
-    const contracts = await createFileBackedTaskContractStore(resolveRuntimeSessionDir(input.threadId)).listByThread(input.threadId);
-    const candidates = input.contractId
-      ? contracts.filter((contract) => contract.id === input.contractId)
-      : contracts
-        .filter((contract) => contract.status === "approved" || contract.status === "executing" || contract.status === "failed")
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return candidates[0] ?? null;
-  };
-
   const resolvePlanContinuationInput = async (input: AgentSendInput): Promise<AgentSendInput> => {
     const feedback = input.userMessage.trim();
     if (input.permissionMode !== "plan" || !feedback) {
@@ -324,92 +305,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
     };
   };
-  const dispatchTaskExecution = (input: {
-    threadId: string;
-    contractId?: string;
-    permissionMode?: AgentSendInput["permissionMode"];
-    intent?: PlanExecutionIntent;
-  }) => async () => {
-    const sessionDir = resolveRuntimeSessionDir(input.threadId);
-    const contract = await resolveExecutableTaskContract({ threadId: input.threadId, contractId: input.contractId });
-    if (!contract) {
-      return {
-        ok: false,
-        status: "not_found" as const,
-        error: "找不到可执行任务。"
-      };
-    }
-    if (contract.status !== "approved" && contract.status !== "executing" && contract.status !== "failed") {
-      return {
-        ok: false,
-        status: "not_executable" as const,
-        contractId: contract.id,
-        error: "任务清单尚未批准或不可继续执行。"
-      };
-    }
-    if (input.intent === "skip") {
-      const taskRun = await createTaskRunFromTaskContractRecord(sessionDir, contract);
-      const skipped = await skipCurrentTask({
-        sessionDir,
-        threadId: input.threadId,
-        taskRunId: taskRun.id
-      });
-      if (skipped) {
-        emitLatestTaskProgress(input.threadId, skipped);
-        context.notifyPlanModePhaseChange(input.threadId, skipped.status === "completed" ? "completed" : "executing");
-      }
-      return {
-        ok: Boolean(skipped),
-        status: skipped ? "sent" as const : "not_executable" as const,
-        contractId: contract.id,
-        ...(skipped ? {} : { error: "当前任务不可跳过。" })
-      };
-    }
-    const taskRun = await createTaskRunFromTaskContractRecord(sessionDir, contract);
-    const started = await startNextTaskRunTask({
-      sessionDir,
-      threadId: input.threadId,
-      taskRunId: taskRun.id,
-      intent: input.intent ?? "execute"
-    });
-    if (!started) {
-      return {
-        ok: false,
-        status: "not_executable" as const,
-        contractId: contract.id,
-        error: "任务清单没有剩余可执行任务。"
-      };
-    }
-    const sendInput = buildCurrentTaskRunSendInput({
-      threadId: input.threadId,
-      taskRun: started.taskRun,
-      task: started.task,
-      permissionMode: input.permissionMode ?? "acceptEdits",
-      controlEvent: input.intent === "retry" ? "retry_task" : input.intent === "continue" ? "continue_task" : "execute_task"
-    });
-    emitLatestTaskProgress(input.threadId, started.taskRun);
-    const dispatch = appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId, { taskRunId: started.taskRun.id, contractId: contract.id }), {
-      onExecutionStarted: () => {
-        context.notifyPlanModePhaseChange(input.threadId, "executing");
-      }
-    });
-    return {
-      ok: true,
-      status: dispatch.mode,
-      queuedCount: dispatch.queuedCount,
-      contractId: contract.id
-    };
-  };
 
-  const emitLatestTaskProgress = (threadId: string, taskRun: TaskRun | null) => {
-    if (!taskRun) return;
-    const latestEvent = taskRun.events.at(-1);
-    if (!latestEvent) return;
-    context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
-      threadId,
-      event: projectTaskRunEventToProgressEvent(taskRun, latestEvent)
-    });
-  };
+  let runtimeOrchestrator: RuntimeOrchestrator;
 
   const createExecutionStartCallback = (input: AgentSendInput) => () => {
     if (!context.planModePhaseTracker.isLikelyExecutionRequest(input)) {
@@ -422,12 +319,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     let finalOutput: string | undefined;
     let taskContractWritten = false;
     return {
-      onRunEvent: (event: unknown) => {
-        const runEvent = event as { type?: string; result?: { finalOutput?: unknown } };
-        if (runEvent.type === "run_completed" && typeof runEvent.result?.finalOutput === "string") {
-          finalOutput = runEvent.result.finalOutput;
+      onRuntimeEvent: (event: unknown) => {
+        const runtimeEvent = event as { type?: string; finalOutput?: unknown };
+        if (runtimeEvent.type === "run.completed" && typeof runtimeEvent.finalOutput === "string") {
+          finalOutput = runtimeEvent.finalOutput;
         }
-        context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
           threadId,
           event
         });
@@ -447,12 +344,16 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           };
         };
         if (appended.message?.role === "user" && typeof appended.message.content === "string") {
-          context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+          const createdAt = new Date(appended.message.createdAt ?? Date.now()).toISOString();
+          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
             threadId,
             event: {
-              type: "user_message_submitted",
+              id: `${threadId}:${appended.message.id ?? createdAt}:message.user.submitted`,
+              type: "message.user.submitted",
+              runId: `message:${appended.message.id ?? createdAt}`,
+              threadId,
               text: appended.message.content,
-              createdAt: new Date(appended.message.createdAt ?? Date.now()).toISOString(),
+              createdAt,
               messageId: appended.message.id,
               versionGroupId: appended.message.versionGroupId,
               versionIndex: appended.message.versionIndex,
@@ -481,32 +382,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           });
         }
         if (options?.taskRunId) {
-          void (async () => {
-            const store = createFileBackedTaskRunStore(sessionDir);
-            let taskRun = await store.get(options.taskRunId!);
-            if (!turnLimited && taskRun?.status === "running" && taskRun.currentTaskId) {
-              const current = taskRun.tasks.find((task) => task.id === taskRun?.currentTaskId);
-              if (current?.status === "running") {
-                taskRun = await markCurrentTaskUnreported({
-                  sessionDir,
-                  threadId,
-                  taskRunId: options.taskRunId
-                });
-              }
-            }
-            emitLatestTaskProgress(threadId, taskRun);
-            if (taskRun?.status === "pending") {
-              void dispatchTaskExecution({
-                threadId,
-                contractId: options.contractId,
-                intent: "continue"
-              })();
-              return;
-            }
-            if (taskRun?.status === "completed") {
-              context.notifyPlanModePhaseChange(threadId, "completed");
-            }
-          })();
+          void runtimeOrchestrator.handleTaskRunCompletion({
+            threadId,
+            taskRunId: options.taskRunId,
+            contractId: options.contractId,
+            turnLimited
+          });
           return;
         }
         if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
@@ -519,10 +400,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           threadId,
           error
         });
-        context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
           threadId,
           event: {
-            type: "run_failed",
+            id: `${threadId}:${Date.now()}:run.failed`,
+            type: "run.failed",
+            threadId,
+            runId: `runtime-error:${threadId}`,
+            createdAt: new Date().toISOString(),
             error: {
               code: "runtime_error",
               message: error
@@ -545,13 +430,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             .filter(Boolean)
             .join("\n");
           if (options?.taskRunId) {
-            void markTaskRunWaiting({
-              sessionDir: resolveRuntimeSessionDir(threadId),
+            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
               threadId,
               taskRunId: options.taskRunId,
               waitingFor: "user",
               reason: message || "等待用户回答"
-            }).then((taskRun) => emitLatestTaskProgress(threadId, taskRun));
+            });
           } else {
             void markTaskContractFallbackExecutionWaiting({
               sessionDir: resolveRuntimeSessionDir(threadId),
@@ -566,13 +450,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         {
           const toolRequest = request as { toolName?: string; reason?: string };
           if (options?.taskRunId) {
-            void markTaskRunWaiting({
-              sessionDir: resolveRuntimeSessionDir(threadId),
+            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
               threadId,
               taskRunId: options.taskRunId,
               waitingFor: "permission",
               reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
-            }).then((taskRun) => emitLatestTaskProgress(threadId, taskRun));
+            });
           } else {
             void markTaskContractFallbackExecutionWaiting({
               sessionDir: resolveRuntimeSessionDir(threadId),
@@ -592,10 +475,29 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     };
   };
 
+  runtimeOrchestrator = createRuntimeOrchestrator({
+    appendAgentMessage,
+    createAgentStreamEmitter,
+    notifyPlanModePhaseChange: context.notifyPlanModePhaseChange,
+    resolveRuntimeSessionDir,
+    writeRuntimeEvent: (threadId, event) => {
+      context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
+        threadId,
+        event
+      });
+    }
+  });
+
   const handlers: Record<string, RpcHandler> = {
     [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),
     [AGENT_IPC_CHANNELS.CREATE_THREAD]: async (params) => {
       const input = validateInput(agentCreateThreadInputSchema, params, AGENT_IPC_CHANNELS.CREATE_THREAD);
+      log.info("[Agent 线程] 创建", {
+        title: input.title,
+        workspaceId: input.workspaceId,
+        modelRef: input.modelRef,
+        channelId: input.channelId
+      });
       return createAgentThreadWithModelRef(
         input.title,
         input.modelRef,
@@ -609,19 +511,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES);
       return getAgentThreadMessages(input.threadId);
     },
-    [AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS]: async (params) => {
-      const input = validateInput(threadRunEventsInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS);
-      const sessionDir = resolveRuntimeSessionDir(input.threadId);
-      const runs = await createFileBackedLumeRunStateStore(sessionDir)
-        .listByThread(input.threadId);
-      const taskRuns = await createFileBackedTaskRunStore(sessionDir).listByThread(input.threadId);
-      return {
-        threadId: input.threadId,
-        events: [
-          ...runs.flatMap((run) => projectRunStateToRunEvents(run)),
-          ...taskRuns.flatMap((taskRun) => projectTaskRunToProgressEvents(taskRun))
-        ]
-      };
+    [AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS]: async (params) => {
+      const input = validateInput(threadRunEventsInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS);
+      return listThreadRuntimeEvents({
+        sessionDir: resolveRuntimeSessionDir(input.threadId),
+        threadId: input.threadId
+      });
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGE_VERSIONS]: async (params) => {
       const input = validateInput(
@@ -724,6 +619,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.DELETE_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.DELETE_THREAD);
+      log.info("[Agent 线程] 删除", { threadId: input.threadId.slice(0, 8) });
       deleteAgentThread(input.threadId);
       getAgentRuntimeStatusManager().clearSession(input.threadId);
       context.planModePhaseTracker.clearSession(input.threadId);
@@ -800,8 +696,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             }
           }
         }, {
-          onRunEvent: (event) => {
-            context.writeNotification(AGENT_IPC_CHANNELS.RUN_EVENT, {
+          onRuntimeEvent: (event) => {
+            context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
               threadId: state.threadId,
               event
             });
@@ -924,14 +820,19 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.LIST_WORKSPACES]: async () => listAgentWorkspaces(),
     [AGENT_IPC_CHANNELS.CREATE_WORKSPACE]: async (params) => {
       const input = validateInput(workspaceCreateInputSchema, params, AGENT_IPC_CHANNELS.CREATE_WORKSPACE);
-      return createAgentWorkspace(input.name);
+      const result = createAgentWorkspace(input.name);
+      log.info("[Agent 工作区] 创建", { name: input.name });
+      return result;
     },
     [AGENT_IPC_CHANNELS.UPDATE_WORKSPACE]: async (params) => {
       const input = validateInput(workspaceUpdateInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_WORKSPACE);
-      return updateAgentWorkspace(input.id, { name: input.name });
+      const result = updateAgentWorkspace(input.id, { name: input.name });
+      log.info("[Agent 工作区] 更新", { id: input.id, name: input.name });
+      return result;
     },
     [AGENT_IPC_CHANNELS.DELETE_WORKSPACE]: async (params) => {
       const input = validateInput(workspaceDeleteInputSchema, params, AGENT_IPC_CHANNELS.DELETE_WORKSPACE);
+      log.info("[Agent 工作区] 删除", { id: input.id });
       deleteAgentWorkspace(input.id);
       return { ok: true };
     },
@@ -1333,21 +1234,21 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       if (input.execute !== true) {
         return { ok };
       }
-      const execution = await dispatchTaskExecution({
+      const execution = await runtimeOrchestrator.dispatchTaskExecution({
         threadId: input.threadId,
         contractId: input.contractId,
         intent: "execute"
-      })();
+      });
       return { ok, execution };
     },
     [AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT]: async (params) => {
       const input = validateInput(executeTaskContractInputSchema, params, AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT);
-      return dispatchTaskExecution({
+      return runtimeOrchestrator.dispatchTaskExecution({
         threadId: input.threadId,
         contractId: input.contractId,
         permissionMode: input.permissionMode,
         intent: input.intent
-      })();
+      });
     },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
     "agent:read-bootstrap-file": async (params) => {
@@ -1362,14 +1263,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
       if (isPlanExecutionApprovalUserMessage(input.userMessage) && typeof input.messageMetadata?.planExecutionKey !== "string") {
-        const latestContinuableTaskContract = await resolveExecutableTaskContract({ threadId: input.threadId });
+        const latestContinuableTaskContract = await runtimeOrchestrator.resolveExecutableTaskContract({ threadId: input.threadId });
         if (latestContinuableTaskContract) {
-          return dispatchTaskExecution({
+          return runtimeOrchestrator.dispatchTaskExecution({
             threadId: input.threadId,
             contractId: latestContinuableTaskContract.id,
             permissionMode: input.permissionMode,
             intent: "continue"
-          })();
+          });
         }
       }
       const sendInput = await resolvePlanContinuationInput(input);
@@ -1423,65 +1324,4 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   };
 
   return handlers;
-}
-
-function taskContractRecordToTaskContract(contract: TaskContractRecord): TaskContract {
-  return {
-    id: contract.id,
-    runId: contract.runId,
-    threadId: contract.threadId,
-    goal: contract.goal,
-    summary: contract.summary,
-    tasks: contract.steps.map((step) => ({
-      id: step.id,
-      title: step.title,
-      description: step.description,
-      ...(step.expectedTools ? { expectedTools: step.expectedTools } : {}),
-      ...(step.expectedFiles ? { expectedFiles: step.expectedFiles } : {})
-    })),
-    risks: contract.risks,
-    expectedChanges: contract.expectedChanges,
-    status: contract.status === "approved" ? "approved" : contract.status === "cancelled" ? "rejected" : "draft",
-    createdAt: contract.createdAt,
-    updatedAt: contract.updatedAt,
-    ...(contract.approvedAt ? { approvedAt: contract.approvedAt } : {})
-  };
-}
-
-async function createTaskRunFromTaskContractRecord(sessionDir: string, contract: TaskContractRecord): Promise<TaskRun> {
-  const store = createFileBackedTaskRunStore(sessionDir);
-  const existing = await store.get(`taskrun-${contract.id}`);
-  if (existing) return existing;
-  const created = await createTaskRunFromContract({
-    sessionDir,
-    contract: taskContractRecordToTaskContract(contract)
-  });
-  const tasks = created.tasks.map((task) => {
-    const step = contract.steps.find((item) => item.id === task.id);
-    if (!step) return task;
-    return {
-      ...task,
-      status: step.status === "running" ? "running" as const : step.status,
-      attemptCount: step.attemptCount ?? task.attemptCount,
-      ...(step.result ? { result: step.result } : {}),
-      ...(step.error ? { error: step.error } : {}),
-      ...(step.startedAt ? { startedAt: step.startedAt } : {}),
-      ...(step.endedAt ? { endedAt: step.endedAt } : {}),
-      ...(step.blockedReason ? { blockedReason: step.blockedReason } : {})
-    };
-  });
-  const saved: TaskRun = {
-    ...created,
-    status: contract.status === "failed"
-      ? "failed"
-      : contract.status === "executing"
-        ? "running"
-        : contract.status === "completed"
-          ? "completed"
-          : "pending",
-    currentTaskId: contract.currentStepId,
-    tasks
-  };
-  await store.upsert(saved);
-  return saved;
 }

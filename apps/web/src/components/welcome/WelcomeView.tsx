@@ -10,13 +10,13 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
   activeTabIdAtom,
-  agentRunEventsAtom,
+  agentRuntimeEventsAtom,
   agentStreamingStatesAtom,
   agentPlanModePhaseAtom,
   welcomePromptSeedAtom,
 } from '@/atoms'
 import { sidecarCall, agentSend, openFileDialog } from '@/lib/desktop-api'
-import { appendRunEvent } from '@/hooks/run-event-state'
+import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
@@ -40,7 +40,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
   const setActiveTabId = useAtom(activeTabIdAtom)[1]
-  const setRunEvents = useSetAtom(agentRunEventsAtom)
+  const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setCurrentWorkspaceId = useAtom(currentWorkspaceIdAtom)[1]
@@ -173,13 +173,14 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         setPlanModePhase((prev) => ({ ...prev, [meta.id]: { threadId: meta.id, phase: 'planning' } }))
       }
 
-      setRunEvents((prev) => appendRunEvent(prev, {
+      const createdAt = new Date().toISOString()
+      setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
+        id: `optimistic:${meta.id}:${createdAt}`,
+        type: 'message.user.submitted',
         threadId: meta.id,
-        event: {
-          type: 'user_message_submitted',
-          text,
-          createdAt: new Date().toISOString(),
-        },
+        runId: `optimistic:${meta.id}:${createdAt}`,
+        createdAt,
+        text,
       }))
 
       await agentSend({

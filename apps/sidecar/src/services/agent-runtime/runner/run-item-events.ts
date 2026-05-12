@@ -1,19 +1,31 @@
-import type { LumeRunEvent } from "@lume/shared";
+import type { LumeRuntimeEvent } from "@lume/shared";
 import type { LumeRunItem } from "./run-items";
 import type { LumeRunState } from "./run-state";
 
-export function projectRunStateToRunEvents(run: LumeRunState): LumeRunEvent[] {
+export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEvent[] {
   if (isRuntimeContinuationRun(run)) {
     return [];
   }
-  const events: LumeRunEvent[] = [];
+  const events: LumeRuntimeEvent[] = [{
+    id: `${run.runId}:run.started`,
+    type: "run.started",
+    threadId: run.threadId,
+    runId: run.runId,
+    createdAt: run.createdAt,
+    workspaceId: run.workspaceId,
+    workspaceSlug: run.workspaceSlug,
+    model: run.model
+  }];
   const userMessage = typeof run.input.userMessage === "string" ? run.input.userMessage : "";
   if (userMessage.trim() && !isHiddenFromChatRun(run)) {
     const metadata = run.input.messageMetadata;
     events.push({
-      type: "user_message_submitted",
-      text: userMessage,
+      id: `${run.runId}:message.user.submitted`,
+      type: "message.user.submitted",
+      threadId: run.threadId,
+      runId: run.runId,
       createdAt: run.createdAt,
+      text: userMessage,
       ...(typeof metadata?.messageId === "string" ? { messageId: metadata.messageId } : {}),
       ...(typeof metadata?.versionGroupId === "string" ? { versionGroupId: metadata.versionGroupId } : {}),
       ...(typeof metadata?.versionIndex === "number" ? { versionIndex: metadata.versionIndex } : {}),
@@ -26,32 +38,47 @@ export function projectRunStateToRunEvents(run: LumeRunState): LumeRunEvent[] {
   );
 
   for (const item of run.generatedItems) {
-    const itemEvents = projectRunItemToRunEvents(item, {
+    events.push(...projectRunItemToRuntimeEvents(run, item, {
       includeAssistantText: true,
       includeAssistantThinking: true,
       includeModelStreamText: !hasAssistantMessage
-    });
-    events.push(...itemEvents);
+    }));
   }
 
   if (run.status === "completed") {
     events.push({
-      type: "run_completed",
-      result: {
-        status: "completed",
-        finalOutput: extractFinalOutput(run.generatedItems)
+      id: `${run.runId}:run.completed`,
+      type: "run.completed",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: run.completedAt ?? run.updatedAt,
+      finalOutput: extractFinalOutput(run.generatedItems)
+    });
+  }
+
+  if (run.status === "failed") {
+    events.push({
+      id: `${run.runId}:run.failed`,
+      type: "run.failed",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: run.completedAt ?? run.updatedAt,
+      error: {
+        code: run.error?.code ?? "runtime_error",
+        message: run.error?.message ?? "Run failed",
+        stack: run.error?.stack,
+        retryable: run.error?.retryable
       }
     });
   }
 
-  if (run.status === "failed" || run.status === "cancelled") {
+  if (run.status === "cancelled") {
     events.push({
-      type: "run_failed",
-      error: {
-        code: run.error?.code ?? run.status,
-        message: run.error?.message ?? (run.status === "cancelled" ? "Run cancelled" : "Run failed"),
-        retryable: run.error?.retryable
-      }
+      id: `${run.runId}:run.cancelled`,
+      type: "run.cancelled",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: run.completedAt ?? run.updatedAt
     });
   }
 
@@ -67,25 +94,35 @@ function isHiddenFromChatRun(run: LumeRunState): boolean {
   return run.input.messageMetadata?.hiddenFromChat === true;
 }
 
-export function projectRunItemToRunEvent(
+export function projectRunItemToRuntimeEvents(
+  run: LumeRunState,
   item: LumeRunItem,
   options: { includeAssistantText: boolean; includeAssistantThinking?: boolean; includeModelStreamText: boolean }
-): LumeRunEvent | null {
-  return projectRunItemToRunEvents(item, options)[0] ?? null;
-}
-
-export function projectRunItemToRunEvents(
-  item: LumeRunItem,
-  options: { includeAssistantText: boolean; includeAssistantThinking?: boolean; includeModelStreamText: boolean }
-): LumeRunEvent[] {
+): LumeRuntimeEvent[] {
   if (item.type === "assistant_message") {
-    const events: LumeRunEvent[] = [];
+    const events: LumeRuntimeEvent[] = [];
     for (const block of extractAssistantContentBlocks(item.content)) {
       if (block.kind === "thinking" && options.includeAssistantThinking !== false && block.text.trim()) {
-        events.push({ type: "assistant_thinking_delta", text: block.text });
+        events.push({
+          id: `${run.runId}:${item.id}:assistant.thinking_delta:${events.length}`,
+          type: "assistant.thinking_delta",
+          threadId: run.threadId,
+          runId: run.runId,
+          createdAt: item.createdAt,
+          delta: block.text,
+          messageId: item.id
+        });
       }
       if (block.kind === "text" && options.includeAssistantText && block.text.trim()) {
-        events.push({ type: "assistant_delta", text: block.text });
+        events.push({
+          id: `${run.runId}:${item.id}:assistant.delta:${events.length}`,
+          type: "assistant.delta",
+          threadId: run.threadId,
+          runId: run.runId,
+          createdAt: item.createdAt,
+          delta: block.text,
+          messageId: item.id
+        });
       }
     }
     return events;
@@ -96,31 +133,64 @@ export function projectRunItemToRunEvents(
     if (!delta || delta.text.length === 0) return [];
     if (delta.kind === "thinking" && !delta.text.trim()) return [];
     return [{
-      type: delta.kind === "thinking" ? "assistant_thinking_delta" : "assistant_delta",
-      text: delta.text
+      id: `${run.runId}:${item.id}:${delta.kind}`,
+      type: delta.kind === "thinking" ? "assistant.thinking_delta" : "assistant.delta",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      delta: delta.text
     }];
   }
 
   if (item.type === "tool_call") {
-    return [{ type: "tool_call_started", item }];
+    return [{
+      id: `${run.runId}:${item.id}:tool.started`,
+      type: "tool.started",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      toolCallId: item.id,
+      toolName: item.toolName,
+      inputPreview: item.input
+    }];
   }
 
   if (item.type === "tool_result") {
-    return [{ type: "tool_call_completed", item }];
-  }
-
-  if (item.type === "subagent") {
-    return [{ type: "subagent_updated", item }];
-  }
-
-  if (item.type === "handoff") {
-    return [{ type: "handoff_updated", item }];
+    const isError = item.isError === true;
+    if (isError) {
+      return [{
+        id: `${run.runId}:${item.id}:tool.failed`,
+        type: "tool.failed",
+        threadId: run.threadId,
+        runId: run.runId,
+        createdAt: item.createdAt,
+        toolCallId: item.toolCallId,
+        toolName: item.toolName,
+        error: {
+          code: "tool_error",
+          message: previewRuntimePayload(item.output)
+        }
+      }];
+    }
+    return [{
+      id: `${run.runId}:${item.id}:tool.completed`,
+      type: "tool.completed",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      toolCallId: item.toolCallId,
+      toolName: item.toolName,
+      resultPreview: previewRuntimePayload(item.output)
+    }];
   }
 
   return [];
 }
 
-export function projectAssistantMessageFinalEvent(item: LumeRunItem): LumeRunEvent | null {
+export function projectAssistantMessageFinalRuntimeEvent(
+  run: LumeRunState,
+  item: LumeRunItem
+): LumeRuntimeEvent | null {
   if (item.type !== "assistant_message") return null;
   const blocks = extractAssistantContentBlocks(item.content)
     .filter((block) => block.text.trim())
@@ -128,7 +198,16 @@ export function projectAssistantMessageFinalEvent(item: LumeRunItem): LumeRunEve
       type: block.kind,
       text: block.text
     }));
-  return blocks.length > 0 ? { type: "assistant_message_final", blocks } : null;
+  return blocks.length > 0
+    ? {
+        id: `${run.runId}:${item.id}:assistant.final`,
+        type: "assistant.final",
+        threadId: run.threadId,
+        runId: run.runId,
+        createdAt: item.createdAt,
+        blocks
+      }
+    : null;
 }
 
 function extractFinalOutput(items: LumeRunItem[]): string | undefined {
@@ -147,10 +226,6 @@ function extractFinalOutput(items: LumeRunItem[]): string | undefined {
     }
   }
   return undefined;
-}
-
-function extractModelStreamText(event: unknown): string {
-  return extractModelStreamDelta(event)?.text ?? "";
 }
 
 function extractModelStreamDelta(event: unknown): { kind: "text" | "thinking"; text: string } | null {
@@ -172,6 +247,16 @@ function extractText(content: unknown): string {
     .filter((block) => block.kind === "text")
     .map((block) => block.text)
     .join("");
+}
+
+function previewRuntimePayload(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function extractAssistantContentBlocks(content: unknown): Array<{ kind: "text" | "thinking"; text: string }> {

@@ -51,6 +51,15 @@ type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 const MIN_LEVEL: LogLevel = (process.env.LUME_LOG_LEVEL as LogLevel) || "info";
 const CONSOLE_ENABLED = process.env.LUME_LOG_CONSOLE !== "false";
 
+const LEVEL_ORDER: Record<LogLevel, number> = {
+  trace: 0,
+  debug: 1,
+  info: 2,
+  warn: 3,
+  error: 4,
+  fatal: 5
+};
+
 interface LoggerBackend {
   child(bindings: { context?: string; sessionId?: string }): LoggerBackend;
   trace(data: Record<string, unknown>, msg: string): void;
@@ -151,7 +160,7 @@ export function createLogger(context: string, sessionId?: string): Logger {
     data?: Record<string, unknown>
   ): void => {
     const payload = data ?? {};
-    if (CONSOLE_ENABLED) {
+    if (CONSOLE_ENABLED && LEVEL_ORDER[level] >= LEVEL_ORDER[MIN_LEVEL]) {
       emitConsoleLine(formatStructuredLogLine({
         source: LOG_SOURCE,
         context,

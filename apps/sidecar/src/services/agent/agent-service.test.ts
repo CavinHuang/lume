@@ -9,10 +9,17 @@ const runPiAgentCalls: unknown[] = [];
 
 function emitSuccessfulRun(emit: {
   onSdkMessage: (message: SDKMessage) => void;
-  onRunEvent?: (event: unknown) => void;
+  onRuntimeEvent?: (event: unknown) => void;
   onComplete: () => void;
 }): void {
-  emit.onRunEvent?.({ type: "assistant_delta", text: "mock assistant output" });
+  emit.onRuntimeEvent?.({
+    id: "runtime-1",
+    type: "assistant.delta",
+    threadId: "thread-1",
+    runId: "run-1",
+    createdAt: "2026-05-11T00:00:00.000Z",
+    delta: "mock assistant output"
+  });
   emit.onSdkMessage({
     type: "assistant",
     message: {
@@ -117,7 +124,7 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
     params: unknown,
     emit: {
       onSdkMessage: (message: SDKMessage) => void;
-      onRunEvent?: (event: unknown) => void;
+      onRuntimeEvent?: (event: unknown) => void;
       onComplete: () => void;
       onError: (error: string) => void;
     }
@@ -183,8 +190,14 @@ describe("agent-service", () => {
 
   afterEach(async () => {
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
+    const { resetAgentRuntimeKernelForTest, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
     const { closeMemoryManagers } = await import("../memory/memory-service");
+    const { drainServiceRuntimeForTest, resetServiceRuntimeForTest } = await import("../agent-runtime/service-runtime/service-runtime");
+    await waitForAgentRuntimeKernelIdleForTest();
+    await drainServiceRuntimeForTest();
     resetAgentRuntimeStatusManagerForTest();
+    resetAgentRuntimeKernelForTest();
+    resetServiceRuntimeForTest();
     closeMemoryManagers();
     heldRunResolvers.clear();
     runPiAgentCalls.length = 0;
@@ -204,7 +217,7 @@ describe("agent-service", () => {
     const { sendAgentMessage } = await import("./agent-service");
     const thread = createAgentThread("send lifecycle", "channel-test");
     const appended: AgentMessageAppendedEvent[] = [];
-    const runEvents: unknown[] = [];
+    const runtimeEvents: unknown[] = [];
 
     await sendAgentMessage({
       threadId: thread.id,
@@ -212,8 +225,8 @@ describe("agent-service", () => {
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
-      onRunEvent: (event) => {
-        runEvents.push(event);
+      onRuntimeEvent: (event) => {
+        runtimeEvents.push(event);
       },
       onMessageAppended: (event) => {
         appended.push(event);
@@ -229,7 +242,10 @@ describe("agent-service", () => {
     const sdkMessages = getAgentThreadSDKMessages(thread.id);
 
     expect(appended).toHaveLength(2);
-    expect(runEvents).toContainEqual({ type: "assistant_delta", text: "mock assistant output" });
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({
+      type: "assistant.delta",
+      delta: "mock assistant output"
+    }));
     expect(appended[0]?.message.role).toBe("user");
     expect(appended[0]?.message.sdkMessages?.[0]?.type).toBe("user");
     expect(appended[1]?.message.role).toBe("assistant");
@@ -246,7 +262,7 @@ describe("agent-service", () => {
     const { sendAgentMessage } = await import("./agent-service");
     const thread = createAgentThread("hidden plan control", "channel-test");
     const appended: AgentMessageAppendedEvent[] = [];
-    const runEvents: unknown[] = [];
+    const runtimeEvents: unknown[] = [];
 
     await sendAgentMessage({
       threadId: thread.id,
@@ -258,8 +274,8 @@ describe("agent-service", () => {
         planControlEvent: "continue_plan"
       }
     }, {
-      onRunEvent: (event) => {
-        runEvents.push(event);
+      onRuntimeEvent: (event) => {
+        runtimeEvents.push(event);
       },
       onMessageAppended: (event) => {
         appended.push(event);
@@ -272,7 +288,10 @@ describe("agent-service", () => {
     });
 
     expect(appended.some((event) => event.message.role === "user")).toBe(false);
-    expect(runEvents).toContainEqual({ type: "assistant_delta", text: "mock assistant output" });
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({
+      type: "assistant.delta",
+      delta: "mock assistant output"
+    }));
     expect(getAgentThreadMessages(thread.id).some((message) => message.role === "user")).toBe(false);
     expect(getAgentThreadSDKMessages(thread.id).map((message) => message.type)).toEqual(["assistant", "result"]);
   });
@@ -305,6 +324,7 @@ describe("agent-service", () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { createAgentWorkspace } = await import("./agent-workspace-manager");
     const { sendAgentMessage } = await import("./agent-service");
+    const { drainServiceRuntimeForTest } = await import("../agent-runtime/service-runtime/service-runtime");
     const { searchLayeredMemory } = await import("../memory/memory-service");
     const workspace = createAgentWorkspace("Memory Flush Workspace", { slug: "memory-flush-workspace" });
     const thread = createAgentThread("compaction memory flush", "channel-test", workspace.id);
@@ -322,6 +342,8 @@ describe("agent-service", () => {
       onAskUserQuestion: () => undefined,
       onToolPermissionRequest: () => undefined
     });
+
+    await drainServiceRuntimeForTest();
 
     const results = await searchLayeredMemory({
       workspaceSlug: workspace.slug,

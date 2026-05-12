@@ -19,7 +19,7 @@ import type {
   AgentGetMessageVersionsInput,
   AgentMessageVersionsResult,
   AgentMessage,
-  AgentThreadRunEventsResult,
+  AgentThreadRuntimeEventsResult,
 } from '@lume/shared'
 
 export const agentSend = (input: AgentSendInput) =>
@@ -40,9 +40,9 @@ export const listThreads = () =>
 export const createThread = (workspaceId?: string) =>
   invoke('sidecar_call', { method: AGENT_IPC_CHANNELS.CREATE_THREAD, params: { workspaceId } })
 
-export const getThreadRunEvents = (threadId: string) =>
-  invoke<AgentThreadRunEventsResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS,
+export const getThreadRuntimeEvents = (threadId: string) =>
+  invoke<AgentThreadRuntimeEventsResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS,
     params: { threadId },
   })
 

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { assertBridgeSmokeOutcome } from "./agent-runtime-bridges-smoke";
+import { assertInteractionSmokeOutcome } from "./agent-runtime-interactions-smoke";
 
-describe("agent-runtime-bridges-smoke helpers", () => {
-  test("assertBridgeSmokeOutcome 应校验 permission / ask-user / subagent completed 全链路结果", () => {
+describe("agent-runtime-interactions-smoke helpers", () => {
+  test("assertInteractionSmokeOutcome 应校验 permission / ask-user / subagent completed 全链路结果", () => {
     expect(() =>
-      assertBridgeSmokeOutcome({
+      assertInteractionSmokeOutcome({
         permissionRequest: { requestId: "perm-1", toolName: "write" },
         askUserRequest: { toolUseId: "ask-1", questions: [{ header: "范围" }] },
         statusPhases: ["awaiting_permission", "awaiting_user_answer", "completed"],

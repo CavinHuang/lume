@@ -1,52 +1,24 @@
-import type { LumeRunEvent } from '@lume/shared'
+import type { LumeRuntimeEvent } from '@lume/shared'
+import type {
+  RuntimeAssistantBlock,
+  RuntimeAssistantMessageView,
+  RuntimeMessageView,
+  RuntimeToolCallView,
+} from './runtime-message-view'
 
-export interface RunEventToolCallView {
-  id: string
-  toolName: string
-  input: unknown
-  status: 'running' | 'completed' | 'failed'
-  output?: unknown
-  isError?: boolean
-}
-
-export type RunEventAssistantBlock =
-  | { type: 'text'; id: string; text: string }
-  | { type: 'thinking'; id: string; text: string }
-  | { type: 'tool_call'; id: string; toolCall: RunEventToolCallView }
-  | { type: 'task_progress'; id: string; event: Extract<LumeRunEvent, { type: 'task_progress' }> }
-
-export interface RunEventAssistantMessageView {
-  id: string
-  type: 'assistant'
-  text: string
-  thinking: string
-  blocks: RunEventAssistantBlock[]
-  status: 'streaming' | 'completed' | 'failed'
-  error?: string
-  toolCalls: RunEventToolCallView[]
-}
-
-export interface RunEventUserMessageView {
-  id: string
-  type: 'user'
-  text: string
-  createdAt: string
-  messageId?: string
-  versionGroupId?: string
-  versionIndex?: number
-  versionCount?: number
-}
-
-export type RunEventMessageView = RunEventUserMessageView | RunEventAssistantMessageView
-
-export function projectRunEventMessages(events: LumeRunEvent[]): RunEventMessageView[] {
+export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): RuntimeMessageView[] {
   events = keepLatestVersionTurns(events)
-  const messages: RunEventMessageView[] = []
+  const messages: RuntimeMessageView[] = []
   let currentAssistant: MutableAssistantMessage | null = null
   let terminalClosed = false
 
-  events.forEach((event, index) => {
-    if (event.type === 'user_message_submitted') {
+  events.forEach((event) => {
+    if (event.type === 'run.started') {
+      terminalClosed = false
+      return
+    }
+
+    if (event.type === 'message.user.submitted') {
       flushAssistant(messages, currentAssistant)
       messages.push({
         id: event.messageId ?? `user:${event.createdAt}`,
@@ -58,14 +30,38 @@ export function projectRunEventMessages(events: LumeRunEvent[]): RunEventMessage
         ...(typeof event.versionIndex === 'number' ? { versionIndex: event.versionIndex } : {}),
         ...(typeof event.versionCount === 'number' ? { versionCount: event.versionCount } : {}),
       })
-      currentAssistant = createAssistantMessage(`assistant:${event.createdAt}`)
+      currentAssistant = createAssistantMessage(`assistant:${event.runId}`)
       terminalClosed = false
       return
     }
 
-    if (event.type === 'task_progress') {
+    if (terminalClosed) {
+      return
+    }
+
+    if (event.type === 'assistant.delta') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      currentAssistant.text += event.delta
+      appendAssistantTextBlock(currentAssistant, event.delta)
+      return
+    }
+
+    if (event.type === 'assistant.thinking_delta') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      currentAssistant.thinking += event.delta
+      appendAssistantThinkingBlock(currentAssistant, event.delta)
+      return
+    }
+
+    if (event.type === 'assistant.final') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      replaceAssistantContentBlocks(currentAssistant, event.blocks)
+      return
+    }
+
+    if (event.type === 'task.progress') {
       if (terminalClosed || !currentAssistant) {
-        currentAssistant = createAssistantMessage(`assistant:task:${event.createdAt}`)
+        currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}`)
       }
       terminalClosed = false
       currentAssistant.blocks.push({
@@ -77,70 +73,47 @@ export function projectRunEventMessages(events: LumeRunEvent[]): RunEventMessage
       return
     }
 
-    if (terminalClosed) {
-      return
-    }
-
-    if (event.type === 'assistant_delta') {
-      currentAssistant ??= createAssistantMessage(`assistant:${index}`)
-      currentAssistant.text += event.text
-      appendAssistantTextBlock(currentAssistant, event.text)
-      return
-    }
-
-    if (event.type === 'assistant_thinking_delta') {
-      currentAssistant ??= createAssistantMessage(`assistant:${index}`)
-      currentAssistant.thinking += event.text
-      appendAssistantThinkingBlock(currentAssistant, event.text)
-      return
-    }
-
-    if (event.type === 'assistant_message_final') {
-      currentAssistant ??= createAssistantMessage(`assistant:${index}`)
-      replaceAssistantContentBlocks(currentAssistant, event.blocks)
-      return
-    }
-
-    if (event.type === 'tool_call_started') {
-      currentAssistant ??= createAssistantMessage(`assistant:${index}`)
-      const toolCall: RunEventToolCallView = {
-        id: event.item.id,
-        toolName: event.item.toolName,
-        input: event.item.input,
+    if (event.type === 'tool.started') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      const toolCall: RuntimeToolCallView = {
+        id: event.toolCallId,
+        toolName: event.toolName,
+        input: event.inputPreview ?? {},
         status: 'running',
       }
-      currentAssistant.toolCalls.set(event.item.id, toolCall)
-      currentAssistant.toolBlockIds.set(event.item.id, currentAssistant.blocks.length)
-      currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.item.id}`, toolCall })
+      currentAssistant.toolCalls.set(event.toolCallId, toolCall)
+      currentAssistant.toolBlockIds.set(event.toolCallId, currentAssistant.blocks.length)
+      currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall })
       currentAssistant.currentContentSegmentStart = currentAssistant.blocks.length
       return
     }
 
-    if (event.type === 'tool_call_completed') {
-      currentAssistant ??= createAssistantMessage(`assistant:${index}`)
-      const existing = currentAssistant.toolCalls.get(event.item.toolCallId)
-      const toolCall: RunEventToolCallView = {
-        id: event.item.toolCallId,
-        toolName: event.item.toolName ?? existing?.toolName ?? event.item.toolCallId,
+    if (event.type === 'tool.completed' || event.type === 'tool.failed') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      const existing = currentAssistant.toolCalls.get(event.toolCallId)
+      const isError = event.type === 'tool.failed'
+      const toolCall: RuntimeToolCallView = {
+        id: event.toolCallId,
+        toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
         input: existing?.input ?? {},
-        status: event.item.isError ? 'failed' : 'completed',
-        output: event.item.output,
-        isError: event.item.isError === true,
+        status: isError ? 'failed' : 'completed',
+        output: isError ? event.error.message : event.resultPreview,
+        isError,
       }
-      currentAssistant.toolCalls.set(event.item.toolCallId, toolCall)
-      const blockIndex = currentAssistant.toolBlockIds.get(event.item.toolCallId)
+      currentAssistant.toolCalls.set(event.toolCallId, toolCall)
+      const blockIndex = currentAssistant.toolBlockIds.get(event.toolCallId)
       if (blockIndex === undefined) {
-        currentAssistant.toolBlockIds.set(event.item.toolCallId, currentAssistant.blocks.length)
-        currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.item.toolCallId}`, toolCall })
+        currentAssistant.toolBlockIds.set(event.toolCallId, currentAssistant.blocks.length)
+        currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall })
         currentAssistant.currentContentSegmentStart = currentAssistant.blocks.length
       } else {
-        currentAssistant.blocks[blockIndex] = { type: 'tool_call', id: `tool:${event.item.toolCallId}`, toolCall }
+        currentAssistant.blocks[blockIndex] = { type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall }
       }
       return
     }
 
-    if (event.type === 'run_completed') {
-      currentAssistant ??= createAssistantMessage(`assistant:${index}`)
+    if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
       currentAssistant.status = 'completed'
       flushAssistant(messages, currentAssistant)
       currentAssistant = null
@@ -148,10 +121,10 @@ export function projectRunEventMessages(events: LumeRunEvent[]): RunEventMessage
       return
     }
 
-    if (event.type === 'run_failed') {
-      currentAssistant ??= createAssistantMessage(`assistant:${index}`)
+    if (event.type === 'run.failed' || event.type === 'run.cancelled') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
       currentAssistant.status = 'failed'
-      currentAssistant.error = event.error.message
+      currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
       flushAssistant(messages, currentAssistant)
       currentAssistant = null
       terminalClosed = true
@@ -162,11 +135,11 @@ export function projectRunEventMessages(events: LumeRunEvent[]): RunEventMessage
   return messages
 }
 
-function keepLatestVersionTurns(events: LumeRunEvent[]): LumeRunEvent[] {
+function keepLatestVersionTurns(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
   const latestTurnByGroup = new Map<string, number>()
   let turnIndex = -1
   for (const event of events) {
-    if (event.type !== 'user_message_submitted') continue
+    if (event.type !== 'message.user.submitted') continue
     turnIndex += 1
     if (!event.versionGroupId) continue
     const current = latestTurnByGroup.get(event.versionGroupId)
@@ -176,10 +149,10 @@ function keepLatestVersionTurns(events: LumeRunEvent[]): LumeRunEvent[] {
   }
   if (latestTurnByGroup.size === 0) return events
 
-  const filtered: LumeRunEvent[] = []
+  const filtered: LumeRuntimeEvent[] = []
   let includeCurrentTurn = true
   for (const event of events) {
-    if (event.type === 'user_message_submitted') {
+    if (event.type === 'message.user.submitted') {
       includeCurrentTurn = !event.versionGroupId
         || latestTurnByGroup.get(event.versionGroupId) === (event.versionIndex ?? 0)
     }
@@ -194,11 +167,11 @@ interface MutableAssistantMessage {
   id: string
   text: string
   thinking: string
-  status: RunEventAssistantMessageView['status']
+  status: RuntimeAssistantMessageView['status']
   error?: string
-  toolCalls: Map<string, RunEventToolCallView>
+  toolCalls: Map<string, RuntimeToolCallView>
   toolBlockIds: Map<string, number>
-  blocks: RunEventAssistantBlock[]
+  blocks: RuntimeAssistantBlock[]
   currentContentSegmentStart: number
 }
 
@@ -234,20 +207,10 @@ function appendAssistantThinkingBlock(assistant: MutableAssistantMessage, text: 
     last.text += text
     return
   }
-
   assistant.blocks.push({
     type: 'thinking',
     id: `thinking:${assistant.blocks.length}`,
     text,
-  })
-}
-
-function reindexToolBlocks(assistant: MutableAssistantMessage): void {
-  assistant.toolBlockIds.clear()
-  assistant.blocks.forEach((block, index) => {
-    if (block.type === 'tool_call') {
-      assistant.toolBlockIds.set(block.toolCall.id, index)
-    }
   })
 }
 
@@ -278,19 +241,28 @@ function replaceAssistantContentBlocks(
   recomputeAssistantContent(assistant)
 }
 
+function reindexToolBlocks(assistant: MutableAssistantMessage): void {
+  assistant.toolBlockIds.clear()
+  assistant.blocks.forEach((block, index) => {
+    if (block.type === 'tool_call') {
+      assistant.toolBlockIds.set(block.toolCall.id, index)
+    }
+  })
+}
+
 function recomputeAssistantContent(assistant: MutableAssistantMessage): void {
   assistant.text = assistant.blocks
-    .filter((block): block is Extract<RunEventAssistantBlock, { type: 'text' }> => block.type === 'text')
+    .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'text' }> => block.type === 'text')
     .map((block) => block.text)
     .join('')
   assistant.thinking = assistant.blocks
-    .filter((block): block is Extract<RunEventAssistantBlock, { type: 'thinking' }> => block.type === 'thinking')
+    .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'thinking' }> => block.type === 'thinking')
     .map((block) => block.text)
     .join('')
 }
 
 function flushAssistant(
-  messages: RunEventMessageView[],
+  messages: RuntimeMessageView[],
   assistant: MutableAssistantMessage | null,
 ): void {
   if (!assistant) return

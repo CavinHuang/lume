@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getRuntimeCoreSessionDir } from "../../runtime-core/session-store";
-import { createFileBackedLumeInterruptionStore } from "../../../agent-runtime/interruption/interruption-store";
-import { createFileBackedRunContinuationStore } from "../../../agent-runtime/runner/run-continuation-store";
+import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
+import { createFileBackedLumeInterruptionStore } from "./interruption-store";
+import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import {
   isToolAlwaysAllowed,
   listPendingToolPermissionRequests,
@@ -12,9 +12,9 @@ import {
   setToolPermissionApprovalSession,
   submitToolPermissionDecision,
   waitForToolPermissionDecision
-} from "./tool-permission-bridge";
+} from "./tool-permission-session";
 
-describe("tool-permission-bridge", () => {
+describe("tool-permission-session", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
 
   afterEach(() => {

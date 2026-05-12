@@ -9,6 +9,7 @@ import { persistTaskApprovalInterruption } from "../services/agent-runtime/plan/
 import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
+import { createFileBackedTaskRunStore } from "../services/agent-runtime/task-run/task-run-store";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
 
@@ -145,6 +146,31 @@ describe("agent-handlers runtime state", () => {
       createdAt: "2026-04-30T00:00:00.000Z",
       updatedAt: "2026-04-30T00:00:00.000Z"
     });
+    await createFileBackedTaskRunStore(sessionDir).upsert({
+      id: "taskrun-1",
+      contractId: "plan-1",
+      runId,
+      threadId,
+      goal: "Finish runtime state",
+      summary: "Expose task progress",
+      status: "running",
+      currentTaskId: "step-1",
+      tasks: [{
+        id: "step-1",
+        title: "Read plan",
+        description: "Read plan",
+        status: "running",
+        attemptCount: 1
+      }],
+      events: [{
+        type: "task_started",
+        taskRunId: "taskrun-1",
+        taskId: "step-1",
+        createdAt: "2026-04-30T00:00:02.000Z"
+      }],
+      createdAt: "2026-04-30T00:00:02.000Z",
+      updatedAt: "2026-04-30T00:00:02.000Z"
+    });
     const planNeedingApproval = {
       id: "plan-needs-approval",
       runId,
@@ -197,12 +223,14 @@ describe("agent-handlers runtime state", () => {
       }]
     });
 
-    const runEvents = await handlers[AGENT_IPC_CHANNELS.GET_THREAD_RUN_EVENTS]!({ threadId });
-    expect(runEvents).toMatchObject({
+    const runtimeEvents = await handlers[AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS]!({ threadId });
+    expect(runtimeEvents).toMatchObject({
       threadId,
       events: [
-        { type: "user_message_submitted", text: "resume me" },
-        { type: "assistant_delta", text: "historical answer" }
+        { type: "run.started", threadId, runId },
+        { type: "message.user.submitted", text: "resume me", threadId, runId },
+        { type: "assistant.delta", delta: "historical answer", threadId, runId },
+        { type: "task.progress", taskRunId: "taskrun-1", threadId, runId }
       ]
     });
 

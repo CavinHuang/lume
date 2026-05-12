@@ -1,15 +1,16 @@
 import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentRunEventsAtom, agentSubagentRunsAtom } from '@/atoms'
+import { agentRuntimeEventsAtom, agentSubagentRunsAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useScrollPositionMemory } from '@/hooks/useScrollPositionMemory'
-import { getThreadMessages, getThreadRunEvents, sidecarCall } from '@/lib/desktop-api'
+import { getThreadMessages, getThreadRuntimeEvents, sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, type AgentListSubagentRunsResult, type AgentMessage } from '@lume/shared'
 import { cn } from '@/lib/utils'
-import { hydrateRunEvents } from '@/hooks/run-event-state'
-import { projectRunEventMessages, type RunEventMessageView } from './run-event-message-projection'
-import { RunEventContentBlock } from './RunEventContentBlock'
+import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
+import type { RuntimeMessageView } from './runtime-message-view'
+import { projectRuntimeEventMessages } from './runtime-event-message-projection'
+import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
 
 interface AgentMessagesProps {
   threadId: string
@@ -23,9 +24,9 @@ function isNearBottom(el: HTMLElement | null): boolean {
 }
 
 export function reconcileUserMessageVersions(
-  messages: RunEventMessageView[],
+  messages: RuntimeMessageView[],
   visibleThreadMessages: AgentMessage[],
-): RunEventMessageView[] {
+): RuntimeMessageView[] {
   const visibleUsers = visibleThreadMessages.filter((message) => message.role === 'user')
   if (visibleUsers.length === 0) return messages
   const usedVisibleIds = new Set<string>()
@@ -61,14 +62,14 @@ export function reconcileUserMessageVersions(
 }
 
 export function AgentMessages({ threadId, streaming, onOpenThreadFile }: AgentMessagesProps) {
-  const liveRunEvents = useAtomValue(agentRunEventsAtom)[threadId]?.events ?? []
-  const setRunEvents = useSetAtom(agentRunEventsAtom)
+  const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
+  const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const prevThreadIdRef = useRef(threadId)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
-  const loadedRunEventThreadsRef = useRef<Set<string>>(new Set())
+  const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
   const wasNearBottomRef = useRef(true)
   const prevStreamingRef = useRef(streaming)
   const pendingRestoreThreadIdRef = useRef<string | null>(threadId)
@@ -83,7 +84,11 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile }: AgentMe
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
 
   const { save, restore, hasSavedPosition } = useScrollPositionMemory()
-  const projectedMessages = useMemo(() => projectRunEventMessages(liveRunEvents), [liveRunEvents])
+  const projectedMessages = useMemo(() => (
+    runtimeEvents.length > 0
+      ? projectRuntimeEventMessages(runtimeEvents)
+      : []
+  ), [runtimeEvents])
   const liveMessages = useMemo(
     () => reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
     [projectedMessages, visibleThreadMessages],
@@ -240,17 +245,17 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile }: AgentMe
   }, [threadId, setSubagentRuns])
 
   useEffect(() => {
-    if (liveRunEvents.length > 0 || loadedRunEventThreadsRef.current.has(threadId)) return
-    loadedRunEventThreadsRef.current.add(threadId)
-    getThreadRunEvents(threadId)
+    if (runtimeEvents.length > 0 || loadedRuntimeEventThreadsRef.current.has(threadId)) return
+    loadedRuntimeEventThreadsRef.current.add(threadId)
+    getThreadRuntimeEvents(threadId)
       .then((result) => {
-        setRunEvents((prev) => hydrateRunEvents(prev, result))
+        setRuntimeEvents((prev) => hydrateRuntimeEvents(prev, result))
       })
       .catch((err) => {
-        console.error('[AgentMessages] 加载 run events 失败:', err)
-        loadedRunEventThreadsRef.current.delete(threadId)
+        console.error('[AgentMessages] 加载 runtime events 失败:', err)
+        loadedRuntimeEventThreadsRef.current.delete(threadId)
       })
-  }, [liveRunEvents.length, setRunEvents, threadId])
+  }, [runtimeEvents.length, setRuntimeEvents, threadId])
 
   useEffect(() => {
     getThreadMessages(threadId)
@@ -364,8 +369,8 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile }: AgentMe
   for (let i = 0; i < liveMessages.length; i++) {
     const msg = liveMessages[i]
     items.push(
-      <RunEventContentBlock
-        key={`run-event-${msg.id}`}
+      <RuntimeEventContentBlock
+        key={`runtime-event-${msg.id}`}
         message={msg}
         animate={streaming && i === liveMessages.length - 1}
         threadId={threadId}

@@ -1,60 +1,36 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  buildLiveRunEventRows,
+  buildLiveRuntimeEventRows,
   buildRunRows,
   buildTraceRows,
   getDefaultRunId,
 } from './runtime-state-projections'
-import type { AgentRunTrace, AgentRunStateSummary } from '@lume/shared'
+import type { AgentRunTrace, AgentRunStateSummary, LumeRuntimeEvent } from '@lume/shared'
 
 describe('runtime-state projections', () => {
-  test('maps live run events into readable rows', () => {
-    expect(buildLiveRunEventRows([
-      { type: 'assistant_delta', text: 'hello' },
-      { type: 'assistant_thinking_delta', text: 'thinking' },
+  test('maps live runtime events into readable rows', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+    expect(buildLiveRuntimeEventRows([
+      { ...base, id: 'event-1', type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash' },
       {
-        type: 'tool_call_started',
-        item: {
-          type: 'tool_call',
-          id: 'tool-1',
-          toolName: 'Bash',
-          input: {},
-          parentAgentId: 'root',
-          status: 'running',
-          createdAt: '2026-04-30T00:00:00.000Z',
-        },
+        ...base,
+        id: 'event-2',
+        type: 'task.progress',
+        taskRunId: 'taskrun-1',
+        contractId: 'contract-1',
+        status: 'running',
+        tasks: [],
+        message: '开始执行：Patch',
       },
-      {
-        type: 'subagent_updated',
-        item: {
-          type: 'subagent',
-          id: 'subagent-item-1',
-          runId: 'subagent-run-1',
-          task: 'Review runtime boundaries',
-          status: 'running',
-          childThreadId: 'child-thread',
-          createdAt: '2026-04-30T00:00:00.000Z',
-        },
-      },
-      {
-        type: 'handoff_updated',
-        item: {
-          type: 'handoff',
-          id: 'handoff-1',
-          fromAgentId: 'root',
-          toAgentId: 'reviewer',
-          status: 'completed',
-          createdAt: '2026-04-30T00:00:00.000Z',
-        },
-      },
-      { type: 'run_failed', error: { code: 'failed', message: 'boom' } },
-    ])).toEqual([
-      { id: '0:assistant_delta', label: 'Assistant delta', detail: 'hello', tone: 'neutral' },
-      { id: '1:assistant_thinking_delta', label: 'Thinking delta', detail: 'thinking', tone: 'neutral' },
-      { id: '2:tool_call_started', label: 'Tool started', detail: 'Bash', tone: 'active' },
-      { id: '3:subagent_updated', label: 'Subagent', detail: 'running: Review runtime boundaries', tone: 'active' },
-      { id: '4:handoff_updated', label: 'Handoff', detail: 'completed: root -> reviewer', tone: 'success' },
-      { id: '5:run_failed', label: 'Run failed', detail: 'boom', tone: 'danger' },
+      { ...base, id: 'event-3', type: 'run.failed', error: { code: 'failed', message: 'boom' } },
+    ] satisfies LumeRuntimeEvent[])).toEqual([
+      { id: 'event-1:0', label: 'Tool started', detail: 'Bash', tone: 'active' },
+      { id: 'event-2:1', label: 'Task progress', detail: '开始执行：Patch', tone: 'active' },
+      { id: 'event-3:2', label: 'Run failed', detail: 'boom', tone: 'danger' },
     ])
   })
 

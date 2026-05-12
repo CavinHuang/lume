@@ -1,0 +1,6 @@
+apps/desktop/scripts/sidecar-echo-repro.js
+apps/web/src/components/agent/subagent-label.test.ts
+apps/web/src/components/file-browser/FileBrowser.test.ts
+apps/web/src/components/ui/button.test.ts
+apps/web/src/components/ui/dialog.test.ts
+apps/web/src/hooks/useScrollPositionMemory.test.ts

@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { reconcileUserMessageVersions, type RunEventMessageView } from './AgentMessages'
+import { reconcileUserMessageVersions } from './AgentMessages'
+import type { RuntimeMessageView } from './runtime-message-view'
 import type { AgentMessage } from '@lume/shared'
 
 describe('reconcileUserMessageVersions', () => {
-  test('keeps unmatched run-event turns stable while enriching matched user messages', () => {
-    const messages: RunEventMessageView[] = [
+  test('keeps unmatched runtime turns stable while enriching matched user messages', () => {
+    const messages: RuntimeMessageView[] = [
       {
         id: 'user:1',
         type: 'user',

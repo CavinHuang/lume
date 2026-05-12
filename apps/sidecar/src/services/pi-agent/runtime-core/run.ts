@@ -48,7 +48,7 @@ import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createLumePiTools } from "../tools/create-lume-tools";
-import { applyPiToolPolicies } from "../tools/permissions/tool-policy";
+import { resolveEffectiveToolPolicies } from "../tools/permissions/tool-policy";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
@@ -62,6 +62,9 @@ import { ContextAssembler } from "../../agent-runtime/context/context-assembler"
 import type { ContextAssemblyInput } from "../../agent-runtime/context/context-assembler";
 import { createTaskContractWriteTool } from "../../agent-runtime/plan/task-contract-write-tool";
 import { createTaskReportTool } from "../../agent-runtime/task-run/task-report-tool";
+import { ToolRegistry } from "../../agent-runtime/tools/tool-registry";
+import { ToolResolver } from "../../agent-runtime/tools/tool-resolver";
+import { createToolDescriptorsFromDefinitions } from "../../agent-runtime/tools/tool-source";
 import type { TaskContractRecord } from "../../agent-runtime/plan/task-contract-record-types";
 
 const log = createLogger("runtime-core-prompt");
@@ -540,13 +543,11 @@ function buildRuntimeCoreTools(input: {
 
   const policyInput = {
     provider: input.provider,
+    workspaceSlug: input.workspaceSlug,
     threadType: input.threadType,
     chatType: input.chatType,
     messageMetadata: input.messageMetadata
   };
-
-  const customTools = applyPiToolPolicies(lumeTools.customTools as unknown as any[], policyInput) as unknown as ToolDefinition[];
-  const filteredBaseTools = applyPiToolPolicies(baseTools as unknown as any[], policyInput) as unknown as ToolDefinition[];
 
   const sidecarAgentTool: ToolDefinition = {
     ...AgentTool,
@@ -652,13 +653,19 @@ function buildRuntimeCoreTools(input: {
     }
   };
 
-  const tools = [
-    ...filteredBaseTools,
-    planWriteTool,
-    taskReportTool,
-    ...customTools,
-    sidecarAgentTool
-  ];
+  const registry = new ToolRegistry();
+  registry.registerMany(createToolDescriptorsFromDefinitions(baseTools, "sdk"));
+  registry.registerMany(createToolDescriptorsFromDefinitions([planWriteTool], "plan"));
+  registry.registerMany(createToolDescriptorsFromDefinitions([taskReportTool], "task"));
+  registry.registerMany(createToolDescriptorsFromDefinitions(lumeTools.customTools as ToolDefinition[], "lume"));
+  registry.registerMany(createToolDescriptorsFromDefinitions([sidecarAgentTool], "task"));
+  const tools = new ToolResolver(registry)
+    .resolve({
+      permissionMode,
+      messageMetadata: input.messageMetadata,
+      policies: resolveEffectiveToolPolicies(policyInput)
+    })
+    .map((descriptor) => descriptor.definition);
 
   return {
     tools,

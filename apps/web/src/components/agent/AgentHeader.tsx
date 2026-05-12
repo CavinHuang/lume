@@ -1,7 +1,7 @@
 import { useAtom, useAtomValue } from 'jotai'
 import { ActivitySquare, FolderOpen, ListTodo } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentRunEventsAtom, agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, type SidePanelView } from '@/atoms'
+import { agentRuntimeEventsAtom, agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, type SidePanelView } from '@/atoms'
 import { WorkspacePicker } from './WorkspacePicker'
 import type { AgentRuntimePhase } from '@lume/shared'
 
@@ -23,7 +23,7 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const thread = threads.find((t) => t.id === threadId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusAtom)[threadId]
-  const runEvents = useAtomValue(agentRunEventsAtom)[threadId]?.events ?? []
+  const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
   const currentView = sidePanelViews[threadId] ?? null
 
@@ -40,7 +40,7 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
   const phase = runtimeStatus?.phase
   const phaseStyle = phase && phase !== 'idle' ? PHASE_STYLE[phase] : null
 
-  const toolStepCount = runEvents.filter((event) => event.type === 'tool_call_started').length
+  const toolStepCount = runtimeEvents.filter((event) => event.type === 'tool.started').length
 
   const isStreaming = phase === 'streaming'
   const toolName = runtimeStatus?.toolName

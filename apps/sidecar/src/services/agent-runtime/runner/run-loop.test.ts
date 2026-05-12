@@ -111,18 +111,28 @@ describe("runtime-core run loop", () => {
     expect(normalizeRuntimeCoreQueryPermissionMode("default")).toBe("default");
   });
 
-  test("observed emitter emits run events from observer-recorded run items", () => {
-    const runEvents: unknown[] = [];
+  test("observed emitter emits runtime events from observer-recorded run items", () => {
+    const runtimeEvents: unknown[] = [];
     const sdkMessages: SDKMessage[] = [];
     const observer = {
-      recordSdkMessage: (_message: SDKMessage, emitRunEvent?: (event: unknown) => void) => {
-        emitRunEvent?.({ type: "assistant_delta", text: "from run item" });
+      recordSdkMessage: (
+        _message: SDKMessage,
+        emitRuntimeEvent?: (event: unknown) => void
+      ) => {
+        emitRuntimeEvent?.({
+          id: "runtime-1",
+          type: "assistant.delta",
+          threadId: "thread-1",
+          runId: "run-1",
+          createdAt: "2026-05-11T00:00:00.000Z",
+          delta: "from run item"
+        });
       }
     } as unknown as LumeRunObserver;
 
     const emit = createObservedRuntimeEmitter({
       onSdkMessage: (message) => sdkMessages.push(message),
-      onRunEvent: (event) => runEvents.push(event),
+      onRuntimeEvent: (event) => runtimeEvents.push(event),
       onComplete: () => undefined,
       onError: () => undefined,
       onAskUserQuestion: () => undefined,
@@ -136,6 +146,13 @@ describe("runtime-core run loop", () => {
     emit.onSdkMessage(message);
 
     expect(sdkMessages).toEqual([message]);
-    expect(runEvents).toEqual([{ type: "assistant_delta", text: "from run item" }]);
+    expect(runtimeEvents).toEqual([{
+      id: "runtime-1",
+      type: "assistant.delta",
+      threadId: "thread-1",
+      runId: "run-1",
+      createdAt: "2026-05-11T00:00:00.000Z",
+      delta: "from run item"
+    }]);
   });
 });

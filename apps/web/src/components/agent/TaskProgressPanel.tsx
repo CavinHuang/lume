@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
-import { agentRunEventsAtom } from '@/atoms'
+import { agentRuntimeEventsAtom } from '@/atoms'
 import { cn } from '@/lib/utils'
 import { executeTaskContract, listTaskContracts } from '@/lib/desktop-api'
 import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, SkipForward, XCircle } from 'lucide-react'
 
-import type { AgentTaskContract, AgentTaskContractItem, AgentTaskRunTask, LumeRunEvent } from '@lume/shared'
+import type { AgentTaskContract, AgentTaskContractItem, AgentTaskRunTask, LumeRuntimeEvent } from '@lume/shared'
 
 interface TaskProgressPanelProps {
   threadId: string
@@ -51,7 +51,7 @@ export function shouldShowTaskEmptyState(
 
 export function getTaskProgressItems(
   contract: AgentTaskContract | undefined,
-  progress: Extract<LumeRunEvent, { type: 'task_progress' }> | undefined,
+  progress: Extract<LumeRuntimeEvent, { type: 'task.progress' }> | undefined,
 ): Array<AgentTaskContractItem | AgentTaskRunTask> {
   if (progress) return progress.tasks
   if (contract?.status === 'needs_approval') return []
@@ -59,21 +59,21 @@ export function getTaskProgressItems(
 }
 
 export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
-  const runEventState = useAtomValue(agentRunEventsAtom)[threadId]
+  const runtimeEventState = useAtomValue(agentRuntimeEventsAtom)[threadId]
   const activeItemRef = useRef<HTMLDivElement>(null)
   const [taskContracts, setTaskContracts] = useState<AgentTaskContract[]>([])
   const [continueBusy, setContinueBusy] = useState(false)
 
   const taskRefreshKey = useMemo(() => {
-    return (runEventState?.events ?? [])
+    return (runtimeEventState?.events ?? [])
       .filter((event) => (
-        event.type === 'run_completed'
-        || event.type === 'task_progress'
-        || (event.type === 'tool_call_completed' && event.item.toolName === 'TaskContractWrite')
+        event.type === 'run.completed'
+        || event.type === 'task.progress'
+        || (event.type === 'tool.completed' && event.toolName === 'TaskContractWrite')
       ))
-      .map((event) => event.type === 'tool_call_completed' ? event.item.createdAt : event.type === 'task_progress' ? event.createdAt : event.type)
+      .map((event) => `${event.type}:${event.createdAt}`)
       .join('|')
-  }, [runEventState?.events])
+  }, [runtimeEventState?.events])
 
   const loadTaskContracts = useCallback(() => {
     let cancelled = false
@@ -95,9 +95,9 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
   useEffect(() => loadTaskContracts(), [loadTaskContracts, taskRefreshKey])
 
   const latestTaskContract = [...taskContracts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-  const latestTaskProgress = [...(runEventState?.events ?? [])]
+  const latestTaskProgress = [...(runtimeEventState?.events ?? [])]
     .reverse()
-    .find((event): event is Extract<LumeRunEvent, { type: 'task_progress' }> => event.type === 'task_progress')
+    .find((event): event is Extract<LumeRuntimeEvent, { type: 'task.progress' }> => event.type === 'task.progress')
   const progressItems = getTaskProgressItems(latestTaskContract, latestTaskProgress)
   const completedCount = progressItems.filter((item) => item.status === 'completed' || item.status === 'skipped').length
   const failedCount = progressItems.filter((item) => item.status === 'failed').length

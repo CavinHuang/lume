@@ -10,21 +10,16 @@ import {
   markToolAlwaysAllowed,
   setToolPermissionApprovalSession,
   waitForToolPermissionDecision
-} from "../tools/bridges/tool-permission-bridge";
-import {
-  getToolMetadata,
-  inferToolMetadata,
-  isToolAllowedInPlanMode
-} from "../tools/permissions/tool-metadata";
+} from "../../agent-runtime/interruption/tool-permission-session";
 import {
   setAskUserQuestionApprovalSession,
   waitForPiAskUserQuestionAnswers
-} from "../tools/bridges/ask-user-question-bridge";
+} from "../../agent-runtime/interruption/ask-user-question-session";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import { builtinToolInputGuardrails } from "../../agent-runtime/guardrails/builtin-tool-guardrails";
 import { LumeGuardrailRunner } from "../../agent-runtime/guardrails/guardrail-runner";
 import { LumeRunner } from "../../agent-runtime/runner/lume-runner";
-import { evaluateToolApprovalPolicy } from "../../agent-runtime/tools/tool-policy";
+import { ToolExecutionGateway } from "../../agent-runtime/tools/tool-execution-gateway";
 import { prepareRuntimeCoreAttempt, type PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 import { persistToolApprovalInterruption } from "../../agent-runtime/interruption/approval-service";
 
@@ -35,6 +30,7 @@ interface RunRuntimeCoreAttemptOptions {
 
 const log = createLogger("pi-agent-runtime-core-attempt");
 const toolInputGuardrails = new LumeGuardrailRunner(builtinToolInputGuardrails);
+const toolExecutionGateway = new ToolExecutionGateway({ guardrails: toolInputGuardrails });
 
 function sanitizeToolInput(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object") return {};
@@ -99,7 +95,6 @@ function createCanUseToolHandler(
 ): CanUseToolFn {
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
-    const mode = params.input.permissionMode ?? "default";
     const approvalThreadId = params.runtime.deliveryThreadId ?? params.runtime.sessionId;
     const originThreadId = params.runtime.deliveryThreadId
       ? params.runtime.sessionId
@@ -108,26 +103,33 @@ function createCanUseToolHandler(
     const subagentLabel = resolveSubagentInteractiveLabel(subagentRunId);
     const automationExecution = isAutomationExecution(params.input.messageMetadata);
     const requestRunId = runId;
-    if (mode === "plan" && !isToolAllowedInPlanMode(toolName)) {
-      return {
-        behavior: "deny",
-        message: `当前是 plan 模式，只允许规划与只读工具，禁止执行: ${toolName}`
-      };
-    }
-
-    const inputSafety = await toolInputGuardrails.runToolInputGuardrails({
+    const toolStartTime = Date.now();
+    log.debug("[Agent 工具] 调用", {
+      toolName,
+      threadId: params.runtime.sessionId.slice(0, 8),
+      toolUseId: metadata?.toolUseId
+    });
+    const authorization = await toolExecutionGateway.authorize({
       toolName,
       input,
+      permissionMode: params.input.permissionMode,
       context: {
         threadId: params.runtime.sessionId,
         cwd: prepared.agentCwd,
         workspaceSlug: prepared.workspaceSlug
       }
     });
-    if (inputSafety.behavior === "reject") {
+    if (authorization.status === "deny") {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+        reason: "denied"
+      });
       return {
         behavior: "deny",
-        message: `工具参数被拒绝: ${inputSafety.reason}`
+        message: authorization.message
       };
     }
 
@@ -137,6 +139,13 @@ function createCanUseToolHandler(
         : {};
       const questions = parseAskUserQuestions(normalizedInput);
       if (questions.length === 0) {
+        log.debug("[Agent 工具] 完成", {
+          toolName,
+          threadId: params.runtime.sessionId.slice(0, 8),
+          durationMs: Date.now() - toolStartTime,
+          ok: false,
+          reason: "denied"
+        });
         return {
           behavior: "deny",
           message: "AskUserQuestion 缺少有效问题，已拒绝执行"
@@ -168,6 +177,13 @@ function createCanUseToolHandler(
         }
       );
       if (askResult.status !== "answered" || !askResult.answers) {
+        log.debug("[Agent 工具] 完成", {
+          toolName,
+          threadId: params.runtime.sessionId.slice(0, 8),
+          durationMs: Date.now() - toolStartTime,
+          ok: false,
+          reason: "denied"
+        });
         if (askResult.status === "timeout") {
           return { behavior: "deny", message: "AskUserQuestion 等待用户回答超时" };
         }
@@ -176,27 +192,40 @@ function createCanUseToolHandler(
         }
         return { behavior: "deny", message: "用户取消了 AskUserQuestion" };
       }
-      return {
-        behavior: "allow",
+      const result = {
+        behavior: "allow" as const,
         updatedInput: {
           ...normalizedInput,
           questions,
           answers: askResult.answers
         }
       };
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: true
+      });
+      return result;
     }
 
-    const approvalPolicy = evaluateToolApprovalPolicy({
-      permissionMode: params.input.permissionMode,
-      toolName,
-      guardrailResult: inputSafety
-    });
-
-    if (!approvalPolicy.requiresApproval) {
+    if (authorization.status === "allow") {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: true
+      });
       return { behavior: "allow" };
     }
 
     if (isToolAlwaysAllowed(params.runtime.sessionId, toolName)) {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: true
+      });
       return { behavior: "allow" };
     }
 
@@ -209,8 +238,8 @@ function createCanUseToolHandler(
       requestId: metadata?.toolUseId ?? toolName,
       toolUseId: metadata?.toolUseId ?? toolName,
       toolName,
-      risk: (getToolMetadata(toolName) ?? inferToolMetadata(toolName)).riskLevel,
-      reason: approvalPolicy.reason,
+      risk: authorization.risk,
+      reason: authorization.reason,
       input: sanitizeToolInput(input),
       ...(automationExecution ? {
         interruptionType: "automation_approval" as const,
@@ -231,6 +260,13 @@ function createCanUseToolHandler(
         ...(originThreadId ? { originThreadId } : {}),
         ...(subagentRunId ? { subagentRunId } : {}),
         ...(subagentLabel ? { subagentLabel } : {})
+      });
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+        reason: "denied"
       });
       return {
         behavior: "deny",
@@ -256,11 +292,30 @@ function createCanUseToolHandler(
     );
     if (decision === "allow_always") {
       markToolAlwaysAllowed(params.runtime.sessionId, toolName);
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: true
+      });
       return { behavior: "allow" };
     }
     if (decision === "allow_once") {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: true
+      });
       return { behavior: "allow" };
     }
+    log.debug("[Agent 工具] 完成", {
+      toolName,
+      threadId: params.runtime.sessionId.slice(0, 8),
+      durationMs: Date.now() - toolStartTime,
+      ok: false,
+      reason: "denied"
+    });
     return {
       behavior: "deny",
       message: `用户拒绝执行工具: ${toolName}`

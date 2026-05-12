@@ -51,10 +51,10 @@ function createEmitter(events: string[]): PiAgentRuntimeEmitter {
   };
 }
 
-function createRunEventEmitter(events: string[]): PiAgentRuntimeEmitter {
+function createRuntimeEventEmitter(events: string[]): PiAgentRuntimeEmitter {
   return {
     ...createEmitter(events),
-    onRunEvent: (event) => events.push(`run:${event.type}`)
+    onRuntimeEvent: (event) => events.push(`runtime:${event.type}`)
   };
 }
 
@@ -151,14 +151,14 @@ describe("LumeRunner", () => {
     expect(readOnlyRunState(agentDir).status).toBe("completed");
   });
 
-  test("complete waits for observed run events before terminal event", async () => {
+  test("complete waits for observed runtime events before terminal event", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-complete-order-"));
     dirs.push(agentDir);
     const events: string[] = [];
     const runner = await LumeRunner.create({
       params: createTestParams("thread-1"),
       prepared: createPrepared(agentDir),
-      emit: createRunEventEmitter(events)
+      emit: createRuntimeEventEmitter(events)
     });
 
     await runner.runQueryStream(stream([{
@@ -172,8 +172,35 @@ describe("LumeRunner", () => {
 
     expect(events).toEqual([
       "sdk:assistant",
-      "run:assistant_delta",
-      "run:run_completed",
+      "runtime:assistant.delta",
+      "runtime:run.completed",
+      "complete"
+    ]);
+  });
+
+  test("complete emits RuntimeEvents", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-runtime-events-"));
+    dirs.push(agentDir);
+    const events: string[] = [];
+    const runner = await LumeRunner.create({
+      params: createTestParams("thread-1"),
+      prepared: createPrepared(agentDir),
+      emit: createRuntimeEventEmitter(events)
+    });
+
+    await runner.runQueryStream(stream([{
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }]
+      }
+    } as SDKMessage]));
+    await runner.complete();
+
+    expect(events).toEqual([
+      "sdk:assistant",
+      "runtime:assistant.delta",
+      "runtime:run.completed",
       "complete"
     ]);
   });
@@ -218,7 +245,7 @@ describe("LumeRunner", () => {
     const runner = await LumeRunner.create({
       params: createTestParams("thread-1"),
       prepared: createPrepared(agentDir),
-      emit: createRunEventEmitter(events)
+      emit: createRuntimeEventEmitter(events)
     });
 
     const result = await runner.runQueryStream(stream([{
@@ -232,7 +259,7 @@ describe("LumeRunner", () => {
       status: "turn_limited",
       errorMessage: "Agent SDK 达到最大回合数（20），本轮需要继续执行。"
     });
-    expect(events).toEqual(["sdk:result", "run:run_completed"]);
+    expect(events).toEqual(["sdk:result", "runtime:run.turn_limited"]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
   });
 

@@ -96,7 +96,7 @@ export function createObservedRuntimeEmitter(
   return {
     ...emit,
     onSdkMessage: (message) => {
-      observer.recordSdkMessage(message, emit.onRunEvent);
+      observer.recordSdkMessage(message, emit.onRuntimeEvent);
       emit.onSdkMessage(message);
     }
   };

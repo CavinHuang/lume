@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { showTemporaryCopiedFeedback, type CopyFeedbackState } from './RunEventContentBlock'
+import { showTemporaryCopiedFeedback, type CopyFeedbackState } from './RuntimeEventContentBlock'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
 
 describe('showTemporaryCopiedFeedback', () => {

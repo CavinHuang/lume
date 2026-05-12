@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { projectTaskRunEventToProgressEvent } from "./task-progress-events";
+import { projectTaskRunEventToRuntimeEvent } from "./task-progress-events";
 import type { TaskRun } from "./task-run-types";
 
 describe("task-progress-events", () => {
-  test("projects durable task run events into task_progress run events", () => {
+  test("projects durable task run events into task.progress runtime events", () => {
     const taskRun: TaskRun = {
       id: "taskrun-1",
       contractId: "contract-1",
@@ -29,8 +29,11 @@ describe("task-progress-events", () => {
       updatedAt: "2026-05-04T00:00:00.000Z"
     };
 
-    expect(projectTaskRunEventToProgressEvent(taskRun, taskRun.events[0]!)).toMatchObject({
-      type: "task_progress",
+    expect(projectTaskRunEventToRuntimeEvent("thread-1", taskRun, taskRun.events[0]!)).toMatchObject({
+      id: "task.progress:taskrun-1:2026-05-04T00:00:00.000Z:task_started:task-1",
+      type: "task.progress",
+      threadId: "thread-1",
+      runId: "run-1",
       taskRunId: "taskrun-1",
       contractId: "contract-1",
       status: "running",

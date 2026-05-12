@@ -2,7 +2,7 @@ import type {
   AgentRunStateSummary,
   AgentRunTrace,
   AgentRunTraceSpan,
-  LumeRunEvent,
+  LumeRuntimeEvent,
 } from '@lume/shared'
 
 export interface TraceRow {
@@ -24,17 +24,17 @@ export interface RunRow {
   createdAt: string
 }
 
-export interface LiveRunEventRow {
+export interface LiveRuntimeEventRow {
   id: string
   label: string
   detail: string
   tone: 'neutral' | 'active' | 'success' | 'danger'
 }
 
-export function buildLiveRunEventRows(events: LumeRunEvent[]): LiveRunEventRow[] {
+export function buildLiveRuntimeEventRows(events: LumeRuntimeEvent[]): LiveRuntimeEventRow[] {
   return events.slice(-8).map((event, index) => ({
-    id: `${index}:${event.type}`,
-    ...formatRunEvent(event),
+    id: `${event.id}:${index}`,
+    ...formatRuntimeEvent(event),
   }))
 }
 
@@ -42,65 +42,41 @@ export function getDefaultRunId(runs: AgentRunStateSummary[]): string | null {
   return sortRunsLatestFirst(runs)[0]?.runId ?? null
 }
 
-function formatRunEvent(event: LumeRunEvent): Omit<LiveRunEventRow, 'id'> {
-  if (event.type === 'user_message_submitted') {
+function formatRuntimeEvent(event: LumeRuntimeEvent): Omit<LiveRuntimeEventRow, 'id'> {
+  if (event.type === 'message.user.submitted') {
     return { label: 'User message', detail: truncate(event.text), tone: 'neutral' }
   }
-  if (event.type === 'assistant_delta') {
-    return { label: 'Assistant delta', detail: truncate(event.text), tone: 'neutral' }
+  if (event.type === 'assistant.delta') {
+    return { label: 'Assistant delta', detail: truncate(event.delta), tone: 'neutral' }
   }
-  if (event.type === 'assistant_thinking_delta') {
-    return { label: 'Thinking delta', detail: truncate(event.text), tone: 'neutral' }
+  if (event.type === 'assistant.thinking_delta') {
+    return { label: 'Thinking delta', detail: truncate(event.delta), tone: 'neutral' }
   }
-  if (event.type === 'assistant_message_final') {
+  if (event.type === 'assistant.final') {
     return {
       label: 'Assistant final',
       detail: truncate(event.blocks.map((block) => block.text).join(' ')),
       tone: 'success',
     }
   }
-  if (event.type === 'tool_call_started') {
-    return { label: 'Tool started', detail: event.item.toolName, tone: 'active' }
+  if (event.type === 'tool.started') {
+    return { label: 'Tool started', detail: event.toolName, tone: 'active' }
   }
-  if (event.type === 'tool_call_completed') {
+  if (event.type === 'tool.completed') {
     return {
       label: 'Tool completed',
-      detail: event.item.toolName ?? event.item.toolCallId,
-      tone: event.item.isError ? 'danger' : 'success',
+      detail: event.toolName ?? event.toolCallId,
+      tone: 'success',
     }
   }
-  if (event.type === 'interruption_created') {
-    return { label: 'Interruption created', detail: 'waiting for input', tone: 'active' }
-  }
-  if (event.type === 'interruption_resolved') {
-    return { label: 'Interruption resolved', detail: 'resolved', tone: 'success' }
-  }
-  if (event.type === 'subagent_updated') {
+  if (event.type === 'tool.failed') {
     return {
-      label: 'Subagent',
-      detail: `${event.item.status}: ${truncate(event.item.task)}`,
-      tone: event.item.status === 'failed' || event.item.status === 'cancelled'
-        ? 'danger'
-        : event.item.status === 'completed'
-          ? 'success'
-          : 'active',
+      label: 'Tool failed',
+      detail: event.toolName ?? event.error.message,
+      tone: 'danger',
     }
   }
-  if (event.type === 'handoff_updated') {
-    return {
-      label: 'Handoff',
-      detail: `${event.item.status}: ${event.item.fromAgentId} -> ${event.item.toAgentId}`,
-      tone: event.item.status === 'failed' || event.item.status === 'cancelled'
-        ? 'danger'
-        : event.item.status === 'completed'
-          ? 'success'
-          : 'active',
-    }
-  }
-  if (event.type === 'run_completed') {
-    return { label: 'Run completed', detail: event.result.finalOutput ?? 'completed', tone: 'success' }
-  }
-  if (event.type === 'task_progress') {
+  if (event.type === 'task.progress') {
     return {
       label: 'Task progress',
       detail: event.message ?? event.status,
@@ -111,7 +87,19 @@ function formatRunEvent(event: LumeRunEvent): Omit<LiveRunEventRow, 'id'> {
           : 'active',
     }
   }
-  return { label: 'Run failed', detail: event.error.message, tone: 'danger' }
+  if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
+    return { label: 'Run completed', detail: event.type === 'run.turn_limited' ? 'turn limited' : (event.finalOutput ?? 'completed'), tone: 'success' }
+  }
+  if (event.type === 'run.started') {
+    return { label: 'Run started', detail: event.model?.modelId ?? event.runId, tone: 'active' }
+  }
+  if (event.type === 'run.cancelled') {
+    return { label: 'Run cancelled', detail: event.reason ?? 'cancelled', tone: 'neutral' }
+  }
+  if (event.type === 'run.failed') {
+    return { label: 'Run failed', detail: event.error.message, tone: 'danger' }
+  }
+  return { label: 'Runtime event', detail: '', tone: 'neutral' }
 }
 
 export function buildRunRows(runs: AgentRunStateSummary[]): RunRow[] {

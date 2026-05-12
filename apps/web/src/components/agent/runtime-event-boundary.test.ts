@@ -1,0 +1,53 @@
+import { describe, expect, test } from 'bun:test'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const repoRoot = process.cwd()
+
+function source(path: string): string {
+  return readFileSync(join(repoRoot, path), 'utf8')
+}
+
+describe('RuntimeEvent UI boundary', () => {
+  test('message entry points no longer write legacy run-event state', () => {
+    const files = [
+      'apps/web/src/components/agent/AgentInput.tsx',
+      'apps/web/src/components/welcome/WelcomeView.tsx',
+    ]
+
+    for (const file of files) {
+      const content = source(file)
+      expect(content).not.toContain('agentRunEventsAtom')
+      expect(content).not.toContain('appendRunEvent')
+      expect(content).not.toContain('user_message_submitted')
+    }
+  })
+
+  test('global listener no longer consumes legacy RUN_EVENT notifications', () => {
+    const content = source('apps/web/src/hooks/useGlobalAgentListeners.ts')
+
+    expect(content).not.toContain('agentRunEventsAtom')
+    expect(content).not.toContain('appendRunEvent')
+    expect(content).not.toContain('AGENT_IPC_CHANNELS.RUN_EVENT')
+  })
+
+  test('agent message projection has no legacy run-event projector', () => {
+    expect(existsSync(join(repoRoot, 'apps/web/src/components/agent/run-event-message-projection.ts'))).toBeFalse()
+    expect(existsSync(join(repoRoot, 'apps/web/src/components/agent/run-event-message-projection.test.ts'))).toBeFalse()
+    expect(source('apps/web/src/components/agent/runtime-state-projections.ts')).not.toContain('LumeRunEvent')
+  })
+
+  test('runtime event UI uses RuntimeEvent naming at the product boundary', () => {
+    expect(existsSync(join(repoRoot, 'apps/web/src/components/agent/RunEventContentBlock.tsx'))).toBeFalse()
+
+    for (const file of [
+      'apps/web/src/components/agent/AgentMessages.tsx',
+      'apps/web/src/components/agent/TracePanel.tsx',
+      'apps/web/src/components/agent/runtime-state-projections.ts',
+      'apps/web/src/components/agent/RuntimeEventContentBlock.tsx',
+    ]) {
+      expect(source(file)).not.toContain('RunEvent')
+      expect(source(file)).not.toContain('run-event')
+    }
+  })
+})

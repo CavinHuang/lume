@@ -8,14 +8,14 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
-import { agentPlanModePhaseAtom, agentRunEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
   type LumeConfigThinkingLevel,
   type SkillMeta,
   type WorkspaceMcpConfig,
 } from '@lume/shared'
-import { appendRunEvent } from '@/hooks/run-event-state'
+import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { MentionList } from './MentionList'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
@@ -159,7 +159,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const planModePhase = useAtomValue(agentPlanModePhaseAtom)[threadId]
-  const setRunEvents = useSetAtom(agentRunEventsAtom)
+  const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const workspaceIdRef = useRef<string | null>(null)
   const workspaceSlugRef = useRef<string | null>(null)
@@ -262,13 +262,14 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
     if (!text) return
     editor.commands.clearContent()
     setEditorText('')
-    setRunEvents((prev) => appendRunEvent(prev, {
+    const createdAt = new Date().toISOString()
+    setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
+      id: `optimistic:${threadId}:${createdAt}`,
+      type: 'message.user.submitted',
       threadId,
-      event: {
-        type: 'user_message_submitted',
-        text,
-        createdAt: new Date().toISOString(),
-      },
+      runId: `optimistic:${threadId}:${createdAt}`,
+      createdAt,
+      text,
     }))
     setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
     await agentSend({

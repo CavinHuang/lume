@@ -2,16 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getRuntimeCoreSessionDir } from "../../runtime-core/session-store";
-import { createFileBackedLumeInterruptionStore } from "../../../agent-runtime/interruption/interruption-store";
+import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
+import { createFileBackedLumeInterruptionStore } from "./interruption-store";
 import {
   listPendingPiAskUserQuestionRequests,
   setAskUserQuestionApprovalSession,
   submitPiAskUserQuestionAnswers,
   waitForPiAskUserQuestionAnswers
-} from "./ask-user-question-bridge";
+} from "./ask-user-question-session";
 
-describe("ask-user-question-bridge", () => {
+describe("ask-user-question-session", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
 
   afterEach(() => {

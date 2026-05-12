@@ -9,7 +9,7 @@ import type {
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
   AgentGenerateTitleInput,
-  LumeRunEvent
+  LumeRuntimeEvent
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
@@ -32,8 +32,8 @@ import { getAgentWorkspace } from "./agent-workspace-manager";
 import { resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
 import { createLogger } from "../infra/logger";
 import { getSessionStateManager } from "../runtime/session-state-manager";
-import { submitPiAskUserQuestionAnswers } from "../pi-agent/tools/bridges/ask-user-question-bridge";
-import { submitToolPermissionDecision } from "../pi-agent/tools/bridges/tool-permission-bridge";
+import { submitPiAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
+import { submitToolPermissionDecision } from "../agent-runtime/interruption/tool-permission-session";
 import {
   resolveAgentDefaultStrategy,
   resolveChannelModelSelection,
@@ -41,19 +41,19 @@ import {
 } from "../channel/model-selection";
 import {
   AGENT_TITLE_PROMPT_FROM_SUMMARY,
-  deriveFallbackAgentTitleFromSourceText,
   isWeakGeneratedTitle,
-  resolveAgentTitleSourceText,
-  sanitizeGeneratedTitle,
-  shouldAutoGenerateThreadTitle
+  sanitizeGeneratedTitle
 } from "./session-title-summarizer";
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
-import { runStructuredMemoryFlush } from "../memory/memory-flush-runner";
+import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
+import { createCompactionMemoryFlushJob } from "../agent-runtime/service-runtime/compaction-memory-flush-job";
+import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
+import { AgentRuntimeKernel } from "../agent-runtime/kernel/agent-runtime-kernel";
 
 type AgentStreamEmitter = {
-  onRunEvent?: (event: LumeRunEvent) => void;
+  onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
   onComplete: (payload?: { reason?: "max_turns" }) => void;
   onError: (error: string) => void;
@@ -81,14 +81,17 @@ const ROUTING_HEURISTIC_TOOLS = [
   "memory_save"
 ];
 
-interface QueuedAgentDispatch {
-  input: AgentSendInput;
-  emit: AgentStreamEmitter;
-  onExecutionStarted?: () => void;
-}
-
-const activeAgentDispatches = new Set<string>();
-const queuedAgentDispatches = new Map<string, QueuedAgentDispatch[]>();
+const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
+  execute: async (dispatch) => {
+    await sendAgentMessage(dispatch.input, dispatch.emit);
+  },
+  onQueuedCountChange: (threadId, queuedCount) => {
+    getAgentRuntimeStatusManager().setQueuedCount(threadId, queuedCount);
+  },
+  onDispatchError: (dispatch, error) => {
+    dispatch.emit.onError(error instanceof Error ? error.message : String(error));
+  }
+});
 
 function mergeToolPolicies(
   base: AgentToolPolicy | undefined,
@@ -136,56 +139,6 @@ function handleRuntimeThreadStateMessage(
     log.info("线程开始压缩", { threadId: threadId.slice(0, 8) });
     log.info("线程压缩完成", { threadId: threadId.slice(0, 8) });
   }
-}
-
-function extractCompactSummary(message: SDKMessage): string | null {
-  if (message.type !== "system" || message.subtype !== "compact_boundary") {
-    return null;
-  }
-  const metadataSummary = (message as SDKMessage & {
-    compact_metadata?: { summary?: unknown };
-  }).compact_metadata?.summary;
-  if (typeof metadataSummary === "string" && metadataSummary.trim()) {
-    return metadataSummary.trim();
-  }
-  const legacySummary = (message as SDKMessage & { summary?: unknown }).summary;
-  if (typeof legacySummary === "string" && legacySummary.trim()) {
-    return legacySummary.trim();
-  }
-  return null;
-}
-
-async function flushCompactionSummaryToMemory(input: {
-  workspaceSlug?: string;
-  threadId: string;
-  message: SDKMessage;
-}): Promise<void> {
-  if (!input.workspaceSlug) return;
-  const summary = extractCompactSummary(input.message);
-  if (!summary) return;
-
-  const rawOutput = JSON.stringify({
-    entries: [{
-      kind: "episode",
-      scope: "workspace",
-      title: "Compaction summary",
-      content: summary,
-      importance: 3,
-      confidence: 0.8,
-      tags: ["compaction", "memory-flush"]
-    }]
-  });
-  const result = await runStructuredMemoryFlush({
-    workspaceSlug: input.workspaceSlug,
-    sessionId: input.threadId,
-    rawOutput
-  });
-  log.info("compaction memory flush completed", {
-    threadId: input.threadId.slice(0, 8),
-    workspaceSlug: input.workspaceSlug,
-    savedCount: result.savedCount ?? 0,
-    skippedCount: result.skippedCount ?? 0
-  });
 }
 
 export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): { ok: true } {
@@ -399,7 +352,6 @@ export async function sendAgentMessage(
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
   const persistedSdkMessages: SDKMessage[] = [];
-  const memoryFlushTasks: Promise<void>[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
   const stateWorkspaceSlug = effectiveWorkspace?.slug;
@@ -423,6 +375,7 @@ export async function sendAgentMessage(
   };
   let runtimeMessageMetadata: Record<string, unknown> = effectiveMessageMetadata;
 
+  const sendStartTime = Date.now();
   log.info("[Agent 会话] 开始发送消息", buildAgentSendStartLogData({
     threadId,
     workspaceId: effectiveWorkspaceId,
@@ -529,19 +482,14 @@ export async function sendAgentMessage(
       handleRuntimeThreadStateMessage(threadId, stampedMessage, sessionStateManager);
       if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
         runtimeStatusManager.markCompacting(threadId);
-        memoryFlushTasks.push(
-          flushCompactionSummaryToMemory({
-            workspaceSlug: stateWorkspaceSlug,
-            threadId,
-            message: stampedMessage
-          }).catch((error) => {
-            log.warn("compaction memory flush failed", {
-              threadId: threadId.slice(0, 8),
-              workspaceSlug: stateWorkspaceSlug,
-              error: error instanceof Error ? error.message : String(error)
-            });
-          })
-        );
+        const job = createCompactionMemoryFlushJob({
+          workspaceSlug: stateWorkspaceSlug,
+          threadId,
+          message: stampedMessage
+        });
+        if (job) {
+          getServiceRuntime().schedule(job);
+        }
       }
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
         persistedSdkMessages.push(stampedMessage);
@@ -550,8 +498,8 @@ export async function sendAgentMessage(
     onComplete: () => {
       runtimeCompleted = true;
     },
-    onRunEvent: (event) => {
-      emit.onRunEvent?.(event);
+    onRuntimeEvent: (event) => {
+      emit.onRuntimeEvent?.(event);
     },
     onError: (error) => {
       runtimeStatusManager.markErrored(threadId, error);
@@ -579,9 +527,6 @@ export async function sendAgentMessage(
   if (persistedSdkMessages.length > 0) {
     appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
   }
-  if (memoryFlushTasks.length > 0) {
-    await Promise.allSettled(memoryFlushTasks);
-  }
   if ((piResult.status === "completed" || piResult.status === "turn_limited") && activeTurnId) {
     const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
       threadId,
@@ -605,6 +550,7 @@ export async function sendAgentMessage(
   if (runtimeCompleted && piResult.status === "completed") {
     log.info("[Agent 会话] 运行完成", {
       threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length,
       visibleAssistantTurnCreated: activeTurnId !== null,
       autoTitlePending: shouldTryAutoTitle
@@ -623,53 +569,31 @@ export async function sendAgentMessage(
   if (piResult.status === "aborted") {
     log.warn("[Agent 会话] 运行中止", {
       threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length
     });
   }
   if (piResult.status === "errored") {
     log.error("[Agent 会话] 运行失败", {
       threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length,
       errorMessage: piResult.errorMessage
     });
   }
   if (piResult.status === "completed" && shouldTryAutoTitle) {
-    void autoGenerateAgentTitle(threadId, userMessage, emit);
+    const job = createAutoTitleJob({
+      threadId,
+      fallbackUserMessage: userMessage,
+      onTitleUpdated: (title) => {
+        emit.onTitleUpdated(title);
+      }
+    });
+    if (job) {
+      getServiceRuntime().schedule(job);
+    }
   }
   return;
-}
-
-function getQueuedDispatchCount(threadId: string): number {
-  return queuedAgentDispatches.get(threadId)?.length ?? 0;
-}
-
-function syncQueuedCount(threadId: string): void {
-  getAgentRuntimeStatusManager().setQueuedCount(threadId, getQueuedDispatchCount(threadId));
-}
-
-async function processQueuedAgentDispatch(dispatch: QueuedAgentDispatch): Promise<void> {
-  const { threadId } = dispatch.input;
-  activeAgentDispatches.add(threadId);
-  syncQueuedCount(threadId);
-  try {
-    dispatch.onExecutionStarted?.();
-    await sendAgentMessage(dispatch.input, dispatch.emit);
-  } catch (error) {
-    dispatch.emit.onError(error instanceof Error ? error.message : String(error));
-  } finally {
-    activeAgentDispatches.delete(threadId);
-    const queue = queuedAgentDispatches.get(threadId) ?? [];
-    const next = queue.shift();
-    if (queue.length === 0) {
-      queuedAgentDispatches.delete(threadId);
-    } else {
-      queuedAgentDispatches.set(threadId, queue);
-    }
-    syncQueuedCount(threadId);
-    if (next) {
-      void processQueuedAgentDispatch(next);
-    }
-  }
 }
 
 export function appendAgentMessage(
@@ -679,25 +603,15 @@ export function appendAgentMessage(
     onExecutionStarted?: () => void;
   }
 ): AgentThreadMessageDispatchResult {
-  const threadId = input.threadId;
-  if (activeAgentDispatches.has(threadId)) {
-    const nextQueue = queuedAgentDispatches.get(threadId) ?? [];
-    nextQueue.push({ input, emit, onExecutionStarted: options?.onExecutionStarted });
-    queuedAgentDispatches.set(threadId, nextQueue);
-    syncQueuedCount(threadId);
-    return {
-      ok: true,
-      mode: "queued",
-      queuedCount: nextQueue.length
-    };
-  }
+  return agentRuntimeKernel.dispatch(input, emit, options);
+}
 
-  void processQueuedAgentDispatch({ input, emit, onExecutionStarted: options?.onExecutionStarted });
-  return {
-    ok: true,
-    mode: "sent",
-    queuedCount: getQueuedDispatchCount(threadId)
-  };
+export async function waitForAgentRuntimeKernelIdleForTest(): Promise<void> {
+  await agentRuntimeKernel.waitForIdleForTest();
+}
+
+export function resetAgentRuntimeKernelForTest(): void {
+  agentRuntimeKernel.resetForTest();
 }
 
 export function stopAgent(threadId: string): void {
@@ -768,45 +682,5 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
       error: error instanceof Error ? error.message : String(error)
     });
     return null;
-  }
-}
-
-function autoGenerateAgentTitle(
-  threadId: string,
-  fallbackUserMessage: string,
-  emit: AgentStreamEmitter
-): void {
-  try {
-    const meta = getAgentThreadMeta(threadId);
-    if (!meta) {
-      log.debug("自动标题跳过：线程不存在", { threadId });
-      return;
-    }
-    if (!shouldAutoGenerateThreadTitle(meta.title)) {
-      log.debug("自动标题跳过：线程标题不是默认值", {
-        threadId,
-        currentTitle: meta.title
-      });
-      return;
-    }
-    const threadMessages = getAgentThreadMessages(threadId);
-    const sourceText = resolveAgentTitleSourceText(threadMessages, fallbackUserMessage);
-    const fallbackTitle = sanitizeGeneratedTitle(deriveFallbackAgentTitleFromSourceText(sourceText) ?? "");
-    if (!fallbackTitle) {
-      log.debug("自动标题跳过：未能生成可用标题", { threadId });
-      return;
-    }
-    updateAgentThreadMeta(threadId, { title: fallbackTitle });
-    log.info("自动标题更新成功（临时）", {
-      threadId,
-      title: fallbackTitle,
-      source: "fallback"
-    });
-    emit.onTitleUpdated(fallbackTitle);
-  } catch (error) {
-    log.warn("自动标题生成流程异常", {
-      threadId,
-      error: error instanceof Error ? error.message : String(error)
-    });
   }
 }

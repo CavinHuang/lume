@@ -8,8 +8,8 @@ import {
   resolvePersistedToolApprovalInterruption,
   resolveToolApprovalInterruption,
   updateToolApprovalSession
-} from "../../../agent-runtime/interruption/approval-service";
-import { listPendingRuntimeCoreInterruptions } from "../../../agent-runtime/interruption/interruption-index";
+} from "./approval-service";
+import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
 
 const pendingToolPermissionResolvers = new Map<
   string,

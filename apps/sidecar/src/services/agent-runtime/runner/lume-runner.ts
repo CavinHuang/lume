@@ -124,16 +124,24 @@ export class LumeRunner {
     });
     if (result.status === "turn_limited") {
       await this.observer.flush();
-      this.emit.onRunEvent?.({
-        type: "run_completed",
-        result: { status: "completed" }
+      this.emit.onRuntimeEvent?.({
+        id: `${this.observer.getRunId()}:run.turn_limited`,
+        type: "run.turn_limited",
+        threadId: this.observer.getThreadId(),
+        runId: this.observer.getRunId(),
+        createdAt: new Date().toISOString(),
+        reason: result.errorMessage
       });
       return this.finalizeResult(result);
     }
     if (result.status !== "completed") {
       await this.observer.flush();
-      this.emit.onRunEvent?.({
-        type: "run_failed",
+      this.emit.onRuntimeEvent?.({
+        id: `${this.observer.getRunId()}:run.failed`,
+        type: "run.failed",
+        threadId: this.observer.getThreadId(),
+        runId: this.observer.getRunId(),
+        createdAt: new Date().toISOString(),
         error: {
           code: "runtime_error",
           message: result.errorMessage
@@ -264,9 +272,12 @@ export class LumeRunner {
 
   async complete(): Promise<PiAgentRunResult> {
     await this.observer.flush();
-    this.emit.onRunEvent?.({
-      type: "run_completed",
-      result: { status: "completed" }
+    this.emit.onRuntimeEvent?.({
+      id: `${this.observer.getRunId()}:run.completed`,
+      type: "run.completed",
+      threadId: this.observer.getThreadId(),
+      runId: this.observer.getRunId(),
+      createdAt: new Date().toISOString()
     });
     this.emit.onComplete();
     return this.finalizeResult({ status: "completed" });
@@ -281,6 +292,17 @@ export class LumeRunner {
   async fail(errorMessage: string): Promise<PiAgentRunResult> {
     await this.observer.flush();
     this.emit.onError(errorMessage);
+    this.emit.onRuntimeEvent?.({
+      id: `${this.observer.getRunId()}:run.failed`,
+      type: "run.failed",
+      threadId: this.observer.getThreadId(),
+      runId: this.observer.getRunId(),
+      createdAt: new Date().toISOString(),
+      error: {
+        code: "runtime_error",
+        message: errorMessage
+      }
+    });
     return this.finalizeResult({ status: "errored", errorMessage });
   }
 }
