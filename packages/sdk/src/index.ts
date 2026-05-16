@@ -242,18 +242,15 @@ export {
 } from './utils/context.js'
 
 // --------------------------------------------------------------------------
-// Settings & CLAUDE.md Utilities
+// Settings Utilities
 // --------------------------------------------------------------------------
 
 export {
   loadSettingsFromSources,
   mergeAgentOptions,
-  loadClaudeMdFiles,
 } from './utils/settings.js'
 export type {
   LoadedSettingsSource,
-  LoadedClaudeMd,
-  ClaudeMdMemoryType,
 } from './utils/settings.js'
 
 // --------------------------------------------------------------------------

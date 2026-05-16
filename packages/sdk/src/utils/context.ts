@@ -100,18 +100,7 @@ function detectMainBranch(cwd: string): string | null {
 export async function discoverProjectContextFiles(cwd: string): Promise<string[]> {
   const candidates = [
     join(cwd, 'AGENT.md'),
-    join(cwd, 'CLAUDE.md'),
-    join(cwd, '.claude', 'CLAUDE.md'),
-    join(cwd, 'claude.md'),
   ]
-
-  // Also check home directory
-  const home = process.env.HOME || process.env.USERPROFILE || ''
-  if (home) {
-    candidates.push(
-      join(home, '.claude', 'CLAUDE.md'),
-    )
-  }
 
   const found: string[] = []
   for (const path of candidates) {

@@ -56,7 +56,6 @@ import type { NormalizedMessageParam } from './providers/types.js'
 import {
   loadSettingsFromSources,
   mergeAgentOptions,
-  loadClaudeMdFiles,
   type LoadedSettingsSource,
 } from './utils/settings.js'
 import { QueryController } from './query-controller.js'
@@ -172,7 +171,6 @@ export class Agent {
   private hookRegistry: HookRegistry
   private loadedSettings: LoadedSettingsSource[] = []
   private loadedPlugins: LoadedPlugin[] = []
-  private claudeMdAppend = ''
   private pluginSkillNames = new Set<string>()
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
@@ -305,37 +303,6 @@ export class Agent {
     for (const plugin of this.loadedPlugins) {
       if (!plugin.hooks) continue
       this.hookRegistry.registerFromConfig(plugin.hooks)
-    }
-  }
-
-  private async loadAndApplyClaudeMdFiles(cwd: string): Promise<void> {
-    try {
-      const claudeMdFiles = await loadClaudeMdFiles(cwd)
-      if (claudeMdFiles.length === 0) return
-
-      const sections: string[] = []
-      for (const file of claudeMdFiles) {
-        sections.push(file.content.trim())
-
-        // Fire InstructionsLoaded hook for each loaded file
-        if (this.hookRegistry.hasHooks('InstructionsLoaded')) {
-          const hookResult = await this.hookRegistry.executeDetailed('InstructionsLoaded', {
-            event: 'InstructionsLoaded',
-            file_path: file.path,
-            memory_type: file.memoryType,
-            load_reason: 'session_start',
-            sessionId: this.sid,
-          })
-          // Queue hook events to be emitted on next query
-          for (const evt of hookResult.events) {
-            this.queuedSdkEvents.push(evt)
-          }
-        }
-      }
-
-      this.claudeMdAppend = sections.join('\n\n---\n\n')
-    } catch {
-      // CLAUDE.md loading is best-effort
     }
   }
 
@@ -599,9 +566,6 @@ export class Agent {
     ]
     this.resetHookRegistry()
 
-    // Load CLAUDE.md files from filesystem hierarchy and append to system prompt
-    await this.loadAndApplyClaudeMdFiles(cwd)
-
     const mergedAgents = {
       ...this.getPluginAgents(),
       ...(this.cfg.agents || {}),
@@ -762,10 +726,6 @@ export class Agent {
       systemPrompt = opts.systemPrompt as string | undefined
     }
 
-    // Append loaded CLAUDE.md content to system prompt
-    if (this.claudeMdAppend) {
-      appendSystemPrompt = [appendSystemPrompt, this.claudeMdAppend].filter(Boolean).join('\n\n')
-    }
 
     let tools = this.toolPool
     if (overrides?.disallowedTools) {

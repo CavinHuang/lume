@@ -1,5 +1,5 @@
-import { readFile, readdir } from 'fs/promises'
-import { join, resolve } from 'path'
+import { readFile } from 'fs/promises'
+import { join } from 'path'
 import type { AgentOptions, SettingSource } from '../types.js'
 
 export interface LoadedSettingsSource {
@@ -9,14 +9,13 @@ export interface LoadedSettingsSource {
 }
 
 function getSettingsFileForSource(cwd: string, source: SettingSource): string {
-  const home = process.env.HOME || process.env.USERPROFILE || cwd
   switch (source) {
     case 'user':
-      return join(home, '.claude', 'settings.json')
+      return join(cwd, 'settings.json')
     case 'project':
-      return join(cwd, '.claude', 'settings.json')
+      return join(cwd, 'settings.json')
     case 'local':
-      return join(cwd, '.claude', 'settings.local.json')
+      return join(cwd, 'settings.local.json')
   }
 }
 
@@ -81,89 +80,4 @@ export function mergeAgentOptions(
   return merged as AgentOptions
 }
 
-// --------------------------------------------------------------------------
-// CLAUDE.md Loading
-// --------------------------------------------------------------------------
-
-export type ClaudeMdMemoryType = 'User' | 'Project' | 'Local' | 'Managed'
-
-export interface LoadedClaudeMd {
-  path: string
-  content: string
-  memoryType: ClaudeMdMemoryType
-}
-
-/**
- * Load CLAUDE.md files from the standard hierarchy:
- * 1. User:    ~/.claude/CLAUDE.md
- * 2. Project: <cwd>/CLAUDE.md, <cwd>/.claude/CLAUDE.md, <cwd>/.claude/rules/*.md
- * 3. Local:   <cwd>/CLAUDE.local.md
- *
- * Files closer to cwd have higher priority (loaded last = higher precedence).
- * Returns loaded files in ascending priority order.
- */
-export async function loadClaudeMdFiles(cwd: string): Promise<LoadedClaudeMd[]> {
-  const loaded: LoadedClaudeMd[] = []
-  const home = process.env.HOME || process.env.USERPROFILE || cwd
-
-  // 1. User-level: ~/.claude/CLAUDE.md
-  const userMd = join(home, '.claude', 'CLAUDE.md')
-  const userContent = await tryReadFile(userMd)
-  if (userContent !== null) {
-    loaded.push({ path: userMd, content: userContent, memoryType: 'User' })
-  }
-
-  // 2. Project-level: CLAUDE.md in cwd
-  const projectMd = join(cwd, 'CLAUDE.md')
-  const projectContent = await tryReadFile(projectMd)
-  if (projectContent !== null) {
-    loaded.push({ path: projectMd, content: projectContent, memoryType: 'Project' })
-  }
-
-  // 3. Project-level: .claude/CLAUDE.md in cwd
-  const dotClaudeMd = join(cwd, '.claude', 'CLAUDE.md')
-  const dotClaudeContent = await tryReadFile(dotClaudeMd)
-  if (dotClaudeContent !== null) {
-    loaded.push({ path: dotClaudeMd, content: dotClaudeContent, memoryType: 'Project' })
-  }
-
-  // 4. Project-level: .claude/rules/*.md
-  const rulesDir = join(cwd, '.claude', 'rules')
-  const ruleFiles = await tryListMdFiles(rulesDir)
-  for (const ruleFile of ruleFiles) {
-    const ruleContent = await tryReadFile(ruleFile)
-    if (ruleContent !== null) {
-      loaded.push({ path: ruleFile, content: ruleContent, memoryType: 'Project' })
-    }
-  }
-
-  // 5. Local: CLAUDE.local.md in cwd (highest project priority)
-  const localMd = join(cwd, 'CLAUDE.local.md')
-  const localContent = await tryReadFile(localMd)
-  if (localContent !== null) {
-    loaded.push({ path: localMd, content: localContent, memoryType: 'Local' })
-  }
-
-  return loaded
-}
-
-async function tryReadFile(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, 'utf-8')
-  } catch {
-    return null
-  }
-}
-
-async function tryListMdFiles(dirPath: string): Promise<string[]> {
-  try {
-    const entries = await readdir(dirPath)
-    return entries
-      .filter((name) => name.endsWith('.md'))
-      .sort()
-      .map((name) => resolve(dirPath, name))
-  } catch {
-    return []
-  }
-}
 
