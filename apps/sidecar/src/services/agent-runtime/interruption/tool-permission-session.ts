@@ -71,7 +71,10 @@ export function setToolPermissionApprovalSession(requestId: string, approvalSess
 export function waitForToolPermissionDecision(
   request: AgentToolPermissionRequest,
   signal: AbortSignal,
-  emit: (request: AgentToolPermissionRequest) => void
+  emit: (request: AgentToolPermissionRequest) => void,
+  options: {
+    onTimeout?: (request: AgentToolPermissionRequest) => void;
+  } = {}
 ): Promise<AgentToolPermissionDecision | null> {
   return new Promise((resolve) => {
     const done = async (decision: AgentToolPermissionDecision | null): Promise<void> => {
@@ -99,6 +102,7 @@ export function waitForToolPermissionDecision(
     }
 
     const timeout = setTimeout(() => {
+      options.onTimeout?.(request);
       void done(null);
     }, resolveTimeoutMs());
     if (typeof timeout === "object" && "unref" in timeout && typeof timeout.unref === "function") {

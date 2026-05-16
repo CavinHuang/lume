@@ -7,7 +7,7 @@ mock.module('@/lib/desktop-api', () => ({
   submitTaskApproval: async () => ({ ok: true }),
 }))
 
-const { PlanApprovalOverlay, buildPlanApprovalSubmission } = await import('./PlanApprovalOverlay')
+const { PlanApprovalOverlay, buildPlanApprovalSubmission, shouldSwitchToAgentModeAfterTaskApproval } = await import('./PlanApprovalOverlay')
 
 const request: AgentTaskApprovalRequest = {
   threadId: 'thread-1',
@@ -30,6 +30,7 @@ describe('PlanApprovalOverlay', () => {
     expect(markup).toContain('实施此计划?')
     expect(markup).toContain('是，实施此计划')
     expect(markup).toContain('否，请告知 Lume 如何调整')
+    expect(markup).toContain('写下你希望 Lume 调整的方向')
     expect(markup).toContain('忽略')
     expect(markup).toContain('ESC')
     expect(markup).toContain('提交')
@@ -47,6 +48,35 @@ describe('PlanApprovalOverlay', () => {
       decision: 'approve',
       execute: true,
     })
+  })
+
+  test('switches out of plan mode after approve and execute succeeds', () => {
+    expect(shouldSwitchToAgentModeAfterTaskApproval({
+      submission: {
+        threadId: 'thread-1',
+        contractId: 'plan-1',
+        decision: 'approve',
+        execute: true,
+      },
+      result: {
+        ok: true,
+        execution: {
+          ok: true,
+          status: 'sent',
+          contractId: 'plan-1',
+        },
+      },
+    })).toBe(true)
+
+    expect(shouldSwitchToAgentModeAfterTaskApproval({
+      submission: {
+        threadId: 'thread-1',
+        contractId: 'plan-1',
+        decision: 'reject',
+        feedback: '调整',
+      },
+      result: { ok: true },
+    })).toBe(false)
   })
 
   test('requires feedback for reject submissions', () => {

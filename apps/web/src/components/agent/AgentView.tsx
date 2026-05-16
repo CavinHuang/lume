@@ -26,6 +26,9 @@ export function AgentView({ threadId }: AgentViewProps) {
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
   const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
   const activeTaskApproval = pendingTaskApprovals[0]
+  const activeToolPermission = activeTaskApproval ? undefined : pendingToolPermissions[0]
+  const activeAskUserQuestion = activeTaskApproval || activeToolPermission ? undefined : pendingAskUserQuestions[0]
+  const hasComposerOverlay = Boolean(activeTaskApproval || activeToolPermission || activeAskUserQuestion)
   const [approvalOverlayVisible, setApprovalOverlayVisible] = useState(Boolean(activeTaskApproval))
 
   const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
@@ -139,17 +142,11 @@ export function AgentView({ threadId }: AgentViewProps) {
           onOpenThreadFile={openThreadFilePreview}
         />
         {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
-        {pendingToolPermissions.map((request) => (
-          <PermissionBanner key={request.requestId} threadId={threadId} request={request} />
-        ))}
-        {pendingAskUserQuestions.map((request) => (
-          <AskUserBanner key={request.toolUseId} threadId={threadId} request={request} />
-        ))}
         <div className="relative">
           <div
-            aria-hidden={Boolean(activeTaskApproval && approvalOverlayVisible)}
+            aria-hidden={hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible)}
             className={cn(
-              activeTaskApproval && approvalOverlayVisible && 'pointer-events-none select-none opacity-0',
+              hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible) && 'pointer-events-none select-none opacity-0',
             )}
           >
             <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
@@ -161,6 +158,16 @@ export function AgentView({ threadId }: AgentViewProps) {
                 request={activeTaskApproval}
                 onVisibilityChange={setApprovalOverlayVisible}
               />
+            </div>
+          )}
+          {activeToolPermission && (
+            <div className="absolute inset-x-0 bottom-0 z-30">
+              <PermissionBanner threadId={threadId} request={activeToolPermission} />
+            </div>
+          )}
+          {activeAskUserQuestion && (
+            <div className="absolute inset-x-0 bottom-0 z-30">
+              <AskUserBanner threadId={threadId} request={activeAskUserQuestion} />
             </div>
           )}
         </div>

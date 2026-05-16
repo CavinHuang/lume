@@ -7,6 +7,7 @@ export interface RuntimeToolCallView {
   status: 'running' | 'completed' | 'failed'
   output?: unknown
   isError?: boolean
+  permissionState?: 'timeout'
 }
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>

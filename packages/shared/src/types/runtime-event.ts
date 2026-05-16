@@ -11,6 +11,7 @@ export type RuntimeEventType =
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
+  | "tool.permission_timeout"
   | "plan.preview"
   | "task.progress"
   | "permission.requested"
@@ -100,6 +101,14 @@ export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
   };
 }
 
+export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
+  type: "tool.permission_timeout";
+  toolCallId: string;
+  requestId: string;
+  toolName: string;
+  message: string;
+}
+
 export interface PlanPreviewRuntimeEvent extends RuntimeEventBase {
   type: "plan.preview";
   contractId: string;
@@ -187,6 +196,7 @@ export type LumeRuntimeEvent =
   | ToolStartedRuntimeEvent
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
+  | ToolPermissionTimeoutRuntimeEvent
   | PlanPreviewRuntimeEvent
   | TaskProgressRuntimeEvent
   | RunCompletedRuntimeEvent

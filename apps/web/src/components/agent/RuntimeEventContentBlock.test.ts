@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { showTemporaryCopiedFeedback, type CopyFeedbackState } from './RuntimeEventContentBlock'
+import { getTaskProgressStatusText, getToolPermissionTitleBadgeText, showTemporaryCopiedFeedback, type CopyFeedbackState } from './RuntimeEventContentBlock'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
+import type { LumeRuntimeEvent } from '@lume/shared'
 
 describe('showTemporaryCopiedFeedback', () => {
   test('sets copied immediately, clears the previous timer, and resets after 3 seconds', () => {
@@ -59,5 +60,33 @@ describe('normalizeThreadFilePathCandidate', () => {
     expect(normalizeThreadFilePathCandidate('/Users/me/report.md')).toBeNull()
     expect(normalizeThreadFilePathCandidate('../report.md')).toBeNull()
     expect(normalizeThreadFilePathCandidate('report.md')).toBeNull()
+  })
+})
+
+describe('getTaskProgressStatusText', () => {
+  test('returns a compact running status from the latest task progress event', () => {
+    const progress = {
+      type: 'task.progress',
+      currentTaskId: 'step-2',
+      tasks: [
+        { id: 'step-1', title: 'Patch files', status: 'completed' },
+        { id: 'step-2', title: 'Run focused tests', status: 'running' },
+      ],
+    } as Extract<LumeRuntimeEvent, { type: 'task.progress' }>
+
+    expect(getTaskProgressStatusText(progress)).toBe('正在执行：Run focused tests')
+  })
+})
+
+describe('getToolPermissionTitleBadgeText', () => {
+  test('returns a compact timeout badge for timed out permission tool calls', () => {
+    expect(getToolPermissionTitleBadgeText({
+      id: 'tool-1',
+      toolName: 'Bash',
+      input: {},
+      status: 'failed',
+      isError: true,
+      permissionState: 'timeout',
+    })).toBe('权限超时')
   })
 })

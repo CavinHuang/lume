@@ -274,6 +274,7 @@ function createCanUseToolHandler(
       };
     }
 
+    let permissionTimedOut = false;
     const decision = await waitForToolPermissionDecision(
       request,
       new AbortController().signal,
@@ -288,6 +289,22 @@ function createCanUseToolHandler(
           ...(subagentRunId ? { subagentRunId } : {}),
           ...(subagentLabel ? { subagentLabel } : {})
         });
+      },
+      {
+        onTimeout: (permissionRequest) => {
+          permissionTimedOut = true;
+          emit.onRuntimeEvent?.({
+            id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:tool.permission_timeout`,
+            type: "tool.permission_timeout",
+            threadId: approvalThreadId,
+            runId: requestRunId ?? permissionRequest.runId ?? params.runtime.sessionId,
+            createdAt: new Date().toISOString(),
+            toolCallId: permissionRequest.toolUseId,
+            requestId: permissionRequest.requestId,
+            toolName,
+            message: `工具权限确认超时: ${toolName}`
+          });
+        }
       }
     );
     if (decision === "allow_always") {
@@ -318,7 +335,9 @@ function createCanUseToolHandler(
     });
     return {
       behavior: "deny",
-      message: `用户拒绝执行工具: ${toolName}`
+      message: permissionTimedOut
+        ? `工具权限确认超时: ${toolName}`
+        : `用户拒绝执行工具: ${toolName}`
     };
   };
 }

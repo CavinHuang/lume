@@ -35,6 +35,21 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
       return
     }
 
+    if (event.type === 'task.progress') {
+      if (terminalClosed || !currentAssistant) {
+        currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}`)
+      }
+      terminalClosed = false
+      currentAssistant.blocks = currentAssistant.blocks.filter((block) => block.type !== 'task_progress')
+      currentAssistant.blocks.push({
+        type: 'task_progress',
+        id: `task:${event.taskRunId}:${event.createdAt}`,
+        event,
+      })
+      recomputeAssistantContent(currentAssistant)
+      return
+    }
+
     if (terminalClosed) {
       return
     }
@@ -56,20 +71,6 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
     if (event.type === 'assistant.final') {
       currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
       replaceAssistantContentBlocks(currentAssistant, event.blocks)
-      return
-    }
-
-    if (event.type === 'task.progress') {
-      if (terminalClosed || !currentAssistant) {
-        currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}`)
-      }
-      terminalClosed = false
-      currentAssistant.blocks.push({
-        type: 'task_progress',
-        id: `task:${event.taskRunId}:${event.createdAt}`,
-        event,
-      })
-      currentAssistant.text += event.message ?? ''
       return
     }
 
@@ -111,6 +112,9 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
       currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
       const existing = currentAssistant.toolCalls.get(event.toolCallId)
       const isError = event.type === 'tool.failed'
+      const permissionState = isError && isToolPermissionTimeoutMessage(event.error.message)
+        ? 'timeout'
+        : existing?.permissionState
       const toolCall: RuntimeToolCallView = {
         id: event.toolCallId,
         toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
@@ -118,16 +122,25 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         status: isError ? 'failed' : 'completed',
         output: isError ? event.error.message : event.resultPreview,
         isError,
+        ...(permissionState ? { permissionState } : {}),
       }
-      currentAssistant.toolCalls.set(event.toolCallId, toolCall)
-      const blockIndex = currentAssistant.toolBlockIds.get(event.toolCallId)
-      if (blockIndex === undefined) {
-        currentAssistant.toolBlockIds.set(event.toolCallId, currentAssistant.blocks.length)
-        currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall })
-        currentAssistant.currentContentSegmentStart = currentAssistant.blocks.length
-      } else {
-        currentAssistant.blocks[blockIndex] = { type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall }
+      upsertToolCallBlock(currentAssistant, event.toolCallId, toolCall)
+      return
+    }
+
+    if (event.type === 'tool.permission_timeout') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      const existing = currentAssistant.toolCalls.get(event.toolCallId)
+      const toolCall: RuntimeToolCallView = {
+        id: event.toolCallId,
+        toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
+        input: existing?.input ?? {},
+        status: 'failed',
+        output: event.message,
+        isError: true,
+        permissionState: 'timeout',
       }
+      upsertToolCallBlock(currentAssistant, event.toolCallId, toolCall)
       return
     }
 
@@ -152,6 +165,26 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
 
   flushAssistant(messages, currentAssistant)
   return messages
+}
+
+function isToolPermissionTimeoutMessage(message: string): boolean {
+  return message.includes('工具权限确认超时')
+}
+
+function upsertToolCallBlock(
+  assistant: MutableAssistantMessage,
+  toolCallId: string,
+  toolCall: RuntimeToolCallView,
+): void {
+  assistant.toolCalls.set(toolCallId, toolCall)
+  const blockIndex = assistant.toolBlockIds.get(toolCallId)
+  if (blockIndex === undefined) {
+    assistant.toolBlockIds.set(toolCallId, assistant.blocks.length)
+    assistant.blocks.push({ type: 'tool_call', id: `tool:${toolCallId}`, toolCall })
+    assistant.currentContentSegmentStart = assistant.blocks.length
+    return
+  }
+  assistant.blocks[blockIndex] = { type: 'tool_call', id: `tool:${toolCallId}`, toolCall }
 }
 
 function keepLatestVersionTurns(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
@@ -277,6 +310,12 @@ function recomputeAssistantContent(assistant: MutableAssistantMessage): void {
     ))
     .map((block) => block.type === 'text' ? block.text : block.preview.markdown)
     .join('')
+  const taskProgressText = assistant.blocks
+    .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'task_progress' }> => block.type === 'task_progress')
+    .map((block) => block.event.message)
+    .filter((message): message is string => typeof message === 'string' && message.trim().length > 0)
+    .join('')
+  assistant.text += taskProgressText
   assistant.thinking = assistant.blocks
     .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'thinking' }> => block.type === 'thinking')
     .map((block) => block.text)

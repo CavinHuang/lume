@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { MessageCircle, X } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest } from '@lume/shared'
 import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
+import { InteractiveOverlayFrame } from './InteractiveOverlayFrame'
 
 interface AskUserBannerProps {
   threadId: string
@@ -16,15 +17,37 @@ interface AskUserBannerProps {
 export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [hidden, setHidden] = useState(false)
+  const [busy, setBusy] = useState(false)
   const subagentDisplayLabel = getSubagentDisplayLabel(request)
+
+  useEffect(() => {
+    setAnswers({})
+    setHidden(false)
+    setBusy(false)
+  }, [threadId, request.toolUseId])
+
+  useEffect(() => {
+    if (hidden || typeof window === 'undefined') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setHidden(true)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [hidden])
 
   const select = (question: string, label: string) => {
     setAnswers((prev) => ({ ...prev, [question]: label }))
   }
 
   const submit = async () => {
-    await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, answers })
-    dismiss()
+    setBusy(true)
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, answers })
+      dismiss()
+    } finally {
+      setBusy(false)
+    }
   }
 
   const dismiss = () => {
@@ -34,66 +57,52 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     })
   }
 
-  const close = async () => {
-    dismiss()
-    try {
-      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, canceled: true })
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('未找到待确认的 AskUserQuestion 请求')) {
-        throw error
-      }
-    }
-  }
-
   const allAnswered = request.questions.every((q) => answers[q.question])
 
+  if (hidden) return null
+
   return (
-    <div className="animate-in slide-in-from-bottom-2 duration-200 mx-4 mb-3 rounded-xl border bg-card shadow-lg">
-      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <MessageCircle size={14} className="text-foreground/50" />
-        <span className="text-[13px] font-medium text-foreground">需要你的输入</span>
+    <InteractiveOverlayFrame
+      kind="ask-user"
+      title="需要你的输入"
+      busy={busy}
+      submitDisabled={!allAnswered}
+      onIgnore={() => setHidden(true)}
+      onSubmit={() => void submit()}
+    >
+      <div className="space-y-3">
         {subagentDisplayLabel && (
-          <span className="text-[11px] text-foreground/45">{subagentDisplayLabel}</span>
+          <p className="px-1 text-[12px] leading-5 text-[#8a8f98]">{subagentDisplayLabel}</p>
         )}
-        <button
-          type="button"
-          title="关闭"
-          onClick={() => void close()}
-          className="ml-auto flex size-6 items-center justify-center rounded-md text-foreground/45 transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <X size={14} />
-        </button>
-      </div>
-      <div className="px-3 pb-3 space-y-3">
         {request.questions.map((q) => (
           <div key={q.question}>
-            <p className="text-[12px] text-foreground/70 mb-1.5">{q.question}</p>
-            <div className="flex flex-wrap gap-1.5">
+            <p className="mb-1.5 px-1 text-[13px] font-semibold leading-5 text-[#1f232b]">{q.question}</p>
+            <div className="space-y-1">
               {q.options.map((opt) => (
                 <button
                   key={opt.label}
+                  type="button"
                   onClick={() => select(q.question, opt.label)}
                   className={cn(
-                    'px-2.5 py-1 rounded-lg text-[12px] border transition-colors',
+                    'flex min-h-10 w-full items-center rounded-[12px] px-2.5 text-left text-[14px] transition-colors',
                     answers[q.question] === opt.label
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'border-border/50 text-foreground/70 hover:bg-muted/50'
+                      ? 'bg-[#f1f1f3] text-[#1f232b]'
+                      : 'text-[#8a8f98] hover:bg-[#f6f6f7]'
                   )}
                 >
-                  {opt.label}
+                  <span className="flex min-w-0 flex-1 items-center gap-2 font-semibold">
+                    {opt.label}
+                    {answers[q.question] === opt.label && <Check size={15} className="text-[#5f9cff]" />}
+                  </span>
+                  {opt.description && opt.description !== opt.label && (
+                    <span className="ml-3 max-w-[45%] truncate text-[12px] font-medium text-[#9aa0aa]">{opt.description}</span>
+                  )}
                 </button>
               ))}
             </div>
           </div>
         ))}
-        <button
-          onClick={submit}
-          disabled={!allAnswered}
-          className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
-        >
-          提交
-        </button>
       </div>
-    </div>
+    </InteractiveOverlayFrame>
   )
 }

@@ -120,6 +120,19 @@
   margin-top: 0;
 }
 
+@keyframes lume-shimmer-text {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.lume-shimmer-text {
+  background: linear-gradient(90deg, #9ca3af 0%, #c7ccd4 45%, #9ca3af 90%);
+  background-size: 200% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: lume-shimmer-text 1.45s ease-in-out infinite;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;

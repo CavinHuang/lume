@@ -23,6 +23,8 @@ import {
   type PlanModePhaseChangedEvent,
 } from '@lume/shared'
 import {
+  planPreviewToPendingTaskApproval,
+  removePendingToolPermissionEverywhere,
   removePendingTaskApprovalsForThread,
   upsertPendingAskUserQuestion,
   upsertPendingTaskApproval,
@@ -70,8 +72,18 @@ export function useGlobalAgentListeners() {
           const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
           setRuntimeEvents((prev) => appendRuntimeEvent(prev, event))
+          if (event.type === 'plan.preview') {
+            setPendingInteractive((prev) => upsertPendingTaskApproval(prev, planPreviewToPendingTaskApproval(event)))
+          }
           if (event.type === 'task.progress') {
             setSidePanelViews((prev) => ({ ...prev, [threadId]: 'task-progress' }))
+          }
+          if (
+            event.type === 'tool.permission_timeout' ||
+            (event.type === 'tool.failed' && event.error.message.includes('工具权限确认超时'))
+          ) {
+            const requestId = event.type === 'tool.permission_timeout' ? event.requestId : event.toolCallId
+            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, requestId))
           }
           if (
             event.type === 'assistant.delta' ||
@@ -79,6 +91,7 @@ export function useGlobalAgentListeners() {
             event.type === 'tool.started' ||
             event.type === 'tool.completed' ||
             event.type === 'tool.failed' ||
+            event.type === 'tool.permission_timeout' ||
             (event.type === 'task.progress' && event.status !== 'completed' && event.status !== 'failed' && event.status !== 'cancelled')
           ) {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))

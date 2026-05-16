@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
-import { Check, CheckCircle, ChevronDown, ChevronRight, Circle, ClipboardList, Copy, Edit3, FileText, History, Loader2, Sparkles, Terminal, Wrench, X, XCircle } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Edit3, FileText, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -50,9 +50,21 @@ export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThr
     return <UserMessageBlock message={message} threadId={threadId} className={cls} />
   }
 
-  const hasVisibleWorkBlock = message.blocks.some((block) => block.type === 'text' || block.type === 'tool_call')
-  const shouldShowStreamingProgress = message.status === 'streaming'
-    && (message.blocks.length === 0 || !hasVisibleWorkBlock)
+  const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
+  const contentBlocks = message.blocks.filter((block) => block.type !== 'task_progress')
+  const activitySignature = contentBlocks
+    .map((block) => {
+      if (block.type === 'text') return `text:${block.text}`
+      if (block.type === 'thinking') return `thinking:${block.text}`
+      if (block.type === 'tool_call') return `tool:${block.toolCall.id}:${block.toolCall.status}`
+      if (block.type === 'plan_preview') return `plan:${block.preview.contractId}:${block.preview.markdown}`
+      return ''
+    })
+    .join('|')
+  const showIdleStatus = useDelayedAssistantIdleStatus(
+    animate === true && message.status === 'streaming' && !latestTaskProgressBlock,
+    activitySignature,
+  )
 
   return (
     <div className={cn('flex min-w-0 gap-4', cls)}>
@@ -60,7 +72,7 @@ export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThr
         <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
       </div>
       <div className="min-w-0 flex-1 space-y-4 pt-2">
-        {message.blocks.map((block, index) => (
+        {contentBlocks.map((block, index) => (
           <RuntimeEventAssistantBlockItem
             key={block.id}
             block={block}
@@ -70,21 +82,19 @@ export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThr
             isActiveThinking={block.type === 'thinking'
               && animate === true
               && message.status === 'streaming'
-              && index === message.blocks.length - 1}
+              && index === contentBlocks.length - 1}
           />
         ))}
-        {shouldShowStreamingProgress && (
-          <div className="flex items-center gap-2 text-[13px] text-[#8a92a6]">
-            <Loader2 size={14} className="animate-spin" />
-            {message.blocks.length === 0 ? 'Agent 正在思考...' : '正在准备下一步...'}
-          </div>
+        {latestTaskProgressBlock && (
+          <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
         )}
+        {showIdleStatus && <ShimmerStatusLine text="正在思考" />}
         {message.error && (
           <p className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-[12px] text-destructive/80">
             {message.error}
           </p>
         )}
-        <MessageFeedbackActions text={message.text} />
+        <MessageFeedbackActions text={message.text} isStreaming={message.status === 'streaming'} />
       </div>
     </div>
   )
@@ -264,80 +274,62 @@ function RuntimeEventAssistantBlockItem({
     return <RuntimeEventThinkingBlock text={block.text} active={isActiveThinking} />
   }
 
-  if (block.type === 'task_progress') {
-    return <RuntimeEventTaskProgressBlock event={block.event} />
-  }
-
   if (block.type === 'plan_preview') {
     return <PlanPreviewCard preview={block.preview} onOpenThreadFile={onOpenThreadFile} />
+  }
+
+  if (block.type === 'task_progress') {
+    return null
   }
 
   return <RuntimeEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
 }
 
-function RuntimeEventTaskProgressBlock({ event }: { event: TaskProgressViewEvent }) {
-  const total = event.tasks.length
-  const completed = event.tasks.filter((task) => task.status === 'completed' || task.status === 'skipped').length
-  const failed = event.tasks.filter((task) => task.status === 'failed').length
+function findLatestTaskProgressBlock(blocks: RuntimeAssistantBlock[]): Extract<RuntimeAssistantBlock, { type: 'task_progress' }> | undefined {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index]
+    if (block?.type === 'task_progress') return block
+  }
+  return undefined
+}
+
+export function getTaskProgressStatusText(event: TaskProgressViewEvent): string {
   const current = event.currentTaskId
     ? event.tasks.find((task) => task.id === event.currentTaskId)
     : event.tasks.find((task) => task.status === 'running')
-  const tone = failed > 0 || event.status === 'failed'
-    ? 'danger'
-    : event.status === 'completed'
-      ? 'success'
-      : 'active'
+  const title = current?.title || current?.description || current?.id
+  if (event.status === 'completed') return '任务已完成'
+  if (event.status === 'failed') return title ? `执行失败：${title}` : '任务执行失败'
+  if (title) return `正在执行：${title}`
+  return event.message?.trim() || '正在执行任务'
+}
 
+function TaskProgressStatusLine({ event }: { event: TaskProgressViewEvent }) {
+  return <ShimmerStatusLine text={getTaskProgressStatusText(event)} />
+}
+
+function ShimmerStatusLine({ text }: { text: string }) {
   return (
-    <div className={cn(
-      'max-w-[680px] rounded-lg border bg-white px-3 py-3 shadow-[0_8px_24px_rgba(53,48,85,0.06)]',
-      tone === 'active' && 'border-[#d9d2ff]',
-      tone === 'success' && 'border-emerald-500/20',
-      tone === 'danger' && 'border-destructive/20 bg-destructive/5',
-    )}>
-      <div className="flex items-start gap-2">
-        <span className={cn(
-          'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
-          tone === 'success' ? 'bg-emerald-500/10 text-emerald-600' : tone === 'danger' ? 'bg-destructive/10 text-destructive' : 'bg-[#f1efff] text-[#675cff]',
-        )}>
-          {tone === 'success' ? <CheckCircle size={15} /> : tone === 'danger' ? <XCircle size={15} /> : <ClipboardList size={15} />}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <div className="truncate text-[13px] font-semibold text-[#34384c]">
-              {event.status === 'completed' ? '任务全部完成' : event.status === 'failed' ? '任务执行失败' : '正在执行任务'}
-            </div>
-            <div className="shrink-0 text-[11px] text-[#8a92a6]">
-              {completed}/{total}
-            </div>
-          </div>
-          {current && (
-            <div className="mt-1 text-[12px] leading-5 text-[#5c6275]">
-              {current.title || current.description || current.id}
-            </div>
-          )}
-          {event.message && event.message !== (current?.title || current?.description) && (
-            <div className="mt-1 text-[11px] leading-5 text-[#8a92a6]">
-              {event.message}
-            </div>
-          )}
-          <div className="mt-2 flex gap-1.5">
-            {event.tasks.slice(0, 8).map((task) => (
-              <span key={task.id} title={task.title || task.description || task.id} className="text-[#9aa0b2]">
-                {task.status === 'completed' || task.status === 'skipped'
-                  ? <CheckCircle size={12} className="text-emerald-500" />
-                  : task.status === 'running'
-                    ? <Loader2 size={12} className="animate-spin text-[#675cff]" />
-                    : task.status === 'failed'
-                      ? <XCircle size={12} className="text-destructive" />
-                      : <Circle size={12} />}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
+    <div className="flex min-h-5 items-center text-[13px] font-medium leading-5 text-[#8a92a6]">
+      <span className="lume-shimmer-text truncate">{text}</span>
     </div>
   )
+}
+
+function useDelayedAssistantIdleStatus(active: boolean, activitySignature: string): boolean {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    setVisible(false)
+    if (!active) return
+
+    const timeoutId = window.setTimeout(() => {
+      setVisible(true)
+    }, 3000)
+    return () => window.clearTimeout(timeoutId)
+  }, [active, activitySignature])
+
+  return visible
 }
 
 function RuntimeEventThinkingBlock({ text, active }: { text: string; active: boolean }) {
@@ -694,6 +686,11 @@ function RuntimeEventToolCallBlock({ toolCall, threadId }: { toolCall: RuntimeTo
       >
         <Icon size={15} className="shrink-0 text-[#68718a]" />
         <span className="font-mono font-semibold text-[#4d566f]">{toolCall.toolName}</span>
+        {getToolPermissionTitleBadgeText(toolCall) && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[12px] font-semibold text-amber-700">
+            {getToolPermissionTitleBadgeText(toolCall)}
+          </span>
+        )}
         <span className={cn(
           'rounded-full px-2 py-0.5 text-[12px] font-semibold',
           toolCall.status === 'failed'
@@ -729,8 +726,13 @@ function RuntimeEventToolCallBlock({ toolCall, threadId }: { toolCall: RuntimeTo
   )
 }
 
-function MessageFeedbackActions({ text }: { text: string }) {
-  if (!text.trim()) return null
+export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): string | null {
+  if (toolCall.permissionState === 'timeout') return '权限超时'
+  return null
+}
+
+function MessageFeedbackActions({ text, isStreaming }: { text: string; isStreaming: boolean }) {
+  if (!text.trim() || isStreaming) return null
 
   return (
     <div className="flex items-center pt-2 text-[#9aa1b3]">

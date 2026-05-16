@@ -95,6 +95,64 @@ describe('runtime-event-message-projection', () => {
     }])
   })
 
+  test('marks timed out tool permission failures for the tool title badge', () => {
+    const messages = projectRuntimeEventMessages([
+      event({
+        type: 'tool.started',
+        toolCallId: 'tool-timeout',
+        toolName: 'Bash',
+        inputPreview: { command: 'sleep 1' },
+      }),
+      event({
+        type: 'tool.failed',
+        toolCallId: 'tool-timeout',
+        toolName: 'Bash',
+        error: {
+          code: 'tool_error',
+          message: '工具权限确认超时: Bash',
+        },
+      }),
+    ])
+
+    expect(messages[0]?.type).toBe('assistant')
+    if (messages[0]?.type !== 'assistant') return
+    expect(messages[0].toolCalls[0]).toMatchObject({
+      id: 'tool-timeout',
+      status: 'failed',
+      isError: true,
+      permissionState: 'timeout',
+    })
+  })
+
+  test('marks a running tool as permission timed out when the timeout RuntimeEvent arrives', () => {
+    const messages = projectRuntimeEventMessages([
+      event({
+        type: 'tool.started',
+        toolCallId: 'tool-timeout',
+        toolName: 'Bash',
+        inputPreview: { command: 'sleep 1' },
+      }),
+      event({
+        type: 'tool.permission_timeout',
+        toolCallId: 'tool-timeout',
+        requestId: 'tool-timeout',
+        toolName: 'Bash',
+        message: '工具权限确认超时: Bash',
+      }),
+    ])
+
+    expect(messages[0]?.type).toBe('assistant')
+    if (messages[0]?.type !== 'assistant') return
+    expect(messages[0].toolCalls[0]).toMatchObject({
+      id: 'tool-timeout',
+      toolName: 'Bash',
+      status: 'failed',
+      output: '工具权限确认超时: Bash',
+      isError: true,
+      permissionState: 'timeout',
+    })
+  })
+
   test('projects task progress RuntimeEvents as assistant task blocks', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'message.user.submitted', text: 'run the plan', messageId: 'user-1' }),
@@ -132,6 +190,105 @@ describe('runtime-event-message-projection', () => {
       }],
       status: 'streaming',
     })
+  })
+
+  test('keeps only the latest task progress block at the assistant message bottom', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'run the plan', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: 'Starting. ' }),
+      event({
+        type: 'task.progress',
+        taskRunId: 'taskrun-1',
+        contractId: 'contract-1',
+        status: 'running',
+        currentTaskId: 'task-1',
+        tasks: [{
+          id: 'task-1',
+          title: 'Patch files',
+          status: 'running',
+          attemptCount: 1,
+        }],
+        message: '正在执行：Patch files',
+      }),
+      event({ type: 'assistant.delta', delta: 'Still working. ' }),
+      event({
+        type: 'task.progress',
+        taskRunId: 'taskrun-1',
+        contractId: 'contract-1',
+        status: 'running',
+        currentTaskId: 'task-2',
+        tasks: [{
+          id: 'task-2',
+          title: 'Run tests',
+          status: 'running',
+          attemptCount: 1,
+        }],
+        message: '正在执行：Run tests',
+      }),
+    ])
+
+    expect(messages[1]).toMatchObject({
+      text: 'Starting. Still working. 正在执行：Run tests',
+      blocks: [
+        { type: 'text', text: 'Starting. ' },
+        { type: 'text', text: 'Still working. ' },
+        {
+          type: 'task_progress',
+          event: {
+            currentTaskId: 'task-2',
+            message: '正在执行：Run tests',
+          },
+        },
+      ],
+    })
+  })
+
+  test('projects task progress after a completed plan message as a new streaming assistant status', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'make a plan', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: 'Here is the plan.' }),
+      event({ type: 'run.completed' }),
+      event({
+        type: 'task.progress',
+        runId: 'run-execute-1',
+        taskRunId: 'taskrun-1',
+        contractId: 'contract-1',
+        status: 'running',
+        currentTaskId: 'task-1',
+        tasks: [{
+          id: 'task-1',
+          title: 'Patch files',
+          status: 'running',
+          attemptCount: 1,
+        }],
+        message: '正在执行：Patch files',
+      }),
+    ])
+
+    expect(messages).toMatchObject([
+      { type: 'user', text: 'make a plan' },
+      {
+        id: 'assistant:run-1',
+        type: 'assistant',
+        text: 'Here is the plan.',
+        status: 'completed',
+      },
+      {
+        id: 'assistant:task:taskrun-1',
+        type: 'assistant',
+        text: '正在执行：Patch files',
+        blocks: [{
+          type: 'task_progress',
+          event: {
+            type: 'task.progress',
+            runId: 'run-execute-1',
+            taskRunId: 'taskrun-1',
+            message: '正在执行：Patch files',
+          },
+        }],
+        status: 'streaming',
+      },
+    ])
   })
 
   test('projects plan preview RuntimeEvents as assistant plan blocks and copyable text', () => {
