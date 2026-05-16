@@ -1,5 +1,9 @@
 # Thread plan.md Approval Implementation Plan
 
+Status: Superseded/implemented by the final Codex-like Plan Mode migration.
+
+> Historical note: this plan still references fallback plan persistence because it predates the final deletion pass. Current code requires `TaskContractWrite` with verified `planMarkdown`; plain assistant output is no longer converted into a fallback task contract.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make plan approval use a thread-workspace Markdown plan contract, with reliable preview/open behavior and rejection feedback routed back to planning.

@@ -1,5 +1,9 @@
 # Task Contract + Task Progress Implementation Plan
 
+Status: Superseded/implemented by the final TaskContractWrite + TaskRun plan-mode migration.
+
+> Historical note: this plan still mentions fallback execution cleanup targets because it was written before the final deletion pass. Current code has removed fallback execution and uses `task.progress` runtime events as the TaskProgressPanel source of truth.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Redesign agent planning so Plan Mode only produces an approval contract, approval automatically switches to execution with `acceptEdits`, and the UI shows task progress instead of a plan execution state.

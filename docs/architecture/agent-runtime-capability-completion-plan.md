@@ -28,7 +28,7 @@ Lume 不迁移到 `openai-agents-js`。本轮实现只借鉴其 Runner、RunStat
   - `sessions/{threadId}/interruptions/{interruptionId}.json`
 - Added minimal guardrail framework and migrated runtime tool safety into builtin tool input guardrails.
 - Added builtin guardrails for file write workspace boundaries and sensitive memory writes.
-- Added minimal structured plan store and markdown/front matter/`PlanModePhaseTracker` step mapping for later Plan UI/runtime integration.
+- Added minimal task contract store, markdown plan file verification, and `PlanModePhaseTracker` state mapping for Plan UI/runtime integration.
 - Added context budget and moved existing system/dynamic/memory prompt assembly into `ContextAssembler`.
 - Added `LumeRunEvent` types. SDK stream is normalized once into RunItems; UI events are projected from those RunItems.
 - Added sidecar `agent:run:event` live emission for assistant/tool/interruption/run terminal events.
@@ -47,9 +47,9 @@ Lume 不迁移到 `openai-agents-js`。本轮实现只借鉴其 Runner、RunStat
   - AskUser interruption resolves into a synthetic tool result checkpoint
   - `agent:resume-run` can rebuild a hidden continuation message and continue through `sendAgentMessage`
   - unresolved tool approvals without tool result are reported as `not_resumable` instead of pretending to resume
-- Added tool-approval cold-start replan continuation:
+- Added tool-approval durable resolution checkpoints:
   - approval/rejection resolves into a `before_model_call` checkpoint
-  - recovery explicitly tells the model the original tool was not replayed
+  - cold-start resume explicitly refuses to replay or synthesize approved tool calls
   - execute tools are still not process-restored; they must be re-issued or replanned
 - Added `TaskContractWrite` in plan mode and task approval interruption persistence.
 - Added task approval as a first-class pending interactive item:
@@ -70,22 +70,23 @@ Lume 不迁移到 `openai-agents-js`。本轮实现只借鉴其 Runner、RunStat
   - `agent:list-run-states`
   - `agent:get-thread-run-events`
   - `agent:get-run-trace`
-  - `agent:list-structured-plans`
 - Added run-state summary projection for UI/debug consumers, including continuation checkpoint summaries and interruption/item counts without exposing full generated item payloads.
 - Added RunState/RunItems to `LumeRunEvent` projection for reload-safe history rendering without raw SDK transcript reads.
 - Added default `safe_summary` trace projection for UI-facing trace reads.
-- Added structured plan projection from `TaskContractStore` without forcing historical markdown plan migration.
+- Added `TaskContractWrite`-backed plan approval flow:
+  - plan mode must submit `planMarkdown` through `TaskContractWrite`
+  - sidecar writes and verifies `plans/{contractId}.md`
+  - task approval interruptions point at the stored contract
+  - natural-language approval and approval-button execution share the same TaskRun dispatch path
+- Removed legacy structured-plan list/fallback execution UI surfaces; TaskProgressPanel now renders only `task.progress` runtime events.
 - Added internal handoff recording API that persists a `handoff` run item and trace span without changing current conversation control flow.
-- Added typed web desktop API wrappers for resume, trace reads, and structured plan reads.
-- Added TaskProgressPanel structured-plan fallback so existing Plan UI can render `TaskContractStore` data when legacy `PlanModePhaseTracker` state is absent.
-- Added TaskProgressPanel approval actions for structured plans that are waiting on `plan_approval`; approval reuses the existing best-effort `resume-run` path.
+- Added typed web desktop API wrappers for resume, trace reads, task approval, and TaskRun dispatch.
 - Added TracePanel and side-panel trace entry. UI reads `safe_summary` traces by default.
 - Added TracePanel redaction-level switch. UI-facing trace reads only support `safe_summary` and `diagnostic`; `raw_internal` remains sidecar-internal only.
 - Added TracePanel run selector backed by `agent:list-run-states`, so users can inspect historical runs instead of only the latest trace.
 - Added TracePanel live event preview backed by the frontend `LumeRunEvent` cache. This is intentionally a debug/status projection, not a replacement for message rendering yet.
 - Added TracePanel span tree projection based on `parentId`, with orphan spans kept as root rows for robustness.
-- Added best-effort `resume-run` calls after tool approval and AskUserQuestion answers. `not_resumable` remains non-fatal and does not claim execution resumed.
-- Added debug logging for non-resumed `resume-run` results so resume boundaries are visible without user-facing false success.
+- Added best-effort `resume-run` after persisted AskUserQuestion answers. Live AskUserQuestion answers wake the in-process resolver; tool approvals remain `not_resumable` in cold-start resume unless a safe synthetic tool result exists.
 - Added automation approval metadata (`automationJobId` / `automationTrigger`) to high-risk tool permission requests.
 - Added Automation management page pending-approval banner for `automation_approval` interruptions, joined with known job names when available.
 - Removed production `systemPrompt.md` writes from runtime session creation.
@@ -99,7 +100,7 @@ Lume 不迁移到 `openai-agents-js`。本轮实现只借鉴其 Runner、RunStat
 - Web UI no longer consumes raw `SDKMessage`; runtime internals may still persist SDK messages for transcript/debug purposes.
 - Removed `agent:stream:event` / `LEGACY_STREAM_EVENT` and `agent:get-thread-sdk-messages` from the public UI boundary.
 - No full post-restart execution resume for every tool yet. `agent:resume-run` returns explicit `not_resumable` unless a valid checkpoint, synthetic result, and continuation runner exist.
-- Plan approval can clear the persistent interruption and mark the plan approved, but full execution continuation still depends on the runner/resume capability available for that run.
+- Plan approval now creates or continues a `TaskRun`; restart-safe continuation remains limited to explicit resume checkpoints.
 - No recovery of in-flight shell/process tools after restart.
 - No complex handoff UI or control-transfer implementation yet.
 - No full automation dashboard rewrite yet; the current page surfaces pending approvals and run records can show `waiting_for_approval`.

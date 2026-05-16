@@ -1,6 +1,6 @@
 # Codex-like Plan Mode 交互整理
 
-Status: Draft for implementation planning
+Status: Implemented
 
 ## 背景
 
@@ -139,21 +139,16 @@ executing --完成--> completed
 
 ## Lume 当前映射
 
-已有基础：
+当前实现：
 
-- `TaskContractWrite` 能提交结构化任务契约。
-- 线程工作区内 `plan.md` 契约已确定。
-- `TaskApprovalBanner` 已支持查看计划、批准、拒绝反馈。
-- 拒绝反馈已经能回到 plan 权限继续发送给 Agent。
-- 前端已能把 `planFilePath` 当 thread file tab 打开。
-
-需要调整的重点：
-
-- 把普通聊天输入作为修改计划的主入口。
-- 审批横幅从“表单式拒绝”降级为轻量状态提示和快捷按钮。
-- 明确 `awaiting_approval` 状态，不让 `review`、`planning`、`executing` 的语义混在一起。
-- 让“继续实现”等自然语言批准路径和按钮批准走同一套执行入口。
-- 清理或收束旧 fallback plan execution，避免绕过 TaskRun。
+- `TaskContractWrite` 是唯一的计划提交出口；提交 `needs_approval` 前必须提供并验证 `planMarkdown`。
+- Plan 模式下仍可用 `AskUserQuestion` 澄清需求或让用户选择方案，但不能用它请求计划审批；审批只来自 `TaskContractWrite` 产生的计划审批请求。
+- 计划文件写入线程工作区 `plans/{contractId}.md`，审批请求通过 persistent interruption 暴露到 `agent:get-pending-interactive`。
+- `TaskApprovalBanner` 只保留轻量状态、查看计划和继续执行按钮；普通聊天输入是一等反馈入口。
+- 普通反馈会取消当前待审批计划并回到 `planning`，由 Agent 更新计划并重新调用 `TaskContractWrite`。
+- 点击按钮批准和发送“继续执行 / 继续实现 / 按计划实现”等自然语言批准走同一套 `approve + TaskRun dispatch` 路径。
+- 执行阶段由 `TaskRun` 与 `task.progress` 事件驱动，`TaskProgressPanel` 不再读取旧 contract execution 状态。
+- 旧 `EnterPlanMode` / `ExitPlanMode` SDK 全局状态工具、fallback plan synthesis、fallback execution、task contract list IPC 已移除。
 
 ## UI 原则
 
@@ -165,12 +160,12 @@ executing --完成--> completed
 
 ## 成功标准
 
-- Plan 模式下 Agent 能先读上下文，再生成 verified plan file。
-- 用户能打开计划文件审阅。
-- 用户发送修改意见后，Agent 重新规划而不是执行。
-- 用户发送“继续实现”或点击按钮后，进入同一条 TaskRun 执行路径。
-- 执行阶段没有重复审批 UI。
-- 相关测试覆盖计划反馈、自然语言批准、按钮批准和计划文件打开。
+- Plan 模式下 Agent 能先读上下文，再生成 verified plan file。已覆盖：`TaskContractWriteTool` 与 runtime-core plan file 测试。
+- 用户能打开计划文件审阅。已覆盖：`AgentView` plan approval tab 行为测试。
+- 用户发送修改意见后，Agent 重新规划而不是执行。已覆盖：pending plan feedback RPC 测试。
+- 用户发送“继续实现”或点击按钮后，进入同一条 TaskRun 执行路径。已覆盖：自然语言批准、按钮批准和 execute task contract RPC 测试。
+- 执行阶段没有重复审批 UI。已覆盖：pending interactive 状态清理与 TaskProgressPanel runtime-progress 测试。
+- SDK 不再暴露旧 plan mode state tools。已覆盖：SDK tool registry 测试。
 
 ## 待确认问题
 

@@ -1,5 +1,9 @@
 # Plan 模式审批流程改进
 
+Status: Superseded by `docs/superpowers/specs/2026-05-10-codex-like-plan-mode-design.md`.
+
+> 这份文档记录早期审批流程设计。当前实现以 `TaskContractWrite` 写入并验证 `plans/{contractId}.md` 为唯一计划出口；普通聊天反馈触发重规划，自然语言批准和按钮批准都进入同一条 TaskRun 执行路径。
+
 ## 背景与问题
 
 当前 Plan 模式的审批流程存在以下问题：
