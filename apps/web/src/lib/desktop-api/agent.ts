@@ -9,13 +9,12 @@ import type {
   AgentPendingInteractiveInput,
   AgentPendingInteractiveState,
   AgentTaskApprovalResponseInput,
+  AgentTaskApprovalResponseResult,
   AgentExecuteTaskContractInput,
   AgentExecuteTaskContractResult,
   AgentRunTraceInput,
   AgentRunTraceResult,
   AgentSendInput,
-  AgentTaskContractsInput,
-  AgentTaskContractsResult,
   AgentGetMessageVersionsInput,
   AgentMessageVersionsResult,
   AgentMessage,
@@ -77,7 +76,7 @@ export const listAgentRunStates = (input: AgentListRunStatesInput) =>
   })
 
 export const submitTaskApproval = (input: AgentTaskApprovalResponseInput) =>
-  invoke<{ ok: boolean }>('sidecar_call', {
+  invoke<AgentTaskApprovalResponseResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL,
     params: input,
   })
@@ -91,11 +90,5 @@ export const executeTaskContract = (input: AgentExecuteTaskContractInput) =>
 export const getAgentRunTrace = (input: AgentRunTraceInput) =>
   invoke<AgentRunTraceResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.GET_RUN_TRACE,
-    params: input,
-  })
-
-export const listTaskContracts = (input: AgentTaskContractsInput) =>
-  invoke<AgentTaskContractsResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS,
     params: input,
   })

@@ -128,3 +128,18 @@ export function removePendingTaskApproval(
     },
   }
 }
+
+export function removePendingTaskApprovalsForThread(
+  prev: Record<string, AgentPendingInteractiveState>,
+  threadId: string,
+): Record<string, AgentPendingInteractiveState> {
+  const current = prev[threadId]
+  if (!current || (current.taskApprovals ?? []).length === 0) return prev
+  return {
+    ...prev,
+    [threadId]: {
+      ...current,
+      taskApprovals: [],
+    },
+  }
+}

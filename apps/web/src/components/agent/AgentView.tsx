@@ -1,12 +1,12 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
-import { activeTabIdAtom, agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom } from '@/atoms'
+import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
-import { TaskApprovalBanner } from './TaskApprovalBanner'
+import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { SidePanel } from './SidePanel'
 import { Upload } from 'lucide-react'
@@ -14,20 +14,19 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
-import { buildThreadPlanFileTab, upsertTab } from '@/components/tabs/file-tabs'
 
 interface AgentViewProps {
   threadId: string
 }
 
 export function AgentView({ threadId }: AgentViewProps) {
-  const [, setTabs] = useAtom(tabsAtom)
-  const [, setActiveTabId] = useAtom(activeTabIdAtom)
   const streamingState = useAtomValue(agentStreamingStatesAtom)[threadId] ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
   const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
+  const activeTaskApproval = pendingTaskApprovals[0]
+  const [approvalOverlayVisible, setApprovalOverlayVisible] = useState(Boolean(activeTaskApproval))
 
   const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
   const sidePanelView = sidePanelViews[threadId] ?? null
@@ -44,9 +43,8 @@ export function AgentView({ threadId }: AgentViewProps) {
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useState({ current: 0 })[0]
-  const pendingPlanFilePath = pendingTaskApprovals.find((request) => request.planFilePath)?.planFilePath
   const [threadFilePreview, setThreadFilePreview] = useState<{ path: string; key: number } | null>(null)
-  const threadFilePathToPreview = threadFilePreview?.path ?? pendingPlanFilePath
+  const threadFilePathToPreview = threadFilePreview?.path
   const threadFilePreviewKey = threadFilePreview?.key ?? 0
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -104,16 +102,6 @@ export function AgentView({ threadId }: AgentViewProps) {
     }
   }, [threadId, workspaceSlug, dragCounter])
 
-  const openPlanFile = useCallback((planFilePath: string) => {
-    const nextTab = buildThreadPlanFileTab({
-      threadId,
-      planFilePath,
-      ...(workspaceSlug ? { workspaceSlug } : {}),
-    })
-    setTabs((prev) => upsertTab(prev, nextTab))
-    setActiveTabId(nextTab.id)
-  }, [setActiveTabId, setTabs, threadId, workspaceSlug])
-
   const openThreadFilePreview = useCallback((path: string) => {
     setThreadFilePreview((prev) => ({
       path,
@@ -128,16 +116,11 @@ export function AgentView({ threadId }: AgentViewProps) {
 
   useEffect(() => {
     setThreadFilePreview(null)
-  }, [threadId, pendingPlanFilePath])
+  }, [threadId])
 
   useEffect(() => {
-    if (!pendingPlanFilePath) return
-    setSidePanelViews((prev) => (
-      prev[threadId] === 'files'
-        ? prev
-        : { ...prev, [threadId]: 'files' }
-    ))
-  }, [pendingPlanFilePath, setSidePanelViews, threadId])
+    setApprovalOverlayVisible(Boolean(activeTaskApproval))
+  }, [activeTaskApproval?.contractId, threadId])
 
   return (
     <div
@@ -162,15 +145,25 @@ export function AgentView({ threadId }: AgentViewProps) {
         {pendingAskUserQuestions.map((request) => (
           <AskUserBanner key={request.toolUseId} threadId={threadId} request={request} />
         ))}
-        {pendingTaskApprovals.map((request) => (
-          <TaskApprovalBanner
-            key={request.contractId}
-            threadId={threadId}
-            request={request}
-            onOpenPlan={request.planFilePath ? () => openPlanFile(request.planFilePath!) : undefined}
-          />
-        ))}
-        <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
+        <div className="relative">
+          <div
+            aria-hidden={Boolean(activeTaskApproval && approvalOverlayVisible)}
+            className={cn(
+              activeTaskApproval && approvalOverlayVisible && 'pointer-events-none select-none opacity-0',
+            )}
+          >
+            <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
+          </div>
+          {activeTaskApproval && (
+            <div className="absolute inset-x-0 bottom-0 z-30">
+              <PlanApprovalOverlay
+                threadId={threadId}
+                request={activeTaskApproval}
+                onVisibilityChange={setApprovalOverlayVisible}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 右侧面板 */}

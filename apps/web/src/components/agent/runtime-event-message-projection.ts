@@ -73,6 +73,25 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
       return
     }
 
+    if (event.type === 'plan.preview') {
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      currentAssistant.blocks.push({
+        type: 'plan_preview',
+        id: `plan:${event.contractId}`,
+        preview: {
+          contractId: event.contractId,
+          title: event.title,
+          summary: event.summary,
+          markdown: event.markdown,
+          ...(event.planFilePath ? { planFilePath: event.planFilePath } : {}),
+          ...(event.planVerified !== undefined ? { planVerified: event.planVerified } : {}),
+          stepCount: event.stepCount,
+        },
+      })
+      currentAssistant.text += event.markdown
+      return
+    }
+
     if (event.type === 'tool.started') {
       currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
       const toolCall: RuntimeToolCallView = {
@@ -224,6 +243,7 @@ function replaceAssistantContentBlocks(
   const currentSegment = assistant.blocks.slice(segmentStart)
   const preservedCurrentSegment = currentSegment.filter((block) => (
     block.type === 'tool_call'
+    || block.type === 'plan_preview'
     || (!finalHasThinking && block.type === 'thinking')
   ))
   assistant.blocks = [...beforeSegment, ...preservedCurrentSegment]
@@ -252,8 +272,10 @@ function reindexToolBlocks(assistant: MutableAssistantMessage): void {
 
 function recomputeAssistantContent(assistant: MutableAssistantMessage): void {
   assistant.text = assistant.blocks
-    .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'text' }> => block.type === 'text')
-    .map((block) => block.text)
+    .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'text' | 'plan_preview' }> => (
+      block.type === 'text' || block.type === 'plan_preview'
+    ))
+    .map((block) => block.type === 'text' ? block.text : block.preview.markdown)
     .join('')
   assistant.thinking = assistant.blocks
     .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'thinking' }> => block.type === 'thinking')

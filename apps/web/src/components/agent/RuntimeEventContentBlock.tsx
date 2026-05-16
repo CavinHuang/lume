@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
-import { Check, CheckCircle, ChevronDown, ChevronRight, Circle, ClipboardList, Copy, Edit3, History, Loader2, Sparkles, Terminal, Wrench, X, XCircle } from 'lucide-react'
+import { Check, CheckCircle, ChevronDown, ChevronRight, Circle, ClipboardList, Copy, Edit3, FileText, History, Loader2, Sparkles, Terminal, Wrench, X, XCircle } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
-import type { RuntimeAssistantBlock, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import type { PlanPreviewView, RuntimeAssistantBlock, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
@@ -268,6 +268,10 @@ function RuntimeEventAssistantBlockItem({
     return <RuntimeEventTaskProgressBlock event={block.event} />
   }
 
+  if (block.type === 'plan_preview') {
+    return <PlanPreviewCard preview={block.preview} onOpenThreadFile={onOpenThreadFile} />
+  }
+
   return <RuntimeEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
 }
 
@@ -378,11 +382,13 @@ function RuntimeEventThinkingBlock({ text, active }: { text: string; active: boo
 function useIsDark(): boolean {
   return useSyncExternalStore(
     (callback) => {
+      if (typeof document === 'undefined') return () => {}
       const observer = new MutationObserver(callback)
       observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
       return () => observer.disconnect()
     },
-    () => document.documentElement.classList.contains('dark'),
+    () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
+    () => false,
   )
 }
 
@@ -431,6 +437,133 @@ function SmoothText({
         {displayedContent}
       </XMarkdown>
     </div>
+  )
+}
+
+export function PlanPreviewCard({
+  preview,
+  onOpenThreadFile,
+}: {
+  preview: PlanPreviewView
+  onOpenThreadFile?: (path: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const feedbackStateRef = useRef<CopyFeedbackState>({ resetTimeoutId: null })
+  const isDark = useIsDark()
+  const canOpenFile = Boolean(preview.planFilePath && onOpenThreadFile)
+
+  useEffect(() => () => {
+    if (feedbackStateRef.current.resetTimeoutId !== null) {
+      window.clearTimeout(feedbackStateRef.current.resetTimeoutId)
+      feedbackStateRef.current.resetTimeoutId = null
+    }
+  }, [])
+
+  const handleCopy = async () => {
+    const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard)
+    if (!writeText) return
+
+    try {
+      await writeText(preview.markdown)
+      showTemporaryCopiedFeedback(feedbackStateRef.current, {
+        setCopied,
+        setTimer: window.setTimeout,
+        clearTimer: window.clearTimeout,
+      })
+    } catch (error) {
+      console.error('[PlanPreviewCard] 复制计划失败:', error)
+    }
+  }
+
+  return (
+    <article
+      data-plan-preview-card="true"
+      data-state={expanded ? 'expanded' : 'collapsed'}
+      className="w-full max-w-[920px] overflow-hidden rounded-[24px] border border-[#e6e6e9] bg-[#f4f4f5] px-5 py-5 shadow-[0_18px_50px_rgba(28,31,39,0.08)]"
+    >
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-semibold leading-5 text-[#20242c]">计划</div>
+          <h3 className="mt-6 text-[28px] font-semibold leading-[1.18] tracking-normal text-[#1f232b]">
+            {preview.title}
+          </h3>
+          {preview.summary && (
+            <p className="mt-3 text-[15px] leading-7 text-[#4f5663]">{preview.summary}</p>
+          )}
+          {preview.planFilePath && (
+            <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[12px] text-[#777d88]">
+              <FileText size={13} className="shrink-0" />
+              <span className="truncate font-mono">{preview.planFilePath}</span>
+              {preview.planVerified ? <span className="shrink-0 text-emerald-600">已验证</span> : null}
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1 text-[#858991]">
+          <button
+            type="button"
+            onClick={() => void handleCopy()}
+            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-black/[0.05] hover:text-[#20242c]"
+            title={copied ? '已复制' : '复制 Markdown'}
+            aria-label="复制计划"
+          >
+            {copied ? <Check size={15} /> : <Copy size={15} />}
+            <span>复制计划</span>
+          </button>
+          {preview.planFilePath && (
+            <button
+              type="button"
+              onClick={() => {
+                if (preview.planFilePath) onOpenThreadFile?.(preview.planFilePath)
+              }}
+              disabled={!canOpenFile}
+              className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-black/[0.05] hover:text-[#20242c] disabled:cursor-not-allowed disabled:opacity-50"
+              title={preview.planFilePath}
+            >
+              <FileText size={15} />
+              <span>打开计划文件</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-black/[0.05] hover:text-[#20242c]"
+            aria-label={expanded ? '收起计划' : '展开计划'}
+          >
+            <ChevronDown size={16} className={cn('transition-transform', expanded && 'rotate-180')} />
+            <span>{expanded ? '收起计划' : '展开计划'}</span>
+          </button>
+        </div>
+      </div>
+
+      <div className={cn('relative mt-6', expanded ? '' : 'max-h-[390px] overflow-hidden')}>
+        <XMarkdown
+          className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
+          rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
+          components={{
+            code: (props) => (
+              <MarkdownCode
+                {...(props as MarkdownCodeProps)}
+                onOpenThreadFile={onOpenThreadFile}
+              />
+            ),
+          }}
+        >
+          {preview.markdown}
+        </XMarkdown>
+        {!expanded && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex h-28 items-end justify-center bg-gradient-to-t from-[#f4f4f5] via-[#f4f4f5]/88 to-transparent pb-2">
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="pointer-events-auto rounded-full bg-[#1f232b] px-4 py-1.5 text-[14px] font-semibold text-white shadow-[0_10px_24px_rgba(31,35,43,0.22)] transition-transform hover:scale-[1.02]"
+            >
+              展开计划
+            </button>
+          </div>
+        )}
+      </div>
+    </article>
   )
 }
 

@@ -133,4 +133,40 @@ describe('runtime-event-message-projection', () => {
       status: 'streaming',
     })
   })
+
+  test('projects plan preview RuntimeEvents as assistant plan blocks and copyable text', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'make a plan', messageId: 'user-1' }),
+      event({
+        type: 'plan.preview',
+        contractId: 'plan-1',
+        title: 'Ship runtime',
+        summary: 'Review before executing',
+        markdown: '# Ship runtime\n\n## Steps\n1. Inspect',
+        planFilePath: 'plans/plan-1.md',
+        planVerified: true,
+        stepCount: 1,
+      } as any),
+    ])
+
+    expect(messages[1]).toMatchObject({
+      id: 'assistant:run-1',
+      type: 'assistant',
+      text: '# Ship runtime\n\n## Steps\n1. Inspect',
+      blocks: [{
+        type: 'plan_preview',
+        id: 'plan:plan-1',
+        preview: {
+          contractId: 'plan-1',
+          title: 'Ship runtime',
+          summary: 'Review before executing',
+          markdown: '# Ship runtime\n\n## Steps\n1. Inspect',
+          planFilePath: 'plans/plan-1.md',
+          planVerified: true,
+          stepCount: 1,
+        },
+      }],
+      status: 'streaming',
+    })
+  })
 })

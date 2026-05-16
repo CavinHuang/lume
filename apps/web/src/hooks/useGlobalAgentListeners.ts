@@ -23,6 +23,7 @@ import {
   type PlanModePhaseChangedEvent,
 } from '@lume/shared'
 import {
+  removePendingTaskApprovalsForThread,
   upsertPendingAskUserQuestion,
   upsertPendingTaskApproval,
   upsertPendingToolPermission,
@@ -158,6 +159,9 @@ export function useGlobalAgentListeners() {
           setPlanModePhase((prev) => ({ ...prev, [e.threadId]: e }))
           if (e.phase === 'awaiting_approval') {
             setSidePanelViews((prev) => prev[e.threadId] === 'task-progress' ? { ...prev, [e.threadId]: null } : prev)
+          }
+          if (e.phase === 'planning' || e.phase === 'executing' || e.phase === 'completed' || e.phase === 'idle') {
+            setPendingInteractive((prev) => removePendingTaskApprovalsForThread(prev, e.threadId))
           }
           if (e.phase === 'planning' || e.phase === 'awaiting_approval') {
             void sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE, { threadId: e.threadId })

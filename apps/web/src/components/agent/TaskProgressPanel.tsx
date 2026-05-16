@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { agentRuntimeEventsAtom } from '@/atoms'
 import { cn } from '@/lib/utils'
-import { executeTaskContract, listTaskContracts } from '@/lib/desktop-api'
+import { executeTaskContract } from '@/lib/desktop-api'
 import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, SkipForward, XCircle } from 'lucide-react'
 
-import type { AgentTaskContract, AgentTaskContractItem, AgentTaskRunTask, LumeRuntimeEvent } from '@lume/shared'
+import type { AgentTaskRunTask, LumeRuntimeEvent } from '@lume/shared'
 
 interface TaskProgressPanelProps {
   threadId: string
@@ -27,94 +27,52 @@ const statusLabel = {
   skipped: '已跳过',
 }
 
-export function canContinueTaskContract(contract: AgentTaskContract | undefined): boolean {
-  if (!contract) return false
-  if (contract.status !== 'approved' && contract.status !== 'executing' && contract.status !== 'failed') return false
-  return contract.steps.some((step) => step.status === 'pending' || step.status === 'running' || step.status === 'failed')
+type TaskProgressEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
+
+export function canContinueTaskProgress(progress: TaskProgressEvent | undefined): boolean {
+  return progress?.status === 'pending' || progress?.status === 'running' || progress?.status === 'failed'
 }
 
-export function canRetryTaskContract(contract: AgentTaskContract | undefined): boolean {
-  if (!contract || contract.status !== 'failed') return false
-  return contract.steps.some((step) => step.status === 'failed')
+export function canRetryTaskProgress(progress: TaskProgressEvent | undefined): boolean {
+  return progress?.status === 'failed' && progress.tasks.some((task) => task.status === 'failed')
 }
 
-export function canSkipTaskContract(contract: AgentTaskContract | undefined): boolean {
-  if (!contract || (contract.status !== 'approved' && contract.status !== 'failed')) return false
-  return contract.steps.some((step) => step.status === 'failed' || step.status === 'pending')
+export function canSkipTaskProgress(progress: TaskProgressEvent | undefined): boolean {
+  return (progress?.status === 'pending' || progress?.status === 'failed')
+    && progress.tasks.some((task) => task.status === 'failed' || task.status === 'pending')
 }
 
 export function shouldShowTaskEmptyState(
-  contract: AgentTaskContract | undefined,
-): boolean {
-  return !contract
+  progress: TaskProgressEvent | undefined,
+): progress is undefined {
+  return !progress
 }
 
 export function getTaskProgressItems(
-  contract: AgentTaskContract | undefined,
-  progress: Extract<LumeRuntimeEvent, { type: 'task.progress' }> | undefined,
-): Array<AgentTaskContractItem | AgentTaskRunTask> {
-  if (progress) return progress.tasks
-  if (contract?.status === 'needs_approval') return []
-  return contract?.steps ?? []
+  progress: TaskProgressEvent | undefined,
+): AgentTaskRunTask[] {
+  return progress?.tasks ?? []
 }
 
 export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
   const runtimeEventState = useAtomValue(agentRuntimeEventsAtom)[threadId]
   const activeItemRef = useRef<HTMLDivElement>(null)
-  const [taskContracts, setTaskContracts] = useState<AgentTaskContract[]>([])
   const [continueBusy, setContinueBusy] = useState(false)
 
-  const taskRefreshKey = useMemo(() => {
-    return (runtimeEventState?.events ?? [])
-      .filter((event) => (
-        event.type === 'run.completed'
-        || event.type === 'task.progress'
-        || (event.type === 'tool.completed' && event.toolName === 'TaskContractWrite')
-      ))
-      .map((event) => `${event.type}:${event.createdAt}`)
-      .join('|')
-  }, [runtimeEventState?.events])
-
-  const loadTaskContracts = useCallback(() => {
-    let cancelled = false
-    void listTaskContracts({ threadId })
-      .then((result) => {
-        if (!cancelled) {
-          setTaskContracts(result.contracts)
-        }
-      })
-      .catch((error) => {
-        console.error('[TaskProgressPanel] 加载任务进度失败:', error)
-        if (!cancelled) setTaskContracts([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [threadId])
-
-  useEffect(() => loadTaskContracts(), [loadTaskContracts, taskRefreshKey])
-
-  const latestTaskContract = [...taskContracts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
   const latestTaskProgress = [...(runtimeEventState?.events ?? [])]
     .reverse()
-    .find((event): event is Extract<LumeRuntimeEvent, { type: 'task.progress' }> => event.type === 'task.progress')
-  const progressItems = getTaskProgressItems(latestTaskContract, latestTaskProgress)
+    .find((event): event is TaskProgressEvent => event.type === 'task.progress')
+  const progressItems = getTaskProgressItems(latestTaskProgress)
   const completedCount = progressItems.filter((item) => item.status === 'completed' || item.status === 'skipped').length
   const failedCount = progressItems.filter((item) => item.status === 'failed').length
   const progressValue = progressItems.length > 0 ? Math.round((completedCount / progressItems.length) * 100) : 0
   const activeItem = progressItems.find((item) => item.status === 'running')
-  const canContinueTasks = latestTaskProgress
-    ? latestTaskProgress.status === 'pending' || latestTaskProgress.status === 'running' || latestTaskProgress.status === 'failed'
-    : canContinueTaskContract(latestTaskContract)
-  const canRetryTasks = latestTaskProgress
-    ? latestTaskProgress.status === 'failed' && latestTaskProgress.tasks.some((task) => task.status === 'failed')
-    : canRetryTaskContract(latestTaskContract)
-  const canSkipTasks = latestTaskProgress
-    ? (latestTaskProgress.status === 'pending' || latestTaskProgress.status === 'failed') && latestTaskProgress.tasks.some((task) => task.status === 'failed' || task.status === 'pending')
-    : canSkipTaskContract(latestTaskContract)
+  const canContinueTasks = canContinueTaskProgress(latestTaskProgress)
+  const canRetryTasks = canRetryTaskProgress(latestTaskProgress)
+  const canSkipTasks = canSkipTaskProgress(latestTaskProgress)
 
   const runTaskIntent = async (intent: 'continue' | 'retry' | 'skip') => {
-    const contractId = latestTaskProgress?.contractId ?? latestTaskContract?.id
+    const contractId = latestTaskProgress?.contractId
     if (!contractId) return
     setContinueBusy(true)
     try {
@@ -135,7 +93,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
     activeItemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [progressItems])
 
-  if (shouldShowTaskEmptyState(latestTaskContract) && !latestTaskProgress) {
+  if (shouldShowTaskEmptyState(latestTaskProgress)) {
     return (
       <div className="flex h-full flex-col bg-[var(--surface-2)]">
         <TaskProgressPanelHeader />
@@ -145,25 +103,6 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
               <ClipboardList size={17} />
             </div>
             <p className="text-[13px] font-medium text-[var(--text-2)]">暂无任务</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (latestTaskContract?.status === 'needs_approval' && !latestTaskProgress) {
-    return (
-      <div className="flex h-full flex-col bg-[var(--surface-2)]">
-        <TaskProgressPanelHeader />
-        <div className="flex flex-1 items-center justify-center px-6 text-center">
-          <div className="space-y-2">
-            <div className="mx-auto flex size-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-3)]">
-              <ClipboardList size={17} />
-            </div>
-            <p className="text-[13px] font-medium text-[var(--text-2)]">等待审阅计划</p>
-            <p className="max-w-[220px] text-[11px] leading-relaxed text-[var(--text-3)]">
-              计划文档已生成。请在主区域审阅后继续执行，任务进度会在批准后显示。
-            </p>
           </div>
         </div>
       </div>
@@ -181,11 +120,11 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
             </span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[12.5px] font-semibold text-[var(--text-1)]">
-                {latestTaskContract?.goal || '任务进度'}
+                任务进度
               </div>
-              {latestTaskContract?.summary && (
+              {latestTaskProgress.message && (
                 <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[var(--text-3)]">
-                  {latestTaskProgress?.message || latestTaskContract?.summary}
+                  {latestTaskProgress.message}
                 </p>
               )}
             </div>
@@ -242,7 +181,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
         <div className="space-y-2">
           {progressItems.length === 0 && (
             <div className="rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[var(--surface-1)] px-3 py-3 text-[12px] leading-relaxed text-[var(--text-3)]">
-              任务进度尚未生成。批准计划后会在这里显示执行任务。
+              任务进度尚未生成。开始执行后会在这里显示任务。
             </div>
           )}
           {progressItems.map((step, index) => (
@@ -305,6 +244,6 @@ function TaskProgressPanelHeader() {
   )
 }
 
-export function formatProgressItemTitle(step: AgentTaskContractItem | AgentTaskRunTask): string {
+export function formatProgressItemTitle(step: AgentTaskRunTask): string {
   return step.title || step.description || step.id
 }

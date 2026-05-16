@@ -7,6 +7,7 @@ import type {
 } from "@lume/shared"
 import {
   removePendingAskUserQuestion,
+  removePendingTaskApprovalsForThread,
   removePendingTaskApproval,
   removePendingToolPermission,
   removePendingToolPermissionEverywhere,
@@ -155,5 +156,47 @@ describe("pending interactive state helpers", () => {
 
     expect(merged["parent-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-1", "plan-2"])
     expect(removed["parent-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-2"])
+  })
+
+  test("线程进入执行态时应能清空该线程所有任务审批请求", () => {
+    const state = {
+      "parent-thread": {
+        threadId: "parent-thread",
+        taskApprovals: [
+          {
+            threadId: "parent-thread",
+            requestId: "task_approval:plan-1",
+            contractId: "plan-1",
+            title: "确认任务清单",
+            message: "Approve plan 1",
+            stepCount: 1,
+          },
+          {
+            threadId: "parent-thread",
+            requestId: "task_approval:plan-2",
+            contractId: "plan-2",
+            title: "确认任务清单",
+            message: "Approve plan 2",
+            stepCount: 2,
+          },
+        ],
+      },
+      "other-thread": {
+        threadId: "other-thread",
+        taskApprovals: [{
+          threadId: "other-thread",
+          requestId: "task_approval:plan-3",
+          contractId: "plan-3",
+          title: "确认任务清单",
+          message: "Approve plan 3",
+          stepCount: 1,
+        }],
+      },
+    }
+
+    const next = removePendingTaskApprovalsForThread(state, "parent-thread")
+
+    expect(next["parent-thread"]?.taskApprovals).toEqual([])
+    expect(next["other-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-3"])
   })
 })

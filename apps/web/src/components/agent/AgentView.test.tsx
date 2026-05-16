@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Provider, createStore } from 'jotai'
@@ -14,9 +14,8 @@ import {
 } from '@/atoms'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 
-let latestTaskApprovalProps: {
-  onOpenPlan?: () => void
-} | null = null
+mock.restore()
+
 let latestAgentMessagesProps: {
   onOpenThreadFile?: (path: string) => void
 } | null = null
@@ -42,11 +41,22 @@ mock.module('sonner', () => ({
 }))
 
 mock.module('@/lib/desktop-api', () => ({
-  sidecarCall: sidecarCallMock,
-  listTaskContracts: async () => ({ contracts: [] }),
-  executeTaskContract: async () => ({ ok: true }),
-  getAgentRunTrace: async () => ({ trace: null }),
-  listAgentRunStates: async () => ({ runs: [] }),
+  sidecarCall: (...args: Parameters<typeof sidecarCallMock>) =>
+    ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
+  agentSend: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopAgentSend?.(...args) ?? Promise.resolve(undefined),
+  openFileDialog: () =>
+    (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
+  executeTaskContract: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopExecuteTaskContract?.(...args) ?? Promise.resolve({ ok: true }),
+  submitTaskApproval: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopSubmitTaskApproval?.(...args) ?? Promise.resolve({ ok: true }),
+  getThreadMessageVersions: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopGetThreadMessageVersions?.(...args) ?? Promise.resolve({ messages: [] }),
+  getAgentRunTrace: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopGetAgentRunTrace?.(...args) ?? Promise.resolve({ trace: null }),
+  listAgentRunStates: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopListAgentRunStates?.(...args) ?? Promise.resolve({ runs: [] }),
 }))
 
 mock.module('@ant-design/x-markdown', () => ({
@@ -86,13 +96,6 @@ mock.module('./AskUserBanner', () => ({
 
 mock.module('./ErrorBanner', () => ({
   ErrorBanner: () => <div>error-banner</div>,
-}))
-
-mock.module('./TaskApprovalBanner', () => ({
-  TaskApprovalBanner: (props: { onOpenPlan?: () => void }) => {
-    latestTaskApprovalProps = props
-    return <div>task-approval-banner</div>
-  },
 }))
 
 const { AgentView } = await import('./AgentView')
@@ -244,6 +247,25 @@ class FakeDocument extends FakeEventTarget {
 }
 
 function installFakeDom() {
+  const keys = [
+    'IS_REACT_ACT_ENVIRONMENT',
+    'document',
+    'window',
+    'self',
+    'navigator',
+    'Node',
+    'Element',
+    'HTMLElement',
+    'HTMLIFrameElement',
+    'Text',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+    'localStorage',
+  ] as const
+  const previousDescriptors = new Map<PropertyKey, PropertyDescriptor | undefined>()
+  for (const key of keys) {
+    previousDescriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key))
+  }
   const document = new FakeDocument()
   const storage = new Map<string, string>()
 
@@ -273,6 +295,16 @@ function installFakeDom() {
 
   return {
     container: document.createElement('div'),
+    cleanup: () => {
+      for (const key of keys) {
+        const previousDescriptor = previousDescriptors.get(key)
+        if (previousDescriptor) {
+          Object.defineProperty(globalThis, key, previousDescriptor)
+        } else {
+          Reflect.deleteProperty(globalThis, key)
+        }
+      }
+    },
   }
 }
 
@@ -284,18 +316,23 @@ async function flush() {
 }
 
 describe('AgentView plan approval tab behavior', () => {
+  afterAll(() => {
+    mock.restore()
+  })
+
   beforeEach(() => {
-    latestTaskApprovalProps = null
     latestAgentMessagesProps = null
+    ;(globalThis as any).__lumeDesktopSidecarCall = sidecarCallMock
     sidecarCallMock.mockClear()
   })
 
   afterEach(async () => {
     await flush()
+    delete (globalThis as any).__lumeDesktopSidecarCall
   })
 
-  test('keeps the thread tab active until the user opens the plan file from the approval banner', async () => {
-    const { container } = installFakeDom()
+  test('shows plan approval as an input overlay without auto-opening the plan file', async () => {
+    const { container, cleanup } = installFakeDom()
     const store = createStore()
     store.set(tabsAtom, [
       {
@@ -360,13 +397,14 @@ describe('AgentView plan approval tab behavior', () => {
 
       expect(store.get(activeTabIdAtom)).toBe('thread-1')
       expect(store.get(tabsAtom)).toHaveLength(1)
-      expect(store.get(agentSidePanelViewAtom)['thread-1']).toBe('files')
-      expect(container.textContent).toContain('deepseek-oss-research.md')
+      expect(store.get(agentSidePanelViewAtom)['thread-1']).toBeUndefined()
+      expect(container.textContent).toContain('实施此计划?')
+      expect(container.textContent).toContain('是，实施此计划')
       expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
         channel === AGENT_IPC_CHANNELS.READ_FILE &&
         (payload as Record<string, unknown>).threadId === 'thread-1' &&
         (payload as Record<string, unknown>).path === 'plans/deepseek-oss-research.md'
-      ))).toBe(true)
+      ))).toBe(false)
       expect(latestAgentMessagesProps?.onOpenThreadFile).toBeDefined()
 
       await act(async () => {
@@ -382,37 +420,13 @@ describe('AgentView plan approval tab behavior', () => {
         (payload as Record<string, unknown>).threadId === 'thread-1' &&
         (payload as Record<string, unknown>).path === 'files/research-notes.md'
       ))).toBe(true)
-      expect(latestTaskApprovalProps?.onOpenPlan).toBeDefined()
-
-      await act(async () => {
-        latestTaskApprovalProps?.onOpenPlan?.()
-        await flush()
-      })
-
-      expect(store.get(activeTabIdAtom)).toBe('file:thread:workspace:thread-1:plans/deepseek-oss-research.md')
-      expect(store.get(tabsAtom)).toEqual([
-        {
-          id: 'thread-1',
-          type: 'agent',
-          title: 'Research thread',
-          threadId: 'thread-1',
-        },
-        {
-          id: 'file:thread:workspace:thread-1:plans/deepseek-oss-research.md',
-          type: 'file',
-          title: 'deepseek-oss-research.md',
-          filePath: 'plans/deepseek-oss-research.md',
-          fileSource: 'thread',
-          workspaceSlug: 'workspace',
-          threadId: 'thread-1',
-        },
-      ])
     } finally {
       await act(async () => {
         root?.unmount()
         root = null
         await flush()
       })
+      cleanup()
     }
   })
 })

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Provider, createStore } from 'jotai'
@@ -13,6 +13,8 @@ import {
   tabsAtom,
 } from '@/atoms'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
+
+mock.restore()
 
 let editorText = ''
 let latestSurfaceProps: any = null
@@ -76,9 +78,18 @@ mock.module('sonner', () => ({
 }))
 
 mock.module('@/lib/desktop-api', () => ({
-  sidecarCall: sidecarCallMock,
-  agentSend: agentSendMock,
-  openFileDialog: async () => ({ files: [] }),
+  sidecarCall: (...args: Parameters<typeof sidecarCallMock>) =>
+    ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
+  agentSend: (...args: Parameters<typeof agentSendMock>) =>
+    ((globalThis as any).__lumeDesktopAgentSend ?? agentSendMock)(...args),
+  openFileDialog: () =>
+    (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
+  executeTaskContract: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopExecuteTaskContract?.(...args) ?? Promise.resolve({ ok: true }),
+  getAgentRunTrace: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopGetAgentRunTrace?.(...args) ?? Promise.resolve({ trace: null }),
+  listAgentRunStates: (...args: unknown[]) =>
+    (globalThis as any).__lumeDesktopListAgentRunStates?.(...args) ?? Promise.resolve({ runs: [] }),
 }))
 
 mock.module('@/lib/desktop-api/lume-config', () => ({
@@ -270,6 +281,25 @@ class FakeDocument extends FakeEventTarget {
 }
 
 function installFakeDom() {
+  const keys = [
+    'IS_REACT_ACT_ENVIRONMENT',
+    'document',
+    'window',
+    'self',
+    'navigator',
+    'Node',
+    'Element',
+    'HTMLElement',
+    'HTMLIFrameElement',
+    'Text',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+    'localStorage',
+  ] as const
+  const previousDescriptors = new Map<PropertyKey, PropertyDescriptor | undefined>()
+  for (const key of keys) {
+    previousDescriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key))
+  }
   const document = new FakeDocument()
   const storage = new Map<string, string>()
 
@@ -299,6 +329,16 @@ function installFakeDom() {
 
   return {
     container: document.createElement('div'),
+    cleanup: () => {
+      for (const key of keys) {
+        const previousDescriptor = previousDescriptors.get(key)
+        if (previousDescriptor) {
+          Object.defineProperty(globalThis, key, previousDescriptor)
+        } else {
+          Reflect.deleteProperty(globalThis, key)
+        }
+      }
+    },
   }
 }
 
@@ -308,17 +348,27 @@ async function flush() {
 }
 
 describe('WelcomeView', () => {
+  afterAll(() => {
+    mock.restore()
+  })
+
   beforeEach(() => {
     editorText = ''
     latestSurfaceProps = null
     effectiveThinkingLevel = undefined
     effectivePermissionMode = undefined
+    ;(globalThis as any).__lumeDesktopSidecarCall = sidecarCallMock
+    ;(globalThis as any).__lumeDesktopAgentSend = agentSendMock
+    ;(globalThis as any).__lumeDesktopOpenFileDialog = async () => ({ files: [] })
     sidecarCallMock.mockClear()
     agentSendMock.mockClear()
   })
 
   afterEach(async () => {
     await flush()
+    delete (globalThis as any).__lumeDesktopSidecarCall
+    delete (globalThis as any).__lumeDesktopAgentSend
+    delete (globalThis as any).__lumeDesktopOpenFileDialog
   })
 
   test('resyncs hero copy, recent threads, and the next send when workspaceId changes on a mounted welcome tab', async () => {
@@ -361,7 +411,7 @@ describe('WelcomeView', () => {
     store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
     store.set(activeTabIdAtom, '__welcome__')
 
-    const { container } = installFakeDom()
+    const { container, cleanup } = installFakeDom()
     let root: Root | null = createRoot(container as never)
 
     try {
@@ -414,6 +464,7 @@ describe('WelcomeView', () => {
         })
         root = null
       }
+      cleanup()
     }
   })
 
@@ -432,7 +483,7 @@ describe('WelcomeView', () => {
     store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
     store.set(activeTabIdAtom, '__welcome__')
 
-    const { container } = installFakeDom()
+    const { container, cleanup } = installFakeDom()
     let root: Root | null = createRoot(container as never)
 
     try {
@@ -479,6 +530,7 @@ describe('WelcomeView', () => {
         })
         root = null
       }
+      cleanup()
     }
   })
 
@@ -498,7 +550,7 @@ describe('WelcomeView', () => {
     store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
     store.set(activeTabIdAtom, '__welcome__')
 
-    const { container } = installFakeDom()
+    const { container, cleanup } = installFakeDom()
     let root: Root | null = createRoot(container as never)
 
     try {
@@ -542,6 +594,7 @@ describe('WelcomeView', () => {
         })
         root = null
       }
+      cleanup()
     }
   })
 
@@ -561,7 +614,7 @@ describe('WelcomeView', () => {
     store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
     store.set(activeTabIdAtom, '__welcome__')
 
-    const { container } = installFakeDom()
+    const { container, cleanup } = installFakeDom()
     let root: Root | null = createRoot(container as never)
 
     try {
@@ -612,6 +665,7 @@ describe('WelcomeView', () => {
         })
         root = null
       }
+      cleanup()
     }
   })
 })
