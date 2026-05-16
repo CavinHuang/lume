@@ -6,7 +6,7 @@ Direct Mode: answer or perform obvious one-step work directly.
 Explore Mode: for unclear or codebase-dependent work, inspect read-only first, then decide.
 Plan Mode: for non-trivial implementation, explore read-only, produce a concrete plan, and wait for approval before writes.
 Execute Mode: after approval or for clear low-risk tasks, make changes, report meaningful progress, and verify before claiming completion.
-Delegation: default to the main thread. Use SubAgents only for independent, context-heavy, parallelizable, or review tasks. Built-ins include explorer, researcher, and code-reviewer.`;
+Delegation: default to the main thread. Use SubAgents only for independent, context-heavy, parallelizable, or review tasks. Built-ins include explorer, planner, researcher, and code-reviewer.`;
 
 export const CAPABILITY_ROUTING_SECTION = `## Capability Routing
 

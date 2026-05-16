@@ -60,6 +60,34 @@ describe("tool-policy", () => {
     }
   });
 
+  test("group:planning 应同时包含澄清和计划提交工具", () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-policy-test-"));
+    try {
+      const tools = [
+        { name: "AskUserQuestion" },
+        { name: "TaskContractWrite" },
+        { name: "TaskReport" },
+        { name: "Read" }
+      ];
+      const filtered = applyPiToolPolicies(tools, {
+        threadType: "main",
+        messageMetadata: {
+          toolPolicy: {
+            allow: ["group:planning"]
+          }
+        }
+      });
+      expect(filtered.map((tool) => tool.name)).toEqual(["AskUserQuestion", "TaskContractWrite"]);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = previousConfigDir;
+      }
+    }
+  });
+
   test("应按 memory policy 返回启用工具", () => {
     const tools = resolveEnabledPiMemoryToolNames({
       allow: ["memory_search", "memory_get"],
@@ -151,4 +179,3 @@ describe("tool-policy", () => {
     }
   });
 });
-

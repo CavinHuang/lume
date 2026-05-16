@@ -3,6 +3,10 @@ import type {
   AgentThreadMessageDispatchResult,
   LumeRuntimeEvent
 } from "@lume/shared";
+import {
+  listPendingTaskApprovalRequests,
+  resolveTaskApproval
+} from "./plan/task-approval-service";
 import type { TaskContractRecord } from "./plan/task-contract-record-types";
 import type { TaskContract } from "./plan/task-contract-types";
 import { createFileBackedTaskContractStore } from "./plan/task-contract-store";
@@ -20,21 +24,36 @@ import type { TaskRun } from "./task-run/task-run-types";
 
 type PlanExecutionIntent = "execute" | "continue" | "retry" | "skip";
 type PlanModePhase = "idle" | "planning" | "awaiting_approval" | "executing" | "completed";
+type DispatchTaskExecutionResult = {
+  ok: boolean;
+  status: "sent" | "queued" | "not_found" | "not_executable";
+  queuedCount?: number;
+  contractId?: string;
+  error?: string;
+};
 
 export interface RuntimeOrchestrator {
   resolveExecutableTaskContract(input: { threadId: string; contractId?: string }): Promise<TaskContractRecord | null>;
+  dispatchPlanExecutionApproval(input: AgentSendInput): Promise<DispatchTaskExecutionResult | null>;
+  resolvePlanContinuationInput(input: AgentSendInput): Promise<AgentSendInput>;
+  submitTaskApproval(input: {
+    threadId: string;
+    contractId: string;
+    decision: "approve" | "reject";
+    feedback?: string;
+    execute?: boolean;
+  }): Promise<{
+    ok: boolean;
+    feedback?: string;
+    replanning?: { status: AgentThreadMessageDispatchResult["mode"] };
+    execution?: DispatchTaskExecutionResult;
+  }>;
   dispatchTaskExecution(input: {
     threadId: string;
     contractId?: string;
     permissionMode?: AgentSendInput["permissionMode"];
     intent?: PlanExecutionIntent;
-  }): Promise<{
-    ok: boolean;
-    status: "sent" | "queued" | "not_found" | "not_executable";
-    queuedCount?: number;
-    contractId?: string;
-    error?: string;
-  }>;
+  }): Promise<DispatchTaskExecutionResult>;
   handleTaskRunCompletion(input: {
     threadId: string;
     taskRunId: string;
@@ -60,15 +79,93 @@ export function createRuntimeOrchestrator<TEmitter>(deps: {
   resolveRuntimeSessionDir: (threadId: string) => string;
   writeRuntimeEvent: (threadId: string, event: LumeRuntimeEvent) => void;
 }): RuntimeOrchestrator {
+  const buildTaskApprovalReplanningMessage = (input: {
+    contractId: string;
+    feedback: string;
+  }): string => [
+    "用户对当前计划提出了反馈，请根据反馈重新规划。",
+    `Contract ID: ${input.contractId}`,
+    `反馈：${input.feedback}`,
+    "请沿用这个 contractId 更新线程工作区内的 plan.md，并重新调用 TaskContractWrite 提交待审批任务契约。"
+  ].join("\n\n");
+
+  const isPlanExecutionApprovalUserMessage = (userMessage: string): boolean => {
+    const text = userMessage.trim();
+    if (!text) return false;
+    const approvalPhrases = new Set([
+      "继续",
+      "继续实现",
+      "继续执行",
+      "继续执行计划",
+      "继续执行任务",
+      "批准执行",
+      "批准并执行",
+      "按这个做",
+      "就按这个做",
+      "按计划执行",
+      "按计划实现",
+      "开始执行",
+      "开始实现",
+      "approve",
+      "approved",
+      "continue",
+      "do it",
+      "go ahead",
+      "lgtm",
+      "looks good",
+      "proceed",
+      "start executing",
+      "start implementation"
+    ]);
+    return approvalPhrases.has(text) || approvalPhrases.has(text.toLowerCase());
+  };
+
   const resolveExecutableTaskContract = async (input: { threadId: string; contractId?: string }) => {
     const contracts = await createFileBackedTaskContractStore(deps.resolveRuntimeSessionDir(input.threadId))
       .listByThread(input.threadId);
     const candidates = input.contractId
       ? contracts.filter((contract) => contract.id === input.contractId)
       : contracts
-        .filter((contract) => contract.status === "approved" || contract.status === "executing" || contract.status === "failed")
+        .filter((contract) => contract.status === "approved")
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return candidates[0] ?? null;
+  };
+
+  const resolvePlanContinuationInput: RuntimeOrchestrator["resolvePlanContinuationInput"] = async (input) => {
+    const feedback = input.userMessage.trim();
+    if (input.permissionMode !== "plan" || !feedback) {
+      return input;
+    }
+    const sessionDir = deps.resolveRuntimeSessionDir(input.threadId);
+    const pendingApproval = (await listPendingTaskApprovalRequests(sessionDir))
+      .find((request) => request.threadId === input.threadId);
+    if (!pendingApproval) {
+      return input;
+    }
+    const ok = await resolveTaskApproval({
+      sessionDir,
+      threadId: input.threadId,
+      contractId: pendingApproval.contractId,
+      decision: "reject"
+    });
+    if (!ok) {
+      return input;
+    }
+    deps.notifyPlanModePhaseChange(input.threadId, "planning");
+    return {
+      ...input,
+      userMessage: buildTaskApprovalReplanningMessage({
+        contractId: pendingApproval.contractId,
+        feedback
+      }),
+      permissionMode: "plan",
+      messageMetadata: {
+        ...input.messageMetadata,
+        taskApprovalRejected: {
+          contractId: pendingApproval.contractId
+        }
+      }
+    };
   };
 
   const emitLatestTaskProgress = (threadId: string, taskRun: TaskRun | null) => {
@@ -88,7 +185,7 @@ export function createRuntimeOrchestrator<TEmitter>(deps: {
         error: "找不到可执行任务。"
       };
     }
-    if (contract.status !== "approved" && contract.status !== "executing" && contract.status !== "failed") {
+    if (contract.status !== "approved") {
       return {
         ok: false,
         status: "not_executable",
@@ -154,8 +251,91 @@ export function createRuntimeOrchestrator<TEmitter>(deps: {
     };
   };
 
+  const dispatchPlanExecutionApproval: RuntimeOrchestrator["dispatchPlanExecutionApproval"] = async (input) => {
+    if (
+      !isPlanExecutionApprovalUserMessage(input.userMessage)
+      || typeof input.messageMetadata?.planExecutionKey === "string"
+    ) {
+      return null;
+    }
+    const sessionDir = deps.resolveRuntimeSessionDir(input.threadId);
+    const pendingApproval = (await listPendingTaskApprovalRequests(sessionDir))
+      .find((request) => request.threadId === input.threadId);
+    if (pendingApproval) {
+      const approved = await resolveTaskApproval({
+        sessionDir,
+        threadId: input.threadId,
+        contractId: pendingApproval.contractId,
+        decision: "approve"
+      });
+      if (approved) {
+        return dispatchTaskExecution({
+          threadId: input.threadId,
+          contractId: pendingApproval.contractId,
+          permissionMode: input.permissionMode,
+          intent: "execute"
+        });
+      }
+    }
+    const latestContinuableTaskContract = await resolveExecutableTaskContract({ threadId: input.threadId });
+    if (!latestContinuableTaskContract) return null;
+    return dispatchTaskExecution({
+      threadId: input.threadId,
+      contractId: latestContinuableTaskContract.id,
+      permissionMode: input.permissionMode,
+      intent: "continue"
+    });
+  };
+
   return {
     resolveExecutableTaskContract,
+    dispatchPlanExecutionApproval,
+    resolvePlanContinuationInput,
+    async submitTaskApproval(input) {
+      const ok = await resolveTaskApproval({
+        sessionDir: deps.resolveRuntimeSessionDir(input.threadId),
+        threadId: input.threadId,
+        contractId: input.contractId,
+        decision: input.decision
+      });
+      const feedback = input.feedback?.trim();
+      if (!ok) {
+        return { ok, ...(feedback ? { feedback } : {}) };
+      }
+      if (input.decision === "reject") {
+        if (!feedback) return { ok };
+        deps.notifyPlanModePhaseChange(input.threadId, "planning");
+        const dispatch = deps.appendAgentMessage({
+          threadId: input.threadId,
+          userMessage: buildTaskApprovalReplanningMessage({
+            contractId: input.contractId,
+            feedback
+          }),
+          permissionMode: "plan",
+          messageMetadata: {
+            taskApprovalRejected: {
+              contractId: input.contractId
+            }
+          }
+        }, deps.createAgentStreamEmitter(input.threadId));
+        return {
+          ok,
+          feedback,
+          replanning: {
+            status: dispatch.mode
+          }
+        };
+      }
+      if (input.execute !== true) {
+        return { ok };
+      }
+      const execution = await dispatchTaskExecution({
+        threadId: input.threadId,
+        contractId: input.contractId,
+        intent: "execute"
+      });
+      return { ok, execution };
+    },
     dispatchTaskExecution,
     async handleTaskRunCompletion(input) {
       const sessionDir = deps.resolveRuntimeSessionDir(input.threadId);
@@ -228,32 +408,6 @@ async function createTaskRunFromTaskContractRecord(sessionDir: string, contract:
     sessionDir,
     contract: taskContractRecordToTaskContract(contract)
   });
-  const tasks = created.tasks.map((task) => {
-    const step = contract.steps.find((item) => item.id === task.id);
-    if (!step) return task;
-    return {
-      ...task,
-      status: step.status === "running" ? "running" as const : step.status,
-      attemptCount: step.attemptCount ?? task.attemptCount,
-      ...(step.result ? { result: step.result } : {}),
-      ...(step.error ? { error: step.error } : {}),
-      ...(step.startedAt ? { startedAt: step.startedAt } : {}),
-      ...(step.endedAt ? { endedAt: step.endedAt } : {}),
-      ...(step.blockedReason ? { blockedReason: step.blockedReason } : {})
-    };
-  });
-  const saved: TaskRun = {
-    ...created,
-    status: contract.status === "failed"
-      ? "failed"
-      : contract.status === "executing"
-        ? "running"
-        : contract.status === "completed"
-          ? "completed"
-          : "pending",
-    currentTaskId: contract.currentStepId,
-    tasks
-  };
-  await store.upsert(saved);
-  return saved;
+  await store.upsert(created);
+  return created;
 }

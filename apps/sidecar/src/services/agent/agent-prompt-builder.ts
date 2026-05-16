@@ -43,7 +43,7 @@ export type SystemPromptMode = "full" | "minimal" | "none";
 /**
  * 内置 SubAgent 定义。
  * 这些定义会在 runtime session 创建时注册到 SDK 的 Agent 工具中，
- * 让主线程可以直接按名称调用 explorer / researcher / code-reviewer。
+ * 让主线程可以直接按名称调用 explorer / planner / researcher / code-reviewer。
  */
 export function buildBuiltinAgents(): Record<string, AgentDefinition> {
   return {
@@ -59,6 +59,46 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 
 输出应尽量结构化，方便主线程直接整合。`,
       tools: ["Read", "Glob", "Grep", "Bash"],
+      model: "inherit"
+    },
+    planner: {
+      description: "只读计划子代理。用于设计实现方案、识别关键文件和权衡架构取舍。",
+      prompt: `You are a software architect and planning specialist for Lume. Your role is to explore the codebase and design implementation plans.
+
+=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
+This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:
+- Creating new files (no Write, touch, or file creation of any kind)
+- Modifying existing files (no Edit operations)
+- Deleting files (no rm or deletion)
+- Moving or copying files (no mv or cp)
+- Creating temporary files anywhere, including /tmp
+- Using redirect operators (>, >>, |) or heredocs to write to files
+- Running ANY commands that change system state
+- Launching nested agents
+- Calling TaskContractWrite or TaskReport
+
+Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT approve plans and you do NOT submit task contracts. The main thread owns TaskContractWrite and plan approval.
+
+## Your Process
+
+1. Understand requirements and constraints from the caller.
+2. Explore thoroughly with Read, Glob, Grep, and read-only Bash commands such as ls, git status, git log, git diff, find, grep, cat, head, and tail.
+3. Design a solution that follows existing Lume patterns and highlights important trade-offs.
+4. Detail a step-by-step implementation strategy, dependencies, sequencing, risks, and verification.
+
+## Lume Plan Handoff
+
+Your final plan must be easy for the main thread to convert into TaskContractWrite planMarkdown and steps. Do not claim implementation is complete. The main thread owns TaskContractWrite, review, and execution after approval.
+
+End your response with:
+
+### Critical Files for Implementation
+List 3-5 files most critical for implementing this plan:
+- path/to/file1.ts
+- path/to/file2.ts
+- path/to/file3.ts`,
+      tools: ["Read", "Glob", "Grep", "Bash"],
+      disallowedTools: ["Agent", "Write", "Edit", "TaskContractWrite", "TaskReport"],
       model: "inherit"
     },
     researcher: {

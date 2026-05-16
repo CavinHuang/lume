@@ -184,6 +184,23 @@ export function projectRunItemToRuntimeEvents(
     }];
   }
 
+  if (item.type === "plan_preview") {
+    return [{
+      id: `${run.runId}:${item.id}:plan.preview`,
+      type: "plan.preview",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      contractId: item.contractId,
+      title: item.title,
+      summary: item.summary,
+      markdown: item.markdown,
+      ...(item.planFilePath ? { planFilePath: item.planFilePath } : {}),
+      ...(item.planVerified !== undefined ? { planVerified: item.planVerified } : {}),
+      stepCount: item.stepCount
+    }];
+  }
+
   return [];
 }
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { defineTool, type ToolDefinition } from "@lume/agent-sdk";
 import {
   normalizeThreadPlanFilePath,
+  readThreadPlanMarkdownFile,
   verifyThreadPlanMarkdownFile,
   writeThreadPlanMarkdownFile
 } from "./plan-markdown-file-service";
@@ -14,9 +15,18 @@ export interface CreateTaskContractWriteToolInput {
   threadId: string;
   runId: string;
   threadWorkspaceDir?: string;
-  traceSpanId?: string;
   now?: () => string;
-  onTaskContractUpdated?: (contract: TaskContractRecord) => void | Promise<void>;
+  onTaskContractUpdated?: (contract: TaskContractRecord, preview?: TaskContractPlanPreview) => void | Promise<void>;
+}
+
+export interface TaskContractPlanPreview {
+  contractId: string;
+  title: string;
+  summary: string;
+  markdown: string;
+  planFilePath?: string;
+  planVerified?: boolean;
+  stepCount: number;
 }
 
 export function createTaskContractWriteTool(input: CreateTaskContractWriteToolInput): ToolDefinition {
@@ -30,7 +40,7 @@ export function createTaskContractWriteTool(input: CreateTaskContractWriteToolIn
 IMPORTANT: Before setting status to "needs_approval", you MUST provide a detailed Markdown plan via planMarkdown. Lume will write it to the thread workspace at:
   plans/{contractId}.md
 
-TaskContractWrite does not create an executable task run while the plan is pending review. Lume creates the task contract from this draft only after the user approves the plan.
+TaskContractWrite stores the task contract for review, but does not create an executable task run while the plan is pending review. Lume creates the task run only after the user approves the plan.
 
 The plan document should include:
 - YAML frontmatter with contractId and status: draft
@@ -51,7 +61,6 @@ If you provide planFilePath, it must be a thread-workspace relative path. Do not
         steps: { type: "array" },
         expectedChanges: { type: "object" },
         status: { type: "string" },
-        currentStepId: { type: "string" },
         planFilePath: { type: "string" },
         planMarkdown: { type: "string" }
       },
@@ -95,22 +104,23 @@ If you provide planFilePath, it must be a thread-workspace relative path. Do not
           ? record.expectedChanges as TaskContractRecord["expectedChanges"]
           : existing?.expectedChanges ?? {},
         status,
-        traceSpanId: input.traceSpanId ?? existing?.traceSpanId,
         planFilePath,
         planVerification,
         createdAt: existing?.createdAt ?? createdAt,
         updatedAt: createdAt,
         approvedAt: existing?.approvedAt
       };
+      await store.upsert(contract);
       if (contract.status === "needs_approval") {
         await persistTaskApprovalInterruption({
           sessionDir: input.sessionDir,
           contract
         });
-      } else {
-        await store.upsert(contract);
       }
-      await input.onTaskContractUpdated?.(contract);
+      await input.onTaskContractUpdated?.(contract, buildTaskContractPlanPreview({
+        contract,
+        threadWorkspaceDir: input.threadWorkspaceDir
+      }));
       return {
         data: {
           contractId: contract.id,
@@ -122,6 +132,30 @@ If you provide planFilePath, it must be a thread-workspace relative path. Do not
       };
     }
   });
+}
+
+function buildTaskContractPlanPreview(input: {
+  contract: TaskContractRecord;
+  threadWorkspaceDir?: string;
+}): TaskContractPlanPreview | undefined {
+  if (input.contract.status !== "needs_approval") {
+    return undefined;
+  }
+  if (!input.threadWorkspaceDir || !input.contract.planFilePath || input.contract.planVerification?.verified !== true) {
+    return undefined;
+  }
+  return {
+    contractId: input.contract.id,
+    title: input.contract.goal,
+    summary: input.contract.summary,
+    markdown: readThreadPlanMarkdownFile({
+      threadWorkspaceDir: input.threadWorkspaceDir,
+      planFilePath: input.contract.planFilePath
+    }),
+    planFilePath: input.contract.planFilePath,
+    planVerified: true,
+    stepCount: input.contract.steps.length
+  };
 }
 
 function resolvePlanVerification(input: {
@@ -205,13 +239,9 @@ function normalizeStepType(value: unknown): TaskContractRecordItem["type"] {
 
 function normalizeTaskContractStatus(value: unknown): TaskContractRecord["status"] | undefined {
   return value === "draft"
-    || value === "needs_user_input"
     || value === "needs_approval"
     || value === "approved"
-    || value === "executing"
-    || value === "completed"
     || value === "cancelled"
-    || value === "failed"
     ? value
     : undefined;
 }

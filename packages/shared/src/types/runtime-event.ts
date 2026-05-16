@@ -11,6 +11,7 @@ export type RuntimeEventType =
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
+  | "plan.preview"
   | "task.progress"
   | "permission.requested"
   | "ask_user.requested"
@@ -99,6 +100,17 @@ export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
   };
 }
 
+export interface PlanPreviewRuntimeEvent extends RuntimeEventBase {
+  type: "plan.preview";
+  contractId: string;
+  title: string;
+  summary: string;
+  markdown: string;
+  planFilePath?: string;
+  planVerified?: boolean;
+  stepCount: number;
+}
+
 export type TaskProgressRuntimeStatus =
   | "pending"
   | "running"
@@ -175,6 +187,7 @@ export type LumeRuntimeEvent =
   | ToolStartedRuntimeEvent
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
+  | PlanPreviewRuntimeEvent
   | TaskProgressRuntimeEvent
   | RunCompletedRuntimeEvent
   | RunTurnLimitedRuntimeEvent

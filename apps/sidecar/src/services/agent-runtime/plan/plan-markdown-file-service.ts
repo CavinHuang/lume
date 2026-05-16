@@ -79,3 +79,19 @@ export function verifyThreadPlanMarkdownFile(input: {
     checkedAt: input.now?.() ?? new Date().toISOString()
   };
 }
+
+export function readThreadPlanMarkdownFile(input: {
+  threadWorkspaceDir: string;
+  planFilePath: string;
+}): string {
+  const relativePath = normalizeThreadPlanFilePath(input.planFilePath);
+  if (!relativePath) {
+    throw new Error("planFilePath 必须是线程工作区内的相对路径");
+  }
+  const root = resolve(input.threadWorkspaceDir);
+  const targetPath = resolve(join(root, relativePath));
+  if (!isWithin(root, targetPath)) {
+    throw new Error("planFilePath 必须是线程工作区内的相对路径");
+  }
+  return readFileSync(targetPath, "utf-8");
+}

@@ -192,7 +192,8 @@ registerToolMetadata({
   name: "AskUserQuestion",
   category: "control",
   riskLevel: "low",
-  description: "向用户提问"
+  description: "向用户提问",
+  allowedInPlanMode: true
 });
 
 registerToolMetadata({
@@ -207,7 +208,8 @@ registerToolMetadata({
   name: "TaskReport",
   category: "control",
   riskLevel: "low",
-  description: "写入当前任务执行结果"
+  description: "写入当前任务执行结果",
+  allowedInPlanMode: false
 });
 
 // 记忆工具

@@ -35,10 +35,21 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("TaskContractWrite")).toBeTrue();
   });
 
-  test("treats TaskReport as a low-risk control tool", () => {
+  test("allows AskUserQuestion in plan mode for clarification before approval", () => {
+    expect(getToolMetadata("AskUserQuestion")).toMatchObject({
+      category: "control",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(isToolAllowedInPlanMode("AskUserQuestion")).toBeTrue();
+  });
+
+  test("keeps TaskReport out of plan mode", () => {
     expect(getToolMetadata("TaskReport")).toMatchObject({
       category: "control",
-      riskLevel: "low"
+      riskLevel: "low",
+      allowedInPlanMode: false
     });
+    expect(isToolAllowedInPlanMode("TaskReport")).toBeFalse();
   });
 });

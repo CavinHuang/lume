@@ -85,4 +85,20 @@ describe("ToolResolver", () => {
       policies: [{ allow: ["group:fs", "web_*"], deny: ["Write"] }]
     }).map((item) => item.name)).toEqual(["Read", "WebSearch", "WebFetch"]);
   });
+
+  test("planning group keeps clarification and plan submission tools together", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany([
+      tool({ name: "AskUserQuestion", category: "control", allowedInPlanMode: true, isReadOnly: true }),
+      tool({ name: "TaskContractWrite", category: "control", allowedInPlanMode: true, isReadOnly: false }),
+      tool({ name: "TaskReport", category: "control", allowedInPlanMode: false, isReadOnly: false }),
+      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true })
+    ]);
+    const resolver = new ToolResolver(registry);
+
+    expect(resolver.resolve({
+      permissionMode: "plan",
+      policies: [{ allow: ["group:planning"] }]
+    }).map((item) => item.name)).toEqual(["AskUserQuestion", "TaskContractWrite"]);
+  });
 });

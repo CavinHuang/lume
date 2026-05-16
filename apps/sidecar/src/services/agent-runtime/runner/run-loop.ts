@@ -98,6 +98,12 @@ export function createObservedRuntimeEmitter(
     onSdkMessage: (message) => {
       observer.recordSdkMessage(message, emit.onRuntimeEvent);
       emit.onSdkMessage(message);
+    },
+    onTaskContractUpdated: (contract, preview) => {
+      if (preview) {
+        observer.recordPlanPreview(preview, emit.onRuntimeEvent);
+      }
+      emit.onTaskContractUpdated?.(contract, preview);
     }
   };
 }

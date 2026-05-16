@@ -35,7 +35,8 @@ function eventOrder(event: LumeRuntimeEvent): number {
   if (event.type === "message.user.submitted") return 1;
   if (event.type.startsWith("assistant.")) return 2;
   if (event.type.startsWith("tool.")) return 3;
-  if (event.type === "task.progress") return 4;
-  if (event.type.startsWith("run.")) return 5;
+  if (event.type === "plan.preview") return 4;
+  if (event.type === "task.progress") return 5;
+  if (event.type.startsWith("run.")) return 6;
   return 9;
 }

@@ -172,6 +172,39 @@ describe("projectRunStateToRuntimeEvents", () => {
       delta: "plan execution output"
     }));
   });
+
+  test("projects persisted plan previews into product runtime events", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      status: "running",
+      generatedItems: [{
+        type: "plan_preview",
+        id: "plan:plan-1",
+        contractId: "plan-1",
+        title: "Ship runtime",
+        summary: "Preview the plan",
+        markdown: "# Ship runtime\n\n## Steps\n1. Inspect",
+        planFilePath: "plans/plan-1.md",
+        planVerified: true,
+        stepCount: 1,
+        createdAt: "2026-04-30T00:00:04.000Z"
+      } as any]
+    }));
+
+    expect(events).toContainEqual({
+      id: "run-1:plan:plan-1:plan.preview",
+      type: "plan.preview",
+      threadId: "thread-1",
+      runId: "run-1",
+      createdAt: "2026-04-30T00:00:04.000Z",
+      contractId: "plan-1",
+      title: "Ship runtime",
+      summary: "Preview the plan",
+      markdown: "# Ship runtime\n\n## Steps\n1. Inspect",
+      planFilePath: "plans/plan-1.md",
+      planVerified: true,
+      stepCount: 1
+    });
+  });
 });
 
 describe("projectAssistantMessageFinalRuntimeEvent", () => {

@@ -128,6 +128,9 @@ export const AgentTool: ToolDefinition = {
     if (agentDef?.tools) {
       tools = filterTools(tools, agentDef.tools)
     }
+    if (agentDef?.disallowedTools) {
+      tools = filterTools(tools, undefined, agentDef.disallowedTools)
+    }
 
     // Remove AgentTool from subagent to prevent infinite recursion
     tools = tools.filter(t => t.name !== 'Agent')

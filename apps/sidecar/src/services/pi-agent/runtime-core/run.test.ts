@@ -48,12 +48,15 @@ describe("runtime-core run", () => {
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
     expect(result.session.getActiveToolNames()).toContain("ls");
+    expect(result.session.getActiveToolNames()).toContain("AskUserQuestion");
     expect(result.session.getActiveToolNames()).toContain("TaskContractWrite");
+    expect(result.session.getActiveToolNames()).not.toContain("TaskReport");
     expect(result.session.getActiveToolNames()).not.toContain("Write");
     expect(result.session.getActiveToolNames()).not.toContain("Bash");
     const init = await result.agent.getInitializationResult();
     expect(init.agents.map((agent) => agent.name)).toEqual([
       "explorer",
+      "planner",
       "researcher",
       "code-reviewer"
     ]);
@@ -85,7 +88,7 @@ describe("runtime-core run", () => {
     expect(toolNames).toContain("Grep");
     expect(toolNames).toContain("WebSearch");
     expect(toolNames).toContain("WebFetch");
-    expect(toolNames).toContain("TaskContractWrite");
+    expect(toolNames).not.toContain("TaskContractWrite");
     expect(toolNames).toContain("TaskReport");
     expect(toolNames).not.toContain("read");
     expect(toolNames).not.toContain("write");
@@ -95,6 +98,39 @@ describe("runtime-core run", () => {
     expect(toolNames).not.toContain("grep");
     expect(toolNames).not.toContain("web_search");
     expect(toolNames).not.toContain("web_fetch");
+
+    result.session.dispose();
+  });
+
+  test("planner 子代理会话应应用内置 agent prompt 与工具策略", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-planner-subagent-"));
+    const agentDir = join(cwd, ".pi-agent-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "planner-subagent-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      threadType: "subagent",
+      subagentType: "planner"
+    });
+
+    const systemPrompt = result.session.agent.state.systemPrompt;
+    expect(systemPrompt).toStartWith("You are a software architect and planning specialist for Lume.");
+    expect(systemPrompt).toContain("READ-ONLY MODE - NO FILE MODIFICATIONS");
+
+    const toolNames = result.session.getActiveToolNames();
+    expect(toolNames).toEqual(["Read", "Glob", "Grep", "Bash"]);
+    expect(toolNames).not.toContain("Agent");
+    expect(toolNames).not.toContain("Write");
+    expect(toolNames).not.toContain("Edit");
+    expect(toolNames).not.toContain("TaskContractWrite");
+    expect(toolNames).not.toContain("TaskReport");
+    expect(toolNames).not.toContain("TodoWrite");
 
     result.session.dispose();
   });

@@ -18,7 +18,6 @@ async function tryReadDir(path: string) {
 export interface LoadFilesystemSkillsInput {
   cwd: string
   roots?: string[]
-  includeLegacyFallback?: boolean
 }
 
 export async function loadFilesystemSkills(
@@ -29,18 +28,10 @@ export async function loadFilesystemSkills(
       ? { cwd: input }
       : input
 
-  const cwd = resolvedInput.cwd
-  const home = process.env.HOME || process.env.USERPROFILE || cwd
   const explicitRoots = Array.isArray(resolvedInput.roots)
     ? resolvedInput.roots.filter((root): root is string => typeof root === 'string' && root.trim().length > 0)
     : []
-  const legacyRoots = resolvedInput.includeLegacyFallback === false
-    ? []
-    : [
-        join(home, '.claude', 'skills'),
-        join(cwd, '.claude', 'skills'),
-      ]
-  const roots = Array.from(new Set([...explicitRoots, ...legacyRoots]))
+  const roots = Array.from(new Set([...explicitRoots]))
 
   const skills: SkillDefinition[] = []
 

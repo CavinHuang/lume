@@ -118,10 +118,6 @@ export {
   EnterWorktreeTool,
   ExitWorktreeTool,
 
-  // Planning
-  EnterPlanModeTool,
-  ExitPlanModeTool,
-
   // User interaction
   AskUserQuestionTool,
 
@@ -352,11 +348,6 @@ export {
   clearMailboxes,
 } from './tools/send-message.js'
 export type { AgentMessage } from './tools/send-message.js'
-
-export {
-  isPlanModeActive,
-  getCurrentTaskContract,
-} from './tools/plan-tools.js'
 
 export {
   registerAgents,

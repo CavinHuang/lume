@@ -7,12 +7,6 @@ import { createFileBackedTaskContractStore } from "./task-contract-store";
 
 interface TaskApprovalPayload {
   contractId?: string;
-  stepCount?: number;
-  expectedChanges?: TaskContractRecord["expectedChanges"];
-  summary?: string;
-  planFilePath?: string;
-  planVerified?: boolean;
-  contract?: TaskContractRecord;
 }
 
 export function taskApprovalInterruptionId(contractId: string): string {
@@ -32,15 +26,9 @@ export async function persistTaskApprovalInterruption(input: {
     type: "task_approval",
     status: "pending",
     title: "审阅计划",
-    message: input.message ?? input.contract.summary,
+    message: input.message ?? "审阅任务计划",
     payload: {
-      contractId: input.contract.id,
-      stepCount: input.contract.steps.length,
-      expectedChanges: input.contract.expectedChanges,
-      summary: input.contract.summary,
-      ...(input.contract.planFilePath ? { planFilePath: input.contract.planFilePath } : {}),
-      ...(input.contract.planVerification ? { planVerified: input.contract.planVerification.verified } : {}),
-      contract: input.contract
+      contractId: input.contract.id
     },
     source: {},
     createdAt: now,
@@ -64,8 +52,8 @@ export async function listPendingTaskApprovalRequests(sessionDir?: string): Prom
     const payload = record.interruption.payload as TaskApprovalPayload;
     const contractId = payload?.contractId;
     if (!contractId) continue;
-    const storedContract = await createFileBackedTaskContractStore(record.sessionDir).get(contractId);
-    const contract = storedContract ?? payload.contract;
+    const contract = await createFileBackedTaskContractStore(record.sessionDir).get(contractId);
+    if (!contract) continue;
     requests.push({
       threadId: record.interruption.threadId,
       runId: record.interruption.runId,
@@ -73,13 +61,13 @@ export async function listPendingTaskApprovalRequests(sessionDir?: string): Prom
       contractId,
       title: record.interruption.title,
       message: record.interruption.message,
-      summary: contract?.summary ?? payload.summary,
-      stepCount: contract?.steps.length ?? payload.stepCount ?? 0,
-      expectedChanges: contract?.expectedChanges ?? payload.expectedChanges,
-      ...(contract?.planFilePath ?? payload.planFilePath
+      summary: contract.summary,
+      stepCount: contract.steps.length,
+      expectedChanges: contract.expectedChanges,
+      ...(contract.planFilePath
         ? {
-            planFilePath: contract?.planFilePath ?? payload.planFilePath,
-            planVerified: contract?.planVerification?.verified === true || payload.planVerified === true
+            planFilePath: contract.planFilePath,
+            planVerified: contract.planVerification?.verified === true
           }
         : {})
     });
@@ -102,25 +90,23 @@ export async function resolveTaskApproval(input: {
 
   const approved = input.decision === "approve";
   const contractStore = createFileBackedTaskContractStore(input.sessionDir);
-  const storedContract = await contractStore.get(input.contractId);
-  const payload = interruption.payload as TaskApprovalPayload;
-  const contract = storedContract ?? payload.contract;
+  const contract = await contractStore.get(input.contractId);
   const timestamp = new Date().toISOString();
 
-  if (approved && !contract) {
+  if (!contract) {
     return false;
   }
 
-  if (approved && contract) {
+  if (approved) {
     await contractStore.upsert({
       ...contract,
       status: "approved",
       approvedAt: timestamp,
       updatedAt: timestamp
     });
-  } else if (!approved && storedContract) {
+  } else {
     await contractStore.upsert({
-      ...storedContract,
+      ...contract,
       status: "cancelled",
       updatedAt: timestamp
     });

@@ -4,6 +4,7 @@ export type LumeRunItem =
   | LumeToolCallItem
   | LumeToolResultItem
   | LumeModelStreamItem
+  | LumePlanPreviewItem
   | LumeSystemEventItem
   | LumeApprovalItem
   | LumeSubagentItem
@@ -59,6 +60,19 @@ export interface LumeSystemEventItem {
   id: string;
   name: string;
   payload?: unknown;
+  createdAt: string;
+}
+
+export interface LumePlanPreviewItem {
+  type: "plan_preview";
+  id: string;
+  contractId: string;
+  title: string;
+  summary: string;
+  markdown: string;
+  planFilePath?: string;
+  planVerified?: boolean;
+  stepCount: number;
   createdAt: string;
 }
 

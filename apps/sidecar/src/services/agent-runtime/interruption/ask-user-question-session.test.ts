@@ -40,12 +40,16 @@ describe("ask-user-question-session", () => {
       signal,
       () => {}
     );
-    const handled = submitPiAskUserQuestionAnswers({
+    const handled = await submitPiAskUserQuestionAnswers({
       threadId: "session-1",
       toolUseId,
       answers: { "问题1": "A" }
     });
-    expect(handled).toBeTrue();
+    expect(handled).toMatchObject({
+      handledBy: "live",
+      threadId: "session-1",
+      approvalThreadId: "session-1"
+    });
     const result = await waitPromise;
     expect(result.status).toBe("answered");
     expect(result.answers).toEqual({ "问题1": "A" });
@@ -109,12 +113,16 @@ describe("ask-user-question-session", () => {
       () => {}
     );
     setAskUserQuestionApprovalSession(toolUseId, "parent-session");
-    const handled = submitPiAskUserQuestionAnswers({
+    const handled = await submitPiAskUserQuestionAnswers({
       threadId: "parent-session",
       toolUseId,
       answers: { "问题1": "B" }
     });
-    expect(handled).toBeTrue();
+    expect(handled).toMatchObject({
+      handledBy: "live",
+      threadId: "child-session",
+      approvalThreadId: "parent-session"
+    });
     const result = await waitPromise;
     expect(result.status).toBe("answered");
     expect(result.answers).toEqual({ "问题1": "B" });
@@ -149,7 +157,7 @@ describe("ask-user-question-session", () => {
     expect(pending[0]?.threadId).toBe("parent-session");
     expect(pending[0]?.subagentLabel).toBe("探索网络和搜索能力");
 
-    submitPiAskUserQuestionAnswers({
+    await submitPiAskUserQuestionAnswers({
       threadId: "parent-session",
       toolUseId,
       canceled: true
@@ -181,7 +189,7 @@ describe("ask-user-question-session", () => {
       "ask_user:ask-persist"
     ]);
 
-    submitPiAskUserQuestionAnswers({
+    await submitPiAskUserQuestionAnswers({
       threadId,
       toolUseId: "ask-persist",
       answers: { choice: "继续" }
@@ -224,13 +232,17 @@ describe("ask-user-question-session", () => {
       updatedAt: "2026-04-29T00:00:00.000Z"
     });
 
-    const handled = submitPiAskUserQuestionAnswers({
+    const handled = await submitPiAskUserQuestionAnswers({
       threadId,
       toolUseId: "ask-cold",
       canceled: true
     });
 
-    expect(handled).toBeTrue();
+    expect(handled).toMatchObject({
+      handledBy: "persisted",
+      threadId,
+      approvalThreadId: threadId
+    });
     expect((await store.get("ask_user:ask-cold"))?.status).toBe("rejected");
   });
 });

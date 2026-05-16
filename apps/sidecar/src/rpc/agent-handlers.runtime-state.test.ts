@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import type { AgentTaskContractsResult } from "@lume/shared";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { persistTaskApprovalInterruption } from "../services/agent-runtime/plan/task-approval-service";
 import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
@@ -26,6 +25,8 @@ const sendAgentMessageMock = mock(async (_input: unknown, emit?: {
   });
   emit?.onComplete?.();
 });
+let submitAskUserQuestionAnswersResult: unknown = { ok: true };
+const submitAskUserQuestionAnswersMock = mock(() => submitAskUserQuestionAnswersResult);
 
 mock.module("../services/agent/agent-service", () => ({
   appendAgentMessage: async () => ({ queued: false }),
@@ -33,7 +34,7 @@ mock.module("../services/agent/agent-service", () => ({
   generateAgentTitle: async () => undefined,
   stopAgent: async () => undefined,
   submitAgentToolPermission: () => false,
-  submitAskUserQuestionAnswers: () => false
+  submitAskUserQuestionAnswers: submitAskUserQuestionAnswersMock
 }));
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
@@ -48,6 +49,9 @@ describe("agent-handlers runtime state", () => {
   const previousConfigDir = process.env.LUME_CONFIG_DIR;
 
   afterEach(() => {
+    submitAskUserQuestionAnswersResult = { ok: true };
+    submitAskUserQuestionAnswersMock.mockClear();
+    sendAgentMessageMock.mockClear();
     if (process.env.LUME_CONFIG_DIR) {
       rmSync(process.env.LUME_CONFIG_DIR, { recursive: true, force: true });
     }
@@ -58,7 +62,7 @@ describe("agent-handlers runtime state", () => {
     }
   });
 
-  test("exposes resume, run summaries, redacted trace, and task contracts through IPC handlers", async () => {
+  test("exposes resume, run summaries, redacted trace, task progress, and pending approvals through IPC handlers", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-state-rpc-"));
     const threadId = "thread-runtime-state";
     const runId = "run-1";
@@ -89,6 +93,18 @@ describe("agent-handlers runtime state", () => {
       content: [{ type: "text", text: "historical answer" }],
       createdAt: "2026-04-30T00:00:01.000Z"
     });
+    await runStore.appendItem(runId, {
+      type: "plan_preview",
+      id: "plan:plan-needs-approval",
+      contractId: "plan-needs-approval",
+      title: "Approve runtime plan",
+      summary: "Needs approval",
+      markdown: "# Approve runtime plan\n\n## Steps\n1. Review",
+      planFilePath: "plans/plan-needs-approval.md",
+      planVerified: true,
+      stepCount: 1,
+      createdAt: "2026-04-30T00:00:01.500Z"
+    } as any);
 
     await createFileBackedRunContinuationStore(sessionDir).upsert({
       version: 1,
@@ -125,27 +141,6 @@ describe("agent-handlers runtime state", () => {
       }]
     });
 
-    await createFileBackedTaskContractStore(sessionDir).upsert({
-      id: "plan-1",
-      runId,
-      threadId,
-      goal: "Finish runtime state",
-      summary: "Expose task contracts",
-      assumptions: [],
-      questions: [],
-      risks: [],
-      steps: [{
-        id: "step-1",
-        title: "Read plan",
-        description: "Read plan",
-        type: "read",
-        status: "completed"
-      }],
-      expectedChanges: {},
-      status: "approved",
-      createdAt: "2026-04-30T00:00:00.000Z",
-      updatedAt: "2026-04-30T00:00:00.000Z"
-    });
     await createFileBackedTaskRunStore(sessionDir).upsert({
       id: "taskrun-1",
       contractId: "plan-1",
@@ -210,7 +205,7 @@ describe("agent-handlers runtime state", () => {
         traceId,
         model: { provider: "openai", modelId: "gpt-test" },
         pendingInterruptionCount: 1,
-        generatedItemCount: 1,
+        generatedItemCount: 2,
         continuation: {
           status: "ready_to_resume",
           checkpoint: {
@@ -230,6 +225,7 @@ describe("agent-handlers runtime state", () => {
         { type: "run.started", threadId, runId },
         { type: "message.user.submitted", text: "resume me", threadId, runId },
         { type: "assistant.delta", delta: "historical answer", threadId, runId },
+        { type: "plan.preview", contractId: "plan-needs-approval", markdown: "# Approve runtime plan\n\n## Steps\n1. Review", threadId, runId },
         { type: "task.progress", taskRunId: "taskrun-1", threadId, runId }
       ]
     });
@@ -246,20 +242,14 @@ describe("agent-handlers runtime state", () => {
       }
     });
 
-    const contracts = await handlers[AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS]!({ threadId }) as AgentTaskContractsResult;
-    expect(contracts.contracts).toContainEqual(expect.objectContaining({
-        id: "plan-1",
-        goal: "Finish runtime state",
-        steps: [expect.objectContaining({ id: "step-1", status: "completed" })]
-    }));
-
     const pending = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE]!({ threadId });
     expect(pending).toMatchObject([{
       threadId,
       taskApprovals: [{
         contractId: "plan-needs-approval",
         requestId: "task_approval:plan-needs-approval",
-        message: "Needs approval"
+        message: "审阅任务计划",
+        summary: "Needs approval"
       }]
     }]);
 
@@ -362,5 +352,189 @@ describe("agent-handlers runtime state", () => {
     });
     expect(sendAgentMessageMock.mock.calls[0]?.[2]).toEqual({ appendUserMessage: false });
     expect((await createFileBackedRunContinuationStore(sessionDir).get(runId))?.status).toBe("resumed");
+  });
+
+  test("auto-resumes a persisted AskUserQuestion answer through the default continuation runner", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-ask-resume-rpc-"));
+    const threadId = "thread-runtime-ask-resume";
+    const runId = "run-ask-resume";
+    submitAskUserQuestionAnswersResult = {
+      ok: true,
+      handledBy: "persisted",
+      threadId,
+      runId
+    };
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    const runStore = createFileBackedLumeRunStateStore(sessionDir);
+    await runStore.create({
+      version: 1,
+      runId,
+      threadId,
+      workspaceId: "workspace-ask",
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "paused",
+      input: {
+        userMessage: "plan something",
+        permissionMode: "plan",
+        messageMetadata: { source: "ask-test" }
+      },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-ask-resume",
+      model: {
+        provider: "openai",
+        modelId: "gpt-test",
+        modelRef: "openai/gpt-test"
+      },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    await createFileBackedRunContinuationStore(sessionDir).upsert({
+      version: 1,
+      runId,
+      threadId,
+      status: "ready_to_resume",
+      checkpoint: {
+        step: "after_tool_result",
+        interruptionId: "ask_user:ask-1",
+        toolCallId: "ask-1",
+        toolName: "AskUserQuestion",
+        toolKind: "control",
+        syntheticToolResult: {
+          status: "answered",
+          answers: { scope: "continue" }
+        }
+      },
+      reason: "AskUserQuestion 已回答，恢复时将注入答案。",
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION]!({
+      threadId,
+      toolUseId: "ask-1",
+      answers: { scope: "continue" }
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      handledBy: "persisted",
+      threadId,
+      runId,
+      resume: {
+        status: "resumed",
+        finalOutput: "resumed output"
+      }
+    });
+    expect(sendAgentMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessageMock.mock.calls[0]?.[0]).toMatchObject({
+      threadId,
+      workspaceId: "workspace-ask",
+      modelRef: "openai/gpt-test",
+      permissionMode: "plan",
+      messageMetadata: {
+        source: "ask-test",
+        runtimeContinuation: {
+          sourceRunId: runId,
+          checkpoint: {
+            toolName: "AskUserQuestion",
+            syntheticToolResult: {
+              status: "answered",
+              answers: { scope: "continue" }
+            }
+          }
+        }
+      }
+    });
+  });
+
+  test("does not cold-start resume live AskUserQuestion answers", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-ask-live-rpc-"));
+    const threadId = "thread-runtime-ask-live";
+    const runId = "run-ask-live";
+    submitAskUserQuestionAnswersResult = {
+      ok: true,
+      handledBy: "live",
+      threadId,
+      approvalThreadId: threadId,
+      runId
+    };
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    const runStore = createFileBackedLumeRunStateStore(sessionDir);
+    await runStore.create({
+      version: 1,
+      runId,
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "paused",
+      input: {
+        userMessage: "plan something",
+        permissionMode: "plan"
+      },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-ask-live",
+      model: {
+        provider: "openai",
+        modelId: "gpt-test"
+      },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    await createFileBackedRunContinuationStore(sessionDir).upsert({
+      version: 1,
+      runId,
+      threadId,
+      status: "ready_to_resume",
+      checkpoint: {
+        step: "after_tool_result",
+        interruptionId: "ask_user:ask-live",
+        toolCallId: "ask-live",
+        toolName: "AskUserQuestion",
+        toolKind: "control",
+        syntheticToolResult: {
+          status: "answered",
+          answers: { scope: "continue" }
+        }
+      },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION]!({
+      threadId,
+      toolUseId: "ask-live",
+      answers: { scope: "continue" }
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      handledBy: "live",
+      threadId,
+      approvalThreadId: threadId,
+      runId
+    });
+    expect(sendAgentMessageMock).not.toHaveBeenCalled();
+    expect((await createFileBackedRunContinuationStore(sessionDir).get(runId))?.status).toBe("ready_to_resume");
   });
 });

@@ -39,48 +39,25 @@ const standardPrompt = buildSystemPromptAppend({
   permissionMode: "default",
 });
 
-// P0-2: 知识管理
-check("P0-2: 知识管理章节存在", standardPrompt, "文档输出与知识管理");
-check("P0-2: AGENTS.md 维护指引", standardPrompt, "AGENTS.md — 项目知识库");
-check("P0-2: .context 目录说明", standardPrompt, ".context/ 目录 — 结构化工作文档");
-check("P0-2: note.md 说明", standardPrompt, "note.md — 研究与分析输出");
-check("P0-2: todo.md 说明", standardPrompt, "todo.md — 任务进度追踪");
-check("P0-2: 决策表", standardPrompt, "何时输出到文件 vs 只在聊天中回复");
-check("P0-2: .context 目录层级", standardPrompt, ".context 目录层级");
-check("P0-2: 会话级 .context", standardPrompt, "会话级");
-check("P0-2: 工作区级 .context", standardPrompt, "工作区级");
-check("P0-2: 工作区级 .context 根目录说明", standardPrompt, "/.context/");
-check("P0-2: Session Bootstrap 包含 .context", standardPrompt, "工作区根目录下的 .context/ 目录");
-check("P0-2: Session Bootstrap 包含 AGENTS.md", standardPrompt, "工作区的 AGENTS.md");
-
-// P0-3: 标准模式不确定性处理
-check("P0-3: 标准模式 — AskUserQuestion 引导", standardPrompt, "尽可能多地使用 AskUserQuestion");
-check("P0-3: 标准模式 — brainstorming 引导", standardPrompt, "brainstorming");
-check("P0-3: 标准模式 — 反偏见指引", standardPrompt, "不要盲目附和");
+check("标准模式 — Execution Modes", standardPrompt, "## Execution Modes");
+check("标准模式 — Capability Routing", standardPrompt, "## Capability Routing");
+check("标准模式 — AskUserQuestion 澄清边界", standardPrompt, "AskUserQuestion 用于需求澄清或关键取舍");
+check("标准模式 — brainstorming 引导", standardPrompt, "Use brainstorming only for ambiguous product/design exploration");
+check("标准模式 — 反偏见指引", standardPrompt, "不要盲目附和");
 // 标准模式不应包含"严禁调用 AskUserQuestion"
 const standardHasBan = standardPrompt.includes("严禁调用 AskUserQuestion");
 if (!standardHasBan) {
-  console.log(`  ${GREEN}✓${RESET} P0-3: 标准模式 — 无禁止 AskUserQuestion（正确）`);
+  console.log(`  ${GREEN}✓${RESET} 标准模式 — 无禁止 AskUserQuestion（正确）`);
   passed++;
 } else {
-  console.log(`  ${RED}✗${RESET} P0-3: 标准模式 — 不应包含禁止 AskUserQuestion`);
+  console.log(`  ${RED}✗${RESET} 标准模式 — 不应包含禁止 AskUserQuestion`);
   failed++;
 }
 
-// P0-1: SubAgent 委派策略
-check("P0-1: SubAgent 委派策略章节", standardPrompt, "SubAgent 委派策略");
-check("P0-1: explorer 角色", standardPrompt, "explorer");
-check("P0-1: researcher 角色", standardPrompt, "researcher");
-check("P0-1: code-reviewer 角色", standardPrompt, "code-reviewer");
-check("P0-1: haiku 模型建议", standardPrompt, "haiku");
-check("P0-1: 不需要委派场景", standardPrompt, "不需要委派的场景");
-
-// P1-2: 记忆哲学
-check("P1-2: 记忆系统哲学章节", standardPrompt, "记忆系统");
-check("P1-2: 共同经历", standardPrompt, "共同的经历");
-check("P1-2: 自然带入", standardPrompt, "像老搭档一样自然地带入");
-check("P1-2: 反机械引用", standardPrompt, "根据记忆记录");
-check("P1-2: 存储要点", standardPrompt, "记的是经历和结论，不是对话流水账");
+check("标准模式 — explorer 角色", standardPrompt, "explorer");
+check("标准模式 — planner 角色", standardPrompt, "planner");
+check("标准模式 — researcher 角色", standardPrompt, "researcher");
+check("标准模式 — code-reviewer 角色", standardPrompt, "code-reviewer");
 
 // === 场景 2: bypassPermissions 模式 ===
 section("场景 2: bypassPermissions 模式 System Prompt");
@@ -95,7 +72,7 @@ const autoPrompt = buildSystemPromptAppend({
 check("P0-3: 自动模式 — 禁止 AskUserQuestion", autoPrompt, "严禁调用 AskUserQuestion");
 check("P0-3: 自动模式 — 完全自动模式说明", autoPrompt, "完全自动模式");
 check("P0-3: 自动模式 — 文本提问引导", autoPrompt, "直接在回复文本中向用户提问");
-check("P0-3: 自动模式 — 使用 Planning Protocol", autoPrompt, "Planning Protocol");
+check("P0-3: 自动模式 — 保留反偏见指引", autoPrompt, "不要盲目附和");
 
 // === 场景 3: plan 模式 ===
 section("场景 3: plan 模式 System Prompt");
@@ -107,7 +84,10 @@ const planPrompt = buildSystemPromptAppend({
   permissionMode: "plan",
 });
 
-check("P0-3: 计划模式 — 禁止 AskUserQuestion", planPrompt, "严禁调用 AskUserQuestion");
+check("P0-3: 计划模式 — AskUserQuestion 澄清", planPrompt, "AskUserQuestion 澄清需求");
+check("P0-3: 计划模式 — AskUserQuestion 不做审批", planPrompt, "不要用 AskUserQuestion 请求计划审批");
+check("P0-3: 计划模式 — planner 辅助设计", planPrompt, "先探索，再调用 planner");
+check("P0-3: 计划模式 — planner 不做审批", planPrompt, "planner 只提供设计草案");
 check("P0-3: 计划模式 — 使用结构化计划工具", planPrompt, "TaskContractWrite");
 check("P0-3: 计划模式 — 等待计划批准", planPrompt, "needs_approval");
 // 计划模式不应包含原始 Planning Protocol，而是使用增强版计划章节

@@ -427,7 +427,6 @@ npx tsx examples/web/server.ts
 | **TeamCreate/Delete**                      | Multi-agent team coordination                |
 | **SendMessage**                            | Inter-agent messaging                        |
 | **EnterWorktree/ExitWorktree**             | Git worktree isolation                       |
-| **EnterPlanMode/ExitPlanMode**             | Structured planning workflow                 |
 | **AskUserQuestion**                        | Structured multiple-choice user input        |
 | **ToolSearch**                             | Discover lazy-loaded tools                   |
 | **ListMcpResourcesTool/ReadMcpResourceTool** | MCP resource access                        |

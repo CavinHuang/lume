@@ -17,8 +17,7 @@ test("应优先加载传入的 skillsDirectories", async () => {
   try {
     const skills = await loadFilesystemSkills({
       cwd: process.cwd(),
-      roots: [root],
-      includeLegacyFallback: false
+      roots: [root]
     });
 
     expect(skills.map((item) => item.name)).toContain("planner");

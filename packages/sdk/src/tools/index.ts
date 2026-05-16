@@ -39,9 +39,6 @@ import {
 // Worktree
 import { EnterWorktreeTool, ExitWorktreeTool } from './worktree-tools.js'
 
-// Planning
-import { EnterPlanModeTool, ExitPlanModeTool } from './plan-tools.js'
-
 // User interaction
 import { AskUserQuestionTool } from './ask-user.js'
 
@@ -108,10 +105,6 @@ const ALL_TOOLS: ToolDefinition[] = [
   // Worktree
   EnterWorktreeTool,
   ExitWorktreeTool,
-
-  // Planning
-  EnterPlanModeTool,
-  ExitPlanModeTool,
 
   // User interaction
   AskUserQuestionTool,
@@ -244,9 +237,6 @@ export {
   // Worktree
   EnterWorktreeTool,
   ExitWorktreeTool,
-  // Planning
-  EnterPlanModeTool,
-  ExitPlanModeTool,
   // User
   AskUserQuestionTool,
   // Discovery

@@ -381,7 +381,6 @@ export class Agent {
   private async registerFilesystemSkills(input: {
     cwd: string
     roots?: string[]
-    includeLegacyFallback?: boolean
   }): Promise<void> {
     this.unregisterFileSkills()
     const skills = await loadFilesystemSkills(input)
@@ -593,7 +592,6 @@ export class Agent {
     await this.registerFilesystemSkills({
       cwd,
       roots: this.cfg.skillsDirectories,
-      includeLegacyFallback: true,
     })
     this.loadedCommands = [
       ...(await loadCommandDefinitions(cwd)),
@@ -700,7 +698,7 @@ export class Agent {
       }
 
       if (permMode === 'plan') {
-        if (tool.isReadOnly?.() || readOnlyNames.has(tool.name) || tool.name === 'EnterPlanMode' || tool.name === 'ExitPlanMode') {
+        if (tool.isReadOnly?.() || readOnlyNames.has(tool.name)) {
           return { behavior: 'allow', ...base }
         }
         return {
@@ -1263,7 +1261,6 @@ export class Agent {
     await this.registerFilesystemSkills({
       cwd: this.cfg.cwd || process.cwd(),
       roots: this.cfg.skillsDirectories,
-      includeLegacyFallback: true,
     })
     this.loadedCommands = [
       ...(await loadCommandDefinitions(this.cfg.cwd || process.cwd())),

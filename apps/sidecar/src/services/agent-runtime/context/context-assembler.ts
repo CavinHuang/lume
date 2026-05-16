@@ -25,6 +25,7 @@ export interface ContextAssemblyInput {
   threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
+  agentSystemPrompt?: string;
   availableTools: string[];
   tokenBudget: number;
   trace?: {
@@ -95,6 +96,7 @@ export class ContextAssembler {
       memoryCitationsMode: memoryRuntimeConfig.citationsMode,
       permissionMode: input.permissionMode
     }).trim();
+    const agentSystemPrompt = input.agentSystemPrompt?.trim();
 
     const routingTrace = resolveAgentRuntimeRoutingTrace({
       workspaceSlug: input.workspaceSlug,
@@ -162,7 +164,7 @@ export class ContextAssembler {
       }
     }
 
-    const systemPrompt = [systemPromptAppend, dynamicContext, memoryContext]
+    const systemPrompt = [agentSystemPrompt, systemPromptAppend, dynamicContext, memoryContext]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
 

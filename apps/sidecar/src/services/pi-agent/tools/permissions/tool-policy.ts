@@ -52,7 +52,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:memory-global": ["memory.searchGlobal", "memory.listGlobalCandidates"],
   "group:memory-global-write": ["memory.promoteGlobal", "memory.rejectGlobalCandidate"],
   "group:web": ["web_search", "web_fetch"],
-  "group:planning": ["askuserquestion"]
+  "group:planning": ["askuserquestion", "taskcontractwrite"]
 };
 
 const DEFAULT_SUBAGENT_POLICY: ToolPolicy = {};

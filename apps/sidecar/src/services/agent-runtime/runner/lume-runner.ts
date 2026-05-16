@@ -250,6 +250,7 @@ export class LumeRunner {
       workspaceSlug: prepared.workspaceSlug,
       channelId: runtime.channelId,
       threadType: runtime.threadType,
+      subagentType: runtime.subagentType,
       chatType: input.chatType,
       permissionMode: input.permissionMode,
       messageMetadata: input.messageMetadata,

@@ -385,7 +385,7 @@ export function buildFeatureAgentOptions(
       return {
         ...base,
         permissionMode: 'default',
-        allowedTools: ['Read', 'Glob', 'Grep', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode', 'TodoWrite'],
+        allowedTools: ['Read', 'Glob', 'Grep', 'AskUserQuestion', 'TodoWrite'],
       }
 
     case 'hooks':

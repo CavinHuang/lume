@@ -108,19 +108,12 @@ import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attemp
 import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
 import {
   buildColdStartContinuationMessage,
-  LumeResumeService
+  LumeResumeService,
+  type ResumeRunResult
 } from "../services/agent-runtime/interruption/resume-service";
 import {
-  listPendingTaskApprovalRequests,
-  resolveTaskApproval
+  listPendingTaskApprovalRequests
 } from "../services/agent-runtime/plan/task-approval-service";
-import { persistFallbackTaskContractFromText } from "../services/agent-runtime/plan/task-contract-fallback-service";
-import {
-  markTaskContractFallbackExecutionFailed,
-  markTaskContractFallbackExecutionWaiting,
-  markTaskContractInteractionResolved
-} from "../services/agent-runtime/plan/task-contract-fallback-execution-service";
-import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
@@ -184,7 +177,6 @@ import {
   searchWorkspaceFilesInputSchema,
   skillMarketCatalogInputSchema,
   skillMarketDetailInputSchema,
-  taskContractsInputSchema,
   threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
@@ -215,36 +207,6 @@ interface AgentHandlersContext {
   ) => void;
 }
 
-function isPlanExecutionApprovalUserMessage(userMessage: string): boolean {
-  const text = userMessage.trim();
-  if (!text) return false;
-  return [
-    "继续",
-    "继续实现",
-    "继续执行",
-    "继续执行计划",
-    "继续执行任务",
-    "批准执行",
-    "批准并执行",
-    "按计划执行",
-    "按计划实现",
-    "开始执行",
-    "开始实现"
-  ].includes(text);
-}
-
-function buildTaskApprovalReplanningMessage(input: {
-  contractId: string;
-  feedback: string;
-}): string {
-  return [
-    "用户对当前计划提出了反馈，请根据反馈重新规划。",
-    `Contract ID: ${input.contractId}`,
-    `反馈：${input.feedback}`,
-    "请沿用这个 contractId 更新线程工作区内的 plan.md，并重新调用 TaskContractWrite 提交待审批任务契约。"
-  ].join("\n\n");
-}
-
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
   const resolveRequiredWorkspaceSlug = (threadId: string, workspaceSlug?: string) => {
     const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugByThreadId(threadId);
@@ -252,11 +214,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       throw new Error("未找到线程对应的 workspace");
     }
     return resolvedWorkspaceSlug;
-  };
-
-  const resolveOptionalThreadWorkspaceDir = (threadId: string): string | undefined => {
-    const workspaceSlug = resolveWorkspaceSlugByThreadId(threadId);
-    return workspaceSlug ? getAgentThreadPath(workspaceSlug, threadId) : undefined;
   };
 
   const resolveRuntimeSessionDir = (threadId: string) => getRuntimeCoreSessionDir(threadId);
@@ -270,40 +227,78 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return runs.at(-1)?.runId ?? null;
   };
 
-  const resolvePlanContinuationInput = async (input: AgentSendInput): Promise<AgentSendInput> => {
-    const feedback = input.userMessage.trim();
-    if (input.permissionMode !== "plan" || !feedback) {
-      return input;
-    }
+  const resumeRunForThread = async (input: {
+    threadId: string;
+    runId?: string;
+    interruptionId?: string;
+  }): Promise<ResumeRunResult> => {
     const sessionDir = resolveRuntimeSessionDir(input.threadId);
-    const [pendingApproval] = await listPendingTaskApprovalRequests(sessionDir);
-    if (!pendingApproval || pendingApproval.threadId !== input.threadId) {
-      return input;
+    const runId = await resolveRunIdForThread(input.threadId, input.runId);
+    if (!runId) {
+      return {
+        status: "not_resumable",
+        error: "找不到可恢复 run。"
+      };
     }
-    const ok = await resolveTaskApproval({
-      sessionDir,
-      threadId: input.threadId,
-      contractId: pendingApproval.contractId,
-      decision: "reject"
-    });
-    if (!ok) {
-      return input;
-    }
-    context.notifyPlanModePhaseChange(input.threadId, "planning");
-    return {
-      ...input,
-      userMessage: buildTaskApprovalReplanningMessage({
-        contractId: pendingApproval.contractId,
-        feedback
-      }),
-      permissionMode: "plan",
-      messageMetadata: {
-        ...input.messageMetadata,
-        taskApprovalRejected: {
-          contractId: pendingApproval.contractId
+    const service = new LumeResumeService({
+      runStateStore: createFileBackedLumeRunStateStore(sessionDir),
+      continuationStore: createFileBackedRunContinuationStore(sessionDir)
+    }, async (checkpoint, state) => {
+      let finalOutput = "";
+      await sendAgentMessage({
+        threadId: state.threadId,
+        userMessage: buildColdStartContinuationMessage(checkpoint),
+        ...(state.workspaceId ? { workspaceId: state.workspaceId } : {}),
+        ...(state.model.modelRef ? { modelRef: state.model.modelRef } : {}),
+        ...(state.model.channelId ? { channelId: state.model.channelId } : {}),
+        modelId: state.model.modelId,
+        chatType: state.input.chatType as never,
+        threadType: state.input.threadType as never,
+        permissionMode: state.input.permissionMode,
+        messageMetadata: {
+          ...(state.input.messageMetadata ?? {}),
+          runtimeContinuation: {
+            sourceRunId: state.runId,
+            checkpoint: checkpoint.checkpoint,
+            reason: checkpoint.reason
+          }
         }
-      }
-    };
+      }, {
+        onRuntimeEvent: (event) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
+            threadId: state.threadId,
+            event
+          });
+        },
+        onMessageAppended: (event) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+          if (event.message.role === "assistant") {
+            finalOutput = event.message.content;
+          }
+        },
+        onComplete: () => undefined,
+        onError: (error) => {
+          throw new Error(error);
+        },
+        onTitleUpdated: (title) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
+            threadId: state.threadId,
+            title
+          });
+        },
+        onAskUserQuestion: (request) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
+        },
+        onToolPermissionRequest: (request) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
+        }
+      }, { appendUserMessage: false });
+      return { finalOutput };
+    });
+    return service.resumeRun({
+      runId,
+      interruptionId: input.interruptionId
+    });
   };
 
   let runtimeOrchestrator: RuntimeOrchestrator;
@@ -316,14 +311,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   };
 
   const createAgentStreamEmitter = (threadId: string, options?: { contractId?: string; taskRunId?: string }) => {
-    let finalOutput: string | undefined;
-    let taskContractWritten = false;
     return {
       onRuntimeEvent: (event: unknown) => {
-        const runtimeEvent = event as { type?: string; finalOutput?: unknown };
-        if (runtimeEvent.type === "run.completed" && typeof runtimeEvent.finalOutput === "string") {
-          finalOutput = runtimeEvent.finalOutput;
-        }
         context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
           threadId,
           event
@@ -363,24 +352,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         }
       },
       onComplete: (payload?: { reason?: "max_turns" }) => {
-        const sessionDir = resolveRuntimeSessionDir(threadId);
         const turnLimited = payload?.reason === "max_turns";
-        if (
-          !taskContractWritten
-          && context.planModePhaseTracker.getPhase(threadId) === "planning"
-          && finalOutput?.trim()
-        ) {
-          void persistFallbackTaskContractFromText({
-            sessionDir,
-            threadId,
-            runId: threadId,
-            text: finalOutput,
-            threadWorkspaceDir: resolveOptionalThreadWorkspaceDir(threadId),
-            onTaskContractUpdated: () => {
-              context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
-            }
-          });
-        }
         if (options?.taskRunId) {
           void runtimeOrchestrator.handleTaskRunCompletion({
             threadId,
@@ -395,11 +367,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         }
       },
       onError: (error: string) => {
-        void markTaskContractFallbackExecutionFailed({
-          sessionDir: resolveRuntimeSessionDir(threadId),
-          threadId,
-          error
-        });
         context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
           threadId,
           event: {
@@ -436,13 +403,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
               waitingFor: "user",
               reason: message || "等待用户回答"
             });
-          } else {
-            void markTaskContractFallbackExecutionWaiting({
-              sessionDir: resolveRuntimeSessionDir(threadId),
-              threadId,
-              status: "needs_user_input",
-              reason: message || "等待用户回答"
-            });
           }
           context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
         },
@@ -456,18 +416,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
               waitingFor: "permission",
               reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
             });
-          } else {
-            void markTaskContractFallbackExecutionWaiting({
-              sessionDir: resolveRuntimeSessionDir(threadId),
-              threadId,
-              status: "needs_approval",
-              reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
-            });
           }
           context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
         },
       onTaskContractUpdated: (contract?: { status?: string }) => {
-        taskContractWritten = true;
         if (contract?.status === "needs_approval") {
           context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
         }
@@ -664,73 +616,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.RESUME_RUN]: async (params) => {
       const input = validateInput(resumeRunInputSchema, params, AGENT_IPC_CHANNELS.RESUME_RUN);
-      const sessionDir = resolveRuntimeSessionDir(input.threadId);
-      const runId = await resolveRunIdForThread(input.threadId, input.runId);
-      if (!runId) {
-        return {
-          status: "not_resumable",
-          error: "找不到可恢复 run。"
-        };
-      }
-      const service = new LumeResumeService({
-        runStateStore: createFileBackedLumeRunStateStore(sessionDir),
-        continuationStore: createFileBackedRunContinuationStore(sessionDir)
-      }, async (checkpoint, state) => {
-        let finalOutput = "";
-        await sendAgentMessage({
-          threadId: state.threadId,
-          userMessage: buildColdStartContinuationMessage(checkpoint),
-          ...(state.workspaceId ? { workspaceId: state.workspaceId } : {}),
-          ...(state.model.modelRef ? { modelRef: state.model.modelRef } : {}),
-          ...(state.model.channelId ? { channelId: state.model.channelId } : {}),
-          modelId: state.model.modelId,
-          chatType: state.input.chatType as never,
-          threadType: state.input.threadType as never,
-          permissionMode: state.input.permissionMode,
-          messageMetadata: {
-            ...(state.input.messageMetadata ?? {}),
-            runtimeContinuation: {
-              sourceRunId: state.runId,
-              checkpoint: checkpoint.checkpoint,
-              reason: checkpoint.reason
-            }
-          }
-        }, {
-          onRuntimeEvent: (event) => {
-            context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-              threadId: state.threadId,
-              event
-            });
-          },
-          onMessageAppended: (event) => {
-            context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
-            if (event.message.role === "assistant") {
-              finalOutput = event.message.content;
-            }
-          },
-          onComplete: () => undefined,
-          onError: (error) => {
-            throw new Error(error);
-          },
-          onTitleUpdated: (title) => {
-            context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-              threadId: state.threadId,
-              title
-            });
-          },
-          onAskUserQuestion: (request) => {
-            context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
-          },
-          onToolPermissionRequest: (request) => {
-            context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
-          }
-        }, { appendUserMessage: false });
-        return { finalOutput };
-      });
-      return service.resumeRun({
-        runId,
-        interruptionId: input.interruptionId
-      });
+      return resumeRunForThread(input);
     },
     [AGENT_IPC_CHANNELS.LIST_RUN_STATES]: async (params) => {
       const input = validateInput(listRunStatesInputSchema, params, AGENT_IPC_CHANNELS.LIST_RUN_STATES);
@@ -799,12 +685,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           ? redactTraceForLevel(trace, (input.redactionLevel ?? "safe_summary") as TraceRedactionLevel)
           : null
       };
-    },
-    [AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS]: async (params) => {
-      const input = validateInput(taskContractsInputSchema, params, AGENT_IPC_CHANNELS.LIST_TASK_CONTRACTS);
-      const plans = await createFileBackedTaskContractStore(resolveRuntimeSessionDir(input.threadId))
-        .listByThread(input.threadId);
-      return { contracts: plans };
     },
     [AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM]: async (params) => {
       const input = validateInput(agentTruncateThreadInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM);
@@ -1146,11 +1026,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_THREAD);
       stopAgent(input.threadId);
-      void markTaskContractFallbackExecutionFailed({
-        sessionDir: resolveRuntimeSessionDir(input.threadId),
-        threadId: input.threadId,
-        error: "用户已停止当前执行"
-      });
       if (context.planModePhaseTracker.getPhase(input.threadId) === "executing") {
         context.notifyPlanModePhaseChange(input.threadId, "awaiting_approval");
       }
@@ -1162,16 +1037,21 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION
       );
-      const result = submitAskUserQuestionAnswers({
+      const result = await submitAskUserQuestionAnswers({
         threadId: input.threadId,
         toolUseId: input.toolUseId,
         canceled: input.canceled === true,
         answers: input.answers
       });
-      void markTaskContractInteractionResolved({
-        sessionDir: resolveRuntimeSessionDir(input.threadId),
-        threadId: input.threadId
-      });
+      if (result.handledBy === "persisted") {
+        const resume = await resumeRunForThread({
+          threadId: result.threadId,
+          runId: result.runId
+        });
+        if (resume.status !== "not_resumable") {
+          return { ...result, resume };
+        }
+      }
       return result;
     },
     [AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION]: async (params) => {
@@ -1185,10 +1065,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         requestId: input.requestId,
         decision: input.decision
       });
-      void markTaskContractInteractionResolved({
-        sessionDir: resolveRuntimeSessionDir(input.threadId),
-        threadId: input.threadId
-      });
       return result;
     },
     [AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL]: async (params) => {
@@ -1197,49 +1073,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL
       );
-      const ok = await resolveTaskApproval({
-        sessionDir: resolveRuntimeSessionDir(input.threadId),
-        threadId: input.threadId,
-        contractId: input.contractId,
-        decision: input.decision
-      });
-      const feedback = input.feedback?.trim();
-      if (!ok) {
-        return { ok, ...(feedback ? { feedback } : {}) };
-      }
-      if (input.decision === "reject") {
-        if (!feedback) return { ok };
-        context.notifyPlanModePhaseChange(input.threadId, "planning");
-        const dispatch = appendAgentMessage({
-          threadId: input.threadId,
-          userMessage: buildTaskApprovalReplanningMessage({
-            contractId: input.contractId,
-            feedback
-          }),
-          permissionMode: "plan",
-          messageMetadata: {
-            taskApprovalRejected: {
-              contractId: input.contractId
-            }
-          }
-        }, createAgentStreamEmitter(input.threadId));
-        return {
-          ok,
-          feedback,
-          replanning: {
-            status: dispatch.mode
-          }
-        };
-      }
-      if (input.execute !== true) {
-        return { ok };
-      }
-      const execution = await runtimeOrchestrator.dispatchTaskExecution({
-        threadId: input.threadId,
-        contractId: input.contractId,
-        intent: "execute"
-      });
-      return { ok, execution };
+      return runtimeOrchestrator.submitTaskApproval(input);
     },
     [AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT]: async (params) => {
       const input = validateInput(executeTaskContractInputSchema, params, AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT);
@@ -1262,18 +1096,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
-      if (isPlanExecutionApprovalUserMessage(input.userMessage) && typeof input.messageMetadata?.planExecutionKey !== "string") {
-        const latestContinuableTaskContract = await runtimeOrchestrator.resolveExecutableTaskContract({ threadId: input.threadId });
-        if (latestContinuableTaskContract) {
-          return runtimeOrchestrator.dispatchTaskExecution({
-            threadId: input.threadId,
-            contractId: latestContinuableTaskContract.id,
-            permissionMode: input.permissionMode,
-            intent: "continue"
-          });
-        }
+      const approvalDispatch = await runtimeOrchestrator.dispatchPlanExecutionApproval(input);
+      if (approvalDispatch) {
+        return approvalDispatch;
       }
-      const sendInput = await resolvePlanContinuationInput(input);
+      const sendInput = await runtimeOrchestrator.resolvePlanContinuationInput(input);
       if (sendInput.permissionMode === "plan") {
         context.notifyPlanModePhaseChange(sendInput.threadId, "planning");
       }

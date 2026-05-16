@@ -11,6 +11,13 @@ import {
 } from "./interruption-store";
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 
+export interface PersistedAskUserInterruptionResolution {
+  handledBy: "persisted";
+  threadId: string;
+  approvalThreadId: string;
+  runId?: string;
+}
+
 export function askUserInterruptionId(toolUseId: string): string {
   return `ask_user:${toolUseId}`;
 }
@@ -122,19 +129,19 @@ export async function updateAskUserApprovalSession(input: {
   });
 }
 
-export function resolvePersistedAskUserInterruption(input: {
+export async function resolvePersistedAskUserInterruption(input: {
   approvalThreadId: string;
   toolUseId: string;
   canceled?: boolean;
   answers?: Record<string, string>;
-}): boolean {
+}): Promise<PersistedAskUserInterruptionResolution | null> {
   const matched = listPendingRuntimeCoreInterruptionRecords().find((record) => {
     const payload = record.interruption.payload as AgentAskUserQuestionRequest;
     return record.interruption.type === "ask_user"
       && payload?.toolUseId === input.toolUseId
       && record.interruption.threadId === input.approvalThreadId;
   });
-  if (!matched) return false;
+  if (!matched) return null;
   const interruptionId = askUserInterruptionId(input.toolUseId);
   const resolved = resolveFileBackedInterruptionSync(
     matched.sessionDir,
@@ -150,7 +157,7 @@ export function resolvePersistedAskUserInterruption(input: {
     }
   );
   if (resolved && matched.interruption.runId) {
-    void createFileBackedRunContinuationStore(matched.sessionDir).update(matched.interruption.runId, {
+    await createFileBackedRunContinuationStore(matched.sessionDir).update(matched.interruption.runId, {
       status: "ready_to_resume",
       checkpoint: {
         step: "after_tool_result",
@@ -167,7 +174,14 @@ export function resolvePersistedAskUserInterruption(input: {
         : "AskUserQuestion 已回答，恢复时将注入答案。"
     });
   }
-  return resolved;
+  if (!resolved) return null;
+  const payload = matched.interruption.payload as AgentAskUserQuestionRequest;
+  return {
+    handledBy: "persisted",
+    threadId: matched.interruption.originThreadId ?? payload.originThreadId ?? matched.interruption.threadId,
+    approvalThreadId: input.approvalThreadId,
+    ...(matched.interruption.runId ? { runId: matched.interruption.runId } : {})
+  };
 }
 
 function summarizeQuestions(questions: AgentAskUserQuestionQuestion[]): string {

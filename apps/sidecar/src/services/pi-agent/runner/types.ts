@@ -3,6 +3,7 @@ import type { AgentSendInput } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
 import type { AgentToolPermissionRequest } from "@lume/shared";
 import type { LumeRuntimeEvent } from "@lume/shared";
+import type { TaskContractPlanPreview } from "../../agent-runtime/plan/task-contract-write-tool";
 import type { TaskContractRecord } from "../../agent-runtime/plan/task-contract-record-types";
 
 export interface PiAgentRuntimeEmitter {
@@ -12,7 +13,7 @@ export interface PiAgentRuntimeEmitter {
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
-  onTaskContractUpdated?: (contract: TaskContractRecord) => void;
+  onTaskContractUpdated?: (contract: TaskContractRecord, preview?: TaskContractPlanPreview) => void;
 }
 
 export type PiAgentRunStatus = "completed" | "aborted" | "errored" | "turn_limited";
@@ -28,6 +29,7 @@ export interface PiAgentRunParams {
     sessionId: string;
     deliveryThreadId?: string;
     subagentRunId?: string;
+    subagentType?: string;
     modelRef?: string;
     channelId: string;
     resolvedModelId: string;

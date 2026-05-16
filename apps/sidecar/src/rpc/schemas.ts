@@ -641,10 +641,6 @@ export const runTraceInputSchema = z.object({
   redactionLevel: z.enum(["safe_summary", "diagnostic"]).optional()
 });
 
-export const taskContractsInputSchema = z.object({
-  threadId: idSchema
-});
-
 const bootstrapFileTypeSchema = z.enum([
   "SOUL",
   "USER",

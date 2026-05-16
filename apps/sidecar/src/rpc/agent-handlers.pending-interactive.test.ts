@@ -22,11 +22,11 @@ function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
 }
 
 describe("agent-handlers pending interactive aggregation", () => {
-  afterEach(() => {
+  afterEach(async () => {
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-1", decision: "deny" })
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-2", decision: "deny" })
-    submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", canceled: true })
-    submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", canceled: true })
+    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", canceled: true })
+    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", canceled: true })
   })
 
   test("GET_PENDING_INTERACTIVE 应按父线程返回全部待处理请求，而不是只取第一条", async () => {
@@ -113,8 +113,8 @@ describe("agent-handlers pending interactive aggregation", () => {
 
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-1", decision: "allow_once" })
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-2", decision: "allow_once" })
-    submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", answers: { pick: "A" } })
-    submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", answers: { pick: "B" } })
+    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", answers: { pick: "A" } })
+    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", answers: { pick: "B" } })
 
     await Promise.all([askWaitA, askWaitB, permWaitA, permWaitB])
   })

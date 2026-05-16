@@ -4,6 +4,7 @@ import type {
   AgentAskUserQuestionResponseInput
 } from "@lume/shared";
 import {
+  type PersistedAskUserInterruptionResolution,
   persistAskUserInterruption,
   resolvePersistedAskUserInterruption,
   resolveAskUserInterruption,
@@ -28,6 +29,15 @@ export interface AskUserQuestionWaitResult {
   status: "answered" | "canceled" | "aborted" | "timeout";
   answers: Record<string, string> | null;
 }
+
+export type AskUserQuestionSubmitResult =
+  | {
+      handledBy: "live";
+      threadId: string;
+      approvalThreadId: string;
+      runId?: string;
+    }
+  | PersistedAskUserInterruptionResolution;
 
 export function setAskUserQuestionApprovalSession(toolUseId: string, approvalSessionId: string): void {
   const pending = pendingPiAskUserQuestionResolvers.get(toolUseId);
@@ -119,10 +129,12 @@ export function waitForPiAskUserQuestionAnswers(
   });
 }
 
-export function submitPiAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): boolean {
+export async function submitPiAskUserQuestionAnswers(
+  input: AgentAskUserQuestionResponseInput
+): Promise<AskUserQuestionSubmitResult | null> {
   const pending = pendingPiAskUserQuestionResolvers.get(input.toolUseId);
   if (!pending) {
-    return resolvePersistedAskUserInterruption({
+    return await resolvePersistedAskUserInterruption({
       approvalThreadId: input.threadId,
       toolUseId: input.toolUseId,
       canceled: input.canceled,
@@ -134,10 +146,20 @@ export function submitPiAskUserQuestionAnswers(input: AgentAskUserQuestionRespon
   }
   if (input.canceled) {
     pending.resolve({ status: "canceled", answers: null });
-    return true;
+    return {
+      handledBy: "live",
+      threadId: pending.threadId,
+      approvalThreadId: input.threadId,
+      ...(pending.request.runId ? { runId: pending.request.runId } : {})
+    };
   }
   pending.resolve({ status: "answered", answers: input.answers ?? {} });
-  return true;
+  return {
+    handledBy: "live",
+    threadId: pending.threadId,
+    approvalThreadId: input.threadId,
+    ...(pending.request.runId ? { runId: pending.request.runId } : {})
+  };
 }
 
 export function cancelPendingPiAskUserQuestionBySession(threadId: string): void {

@@ -677,6 +677,15 @@ export interface AgentTaskApprovalResponseInput {
   feedback?: string
 }
 
+export interface AgentTaskApprovalResponseResult {
+  ok: boolean
+  feedback?: string
+  replanning?: {
+    status: 'sent' | 'queued'
+  }
+  execution?: AgentExecuteTaskContractResult
+}
+
 export interface AgentExecuteTaskContractInput {
   threadId: string
   contractId?: string
@@ -834,89 +843,6 @@ export interface AgentListRunStatesInput {
 
 export interface AgentListRunStatesResult {
   runs: AgentRunStateSummary[]
-}
-
-export type AgentTaskContractStatus =
-  | 'draft'
-  | 'needs_user_input'
-  | 'needs_approval'
-  | 'approved'
-  | 'executing'
-  | 'completed'
-  | 'cancelled'
-  | 'failed'
-
-export type AgentTaskContractItemStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'skipped'
-
-export interface AgentTaskContractItem {
-  id: string
-  title: string
-  description: string
-  type: 'read' | 'analyze' | 'edit' | 'execute' | 'ask_user' | 'memory' | 'subagent'
-  status: AgentTaskContractItemStatus
-  expectedTools?: string[]
-  expectedFiles?: string[]
-  result?: string
-  error?: string
-  traceSpanId?: string
-  currentStepId?: string
-  attemptCount?: number
-  startedAt?: string
-  endedAt?: string
-  blockedReason?: string
-}
-
-export interface AgentTaskContractEvent {
-  type:
-    | 'contract_started'
-    | 'task_started'
-    | 'task_completed'
-    | 'task_failed'
-    | 'task_skipped'
-    | 'contract_waiting'
-    | 'contract_completed'
-  contractId: string
-  taskId?: string
-  message?: string
-  createdAt: string
-}
-
-export interface AgentTaskContract {
-  id: string
-  runId: string
-  threadId: string
-  goal: string
-  summary: string
-  assumptions: string[]
-  questions: unknown[]
-  risks: unknown[]
-  steps: AgentTaskContractItem[]
-  expectedChanges: {
-    files?: string[]
-    commands?: string[]
-    tools?: string[]
-    memoryWrites?: string[]
-  }
-  events?: AgentTaskContractEvent[]
-  status: AgentTaskContractStatus
-  currentStepId?: string
-  traceSpanId?: string
-  createdAt: string
-  updatedAt: string
-  approvedAt?: string
-}
-
-export interface AgentTaskContractsInput {
-  threadId: string
-}
-
-export interface AgentTaskContractsResult {
-  contracts: AgentTaskContract[]
 }
 
 export type AgentTaskRunStatus =
@@ -1294,9 +1220,6 @@ export const AGENT_IPC_CHANNELS = {
   LIST_RUN_STATES: 'agent:list-run-states',
   /** 获取 runtime trace（默认 safe_summary 脱敏） */
   GET_RUN_TRACE: 'agent:get-run-trace',
-  /** 获取结构化任务清单 */
-  LIST_TASK_CONTRACTS: 'agent:list-task-contracts',
-
   // 附件
   /** 保存文件到 Agent thread 工作目录 */
   SAVE_FILES_TO_THREAD: 'agent:save-files-to-thread',

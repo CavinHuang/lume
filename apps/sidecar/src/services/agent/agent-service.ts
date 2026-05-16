@@ -141,14 +141,30 @@ function handleRuntimeThreadStateMessage(
   }
 }
 
-export function submitAskUserQuestionAnswers(input: AgentAskUserQuestionResponseInput): { ok: true } {
-  const handledByPi = submitPiAskUserQuestionAnswers(input);
+export interface SubmitAskUserQuestionAnswersResult {
+  ok: true;
+  handledBy: "live" | "persisted" | "none";
+  threadId: string;
+  approvalThreadId?: string;
+  runId?: string;
+}
+
+export async function submitAskUserQuestionAnswers(
+  input: AgentAskUserQuestionResponseInput
+): Promise<SubmitAskUserQuestionAnswersResult> {
+  const handledByPi = await submitPiAskUserQuestionAnswers(input);
   if (handledByPi) {
-    getAgentRuntimeStatusManager().markStreaming(input.threadId);
-    return { ok: true };
+    if (handledByPi.handledBy === "live") {
+      getAgentRuntimeStatusManager().markStreaming(input.threadId);
+    }
+    return { ok: true, ...handledByPi };
   }
   if (input.canceled) {
-    return { ok: true };
+    return {
+      ok: true,
+      handledBy: "none",
+      threadId: input.threadId
+    };
   }
   throw new Error("未找到待确认的 AskUserQuestion 请求");
 }

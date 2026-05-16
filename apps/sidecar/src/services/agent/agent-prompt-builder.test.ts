@@ -102,11 +102,18 @@ describe("agent-prompt-builder", () => {
     expect(prompt).not.toContain("在同一个响应中产出多个 Agent tool_use 块");
   });
 
-  test("buildBuiltinAgents 应返回预注册的 explorer / researcher / code-reviewer", () => {
+  test("buildBuiltinAgents 应返回预注册的 explorer / planner / researcher / code-reviewer", () => {
     const agents = buildBuiltinAgents();
 
-    expect(Object.keys(agents)).toEqual(["explorer", "researcher", "code-reviewer"]);
+    expect(Object.keys(agents)).toEqual(["explorer", "planner", "researcher", "code-reviewer"]);
     expect(agents.explorer?.model).toBe("inherit");
+    expect(agents.planner?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
+    expect(agents.planner?.disallowedTools).toEqual(["Agent", "Write", "Edit", "TaskContractWrite", "TaskReport"]);
+    expect(agents.planner?.prompt).toContain("software architect and planning specialist");
+    expect(agents.planner?.prompt).toContain("READ-ONLY MODE - NO FILE MODIFICATIONS");
+    expect(agents.planner?.prompt).toContain("Critical Files for Implementation");
+    expect(agents.planner?.prompt).toContain("TaskContractWrite");
+    expect(agents.planner?.prompt).toContain("The main thread owns TaskContractWrite");
     expect(agents.researcher?.tools).toContain("WebSearch");
     expect(agents.researcher?.tools).toContain("WebFetch");
     expect(agents["code-reviewer"]?.tools).toContain("Read");
@@ -119,7 +126,7 @@ describe("agent-prompt-builder", () => {
       availableTools: ["task", "read"]
     });
 
-    expect(prompt).toContain("Built-ins include explorer, researcher, and code-reviewer");
+    expect(prompt).toContain("Built-ins include explorer, planner, researcher, and code-reviewer");
     expect(prompt).not.toContain("指定 model: \"haiku\" 降低成本");
   });
 

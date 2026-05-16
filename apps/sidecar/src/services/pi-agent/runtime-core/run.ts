@@ -7,6 +7,7 @@ import {
   FileEditTool,
   FileReadTool,
   FileWriteTool,
+  filterTools,
   GlobTool,
   GrepTool,
   LSPTool,
@@ -14,6 +15,7 @@ import {
   registerAgents,
   type SDKMessage,
   type Agent,
+  type AgentDefinition,
   type AgentOptions,
   type ApiType,
   type McpServerConfig,
@@ -92,13 +94,14 @@ export interface CreateRuntimeCoreSessionInput {
   workspaceSlug?: string;
   channelId?: string;
   threadType?: AgentSendInput["threadType"];
+  subagentType?: string;
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
+  emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
   runId?: string;
   trace?: ContextAssemblyInput["trace"];
 }
@@ -270,6 +273,7 @@ async function runSidecarSubagent(input: {
   parentThreadId: string;
   deliveryThreadId: string;
   parentToolUseId?: string;
+  subagentType?: string;
   modelOverride: ResolvedSubagentModelOverride;
   channelId?: string;
   workspaceId?: string;
@@ -285,6 +289,9 @@ async function runSidecarSubagent(input: {
   error?: string;
 }> {
   const prompt = typeof input.toolInput.prompt === "string" ? input.toolInput.prompt : "";
+  const subagentType = typeof input.toolInput.subagent_type === "string"
+    ? input.toolInput.subagent_type
+    : input.subagentType;
   const resolvedChannelId = input.modelOverride.channelId ?? input.channelId;
   const resolvedModelId = input.modelOverride.resolvedModelId ?? input.context.model;
   if (!resolvedChannelId || !resolvedModelId) {
@@ -330,6 +337,7 @@ async function runSidecarSubagent(input: {
       sessionId: input.childThreadId,
       deliveryThreadId: input.deliveryThreadId,
       subagentRunId: input.runId,
+      ...(subagentType ? { subagentType } : {}),
       ...(input.modelOverride.modelRef ? { modelRef: input.modelOverride.modelRef } : {}),
       channelId: resolvedChannelId,
       resolvedModelId,
@@ -497,6 +505,7 @@ function buildRuntimeCoreTools(input: {
   chatType?: AgentSendInput["chatType"];
   threadType?: AgentSendInput["threadType"];
   permissionMode?: AgentSendInput["permissionMode"];
+  subagentDefinition?: AgentDefinition;
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
@@ -604,6 +613,7 @@ function buildRuntimeCoreTools(input: {
         parentThreadId,
         deliveryThreadId: parentThreadId,
         parentToolUseId: context.toolUseId,
+        subagentType: subagentRun.registryInput.resolvedAgentId,
         modelOverride,
         channelId: input.channelId,
         workspaceId: input.workspaceId,
@@ -655,22 +665,44 @@ function buildRuntimeCoreTools(input: {
 
   const registry = new ToolRegistry();
   registry.registerMany(createToolDescriptorsFromDefinitions(baseTools, "sdk"));
-  registry.registerMany(createToolDescriptorsFromDefinitions([planWriteTool], "plan"));
+  if (permissionMode === "plan") {
+    registry.registerMany(createToolDescriptorsFromDefinitions([planWriteTool], "plan"));
+  }
   registry.registerMany(createToolDescriptorsFromDefinitions([taskReportTool], "task"));
   registry.registerMany(createToolDescriptorsFromDefinitions(lumeTools.customTools as ToolDefinition[], "lume"));
   registry.registerMany(createToolDescriptorsFromDefinitions([sidecarAgentTool], "task"));
-  const tools = new ToolResolver(registry)
+  let tools = new ToolResolver(registry)
     .resolve({
       permissionMode,
       messageMetadata: input.messageMetadata,
       policies: resolveEffectiveToolPolicies(policyInput)
     })
     .map((descriptor) => descriptor.definition);
+  if (input.threadType === "subagent") {
+    tools = tools.filter((tool) => tool.name !== "Agent");
+  }
+  if (input.subagentDefinition) {
+    tools = applyAgentDefinitionToolPolicy(tools, input.subagentDefinition);
+  }
 
   return {
     tools,
     availableToolNames: Array.from(new Set(tools.map((tool) => tool.name)))
   };
+}
+
+function applyAgentDefinitionToolPolicy(
+  tools: ToolDefinition[],
+  agentDefinition: AgentDefinition
+): ToolDefinition[] {
+  let filtered = tools;
+  if (agentDefinition.tools && agentDefinition.tools.length > 0) {
+    filtered = filterTools(filtered, agentDefinition.tools);
+  }
+  if (agentDefinition.disallowedTools && agentDefinition.disallowedTools.length > 0) {
+    filtered = filterTools(filtered, undefined, agentDefinition.disallowedTools);
+  }
+  return filtered;
 }
 
 function resolveSdkApiType(provider: string): ApiType {
@@ -736,6 +768,8 @@ export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
   const sessionManager = createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
+  const agents = { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) };
+  const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     sessionId: input.lumeSessionId,
@@ -746,6 +780,7 @@ export async function createRuntimeCoreSession(
     threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
+    subagentDefinition,
     messageMetadata: input.messageMetadata,
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion,
@@ -765,6 +800,7 @@ export async function createRuntimeCoreSession(
     threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
+    agentSystemPrompt: subagentDefinition?.prompt,
     userMessage: input.userMessage ?? "",
     availableTools: toolset.availableToolNames,
     tokenBudget: input.resolvedModel?.contextWindow ?? 32_000,
@@ -785,7 +821,7 @@ export async function createRuntimeCoreSession(
       ? { resume: input.lumeSessionId }
       : {}),
     ...(buildMcpServers(input.workspaceSlug) ? { mcpServers: buildMcpServers(input.workspaceSlug) } : {}),
-    agents: { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) },
+    agents,
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.workspaceSlug),

@@ -1,12 +1,8 @@
 export type TaskContractRecordStatus =
   | "draft"
-  | "needs_user_input"
   | "needs_approval"
   | "approved"
-  | "executing"
-  | "completed"
-  | "cancelled"
-  | "failed";
+  | "cancelled";
 
 export interface TaskContractQuestion {
   id: string;
@@ -25,32 +21,9 @@ export interface TaskContractRecordItem {
   title: string;
   description: string;
   type: "read" | "analyze" | "edit" | "execute" | "ask_user" | "memory" | "subagent";
-  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  status: "pending";
   expectedTools?: string[];
   expectedFiles?: string[];
-  traceSpanId?: string;
-  currentStepId?: string;
-  result?: string;
-  error?: string;
-  attemptCount?: number;
-  startedAt?: string;
-  endedAt?: string;
-  blockedReason?: string;
-}
-
-export interface TaskContractRecordEvent {
-  type:
-    | "contract_started"
-    | "task_started"
-    | "task_completed"
-    | "task_failed"
-    | "task_skipped"
-    | "contract_waiting"
-    | "contract_completed";
-  contractId: string;
-  taskId?: string;
-  message?: string;
-  createdAt: string;
 }
 
 export interface TaskContractRecord {
@@ -69,10 +42,7 @@ export interface TaskContractRecord {
     tools?: string[];
     memoryWrites?: string[];
   };
-  events?: TaskContractRecordEvent[];
   status: TaskContractRecordStatus;
-  currentStepId?: string;
-  traceSpanId?: string;
   createdAt: string;
   updatedAt: string;
   planFilePath?: string;
