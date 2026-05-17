@@ -50,6 +50,8 @@ export interface RuntimeCoreModelChange {
 }
 
 export interface RuntimeCoreSessionContextMessage {
+  id?: string;
+  uuid?: string;
   role: string;
   content?: unknown;
   timestamp?: number;
@@ -232,6 +234,8 @@ function convertSessionMessagesToContext(
     const timestamp = Date.parse(message.timestamp);
     if (message.role === "assistant") {
       contextMessages.push({
+        id: message.uuid,
+        uuid: message.uuid,
         role: "assistant",
         content: message.content,
         timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
@@ -258,6 +262,8 @@ function convertSessionMessagesToContext(
         if (toolResultBlocks.length > 0) {
           for (const block of toolResultBlocks) {
             contextMessages.push({
+              id: message.uuid,
+              uuid: message.uuid,
               role: "toolResult",
               content: block.content,
               timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
@@ -271,6 +277,8 @@ function convertSessionMessagesToContext(
       }
 
       contextMessages.push({
+        id: message.uuid,
+        uuid: message.uuid,
         role: "user",
         content: message.content,
         timestamp: Number.isFinite(timestamp) ? timestamp : undefined

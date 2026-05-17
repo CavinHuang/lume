@@ -97,7 +97,8 @@ export class LumeRunner {
         provider: prepared.modelResolution.provider,
         modelId: prepared.modelResolution.resolvedModelId,
         modelRef: params.runtime.modelRef,
-        channelId: params.runtime.channelId
+        channelId: params.runtime.channelId,
+        contextWindow: prepared.modelResolution.model.contextWindow
       }
     });
     return new LumeRunner(observer, input.emit);

@@ -704,6 +704,7 @@ export interface AgentRunStateSummary {
     modelId: string
     modelRef?: string
     channelId?: string
+    contextWindow?: number
   }
   usage: {
     inputTokens: number

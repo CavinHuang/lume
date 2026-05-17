@@ -60,6 +60,7 @@ import {
 } from "./session-store";
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
+import { createKernelContextController } from "../context/context-controller";
 import { createTaskContractWriteTool } from "../plan/task-contract-write-tool";
 import { createTaskReportTool } from "../task-run/task-report-tool";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
@@ -745,6 +746,12 @@ function resolveSkillDirectories(workspaceSlug?: string): string[] {
   return roots;
 }
 
+function estimateToolSchemaTokens(tools: ToolDefinition[]): number {
+  return tools.reduce((sum, tool) =>
+    sum + Math.ceil((tool.name.length + tool.description.length + JSON.stringify(tool.inputSchema ?? {}).length) / 4),
+  0);
+}
+
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
@@ -793,6 +800,7 @@ export async function createRuntimeCoreSession(
     trace: input.trace
   });
   const systemPrompt = contextAssembly.systemPrompt;
+  const context = sessionManager.buildSessionContext();
 
   const agentOptions: AgentOptions = {
     apiType: resolveSdkApiType(input.provider),
@@ -827,6 +835,15 @@ export async function createRuntimeCoreSession(
       }
     }),
     additionalDirectories: input.workspaceSlug ? [input.cwd] : undefined,
+    contextController: createKernelContextController({
+      threadId: input.lumeSessionId,
+      model: input.resolvedModel?.id ?? input.resolvedModelId,
+      contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
+      systemPrompt,
+      memoryContext: contextAssembly.memoryContext,
+      sessionMessages: context.messages,
+      toolSchemaTokens: estimateToolSchemaTokens(toolset.tools)
+    }),
     persistSession: true
   };
 
@@ -834,7 +851,6 @@ export async function createRuntimeCoreSession(
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 
-  const context = sessionManager.buildSessionContext();
   const session: RuntimeCoreSessionLike = {
     sessionId: input.lumeSessionId,
     threadId: input.lumeSessionId,

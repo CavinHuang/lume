@@ -68,6 +68,7 @@ export interface LumeRunState {
     modelId: string;
     modelRef?: string;
     channelId?: string;
+    contextWindow?: number;
   };
   usage: {
     inputTokens: number;

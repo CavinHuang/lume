@@ -22,6 +22,30 @@ export function extractCompactSummary(message: SDKMessage): string | null {
   return null;
 }
 
+function extractCompactMetadata(message: SDKMessage): {
+  trigger?: string;
+  policy?: string;
+  sourceMessageIds?: string[];
+} {
+  if (message.type !== "system" || message.subtype !== "compact_boundary") {
+    return {};
+  }
+  const metadata = (message as SDKMessage & {
+    compact_metadata?: {
+      trigger?: unknown;
+      policy?: unknown;
+      source_message_ids?: unknown;
+    };
+  }).compact_metadata;
+  return {
+    ...(typeof metadata?.trigger === "string" ? { trigger: metadata.trigger } : {}),
+    ...(typeof metadata?.policy === "string" ? { policy: metadata.policy } : {}),
+    ...(Array.isArray(metadata?.source_message_ids)
+      ? { sourceMessageIds: metadata.source_message_ids.filter((item): item is string => typeof item === "string") }
+      : {})
+  };
+}
+
 export function createCompactionMemoryFlushJob(input: {
   workspaceSlug?: string;
   threadId: string;
@@ -30,6 +54,7 @@ export function createCompactionMemoryFlushJob(input: {
   if (!input.workspaceSlug) return null;
   const summary = extractCompactSummary(input.message);
   if (!summary) return null;
+  const metadata = extractCompactMetadata(input.message);
 
   return {
     id: `memory.flush:${input.threadId}:compact_boundary`,
@@ -43,7 +68,13 @@ export function createCompactionMemoryFlushJob(input: {
           content: summary,
           importance: 3,
           confidence: 0.8,
-          tags: ["compaction", "memory-flush"]
+          tags: [
+            "compaction",
+            "memory-flush",
+            ...(metadata.trigger ? [`compaction:${metadata.trigger}`] : []),
+            ...(metadata.policy ? [`policy:${metadata.policy}`] : [])
+          ],
+          sourceMessageIds: metadata.sourceMessageIds
         }]
       });
       const result = await runStructuredMemoryFlush({

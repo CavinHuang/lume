@@ -99,6 +99,70 @@ function emitRunWithCompactionSummary(emit: {
   emitSuccessfulRun(emit);
 }
 
+function emitManualCompaction(emit: {
+  onSdkMessage: (message: SDKMessage) => void;
+  onRuntimeEvent?: (event: unknown) => void;
+  onComplete: () => void;
+}): void {
+  emit.onSdkMessage({
+    type: "system",
+    subtype: "context_compaction_started",
+    compact_metadata: {
+      trigger: "manual",
+      pre_tokens: 1234,
+      policy: "kernel-v1",
+      source: "agent-runtime-kernel"
+    }
+  } as SDKMessage);
+  emit.onRuntimeEvent?.({
+    id: "compact-started",
+    type: "context.compaction.started",
+    threadId: "thread-test",
+    runId: "run-test",
+    createdAt: "2026-05-17T00:00:00.000Z",
+    trigger: "manual",
+    preTokens: 1234,
+    policy: "kernel-v1",
+    source: "agent-runtime-kernel"
+  });
+  emit.onRuntimeEvent?.({
+    id: "compact-completed",
+    type: "context.compaction.completed",
+    threadId: "thread-test",
+    runId: "run-test",
+    createdAt: "2026-05-17T00:00:01.000Z",
+    trigger: "manual",
+    preTokens: 1234,
+    postTokens: 300,
+    policy: "kernel-v1",
+    source: "agent-runtime-kernel",
+    summary: "Manual compact summary."
+  });
+  emit.onSdkMessage({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: {
+      trigger: "manual",
+      pre_tokens: 1234,
+      post_tokens: 300,
+      summary: "Manual compact summary.",
+      policy: "kernel-v1",
+      source: "agent-runtime-kernel"
+    }
+  } as SDKMessage);
+  emit.onSdkMessage({
+    type: "result",
+    subtype: "success",
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0
+    }
+  } as SDKMessage);
+  emit.onComplete();
+}
+
 async function waitForQueuedRunRelease(userMessage: string): Promise<void> {
   for (let i = 0; i < 50; i += 1) {
     const resolver = heldRunResolvers.get(userMessage);
@@ -138,6 +202,10 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
     }
     if (userMessage === "compact-summary") {
       emitRunWithCompactionSummary(emit);
+      return { status: "completed" as const };
+    }
+    if (userMessage === "/compact") {
+      emitManualCompaction(emit);
       return { status: "completed" as const };
     }
     if (userMessage === "subagent-announce-during-run") {
@@ -294,6 +362,43 @@ describe("agent-service", () => {
     }));
     expect(getAgentThreadMessages(thread.id).some((message) => message.role === "user")).toBe(false);
     expect(getAgentThreadSDKMessages(thread.id).map((message) => message.type)).toEqual(["assistant", "result"]);
+  });
+
+  test("/compact 应作为隐藏能力命令执行，不追加可见用户消息", async () => {
+    const { createAgentThread, getAgentThreadMessages, getAgentThreadSDKMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("manual compact command", "channel-test");
+    const appended: AgentMessageAppendedEvent[] = [];
+    const runtimeEvents: unknown[] = [];
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "/compact",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onRuntimeEvent: (event) => runtimeEvents.push(event),
+      onMessageAppended: (event) => appended.push(event),
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    expect(appended).toEqual([]);
+    expect(getAgentThreadMessages(thread.id)).toEqual([]);
+    expect(getAgentThreadSDKMessages(thread.id).map((message) =>
+      message.type === "system" ? message.subtype : message.type
+    )).toEqual(["context_compaction_started", "compact_boundary", "result"]);
+    expect(runtimeEvents).not.toContainEqual(expect.objectContaining({
+      type: "message.user.submitted",
+      text: "/compact"
+    }));
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({
+      type: "context.compaction.completed",
+      trigger: "manual"
+    }));
   });
 
   test("sendAgentMessage 应继承线程工作区传给 runtime", async () => {

@@ -201,6 +201,74 @@ export function projectRunItemToRuntimeEvents(
     }];
   }
 
+  if (item.type === "system_event") {
+    return projectSystemEventRuntimeEvents(run, item);
+  }
+
+  return [];
+}
+
+function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): LumeRuntimeEvent[] {
+  if (item.type !== "system_event") return [];
+  const payload = asRecord(item.payload);
+  const metadata = asRecord(payload.compact_metadata);
+  if (item.name === "context_compaction_started") {
+    return [{
+      id: `${run.runId}:${item.id}:context.compaction.started`,
+      type: "context.compaction.started",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      trigger: stringValue(metadata.trigger, "auto"),
+      preTokens: numberValue(metadata.pre_tokens),
+      ...optionalNumber("contextWindow", contextWindowFromMetadata(metadata)),
+      ...optionalBudget(metadata),
+      policy: stringValue(metadata.policy, "sdk-default"),
+      source: stringValue(metadata.source, "agent-sdk")
+    }];
+  }
+  if (item.name === "compact_boundary") {
+    return [{
+      id: `${run.runId}:${item.id}:context.compaction.completed`,
+      type: "context.compaction.completed",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      trigger: stringValue(metadata.trigger, "auto"),
+      preTokens: numberValue(metadata.pre_tokens),
+      ...(typeof metadata.post_tokens === "number" ? { postTokens: metadata.post_tokens } : {}),
+      ...optionalNumber("contextWindow", contextWindowFromMetadata(metadata)),
+      ...optionalBudget(metadata),
+      policy: stringValue(metadata.policy, "sdk-default"),
+      source: stringValue(metadata.source, "agent-sdk"),
+      ...(typeof metadata.summary === "string" ? { summary: metadata.summary } : {}),
+      ...(typeof metadata.memory_flush_job_id === "string" ? { memoryFlushJobId: metadata.memory_flush_job_id } : {})
+    }];
+  }
+  if (item.name === "result") {
+    const usage = asRecord(payload.usage);
+    const inputTokens = numberValue(usage.input_tokens);
+    const outputTokens = numberValue(usage.output_tokens);
+    const cachedTokens = numberValue(usage.cache_read_input_tokens)
+      + numberValue(usage.cache_creation_input_tokens);
+    const totalTokens = inputTokens
+      + outputTokens
+      + cachedTokens;
+    return [{
+      id: `${run.runId}:${item.id}:usage.updated`,
+      type: "usage.updated",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      inputTokens,
+      outputTokens,
+      ...(cachedTokens > 0 ? { cachedTokens } : {}),
+      ...optionalUsageRecords(payload.modelUsage),
+      totalTokens,
+      ...optionalNumber("contextWindow", contextWindowFromModelUsage(payload.modelUsage)),
+      ...(typeof payload.total_cost_usd === "number" ? { costUSD: payload.total_cost_usd } : {})
+    }];
+  }
   return [];
 }
 
@@ -296,4 +364,87 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function stringValue(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function optionalNumber<K extends string>(key: K, value: number | undefined): Record<K, number> | {} {
+  return value === undefined ? {} : { [key]: value } as Record<K, number>;
+}
+
+function contextWindowFromMetadata(metadata: Record<string, unknown>): number | undefined {
+  if (typeof metadata.context_window === "number" && Number.isFinite(metadata.context_window)) {
+    return metadata.context_window;
+  }
+  const budget = asRecord(metadata.budget);
+  if (typeof budget.totalTokens === "number" && Number.isFinite(budget.totalTokens)) {
+    return budget.totalTokens;
+  }
+  if (typeof budget.total === "number" && Number.isFinite(budget.total)) {
+    return budget.total;
+  }
+  return undefined;
+}
+
+function contextWindowFromModelUsage(modelUsage: unknown): number | undefined {
+  const usageByModel = asRecord(modelUsage);
+  for (const usage of Object.values(usageByModel)) {
+    const record = asRecord(usage);
+    if (typeof record.contextWindow === "number" && Number.isFinite(record.contextWindow)) {
+      return record.contextWindow;
+    }
+  }
+  return undefined;
+}
+
+function optionalUsageRecords(modelUsage: unknown): Pick<Extract<LumeRuntimeEvent, { type: "usage.updated" }>, "usageRecords"> | {} {
+  const usageByModel = asRecord(modelUsage);
+  const usageRecords = Object.entries(usageByModel)
+    .map(([modelId, usage]) => {
+      const record = asRecord(usage);
+      const inputTokens = numberValue(record.inputTokens);
+      const outputTokens = numberValue(record.outputTokens);
+      const cachedTokens = numberValue(record.cacheReadInputTokens)
+        + numberValue(record.cacheCreationInputTokens);
+      return {
+        callerLabel: modelId,
+        inputTokens,
+        outputTokens,
+        ...(cachedTokens > 0 ? { cachedTokens } : {}),
+        ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
+      };
+    })
+    .filter((record) => record.inputTokens > 0 || record.outputTokens > 0 || (record.cachedTokens ?? 0) > 0);
+  return usageRecords.length > 0 ? { usageRecords } : {};
+}
+
+function optionalBudget(metadata: Record<string, unknown>): { budget: NonNullable<Extract<LumeRuntimeEvent, { type: "context.compaction.started" }>["budget"]> } | {} {
+  const budget = asRecord(metadata.budget);
+  const sections = asRecord(budget.sections);
+  const snapshot = {
+    totalTokens: numberValue(budget.totalTokens),
+    usedTokens: numberValue(budget.usedTokens),
+    remainingTokens: numberValue(budget.remainingTokens),
+    sections: {
+      ...optionalNumber("system", numberOrUndefined(sections.system)),
+      ...optionalNumber("memory", numberOrUndefined(sections.memory)),
+      ...optionalNumber("session", numberOrUndefined(sections.session)),
+      ...optionalNumber("toolSchemas", numberOrUndefined(sections.toolSchemas)),
+      ...optionalNumber("reservedOutput", numberOrUndefined(sections.reservedOutput))
+    }
+  };
+  if (snapshot.totalTokens <= 0 && snapshot.usedTokens <= 0 && Object.keys(snapshot.sections).length === 0) {
+    return {};
+  }
+  return { budget: snapshot };
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

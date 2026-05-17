@@ -27,7 +27,10 @@ describe("createCompactionMemoryFlushJob", () => {
         type: "system",
         subtype: "compact_boundary",
         compact_metadata: {
-          summary: "Compaction captured the architecture boundary decision."
+          summary: "Compaction captured the architecture boundary decision.",
+          trigger: "auto",
+          source_message_ids: ["msg-1"],
+          policy: "kernel-v1"
         }
       } as SDKMessage
     });
@@ -44,7 +47,11 @@ describe("createCompactionMemoryFlushJob", () => {
       workspaceSlug: "workspace-a",
       sessionId: "thread-a"
     }));
-    expect((flushCalls[0] as { rawOutput?: string }).rawOutput).toContain("Compaction captured the architecture boundary decision.");
+    const rawOutput = (flushCalls[0] as { rawOutput?: string }).rawOutput ?? "";
+    expect(rawOutput).toContain("Compaction captured the architecture boundary decision.");
+    expect(rawOutput).toContain("msg-1");
+    expect(rawOutput).toContain("compaction:auto");
+    expect(rawOutput).toContain("kernel-v1");
   });
 
   test("没有 workspace 或 summary 时不创建 job", async () => {

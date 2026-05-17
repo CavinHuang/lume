@@ -93,6 +93,21 @@ describe("projectRunStateToRuntimeEvents", () => {
     ]);
   });
 
+  test("projects model context window into run started events", () => {
+    expect(projectRunStateToRuntimeEvents(baseRun({
+      model: {
+        provider: "openai",
+        modelId: "gpt-test",
+        contextWindow: 200_000
+      }
+    }))[0]).toMatchObject({
+      type: "run.started",
+      model: expect.objectContaining({
+        contextWindow: 200_000
+      })
+    });
+  });
+
   test("uses stream deltas only when no final assistant message exists", () => {
     expect(projectRunStateToRuntimeEvents(baseRun({
       status: "running",
@@ -204,6 +219,148 @@ describe("projectRunStateToRuntimeEvents", () => {
       planVerified: true,
       stepCount: 1
     });
+  });
+
+  test("projects compaction and usage system events into product runtime events", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      generatedItems: [
+        {
+          type: "system_event",
+          id: "compact-started",
+          name: "context_compaction_started",
+          payload: {
+            type: "system",
+            subtype: "context_compaction_started",
+            compact_metadata: {
+              trigger: "auto",
+              pre_tokens: 900,
+              policy: "kernel-v1",
+              source: "agent-runtime-kernel",
+              context_window: 1000,
+              budget: {
+                totalTokens: 1000,
+                usedTokens: 900,
+                remainingTokens: 100,
+                sections: {
+                  system: 120,
+                  memory: 80,
+                  session: 650,
+                  toolSchemas: 30,
+                  reservedOutput: 50
+                }
+              }
+            }
+          },
+          createdAt: "2026-04-30T00:00:01.000Z"
+        },
+        {
+          type: "system_event",
+          id: "compact-done",
+          name: "compact_boundary",
+          payload: {
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: {
+              trigger: "auto",
+              pre_tokens: 900,
+              post_tokens: 300,
+              summary: "kept the important decisions",
+              policy: "kernel-v1",
+              source: "agent-runtime-kernel",
+              source_message_ids: ["msg-1"],
+              memory_flush_job_id: "memory.flush:thread-1:compact_boundary",
+              context_window: 1000,
+              budget: {
+                totalTokens: 1000,
+                usedTokens: 900,
+                remainingTokens: 100,
+                sections: {
+                  system: 120,
+                  memory: 80,
+                  session: 650,
+                  toolSchemas: 30,
+                  reservedOutput: 50
+                }
+              }
+            }
+          },
+          createdAt: "2026-04-30T00:00:02.000Z"
+        },
+        {
+          type: "system_event",
+          id: "result",
+          name: "result",
+          payload: {
+            type: "result",
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              cache_read_input_tokens: 3,
+              cache_creation_input_tokens: 2
+            },
+            modelUsage: {
+              "gpt-test": {
+                inputTokens: 10,
+                outputTokens: 5,
+                cacheReadInputTokens: 3,
+                cacheCreationInputTokens: 2,
+                costUSD: 0.01,
+                contextWindow: 1000
+              }
+            },
+            total_cost_usd: 0.01
+          },
+          createdAt: "2026-04-30T00:00:03.000Z"
+        }
+      ]
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      id: "run-1:compact-started:context.compaction.started",
+      type: "context.compaction.started",
+      trigger: "auto",
+      preTokens: 900,
+      contextWindow: 1000,
+      budget: expect.objectContaining({
+        totalTokens: 1000,
+        sections: expect.objectContaining({ session: 650 })
+      }),
+      policy: "kernel-v1",
+      source: "agent-runtime-kernel"
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      id: "run-1:compact-done:context.compaction.completed",
+      type: "context.compaction.completed",
+      trigger: "auto",
+      preTokens: 900,
+      postTokens: 300,
+      contextWindow: 1000,
+      budget: expect.objectContaining({
+        totalTokens: 1000,
+        sections: expect.objectContaining({ session: 650 })
+      }),
+      summary: "kept the important decisions",
+      memoryFlushJobId: "memory.flush:thread-1:compact_boundary"
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      id: "run-1:result:usage.updated",
+      type: "usage.updated",
+      inputTokens: 10,
+      outputTokens: 5,
+      cachedTokens: 5,
+      usageRecords: [
+        {
+          callerLabel: "gpt-test",
+          inputTokens: 10,
+          outputTokens: 5,
+          cachedTokens: 5,
+          costUSD: 0.01
+        }
+      ],
+      totalTokens: 20,
+      contextWindow: 1000,
+      costUSD: 0.01
+    }));
   });
 });
 

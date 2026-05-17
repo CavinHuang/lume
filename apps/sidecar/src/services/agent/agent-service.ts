@@ -134,9 +134,12 @@ function handleRuntimeThreadStateMessage(
     );
   }
 
+  if (message.type === "system" && message.subtype === "context_compaction_started") {
+    log.info("线程开始压缩", { threadId: threadId.slice(0, 8) });
+  }
+
   if (message.type === "system" && message.subtype === "compact_boundary") {
     sessionStateManager.incrementCompaction(threadId);
-    log.info("线程开始压缩", { threadId: threadId.slice(0, 8) });
     log.info("线程压缩完成", { threadId: threadId.slice(0, 8) });
   }
 }
@@ -240,7 +243,8 @@ function shouldPersistAssistantTurnSdkMessage(message: SDKMessage): boolean {
       && message.message.content.some((block) => !!block && typeof block === "object" && block.type === "tool_result");
   }
   return message.type === "system" && (
-    message.subtype === "compact_boundary"
+    message.subtype === "context_compaction_started"
+    || message.subtype === "compact_boundary"
     || message.subtype === "task_started"
     || message.subtype === "task_progress"
     || message.subtype === "task_notification"
@@ -363,7 +367,10 @@ export async function sendAgentMessage(
     : effectiveSelection.modelRef;
   const hasExplicitSendSelection = input.modelRef !== undefined || input.channelId !== undefined || input.modelId !== undefined;
 
-  const shouldAppendUserMessage = (options.appendUserMessage ?? true) && input.messageMetadata?.hiddenFromChat !== true;
+  const isManualCompactCommand = userMessage.trim() === "/compact";
+  const shouldAppendUserMessage = (options.appendUserMessage ?? true)
+    && input.messageMetadata?.hiddenFromChat !== true
+    && !isManualCompactCommand;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
@@ -384,6 +391,10 @@ export async function sendAgentMessage(
       : undefined;
   const effectiveMessageMetadata = {
     ...(input.messageMetadata ?? {}),
+    ...(isManualCompactCommand ? {
+      hiddenFromChat: true,
+      manualCommand: "compact"
+    } : {}),
     capabilityLanes: routingTrace.capabilityLanes,
     preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
     capabilityRoutingReason: routingTrace.reason,
@@ -496,8 +507,10 @@ export async function sendAgentMessage(
     onSdkMessage: (message) => {
       const stampedMessage = ensureSdkMessageCreatedAt(message);
       handleRuntimeThreadStateMessage(threadId, stampedMessage, sessionStateManager);
-      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
+      if (stampedMessage.type === "system" && stampedMessage.subtype === "context_compaction_started") {
         runtimeStatusManager.markCompacting(threadId);
+      }
+      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
         const job = createCompactionMemoryFlushJob({
           workspaceSlug: stateWorkspaceSlug,
           threadId,

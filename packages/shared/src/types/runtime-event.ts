@@ -29,6 +29,19 @@ export interface RuntimeEventBase {
   sequence?: number;
 }
 
+export interface ContextBudgetRuntimeSnapshot {
+  totalTokens: number;
+  usedTokens: number;
+  remainingTokens: number;
+  sections: {
+    system?: number;
+    memory?: number;
+    session?: number;
+    toolSchemas?: number;
+    reservedOutput?: number;
+  };
+}
+
 export interface RunStartedRuntimeEvent extends RuntimeEventBase {
   type: "run.started";
   workspaceId?: string;
@@ -38,6 +51,7 @@ export interface RunStartedRuntimeEvent extends RuntimeEventBase {
     modelId: string;
     modelRef?: string;
     channelId?: string;
+    contextWindow?: number;
   };
 }
 
@@ -187,6 +201,46 @@ export interface RunCancelledRuntimeEvent extends RuntimeEventBase {
   reason?: string;
 }
 
+export interface ContextCompactionStartedRuntimeEvent extends RuntimeEventBase {
+  type: "context.compaction.started";
+  trigger: "auto" | "manual" | "prompt_too_long" | string;
+  preTokens: number;
+  contextWindow?: number;
+  budget?: ContextBudgetRuntimeSnapshot;
+  policy: string;
+  source: string;
+}
+
+export interface ContextCompactionCompletedRuntimeEvent extends RuntimeEventBase {
+  type: "context.compaction.completed";
+  trigger: "auto" | "manual" | "prompt_too_long" | string;
+  preTokens: number;
+  postTokens?: number;
+  contextWindow?: number;
+  budget?: ContextBudgetRuntimeSnapshot;
+  policy: string;
+  source: string;
+  summary?: string;
+  memoryFlushJobId?: string;
+}
+
+export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
+  type: "usage.updated";
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens?: number;
+  usageRecords?: Array<{
+    callerLabel: string;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens?: number;
+    costUSD?: number;
+  }>;
+  totalTokens: number;
+  contextWindow?: number;
+  costUSD?: number;
+}
+
 export type LumeRuntimeEvent =
   | RunStartedRuntimeEvent
   | UserMessageSubmittedRuntimeEvent
@@ -202,4 +256,7 @@ export type LumeRuntimeEvent =
   | RunCompletedRuntimeEvent
   | RunTurnLimitedRuntimeEvent
   | RunFailedRuntimeEvent
-  | RunCancelledRuntimeEvent;
+  | RunCancelledRuntimeEvent
+  | ContextCompactionStartedRuntimeEvent
+  | ContextCompactionCompletedRuntimeEvent
+  | UsageUpdatedRuntimeEvent;

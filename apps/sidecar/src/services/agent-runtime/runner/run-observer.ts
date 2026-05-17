@@ -36,6 +36,7 @@ export class LumeRunObserver {
   private readonly toolSpanIds = new Map<string, string>();
   private readonly subagentSpanIds = new Map<string, string>();
   private readonly subagentParentToolCallIds = new Map<string, string>();
+  private compactionSpanId?: string;
   private emittedModelStreamText = false;
   private emittedModelStreamThinking = false;
 
@@ -149,11 +150,13 @@ export class LumeRunObserver {
       if (message.type === "result" && message.usage) {
         const inputTokens = message.usage.input_tokens ?? 0;
         const outputTokens = message.usage.output_tokens ?? 0;
+        const cachedTokens = (message.usage.cache_read_input_tokens ?? 0)
+          + (message.usage.cache_creation_input_tokens ?? 0);
         await this.stateStore.update(this.state.runId, {
           usage: {
             inputTokens,
             outputTokens,
-            totalTokens: inputTokens + outputTokens,
+            totalTokens: inputTokens + outputTokens + cachedTokens,
             costUSD: message.total_cost_usd
           }
         });
@@ -292,6 +295,36 @@ export class LumeRunObserver {
   }
 
   private async recordSdkMessageTrace(message: SDKMessage): Promise<void> {
+    if (message.type === "system" && message.subtype === "context_compaction_started") {
+      const metadata = extractCompactionMetadata(message);
+      const span = await this.traceRecorder.startSpan({
+        traceId: this.state.traceId,
+        parentId: this.runSpan?.id,
+        type: "compaction",
+        name: "context compaction",
+        input: metadata
+      });
+      this.compactionSpanId = span.id;
+      return;
+    }
+
+    if (message.type === "system" && message.subtype === "compact_boundary") {
+      const metadata = extractCompactionMetadata(message);
+      if (!this.compactionSpanId) {
+        const span = await this.traceRecorder.startSpan({
+          traceId: this.state.traceId,
+          parentId: this.runSpan?.id,
+          type: "compaction",
+          name: "context compaction",
+          input: metadata
+        });
+        this.compactionSpanId = span.id;
+      }
+      await this.traceRecorder.endSpan(this.compactionSpanId, metadata);
+      this.compactionSpanId = undefined;
+      return;
+    }
+
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type !== "tool_use") continue;
@@ -489,6 +522,27 @@ function extractSubagentTask(message: SDKMessage & Record<string, unknown>): str
     }
   }
   return "Subagent run";
+}
+
+function extractCompactionMetadata(message: SDKMessage): Record<string, unknown> {
+  const metadata = asRecord((message as SDKMessage & {
+    compact_metadata?: unknown;
+  }).compact_metadata);
+  return {
+    trigger: typeof metadata.trigger === "string" ? metadata.trigger : undefined,
+    preTokens: typeof metadata.pre_tokens === "number" ? metadata.pre_tokens : undefined,
+    postTokens: typeof metadata.post_tokens === "number" ? metadata.post_tokens : undefined,
+    summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
+    policy: typeof metadata.policy === "string" ? metadata.policy : undefined,
+    source: typeof metadata.source === "string" ? metadata.source : undefined,
+    memoryFlushJobId: typeof metadata.memory_flush_job_id === "string" ? metadata.memory_flush_job_id : undefined
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function normalizeSubagentStatus(status: unknown): "running" | "completed" | "failed" | "cancelled" {

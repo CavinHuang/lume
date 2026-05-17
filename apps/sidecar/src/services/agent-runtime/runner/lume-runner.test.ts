@@ -259,7 +259,7 @@ describe("LumeRunner", () => {
       status: "turn_limited",
       errorMessage: "Agent SDK 达到最大回合数（20），本轮需要继续执行。"
     });
-    expect(events).toEqual(["sdk:result", "runtime:run.turn_limited"]);
+    expect(events).toEqual(["sdk:result", "runtime:usage.updated", "runtime:run.turn_limited"]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
   });
 
@@ -299,6 +299,60 @@ describe("LumeRunner", () => {
       output: {
         toolName: "Bash",
         isError: false
+      }
+    });
+  });
+
+  test("records compaction spans from SDK compact boundary messages", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-compaction-span-"));
+    dirs.push(agentDir);
+    const runner = await createRunner(agentDir);
+
+    await runner.runQueryStream(stream([
+      {
+        type: "system",
+        subtype: "context_compaction_started",
+        compact_metadata: {
+          trigger: "manual",
+          pre_tokens: 900,
+          policy: "kernel-v1",
+          source: "agent-runtime-kernel"
+        }
+      } as SDKMessage,
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: {
+          trigger: "manual",
+          pre_tokens: 900,
+          post_tokens: 300,
+          summary: "manual summary",
+          policy: "kernel-v1",
+          source: "agent-runtime-kernel"
+        }
+      } as SDKMessage,
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "compacted" }]
+        }
+      } as SDKMessage
+    ]));
+    await runner.complete();
+
+    const compactionSpan = readTrace(agentDir).spans.find((span) => span.type === "compaction");
+    expect(compactionSpan).toMatchObject({
+      type: "compaction",
+      name: "context compaction",
+      status: "completed",
+      output: {
+        trigger: "manual",
+        preTokens: 900,
+        postTokens: 300,
+        summary: "manual summary",
+        policy: "kernel-v1",
+        source: "agent-runtime-kernel"
       }
     });
   });
