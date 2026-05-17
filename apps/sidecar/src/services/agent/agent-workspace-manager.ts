@@ -27,7 +27,7 @@ import {
   getWorkspaceResourcesPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
-import { seedDefaultSkills } from "../system/default-skills-seeder";
+import { seedDefaultSkills } from "../skills/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 

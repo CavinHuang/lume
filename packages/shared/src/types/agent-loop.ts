@@ -1,4 +1,4 @@
-export type AgentLoopPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
+export type AgentLoopPermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions" | "dontAsk";
 
 export interface AgentLoopInput {
   threadId: string;

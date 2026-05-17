@@ -5,12 +5,12 @@ import {
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
-import type { PiAgentRuntimeEmitter } from "../../pi-agent/runner/types";
+import type { AgentRuntimeEmitter } from "./types";
 import type { LumeRunObserver } from "./run-observer";
 
 interface ConsumeRuntimeCoreQueryStreamInput {
   query: AsyncIterable<SDKMessage>;
-  emit: Pick<PiAgentRuntimeEmitter, "onSdkMessage">;
+  emit: Pick<AgentRuntimeEmitter, "onSdkMessage">;
 }
 
 export function normalizeRuntimeCoreQueryPermissionMode(
@@ -20,6 +20,7 @@ export function normalizeRuntimeCoreQueryPermissionMode(
     permissionMode === "bypassPermissions"
     || permissionMode === "plan"
     || permissionMode === "acceptEdits"
+    || permissionMode === "dontAsk"
   ) {
     return permissionMode;
   }
@@ -90,9 +91,9 @@ export function getRuntimeCoreStreamError(message: SDKMessage): string | null {
 }
 
 export function createObservedRuntimeEmitter(
-  emit: PiAgentRuntimeEmitter,
+  emit: AgentRuntimeEmitter,
   observer: LumeRunObserver
-): PiAgentRuntimeEmitter {
+): AgentRuntimeEmitter {
   return {
     ...emit,
     onSdkMessage: (message) => {

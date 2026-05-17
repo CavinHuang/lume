@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Map, Pencil, Shield, ShieldOff } from 'lucide-react'
+import { Check, ChevronDown, Map, Pencil, Shield, ShieldCheck, ShieldOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   PERMISSION_OPTIONS,
@@ -22,6 +22,7 @@ interface PermissionModePickerProps {
 const iconMap: Record<PermissionModeIconKey, typeof Shield> = {
   shield: Shield,
   pencil: Pencil,
+  'shield-check': ShieldCheck,
   'shield-off': ShieldOff,
   map: Map,
 }

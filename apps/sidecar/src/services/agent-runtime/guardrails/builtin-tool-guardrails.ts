@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { canonicalizeAgentToolName } from "@lume/shared";
-import { evaluateRuntimeToolSafety } from "../../pi-agent/runtime-core/runtime-tool-safety";
+import { evaluateRuntimeToolSafety } from "./runtime-tool-safety";
 import type { LumeGuardrail } from "./guardrail-types";
 import type { RunToolInputGuardrailsInput } from "./guardrail-runner";
 

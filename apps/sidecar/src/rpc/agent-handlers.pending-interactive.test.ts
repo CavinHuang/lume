@@ -4,8 +4,8 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 import { createAgentHandlers } from "./agent-handlers"
 import {
   setAskUserQuestionApprovalSession,
-  submitPiAskUserQuestionAnswers,
-  waitForPiAskUserQuestionAnswers
+  submitAskUserQuestionAnswers,
+  waitForAskUserQuestionAnswers
 } from "../services/agent-runtime/interruption/ask-user-question-session"
 import {
   setToolPermissionApprovalSession,
@@ -25,12 +25,12 @@ describe("agent-handlers pending interactive aggregation", () => {
   afterEach(async () => {
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-1", decision: "deny" })
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-2", decision: "deny" })
-    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", canceled: true })
-    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", canceled: true })
+    await submitAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", canceled: true })
+    await submitAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", canceled: true })
   })
 
   test("GET_PENDING_INTERACTIVE 应按父线程返回全部待处理请求，而不是只取第一条", async () => {
-    const askWaitA = waitForPiAskUserQuestionAnswers(
+    const askWaitA = waitForAskUserQuestionAnswers(
       "child-thread-a",
       "ask-1",
       [{
@@ -45,7 +45,7 @@ describe("agent-handlers pending interactive aggregation", () => {
       new AbortController().signal,
       () => {}
     )
-    const askWaitB = waitForPiAskUserQuestionAnswers(
+    const askWaitB = waitForAskUserQuestionAnswers(
       "child-thread-b",
       "ask-2",
       [{
@@ -113,8 +113,8 @@ describe("agent-handlers pending interactive aggregation", () => {
 
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-1", decision: "allow_once" })
     submitToolPermissionDecision({ threadId: "parent-thread", requestId: "perm-2", decision: "allow_once" })
-    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", answers: { pick: "A" } })
-    await submitPiAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", answers: { pick: "B" } })
+    await submitAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-1", answers: { pick: "A" } })
+    await submitAskUserQuestionAnswers({ threadId: "parent-thread", toolUseId: "ask-2", answers: { pick: "B" } })
 
     await Promise.all([askWaitA, askWaitB, permWaitA, permWaitB])
   })

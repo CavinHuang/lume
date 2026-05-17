@@ -112,7 +112,7 @@ describe('Lume main-path contract', () => {
     const source = readWebFile('src', 'components', 'skills', 'SkillsMarketView.tsx')
     const api = readWebFile('src', 'lib', 'desktop-api', 'skills-market.ts')
     const shared = readWebFile('..', '..', 'packages', 'shared', 'src', 'types', 'agent.ts')
-    const sidecar = readWebFile('..', 'sidecar', 'src', 'services', 'system', 'skills-market-service.ts')
+    const sidecar = readWebFile('..', 'sidecar', 'src', 'services', 'skills', 'skills-market-service.ts')
 
     expect(source).toContain('SkillDetailDialog')
     expect(source).toContain('SkillFileTree')

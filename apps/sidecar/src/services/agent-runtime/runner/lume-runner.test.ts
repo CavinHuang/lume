@@ -3,12 +3,12 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/shared";
-import type { PiAgentRunParams, PiAgentRuntimeEmitter } from "../../pi-agent/runner/types";
-import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
+import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "./types";
+import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
 
-function createTestParams(threadId: string): PiAgentRunParams {
+function createTestParams(threadId: string): AgentRuntimeRunParams {
   return {
     input: {
       threadId,
@@ -41,7 +41,7 @@ function createPrepared(agentDir: string) {
   } as Parameters<typeof LumeRunner.create>[0]["prepared"];
 }
 
-function createEmitter(events: string[]): PiAgentRuntimeEmitter {
+function createEmitter(events: string[]): AgentRuntimeEmitter {
   return {
     onSdkMessage: (message) => events.push(`sdk:${message.type}`),
     onComplete: () => events.push("complete"),
@@ -51,7 +51,7 @@ function createEmitter(events: string[]): PiAgentRuntimeEmitter {
   };
 }
 
-function createRuntimeEventEmitter(events: string[]): PiAgentRuntimeEmitter {
+function createRuntimeEventEmitter(events: string[]): AgentRuntimeEmitter {
   return {
     ...createEmitter(events),
     onRuntimeEvent: (event) => events.push(`runtime:${event.type}`)

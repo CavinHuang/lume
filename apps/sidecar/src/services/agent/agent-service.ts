@@ -31,8 +31,8 @@ import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
 import { resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
 import { createLogger } from "../infra/logger";
-import { getSessionStateManager } from "../runtime/session-state-manager";
-import { submitPiAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
+import { getSessionStateManager } from "../agent-runtime/runner/session-state-manager";
+import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
 import { submitToolPermissionDecision } from "../agent-runtime/interruption/tool-permission-session";
 import {
   resolveAgentDefaultStrategy,
@@ -152,12 +152,12 @@ export interface SubmitAskUserQuestionAnswersResult {
 export async function submitAskUserQuestionAnswers(
   input: AgentAskUserQuestionResponseInput
 ): Promise<SubmitAskUserQuestionAnswersResult> {
-  const handledByPi = await submitPiAskUserQuestionAnswers(input);
-  if (handledByPi) {
-    if (handledByPi.handledBy === "live") {
+  const handledByRuntime = await submitRuntimeAskUserQuestionAnswers(input);
+  if (handledByRuntime) {
+    if (handledByRuntime.handledBy === "live") {
       getAgentRuntimeStatusManager().markStreaming(input.threadId);
     }
-    return { ok: true, ...handledByPi };
+    return { ok: true, ...handledByRuntime };
   }
   if (input.canceled) {
     return {
@@ -457,7 +457,7 @@ export async function sendAgentMessage(
   let runtimeCompleted = false;
 
   if (!resolvedChannelId || !resolvedModelId) {
-    const msg = "Pi Agent runtime 缺少 channelId/modelId。";
+    const msg = "Agent Runtime 缺少 channelId/modelId。";
     log.error("[Agent 会话] 启动失败：缺少模型或渠道", {
       threadId: threadId.slice(0, 8),
       channelId: resolvedChannelId,
@@ -467,10 +467,10 @@ export async function sendAgentMessage(
     emit.onError(msg);
     return;
   }
-  const { runPiAgent } = await import("../pi-agent/runtime-core/attempt");
+  const { runAgentRuntime } = await import("../agent-runtime/runtime-core/attempt");
   const configThinkingLevel = effectiveLumeConfig.agent?.thinkingLevel;
   const configPermissionMode = effectiveLumeConfig.agent?.permissionMode;
-  const piResult = await runPiAgent({
+  const runtimeResult = await runAgentRuntime({
     input: {
       ...input,
       ...(effectiveWorkspaceId ? { workspaceId: effectiveWorkspaceId } : {}),
@@ -543,7 +543,7 @@ export async function sendAgentMessage(
   if (persistedSdkMessages.length > 0) {
     appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
   }
-  if ((piResult.status === "completed" || piResult.status === "turn_limited") && activeTurnId) {
+  if ((runtimeResult.status === "completed" || runtimeResult.status === "turn_limited") && activeTurnId) {
     const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
       threadId,
       sdkMessages: persistedSdkMessages,
@@ -563,7 +563,7 @@ export async function sendAgentMessage(
       }
     }
   }
-  if (runtimeCompleted && piResult.status === "completed") {
+  if (runtimeCompleted && runtimeResult.status === "completed") {
     log.info("[Agent 会话] 运行完成", {
       threadId: threadId.slice(0, 8),
       durationMs: Date.now() - sendStartTime,
@@ -574,7 +574,7 @@ export async function sendAgentMessage(
     runtimeStatusManager.markCompleted(threadId);
     emit.onComplete();
   }
-  if (piResult.status === "turn_limited") {
+  if (runtimeResult.status === "turn_limited") {
     log.info("[Agent 会话] 运行达到最大回合数，等待继续执行", {
       threadId: threadId.slice(0, 8),
       persistedSdkMessageCount: persistedSdkMessages.length
@@ -582,22 +582,22 @@ export async function sendAgentMessage(
     runtimeStatusManager.markCompleted(threadId);
     emit.onComplete({ reason: "max_turns" });
   }
-  if (piResult.status === "aborted") {
+  if (runtimeResult.status === "aborted") {
     log.warn("[Agent 会话] 运行中止", {
       threadId: threadId.slice(0, 8),
       durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length
     });
   }
-  if (piResult.status === "errored") {
+  if (runtimeResult.status === "errored") {
     log.error("[Agent 会话] 运行失败", {
       threadId: threadId.slice(0, 8),
       durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length,
-      errorMessage: piResult.errorMessage
+      errorMessage: runtimeResult.errorMessage
     });
   }
-  if (piResult.status === "completed" && shouldTryAutoTitle) {
+  if (runtimeResult.status === "completed" && shouldTryAutoTitle) {
     const job = createAutoTitleJob({
       threadId,
       fallbackUserMessage: userMessage,
@@ -634,14 +634,14 @@ export function stopAgent(threadId: string): void {
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);
-  void import("../pi-agent/runtime-core/attempt")
-    .then((module) => module.stopPiAgent(threadId))
+  void import("../agent-runtime/runtime-core/attempt")
+    .then((module) => module.stopAgentRuntime(threadId))
     .catch(() => undefined);
 }
 
 export function stopAllAgents(): void {
-  void import("../pi-agent/runtime-core/attempt")
-    .then((module) => module.stopAllPiAgents())
+  void import("../agent-runtime/runtime-core/attempt")
+    .then((module) => module.stopAllAgentRuntimeSessions())
     .catch(() => undefined);
 }
 

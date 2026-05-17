@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { getAgentThreadMessages, listAgentThreads } from "../agent/agent-thread-manager";
 import { normalizeSessionText } from "./session-memory-utils";
-import { getRuntimeCoreSessionDirPath } from "../pi-agent/runtime-core/session-store";
+import { getRuntimeCoreSessionDirPath } from "../agent-runtime/runtime-core/session-store";
 import type { AgentMessage } from "@lume/shared";
 
 export interface ThreadFileEntry {

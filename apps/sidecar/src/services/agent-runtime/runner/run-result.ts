@@ -1,4 +1,4 @@
-import type { PiAgentRunResult } from "../../pi-agent/runner/types";
+import type { AgentRuntimeRunResult } from "./types";
 import type { LumeRunStatus } from "./run-state";
 
 export interface LumeRunResult {
@@ -7,7 +7,7 @@ export interface LumeRunResult {
   error?: string;
 }
 
-export function fromPiAgentRunResult(result: PiAgentRunResult): LumeRunResult {
+export function fromAgentRuntimeRunResult(result: AgentRuntimeRunResult): LumeRunResult {
   if (result.status === "completed" || result.status === "turn_limited") {
     return { status: "completed" };
   }

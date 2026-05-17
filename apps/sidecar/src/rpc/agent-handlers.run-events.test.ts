@@ -7,7 +7,7 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 import type { TaskContractRecord } from "../services/agent-runtime/plan/task-contract-record-types";
 import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { createFileBackedTaskRunStore } from "../services/agent-runtime/task-run/task-run-store";
-import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
+import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 
 const appendedInputs: unknown[] = [];
 let mockCompletePayload: { reason?: "max_turns" } | undefined;

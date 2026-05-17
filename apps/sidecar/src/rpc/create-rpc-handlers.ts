@@ -4,7 +4,6 @@ import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker"
 import { createAgentHandlers } from "./agent-handlers";
 import { createAutomationHandlers } from "./automation-handlers";
 import { createChannelHandlers } from "./channel-handlers";
-import { createChatHandlers } from "./chat-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
 import { createSystemHandlers } from "./system-handlers";
 import type { NotificationWriter, RpcHandler } from "./types";
@@ -41,7 +40,6 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       getMethodNames: () => Object.keys(handlers).sort()
     }),
     createChannelHandlers(),
-    createChatHandlers(context.writeNotification),
     createMemoryHandlers(),
     createAutomationHandlers(),
     createAgentHandlers({

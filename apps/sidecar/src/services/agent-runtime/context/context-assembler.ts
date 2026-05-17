@@ -10,6 +10,7 @@ import {
 import { createLogger } from "../../infra/logger";
 import { buildMemoryContext } from "../../memory/memory-prompt-builder";
 import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
+import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
 
@@ -125,6 +126,7 @@ export class ContextAssembler {
         fallbackModelId: input.modelRef ?? input.resolvedModelId
       })
     ).trim();
+    const permissionDeniedContext = getPermissionDeniedSummary(input.threadId);
 
     let memoryContext = "";
     if (input.workspaceSlug && input.userMessage.trim()) {
@@ -164,7 +166,7 @@ export class ContextAssembler {
       }
     }
 
-    const systemPrompt = [agentSystemPrompt, systemPromptAppend, dynamicContext, memoryContext]
+    const systemPrompt = [agentSystemPrompt, systemPromptAppend, dynamicContext, permissionDeniedContext, memoryContext]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
 

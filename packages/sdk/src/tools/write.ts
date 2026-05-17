@@ -2,8 +2,8 @@
  * FileWriteTool - Write/create files
  */
 
-import { writeFile, mkdir } from 'fs/promises'
-import { resolve, dirname } from 'path'
+import { writeFile, mkdir, rename, rm } from 'fs/promises'
+import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
 
@@ -40,7 +40,7 @@ export const FileWriteTool = defineTool({
 
     try {
       await mkdir(dirname(filePath), { recursive: true })
-      await writeFile(filePath, input.content, 'utf-8')
+      await writeFileAtomic(filePath, input.content)
 
       const lines = input.content.split('\n').length
       const bytes = Buffer.byteLength(input.content, 'utf-8')
@@ -57,3 +57,15 @@ export const FileWriteTool = defineTool({
     }
   },
 })
+
+async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+  const dir = dirname(filePath)
+  const tempPath = join(dir, `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
+  try {
+    await writeFile(tempPath, content, 'utf-8')
+    await rename(tempPath, filePath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
+}

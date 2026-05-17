@@ -68,4 +68,26 @@ describe("ToolRegistry", () => {
       }
     });
   });
+
+  test("merges payload, result, and execution policy metadata", () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "PluginTool",
+      source: "plugin",
+      definition: makeTool("PluginTool"),
+      metadata: {
+        resultPolicy: { maxChars: 1234 },
+        executionPolicy: { maxCallsPerTurn: 2, allowBackground: false },
+        payloadPolicy: { maxInputChars: 500 }
+      }
+    });
+
+    expect(registry.get("PluginTool")?.metadata).toMatchObject({
+      capability: "plugin",
+      resultPolicy: { maxChars: 1234 },
+      executionPolicy: { maxCallsPerTurn: 2, allowBackground: false },
+      payloadPolicy: { maxInputChars: 500 },
+      requiresApprovalByDefault: true
+    });
+  });
 });

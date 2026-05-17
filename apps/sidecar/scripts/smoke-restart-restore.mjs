@@ -143,13 +143,6 @@ async function run() {
       "lume.yaml workspace overlay not applied"
     );
 
-    const conversation = await sidecar.call("chat:create-conversation", {
-      title: "smoke-restore-chat",
-      modelId: "restore-model",
-      channelId: "restore-channel"
-    });
-    assert(typeof conversation?.id === "string", "conversation create failed");
-
     const thread = await sidecar.call("agent:create-thread", {
       title: "smoke-restore-thread",
       workspaceId: workspace.id,
@@ -159,50 +152,34 @@ async function run() {
     assert(typeof thread?.id === "string", "thread create failed");
 
     const updatedState = await sidecar.call("ui-state:update", {
-      appMode: "agent",
       activeView: "settings",
-      currentConversationId: conversation.id,
       currentAgentThreadId: thread.id,
       currentAgentWorkspaceId: workspace.id,
       promptSidebarOpen: true,
       agentSidePanelOpenByThreadId: {
         [thread.id]: false
       },
-      chatDraftByConversationId: {
-        [conversation.id]: "restore chat draft"
-      },
       agentDraftByThreadId: {
         [thread.id]: "restore agent draft"
       }
     });
-    assert(updatedState?.currentConversationId === conversation.id, "ui-state write failed for conversation");
     assert(updatedState?.currentAgentThreadId === thread.id, "ui-state write failed for thread");
     assert(updatedState?.currentAgentWorkspaceId === workspace.id, "ui-state write failed for workspace");
     assert(updatedState?.activeView === "settings", "ui-state write failed for activeView");
     assert(updatedState?.promptSidebarOpen === true, "ui-state write failed for promptSidebarOpen");
     assert(updatedState?.agentSidePanelOpenByThreadId?.[thread.id] === false, "ui-state write failed for side panel");
-    assert(updatedState?.chatDraftByConversationId?.[conversation.id] === "restore chat draft", "ui-state write failed for chat draft");
     assert(updatedState?.agentDraftByThreadId?.[thread.id] === "restore agent draft", "ui-state write failed for agent draft");
 
     await sidecar.close();
     sidecar = createSidecarProcess(configHome);
 
     const restoredState = await sidecar.call("ui-state:get");
-    assert(restoredState?.appMode === "agent", "ui-state appMode not restored");
     assert(restoredState?.activeView === "settings", "ui-state activeView not restored");
-    assert(restoredState?.currentConversationId === conversation.id, "ui-state conversation not restored");
     assert(restoredState?.currentAgentThreadId === thread.id, "ui-state thread not restored");
     assert(restoredState?.currentAgentWorkspaceId === workspace.id, "ui-state workspace not restored");
     assert(restoredState?.promptSidebarOpen === true, "ui-state promptSidebarOpen not restored");
     assert(restoredState?.agentSidePanelOpenByThreadId?.[thread.id] === false, "ui-state side panel not restored");
-    assert(restoredState?.chatDraftByConversationId?.[conversation.id] === "restore chat draft", "ui-state chat draft not restored");
     assert(restoredState?.agentDraftByThreadId?.[thread.id] === "restore agent draft", "ui-state agent draft not restored");
-
-    const conversations = await sidecar.call("chat:list-conversations");
-    assert(
-      Array.isArray(conversations) && conversations.some((item) => item.id === conversation.id),
-      "conversation metadata missing after restart"
-    );
 
     const threads = await sidecar.call("agent:list-threads");
     assert(

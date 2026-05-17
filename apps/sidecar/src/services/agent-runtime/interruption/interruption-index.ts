@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getRuntimeCoreAgentDir } from "../../pi-agent/runtime-core/session-store";
+import { getRuntimeCoreAgentDir } from "../runtime-core/session-store";
 import type { LumeInterruption } from "./interruption";
 
 export interface RuntimeCoreInterruptionRecord {

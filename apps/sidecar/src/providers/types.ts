@@ -7,7 +7,26 @@
  * core 层不依赖 Electron / Node fs，通过注入函数访问平台能力。
  */
 
-import type { ChatMessage, FileAttachment, ProviderType, ThinkingLevel } from '@lume/shared'
+import type { LumeConfigThinkingLevel, ProviderType } from '@lume/shared'
+
+export interface ProviderAttachment {
+  id: string
+  filename: string
+  mediaType: string
+  localPath: string
+  size: number
+}
+
+export interface ProviderMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  createdAt: number
+  model?: string
+  reasoning?: string
+  stopped?: boolean
+  attachments?: ProviderAttachment[]
+}
 
 // ===== 图片附件数据 =====
 
@@ -25,7 +44,7 @@ export interface ImageAttachmentData {
  * 由 Electron 层注入，负责从磁盘读取附件 base64 数据。
  * core 层不直接访问文件系统。
  */
-export type ImageAttachmentReader = (attachments?: FileAttachment[]) => ImageAttachmentData[]
+export type ImageAttachmentReader = (attachments?: ProviderAttachment[]) => ImageAttachmentData[]
 
 // ===== Tool Use（Function Calling）=====
 
@@ -73,7 +92,7 @@ export interface ToolResult {
   /** 是否出错 */
   isError?: boolean
   /** 工具生成的附件（如图片） */
-  generatedAttachments?: FileAttachment[]
+  generatedAttachments?: ProviderAttachment[]
 }
 
 /**
@@ -163,19 +182,19 @@ export interface StreamRequestInput {
   /** 模型 ID */
   modelId: string
   /** 经过裁剪的历史消息（不含当前用户消息） */
-  history: ChatMessage[]
+  history: ProviderMessage[]
   /** 当前用户消息文本 */
   userMessage: string
   /** 系统提示词 */
   systemMessage?: string
   /** 当前用户消息的附件 */
-  attachments?: FileAttachment[]
+  attachments?: ProviderAttachment[]
   /** 图片附件读取器（由 Electron 层注入） */
   readImageAttachments: ImageAttachmentReader
   /** 是否启用思考模式（各适配器根据供应商 API 自行转换） */
   thinkingEnabled?: boolean
   /** 思考等级（各适配器根据供应商 API 自行映射预算） */
-  thinkingLevel?: ThinkingLevel
+  thinkingLevel?: LumeConfigThinkingLevel
   /** 工具定义列表（可选，启用 function calling） */
   tools?: ToolDefinition[]
   /** 工具续接消息（tool use 循环中，前一轮的 tool_use + tool_result） */

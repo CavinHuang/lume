@@ -12,7 +12,6 @@ import {
   getAgentThreadMessages,
   getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
-  migrateChatToAgentThread,
   moveAgentThreadToWorkspace,
   truncateAgentMessagesFrom,
   updateAgentThreadMeta,
@@ -20,11 +19,10 @@ import {
 } from "./agent-thread-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentThreadArtifactsPath, getAgentThreadFilesPath, getAgentThreadPlansPath, getAgentThreadRootPath, getAgentWorkspacePath } from "../infra/config-paths";
-import { appendMessage, createConversation } from "../chat/conversation-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath
-} from "../pi-agent/runtime-core/session-store";
+} from "../agent-runtime/runtime-core/session-store";
 import { getAgentMessageVersionStorePath, readAgentMessageVersionStore } from "./agent-message-version-store";
 
 describe("agent-thread-manager advanced ops", () => {
@@ -137,41 +135,6 @@ describe("agent-thread-manager advanced ops", () => {
     expect(existsSync(join(targetSessionDir, "source.txt"))).toBeTrue();
     expect(existsSync(join(targetSessionDir, "target.txt"))).toBeFalse();
     expect(existsSync(sourceSessionDir)).toBeFalse();
-  });
-
-  test("migrateChatToAgentThread 应迁移 user/assistant 文本消息", () => {
-    const conversation = createConversation("聊天记录");
-    appendMessage(conversation.id, {
-      id: "msg-user",
-      role: "user",
-      content: "你好",
-      createdAt: 1
-    });
-    appendMessage(conversation.id, {
-      id: "msg-assistant",
-      role: "assistant",
-      content: "我在",
-      createdAt: 2,
-      model: "demo-model"
-    });
-    appendMessage(conversation.id, {
-      id: "msg-system",
-      role: "system",
-      content: "ignore me",
-      createdAt: 3
-    });
-
-    const session = createAgentThread("目标会话");
-    const migrated = migrateChatToAgentThread(conversation.id, session.id);
-    const messages = getAgentThreadMessages(session.id);
-
-    expect(migrated).toBe(2);
-    expect(messages.length).toBe(2);
-    expect(messages[0]?.role).toBe("user");
-    expect(messages[0]?.content).toBe("你好");
-    expect(messages[1]?.role).toBe("assistant");
-    expect(messages[1]?.content).toBe("我在");
-    expect(messages[1]?.model).toBe("unknown/demo-model");
   });
 
   test("JSONL 缺失时应回退到 runtime-core transcript 消息", () => {

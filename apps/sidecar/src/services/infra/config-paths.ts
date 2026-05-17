@@ -1,7 +1,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 const CONFIG_DIR_NAME = ".lume";
 
@@ -32,17 +32,6 @@ function assertSafeSegment(value: string, label: string): string {
   return trimmed;
 }
 
-function assertSafeRelativePath(value: string, label: string): string {
-  const normalized = normalize(value).replace(/\\/g, "/");
-  if (normalized.startsWith("/") || normalized.includes("..")) {
-    throw new Error(`${label} 非法`);
-  }
-  if (normalized.includes("\0")) {
-    throw new Error(`${label} 非法`);
-  }
-  return normalized.split("/").join(sep);
-}
-
 export function getConfigDir(): string {
   const fromEnv = process.env.LUME_CONFIG_DIR?.trim();
   if (fromEnv) {
@@ -54,33 +43,6 @@ export function getConfigDir(): string {
 
 export function getChannelsPath(): string {
   return join(getConfigDir(), "channels.json");
-}
-
-export function getConversationsIndexPath(): string {
-  return join(getConfigDir(), "conversations.json");
-}
-
-export function getConversationsDir(): string {
-  return ensureDir(join(getConfigDir(), "conversations"), "对话目录");
-}
-
-export function getConversationMessagesPath(id: string): string {
-  const safeId = assertSafeSegment(id, "conversation id");
-  return join(getConversationsDir(), `${safeId}.jsonl`);
-}
-
-export function getAttachmentsDir(): string {
-  return ensureDir(join(getConfigDir(), "attachments"), "附件目录");
-}
-
-export function getConversationAttachmentsDir(conversationId: string): string {
-  const safeConversationId = assertSafeSegment(conversationId, "conversation id");
-  return ensureDir(join(getAttachmentsDir(), safeConversationId));
-}
-
-export function resolveAttachmentPath(localPath: string): string {
-  const safeLocalPath = assertSafeRelativePath(localPath, "attachment path");
-  return join(getAttachmentsDir(), safeLocalPath);
 }
 
 export function getSettingsPath(): string {
@@ -125,14 +87,6 @@ export function getLumeConfigAuditPath(): string {
 
 export function getLumeJsonPath(): string {
   return join(getConfigDir(), "lume.json");
-}
-
-export function getSystemPromptsPath(): string {
-  return join(getConfigDir(), "system-prompts.json");
-}
-
-export function getChatToolsPath(): string {
-  return join(getConfigDir(), "chat-tools.json");
 }
 
 export function getUserProfilePath(): string {

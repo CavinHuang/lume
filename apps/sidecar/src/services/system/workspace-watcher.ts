@@ -1,19 +1,12 @@
 
 import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { AGENT_IPC_CHANNELS, LUME_CONFIG_IPC_CHANNELS } from "@lume/shared";
 import { getAgentWorkspacesDir, getConfigDir, getLumeConfigYamlPath } from "../infra/config-paths";
 
 type NotificationEmitter = (method: string, params: unknown) => void;
 
 const DEBOUNCE_MS = 500;
-
-const claudeRoot = join(homedir(), ".claude");
-const claudeJsonPath = join(homedir(), ".claude.json");
-const claudePluginPath = join(claudeRoot, "plugins");
-const claudeSkillsPath = join(claudeRoot, "skills");
 
 let watchers: FSWatcher[] = [];
 let capabilitiesTimer: ReturnType<typeof setTimeout> | null = null;
@@ -102,11 +95,6 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     }
   }, "Lume 全局配置目录");
   safeWatch(getLumeConfigYamlPath(), {}, () => emitLumeConfigChanged(), "Lume 全局配置文件");
-  safeWatch(claudeRoot, { recursive: true }, () => emitGlobalCapabilitiesChanged(), "Claude 全局目录");
-  safeWatch(claudeJsonPath, {}, () => emitGlobalCapabilitiesChanged(), "Claude 全局配置");
-  safeWatch(claudePluginPath, { recursive: true }, () => emitGlobalCapabilitiesChanged(), "Claude 插件目录");
-  safeWatch(claudeSkillsPath, { recursive: true }, () => emitGlobalCapabilitiesChanged(), "Claude Skills 目录");
-
   if (watchers.length === 0) {
     console.warn("[工作区监听] 未找到可监听目录，已跳过监听初始化");
     return;

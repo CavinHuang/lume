@@ -2,7 +2,7 @@ import type {
   AgentToolPermissionDecision,
   AgentToolPermissionRequest
 } from "@lume/shared";
-import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
+import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import type { LumeInterruption } from "./interruption";
 import { listPendingRuntimeCoreInterruptionRecords } from "./interruption-index";
 import {

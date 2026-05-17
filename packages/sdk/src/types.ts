@@ -528,6 +528,7 @@ export interface ToolDefinition {
   isConcurrencySafe?: () => boolean
   isEnabled?: () => boolean
   prompt?: (context: ToolContext) => Promise<string>
+  runtimeMetadata?: Record<string, unknown>
 }
 
 export interface ToolInputSchema {
@@ -996,6 +997,15 @@ export interface AgentOptions {
   appendSystemPrompt?: string
   /** Available tools (ToolDefinition[] or string[] preset) */
   tools?: ToolDefinition[] | string[] | { type: 'preset'; preset: 'default' }
+  /** Host hook for final runtime visibility/policy filtering after MCP and plugin tools are assembled */
+  resolveRuntimeTools?: (
+    tools: ToolDefinition[],
+    context: {
+      cwd: string
+      sessionId: string
+      permissionMode?: PermissionMode
+    }
+  ) => ToolDefinition[] | Promise<ToolDefinition[]>
   /** Explicit skill definitions provided by the host runtime */
   skills?: import('./skills/types.js').SkillDefinition[]
   /** Explicit filesystem roots to scan for skills */
@@ -1068,7 +1078,7 @@ export interface AgentOptions {
   /** Load settings from filesystem */
   settingSources?: SettingSource[]
   /** Plugin configurations */
-  plugins?: Array<{ name: string; path?: string; config?: Record<string, unknown> }>
+  plugins?: Array<{ name: string; path?: string; config?: Record<string, unknown>; kind?: 'command' | 'module' | 'any' }>
   /** Additional working directories */
   additionalDirectories?: string[]
   /** Default agent to use */

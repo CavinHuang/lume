@@ -38,10 +38,6 @@ export interface NetworkDiagnosticResult {
     httpsProxy?: string
     noProxy?: string
   }
-  searchCredentials?: {
-    braveConfigured: boolean
-    tavilyConfigured: boolean
-  }
   checks: NetworkDiagnosticEntry[]
 }
 

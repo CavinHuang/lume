@@ -1,167 +1,5 @@
 import { idSchema, optionalIdSchema, z } from "./validation";
 
-export const fileAttachmentSchema = z.object({
-  id: z.string(),
-  filename: z.string(),
-  mediaType: z.string(),
-  localPath: z.string(),
-  size: z.number()
-});
-
-export const chatMessageSchema = z.object({
-  id: z.string(),
-  role: z.enum(["user", "assistant", "system"]),
-  content: z.string(),
-  createdAt: z.number(),
-  model: z.string().optional(),
-  reasoning: z.string().optional(),
-  stopped: z.boolean().optional(),
-  attachments: z.array(fileAttachmentSchema).optional(),
-  toolActivities: z.array(z.object({
-    toolCallId: z.string(),
-    toolName: z.string(),
-    type: z.enum(["start", "result"]),
-    result: z.string().optional(),
-    isError: z.boolean().optional()
-  })).optional()
-});
-
-export const chatSendInputSchema = z.object({
-  conversationId: z.string().min(1),
-  userMessage: z.string(),
-  messageHistory: z.array(chatMessageSchema),
-  modelRef: z.string().optional(),
-  channelId: z.string().min(1),
-  modelId: z.string().min(1),
-  systemMessage: z.string().optional(),
-  contextLength: z.union([z.number(), z.literal("infinite")]).optional(),
-  contextDividers: z.array(z.string()).optional(),
-  attachments: z.array(fileAttachmentSchema).optional(),
-  thinkingEnabled: z.boolean().optional(),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
-  enabledToolIds: z.array(z.string()).optional()
-});
-
-export const chatConversationIdInputSchema = z.object({
-  conversationId: idSchema
-});
-
-export const chatUpdateTitleInputSchema = z.object({
-  conversationId: idSchema,
-  title: z.string().min(1)
-});
-
-export const chatUpdateModelInputSchema = z.object({
-  conversationId: idSchema,
-  modelRef: z.string().optional(),
-  modelId: z.string().optional(),
-  channelId: z.string().optional()
-});
-
-export const chatMessageIdInputSchema = z.object({
-  conversationId: idSchema,
-  messageId: idSchema
-});
-
-export const chatTruncateInputSchema = z.object({
-  conversationId: idSchema,
-  messageId: idSchema,
-  preserveFirstMessageAttachments: z.boolean().optional()
-});
-
-export const chatContextDividersInputSchema = z.object({
-  conversationId: idSchema,
-  dividers: z.array(z.string()).default([])
-});
-
-export const chatLocalPathInputSchema = z.object({
-  localPath: idSchema
-});
-
-export const chatRecentMessagesInputSchema = z.object({
-  conversationId: idSchema,
-  limit: z.number().int().min(1)
-});
-
-export const attachmentSaveInputSchema = z.object({
-  conversationId: z.string().min(1),
-  filename: z.string().min(1),
-  mediaType: z.string().min(1),
-  data: z.string().optional(),
-  sourcePath: z.string().min(1).optional()
-}).refine((input) => !!input.data || !!input.sourcePath, {
-  message: "附件必须提供 data 或 sourcePath"
-});
-
-export const systemPromptCreateInputSchema = z.object({
-  name: z.string().min(1).max(50),
-  content: z.string()
-});
-
-export const systemPromptUpdateInputSchema = z.object({
-  id: idSchema,
-  input: z.object({
-    name: z.string().min(1).max(50).optional(),
-    content: z.string().optional()
-  })
-});
-
-export const systemPromptDeleteInputSchema = z.object({
-  id: idSchema
-});
-
-export const systemPromptAppendInputSchema = z.object({
-  enabled: z.boolean()
-});
-
-export const systemPromptSetDefaultInputSchema = z.object({
-  id: z.string().min(1).nullable()
-});
-
-export const chatToolStateUpdateInputSchema = z.object({
-  toolId: idSchema,
-  state: z.object({
-    enabled: z.boolean()
-  })
-});
-
-export const chatToolCredentialsUpdateInputSchema = z.object({
-  toolId: idSchema,
-  credentials: z.record(z.string(), z.string())
-});
-
-export const chatToolIdInputSchema = z.object({
-  toolId: idSchema
-});
-
-export const chatToolMetaSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().min(1),
-  icon: z.string().optional(),
-  category: z.enum(["builtin", "custom"]),
-  params: z.array(z.object({
-    name: z.string().min(1),
-    type: z.enum(["string", "number", "boolean"]),
-    description: z.string().min(1),
-    required: z.boolean().optional(),
-    enum: z.array(z.string()).optional()
-  })).optional(),
-  executorType: z.enum(["builtin", "http"]).optional(),
-  httpConfig: z.object({
-    urlTemplate: z.string().min(1),
-    method: z.enum(["GET", "POST"]),
-    headers: z.record(z.string(), z.string()).optional(),
-    bodyTemplate: z.string().optional(),
-    resultPath: z.string().optional()
-  }).optional(),
-  systemPromptAppend: z.string().optional()
-});
-
-export const chatToolCreateCustomInputSchema = z.object({
-  meta: chatToolMetaSchema
-});
-
 export const agentSendInputSchema = z.object({
   threadId: z.string().min(1),
   userMessage: z.string(),
@@ -171,7 +9,7 @@ export const agentSendInputSchema = z.object({
   workspaceId: z.string().optional(),
   chatType: z.enum(["direct", "group", "channel"]).optional(),
   threadType: z.enum(["main", "subagent", "group", "channel"]).optional(),
-  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).optional(),
+  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).optional(),
   thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
   resendFromMessageId: z.string().optional(),
@@ -315,11 +153,6 @@ export const agentUpdateThreadModelSelectionInputSchema = z.object({
   modelId: z.string().nullable().optional()
 });
 
-export const agentMigrateChatInputSchema = z.object({
-  conversationId: idSchema,
-  threadId: idSchema
-});
-
 export const agentMoveThreadInputSchema = z.object({
   threadId: idSchema,
   workspaceId: idSchema
@@ -395,7 +228,7 @@ export const lumeConfigUpdateInputSchema = z.union([
   }),
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("agent.permissionMode"),
-    value: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).nullable()
+    value: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).nullable()
   })
 ]);
 
@@ -454,10 +287,6 @@ export const workspaceMcpConfigInputSchema = z.object({
 export const deleteSkillInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema
-});
-
-export const marketplaceDetailInputSchema = z.object({
-  marketplaceId: idSchema
 });
 
 export const skillMarketCatalogInputSchema = z.object({
@@ -612,7 +441,7 @@ export const submitTaskApprovalInputSchema = z.object({
 export const executeTaskContractInputSchema = z.object({
   threadId: idSchema,
   contractId: idSchema.optional(),
-  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions"]).optional(),
+  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "dontAsk"]).optional(),
   intent: z.enum(["execute", "continue", "retry", "skip"]).optional()
 });
 
@@ -661,23 +490,6 @@ export const writeBootstrapFileInputSchema = z.object({
   workspaceSlug: idSchema,
   fileType: bootstrapFileTypeSchema,
   content: z.string()
-});
-
-const toolPolicyRuleSchema = z.object({
-  allow: z.array(z.string()).optional(),
-  deny: z.array(z.string()).optional()
-});
-
-export const saveToolPolicyInputSchema = z.object({
-  version: z.number().optional(),
-  tools: z.object({
-    allow: z.array(z.string()).optional(),
-    deny: z.array(z.string()).optional(),
-    byProvider: z.record(z.string(), toolPolicyRuleSchema).optional(),
-    bySessionType: z.record(z.string(), toolPolicyRuleSchema).optional(),
-    byChatType: z.record(z.string(), toolPolicyRuleSchema).optional(),
-    subagent: toolPolicyRuleSchema.optional()
-  }).optional()
 });
 
 export const proxySettingsInputSchema = z.object({
@@ -751,14 +563,11 @@ export const githubReleaseByTagInputSchema = z.object({
 });
 
 export const updateUiStateInputSchema = z.object({
-  appMode: z.enum(["chat", "agent"]).optional(),
   activeView: z.enum(["conversations", "settings"]).optional(),
-  currentConversationId: z.string().nullable().optional(),
   currentAgentThreadId: z.string().nullable().optional(),
   currentAgentWorkspaceId: z.string().nullable().optional(),
   promptSidebarOpen: z.boolean().optional(),
   agentSidePanelOpenByThreadId: z.record(z.string(), z.boolean()).optional(),
-  chatDraftByConversationId: z.record(z.string(), z.string()).optional(),
   agentDraftByThreadId: z.record(z.string(), z.string()).optional()
 });
 

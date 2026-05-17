@@ -1,11 +1,11 @@
 import type { Channel, ChannelCreateInput, LumeConfigThinkingLevel, ProviderType } from '@lume/shared'
 import { PROVIDER_DEFAULT_URLS, PROVIDER_LABELS } from '@lume/shared'
 
-export type PermissionModeValue = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+export type PermissionModeValue = 'default' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions' | 'plan'
 
 export type PermissionModeTone = 'sky' | 'emerald' | 'amber' | 'violet'
 
-export type PermissionModeIconKey = 'shield' | 'pencil' | 'shield-off' | 'map'
+export type PermissionModeIconKey = 'shield' | 'pencil' | 'shield-check' | 'shield-off' | 'map'
 
 export interface PermissionOption {
   value: PermissionModeValue
@@ -58,6 +58,14 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
     icon: 'pencil',
     tone: 'emerald',
     emphasis: '高效',
+  },
+  {
+    value: 'dontAsk',
+    label: '少询问',
+    desc: '自动允许低风险操作，危险操作仍确认',
+    icon: 'shield-check',
+    tone: 'emerald',
+    emphasis: '智能',
   },
   {
     value: 'bypassPermissions',

@@ -2,13 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
+import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { createFileBackedLumeInterruptionStore } from "./interruption-store";
 import {
-  listPendingPiAskUserQuestionRequests,
+  listPendingAskUserQuestionRequests,
   setAskUserQuestionApprovalSession,
-  submitPiAskUserQuestionAnswers,
-  waitForPiAskUserQuestionAnswers
+  submitAskUserQuestionAnswers,
+  waitForAskUserQuestionAnswers
 } from "./ask-user-question-session";
 
 describe("ask-user-question-session", () => {
@@ -25,7 +25,7 @@ describe("ask-user-question-session", () => {
   test("wait + submit 应成功返回答案", async () => {
     const toolUseId = "tool-use-1";
     const signal = new AbortController().signal;
-    const waitPromise = waitForPiAskUserQuestionAnswers(
+    const waitPromise = waitForAskUserQuestionAnswers(
       "session-1",
       toolUseId,
       [{
@@ -40,7 +40,7 @@ describe("ask-user-question-session", () => {
       signal,
       () => {}
     );
-    const handled = await submitPiAskUserQuestionAnswers({
+    const handled = await submitAskUserQuestionAnswers({
       threadId: "session-1",
       toolUseId,
       answers: { "问题1": "A" }
@@ -63,7 +63,7 @@ describe("ask-user-question-session", () => {
     try {
       const toolUseId = "tool-use-timeout";
       const signal = new AbortController().signal;
-      const result = await waitForPiAskUserQuestionAnswers(
+      const result = await waitForAskUserQuestionAnswers(
         "session-timeout",
         toolUseId,
         [{
@@ -97,7 +97,7 @@ describe("ask-user-question-session", () => {
   test("应支持由父会话提交子会话 AskUserQuestion 答案", async () => {
     const toolUseId = "tool-use-proxy";
     const signal = new AbortController().signal;
-    const waitPromise = waitForPiAskUserQuestionAnswers(
+    const waitPromise = waitForAskUserQuestionAnswers(
       "child-session",
       toolUseId,
       [{
@@ -113,7 +113,7 @@ describe("ask-user-question-session", () => {
       () => {}
     );
     setAskUserQuestionApprovalSession(toolUseId, "parent-session");
-    const handled = await submitPiAskUserQuestionAnswers({
+    const handled = await submitAskUserQuestionAnswers({
       threadId: "parent-session",
       toolUseId,
       answers: { "问题1": "B" }
@@ -131,7 +131,7 @@ describe("ask-user-question-session", () => {
   test("listPending 应保留 subagentLabel，供 UI 展示子代理名称", async () => {
     const toolUseId = "tool-use-label";
     const signal = new AbortController().signal;
-    const waitPromise = waitForPiAskUserQuestionAnswers(
+    const waitPromise = waitForAskUserQuestionAnswers(
       "child-session",
       toolUseId,
       [{
@@ -153,11 +153,11 @@ describe("ask-user-question-session", () => {
     );
 
     setAskUserQuestionApprovalSession(toolUseId, "parent-session");
-    const pending = listPendingPiAskUserQuestionRequests();
+    const pending = listPendingAskUserQuestionRequests();
     expect(pending[0]?.threadId).toBe("parent-session");
     expect(pending[0]?.subagentLabel).toBe("探索网络和搜索能力");
 
-    await submitPiAskUserQuestionAnswers({
+    await submitAskUserQuestionAnswers({
       threadId: "parent-session",
       toolUseId,
       canceled: true
@@ -168,7 +168,7 @@ describe("ask-user-question-session", () => {
   test("应持久化 AskUserQuestion 并在回答后写入 resolution", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-ask-user-persist-"));
     const threadId = "ask-persist-thread";
-    const waitPromise = waitForPiAskUserQuestionAnswers(
+    const waitPromise = waitForAskUserQuestionAnswers(
       threadId,
       "ask-persist",
       [{
@@ -189,7 +189,7 @@ describe("ask-user-question-session", () => {
       "ask_user:ask-persist"
     ]);
 
-    await submitPiAskUserQuestionAnswers({
+    await submitAskUserQuestionAnswers({
       threadId,
       toolUseId: "ask-persist",
       answers: { choice: "继续" }
@@ -232,7 +232,7 @@ describe("ask-user-question-session", () => {
       updatedAt: "2026-04-29T00:00:00.000Z"
     });
 
-    const handled = await submitPiAskUserQuestionAnswers({
+    const handled = await submitAskUserQuestionAnswers({
       threadId,
       toolUseId: "ask-cold",
       canceled: true

@@ -18,8 +18,8 @@ const capturedRuntimeCalls: Array<{
   runtime?: { modelRef?: string; channelId?: string };
 }> = [];
 
-mock.module("../pi-agent/runtime-core/attempt", () => ({
-  runPiAgent: async (
+mock.module("../agent-runtime/runtime-core/attempt", () => ({
+  runAgentRuntime: async (
     params: {
       input?: { channelId?: string; modelId?: string };
       runtime?: { modelRef?: string; channelId?: string };
@@ -32,8 +32,8 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
     emit.onComplete();
     return { status: "completed" as const };
   },
-  stopPiAgent: () => undefined,
-  isPiAgentSessionActive: () => false
+  stopAgentRuntime: () => undefined,
+  isAgentRuntimeSessionActive: () => false
 }));
 
 describe("model-selection", () => {

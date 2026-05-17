@@ -153,16 +153,13 @@ describe("general-settings-service", () => {
     writeFileSync(settingsPath, JSON.stringify({
       uiState: {
         version: 1,
-        appMode: "agent",
         activeView: "settings",
-        currentConversationId: null,
         currentAgentThreadId: "thread-1",
         currentAgentWorkspaceId: "workspace-1",
         promptSidebarOpen: true,
         agentSidePanelOpenByThreadId: {
           "thread-1": true
         },
-        chatDraftByConversationId: {},
         agentDraftByThreadId: {
           "thread-1": "draft"
         },
@@ -176,7 +173,6 @@ describe("general-settings-service", () => {
 
     const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
       uiState?: {
-        appMode?: string;
         currentAgentThreadId?: string;
         updatedAt?: number;
       };
@@ -186,7 +182,6 @@ describe("general-settings-service", () => {
     };
 
     expect(raw.uiState).toMatchObject({
-      appMode: "agent",
       currentAgentThreadId: "thread-1",
       updatedAt: 123
     });

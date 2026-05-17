@@ -19,7 +19,7 @@ mock.restore()
 let editorText = ''
 let latestSurfaceProps: any = null
 let effectiveThinkingLevel: 'off' | 'low' | 'medium' | 'high' | 'max' | undefined
-let effectivePermissionMode: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | undefined
+let effectivePermissionMode: 'default' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions' | 'plan' | undefined
 
 const mockEditor = {
   getText: () => editorText,

@@ -22,7 +22,9 @@ export type LumeToolCapability =
   | "planning"
   | "subagent"
   | "mcp"
-  | "skill";
+  | "skill"
+  | "plugin"
+  | "external";
 
 export type LumeToolRiskLevel = "low" | "medium" | "high";
 
@@ -47,6 +49,16 @@ export interface LumeToolMetadata {
   requiresWorkspace?: boolean;
   requiresNetwork?: boolean;
   requiresApprovalByDefault?: boolean;
+  payloadPolicy?: {
+    maxInputChars?: number;
+  };
+  resultPolicy?: {
+    maxChars?: number;
+  };
+  executionPolicy?: {
+    maxCallsPerTurn?: number;
+    allowBackground?: boolean;
+  };
 }
 
 export interface LumeToolDescriptor {

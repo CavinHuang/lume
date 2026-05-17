@@ -2,9 +2,7 @@ import { argv, stdin, stdout, stderr } from "node:process";
 import { createInterface } from "node:readline";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory/memory-sync-watcher";
-import { startChatToolsWatcher, stopChatToolsWatcher } from "./services/chat/chat-tools-watcher";
-import { syncSharedSearchToolCredentials } from "./services/chat/chat-tool-manager";
-import { seedDefaultSkills } from "./services/system/default-skills-seeder";
+import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
 import { initProxySettings } from "./services/system/proxy-settings-manager";
 import {
   startAutomationRunner,
@@ -103,7 +101,6 @@ async function boot(): Promise<void> {
   void initProxySettings().catch((error) => {
     console.error(`[代理配置] 初始化失败: ${error instanceof Error ? error.message : String(error)}`);
   });
-  syncSharedSearchToolCredentials();
   if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
     const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
     setAutomationNotificationWriter(writeNotification);
@@ -118,9 +115,6 @@ async function boot(): Promise<void> {
   if (envAutostartEnabled("LUME_MEMORY_SYNC_WATCHER_AUTOSTART", false)) {
     startMemorySyncWatcher();
   }
-  if (envAutostartEnabled("LUME_CHAT_TOOLS_WATCHER_AUTOSTART", false)) {
-    startChatToolsWatcher((method, params) => writeNotification(method, params));
-  }
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_COMPLETED, event);
   });
@@ -128,7 +122,6 @@ async function boot(): Promise<void> {
     unsubscribeSubagentAnnounce();
     stopWorkspaceWatcher();
     stopMemorySyncWatcher();
-    stopChatToolsWatcher();
     closeMemoryManagers();
     void stopAutomationRunner().catch(() => {});
   };

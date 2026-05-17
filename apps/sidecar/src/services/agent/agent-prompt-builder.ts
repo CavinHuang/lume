@@ -192,7 +192,7 @@ export function loadCustomAgents(workspaceSlug?: string): Record<string, AgentDe
   return result;
 }
 
-export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
 
 interface SystemPromptContext {
   workspaceName?: string;

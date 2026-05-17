@@ -7,7 +7,7 @@ import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath
-} from "../pi-agent/runtime-core/session-store";
+} from "../agent-runtime/runtime-core/session-store";
 import { listThreadEntriesForWorkspace } from "./thread-files";
 
 describe("memory thread-files", () => {

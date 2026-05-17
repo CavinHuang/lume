@@ -1,4 +1,4 @@
-type InteractionPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+type InteractionPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
 
 export function buildUncertaintySection(permissionMode?: InteractionPermissionMode): string {
   if (permissionMode === "bypassPermissions") {

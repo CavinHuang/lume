@@ -55,6 +55,7 @@ import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
 import { resolve } from 'path'
 import { getUserInvocableSkills } from './skills/index.js'
 import { getDeferredTools } from './tools/tool-search.js'
+import { matchesAnyToolPattern } from './utils/tool-approval.js'
 
 // ============================================================================
 // Tool format conversion
@@ -391,9 +392,6 @@ export class QueryEngine {
     // Add user message
     this.messages.push({ role: 'user', content: prompt as any })
 
-    // Build tool definitions for provider
-    const tools = this.config.tools.map(toProviderTool)
-
     // Build system prompt
     const systemPrompt = await buildSystemPrompt(this.config)
 
@@ -473,6 +471,7 @@ export class QueryEngine {
 
       this.turnCount++
       turnsRemaining--
+      const tools = this.config.tools.map(toProviderTool)
 
       // Make API call with retry via provider
       let response: CreateMessageResponse
@@ -1074,6 +1073,7 @@ export class QueryEngine {
       const startedAt = performance.now()
       const eventStartIndex = events.length
       const result = await tool.call(block.input, toolContext)
+      applySkillAllowedTools(block.name, result, this.config)
       const elapsedTimeSeconds = Math.max(0, (performance.now() - startedAt) / 1000)
       toolsUsed.push(block.name)
       events.push({
@@ -1321,5 +1321,24 @@ export class QueryEngine {
       isAutoCompactEnabled: true,
       apiUsage: this.totalUsage,
     }
+  }
+}
+
+function applySkillAllowedTools(
+  toolName: string,
+  result: ToolResult,
+  config: QueryEngineConfig,
+): void {
+  if (toolName !== 'Skill' || typeof result.content !== 'string' || result.is_error) return
+  try {
+    const parsed = JSON.parse(result.content) as { allowedTools?: unknown }
+    if (!Array.isArray(parsed.allowedTools)) return
+    const allowed = parsed.allowedTools.filter((item): item is string => typeof item === 'string')
+    if (allowed.length === 0) return
+    config.tools = config.tools.filter((tool) =>
+      tool.name === 'Skill' || matchesAnyToolPattern(tool.name, allowed)
+    )
+  } catch {
+    // Non-JSON skill output does not alter tool visibility.
   }
 }

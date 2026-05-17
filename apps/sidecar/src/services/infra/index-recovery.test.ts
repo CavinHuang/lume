@@ -4,11 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getAgentThreadMessages, listAgentThreads } from "../agent/agent-thread-manager";
 import { listAgentWorkspaces } from "../agent/agent-workspace-manager";
-import { getConversationMessages } from "../chat/conversation-manager";
 import {
   getAgentSessionsIndexPath,
-  getAgentWorkspacesIndexPath,
-  getConversationMessagesPath
+  getAgentWorkspacesIndexPath
 } from "./config-paths";
 
 describe("index recovery", () => {
@@ -55,16 +53,4 @@ describe("index recovery", () => {
     expect(files.some((name) => name.startsWith("agent-workspaces.json.corrupt-"))).toBeTrue();
   });
 
-  test("conversation 消息文件损坏时应自动备份并回退空列表", () => {
-    const conversationId = "conversation-broken";
-    const messagesPath = getConversationMessagesPath(conversationId);
-    writeFileSync(messagesPath, "{bad-json-line}\n", "utf-8");
-
-    const messages = getConversationMessages(conversationId);
-    expect(messages).toEqual([]);
-
-    const conversationDir = join(tempConfigDir, "conversations");
-    const files = readdirSync(conversationDir);
-    expect(files.some((name) => name.startsWith(`${conversationId}.jsonl.corrupt-`))).toBeTrue();
-  });
 });

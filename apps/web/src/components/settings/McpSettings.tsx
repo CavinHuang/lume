@@ -23,7 +23,6 @@ import {
   Loader2,
   NotepadText,
   Plug,
-  RefreshCcw,
   MessageSquare,
   Sparkles,
   Trash2,
@@ -41,7 +40,6 @@ import { Textarea } from '@/components/ui/textarea'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import type {
-  GlobalDiscoverySnapshot,
   McpServerEntry,
   McpTransportType,
   WorkspaceMcpConfig,
@@ -112,9 +110,7 @@ export function McpSettings() {
   const workspaceSlug = workspace?.slug ?? null
 
   const [config, setConfig] = React.useState<WorkspaceMcpConfig>({ servers: {} })
-  const [globalDiscovery, setGlobalDiscovery] = React.useState<GlobalDiscoverySnapshot | null>(null)
   const [loading, setLoading] = React.useState(true)
-  const [rescanning, setRescanning] = React.useState(false)
   const [viewMode, setViewMode] = React.useState<ViewMode>('list')
   const [editingServer, setEditingServer] = React.useState<EditingServer | null>(null)
 
@@ -125,12 +121,8 @@ export function McpSettings() {
     }
     setLoading(true)
     try {
-      const [workspaceConfig, discovery] = await Promise.all([
-        sidecarCall<WorkspaceMcpConfig>('agent:get-mcp-config', { workspaceSlug }),
-        sidecarCall<GlobalDiscoverySnapshot>('agent:get-global-discovery', {}).catch(() => null),
-      ])
+      const workspaceConfig = await sidecarCall<WorkspaceMcpConfig>('agent:get-mcp-config', { workspaceSlug })
       setConfig(workspaceConfig ?? { servers: {} })
-      setGlobalDiscovery(discovery)
     } catch (error) {
       console.error('[MCP 设置] 加载失败:', error)
     } finally {
@@ -155,19 +147,6 @@ export function McpSettings() {
       setConfig(newConfig)
     } catch (error) {
       console.error('[MCP 设置] 切换状态失败:', error)
-    }
-  }
-
-  const handleRescan = async () => {
-    setRescanning(true)
-    try {
-      const discovery = await sidecarCall<GlobalDiscoverySnapshot>('agent:rescan-global-discovery', {})
-      setGlobalDiscovery(discovery)
-      await loadConfig()
-    } catch (error) {
-      console.error('[MCP 设置] 重新扫描失败:', error)
-    } finally {
-      setRescanning(false)
     }
   }
 
@@ -201,11 +180,11 @@ export function McpSettings() {
     )
   }
 
-  const serverRows = buildServerRows(config.servers ?? {}, globalDiscovery?.mcpServers ?? [])
+  const serverRows = buildServerRows(config.servers ?? {})
   const connectedCount = serverRows.filter((row) => row.status === 'connected').length
   const warningCount = serverRows.filter((row) => row.status === 'warning').length
-  const discoveredCount = Math.max(serverRows.length, globalDiscovery?.mcpServers.length ?? 0)
-  const lastScan = formatLastScan(globalDiscovery?.scannedAt)
+  const discoveredCount = serverRows.length
+  const lastScan = '配置文件'
 
   return (
     <div className="space-y-3">
@@ -218,20 +197,10 @@ export function McpSettings() {
 
       <div className="space-y-3">
         <SettingsCard
-          title="MCP 服务发现"
+          title="MCP 服务配置"
           marker="A"
           action={(
             <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void handleRescan()}
-                disabled={rescanning}
-                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
-              >
-                {rescanning ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
-                重新扫描
-              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -245,7 +214,7 @@ export function McpSettings() {
           )}
         >
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
-            Lume 会默认从配置文件自动发现 MCP 服务，无需手动添加。
+            当前工作区的 MCP 服务由工作区配置文件管理。
           </p>
 
           <div className="mt-4 grid h-[86px] grid-cols-[1fr_1fr_1fr] items-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)]">
@@ -263,7 +232,7 @@ export function McpSettings() {
             />
             <DiscoveryItem
               icon={Clock3}
-              title="最近扫描"
+              title="状态来源"
               value={lastScan}
               bordered
             />
@@ -271,7 +240,7 @@ export function McpSettings() {
 
           <div className="mt-4 flex items-center gap-2 text-[12px] leading-5 text-[var(--text-3)]">
             <Info size={14} className="text-[var(--text-3)]" />
-            Lume 会默认从全局配置和当前工作区配置中自动发现 MCP 服务
+            不再读取 Claude 全局 MCP 配置；请在当前工作区配置中维护服务。
           </div>
         </SettingsCard>
 
@@ -551,26 +520,8 @@ function McpOverviewStats({
   )
 }
 
-function buildServerRows(
-  servers: WorkspaceMcpConfig['servers'],
-  discoveredServers: GlobalDiscoverySnapshot['mcpServers']
-): McpTableRow[] {
+function buildServerRows(servers: WorkspaceMcpConfig['servers']): McpTableRow[] {
   const rows = new Map<string, { entry: McpServerEntry; source: string }>()
-
-  for (const discovered of discoveredServers) {
-    rows.set(discovered.name, {
-      entry: {
-        type: discovered.type,
-        enabled: discovered.enabled,
-        command: discovered.command,
-        args: discovered.args,
-        env: discovered.env,
-        url: discovered.url,
-        headers: discovered.headers,
-      },
-      source: getDiscoverySource(discovered.sourcePath),
-    })
-  }
 
   for (const [name, entry] of Object.entries(servers ?? {})) {
     rows.set(name, {
@@ -598,17 +549,6 @@ function buildServerRows(
   })
 }
 
-function getDiscoverySource(sourcePath: string): string {
-  const normalized = sourcePath.replace(/\\/g, '/')
-  if (normalized.includes('/agent-workspaces/')) {
-    return '工作区配置'
-  }
-  if (normalized.includes('/.lume/')) {
-    return '全局配置'
-  }
-  return '配置文件'
-}
-
 function getServerIcon(name: string): LucideIcon {
   if (name.includes('github')) return GitBranch
   if (name.includes('notion')) return NotepadText
@@ -623,25 +563,6 @@ function getServerIconClass(name: string): string {
   if (name.includes('browser')) return 'text-[#566078]'
   if (name.includes('file')) return 'text-[#ff9f2d]'
   return 'text-[var(--brand)]'
-}
-
-function formatLastScan(scannedAt?: number): string {
-  if (!scannedAt) {
-    return '刚刚'
-  }
-
-  const elapsedMs = Date.now() - scannedAt
-  if (elapsedMs < 60_000) {
-    return '刚刚'
-  }
-
-  const minutes = Math.max(1, Math.round(elapsedMs / 60_000))
-  if (minutes < 60) {
-    return `${minutes} 分钟前`
-  }
-
-  const hours = Math.round(minutes / 60)
-  return `${hours} 小时前`
 }
 
 // ===== MCP 服务器表单 =====

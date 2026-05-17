@@ -1,4 +1,5 @@
 import { access, readFile } from 'fs/promises'
+import { execFile } from 'child_process'
 import { join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import type {
@@ -39,6 +40,97 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
+interface CommandToolManifest {
+  name: string
+  description?: string
+  command: string
+  args?: string[]
+  cwd?: string
+  timeoutMs?: number
+  inputSchema?: ToolDefinition['inputSchema']
+  metadata?: Record<string, unknown>
+}
+
+function isCommandToolManifest(value: unknown): value is CommandToolManifest {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return typeof record.name === 'string' && typeof record.command === 'string'
+}
+
+function normalizeManifestTools(
+  tools: unknown,
+  pluginPath: string,
+  options: { commandOnly?: boolean } = {},
+): ToolDefinition[] | undefined {
+  if (!Array.isArray(tools)) return undefined
+  const normalized: ToolDefinition[] = []
+  for (const tool of tools) {
+    if (isCommandToolManifest(tool)) {
+      normalized.push(commandToolFromManifest(tool, pluginPath))
+      continue
+    }
+    if (!options.commandOnly) {
+      normalized.push(tool as ToolDefinition)
+    }
+  }
+  return normalized
+}
+
+function commandToolFromManifest(manifest: CommandToolManifest, pluginPath: string): ToolDefinition {
+  return {
+    name: manifest.name,
+    description: manifest.description || manifest.name,
+    inputSchema: manifest.inputSchema || { type: 'object', properties: {} },
+    isReadOnly: () => manifest.metadata?.isReadOnly === true,
+    isConcurrencySafe: () => manifest.metadata?.isConcurrencySafe === true,
+    async call(input, context) {
+      const payload = JSON.stringify(input ?? {})
+      const timeout = Math.max(1, manifest.timeoutMs ?? 30_000)
+      const cwd = manifest.cwd ? resolve(pluginPath, manifest.cwd) : pluginPath
+      const args = [...(manifest.args ?? []), payload]
+      return await new Promise((resolveResult) => {
+        const child = execFile(manifest.command, args, {
+          cwd,
+          timeout,
+          maxBuffer: 1024 * 1024,
+          env: {
+            ...process.env,
+            PLUGIN_INPUT: payload,
+            ...(context.toolConfig?.env && typeof context.toolConfig.env === 'object'
+              ? context.toolConfig.env as Record<string, string>
+              : {}),
+          },
+        }, (error, stdout, stderr) => {
+          if (error) {
+            const output = [error.message, stderr && `stderr: ${stderr}`, stdout && `stdout: ${stdout}`]
+              .filter(Boolean)
+              .join('\n')
+            resolveResult({
+              type: 'tool_result',
+              tool_use_id: context.toolUseId ?? '',
+              content: output,
+              is_error: true,
+            })
+            return
+          }
+          resolveResult({
+            type: 'tool_result',
+            tool_use_id: context.toolUseId ?? '',
+            content: stdout || stderr || '(no output)',
+          })
+        })
+        if (context.abortSignal) {
+          context.abortSignal.addEventListener('abort', () => child.kill(), { once: true })
+        }
+      })
+    },
+    runtimeMetadata: {
+      ...(manifest.metadata ?? {}),
+      source: 'plugin',
+    },
+  } as ToolDefinition
+}
+
 async function loadPluginModule(path: string): Promise<LoadedPlugin | null> {
   const module = (await import(pathToFileURL(path).href)) as PluginModule
   const plugin = 'default' in module && module.default ? module.default : (module as LoadedPlugin)
@@ -56,6 +148,7 @@ export async function loadPlugins(
     const pluginPath = (spec as { path?: string }).path
       ? resolve(cwd, (spec as { path?: string }).path as string)
       : resolve(cwd, spec.name)
+    const commandOnly = (spec as { kind?: string }).kind === 'command'
 
     const manifestPath = join(pluginPath, 'plugin.json')
     const indexCandidates = [
@@ -75,7 +168,7 @@ export async function loadPlugins(
           name: manifest.name || spec.name,
           path: pluginPath,
           source: manifest.source,
-          tools: manifest.tools,
+          tools: normalizeManifestTools(manifest.tools, pluginPath, { commandOnly }),
           agents: manifest.agents,
           hooks: manifest.hooks,
           mcpServers: manifest.mcpServers,
@@ -83,7 +176,7 @@ export async function loadPlugins(
           commands: manifest.commands,
           config: spec.config,
         }
-        if (manifest.entry) {
+        if (!commandOnly && manifest.entry) {
           const modulePlugin = await loadPluginModule(resolve(pluginPath, manifest.entry))
           if (modulePlugin) {
             plugin = {
@@ -96,11 +189,14 @@ export async function loadPlugins(
           }
         }
       } catch {
+        if (commandOnly) {
+          continue
+        }
         // Fall through to module loading.
       }
     }
 
-    if (!plugin) {
+    if (!plugin && !commandOnly) {
       for (const candidate of indexCandidates) {
         if (!(await fileExists(candidate))) continue
         const modulePlugin = await loadPluginModule(candidate)

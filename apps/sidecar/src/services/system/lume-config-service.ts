@@ -5,6 +5,7 @@ import type {
   LumeConfigAuditEntry,
   LumeConfigAuditSource,
   LumeConfigFile,
+  LumeConfigPermissionRule,
   LumeConfigSectionSet,
   LumeEffectiveConfig
 } from "@lume/shared";
@@ -30,11 +31,20 @@ function createDefaultLumeConfig(): LumeConfigFile {
       enabled: [],
       disabled: []
     },
+    plugins: {
+      enabled: [],
+      directories: []
+    },
     permissions: {
       toolPolicy: {
         allow: [],
         deny: []
-      }
+      },
+      rules: [],
+      classifier: {
+        enabled: false
+      },
+      privateWriteRoots: []
     },
     workspaces: {}
   };
@@ -77,6 +87,35 @@ function normalizeFallbackModelRefs(
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizePermissionRules(value: unknown): LumeConfigPermissionRule[] {
+  if (!Array.isArray(value)) return [];
+  const rules: LumeConfigPermissionRule[] = [];
+  for (const item of value) {
+    if (!isPlainObject(item)) continue;
+    const tool = normalizeOptionalString(item.tool);
+    if (!tool) continue;
+    const action = item.action === "allow" || item.action === "ask" || item.action === "deny"
+      ? item.action
+      : undefined;
+    if (!action) continue;
+    rules.push({
+      ...(typeof item.id === "string" && item.id.trim() ? { id: item.id.trim() } : {}),
+      tool,
+      ...(typeof item.commandPattern === "string" && item.commandPattern.trim()
+        ? { commandPattern: item.commandPattern.trim() }
+        : {}),
+      ...(typeof item.pathPattern === "string" && item.pathPattern.trim()
+        ? { pathPattern: item.pathPattern.trim() }
+        : {}),
+      action,
+      ...(item.scope === "session" || item.scope === "workspace" || item.scope === "global"
+        ? { scope: item.scope }
+        : {})
+    });
+  }
+  return rules;
 }
 
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
@@ -129,6 +168,7 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
         || value.agent.permissionMode === "acceptEdits"
         || value.agent.permissionMode === "bypassPermissions"
         || value.agent.permissionMode === "plan"
+        || value.agent.permissionMode === "dontAsk"
         ? { permissionMode: value.agent.permissionMode }
         : {}),
       ...(value.agent.thinkingLevel === "off"
@@ -160,6 +200,13 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     };
   }
 
+  if (isPlainObject(value.plugins)) {
+    next.plugins = {
+      enabled: normalizeUniqueStringArray(value.plugins.enabled),
+      directories: normalizeUniqueStringArray(value.plugins.directories)
+    };
+  }
+
   if (isPlainObject(value.permissions)) {
     const normalizedPermissions: NonNullable<LumeConfigSectionSet["permissions"]> = {};
     if (isPlainObject(value.permissions.toolPolicy)) {
@@ -168,6 +215,15 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
         deny: normalizeStringArray(value.permissions.toolPolicy.deny)
       };
     }
+    normalizedPermissions.rules = normalizePermissionRules(value.permissions.rules);
+    if (isPlainObject(value.permissions.classifier)) {
+      normalizedPermissions.classifier = {
+        ...(typeof value.permissions.classifier.enabled === "boolean"
+          ? { enabled: value.permissions.classifier.enabled }
+          : {})
+      };
+    }
+    normalizedPermissions.privateWriteRoots = normalizeUniqueStringArray(value.permissions.privateWriteRoots);
     next.permissions = normalizedPermissions;
   }
 
@@ -226,7 +282,13 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
       toolPolicy: {
         ...fallbackToolPolicy,
         ...base.permissions?.toolPolicy
-      }
+      },
+      rules: base.permissions?.rules ?? fallback.permissions?.rules ?? [],
+      classifier: {
+        ...(fallback.permissions?.classifier ?? {}),
+        ...(base.permissions?.classifier ?? {})
+      },
+      privateWriteRoots: base.permissions?.privateWriteRoots ?? fallback.permissions?.privateWriteRoots ?? []
     },
     workspaces
   };
@@ -384,7 +446,19 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       toolPolicy: {
         ...(file.permissions?.toolPolicy ?? {}),
         ...(overlay?.permissions?.toolPolicy ?? {})
-      }
+      },
+      rules: [
+        ...(file.permissions?.rules ?? []),
+        ...(overlay?.permissions?.rules ?? [])
+      ],
+      classifier: {
+        ...(file.permissions?.classifier ?? {}),
+        ...(overlay?.permissions?.classifier ?? {})
+      },
+      privateWriteRoots: [
+        ...(file.permissions?.privateWriteRoots ?? []),
+        ...(overlay?.permissions?.privateWriteRoots ?? [])
+      ]
     }
   };
 }

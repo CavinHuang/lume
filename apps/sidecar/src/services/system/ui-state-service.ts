@@ -12,14 +12,11 @@ interface SidecarSettings extends SidecarSettingsStore {
 
 const DEFAULT_UI_STATE: PersistedUiState = {
   version: 1,
-  appMode: "chat",
   activeView: "conversations",
-  currentConversationId: null,
   currentAgentThreadId: null,
   currentAgentWorkspaceId: null,
   promptSidebarOpen: false,
   agentSidePanelOpenByThreadId: {},
-  chatDraftByConversationId: {},
   agentDraftByThreadId: {},
   updatedAt: 0
 };
@@ -32,14 +29,11 @@ function sanitizeUiState(input: unknown): PersistedUiState {
   const value = input as Partial<PersistedUiState>;
   return {
     version: 1,
-    appMode: value.appMode === "agent" ? "agent" : "chat",
     activeView: value.activeView === "settings" ? "settings" : "conversations",
-    currentConversationId: typeof value.currentConversationId === "string" ? value.currentConversationId : null,
     currentAgentThreadId: typeof value.currentAgentThreadId === "string" ? value.currentAgentThreadId : null,
     currentAgentWorkspaceId: typeof value.currentAgentWorkspaceId === "string" ? value.currentAgentWorkspaceId : null,
     promptSidebarOpen: value.promptSidebarOpen === true,
     agentSidePanelOpenByThreadId: sanitizeSidePanelOpenMap(value.agentSidePanelOpenByThreadId),
-    chatDraftByConversationId: sanitizeStringMap(value.chatDraftByConversationId),
     agentDraftByThreadId: sanitizeStringMap(value.agentDraftByThreadId),
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : 0
   };

@@ -3,7 +3,6 @@ import type {
   GetSkillMarketDetailInput,
   GitHubSkillReviewResult,
   GlobalImportResult,
-  ImportGlobalSkillToWorkspaceInput,
   ImportLocalSkillDirectoryToWorkspaceInput,
   InstallSkillMarketItemToWorkspaceInput,
   InstallGitHubSkillToWorkspaceInput,
@@ -30,9 +29,6 @@ export const installGitHubSkillToWorkspace = (input: InstallGitHubSkillToWorkspa
 
 export const importLocalSkillDirectoryToWorkspace = (input: ImportLocalSkillDirectoryToWorkspaceInput) =>
   sidecarCall<GlobalImportResult>('agent:import-local-skill-directory-to-workspace', input)
-
-export const importGlobalSkillToWorkspace = (input: ImportGlobalSkillToWorkspaceInput) =>
-  sidecarCall<GlobalImportResult>('agent:import-global-skill-to-workspace', input)
 
 export const installSkillMarketItemToWorkspace = (input: InstallSkillMarketItemToWorkspaceInput) =>
   sidecarCall<GlobalImportResult>('agent:install-skill-market-item-to-workspace', input)

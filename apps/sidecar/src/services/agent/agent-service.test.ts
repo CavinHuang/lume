@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import type { AgentMessageAppendedEvent, SDKMessage } from "@lume/shared";
 
 const heldRunResolvers = new Map<string, () => void>();
-const runPiAgentCalls: unknown[] = [];
+const runAgentRuntimeCalls: unknown[] = [];
 
 function emitSuccessfulRun(emit: {
   onSdkMessage: (message: SDKMessage) => void;
@@ -119,8 +119,8 @@ mock.module("../../providers", () => ({
   })
 }));
 
-mock.module("../pi-agent/runtime-core/attempt", () => ({
-  runPiAgent: async (
+mock.module("../agent-runtime/runtime-core/attempt", () => ({
+  runAgentRuntime: async (
     params: unknown,
     emit: {
       onSdkMessage: (message: SDKMessage) => void;
@@ -129,7 +129,7 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
       onError: (error: string) => void;
     }
   ) => {
-    runPiAgentCalls.push(params);
+    runAgentRuntimeCalls.push(params);
     const userMessage = (params as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
     const threadId = (params as { runtime?: { sessionId?: string } })?.runtime?.sessionId ?? "";
     if (userMessage === "subagent-projection") {
@@ -175,7 +175,7 @@ mock.module("../pi-agent/runtime-core/attempt", () => ({
     emitSuccessfulRun(emit);
     return { status: "completed" as const };
   },
-  stopPiAgent: () => undefined
+  stopAgentRuntime: () => undefined
 }));
 
 describe("agent-service", () => {
@@ -200,7 +200,7 @@ describe("agent-service", () => {
     resetServiceRuntimeForTest();
     closeMemoryManagers();
     heldRunResolvers.clear();
-    runPiAgentCalls.length = 0;
+    runAgentRuntimeCalls.length = 0;
     if (previousConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -317,7 +317,7 @@ describe("agent-service", () => {
       onToolPermissionRequest: () => undefined
     });
 
-    expect((runPiAgentCalls.at(-1) as { runtime?: { workspaceId?: string } })?.runtime?.workspaceId).toBe(workspace.id);
+    expect((runAgentRuntimeCalls.at(-1) as { runtime?: { workspaceId?: string } })?.runtime?.workspaceId).toBe(workspace.id);
   });
 
   test("sendAgentMessage 在 compaction boundary 后写入结构化 memory flush", async () => {

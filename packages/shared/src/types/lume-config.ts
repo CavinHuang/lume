@@ -1,4 +1,4 @@
-export type LumeConfigPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan"
+export type LumeConfigPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk"
 
 export type LumeConfigThinkingLevel = "off" | "low" | "medium" | "high" | "max"
 
@@ -22,6 +22,11 @@ export interface LumeConfigSkillsSection {
   disabled?: string[]
 }
 
+export interface LumeConfigPluginsSection {
+  enabled?: string[]
+  directories?: string[]
+}
+
 export interface LumeConfigModelsSection {
   chat?: {
     defaultModelRef?: string
@@ -38,6 +43,24 @@ export interface LumeConfigPermissionsSection {
     allow?: string[]
     deny?: string[]
   }
+  rules?: LumeConfigPermissionRule[]
+  classifier?: {
+    enabled?: boolean
+  }
+  privateWriteRoots?: string[]
+}
+
+export type LumeConfigPermissionRuleAction = "allow" | "ask" | "deny"
+
+export type LumeConfigPermissionRuleScope = "session" | "workspace" | "global"
+
+export interface LumeConfigPermissionRule {
+  id?: string
+  tool: string
+  commandPattern?: string
+  pathPattern?: string
+  action: LumeConfigPermissionRuleAction
+  scope?: LumeConfigPermissionRuleScope
 }
 
 export interface LumeConfigSectionSet {
@@ -47,6 +70,7 @@ export interface LumeConfigSectionSet {
   mcp?: Record<string, unknown>
   memory?: Record<string, unknown>
   skills?: LumeConfigSkillsSection
+  plugins?: LumeConfigPluginsSection
   permissions?: LumeConfigPermissionsSection
 }
 

@@ -10,6 +10,7 @@ import {
   updateToolApprovalSession
 } from "./approval-service";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
+import { runtimePermissionSessionStore } from "../permissions/permission-session";
 
 const pendingToolPermissionResolvers = new Map<
   string,
@@ -22,7 +23,6 @@ const pendingToolPermissionResolvers = new Map<
   }
 >();
 
-const sessionAlwaysAllowedTools = new Map<string, Set<string>>();
 const DEFAULT_TOOL_PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
 
 function resolveTimeoutMs(): number {
@@ -33,25 +33,14 @@ function resolveTimeoutMs(): number {
   return Math.max(15_000, Math.min(60 * 60 * 1000, Math.floor(parsed)));
 }
 
-export function isToolAlwaysAllowed(threadId: string, toolName: string): boolean {
-  const allowed = sessionAlwaysAllowedTools.get(threadId);
-  if (!allowed) return false;
-  return allowed.has(toolName.trim());
-}
-
-export function markToolAlwaysAllowed(threadId: string, toolName: string): void {
-  const normalized = toolName.trim();
+export function markToolFingerprintAllowed(threadId: string, fingerprint?: string): void {
+  const normalized = fingerprint?.trim();
   if (!normalized) return;
-  let allowed = sessionAlwaysAllowedTools.get(threadId);
-  if (!allowed) {
-    allowed = new Set<string>();
-    sessionAlwaysAllowedTools.set(threadId, allowed);
-  }
-  allowed.add(normalized);
+  runtimePermissionSessionStore.grantFingerprint(threadId, normalized);
 }
 
 export function clearToolPermissionSession(threadId: string): void {
-  sessionAlwaysAllowedTools.delete(threadId);
+  runtimePermissionSessionStore.clear(threadId);
   cancelPendingToolPermissionBySession(threadId);
 }
 
@@ -131,8 +120,11 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
       requestId: input.requestId,
       decision: input.decision
     });
-    if (handled && input.decision === "allow_always" && persisted?.toolName) {
-      markToolAlwaysAllowed(persisted.originThreadId ?? persisted.threadId, persisted.toolName);
+    if (handled && input.decision === "allow_always" && persisted?.grantSuggestion?.fingerprint) {
+      markToolFingerprintAllowed(
+        persisted.originThreadId ?? persisted.threadId,
+        persisted.grantSuggestion.fingerprint
+      );
     }
     return handled;
   }

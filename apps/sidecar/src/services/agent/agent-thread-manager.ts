@@ -38,14 +38,13 @@ import {
   syncVersionStoreFromMessages
 } from "./agent-message-versioning-service";
 import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./agent-message-version-store";
-import { getConversationMessages } from "../chat/conversation-manager";
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
-import { extractAssistantReasoningText, extractRenderableAssistantText } from "../pi-agent/content-extraction";
+import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath,
   hasRuntimeCoreSessionTranscript
-} from "../pi-agent/runtime-core/session-store";
+} from "../agent-runtime/runtime-core/session-store";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 
 interface AgentThreadsIndex {
@@ -494,73 +493,6 @@ export function moveAgentThreadToWorkspace(id: string, workspaceId: string): Age
     sdkThreadId: undefined,
     runtimeThreadId: undefined
   });
-}
-
-/**
- * 迁移 Chat 对话消息到指定 Agent 线程。
- * 仅迁移 user/assistant 且有文本内容的消息，忽略工具活动与附件。
- */
-export function migrateChatToAgentThread(conversationId: string, agentThreadId: string): number {
-  const thread = getAgentThreadMeta(agentThreadId);
-  if (!thread) {
-    throw new Error(`Agent 线程不存在: ${agentThreadId}`);
-  }
-
-  const chatMessages = getConversationMessages(conversationId);
-  if (chatMessages.length === 0) {
-    return 0;
-  }
-
-  const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(agentThreadId);
-  if (existsSync(runtimeCoreSessionDir)) {
-    rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
-  }
-
-  const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentThreadCwd(agentThreadId), agentThreadId);
-  let migratedCount = 0;
-  for (const message of chatMessages) {
-    if (message.role !== "user" && message.role !== "assistant") continue;
-    if (!message.content.trim()) continue;
-    if (message.role === "user") {
-      sessionManager.appendMessage({
-        role: "user",
-        content: [{ type: "text", text: message.content }],
-        timestamp: message.createdAt
-      });
-      migratedCount += 1;
-      continue;
-    }
-
-    const resolvedModel = typeof message.model === "string" ? message.model.trim() : "";
-    const [provider, ...restModel] = resolvedModel.split("/");
-    const assistantModel = restModel.length > 0
-      ? restModel.join("/")
-      : (resolvedModel || "unknown");
-    const assistantProvider = provider && restModel.length > 0 ? provider : "unknown";
-    sessionManager.appendMessage({
-      role: "assistant",
-      provider: assistantProvider,
-      model: assistantModel,
-      api: "anthropic-messages",
-      stopReason: "stop",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-      },
-      content: [{ type: "text", text: message.content }],
-      timestamp: message.createdAt
-    });
-    migratedCount += 1;
-  }
-
-  if (migratedCount > 0) {
-    updateAgentThreadMeta(agentThreadId, {});
-  }
-  return migratedCount;
 }
 
 export function deleteAgentThread(id: string): void {

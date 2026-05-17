@@ -38,7 +38,7 @@ describe("RuntimeEvent sidecar boundary", () => {
 
   test("runtime runner path no longer exposes onRunEvent callbacks", () => {
     for (const file of [
-      "apps/sidecar/src/services/pi-agent/runner/types.ts",
+      "apps/sidecar/src/services/agent-runtime/runner/types.ts",
       "apps/sidecar/src/services/agent-runtime/runner/run-loop.ts",
       "apps/sidecar/src/services/agent-runtime/runner/run-observer.ts",
       "apps/sidecar/src/services/agent-runtime/runner/lume-runner.ts",

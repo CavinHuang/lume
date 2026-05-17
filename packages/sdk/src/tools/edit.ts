@@ -2,8 +2,8 @@
  * FileEditTool - Precise string replacement in files
  */
 
-import { readFile, writeFile } from 'fs/promises'
-import { resolve } from 'path'
+import { readFile, writeFile, rename, rm } from 'fs/promises'
+import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
 
@@ -68,7 +68,7 @@ export const FileEditTool = defineTool({
           }
         }
         content = content.replace(old_string, new_string)
-        await writeFile(filePath, content, 'utf-8')
+        await writeFileAtomic(filePath, content)
         return {
           data: {
             filePath,
@@ -80,7 +80,7 @@ export const FileEditTool = defineTool({
       } else {
         const count = content.split(old_string).length - 1
         content = content.split(old_string).join(new_string)
-        await writeFile(filePath, content, 'utf-8')
+        await writeFileAtomic(filePath, content)
         return {
           data: {
             filePath,
@@ -98,3 +98,15 @@ export const FileEditTool = defineTool({
     }
   },
 })
+
+async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+  const dir = dirname(filePath)
+  const tempPath = join(dir, `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
+  try {
+    await writeFile(tempPath, content, 'utf-8')
+    await rename(tempPath, filePath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
+}

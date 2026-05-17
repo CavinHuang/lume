@@ -10,7 +10,7 @@ import { createFileBackedRunContinuationStore } from "../services/agent-runtime/
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
 import { createFileBackedTaskRunStore } from "../services/agent-runtime/task-run/task-run-store";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
-import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
+import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 
 const sendAgentMessageMock = mock(async (_input: unknown, emit?: {
   onMessageAppended?: (event: { threadId: string; message: { role: "assistant"; content: string } }) => void;

@@ -7,6 +7,7 @@
 
 import type { SDKMessage } from "@lume/agent-sdk"
 import type { LumeRuntimeEvent } from "./runtime-event"
+import type { LumeConfigThinkingLevel } from "./lume-config"
 export type { SDKMessage } from "@lume/agent-sdk"
 
 // ===== Agent 工作区 =====
@@ -56,7 +57,7 @@ export type AgentModelSelectionSource = 'inherited' | 'thread-override'
  * Agent 线程轻量索引项
  *
  * 存储在 ~/.lume/agent-sessions.json 中，
- * 类似 ConversationMeta，独立存储。
+ * 存储在独立 Agent 线程索引中。
  */
 export interface AgentThreadMeta {
   /** 线程唯一标识 */
@@ -208,18 +209,6 @@ export interface AgentToolPolicy {
   deny?: string[]
 }
 
-export interface AgentRuntimeToolPolicyConfig {
-  version?: number
-  tools?: {
-    allow?: string[]
-    deny?: string[]
-    byProvider?: Record<string, AgentToolPolicy>
-    bySessionType?: Record<string, AgentToolPolicy>
-    byChatType?: Record<string, AgentToolPolicy>
-    subagent?: AgentToolPolicy
-  }
-}
-
 // ===== Subagent Runs =====
 
 export type SubagentRunStatus =
@@ -305,113 +294,6 @@ export interface AgentProxyStatus {
     httpsProxy?: string
     noProxy?: string
   }
-}
-
-// ===== 全局发现（Claude）=====
-
-export type GlobalDiscoveryProvider = 'claude'
-
-export interface GlobalDiscoveryWarning {
-  code: string
-  message: string
-  details?: string
-}
-
-export interface GlobalMcpServerMeta {
-  id: string
-  provider: GlobalDiscoveryProvider
-  name: string
-  type: McpTransportType
-  enabled: boolean
-  command?: string
-  args?: string[]
-  env?: Record<string, string>
-  url?: string
-  headers?: Record<string, string>
-  sourcePath: string
-}
-
-export interface GlobalPluginMarketplaceMeta {
-  id: string
-  provider: GlobalDiscoveryProvider
-  sourceType: 'github' | 'directory' | 'unknown'
-  sourceRef: string
-  installLocation: string
-  lastUpdated?: string
-  autoUpdate?: boolean
-}
-
-export interface GlobalMarketplacePluginMeta {
-  name: string
-  description?: string
-  version?: string
-  source?: string
-  homepage?: string
-  authorName?: string
-}
-
-export interface GlobalPluginMeta {
-  id: string
-  provider: GlobalDiscoveryProvider
-  pluginName: string
-  marketplaceId: string
-  installCount: number
-  scopes: string[]
-  versions: string[]
-  projectPaths: string[]
-  lastUpdated?: string
-}
-
-export interface GlobalSkillMeta {
-  id: string
-  provider: GlobalDiscoveryProvider
-  slug: string
-  name: string
-  description?: string
-  icon?: string
-  sourcePath: string
-}
-
-export interface GlobalDiscoverySnapshot {
-  version: number
-  scannedAt: number
-  providers: GlobalDiscoveryProvider[]
-  mcpServers: GlobalMcpServerMeta[]
-  pluginMarketplaces: GlobalPluginMarketplaceMeta[]
-  plugins: GlobalPluginMeta[]
-  skills: GlobalSkillMeta[]
-  warnings: GlobalDiscoveryWarning[]
-}
-
-export interface GlobalPluginMarketplaceDetail {
-  marketplace: GlobalPluginMarketplaceMeta
-  plugins: GlobalMarketplacePluginMeta[]
-  installedPlugins: GlobalPluginMeta[]
-  warnings: GlobalDiscoveryWarning[]
-}
-
-export interface InstallGlobalPluginInput {
-  marketplaceId: string
-  pluginName: string
-  scope?: 'user' | 'project' | 'local'
-}
-
-export interface InstallGlobalPluginResult {
-  ok: true
-  installed: boolean
-  message: string
-}
-
-export interface ImportGlobalMcpToWorkspaceInput {
-  workspaceSlug: string
-  mcpId: string
-  overwrite?: boolean
-}
-
-export interface ImportGlobalSkillToWorkspaceInput {
-  workspaceSlug: string
-  skillId: string
-  overwrite?: boolean
 }
 
 export interface ImportLocalSkillDirectoryToWorkspaceInput {
@@ -537,9 +419,9 @@ export interface AgentSendInput {
   /** Bootstrap 线程类型（用于系统提示词文件注入策略） */
   threadType?: 'main' | 'subagent' | 'group' | 'channel'
   /** Agent 权限模式（plan 为只读规划模式） */
-  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk'
   /** Agent 思考等级 */
-  thinkingLevel?: ThinkingLevel
+  thinkingLevel?: AgentThinkingLevel
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */
@@ -609,6 +491,18 @@ export type AgentToolPermissionRiskLevel = 'low' | 'medium' | 'high'
 
 export type AgentToolPermissionDecision = 'allow_once' | 'allow_always' | 'deny'
 
+export interface AgentToolPermissionClassification {
+  riskLevel: AgentToolPermissionRiskLevel | 'critical'
+  reasonCode: string
+  explanation: string
+  shouldAsk: boolean
+}
+
+export interface AgentToolPermissionGrantSuggestion {
+  fingerprint: string
+  label: string
+}
+
 export interface AgentToolPermissionRequest {
   threadId: string
   /** 所属 runtime runId，用于 durable interruption / checkpoint 关联。 */
@@ -624,6 +518,10 @@ export interface AgentToolPermissionRequest {
   toolName: string
   risk: AgentToolPermissionRiskLevel
   reason: string
+  reasonCode?: string
+  matchedRuleId?: string
+  classification?: AgentToolPermissionClassification
+  grantSuggestion?: AgentToolPermissionGrantSuggestion
   input: Record<string, unknown>
   /** 持久化 interruption 类型；自动化运行高风险工具时使用 automation_approval。 */
   interruptionType?: 'tool_approval' | 'automation_approval'
@@ -689,7 +587,7 @@ export interface AgentTaskApprovalResponseResult {
 export interface AgentExecuteTaskContractInput {
   threadId: string
   contractId?: string
-  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions'
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'dontAsk'
   intent?: 'execute' | 'continue' | 'retry' | 'skip'
 }
 
@@ -1114,8 +1012,6 @@ export const AGENT_IPC_CHANNELS = {
   UPDATE_THREAD_TITLE: 'agent:update-thread-title',
   /** 更新线程模型/渠道选择 */
   UPDATE_THREAD_MODEL_SELECTION: 'agent:update-thread-model-selection',
-  /** 迁移 Chat 对话消息到 Agent 线程 */
-  MIGRATE_CHAT_TO_THREAD: 'agent:migrate-chat-to-thread',
   /** 置顶/取消置顶线程 */
   TOGGLE_PIN_THREAD: 'agent:toggle-pin-thread',
   /** 移动线程到目标工作区 */
@@ -1152,10 +1048,6 @@ export const AGENT_IPC_CHANNELS = {
   GET_MCP_CONFIG: 'agent:get-mcp-config',
   /** 保存工作区 MCP 配置 */
   SAVE_MCP_CONFIG: 'agent:save-mcp-config',
-  /** 获取 Agent runtime tool policy */
-  GET_TOOL_POLICY: 'agent:get-tool-policy',
-  /** 保存 Agent runtime tool policy */
-  SAVE_TOOL_POLICY: 'agent:save-tool-policy',
   /** 获取 Agent 网络代理配置 */
   GET_PROXY_SETTINGS: 'agent:get-proxy-settings',
   /** 保存 Agent 网络代理配置 */
@@ -1164,18 +1056,6 @@ export const AGENT_IPC_CHANNELS = {
   GET_SKILLS: 'agent:get-skills',
   /** 删除工作区 Skill */
   DELETE_SKILL: 'agent:delete-skill',
-  /** 获取全局发现快照（MCP/Plugin/Marketplace/Skills） */
-  GET_GLOBAL_DISCOVERY: 'agent:get-global-discovery',
-  /** 重新扫描全局发现来源 */
-  RESCAN_GLOBAL_DISCOVERY: 'agent:rescan-global-discovery',
-  /** 获取 marketplace 详情（包含插件清单） */
-  GET_GLOBAL_MARKETPLACE_DETAIL: 'agent:get-global-marketplace-detail',
-  /** 安装全局 marketplace 插件 */
-  INSTALL_GLOBAL_PLUGIN: 'agent:install-global-plugin',
-  /** 导入全局 MCP 到工作区 */
-  IMPORT_GLOBAL_MCP_TO_WORKSPACE: 'agent:import-global-mcp-to-workspace',
-  /** 导入全局 Skill 到工作区 */
-  IMPORT_GLOBAL_SKILL_TO_WORKSPACE: 'agent:import-global-skill-to-workspace',
   /** 从本地目录导入 Skill 到工作区 */
   IMPORT_LOCAL_SKILL_DIRECTORY_TO_WORKSPACE: 'agent:import-local-skill-directory-to-workspace',
   /** 从技能市场条目安装 Skill 到工作区 */
@@ -1314,4 +1194,4 @@ export const AGENT_IPC_CHANNELS = {
   /** 从指定消息处分叉线程 */
   FORK_THREAD: 'agent:fork-thread',
 } as const
-import type { ThinkingLevel } from "./chat"
+export type AgentThinkingLevel = LumeConfigThinkingLevel

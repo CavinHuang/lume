@@ -19,6 +19,9 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   const [choice, setChoice] = useState<AgentToolPermissionDecision>('allow_once')
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
+  const classification = request.classification
+  const grantLabel = request.grantSuggestion?.label
+  const alwaysAllowLabel = grantLabel ? `始终允许 ${grantLabel}` : '始终允许'
 
   useEffect(() => {
     setChoice('allow_once')
@@ -74,6 +77,14 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
             {subagentDisplayLabel && <span className="truncate text-[12px] text-[#8a8f98]">{subagentDisplayLabel}</span>}
           </div>
           <p className="mt-0.5 text-[12px] leading-5 text-[#8a8f98]">{request.reason}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-[#8a8f98]">
+            {request.reasonCode && <span>{request.reasonCode}</span>}
+            {classification?.reasonCode && classification.reasonCode !== request.reasonCode && <span>{classification.reasonCode}</span>}
+            {request.matchedRuleId && <span>{request.matchedRuleId}</span>}
+          </div>
+          {classification?.explanation && classification.explanation !== request.reason && (
+            <p className="mt-1 text-[11px] leading-4 text-[#8a8f98]">{classification.explanation}</p>
+          )}
         </div>
 
         <PermissionChoice
@@ -84,7 +95,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
         />
         <PermissionChoice
           index={2}
-          label="始终允许"
+          label={alwaysAllowLabel}
           selected={choice === 'allow_always'}
           onClick={() => setChoice('allow_always')}
         />

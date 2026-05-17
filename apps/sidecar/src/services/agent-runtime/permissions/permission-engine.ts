@@ -1,0 +1,208 @@
+import type { LumeToolRiskLevel } from "../tools/tool-types";
+import { createPermissionClassifier, type PermissionClassifier } from "./permission-classifier";
+import {
+  buildPermissionFingerprint,
+  extractPermissionCommand,
+  extractPermissionPath,
+  isPathWithinRoot,
+  matchPermissionRule,
+  toAbsolutePath
+} from "./permission-rules";
+import { runtimePermissionSessionStore, type PermissionSessionStore } from "./permission-session";
+import type {
+  PermissionDecision,
+  PermissionDecisionInput,
+  PermissionRule
+} from "./permission-types";
+
+export interface PermissionEngineOptions {
+  classifier?: PermissionClassifier;
+  session?: PermissionSessionStore;
+  rules?: PermissionRule[];
+}
+
+export class PermissionEngine {
+  private readonly classifier: PermissionClassifier;
+  private readonly session: PermissionSessionStore;
+  private readonly rules: PermissionRule[];
+
+  constructor(options: PermissionEngineOptions = {}) {
+    this.classifier = options.classifier ?? createPermissionClassifier();
+    this.session = options.session ?? runtimePermissionSessionStore;
+    this.rules = options.rules ?? [];
+  }
+
+  async decide(input: PermissionDecisionInput): Promise<PermissionDecision> {
+    const mode = normalizePermissionMode(input.mode);
+    const riskLevel = normalizeRisk(input.descriptor.metadata.riskLevel);
+
+    if (mode === "plan") {
+      if (input.descriptor.metadata.allowedInPlanMode) {
+        return allow("mode_plan", "Plan 模式允许规划与只读工具", riskLevel, input);
+      }
+      return deny("mode_plan", `当前是 plan 模式，只允许规划与只读工具，禁止执行: ${input.descriptor.name}`, riskLevel, input);
+    }
+
+    const rules = [...this.rules, ...(input.rules ?? [])];
+    for (const rule of rules) {
+      if (!matchPermissionRule({
+        rule,
+        descriptor: input.descriptor,
+        rawInput: input.input,
+        cwd: input.context.cwd
+      })) {
+        continue;
+      }
+      if (rule.action === "allow") {
+        return {
+          ...allow("rule_allow", "权限规则允许该工具调用", riskLevel, input),
+          matchedRuleId: rule.id
+        };
+      }
+      if (rule.action === "deny") {
+        return {
+          ...deny("rule_deny", "权限规则拒绝该工具调用", riskLevel, input),
+          matchedRuleId: rule.id
+        };
+      }
+      if (mode === "bypassPermissions") {
+        return {
+          ...allow("mode_bypass", "bypassPermissions 跳过审批，但不跳过运行时安全策略", riskLevel, input),
+          matchedRuleId: rule.id
+        };
+      }
+      return {
+        ...approval("rule_ask", "权限规则要求确认该工具调用", riskLevel, input),
+        matchedRuleId: rule.id
+      };
+    }
+
+    if (mode === "bypassPermissions") {
+      return allow("mode_bypass", "bypassPermissions 跳过审批，但不跳过运行时安全策略", riskLevel, input);
+    }
+
+    if (this.session.isGranted({
+      threadId: input.context.threadId,
+      descriptor: input.descriptor,
+      input: input.input
+    })) {
+      return allow("session_allow", "本次会话已允许相同工具输入", riskLevel, input);
+    }
+
+    const privateRootDecision = evaluatePrivateWriteRoot(input);
+    if (privateRootDecision) return privateRootDecision;
+
+    if (mode === "acceptEdits" && isFilesystemEdit(input)) {
+      return allow("mode_accept_edits", "acceptEdits 自动允许文件读写编辑", riskLevel, input);
+    }
+
+    if (
+      input.descriptor.metadata.requiresApprovalByDefault === false &&
+      input.descriptor.metadata.riskLevel === "low"
+    ) {
+      return allow("metadata_low", "工具 metadata 声明低风险且默认无需审批", "low", input);
+    }
+
+    const classification = await this.classifier.classify({
+      toolName: input.descriptor.name,
+      source: input.descriptor.source,
+      command: extractPermissionCommand(input.input),
+      path: resolvePermissionPath(input),
+      description: input.descriptor.metadata.description
+    });
+    const classifiedRisk = classification.riskLevel;
+
+    if (mode === "dontAsk" && !classification.shouldAsk && classifiedRisk === "low") {
+      return allow("mode_dont_ask_safe", "dontAsk 自动允许低风险工具调用", classifiedRisk, input, classification);
+    }
+
+    return approval("risk_requires_approval", classification.explanation, classifiedRisk, input, classification);
+  }
+}
+
+function normalizePermissionMode(mode: PermissionDecisionInput["mode"]): Exclude<PermissionDecisionInput["mode"], undefined | "auto"> {
+  if (mode === "auto") return "dontAsk";
+  return mode ?? "default";
+}
+
+function evaluatePrivateWriteRoot(input: PermissionDecisionInput): PermissionDecision | null {
+  const path = extractPermissionPath(input.input);
+  if (!path || !isFilesystemEdit(input)) return null;
+  const roots = input.context.privateWriteRoots ?? [];
+  const absolutePath = toAbsolutePath(path, input.context.cwd);
+  if (!roots.some((root) => isPathWithinRoot(absolutePath, root, input.context.cwd))) return null;
+  return allow("private_root", "写入 Lume 私有管理目录", "low", input);
+}
+
+function isFilesystemEdit(input: PermissionDecisionInput): boolean {
+  return input.descriptor.metadata.capability === "filesystem" &&
+    (input.descriptor.metadata.category === "read" || input.descriptor.metadata.category === "write");
+}
+
+function resolvePermissionPath(input: PermissionDecisionInput): string | undefined {
+  const path = extractPermissionPath(input.input);
+  return path ? toAbsolutePath(path, input.context.cwd) : undefined;
+}
+
+function allow(
+  reasonCode: string,
+  explanation: string,
+  riskLevel: LumeToolRiskLevel | "critical",
+  input: PermissionDecisionInput,
+  classification?: PermissionDecision["classification"]
+): PermissionDecision {
+  return {
+    status: "allow",
+    reasonCode,
+    riskLevel,
+    explanation,
+    ...(classification ? { classification } : {}),
+    grantSuggestion: grantSuggestion(input)
+  };
+}
+
+function deny(
+  reasonCode: string,
+  explanation: string,
+  riskLevel: LumeToolRiskLevel | "critical",
+  input: PermissionDecisionInput
+): PermissionDecision {
+  return {
+    status: "deny",
+    reasonCode,
+    riskLevel,
+    explanation,
+    grantSuggestion: grantSuggestion(input)
+  };
+}
+
+function approval(
+  reasonCode: string,
+  explanation: string,
+  riskLevel: LumeToolRiskLevel | "critical",
+  input: PermissionDecisionInput,
+  classification?: PermissionDecision["classification"]
+): PermissionDecision {
+  return {
+    status: "approval_required",
+    reasonCode,
+    riskLevel,
+    explanation,
+    ...(classification ? { classification } : {}),
+    grantSuggestion: grantSuggestion(input)
+  };
+}
+
+function grantSuggestion(input: PermissionDecisionInput): PermissionDecision["grantSuggestion"] {
+  return {
+    fingerprint: buildPermissionFingerprint({
+      descriptor: input.descriptor,
+      rawInput: input.input
+    }),
+    label: `允许相同 ${input.descriptor.name} 调用`
+  };
+}
+
+function normalizeRisk(risk: LumeToolRiskLevel | "critical"): LumeToolRiskLevel | "critical" {
+  return risk;
+}

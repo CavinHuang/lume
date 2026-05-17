@@ -24,7 +24,7 @@ describe("task-contract-store", () => {
         status: "pending"
       }],
       expectedChanges: {
-        files: ["apps/sidecar/src/services/pi-agent/runtime-core/attempt.ts"]
+        files: ["apps/sidecar/src/services/agent-runtime/runtime-core/attempt.ts"]
       },
       status: "draft",
       createdAt: "2026-04-29T00:00:00.000Z",

@@ -40,7 +40,41 @@ describe("lume-config-service", () => {
     const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
     expect(file.version).toBe(1);
     expect(file.skills?.enabled).toEqual([]);
+    expect(file.plugins?.enabled).toEqual([]);
+    expect(file.plugins?.directories).toEqual([]);
+    expect(file.permissions?.rules).toEqual([]);
+    expect(file.permissions?.classifier?.enabled).toBe(false);
+    expect(file.permissions?.privateWriteRoots).toEqual([]);
     expect(file.workspaces).toEqual({});
+  });
+
+  test("应支持权限规则、分类器和私有写入根的 workspace 覆盖", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "permissions",
+      value: {
+        rules: [{ id: "global-bash", tool: "Bash", commandPattern: "^ls", action: "allow", scope: "global" }],
+        classifier: { enabled: true },
+        privateWriteRoots: [".lume"]
+      }
+    });
+
+    updateLumeConfigSection({
+      source: "agent",
+      workspaceSlug: "default",
+      path: "permissions",
+      value: {
+        rules: [{ id: "workspace-rm", tool: "Bash", commandPattern: "^rm", action: "ask", scope: "workspace" }],
+        classifier: { enabled: false },
+        privateWriteRoots: [".lume/artifacts"]
+      }
+    });
+
+    const effective = getEffectiveLumeConfig("default");
+
+    expect(effective.permissions?.rules?.map((rule) => rule.id)).toEqual(["global-bash", "workspace-rm"]);
+    expect(effective.permissions?.classifier?.enabled).toBe(false);
+    expect(effective.permissions?.privateWriteRoots).toEqual([".lume", ".lume/artifacts"]);
   });
 
   test("应正确叠加 workspace 覆盖配置", () => {

@@ -37,7 +37,7 @@ export interface LumeRunStep {
 
 export interface LumeRunInput {
   userMessage: string;
-  permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
+  permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
   threadType?: string;
   chatType?: string;
   messageMetadata?: Record<string, unknown>;

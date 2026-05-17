@@ -50,13 +50,14 @@ function defaultMetadataForSource(source: LumeToolSource): LumeToolMetadata {
   if (source === "mcp" || source === "plugin") {
     return {
       category: "control",
-      capability: source === "mcp" ? "mcp" : "skill",
+      capability: source === "mcp" ? "mcp" : "plugin",
       riskLevel: "medium",
       sideEffects: "external",
       allowedInPlanMode: false,
       isReadOnly: false,
       isConcurrencySafe: false,
-      requiresApprovalByDefault: true
+      requiresApprovalByDefault: true,
+      resultPolicy: { maxChars: 200_000 }
     };
   }
   return {
@@ -67,6 +68,7 @@ function defaultMetadataForSource(source: LumeToolSource): LumeToolMetadata {
     allowedInPlanMode: false,
     isReadOnly: false,
     isConcurrencySafe: false,
-    requiresApprovalByDefault: true
+    requiresApprovalByDefault: true,
+    resultPolicy: { maxChars: 200_000 }
   };
 }

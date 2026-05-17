@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AgentToolPermissionRequest } from '@lume/shared'
 
 mock.module('@/lib/desktop-api', () => ({
+  agentSend: async () => undefined,
+  openFileDialog: async () => ({ files: [] }),
   sidecarCall: async () => undefined,
   submitTaskApproval: async () => ({ ok: true }),
 }))
@@ -17,6 +19,17 @@ const request: AgentToolPermissionRequest = {
   toolName: 'Bash',
   risk: 'high',
   reason: '需要运行命令',
+  reasonCode: 'risk_requires_approval',
+  classification: {
+    riskLevel: 'high',
+    reasonCode: 'shell_write_pattern',
+    explanation: '命令会修改工作区状态',
+    shouldAsk: true,
+  },
+  grantSuggestion: {
+    fingerprint: 'Bash:git status',
+    label: 'Bash:git status',
+  },
   input: { command: 'git status' },
 }
 
@@ -30,8 +43,11 @@ describe('PermissionBanner', () => {
     expect(markup).toContain('确认工具执行?')
     expect(markup).toContain('Bash')
     expect(markup).toContain('需要运行命令')
+    expect(markup).toContain('risk_requires_approval')
+    expect(markup).toContain('shell_write_pattern')
+    expect(markup).toContain('命令会修改工作区状态')
     expect(markup).toContain('允许一次')
-    expect(markup).toContain('始终允许')
+    expect(markup).toContain('始终允许 Bash:git status')
     expect(markup).toContain('拒绝')
     expect(markup).toContain('忽略')
     expect(markup).toContain('ESC')

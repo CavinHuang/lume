@@ -4,12 +4,8 @@ import type {
   AgentGenerateTitleInput,
   AgentListSubagentRunsInput,
   AgentProxySettings,
-  AgentRuntimeToolPolicyConfig,
-  ImportGlobalMcpToWorkspaceInput,
-  ImportGlobalSkillToWorkspaceInput,
   ImportLocalSkillDirectoryToWorkspaceInput,
   InstallSkillMarketItemToWorkspaceInput,
-  InstallGlobalPluginInput,
   WorkspaceMcpConfig
 } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
@@ -20,7 +16,6 @@ import {
   getAgentThreadMessages,
   getRecentAgentThreadMessages,
   listAgentThreads,
-  migrateChatToAgentThread,
   moveAgentThreadToWorkspace,
   toggleAgentThreadPin,
   forkAgentThread,
@@ -84,28 +79,21 @@ import {
   updateAgentWorkspace
 } from "../services/agent/agent-workspace-manager";
 import {
-  getGlobalDiscoverySnapshot,
-  getGlobalMarketplaceDetail,
-  importGlobalMcpToWorkspace,
-  importGlobalSkillToWorkspace,
-  installGlobalPlugin
-} from "../services/system/global-discovery-service";
-import {
   getGitHubSkillReview,
   installGitHubSkillToWorkspace
-} from "../services/system/github-skill-install-service";
+} from "../services/skills/github-skill-install-service";
 import {
   getSkillMarketDetail,
   getSkillMarketCatalog,
   installSkillMarketItemToWorkspace,
   importLocalSkillDirectoryToWorkspace
-} from "../services/system/skills-market-service";
+} from "../services/skills/skills-market-service";
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
-import { isPiAgentSessionActive } from "../services/pi-agent/runtime-core/attempt";
-import { getRuntimeCoreSessionDir } from "../services/pi-agent/runtime-core/session-store";
+import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
+import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 import {
   buildColdStartContinuationMessage,
   LumeResumeService,
@@ -124,12 +112,8 @@ import {
 import { redactTraceForLevel, type TraceRedactionLevel } from "../services/agent-runtime/trace/trace-redaction";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
-import { listPendingPiAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
+import { listPendingAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
 import { listPendingToolPermissionRequests } from "../services/agent-runtime/interruption/tool-permission-session";
-import {
-  getAgentRuntimeToolPolicyConfig,
-  saveAgentRuntimeToolPolicyConfig
-} from "../services/pi-agent/tools/permissions/tool-policy";
 import {
   getAgentProxyStatus,
   saveAgentProxySettings
@@ -140,7 +124,6 @@ import {
   agentCreateThreadInputSchema,
   agentGetThreadMessageVersionsInputSchema,
   agentListSubagentRunsInputSchema,
-  agentMigrateChatInputSchema,
   agentMoveThreadInputSchema,
   agentRecentThreadMessagesInputSchema,
   agentSendInputSchema,
@@ -158,7 +141,6 @@ import {
   installGitHubSkillInputSchema,
   installSkillMarketItemInputSchema,
   listDirectoryInputSchema,
-  marketplaceDetailInputSchema,
   moveAttachedFileInputSchema,
   moveFileInputSchema,
   pendingInteractiveInputSchema,
@@ -173,7 +155,6 @@ import {
   runTraceInputSchema,
   saveFilesToWorkspaceInputSchema,
   saveFilesToThreadInputSchema,
-  saveToolPolicyInputSchema,
   searchWorkspaceFilesInputSchema,
   skillMarketCatalogInputSchema,
   skillMarketDetailInputSchema,
@@ -561,9 +542,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.MOVE_THREAD]: async (params) => {
       const input = validateInput(agentMoveThreadInputSchema, params, AGENT_IPC_CHANNELS.MOVE_THREAD);
-      if (isPiAgentSessionActive(input.threadId)) {
+      if (isAgentRuntimeSessionActive(input.threadId)) {
         await new Promise((resolve) => setTimeout(resolve, 500));
-        if (isPiAgentSessionActive(input.threadId)) {
+        if (isAgentRuntimeSessionActive(input.threadId)) {
           throw new Error("线程正在运行中，请停止后再移动。");
         }
       }
@@ -591,7 +572,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params ?? {},
         AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE
       );
-      const askRequests = listPendingPiAskUserQuestionRequests();
+      const askRequests = listPendingAskUserQuestionRequests();
       const toolRequests = listPendingToolPermissionRequests();
       const taskApprovalRequests = await listPendingTaskApprovalRequests();
       const threadIds = new Set<string>();
@@ -729,11 +710,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       saveWorkspaceMcpConfig(input.workspaceSlug, input.config as WorkspaceMcpConfig);
       return { ok: true };
     },
-    [AGENT_IPC_CHANNELS.GET_TOOL_POLICY]: async () => getAgentRuntimeToolPolicyConfig(),
-    [AGENT_IPC_CHANNELS.SAVE_TOOL_POLICY]: async (params) =>
-      saveAgentRuntimeToolPolicyConfig(
-        validateInput(saveToolPolicyInputSchema, params, AGENT_IPC_CHANNELS.SAVE_TOOL_POLICY) as AgentRuntimeToolPolicyConfig
-      ),
     [AGENT_IPC_CHANNELS.GET_PROXY_SETTINGS]: async () => getAgentProxyStatus(),
     [AGENT_IPC_CHANNELS.SAVE_PROXY_SETTINGS]: async (params) =>
       saveAgentProxySettings(
@@ -748,8 +724,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       deleteWorkspaceSkill(input.workspaceSlug, input.skillSlug);
       return { ok: true };
     },
-    [AGENT_IPC_CHANNELS.GET_GLOBAL_DISCOVERY]: async () => getGlobalDiscoverySnapshot(),
-    [AGENT_IPC_CHANNELS.RESCAN_GLOBAL_DISCOVERY]: async () => getGlobalDiscoverySnapshot(),
     [AGENT_IPC_CHANNELS.GET_SKILL_MARKET_CATALOG]: async (params) => {
       const input = validateInput(
         skillMarketCatalogInputSchema,
@@ -782,16 +756,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       return installGitHubSkillToWorkspace(input);
     },
-    [AGENT_IPC_CHANNELS.GET_GLOBAL_MARKETPLACE_DETAIL]: async (params) => {
-      const input = validateInput(marketplaceDetailInputSchema, params, AGENT_IPC_CHANNELS.GET_GLOBAL_MARKETPLACE_DETAIL);
-      return getGlobalMarketplaceDetail(input.marketplaceId);
-    },
-    [AGENT_IPC_CHANNELS.INSTALL_GLOBAL_PLUGIN]: async (params) =>
-      installGlobalPlugin(params as InstallGlobalPluginInput),
-    [AGENT_IPC_CHANNELS.IMPORT_GLOBAL_MCP_TO_WORKSPACE]: async (params) =>
-      importGlobalMcpToWorkspace(params as ImportGlobalMcpToWorkspaceInput),
-    [AGENT_IPC_CHANNELS.IMPORT_GLOBAL_SKILL_TO_WORKSPACE]: async (params) =>
-      importGlobalSkillToWorkspace(params as ImportGlobalSkillToWorkspaceInput),
     [AGENT_IPC_CHANNELS.IMPORT_LOCAL_SKILL_DIRECTORY_TO_WORKSPACE]: async (params) => {
       const input = validateInput(
         importLocalSkillDirectoryInputSchema,

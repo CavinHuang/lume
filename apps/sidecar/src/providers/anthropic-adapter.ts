@@ -17,9 +17,9 @@ import type {
   TitleRequestInput,
   ImageAttachmentData,
   ToolDefinition,
-  ContinuationMessage,
+  ContinuationMessage
 } from './types'
-import type { ThinkingLevel } from '@lume/shared'
+import type { LumeConfigThinkingLevel } from '@lume/shared'
 import { normalizeAnthropicBaseUrl } from './url-utils'
 
 // ===== Anthropic 特有类型 =====
@@ -187,8 +187,8 @@ function appendContinuationMessages(
 export class AnthropicAdapter implements ProviderAdapter {
   readonly providerType = 'anthropic' as const
 
-  private resolveThinkingBudget(level: ThinkingLevel | undefined, enabled: boolean | undefined): number | null {
-    const resolvedLevel: ThinkingLevel = level ?? (enabled ? 'medium' : 'off')
+  private resolveThinkingBudget(level: LumeConfigThinkingLevel | undefined, enabled: boolean | undefined): number | null {
+    const resolvedLevel: LumeConfigThinkingLevel = level ?? (enabled ? 'medium' : 'off')
     switch (resolvedLevel) {
       case 'off':
         return null

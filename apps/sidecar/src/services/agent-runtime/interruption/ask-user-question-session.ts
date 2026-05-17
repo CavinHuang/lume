@@ -12,7 +12,7 @@ import {
 } from "./ask-user-service";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
 
-const pendingPiAskUserQuestionResolvers = new Map<
+const pendingAskUserQuestionResolvers = new Map<
   string,
   {
     threadId: string;
@@ -40,7 +40,7 @@ export type AskUserQuestionSubmitResult =
   | PersistedAskUserInterruptionResolution;
 
 export function setAskUserQuestionApprovalSession(toolUseId: string, approvalSessionId: string): void {
-  const pending = pendingPiAskUserQuestionResolvers.get(toolUseId);
+  const pending = pendingAskUserQuestionResolvers.get(toolUseId);
   if (!pending) return;
   const normalized = approvalSessionId.trim();
   if (!normalized) return;
@@ -61,7 +61,7 @@ function resolveAskTimeoutMs(): number {
   return Math.max(minTimeoutMs, Math.min(60 * 60 * 1000, Math.floor(parsed)));
 }
 
-export function waitForPiAskUserQuestionAnswers(
+export function waitForAskUserQuestionAnswers(
   threadId: string,
   toolUseId: string,
   questions: AgentAskUserQuestionQuestion[],
@@ -71,11 +71,11 @@ export function waitForPiAskUserQuestionAnswers(
 ): Promise<AskUserQuestionWaitResult> {
   return new Promise((resolve) => {
     const done = async (result: AskUserQuestionWaitResult): Promise<void> => {
-      const pending = pendingPiAskUserQuestionResolvers.get(toolUseId);
+      const pending = pendingAskUserQuestionResolvers.get(toolUseId);
       if (pending?.timeout) {
         clearTimeout(pending.timeout);
       }
-      pendingPiAskUserQuestionResolvers.delete(toolUseId);
+      pendingAskUserQuestionResolvers.delete(toolUseId);
       signal.removeEventListener("abort", onAbort);
       await resolveAskUserInterruption({
         threadId,
@@ -90,7 +90,7 @@ export function waitForPiAskUserQuestionAnswers(
       done({ status: "aborted", answers: null });
     };
 
-    const existing = pendingPiAskUserQuestionResolvers.get(toolUseId);
+    const existing = pendingAskUserQuestionResolvers.get(toolUseId);
     if (existing) {
       existing.resolve({ status: "canceled", answers: null });
     }
@@ -116,7 +116,7 @@ export function waitForPiAskUserQuestionAnswers(
       toolUseId,
       questions
     };
-    pendingPiAskUserQuestionResolvers.set(toolUseId, {
+    pendingAskUserQuestionResolvers.set(toolUseId, {
       threadId,
       approvalSessionId: threadId,
       request,
@@ -129,10 +129,10 @@ export function waitForPiAskUserQuestionAnswers(
   });
 }
 
-export async function submitPiAskUserQuestionAnswers(
+export async function submitAskUserQuestionAnswers(
   input: AgentAskUserQuestionResponseInput
 ): Promise<AskUserQuestionSubmitResult | null> {
-  const pending = pendingPiAskUserQuestionResolvers.get(input.toolUseId);
+  const pending = pendingAskUserQuestionResolvers.get(input.toolUseId);
   if (!pending) {
     return await resolvePersistedAskUserInterruption({
       approvalThreadId: input.threadId,
@@ -162,8 +162,8 @@ export async function submitPiAskUserQuestionAnswers(
   };
 }
 
-export function cancelPendingPiAskUserQuestionBySession(threadId: string): void {
-  for (const [toolUseId, pending] of pendingPiAskUserQuestionResolvers) {
+export function cancelPendingAskUserQuestionBySession(threadId: string): void {
+  for (const [toolUseId, pending] of pendingAskUserQuestionResolvers) {
     if (pending.threadId !== threadId && pending.approvalSessionId !== threadId) {
       continue;
     }
@@ -173,12 +173,12 @@ export function cancelPendingPiAskUserQuestionBySession(threadId: string): void 
       canceled: true
     });
     pending.resolve({ status: "canceled", answers: null });
-    pendingPiAskUserQuestionResolvers.delete(toolUseId);
+    pendingAskUserQuestionResolvers.delete(toolUseId);
   }
 }
 
-export function listPendingPiAskUserQuestionRequests(): AgentAskUserQuestionRequest[] {
-  const liveRequests = Array.from(pendingPiAskUserQuestionResolvers.values()).map((pending) => ({
+export function listPendingAskUserQuestionRequests(): AgentAskUserQuestionRequest[] {
+  const liveRequests = Array.from(pendingAskUserQuestionResolvers.values()).map((pending) => ({
     ...pending.request,
     threadId: pending.approvalSessionId,
     ...(pending.request.originThreadId ? {} : (

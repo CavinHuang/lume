@@ -20,7 +20,6 @@ import {
 } from "../services/system/github-release-service";
 import { fetchWithProxy } from "../services/infra/proxy-fetch";
 import { createLogger, getLogsDir } from "../services/infra/logger";
-import { getChatToolCredentials } from "../services/chat/chat-tool-manager";
 import { getLumeConfigYamlPath } from "../services/infra/config-paths";
 import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/system/lume-config-service";
 import { getEffectiveSystemConfig, updatePrimarySystemConfigSection } from "../services/system/system-config-service";
@@ -102,10 +101,6 @@ async function runNetworkDiagnostic(): Promise<NetworkDiagnosticResult> {
 
   return {
     proxy: getActiveProxyConfig(),
-    searchCredentials: {
-      braveConfigured: Boolean(getChatToolCredentials("web_search").braveApiKey?.trim()),
-      tavilyConfigured: Boolean(getChatToolCredentials("web_search").tavilyApiKey?.trim())
-    },
     checks
   };
 }

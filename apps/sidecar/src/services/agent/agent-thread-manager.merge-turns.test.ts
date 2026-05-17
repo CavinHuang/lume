@@ -11,7 +11,7 @@ import {
   createUserMessageVersion,
   initializeVersionStoreFromMessages
 } from "./agent-message-versioning-service";
-import { createOrResumeRuntimeCoreSessionManager } from "../pi-agent/runtime-core/session-store";
+import { createOrResumeRuntimeCoreSessionManager } from "../agent-runtime/runtime-core/session-store";
 
 /**
  * 模拟 SDK 的 agentic loop 在 transcript 中写入多个 assistant turn。

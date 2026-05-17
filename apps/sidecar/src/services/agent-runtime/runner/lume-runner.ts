@@ -1,23 +1,23 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
 import type { SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
-import type { PiAgentRunParams, PiAgentRunResult, PiAgentRuntimeEmitter } from "../../pi-agent/runner/types";
-import { resolveAgentThinkingLevel } from "../../pi-agent/runner/model-capabilities";
-import type { resolveRuntimeCoreChannelModel } from "../../pi-agent/runtime-core/model";
-import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
+import { resolveAgentThinkingLevel } from "./model-capabilities";
+import type { resolveRuntimeCoreChannelModel } from "../runtime-core/model";
+import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import {
   createRuntimeCoreSession,
   type CreateRuntimeCoreSessionInput,
   type CreateRuntimeCoreSessionResult
-} from "../../pi-agent/runtime-core/run";
-import { updateRuntimeThreadMetaIfPresent } from "../../pi-agent/runtime-core/thread-meta-target";
+} from "../runtime-core/run";
+import { updateRuntimeThreadMetaIfPresent } from "../runtime-core/thread-meta-target";
 import {
   consumeRuntimeCoreQueryStream,
   createObservedRuntimeEmitter,
   normalizeRuntimeCoreQueryPermissionMode
 } from "./run-loop";
 import { LumeRunObserver } from "./run-observer";
-import { fromPiAgentRunResult } from "./run-result";
+import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
 
 interface PreparedRuntimeCoreAttempt {
@@ -35,7 +35,7 @@ interface RunRuntimeCoreAttemptOptions {
 }
 
 interface RuntimeSessionRunInput {
-  params: PiAgentRunParams;
+  params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
   runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools">;
   options: RunRuntimeCoreAttemptOptions;
@@ -43,14 +43,14 @@ interface RuntimeSessionRunInput {
 }
 
 interface PreparedRuntimeCoreRunInput {
-  params: PiAgentRunParams;
+  params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
   options: RunRuntimeCoreAttemptOptions;
   createCanUseTool: (askUserSignal: AbortSignal) => CanUseToolFn;
   createRuntimeSession?: (input: CreateRuntimeCoreSessionInput) => Promise<CreateRuntimeCoreSessionResult>;
 }
 
-export function resolveRuntimeCoreMaxTurns(input: PiAgentRunParams["input"]): number | undefined {
+export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]): number | undefined {
   const metadata = input.messageMetadata ?? {};
   const taskControlEvent = metadata.taskControlEvent;
   if (
@@ -68,19 +68,19 @@ export function resolveRuntimeCoreMaxTurns(input: PiAgentRunParams["input"]): nu
 }
 
 export class LumeRunner {
-  readonly emit: PiAgentRuntimeEmitter;
+  readonly emit: AgentRuntimeEmitter;
 
   private constructor(
     private readonly observer: LumeRunObserver,
-    emit: PiAgentRuntimeEmitter
+    emit: AgentRuntimeEmitter
   ) {
     this.emit = createObservedRuntimeEmitter(emit, observer);
   }
 
   static async create(input: {
-    params: PiAgentRunParams;
+    params: AgentRuntimeRunParams;
     prepared: PreparedRuntimeCoreAttempt;
-    emit: PiAgentRuntimeEmitter;
+    emit: AgentRuntimeEmitter;
   }): Promise<LumeRunner> {
     const { params, prepared } = input;
     const observer = await LumeRunObserver.create({
@@ -107,8 +107,8 @@ export class LumeRunner {
     return this.observer.getRunId();
   }
 
-  async finalizeResult(result: PiAgentRunResult): Promise<PiAgentRunResult> {
-    const lumeResult = fromPiAgentRunResult(result);
+  async finalizeResult(result: AgentRuntimeRunResult): Promise<AgentRuntimeRunResult> {
+    const lumeResult = fromAgentRuntimeRunResult(result);
     await this.observer.finalize(lumeResult.status, lumeResult.error);
     return result;
   }
@@ -117,7 +117,7 @@ export class LumeRunner {
     await this.observer.finalize("failed", error instanceof Error ? error : String(error));
   }
 
-  async runQueryStream(query: AsyncIterable<SDKMessage>): Promise<PiAgentRunResult> {
+  async runQueryStream(query: AsyncIterable<SDKMessage>): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
       query,
       emit: this.emit
@@ -158,7 +158,7 @@ export class LumeRunner {
     runtimeSession,
     options,
     createCanUseTool
-  }: RuntimeSessionRunInput): Promise<PiAgentRunResult> {
+  }: RuntimeSessionRunInput): Promise<AgentRuntimeRunResult> {
     const { input, runtime } = params;
     const { agent, session } = runtimeSession;
     const askUserAbortController = new AbortController();
@@ -227,7 +227,7 @@ export class LumeRunner {
     options,
     createCanUseTool,
     createRuntimeSession = createRuntimeCoreSession
-  }: PreparedRuntimeCoreRunInput): Promise<PiAgentRunResult> {
+  }: PreparedRuntimeCoreRunInput): Promise<AgentRuntimeRunResult> {
     const { input, runtime } = params;
     const runtimeSession = await createRuntimeSession({
       lumeSessionId: runtime.sessionId,
@@ -271,7 +271,7 @@ export class LumeRunner {
     });
   }
 
-  async complete(): Promise<PiAgentRunResult> {
+  async complete(): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
     this.emit.onRuntimeEvent?.({
       id: `${this.observer.getRunId()}:run.completed`,
@@ -284,13 +284,13 @@ export class LumeRunner {
     return this.finalizeResult({ status: "completed" });
   }
 
-  async abort(): Promise<PiAgentRunResult> {
+  async abort(): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
     this.emit.onComplete();
     return this.finalizeResult({ status: "aborted" });
   }
 
-  async fail(errorMessage: string): Promise<PiAgentRunResult> {
+  async fail(errorMessage: string): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
     this.emit.onError(errorMessage);
     this.emit.onRuntimeEvent?.({

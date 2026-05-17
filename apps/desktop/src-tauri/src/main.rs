@@ -1029,7 +1029,7 @@ mod tests {
         let behavior = parse_window_behavior_from_settings_str(
             r#"{
                 "uiState": {
-                    "currentConversationId": "conversation-1"
+                    "currentAgentThreadId": "thread-1"
                 },
                 "generalSettings": {
                     "themeMode": "system",

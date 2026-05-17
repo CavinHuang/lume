@@ -466,18 +466,25 @@ export class Agent {
     setMcpConnections(this.mcpLinks.filter((conn) => conn.enabled))
   }
 
-  private rebuildToolPool(options: AgentOptions = this.cfg): void {
+  private async rebuildToolPool(options: AgentOptions = this.cfg): Promise<void> {
     const baseTools = this.buildBaseToolPool(options)
     const mcpTools = this.mcpLinks
       .filter((conn) => conn.enabled && conn.status === 'connected')
       .flatMap((conn) => conn.tools)
 
-    this.toolPool = assembleToolPool(
+    const assembledTools = assembleToolPool(
       baseTools,
       mcpTools,
       undefined,
       options.disallowedTools,
     )
+    this.toolPool = options.resolveRuntimeTools
+      ? await options.resolveRuntimeTools(assembledTools, {
+        cwd: options.cwd || process.cwd(),
+        sessionId: this.sid,
+        permissionMode: options.permissionMode,
+      })
+      : assembledTools
 
     const allKnownTools = assembleToolPool(
       [...getAllBaseTools(), ...this.getPluginTools()],
@@ -575,7 +582,7 @@ export class Agent {
     }
 
     await this.syncMcpConnections()
-    this.rebuildToolPool()
+    await this.rebuildToolPool()
     await this.resumeSessionIfNeeded()
   }
 
@@ -1181,7 +1188,7 @@ export class Agent {
     }
 
     await this.syncMcpConnections()
-    this.rebuildToolPool()
+    await this.rebuildToolPool()
 
     for (const status of this.collectMcpServerStatuses()) {
       if (status.status === 'error' && status.error) {
@@ -1196,7 +1203,7 @@ export class Agent {
     await this.setupDone
     this.disabledMcpServers.delete(serverName)
     await this.syncMcpConnections()
-    this.rebuildToolPool()
+    await this.rebuildToolPool()
     return this.collectMcpServerStatuses().find((status) => status.name === serverName) || null
   }
 
@@ -1208,7 +1215,7 @@ export class Agent {
       this.disabledMcpServers.add(serverName)
     }
     await this.syncMcpConnections()
-    this.rebuildToolPool()
+    await this.rebuildToolPool()
     return this.collectMcpServerStatuses().find((status) => status.name === serverName) || null
   }
 
@@ -1228,7 +1235,7 @@ export class Agent {
     ]
     this.resetHookRegistry()
     await this.syncMcpConnections()
-    this.rebuildToolPool()
+    await this.rebuildToolPool()
 
     const mergedAgents = {
       ...this.getPluginAgents(),

@@ -22,6 +22,12 @@ describe('PERMISSION_OPTIONS', () => {
         emphasis: '高效',
       }),
       expect.objectContaining({
+        value: 'dontAsk',
+        icon: 'shield-check',
+        tone: 'emerald',
+        emphasis: '智能',
+      }),
+      expect.objectContaining({
         value: 'bypassPermissions',
         icon: 'shield-off',
         tone: 'amber',

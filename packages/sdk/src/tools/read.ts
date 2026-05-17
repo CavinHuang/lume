@@ -8,7 +8,7 @@ import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 
 export const FileReadTool = defineTool({
   name: 'Read',
-  description: 'Read a file from the filesystem. Returns content with line numbers. Supports text files, images (returns visual content), and PDFs.',
+  description: 'Read a text file from the filesystem and return content with line numbers. Image files return metadata only.',
   inputSchema: {
     type: 'object',
     properties: {

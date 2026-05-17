@@ -3,7 +3,6 @@ import {
   AGENT_IPC_CHANNELS,
   AUTOMATION_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
-  CHAT_IPC_CHANNELS,
   GITHUB_RELEASE_IPC_CHANNELS,
   MEMORY_IPC_CHANNELS
 } from "@lume/shared";
@@ -25,7 +24,6 @@ describe("createRpcHandlers", () => {
     expect(methods).toEqual(expect.arrayContaining([
       "healthcheck",
       CHANNEL_IPC_CHANNELS.LIST,
-      CHAT_IPC_CHANNELS.LIST_CONVERSATIONS,
       AGENT_IPC_CHANNELS.LIST_THREADS,
       AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS,
       MEMORY_IPC_CHANNELS.SEARCH_LAYERED,

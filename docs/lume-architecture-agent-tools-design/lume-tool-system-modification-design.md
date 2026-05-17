@@ -11,7 +11,7 @@ Agent 系统里，工具不是简单函数列表，而是模型可见能力的�
 Lume 当前已经有不错基础：
 
 - `createRuntimeCoreSession` 会构造 base tools、TaskContractWrite、TaskReport、Lume custom tools、Subagent AgentTool、MCP servers、skills directories。
-- `createLumePiTools` 会根据 workspace 和 memory policy 创建 memory tools、cron tools，并返回 custom tools 和可用工具名。
+- `createLumeRuntimeTools` 会根据 workspace 和 memory policy 创建 memory tools、cron tools，并返回 custom tools 和可用工具名。
 - `applyPiToolPolicies` 已支持全局、provider、session type、chat type、subagent、message metadata 多层过滤。
 - `tool-metadata.ts` 已有工具元数据注册表，包含 category、riskLevel、allowedInPlanMode。
 - `createCanUseToolHandler` 已有 permissionMode、plan mode、guardrail、AskUserQuestion、ToolPermissionRequest、automation interruption 等审批逻辑。
@@ -820,7 +820,7 @@ apps/sidecar/src/services/agent-runtime/tools/tool-source.ts
 迁移/保留：
 
 ```text
-apps/sidecar/src/services/pi-agent/tools/permissions/tool-metadata.ts
+apps/sidecar/src/services/agent-runtime/tools/permissions/tool-metadata.ts
 ```
 
 目标：
@@ -840,9 +840,9 @@ apps/sidecar/src/services/agent-runtime/tools/policies/tool-visibility-policy.ts
 修改：
 
 ```text
-apps/sidecar/src/services/pi-agent/runtime-core/run.ts
-apps/sidecar/src/services/pi-agent/tools/create-lume-tools.ts
-apps/sidecar/src/services/pi-agent/tools/permissions/tool-policy.ts
+apps/sidecar/src/services/agent-runtime/runtime-core/run.ts
+apps/sidecar/src/services/agent-runtime/tools/create-lume-tools.ts
+apps/sidecar/src/services/agent-runtime/tools/permissions/tool-policy.ts
 ```
 
 目标：
@@ -862,7 +862,7 @@ apps/sidecar/src/services/agent-runtime/tools/policies/tool-approval-policy.ts
 修改：
 
 ```text
-apps/sidecar/src/services/pi-agent/runtime-core/attempt.ts
+apps/sidecar/src/services/agent-runtime/runtime-core/attempt.ts
 ```
 
 目标：

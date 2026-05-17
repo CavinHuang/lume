@@ -2,13 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getRuntimeCoreSessionDir } from "../../pi-agent/runtime-core/session-store";
+import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { createFileBackedLumeInterruptionStore } from "./interruption-store";
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+import { runtimePermissionSessionStore } from "../permissions/permission-session";
 import {
-  isToolAlwaysAllowed,
   listPendingToolPermissionRequests,
-  markToolAlwaysAllowed,
+  markToolFingerprintAllowed,
   setToolPermissionApprovalSession,
   submitToolPermissionDecision,
   waitForToolPermissionDecision
@@ -18,6 +18,9 @@ describe("tool-permission-session", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
 
   afterEach(() => {
+    runtimePermissionSessionStore.clear("s2");
+    runtimePermissionSessionStore.clear("s2-fingerprint");
+    runtimePermissionSessionStore.clear("cold-continuation-thread");
     if (prevConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -49,10 +52,19 @@ describe("tool-permission-session", () => {
     expect(decision).toBe("allow_once");
   });
 
-  test("allow_always 应写入会话缓存", () => {
-    expect(isToolAlwaysAllowed("s2", "Bash")).toBeFalse();
-    markToolAlwaysAllowed("s2", "Bash");
-    expect(isToolAlwaysAllowed("s2", "Bash")).toBeTrue();
+  test("allow_always 必须按 fingerprint 写入 Permission Runtime 会话缓存", () => {
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s2", "bash:ls")).toBeFalse();
+    markToolFingerprintAllowed("s2");
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s2", "bash:ls")).toBeFalse();
+    markToolFingerprintAllowed("s2", "bash:ls");
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s2", "bash:ls")).toBeTrue();
+  });
+
+  test("allow_always fingerprint 不应泄露到同名不同输入", () => {
+    markToolFingerprintAllowed("s2-fingerprint", "bash:ls");
+
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s2-fingerprint", "bash:ls")).toBeTrue();
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s2-fingerprint", "bash:rm -rf /tmp/nope")).toBeFalse();
   });
 
   test("应支持由父会话提交子会话权限决策", async () => {
@@ -157,6 +169,10 @@ describe("tool-permission-session", () => {
         toolName: "Bash",
         risk: "high",
         reason: "needs approval",
+        grantSuggestion: {
+          fingerprint: "bash:git status",
+          label: "允许相同 Bash 调用"
+        },
         input: { command: "git status" }
       },
       new AbortController().signal,
@@ -336,6 +352,10 @@ describe("tool-permission-session", () => {
         toolName: "Bash",
         risk: "high",
         reason: "needs approval",
+        grantSuggestion: {
+          fingerprint: "bash:git status",
+          label: "允许相同 Bash 调用"
+        },
         input: { command: "git status" }
       },
       source: {
@@ -354,7 +374,7 @@ describe("tool-permission-session", () => {
 
     expect(handled).toBeTrue();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(isToolAlwaysAllowed(threadId, "Bash")).toBeTrue();
+    expect(runtimePermissionSessionStore.isFingerprintGranted(threadId, "bash:git status")).toBeTrue();
     expect(await continuationStore.get(runId)).toMatchObject({
       status: "not_resumable",
       checkpoint: {

@@ -11,7 +11,7 @@ Alice 的 Agent Loop 文章里有一个关键判断：Agent 主循环的核心�
 Lume 当前已经具备不少基础：
 
 - `agent-service.ts` 负责消息发送、模型选择、消息持久化、runtime 状态、自动标题、memory flush 等。
-- `runPiAgent` / `runRuntimeCoreAttempt` 负责 attempt、retry、abort、权限审批、guardrail。
+- `runAgentRuntime` / `runRuntimeCoreAttempt` 负责 attempt、retry、abort、权限审批、guardrail。
 - `LumeRunner` 负责创建 runtime session、调用 `agent.query(...)`、消费流式结果、complete/abort/fail。
 - `consumeRuntimeCoreQueryStream` 已经消费 `AsyncIterable<SDKMessage>`。
 - `LumeRunObserver` 已经把 SDKMessage 转为 run items / run events，并写入 run state 和 trace。
