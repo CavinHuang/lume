@@ -28,6 +28,14 @@ async function collectResult(engine: QueryEngine) {
   return result as { subtype: string; is_error: boolean; num_turns: number }
 }
 
+async function collectEvents(engine: QueryEngine, prompt = "run") {
+  const events: unknown[] = []
+  for await (const event of engine.submitMessage(prompt)) {
+    events.push(event)
+  }
+  return events
+}
+
 describe("QueryEngine turn limits", () => {
   test("treats a natural completion on the final allowed turn as success", async () => {
     const engine = new QueryEngine({
@@ -53,6 +61,206 @@ describe("QueryEngine turn limits", () => {
     })
   })
 })
+
+describe("QueryEngine context controller", () => {
+  test("lets a host controller own auto-compaction decisions and metadata", async () => {
+    const observedMessages: CreateMessageParams["messages"][] = [];
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    }]);
+    const originalCreateMessage = provider.createMessage.bind(provider);
+    provider.createMessage = async (params) => {
+      observedMessages.push(params.messages);
+      return originalCreateMessage(params);
+    };
+    const boundaries: unknown[] = [];
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: ({ messages }) => messages.length > 0,
+        async compactConversation() {
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\nkernel summary" },
+              { role: "assistant", content: "I will continue." }
+            ],
+            summary: "kernel summary",
+            metadata: {
+              policy: "kernel-v1",
+              source: "agent-runtime-kernel",
+              sourceMessageIds: ["user-1"]
+            }
+          };
+        },
+        microCompactMessages: ({ messages }) => messages,
+        onCompactionBoundary: (boundary) => {
+          boundaries.push(boundary);
+        }
+      }
+    });
+
+    const events = await collectEvents(engine);
+
+    expect(observedMessages[0]?.[0]?.content).toContain("kernel summary");
+    expect(boundaries).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "context_compaction_started",
+      compact_metadata: expect.objectContaining({
+        trigger: "auto",
+        policy: "kernel-v1",
+        source: "agent-runtime-kernel"
+      })
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: expect.objectContaining({
+        trigger: "auto",
+        summary: "kernel summary",
+        policy: "kernel-v1",
+        source: "agent-runtime-kernel",
+        source_message_ids: ["user-1"]
+      })
+    }));
+  });
+
+  test("runs slash compact as a manual kernel compaction without calling the provider", async () => {
+    const provider = new StaticProvider([]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => false,
+        async compactConversation({ trigger }) {
+          expect(trigger).toBe("manual");
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\nmanual summary" },
+              { role: "assistant", content: "I will continue." }
+            ],
+            summary: "manual summary",
+            metadata: {
+              policy: "kernel-v1",
+              source: "agent-runtime-kernel"
+            }
+          };
+        }
+      }
+    });
+    engine.messages.push({ role: "user", content: "old context" });
+
+    const events = await collectEvents(engine, "/compact");
+
+    expect(engine.getMessages()[0]?.content).toContain("manual summary");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: expect.objectContaining({
+        trigger: "manual",
+        summary: "manual summary"
+      })
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "result",
+      subtype: "success",
+      num_turns: 0,
+      is_error: false
+    }));
+  });
+
+  test("emits prompt-too-long compaction boundary before retrying provider", async () => {
+    let calls = 0;
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        calls += 1;
+        if (calls === 1) {
+          const error = new Error("prompt is too long") as Error & { status: number };
+          error.status = 400;
+          throw error;
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => false,
+        async compactConversation({ trigger }) {
+          expect(trigger).toBe("prompt_too_long");
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\nretry summary" },
+              { role: "assistant", content: "I will continue." }
+            ],
+            summary: "retry summary",
+            metadata: {
+              policy: "kernel-v1",
+              source: "agent-runtime-kernel"
+            }
+          };
+        }
+      }
+    });
+
+    const events = await collectEvents(engine);
+
+    expect(calls).toBe(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "context_compaction_started",
+      compact_metadata: expect.objectContaining({
+        trigger: "prompt_too_long",
+        policy: "kernel-v1",
+        source: "agent-runtime-kernel"
+      })
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: expect.objectContaining({
+        trigger: "prompt_too_long",
+        summary: "retry summary"
+      })
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "result",
+      subtype: "success",
+      is_error: false
+    }));
+  });
+});
 
 describe("QueryEngine skill allowed tools", () => {
   test("applies Skill.allowedTools to subsequent provider turns in the same run", async () => {

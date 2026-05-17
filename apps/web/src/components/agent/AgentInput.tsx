@@ -5,12 +5,15 @@ import Mention from '@tiptap/extension-mention'
 import { Send, Square, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
+import { listChannels } from '@/lib/desktop-api/channel'
 import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
+  type Channel,
+  type LumeConfigAgentDefaultStrategy,
   type LumeConfigThinkingLevel,
   type SkillMeta,
   type WorkspaceMcpConfig,
@@ -29,6 +32,9 @@ import type { PermissionModeValue } from '@/components/settings/agent-settings-s
 import { composerControlTriggerClassName } from './composer-control-styles'
 import { syncPermissionModeWithPlanModePhase } from './agent-input-state'
 import { buildSlashSuggestionItems, type MentionItem } from './slash-command-state'
+import { buildContextWindowProgress } from './runtime-state-projections'
+import { ContextWindowIndicator } from './ContextWindowIndicator'
+import { getThreadSelectionSummary } from '@/components/model-selection/model-selection-state'
 
 interface AgentInputProps {
   threadId: string
@@ -158,7 +164,9 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const thread = threads.find((item) => item.id === threadId)
   const planModePhase = useAtomValue(agentPlanModePhaseAtom)[threadId]
+  const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const workspaceIdRef = useRef<string | null>(null)
@@ -167,9 +175,17 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const autoSelectedPlanModeRef = useRef(false)
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [channelsLoaded, setChannelsLoaded] = useState(false)
+  const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
 
   useEffect(() => {
+    listChannels()
+      .then((items) => setChannels(items))
+      .catch(console.error)
+      .finally(() => setChannelsLoaded(true))
+
     getEffectiveLumeConfig()
       .then((config) => {
         if (config.agent?.thinkingLevel) {
@@ -179,6 +195,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
           defaultPermissionModeRef.current = config.agent.permissionMode
           setPermissionMode(config.agent.permissionMode)
         }
+        setDefaultStrategy(config.models?.agent ?? {})
       })
       .catch(() => {})
   }, [])
@@ -197,12 +214,11 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   }, [planModePhase?.phase, threadId])
 
   useEffect(() => {
-    const thread = threads.find((t) => t.id === threadId)
     const targetId = thread?.workspaceId ?? currentWorkspaceId
     const ws = workspaces.find((w) => w.id === targetId)
     workspaceIdRef.current = ws?.id ?? null
     workspaceSlugRef.current = ws?.slug ?? null
-  }, [threads, workspaces, currentWorkspaceId, threadId])
+  }, [thread?.workspaceId, workspaces, currentWorkspaceId])
 
   const getWorkspaceSlug = () => workspaceSlugRef.current
 
@@ -254,6 +270,15 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   const composerState = deriveLumeComposerState({
     hasText: editorText.trim().length > 0,
     mode: streaming ? 'streaming' : 'idle',
+  })
+  const selectedModelSummary = useMemo(() => getThreadSelectionSummary({
+    channels,
+    channelsLoaded,
+    thread,
+    defaultStrategy,
+  }), [channels, channelsLoaded, thread, defaultStrategy])
+  const contextWindowProgress = buildContextWindowProgress(runtimeEvents, {
+    contextWindow: selectedModelSummary.meta?.contextWindow,
   })
 
   const handleSend = async () => {
@@ -351,6 +376,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
                 <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
               </>
             }
+            trailingTools={<ContextWindowIndicator progress={contextWindowProgress} />}
             actionSlot={
               composerState.showStop ? (
                 <button

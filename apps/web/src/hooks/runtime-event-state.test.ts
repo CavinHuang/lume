@@ -52,7 +52,7 @@ describe('runtime-event-state', () => {
     ])
   })
 
-  test('hydrates persisted RuntimeEvents only when live state is empty', () => {
+  test('hydrates persisted RuntimeEvents into empty thread state', () => {
     const result: AgentThreadRuntimeEventsResult = {
       threadId: 'thread-1',
       events: [
@@ -64,8 +64,38 @@ describe('runtime-event-state', () => {
 
     expect(hydrated['thread-1']?.terminalStatus).toBe('completed')
     expect(hydrated['thread-1']?.events).toHaveLength(2)
+  })
 
+  test('hydrates missing persisted user events into existing live state', () => {
+    const result: AgentThreadRuntimeEventsResult = {
+      threadId: 'thread-1',
+      events: [
+        runtimeEvent({ id: 'persisted-run', type: 'run.started' }),
+        runtimeEvent({
+          id: 'persisted-user',
+          type: 'message.user.submitted',
+          text: '帮我看看 download 目录下的文件',
+          messageId: 'message-1',
+          versionGroupId: 'group-1',
+        }),
+        runtimeEvent({ id: 'persisted-completed', type: 'run.completed' }),
+      ],
+    }
     const withLive = appendRuntimeEvent({}, runtimeEvent({ type: 'assistant.delta', delta: 'live' }))
-    expect(hydrateRuntimeEvents(withLive, result)).toBe(withLive)
+    const hydrated = hydrateRuntimeEvents(withLive, result)
+
+    expect(hydrated['thread-1']?.events.map((event) => event.type)).toEqual([
+      'run.started',
+      'message.user.submitted',
+      'assistant.delta',
+      'run.completed',
+    ])
+    expect(hydrated['thread-1']?.events[1]).toMatchObject({
+      type: 'message.user.submitted',
+      text: '帮我看看 download 目录下的文件',
+      messageId: 'message-1',
+      versionGroupId: 'group-1',
+    })
+    expect(hydrated['thread-1']?.terminalStatus).toBe('completed')
   })
 })

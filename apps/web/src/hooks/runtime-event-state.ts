@@ -34,20 +34,71 @@ export function hydrateRuntimeEvents(
   result: AgentThreadRuntimeEventsResult,
 ): RuntimeEventState {
   const current = prev[result.threadId]
-  if ((current?.events.length ?? 0) > 0 || result.events.length === 0) {
+  if (result.events.length === 0) {
+    return prev
+  }
+  const events = mergeHydratedRuntimeEvents(result.events, current?.events ?? [])
+  if (current && sameRuntimeEvents(current.events, events)) {
     return prev
   }
   return {
     ...prev,
     [result.threadId]: {
-      events: result.events,
-      terminalStatus: result.events.reduce<ThreadRuntimeEventState['terminalStatus']>(
+      events,
+      terminalStatus: events.reduce<ThreadRuntimeEventState['terminalStatus']>(
         (status, event) => getTerminalStatus(event) ?? status,
-        undefined,
+        current?.terminalStatus,
       ),
       updatedAt: Date.now(),
     },
   }
+}
+
+function mergeHydratedRuntimeEvents(
+  persistedEvents: LumeRuntimeEvent[],
+  liveEvents: LumeRuntimeEvent[],
+): LumeRuntimeEvent[] {
+  const merged: LumeRuntimeEvent[] = []
+  const seenIds = new Set<string>()
+  for (const event of [...persistedEvents, ...liveEvents]) {
+    if (seenIds.has(event.id)) continue
+    if (isDuplicateSubmittedUserEvent(merged, event)) continue
+    seenIds.add(event.id)
+    merged.push(event)
+  }
+  return merged.sort((a, b) => {
+    const timeOrder = a.createdAt.localeCompare(b.createdAt)
+    if (timeOrder !== 0) return timeOrder
+    return runtimeEventOrder(a) - runtimeEventOrder(b)
+  })
+}
+
+function sameRuntimeEvents(a: LumeRuntimeEvent[], b: LumeRuntimeEvent[]): boolean {
+  return a.length === b.length && a.every((event, index) => event === b[index])
+}
+
+function isDuplicateSubmittedUserEvent(
+  events: LumeRuntimeEvent[],
+  next: LumeRuntimeEvent,
+): boolean {
+  if (next.type !== 'message.user.submitted') return false
+  return events.some((event) => (
+    event.type === 'message.user.submitted'
+    && event.threadId === next.threadId
+    && event.text === next.text
+    && Math.abs(Date.parse(event.createdAt) - Date.parse(next.createdAt)) < 30_000
+  ))
+}
+
+function runtimeEventOrder(event: LumeRuntimeEvent): number {
+  if (event.type === 'run.started') return 0
+  if (event.type === 'message.user.submitted') return 1
+  if (event.type.startsWith('assistant.')) return 2
+  if (event.type.startsWith('tool.')) return 3
+  if (event.type === 'plan.preview') return 4
+  if (event.type === 'task.progress') return 5
+  if (event.type.startsWith('run.')) return 6
+  return 9
 }
 
 function appendOrMergeRuntimeEvent(events: LumeRuntimeEvent[], event: LumeRuntimeEvent): LumeRuntimeEvent[] {

@@ -418,6 +418,7 @@ export type {
   /** @deprecated Use SDKStreamEventMessage */
   SDKPartialMessage,
   SDKSystemMessage,
+  SDKContextCompactionStartedMessage,
   SDKCompactBoundaryMessage,
   SDKStatusMessage,
   SDKTaskNotificationMessage,
@@ -465,6 +466,10 @@ export type {
 
   // Agent types
   AgentOptions,
+  AgentContextController,
+  AgentContextCompactionBoundary,
+  AgentContextCompactionMetadata,
+  AgentContextCompactionTrigger,
   AgentDefinition,
   Query,
   QueryResult,

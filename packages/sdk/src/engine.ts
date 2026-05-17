@@ -20,6 +20,10 @@ import type {
   ToolResult,
   ToolContext,
   TokenUsage,
+  ContentBlockParam,
+  AgentContextCompactionBoundary,
+  AgentContextCompactionMetadata,
+  AgentContextCompactionTrigger,
 } from './types.js'
 import type {
   LLMProvider,
@@ -37,8 +41,8 @@ import {
 } from './utils/tokens.js'
 import {
   shouldAutoCompact,
-  compactConversation,
-  microCompactMessages,
+  compactConversation as defaultCompactConversation,
+  microCompactMessages as defaultMicroCompactMessages,
   createAutoCompactState,
   type AutoCompactState,
 } from './utils/compact.js'
@@ -180,6 +184,29 @@ function createStreamlinedToolUseSummaryMessage(
   }
 }
 
+function compactMetadataContextWindow(metadata?: AgentContextCompactionMetadata): number | undefined {
+  if (typeof metadata?.contextWindow === 'number' && Number.isFinite(metadata.contextWindow)) {
+    return metadata.contextWindow
+  }
+  const budget = metadata?.budget
+  if (budget && typeof budget === 'object') {
+    const record = budget as Record<string, unknown>
+    if (typeof record.totalTokens === 'number' && Number.isFinite(record.totalTokens)) {
+      return record.totalTokens
+    }
+    if (typeof record.total === 'number' && Number.isFinite(record.total)) {
+      return record.total
+    }
+  }
+  return undefined
+}
+
+function compactMetadataBudget(metadata?: AgentContextCompactionMetadata): AgentContextCompactionMetadata['budget'] | undefined {
+  const budget = metadata?.budget
+  if (!budget || typeof budget !== 'object') return undefined
+  return budget
+}
+
 // ============================================================================
 // System Prompt Builder
 // ============================================================================
@@ -317,6 +344,147 @@ export class QueryEngine {
     }
   }
 
+  private isManualCompactPrompt(prompt: string | ContentBlockParam[]): boolean {
+    return typeof prompt === 'string' && prompt.trim() === '/compact'
+  }
+
+  private async shouldCompactAutomatically(): Promise<boolean> {
+    const estimatedTokens = estimateMessagesTokens(this.messages)
+    const controller = this.config.contextController
+    if (controller?.shouldAutoCompact) {
+      return controller.shouldAutoCompact({
+        messages: this.messages,
+        model: this.config.model,
+        state: this.compactState,
+        estimatedTokens,
+      })
+    }
+    return shouldAutoCompact(this.messages as any[], this.config.model, this.compactState)
+  }
+
+  private async compactMessages(
+    trigger: AgentContextCompactionTrigger,
+    preTokens: number,
+  ): Promise<{
+    compactedMessages: NormalizedMessageParam[]
+    summary: string
+    state: AutoCompactState
+    metadata?: AgentContextCompactionMetadata
+  }> {
+    const controller = this.config.contextController
+    if (controller?.compactConversation) {
+      const result = await controller.compactConversation({
+        provider: this.provider,
+        model: this.config.model,
+        messages: this.messages,
+        state: this.compactState,
+        trigger,
+        preTokens,
+      })
+      return {
+        compactedMessages: result.compactedMessages,
+        summary: result.summary,
+        state: result.state ?? {
+          ...this.compactState,
+          compacted: true,
+          consecutiveFailures: 0,
+        },
+        metadata: result.metadata,
+      }
+    }
+    return defaultCompactConversation(
+      this.provider,
+      this.config.model,
+      this.messages as any[],
+      this.compactState,
+    )
+  }
+
+  private createCompactionStartedEvent(
+    trigger: AgentContextCompactionTrigger,
+    preTokens: number,
+    metadata?: AgentContextCompactionMetadata,
+  ): SDKMessage {
+    return {
+      type: 'system',
+      subtype: 'context_compaction_started',
+      compact_metadata: {
+        trigger,
+        pre_tokens: preTokens,
+        ...(compactMetadataContextWindow(metadata) !== undefined
+          ? { context_window: compactMetadataContextWindow(metadata) }
+          : {}),
+        ...(compactMetadataBudget(metadata) ? { budget: compactMetadataBudget(metadata) } : {}),
+        ...(typeof metadata?.policy === 'string' ? { policy: metadata.policy } : {}),
+        ...(typeof metadata?.source === 'string' ? { source: metadata.source } : {}),
+      },
+      session_id: this.sessionId,
+    } as SDKMessage
+  }
+
+  private createCompactBoundaryEvent(
+    boundary: AgentContextCompactionBoundary,
+  ): SDKMessage {
+    return {
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact_metadata: {
+        trigger: boundary.trigger,
+        pre_tokens: boundary.preTokens,
+        ...(boundary.postTokens !== undefined ? { post_tokens: boundary.postTokens } : {}),
+        ...(compactMetadataContextWindow(boundary.metadata) !== undefined
+          ? { context_window: compactMetadataContextWindow(boundary.metadata) }
+          : {}),
+        ...(compactMetadataBudget(boundary.metadata) ? { budget: compactMetadataBudget(boundary.metadata) } : {}),
+        ...(boundary.summary ? { summary: boundary.summary } : {}),
+        ...(typeof boundary.metadata?.policy === 'string' ? { policy: boundary.metadata.policy } : {}),
+        ...(typeof boundary.metadata?.source === 'string' ? { source: boundary.metadata.source } : {}),
+        ...(Array.isArray(boundary.metadata?.sourceMessageIds)
+          ? { source_message_ids: boundary.metadata.sourceMessageIds }
+          : {}),
+        ...(typeof boundary.metadata?.memoryFlushJobId === 'string'
+          ? { memory_flush_job_id: boundary.metadata.memoryFlushJobId }
+          : {}),
+        ...(boundary.metadata?.preservedSegment
+          ? { preserved_segment: boundary.metadata.preservedSegment }
+          : {}),
+      },
+      session_id: this.sessionId,
+    } as SDKMessage
+  }
+
+  private async runCompaction(
+    trigger: AgentContextCompactionTrigger,
+  ): Promise<{ started: SDKMessage; boundary: SDKMessage }> {
+    const preTokens = estimateMessagesTokens(this.messages)
+    const result = await this.compactMessages(trigger, preTokens)
+    this.messages = result.compactedMessages
+    this.compactState = result.state
+    const boundary: AgentContextCompactionBoundary = {
+      trigger,
+      preTokens,
+      postTokens: estimateMessagesTokens(this.messages),
+      summary: result.summary,
+      metadata: result.metadata,
+    }
+    await this.config.contextController?.onCompactionBoundary?.(boundary)
+    return {
+      started: this.createCompactionStartedEvent(trigger, preTokens, result.metadata),
+      boundary: this.createCompactBoundaryEvent(boundary),
+    }
+  }
+
+  private async microCompactForProvider(messages: NormalizedMessageParam[]): Promise<NormalizedMessageParam[]> {
+    const controller = this.config.contextController
+    if (controller?.microCompactMessages) {
+      return controller.microCompactMessages({
+        messages,
+        model: this.config.model,
+      })
+    }
+    return defaultMicroCompactMessages(messages as any[]) as NormalizedMessageParam[]
+  }
+
   private buildPermissionMetadata(
     block: ToolUseBlock,
     tool: ToolDefinition,
@@ -389,6 +557,43 @@ export class QueryEngine {
       session_id: this.sessionId,
     }
 
+    if (this.isManualCompactPrompt(prompt)) {
+      const { started, boundary } = await this.runCompaction('manual')
+      yield started
+      yield boundary
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: this.sessionId,
+        is_error: false,
+        num_turns: 0,
+        total_cost_usd: this.totalCost,
+        duration_api_ms: Math.round(this.apiTimeMs),
+        usage: this.totalUsage,
+        model_usage: { [this.config.model]: { input_tokens: 0, output_tokens: 0 } },
+        modelUsage: {
+          [this.config.model]: {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: this.totalCost,
+            contextWindow: 0,
+            maxOutputTokens: this.config.maxTokens,
+          },
+        },
+        cost: this.totalCost,
+      } as SDKMessage
+      yield {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+        session_id: this.sessionId,
+      }
+      return
+    }
+
     // Add user message
     this.messages.push({ role: 'user', content: prompt as any })
 
@@ -435,39 +640,22 @@ export class QueryEngine {
       }
 
       // Auto-compact if context is too large
-      if (shouldAutoCompact(this.messages as any[], this.config.model, this.compactState)) {
+      if (await this.shouldCompactAutomatically()) {
         await this.executeHooks('PreCompact')
-        const preCompactTokens = estimateMessagesTokens(this.messages)
         try {
-          const result = await compactConversation(
-            this.provider,
-            this.config.model,
-            this.messages as any[],
-            this.compactState,
-          )
-          this.messages = result.compactedMessages as NormalizedMessageParam[]
-          this.compactState = result.state
+          const { started, boundary } = await this.runCompaction('auto')
           await this.executeHooks('PostCompact')
-          // Emit compact boundary in official SDK format
-          yield {
-            type: 'system',
-            subtype: 'compact_boundary',
-            compact_metadata: {
-              trigger: 'auto',
-              pre_tokens: preCompactTokens,
-              summary: result.summary,
-            },
-            session_id: this.sessionId,
-          } as SDKMessage
+          yield started
+          yield boundary
         } catch {
           // Continue with uncompacted messages
         }
       }
 
       // Micro-compact: truncate large tool results
-      const apiMessages = microCompactMessages(
-        normalizeMessagesForAPI(this.messages as any[]),
-      ) as NormalizedMessageParam[]
+      const apiMessages = await this.microCompactForProvider(
+        normalizeMessagesForAPI(this.messages as any[]) as NormalizedMessageParam[],
+      )
 
       this.turnCount++
       turnsRemaining--
@@ -583,14 +771,9 @@ export class QueryEngine {
         // Handle prompt-too-long by compacting
         if (isPromptTooLongError(err) && !this.compactState.compacted) {
           try {
-            const result = await compactConversation(
-              this.provider,
-              this.config.model,
-              this.messages as any[],
-              this.compactState,
-            )
-            this.messages = result.compactedMessages as NormalizedMessageParam[]
-            this.compactState = result.state
+            const { started, boundary } = await this.runCompaction('prompt_too_long')
+            yield started
+            yield boundary
             turnsRemaining++ // Retry this turn
             this.turnCount--
             continue

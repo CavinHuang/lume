@@ -167,10 +167,16 @@ export function LumeComposer({
           {hasToolbarContent ? (
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{leadingTools}</div>
           ) : null}
-          {trailingTools ? (
-            <div className="flex items-center gap-1.5">{trailingTools}</div>
-          ) : null}
-          <div className={cn('shrink-0', hasToolbarContent && 'ml-auto')}>{actionSlot}</div>
+          <div
+            data-composer-right-tools="true"
+            className={cn(
+              'flex shrink-0 items-center gap-1.5',
+              hasToolbarContent && 'ml-auto',
+            )}
+          >
+            {trailingTools}
+            {actionSlot}
+          </div>
         </div>
       </div>
     </div>

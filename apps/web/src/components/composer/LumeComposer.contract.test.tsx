@@ -51,4 +51,19 @@ describe('LumeComposer contract', () => {
     expect(html).toContain('停止')
     expect(html).not.toContain('正在发送')
   })
+
+  test('keeps trailing tools and action in the same right-side group', () => {
+    const html = renderToStaticMarkup(
+      <LumeComposer
+        tone="idle"
+        editorSlot={<div>editor</div>}
+        leadingTools={<button type="button">model</button>}
+        trailingTools={<button type="button">context</button>}
+        actionSlot={<button type="button">send</button>}
+      />,
+    )
+
+    expect(html).toContain('data-composer-right-tools="true"')
+    expect(html.indexOf('context')).toBeLessThan(html.indexOf('send'))
+  })
 })

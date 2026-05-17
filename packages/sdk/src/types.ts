@@ -59,6 +59,7 @@ export type SDKMessage =
   | SDKStreamEventMessage
   | SDKPartialMessage
   | SDKSystemMessage
+  | SDKContextCompactionStartedMessage
   | SDKCompactBoundaryMessage
   | SDKStatusMessage
   | SDKTaskNotificationMessage
@@ -204,6 +205,69 @@ export interface SDKSystemMessage {
   claude_code_version?: string
 }
 
+export type AgentContextCompactionTrigger = 'auto' | 'manual' | 'prompt_too_long'
+
+export interface AgentContextCompactionMetadata {
+  policy?: string
+  source?: string
+  contextWindow?: number
+  budget?: {
+    totalTokens?: number
+    usedTokens?: number
+    remainingTokens?: number
+    sections?: {
+      system?: number
+      memory?: number
+      session?: number
+      toolSchemas?: number
+      reservedOutput?: number
+    }
+  }
+  sourceMessageIds?: string[]
+  memoryFlushJobId?: string
+  preservedSegment?: {
+    head_uuid?: string
+    anchor_uuid?: string
+    tail_uuid?: string
+  }
+  [key: string]: unknown
+}
+
+export interface AgentContextCompactionBoundary {
+  trigger: AgentContextCompactionTrigger
+  preTokens: number
+  postTokens?: number
+  summary?: string
+  metadata?: AgentContextCompactionMetadata
+}
+
+export interface AgentContextController {
+  shouldAutoCompact?: (input: {
+    messages: import('./providers/types.js').NormalizedMessageParam[]
+    model: string
+    state: import('./utils/compact.js').AutoCompactState
+    estimatedTokens: number
+  }) => boolean | Promise<boolean>
+  microCompactMessages?: (input: {
+    messages: import('./providers/types.js').NormalizedMessageParam[]
+    model: string
+  }) => import('./providers/types.js').NormalizedMessageParam[] | Promise<import('./providers/types.js').NormalizedMessageParam[]>
+  compactConversation?: (input: {
+    provider: import('./providers/types.js').LLMProvider
+    model: string
+    messages: import('./providers/types.js').NormalizedMessageParam[]
+    state: import('./utils/compact.js').AutoCompactState
+    trigger: AgentContextCompactionTrigger
+    preTokens: number
+  }) => Promise<{
+    compactedMessages: import('./providers/types.js').NormalizedMessageParam[]
+    summary: string
+    state?: import('./utils/compact.js').AutoCompactState
+    metadata?: AgentContextCompactionMetadata
+  }>
+  onCompactionBoundary?: (boundary: AgentContextCompactionBoundary) => void | Promise<void>
+}
+
 export interface SDKUserMessage {
   type: 'user'
   message: ConversationMessage
@@ -228,17 +292,39 @@ export interface SDKCompactBoundaryMessage {
   subtype: 'compact_boundary'
   /** Metadata about the compaction operation (official SDK format). */
   compact_metadata?: {
-    trigger: 'manual' | 'auto'
+    trigger: AgentContextCompactionTrigger
     pre_tokens: number
+    post_tokens?: number
+    context_window?: number
+    budget?: AgentContextCompactionMetadata['budget']
     summary?: string
+    policy?: string
+    source?: string
+    source_message_ids?: string[]
+    memory_flush_job_id?: string
     preserved_segment?: {
-      head_uuid: string
-      anchor_uuid: string
-      tail_uuid: string
+      head_uuid?: string
+      anchor_uuid?: string
+      tail_uuid?: string
     }
   }
   /** @deprecated Use compact_metadata.trigger. */
   summary?: string
+  uuid?: string
+  session_id?: string
+}
+
+export interface SDKContextCompactionStartedMessage {
+  type: 'system'
+  subtype: 'context_compaction_started'
+  compact_metadata: {
+    trigger: AgentContextCompactionTrigger
+    pre_tokens: number
+    context_window?: number
+    budget?: AgentContextCompactionMetadata['budget']
+    policy?: string
+    source?: string
+  }
   uuid?: string
   session_id?: string
 }
@@ -1107,6 +1193,8 @@ export interface AgentOptions {
     hooks: Array<(input: any, toolUseId: string, context: { signal: AbortSignal }) => Promise<any>>
     timeout?: number
   }>>
+  /** Optional host-owned context policy bridge. Defaults preserve SDK compaction behavior. */
+  contextController?: AgentContextController
 }
 
 export interface QueryResult {
@@ -1165,6 +1253,8 @@ export interface QueryEngineConfig {
     claudeCodeVersion?: string
     apiKeySource?: string
   }
+  /** Optional host-owned context policy bridge. Defaults preserve SDK compaction behavior. */
+  contextController?: AgentContextController
 }
 
 // --------------------------------------------------------------------------

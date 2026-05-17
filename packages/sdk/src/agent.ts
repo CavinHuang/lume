@@ -757,14 +757,17 @@ export class Agent {
     }
 
     const normalizedPrompt = normalizePromptInput(prompt)
-    const userMessage = toSessionMessage('user', normalizedPrompt)
-    this.sessionMessages.push(userMessage)
-    this.messageLog.push({
-      type: 'user',
-      message: { role: 'user', content: normalizedPrompt },
-      uuid: userMessage.uuid,
-      timestamp: userMessage.timestamp,
-    })
+    const isManualCompactCommand = typeof normalizedPrompt === 'string' && normalizedPrompt.trim() === '/compact'
+    const userMessage = isManualCompactCommand ? null : toSessionMessage('user', normalizedPrompt)
+    if (userMessage) {
+      this.sessionMessages.push(userMessage)
+      this.messageLog.push({
+        type: 'user',
+        message: { role: 'user', content: normalizedPrompt },
+        uuid: userMessage.uuid,
+        timestamp: userMessage.timestamp,
+      })
+    }
 
     const engine = new QueryEngine({
       cwd,
@@ -806,12 +809,13 @@ export class Agent {
       },
       sandbox: opts.sandbox,
       toolConfig: opts.toolConfig,
-      currentUserMessageId: userMessage.uuid,
+      currentUserMessageId: userMessage?.uuid ?? `command:${this.sid}:compact`,
       fileCheckpointState: this.fileCheckpointState,
       mcpServerStatuses: this.collectMcpServerStatuses().map((status) => ({
         name: status.name,
         status: status.status,
       })),
+      contextController: opts.contextController,
     })
     this.currentEngine = engine
 
