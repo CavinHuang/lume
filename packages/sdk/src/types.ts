@@ -142,6 +142,10 @@ export interface SDKResultMessage {
    * Compatible with official Claude Agent SDK format.
    */
   modelUsage?: Record<string, ModelUsage>
+  /**
+   * Per-provider-call usage records for host/runtime observability.
+   */
+  usageRecords?: SDKUsageRecord[]
   permission_denials?: SDKPermissionDenial[]
   structured_output?: unknown
   errors?: string[]
@@ -599,6 +603,17 @@ export interface ModelUsage {
   contextWindow: number
   /** Maximum output tokens for the model */
   maxOutputTokens: number
+}
+
+export interface SDKUsageRecord {
+  callerLabel: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+  costUSD: number
+  turn: number
 }
 
 // --------------------------------------------------------------------------

@@ -329,3 +329,72 @@ describe("QueryEngine skill allowed tools", () => {
     expect(observedTools[1]).toEqual(["Read", "Skill"]);
   });
 });
+
+describe("QueryEngine usage records", () => {
+  test("includes per-provider-call usage records in the final result", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "README.md" } }],
+        stopReason: "tool_use",
+        usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          cache_read_input_tokens: 30,
+          cache_creation_input_tokens: 10
+        }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: {
+          input_tokens: 60,
+          output_tokens: 15,
+          cache_read_input_tokens: 5
+        }
+      }
+    ]);
+    const readTool = {
+      name: "Read",
+      description: "read",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "read" };
+      }
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "gpt-4o-mini",
+      provider,
+      tools: [readTool],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    const events = await collectEvents(engine);
+    const result = events.find((event) => (event as { type?: string }).type === "result") as any;
+
+    expect(result.usageRecords).toEqual([
+      expect.objectContaining({
+        callerLabel: "Turn 1",
+        model: "gpt-4o-mini",
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheReadInputTokens: 30,
+        cacheCreationInputTokens: 10,
+        turn: 1
+      }),
+      expect.objectContaining({
+        callerLabel: "Turn 2",
+        model: "gpt-4o-mini",
+        inputTokens: 60,
+        outputTokens: 15,
+        cacheReadInputTokens: 5,
+        cacheCreationInputTokens: 0,
+        turn: 2
+      })
+    ]);
+  });
+});

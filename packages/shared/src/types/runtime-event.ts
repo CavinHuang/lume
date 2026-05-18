@@ -231,6 +231,8 @@ export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
   cachedTokens?: number;
   usageRecords?: Array<{
     callerLabel: string;
+    model?: string;
+    turn?: number;
     inputTokens: number;
     outputTokens: number;
     cachedTokens?: number;

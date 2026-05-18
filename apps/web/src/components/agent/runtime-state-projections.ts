@@ -60,6 +60,8 @@ export interface ContextWindowUsageSummary {
 
 export interface ContextWindowUsageRecord {
   callerLabel: string
+  model?: string
+  turn?: number
   inputTokens: number
   outputTokens: number
   cachedTokens: number
@@ -361,6 +363,8 @@ function buildUsageRecords(
         const cachedTokens = record.cachedTokens ?? 0
         return {
           callerLabel: record.callerLabel,
+          ...(typeof record.model === 'string' ? { model: record.model } : {}),
+          ...(typeof record.turn === 'number' ? { turn: record.turn } : {}),
           inputTokens: record.inputTokens,
           outputTokens: record.outputTokens,
           cachedTokens,

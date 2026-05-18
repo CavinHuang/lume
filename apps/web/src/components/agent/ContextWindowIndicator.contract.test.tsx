@@ -20,7 +20,9 @@ describe('ContextWindowIndicator contract', () => {
         costUSD: 0.0187,
         records: [
           {
-            callerLabel: 'gpt-test',
+            callerLabel: 'Turn 1',
+            model: 'gpt-test',
+            turn: 1,
             inputTokens: 300,
             cachedTokens: 60,
             cacheHitRate: 20,
@@ -62,6 +64,7 @@ describe('ContextWindowIndicator contract', () => {
     expect(html).toContain('命中率')
     expect(html).toContain('↓输出')
     expect(html).toContain('费用')
+    expect(html).toContain('Turn 1')
     expect(html).toContain('gpt-test')
     expect(html).toContain('20%')
   })

@@ -263,7 +263,7 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
       inputTokens,
       outputTokens,
       ...(cachedTokens > 0 ? { cachedTokens } : {}),
-      ...optionalUsageRecords(payload.modelUsage),
+      ...optionalUsageRecords(payload.usageRecords, payload.modelUsage),
       totalTokens,
       ...optionalNumber("contextWindow", contextWindowFromModelUsage(payload.modelUsage)),
       ...(typeof payload.total_cost_usd === "number" ? { costUSD: payload.total_cost_usd } : {})
@@ -403,7 +403,34 @@ function contextWindowFromModelUsage(modelUsage: unknown): number | undefined {
   return undefined;
 }
 
-function optionalUsageRecords(modelUsage: unknown): Pick<Extract<LumeRuntimeEvent, { type: "usage.updated" }>, "usageRecords"> | {} {
+function optionalUsageRecords(
+  sdkUsageRecords: unknown,
+  modelUsage: unknown
+): Pick<Extract<LumeRuntimeEvent, { type: "usage.updated" }>, "usageRecords"> | {} {
+  if (Array.isArray(sdkUsageRecords)) {
+    const usageRecords = sdkUsageRecords
+      .map((usage) => {
+        const record = asRecord(usage);
+        const inputTokens = numberValue(record.inputTokens);
+        const outputTokens = numberValue(record.outputTokens);
+        const directCachedTokens = numberValue(record.cachedTokens);
+        const cachedTokens = directCachedTokens > 0
+          ? directCachedTokens
+          : numberValue(record.cacheReadInputTokens) + numberValue(record.cacheCreationInputTokens);
+        return {
+          callerLabel: stringValue(record.callerLabel, "LLM call"),
+          ...(typeof record.model === "string" && record.model.trim() ? { model: record.model } : {}),
+          ...(typeof record.turn === "number" && Number.isFinite(record.turn) ? { turn: record.turn } : {}),
+          inputTokens,
+          outputTokens,
+          ...(cachedTokens > 0 ? { cachedTokens } : {}),
+          ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
+        };
+      })
+      .filter((record) => record.inputTokens > 0 || record.outputTokens > 0 || (record.cachedTokens ?? 0) > 0);
+    if (usageRecords.length > 0) return { usageRecords };
+  }
+
   const usageByModel = asRecord(modelUsage);
   const usageRecords = Object.entries(usageByModel)
     .map(([modelId, usage]) => {

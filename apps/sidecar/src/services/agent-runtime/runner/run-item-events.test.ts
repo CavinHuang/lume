@@ -308,6 +308,28 @@ describe("projectRunStateToRuntimeEvents", () => {
                 contextWindow: 1000
               }
             },
+            usageRecords: [
+              {
+                callerLabel: "Turn 1",
+                model: "gpt-test",
+                inputTokens: 6,
+                outputTokens: 2,
+                cacheReadInputTokens: 1,
+                cacheCreationInputTokens: 1,
+                costUSD: 0.004,
+                turn: 1
+              },
+              {
+                callerLabel: "Turn 2",
+                model: "gpt-test",
+                inputTokens: 4,
+                outputTokens: 3,
+                cacheReadInputTokens: 2,
+                cacheCreationInputTokens: 1,
+                costUSD: 0.006,
+                turn: 2
+              }
+            ],
             total_cost_usd: 0.01
           },
           createdAt: "2026-04-30T00:00:03.000Z"
@@ -350,11 +372,22 @@ describe("projectRunStateToRuntimeEvents", () => {
       cachedTokens: 5,
       usageRecords: [
         {
-          callerLabel: "gpt-test",
-          inputTokens: 10,
-          outputTokens: 5,
-          cachedTokens: 5,
-          costUSD: 0.01
+          callerLabel: "Turn 1",
+          model: "gpt-test",
+          turn: 1,
+          inputTokens: 6,
+          outputTokens: 2,
+          cachedTokens: 2,
+          costUSD: 0.004
+        },
+        {
+          callerLabel: "Turn 2",
+          model: "gpt-test",
+          turn: 2,
+          inputTokens: 4,
+          outputTokens: 3,
+          cachedTokens: 3,
+          costUSD: 0.006
         }
       ],
       totalTokens: 20,

@@ -89,6 +89,8 @@ describe('runtime-state projections', () => {
         usageRecords: [
           {
             callerLabel: 'gpt-test',
+            model: 'gpt-4o-mini',
+            turn: 1,
             inputTokens: 720,
             cachedTokens: 40,
             outputTokens: 80,
@@ -117,6 +119,8 @@ describe('runtime-state projections', () => {
         records: [
           {
             callerLabel: 'gpt-test',
+            model: 'gpt-4o-mini',
+            turn: 1,
             inputTokens: 720,
             cachedTokens: 40,
             outputTokens: 80,

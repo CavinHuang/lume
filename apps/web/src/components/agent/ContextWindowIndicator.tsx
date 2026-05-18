@@ -7,6 +7,8 @@ interface ContextWindowIndicatorProps {
   defaultOpen?: boolean
 }
 
+type ContextWindowUsageRecordView = NonNullable<NonNullable<ContextWindowProgress['usage']>['records']>[number]
+
 const CONTEXT_THRESHOLDS = [
   { pct: '60%', label: 'Snip + MicroCompact', dotClassName: 'bg-emerald-500', textClassName: 'text-emerald-500' },
   { pct: '~83%', label: 'Auto Compact (LLM)', dotClassName: 'bg-amber-500', textClassName: 'text-amber-500' },
@@ -138,8 +140,13 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
                   <div className="max-h-[160px] overflow-y-auto">
                     {progress.usage.records.slice(0, 20).map((record, index) => (
                       <div key={`${record.callerLabel}:${index}`} className={usageRecordGridClassName}>
-                        <span className="min-w-0 truncate px-1.5 py-1 text-[10px] text-foreground/65" title={record.callerLabel}>
-                          {record.callerLabel}
+                        <span className="min-w-0 px-1.5 py-1 text-[10px] text-foreground/65" title={usageRecordTitle(record)}>
+                          <span className="block truncate">{record.callerLabel}</span>
+                          {record.model && (
+                            <span className="block truncate font-mono text-[9px] text-foreground/35">
+                              {record.model}
+                            </span>
+                          )}
                         </span>
                         <span className="px-1.5 py-1 text-right font-mono text-[10px] text-foreground/50">
                           {formatTokenNumber(record.inputTokens)}
@@ -198,6 +205,10 @@ function UsageSummaryRow({
       <span className={cn('shrink-0 font-mono', valueClassName)}>{value}</span>
     </div>
   )
+}
+
+function usageRecordTitle(record: ContextWindowUsageRecordView): string {
+  return [record.callerLabel, record.model].filter(Boolean).join(' · ')
 }
 
 function ContextWindowRing({ progress }: { progress: ContextWindowProgress }) {

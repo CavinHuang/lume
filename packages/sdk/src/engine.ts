@@ -24,6 +24,7 @@ import type {
   AgentContextCompactionBoundary,
   AgentContextCompactionMetadata,
   AgentContextCompactionTrigger,
+  SDKUsageRecord,
 } from './types.js'
 import type {
   LLMProvider,
@@ -301,6 +302,7 @@ export class QueryEngine {
   private provider: LLMProvider
   public messages: NormalizedMessageParam[] = []
   private totalUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
+  private usageRecords: SDKUsageRecord[] = []
   private totalCost = 0
   private turnCount = 0
   private compactState: AutoCompactState
@@ -319,6 +321,39 @@ export class QueryEngine {
     this.compactState = createAutoCompactState()
     this.sessionId = config.sessionId || crypto.randomUUID()
     this.hookRegistry = config.hookRegistry
+  }
+
+  private recordProviderUsage(usage: CreateMessageResponse['usage']): void {
+    const costUSD = estimateCost(this.config.model, usage)
+    this.totalUsage.input_tokens += usage.input_tokens
+    this.totalUsage.output_tokens += usage.output_tokens
+    if (usage.cache_creation_input_tokens) {
+      this.totalUsage.cache_creation_input_tokens =
+        (this.totalUsage.cache_creation_input_tokens || 0) +
+        usage.cache_creation_input_tokens
+    }
+    if (usage.cache_read_input_tokens) {
+      this.totalUsage.cache_read_input_tokens =
+        (this.totalUsage.cache_read_input_tokens || 0) +
+        usage.cache_read_input_tokens
+    }
+    this.totalCost += costUSD
+    this.usageRecords.push({
+      callerLabel: `Turn ${this.turnCount}`,
+      model: this.config.model,
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+      cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+      costUSD,
+      turn: this.turnCount,
+    })
+  }
+
+  private optionalUsageRecords(): { usageRecords?: SDKUsageRecord[] } {
+    return this.usageRecords.length > 0
+      ? { usageRecords: this.usageRecords.map((record) => ({ ...record })) }
+      : {}
   }
 
   /**
@@ -543,6 +578,7 @@ export class QueryEngine {
         subtype: 'error_during_execution',
         is_error: true,
         usage: this.totalUsage,
+        ...this.optionalUsageRecords(),
         num_turns: 0,
         cost: 0,
         errors: ['Blocked by UserPromptSubmit hook'],
@@ -583,6 +619,7 @@ export class QueryEngine {
             maxOutputTokens: this.config.maxTokens,
           },
         },
+        ...this.optionalUsageRecords(),
         cost: this.totalCost,
       } as SDKMessage
       yield {
@@ -787,6 +824,7 @@ export class QueryEngine {
           subtype: 'error_during_execution',
           is_error: true,
           usage: this.totalUsage,
+          ...this.optionalUsageRecords(),
           num_turns: this.turnCount,
           cost: this.totalCost,
           errors: [err?.message || 'Unknown provider error'],
@@ -805,19 +843,7 @@ export class QueryEngine {
 
       // Track usage (normalized by provider)
       if (response.usage) {
-        this.totalUsage.input_tokens += response.usage.input_tokens
-        this.totalUsage.output_tokens += response.usage.output_tokens
-        if (response.usage.cache_creation_input_tokens) {
-          this.totalUsage.cache_creation_input_tokens =
-            (this.totalUsage.cache_creation_input_tokens || 0) +
-            response.usage.cache_creation_input_tokens
-        }
-        if (response.usage.cache_read_input_tokens) {
-          this.totalUsage.cache_read_input_tokens =
-            (this.totalUsage.cache_read_input_tokens || 0) +
-            response.usage.cache_read_input_tokens
-        }
-        this.totalCost += estimateCost(this.config.model, response.usage)
+        this.recordProviderUsage(response.usage)
       }
 
       // Add assistant message to conversation
@@ -1007,6 +1033,7 @@ export class QueryEngine {
       /** @deprecated Use modelUsage */
       model_usage: { [this.config.model]: snakeCaseUsage },
       modelUsage: { [this.config.model]: camelCaseUsage },
+      ...this.optionalUsageRecords(),
       cost: this.totalCost,
       permission_denials: this.permissionDenials,
       structured_output: structuredOutput,
