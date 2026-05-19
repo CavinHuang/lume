@@ -390,6 +390,7 @@ export async function sendAgentMessage(
       : undefined;
   const effectiveMessageMetadata = {
     ...(input.messageMetadata ?? {}),
+    ...(input.messageAttachments?.length ? { messageAttachments: input.messageAttachments } : {}),
     ...(isManualCompactCommand ? {
       hiddenFromChat: true,
       manualCommand: "compact"

@@ -27,6 +27,28 @@ describe("ContextAssembler", () => {
     expect(result.trace.tokenUsageEstimate).toBeGreaterThan(0);
   });
 
+  test("adds message attachment brief to model-facing user message", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-attachments",
+      runId: "run-attachments",
+      userMessage: "summarize this",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["Read"],
+      tokenBudget: 1000,
+      messageAttachments: [{
+        id: "att-1",
+        filename: "brief.md",
+        mediaType: "text/markdown",
+        size: 2048,
+        threadPath: "docs/brief.md"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain("summarize this");
+    expect(result.userMessageForModel).toContain("本轮用户附加了以下文件：");
+    expect(result.userMessageForModel).toContain("brief.md (text/markdown, 2 KB): docs/brief.md");
+  });
+
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-context-trace-"));
     try {

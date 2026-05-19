@@ -1,4 +1,4 @@
-import type { AgentSendInput } from "@lume/shared";
+import type { AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
 import {
   buildDynamicContext,
   buildSystemPromptAppend
@@ -17,6 +17,7 @@ import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
+import { buildMessageAttachmentBrief } from "./message-attachments";
 
 export interface ContextAssemblyInput {
   threadId: string;
@@ -31,6 +32,7 @@ export interface ContextAssemblyInput {
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   agentSystemPrompt?: string;
+  messageAttachments?: AgentMessageAttachmentInput[];
   availableTools: string[];
   tokenBudget: number;
   trace?: {
@@ -178,6 +180,10 @@ export class ContextAssembler {
     const systemPrompt = [agentSystemPrompt, systemPromptAppend, dynamicContext, permissionDeniedContext]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
+    const attachmentBrief = buildMessageAttachmentBrief(input.messageAttachments);
+    const userMessageForModel = [memoryContext.userMessageForModel, attachmentBrief]
+      .filter((part) => typeof part === "string" && part.trim().length > 0)
+      .join("\n\n");
 
     return {
       systemPrompt,
@@ -185,7 +191,7 @@ export class ContextAssembler {
       memoryContext: memoryContext.prefix,
       memoryUserMessagePrefix: memoryContext.prefix,
       memoryContextUsedItems: memoryContext.items,
-      userMessageForModel: memoryContext.userMessageForModel,
+      userMessageForModel,
       sessionContext: "",
       budget: {
         ...DEFAULT_CONTEXT_BUDGET,

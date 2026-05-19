@@ -19,10 +19,12 @@ import {
   renameAgentFile,
   renameWorkspaceFile,
   readAgentPath,
+  resolveThreadAttachmentPath,
   resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
   saveFilesToWorkspace,
-  searchAgentWorkspaceFiles
+  searchAgentWorkspaceFiles,
+  toThreadRelativePath
 } from "./agent-files-service";
 
 const createdDirs: string[] = [];
@@ -114,6 +116,26 @@ describe("agent-files-service file ops", () => {
       truncated: false
     });
     expect(() => readAgentPath(workspaceSlug, sessionId, "../plan.md")).toThrow("目标路径超出线程工作目录");
+  });
+
+  test("线程附件路径 helper 应转换线程内路径并拒绝越界或缺失文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-attachment-paths";
+    const sessionId = "session-attachment-paths";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const docsDir = join(sessionDir, "docs");
+    mkdirSync(docsDir, { recursive: true });
+    const filePath = join(docsDir, "brief.md");
+    writeFileSync(filePath, "# brief", "utf-8");
+
+    expect(toThreadRelativePath(workspaceSlug, sessionId, filePath)).toBe("docs/brief.md");
+    expect(resolveThreadAttachmentPath(workspaceSlug, sessionId, "docs/brief.md")).toBe(filePath);
+    expect(() => resolveThreadAttachmentPath(workspaceSlug, sessionId, "../brief.md"))
+      .toThrow("目标路径超出线程工作目录");
+    expect(() => resolveThreadAttachmentPath(workspaceSlug, sessionId, "missing.md"))
+      .toThrow("附件文件不存在");
+    expect(() => toThreadRelativePath(workspaceSlug, sessionId, join(tmpdir(), "outside.md")))
+      .toThrow("附件路径不在当前线程目录内");
   });
 
   test("应支持附加目录列出/重命名/移动", () => {

@@ -323,6 +323,43 @@ describe("agent-service", () => {
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
   });
 
+  test("sendAgentMessage 应把本轮附件引用持久化到用户消息 metadata", async () => {
+    const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("message attachments", "channel-test");
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "总结附件",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      messageAttachments: [{
+        id: "att-1",
+        filename: "brief.md",
+        mediaType: "text/markdown",
+        size: 2048,
+        threadPath: "docs/brief.md"
+      }]
+    }, {
+      onRuntimeEvent: () => undefined,
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const visibleMessages = getAgentThreadMessages(thread.id);
+    expect(visibleMessages[0]?.metadata?.messageAttachments).toEqual([{
+      id: "att-1",
+      filename: "brief.md",
+      mediaType: "text/markdown",
+      size: 2048,
+      threadPath: "docs/brief.md"
+    }]);
+  });
+
   test("sendAgentMessage 不应把隐藏的 plan 控制输入追加为可见用户消息", async () => {
     const { createAgentThread, getAgentThreadMessages, getAgentThreadSDKMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");

@@ -1,3 +1,4 @@
+import type { AgentMessageAttachmentInput } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
 import type { LumeRunItem } from "./run-items";
 
@@ -40,6 +41,7 @@ export interface LumeRunInput {
   permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
   threadType?: string;
   chatType?: string;
+  messageAttachments?: AgentMessageAttachmentInput[];
   messageMetadata?: Record<string, unknown>;
 }
 

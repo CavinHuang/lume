@@ -108,6 +108,33 @@ describe("projectRunStateToRuntimeEvents", () => {
     });
   });
 
+  test("projects message attachments onto user submitted events", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      input: {
+        userMessage: "summarize this",
+        messageAttachments: [{
+          id: "att-1",
+          filename: "brief.md",
+          mediaType: "text/markdown",
+          size: 2048,
+          threadPath: "docs/brief.md"
+        }]
+      } as LumeRunState["input"]
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "message.user.submitted",
+      text: "summarize this",
+      attachments: [{
+        id: "att-1",
+        filename: "brief.md",
+        mediaType: "text/markdown",
+        size: 2048,
+        threadPath: "docs/brief.md"
+      }]
+    }));
+  });
+
   test("uses stream deltas only when no final assistant message exists", () => {
     expect(projectRunStateToRuntimeEvents(baseRun({
       status: "running",

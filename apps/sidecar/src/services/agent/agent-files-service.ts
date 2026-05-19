@@ -183,6 +183,23 @@ export function getAgentSessionPath(workspaceSlug: string, sessionId: string): s
 
 export const getAgentThreadPath = getAgentSessionPath;
 
+export function toThreadRelativePath(workspaceSlug: string, sessionId: string, targetPath: string): string {
+  const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
+  const resolved = resolve(targetPath);
+  if (!isWithin(sessionDir, resolved)) {
+    throw new Error("附件路径不在当前线程目录内");
+  }
+  return relative(sessionDir, resolved).split(sep).join("/");
+}
+
+export function resolveThreadAttachmentPath(workspaceSlug: string, sessionId: string, threadPath: string): string {
+  const resolved = resolveSafeTarget(workspaceSlug, sessionId, threadPath);
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new Error("附件文件不存在");
+  }
+  return resolved;
+}
+
 export function getWorkspaceResourcesDirectory(workspaceSlug: string): string {
   return resolveWorkspaceResourcesDir(workspaceSlug);
 }
