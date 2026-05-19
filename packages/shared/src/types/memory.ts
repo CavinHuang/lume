@@ -1,16 +1,3 @@
-export interface MemoryChunkRecord {
-  id: string;
-  path: string;
-  workspaceSlug: string;
-  source: "memory" | "session";
-  startLine: number;
-  endLine: number;
-  hash: string;
-  model: string;
-  text: string;
-  updatedAt: number;
-}
-
 export type MemoryScope =
   | "global"
   | "workspace"
@@ -34,16 +21,7 @@ export type MemorySource =
   | "session"
   | "file"
   | "tool"
-  | "manual"
-  | "flush"
-  | "distillation"
-  | "promotion";
-
-export type MemorySearchStrategy =
-  | "hybrid"
-  | "keyword"
-  | "vector"
-  | "recent";
+  | "manual";
 
 export type MemoryToolName =
   | "memory.search"
@@ -101,7 +79,6 @@ export interface MemorySearchInput {
   includeLongTerm?: boolean;
   includeWorkspaceBrief?: boolean;
   includeSessions?: boolean;
-  strategy?: MemorySearchStrategy;
 }
 
 export interface MemorySearchResult {
@@ -112,10 +89,6 @@ export interface MemorySearchResult {
   snippet: string;
   citation?: string;
   score: number;
-  vectorScore?: number;
-  keywordScore?: number;
-  recencyScore?: number;
-  importanceScore?: number;
   kind?: MemoryKind;
   scope?: MemoryScope;
   source: MemorySource;
@@ -187,10 +160,74 @@ export interface UpdateMemoryRuntimeConfigInput {
   extraPaths?: string[];
 }
 
+export interface MemorySettingsFileSummary {
+  path: string;
+  label: string;
+  kind: "memory" | "daily" | "run";
+  scope: "global" | "workspace";
+  updatedAt?: number;
+}
+
+export interface MemorySettingsEntrySummary {
+  id: string;
+  path: string;
+  scope: "global" | "workspace";
+  kind: MemoryKind;
+  status: "active" | "suspected_stale" | "archived" | "superseded" | "pending_conflict" | "pending_low_confidence";
+  confidence: "low" | "medium" | "high";
+  statement: string;
+  updated: string;
+  pinned: boolean;
+  tags: string[];
+}
+
+export interface MemorySettingsPendingSummary {
+  id: string;
+  path: string;
+  type: "conflict" | "stale" | "low-confidence";
+  status: "open" | "resolved" | "archived";
+  created: string;
+  statement: string;
+  reason: string;
+  existingIds: string[];
+}
+
+export interface MemoryPendingCounts {
+  conflicts: number;
+  stale: number;
+  lowConfidence: number;
+  total: number;
+}
+
+export interface MemorySettingsSnapshot {
+  workspaceSlug: string;
+  counts: {
+    active: number;
+    workspace: number;
+    global: number;
+    suspectedStale: number;
+    pinned: number;
+    daily: number;
+    runs: number;
+    pending: MemoryPendingCounts;
+  };
+  files: MemorySettingsFileSummary[];
+  workspaceEntries: MemorySettingsEntrySummary[];
+  globalEntries: MemorySettingsEntrySummary[];
+  pending: MemorySettingsPendingSummary[];
+}
+
+export interface MemoryOpenSourceInput {
+  workspaceSlug: string;
+  path: string;
+}
+
 export const MEMORY_IPC_CHANNELS = {
   SEARCH: "memory:search",
   READ: "memory:read",
   REMEMBER: "memory:remember",
+  SETTINGS_SNAPSHOT: "memory:settings-snapshot",
+  OPEN_SOURCE: "memory:open-source",
   GET_RUNTIME_CONFIG: "memory:get-runtime-config",
   UPDATE_RUNTIME_CONFIG: "memory:update-runtime-config"
 } as const;

@@ -16,7 +16,6 @@ export interface MemoryV2ScopePaths {
   pendingConflictsDir: string;
   pendingStaleDir: string;
   pendingLowConfidenceDir: string;
-  indexDir: string;
 }
 
 export function getMemoryV2ScopePaths(input: {
@@ -40,8 +39,7 @@ export function ensureMemoryV2ScopePaths(root: string, scope: MemoryV2Scope): Me
     pendingDir,
     pendingConflictsDir: join(pendingDir, "conflicts"),
     pendingStaleDir: join(pendingDir, "stale"),
-    pendingLowConfidenceDir: join(pendingDir, "low-confidence"),
-    indexDir: join(root, "index")
+    pendingLowConfidenceDir: join(pendingDir, "low-confidence")
   };
   for (const dir of [
     paths.root,
@@ -51,8 +49,7 @@ export function ensureMemoryV2ScopePaths(root: string, scope: MemoryV2Scope): Me
     paths.pendingDir,
     paths.pendingConflictsDir,
     paths.pendingStaleDir,
-    paths.pendingLowConfidenceDir,
-    paths.indexDir
+    paths.pendingLowConfidenceDir
   ]) {
     if (dir) mkdirSync(dir, { recursive: true });
   }

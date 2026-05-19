@@ -3,6 +3,7 @@ import type {
   MemoryReadToolResult,
   MemoryRememberToolInput,
   MemoryRuntimeConfig,
+  MemorySettingsSnapshot,
   MemorySearchInput,
   MemorySearchResult,
   MemoryToolWriteResult,
@@ -19,6 +20,12 @@ export const readMemory = (input: MemoryReadToolInput) =>
 
 export const rememberMemory = (input: MemoryRememberToolInput) =>
   sidecarCall<MemoryToolWriteResult>(MEMORY_IPC_CHANNELS.REMEMBER, input)
+
+export const getMemorySettingsSnapshot = (workspaceSlug: string) =>
+  sidecarCall<MemorySettingsSnapshot>(MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT, { workspaceSlug })
+
+export const openMemorySource = (input: { workspaceSlug: string; path: string }) =>
+  sidecarCall<{ ok: true }>(MEMORY_IPC_CHANNELS.OPEN_SOURCE, input)
 
 export const getMemoryRuntimeConfig = () =>
   sidecarCall<MemoryRuntimeConfig>(MEMORY_IPC_CHANNELS.GET_RUNTIME_CONFIG, {})

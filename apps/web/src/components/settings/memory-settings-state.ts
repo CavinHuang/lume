@@ -1,23 +1,35 @@
 import type {
   MemoryKind,
+  MemoryPendingCounts,
   MemoryRuntimeConfig,
   MemorySearchResult,
+  MemorySettingsEntrySummary,
+  MemorySettingsPendingSummary,
+  MemorySettingsSnapshot,
   MemoryToolPolicy,
 } from '@lume/shared'
 
-export type MemorySettingsView = 'workspace' | 'items'
+export type MemorySettingsView = 'overview' | 'workspace' | 'global' | 'pending'
+
+export interface MemoryOverviewMetric {
+  label: string
+  value: string
+  tone: 'neutral' | 'good' | 'warn'
+}
 
 export const MEMORY_SETTINGS_VIEWS: Array<{
   id: MemorySettingsView
   label: string
 }> = [
-  { id: 'workspace', label: '记忆文件' },
-  { id: 'items', label: '语义记忆' },
+  { id: 'overview', label: '概览' },
+  { id: 'workspace', label: '工作区' },
+  { id: 'global', label: '全局' },
+  { id: 'pending', label: '待处理' },
 ]
 
 export const MEMORY_KIND_LABELS: Record<MemoryKind, string> = {
   raw: '原始',
-  summary: '摘要',
+  summary: '状态',
   fact: '事实',
   preference: '偏好',
   decision: '决策',
@@ -25,6 +37,39 @@ export const MEMORY_KIND_LABELS: Record<MemoryKind, string> = {
   lesson: '经验',
   milestone: '里程碑',
   artifact: '产物',
+}
+
+export const MEMORY_STATUS_LABELS: Record<MemorySettingsEntrySummary['status'], string> = {
+  active: '可用',
+  suspected_stale: '可能过期',
+  archived: '已归档',
+  superseded: '已替代',
+  pending_conflict: '冲突待处理',
+  pending_low_confidence: '低置信待处理',
+}
+
+export const MEMORY_PENDING_LABELS: Record<MemorySettingsPendingSummary['type'], string> = {
+  conflict: '冲突',
+  stale: '可能过期',
+  'low-confidence': '低置信',
+}
+
+export const MEMORY_FILE_KIND_LABELS: Record<'memory' | 'daily' | 'run', string> = {
+  memory: '文件',
+  daily: '每日',
+  run: '运行',
+}
+
+export const MEMORY_CONFIDENCE_LABELS: Record<MemorySettingsEntrySummary['confidence'], string> = {
+  low: '低置信',
+  medium: '中置信',
+  high: '高置信',
+}
+
+export const MEMORY_CITATION_MODE_LABELS: Record<'auto' | 'on' | 'off', string> = {
+  auto: '自动',
+  on: '开启',
+  off: '关闭',
 }
 
 export const MEMORY_TOOL_POLICY_GROUPS = [
@@ -63,8 +108,54 @@ export function setMemoryToolGroupEnabled(
   }
 }
 
+export function buildMemoryOverviewMetrics(snapshot: MemorySettingsSnapshot | null): MemoryOverviewMetric[] {
+  const pending = snapshot?.counts.pending.total ?? 0
+  return [
+    {
+      label: '可用记忆',
+      value: String(snapshot?.counts.active ?? 0),
+      tone: (snapshot?.counts.active ?? 0) > 0 ? 'good' : 'neutral',
+    },
+    {
+      label: '工作区',
+      value: String(snapshot?.counts.workspace ?? 0),
+      tone: 'neutral',
+    },
+    {
+      label: '全局',
+      value: String(snapshot?.counts.global ?? 0),
+      tone: 'neutral',
+    },
+    {
+      label: '可能过期',
+      value: String(snapshot?.counts.suspectedStale ?? 0),
+      tone: (snapshot?.counts.suspectedStale ?? 0) > 0 ? 'warn' : 'neutral',
+    },
+    {
+      label: '待处理',
+      value: String(pending),
+      tone: pending > 0 ? 'warn' : 'neutral',
+    },
+  ]
+}
+
+export function pendingNotice(counts?: MemoryPendingCounts): string {
+  if (!counts || counts.total === 0) return '无待处理记忆'
+  const parts = [
+    counts.conflicts > 0 ? `${counts.conflicts} 个冲突` : '',
+    counts.stale > 0 ? `${counts.stale} 个可能过期` : '',
+    counts.lowConfidence > 0 ? `${counts.lowConfidence} 个低置信` : '',
+  ].filter(Boolean)
+  return parts.join(' · ')
+}
+
 export function summarizeMemoryResult(result: MemorySearchResult): string {
   const kind = result.kind ? MEMORY_KIND_LABELS[result.kind] : '记忆'
   const scope = result.scope === 'global' ? '全局' : result.scope === 'session' ? '会话' : '工作区'
   return `${scope} · ${kind} · ${(result.score * 100).toFixed(0)}%`
+}
+
+export function summarizeMemoryEntry(entry: MemorySettingsEntrySummary): string {
+  const scope = entry.scope === 'global' ? '全局' : '工作区'
+  return `${scope} · ${MEMORY_KIND_LABELS[entry.kind]} · ${MEMORY_STATUS_LABELS[entry.status]}`
 }

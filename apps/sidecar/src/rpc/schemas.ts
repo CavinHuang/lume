@@ -39,8 +39,7 @@ export const agentAppendInputSchema = agentSendInputSchema;
 
 const memoryScopeSchema = z.enum(["global", "workspace", "agent", "session"]);
 const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);
-const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual", "flush", "distillation", "promotion"]);
-const memorySearchStrategySchema = z.enum(["hybrid", "keyword", "vector", "recent"]);
+const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual"]);
 
 export const memorySearchInputSchema = z.object({
   workspaceSlug: idSchema,
@@ -54,8 +53,7 @@ export const memorySearchInputSchema = z.object({
   includeRecent: z.boolean().optional(),
   includeLongTerm: z.boolean().optional(),
   includeWorkspaceBrief: z.boolean().optional(),
-  includeSessions: z.boolean().optional(),
-  strategy: memorySearchStrategySchema.optional()
+  includeSessions: z.boolean().optional()
 });
 
 export const memoryReadToolInputSchema = z.object({
@@ -78,6 +76,11 @@ export const memoryRememberToolInputSchema = z.object({
   sourceSessionId: z.string().optional(),
   sourceMessageIds: z.array(z.string()).optional(),
   requireReview: z.boolean().optional()
+});
+
+export const memoryOpenSourceInputSchema = z.object({
+  workspaceSlug: idSchema,
+  path: z.string().min(1)
 });
 
 export const memoryToolPolicySchema = z.object({

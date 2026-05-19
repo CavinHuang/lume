@@ -44,6 +44,11 @@ export interface MemoryV2Store {
     scopes?: MemoryV2Scope[];
     includeStatuses?: MemoryV2Status[];
   }): MemoryV2Entry[];
+  listPending(input: {
+    workspaceSlug?: string;
+    scopes?: MemoryV2Scope[];
+    includeStatuses?: MemoryV2PendingFrontmatter["status"][];
+  }): MemoryV2PendingItem[];
   readMemoryMarkdown(scope: MemoryV2Scope, workspaceSlug?: string): string;
   appendDaily(input: {
     scope: MemoryV2Scope;
@@ -66,6 +71,7 @@ export function createMemoryV2Store(): MemoryV2Store {
     updateEntryStatus,
     writePending,
     listEntries,
+    listPending,
     readMemoryMarkdown,
     appendDaily,
     appendRunArchive
@@ -209,6 +215,31 @@ export function listEntries(input: {
   return entries.sort((a, b) => b.frontmatter.updated.localeCompare(a.frontmatter.updated));
 }
 
+export function listPending(input: {
+  workspaceSlug?: string;
+  scopes?: MemoryV2Scope[];
+  includeStatuses?: MemoryV2PendingFrontmatter["status"][];
+} = {}): MemoryV2PendingItem[] {
+  const scopes = input.scopes ?? ["global", "workspace"];
+  const items: MemoryV2PendingItem[] = [];
+  for (const scope of scopes) {
+    if (scope === "workspace" && !input.workspaceSlug) continue;
+    const paths = getMemoryV2ScopePaths({ scope, workspaceSlug: input.workspaceSlug });
+    for (const dir of [paths.pendingConflictsDir, paths.pendingStaleDir, paths.pendingLowConfidenceDir]) {
+      for (const path of listMarkdownFiles(dir)) {
+        try {
+          const item = readPendingFile(path);
+          if (input.includeStatuses && !input.includeStatuses.includes(item.frontmatter.status)) continue;
+          items.push(item);
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+  return items.sort((a, b) => b.frontmatter.created.localeCompare(a.frontmatter.created));
+}
+
 export function readMemoryMarkdown(scope: MemoryV2Scope, workspaceSlug?: string): string {
   const path = ensureMemoryFile(scope, workspaceSlug);
   return readFileSync(path, "utf-8");
@@ -262,6 +293,15 @@ export function readEntryFile(path: string): MemoryV2Entry {
   return {
     frontmatter: normalizeEntryFrontmatter(frontmatter, path),
     statement: body.trim(),
+    path
+  };
+}
+
+export function readPendingFile(path: string): MemoryV2PendingItem {
+  const { frontmatter, body } = parseMarkdownDocument<MemoryV2PendingFrontmatter>(readFileSync(path, "utf-8"));
+  return {
+    frontmatter: normalizePendingFrontmatter(frontmatter, path),
+    body: body.trim(),
     path
   };
 }
@@ -351,6 +391,18 @@ function normalizeEntryFrontmatter(raw: MemoryV2EntryFrontmatter, path: string):
     valid_from: raw.valid_from ?? null,
     valid_to: raw.valid_to ?? null,
     pinned: Boolean(raw.pinned)
+  };
+}
+
+function normalizePendingFrontmatter(raw: MemoryV2PendingFrontmatter, path: string): MemoryV2PendingFrontmatter {
+  if (!raw.id || !raw.type || !raw.candidate) {
+    throw new Error(`Invalid memory pending frontmatter: ${path}`);
+  }
+  return {
+    ...raw,
+    existing: raw.existing?.ids?.length ? { ids: cleanList(raw.existing.ids) } : undefined,
+    evidence: raw.evidence ?? undefined,
+    status: raw.status ?? "open"
   };
 }
 
