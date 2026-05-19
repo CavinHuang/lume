@@ -69,15 +69,13 @@ export function MemorySettings() {
   const refresh = React.useCallback(async () => {
     if (!workspaceSlug) return
     try {
-      const [nextConfig, nextSnapshot] = await Promise.all([
-        getMemoryRuntimeConfig(),
-        getMemorySettingsSnapshot(workspaceSlug),
-      ])
+      const nextConfig = await getMemoryRuntimeConfig()
+      const nextSnapshot = await getMemorySettingsSnapshot(workspaceSlug)
       setRuntimeConfig(nextConfig)
       setSnapshot(nextSnapshot)
     } catch (error) {
       console.error('[MemorySettings] refresh FAILED:', error)
-      toast.error('读取记忆设置失败')
+      toast.error(memorySettingsErrorMessage(error))
     }
   }, [workspaceSlug])
 
@@ -539,4 +537,13 @@ function formatDate(value?: string | number) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '未知'
   return date.toLocaleString()
+}
+
+function memorySettingsErrorMessage(error: unknown): string {
+  const detail = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : ''
+  return detail ? `读取记忆设置失败：${detail}` : '读取记忆设置失败'
 }
