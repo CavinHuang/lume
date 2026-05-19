@@ -46,6 +46,7 @@ import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
 import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
+import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
@@ -127,6 +128,8 @@ export interface CreateRuntimeCoreSessionResult {
   session: RuntimeCoreSessionLike;
   sessionManager: RuntimeCoreSessionManager;
   systemPrompt: string;
+  userMessageForModel: string;
+  memoryContextUsedItems: MemoryV2RecallItem[];
   tools: ToolDefinition[];
 }
 
@@ -879,6 +882,8 @@ export async function createRuntimeCoreSession(
     session,
     sessionManager,
     systemPrompt,
+    userMessageForModel: contextAssembly.userMessageForModel,
+    memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
     tools: resolvedTools
   };
 }

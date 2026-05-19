@@ -40,7 +40,7 @@ const DEFAULT_EXTRA_PATHS: string[] = [];
 
 const MEMORY_TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory.search", "memory.read"],
-  "group:memory-write": ["memory.remember", "memory.writeEpisode", "memory.flush"],
+  "group:memory-write": ["memory.remember"],
   "group:memory-maintenance": ["memory.distillWorkspace", "memory.status", "memory.indexWorkspace", "memory.indexDocument"],
   "group:memory-global": ["memory.searchGlobal", "memory.listGlobalCandidates"],
   "group:memory-global-write": ["memory.promoteGlobal", "memory.rejectGlobalCandidate"]

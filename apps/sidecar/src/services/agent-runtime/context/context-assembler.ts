@@ -8,8 +8,12 @@ import {
   resolveAgentRuntimeRoutingTrace
 } from "../../agent/agent-runtime-context";
 import { createLogger } from "../../infra/logger";
-import { buildMemoryContext } from "../../memory/memory-prompt-builder";
 import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
+import {
+  buildMemoryV2UserMessageContext,
+  type MemoryV2UserMessageContext
+} from "../../memory-v2/user-message-prefix";
+import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
@@ -40,6 +44,9 @@ export interface ContextAssemblyResult {
   systemPrompt: string;
   dynamicContext: string;
   memoryContext: string;
+  memoryUserMessagePrefix: string;
+  memoryContextUsedItems: MemoryV2RecallItem[];
+  userMessageForModel: string;
   sessionContext: string;
   planContext?: string;
   budget: ContextBudget;
@@ -128,7 +135,11 @@ export class ContextAssembler {
     ).trim();
     const permissionDeniedContext = getPermissionDeniedSummary(input.threadId);
 
-    let memoryContext = "";
+    let memoryContext: MemoryV2UserMessageContext = {
+      prefix: "",
+      items: [],
+      userMessageForModel: input.userMessage
+    };
     if (input.workspaceSlug && input.userMessage.trim()) {
       try {
         const memoryInput = {
@@ -137,9 +148,8 @@ export class ContextAssembler {
             threadType: input.threadType,
             chatType: input.chatType
           }),
-          userInput: input.userMessage,
-          maxItems: 8,
-          tokenBudget: Math.floor(input.tokenBudget * DEFAULT_CONTEXT_BUDGET.memory)
+          userMessage: input.userMessage,
+          maxItems: 8
         };
         if (input.trace) {
           memoryContext = await input.trace.recorder.withSpan({
@@ -150,12 +160,11 @@ export class ContextAssembler {
             input: {
               workspaceSlug: memoryInput.workspaceSlug,
               sessionType: memoryInput.sessionType,
-              maxItems: memoryInput.maxItems,
-              tokenBudget: memoryInput.tokenBudget
+              maxItems: memoryInput.maxItems
             }
-          }, () => buildMemoryContext(memoryInput));
+          }, () => buildMemoryV2UserMessageContext(memoryInput));
         } else {
-          memoryContext = await buildMemoryContext(memoryInput);
+          memoryContext = await buildMemoryV2UserMessageContext(memoryInput);
         }
       } catch (error) {
         log.warn("failed to build memory context", {
@@ -166,21 +175,24 @@ export class ContextAssembler {
       }
     }
 
-    const systemPrompt = [agentSystemPrompt, systemPromptAppend, dynamicContext, permissionDeniedContext, memoryContext]
+    const systemPrompt = [agentSystemPrompt, systemPromptAppend, dynamicContext, permissionDeniedContext]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
 
     return {
       systemPrompt,
       dynamicContext,
-      memoryContext,
+      memoryContext: memoryContext.prefix,
+      memoryUserMessagePrefix: memoryContext.prefix,
+      memoryContextUsedItems: memoryContext.items,
+      userMessageForModel: memoryContext.userMessageForModel,
       sessionContext: "",
       budget: {
         ...DEFAULT_CONTEXT_BUDGET,
         total: input.tokenBudget
       },
       trace: {
-        includedMemoryIds: [],
+        includedMemoryIds: memoryContext.items.map((item) => item.id),
         includedSessionMessageIds: [],
         tokenUsageEstimate: estimateTokens(systemPrompt)
       }

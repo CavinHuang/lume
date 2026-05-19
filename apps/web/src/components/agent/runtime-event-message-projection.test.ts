@@ -326,4 +326,37 @@ describe('runtime-event-message-projection', () => {
       status: 'streaming',
     })
   })
+
+  test('projects memory context used RuntimeEvents as a bottom notice block', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'continue', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: 'Continuing.' }),
+      event({
+        type: 'memory.context.used',
+        items: [{
+          id: 'mem_1',
+          kind: 'decision',
+          scope: 'workspace',
+          status: 'active',
+          citation: '/tmp/memory/entries/mem_1.md',
+          reason: 'matched memory entry',
+        }],
+        hidden: true,
+      }),
+    ])
+
+    expect(messages[1]).toMatchObject({
+      type: 'assistant',
+      blocks: [
+        { type: 'text', text: 'Continuing.' },
+        {
+          type: 'memory_context_used',
+          event: {
+            type: 'memory.context.used',
+            items: [{ id: 'mem_1' }],
+          },
+        },
+      ],
+    })
+  })
 })

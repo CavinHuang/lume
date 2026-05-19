@@ -282,7 +282,28 @@ function RuntimeEventAssistantBlockItem({
     return null
   }
 
+  if (block.type === 'memory_context_used') {
+    return <MemoryContextUsedNotice event={block.event} />
+  }
+
   return <RuntimeEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
+}
+
+function MemoryContextUsedNotice({
+  event,
+}: {
+  event: Extract<RuntimeAssistantBlock, { type: 'memory_context_used' }>['event']
+}) {
+  const count = event.items.length
+  const ids = event.items.slice(0, 3).map((item) => item.id).join(' · ')
+  return (
+    <div className="mt-2 flex min-h-6 max-w-full items-center gap-2 text-[11px] leading-5 text-[#8a92a6]">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa3b8]" />
+      <span className="truncate">
+        引用了 {count} 条记忆{ids ? `：${ids}` : ''}
+      </span>
+    </div>
+  )
 }
 
 function findLatestTaskProgressBlock(blocks: RuntimeAssistantBlock[]): Extract<RuntimeAssistantBlock, { type: 'task_progress' }> | undefined {

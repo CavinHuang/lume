@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import type {
   GlobalMemoryCandidate,
   MemoryIndexDocumentToolInput,
@@ -12,30 +13,21 @@ import type {
   MemoryRejectGlobalCandidateToolInput,
   MemoryRememberToolInput,
   MemorySaveInput,
-  MemorySaveResult,
   MemorySearchResult,
   MemorySearchGlobalToolInput,
   MemorySearchToolInput,
-  MemoryStats,
   MemoryToolName,
   MemoryToolWriteResult,
   MemoryWriteEpisodeInput,
   MemoryWriteEpisodeResult,
   PromoteGlobalMemoryInput
 } from "@lume/shared";
-import {
-  getGlobalStructuredMemoryDbPath,
-  getWorkspaceMemoryDbPath
-} from "../infra/config-paths";
-import { MemoryRepository } from "./memory-repository";
 import { runStructuredMemoryFlush } from "./memory-flush-runner";
 import {
   getLayeredMemoryStatus,
   indexWorkspaceMemoryDocument,
   indexWorkspaceMemoryCorpus,
-  readLayeredMemoryFile,
   runWorkspaceMemoryDistillation,
-  searchLayeredMemory,
   writeWorkspaceMemory
 } from "./memory-service";
 import {
@@ -44,6 +36,10 @@ import {
   rejectGlobalMemoryCandidate,
   searchGlobalMemory
 } from "./memory-global-promoter";
+import { searchMemoryV2 } from "../memory-v2/retrieval";
+import { createMemoryV2Store } from "../memory-v2/markdown-store";
+import { smartAddMemoryV2Candidate } from "../memory-v2/smart-add";
+import type { MemoryV2Kind, MemoryV2Scope } from "../memory-v2/types";
 
 export const MVP_MEMORY_TOOL_NAMES = [
   "memory.search",
@@ -70,19 +66,16 @@ export const MEMORY_TOOL_NAMES = [
 ] as const satisfies readonly MemoryToolName[];
 
 type MemoryToolsDeps = {
-  searchLayeredMemory?: typeof searchLayeredMemory;
   searchGlobalMemory?: typeof searchGlobalMemory;
   listGlobalMemoryCandidates?: typeof listGlobalMemoryCandidates;
   promoteGlobalMemory?: typeof promoteGlobalMemory;
   rejectGlobalMemoryCandidate?: typeof rejectGlobalMemoryCandidate;
-  readLayeredMemoryFile?: typeof readLayeredMemoryFile;
   writeWorkspaceMemory?: typeof writeWorkspaceMemory;
   runStructuredMemoryFlush?: typeof runStructuredMemoryFlush;
   runWorkspaceMemoryDistillation?: typeof runWorkspaceMemoryDistillation;
   getLayeredMemoryStatus?: typeof getLayeredMemoryStatus;
   indexWorkspaceMemoryCorpus?: typeof indexWorkspaceMemoryCorpus;
   indexWorkspaceMemoryDocument?: typeof indexWorkspaceMemoryDocument;
-  createRepository?: (workspaceSlug: string) => MemoryRepository;
 };
 
 export type MemoryTools = {
@@ -106,10 +99,6 @@ function defaultIncludeGlobal(input: MemorySearchToolInput): boolean {
   return input.sessionType === undefined || input.sessionType === "main";
 }
 
-function isPrivateSessionType(input: MemorySearchToolInput): boolean {
-  return input.sessionType === "subagent" || input.sessionType === "group" || input.sessionType === "channel";
-}
-
 function formatEpisodeContent(input: MemoryWriteEpisodeInput): string {
   const lines = [`# ${input.title}`, "", input.summary.trim()];
   const addList = (heading: string, values?: string[]) => {
@@ -125,140 +114,119 @@ function formatEpisodeContent(input: MemoryWriteEpisodeInput): string {
   return lines.join("\n").trim();
 }
 
-function resultToWriteResult(input: {
-  result: MemorySaveResult;
-  kind: MemorySaveInput["kind"];
-  scope: MemorySaveInput["scope"];
-}): MemoryToolWriteResult {
-  return {
-    id: input.result.itemId,
-    path: input.result.path,
-    kind: input.kind,
-    scope: input.scope
-  };
-}
-
-function memoryItemToReadResult(item: Awaited<ReturnType<MemoryRepository["get"]>>): MemoryReadToolResult {
-  if (!item) {
-    throw new Error("记忆不存在");
-  }
-  return {
-    id: item.id,
-    path: item.sourcePath,
-    text: item.content,
-    metadata: {
-      id: item.id,
-      workspaceSlug: item.workspaceSlug,
-      scope: item.scope,
-      kind: item.kind,
-      source: item.source,
-      title: item.title,
-      summary: item.summary,
-      tags: item.tags,
-      importance: item.importance,
-      confidence: item.confidence,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt
-    },
-    citation: item.sourcePath
-  };
-}
-
-async function readMemoryById(input: {
-  workspaceSlug: string;
-  id: string;
-  deps: Required<Pick<MemoryToolsDeps, "createRepository">>;
-}): Promise<MemoryReadToolResult> {
-  const repository = input.deps.createRepository(input.workspaceSlug);
-  try {
-    return memoryItemToReadResult(await repository.get(input.id));
-  } finally {
-    repository.dispose();
-  }
-}
-
 export function createMemoryTools(deps: MemoryToolsDeps = {}): MemoryTools {
   const resolved = {
-    searchLayeredMemory,
     searchGlobalMemory,
     listGlobalMemoryCandidates,
     promoteGlobalMemory,
     rejectGlobalMemoryCandidate,
-    readLayeredMemoryFile,
     writeWorkspaceMemory,
     runStructuredMemoryFlush,
     runWorkspaceMemoryDistillation,
     getLayeredMemoryStatus,
     indexWorkspaceMemoryCorpus,
     indexWorkspaceMemoryDocument,
-    createRepository: (workspaceSlug: string) => new MemoryRepository({
-      dbPath: workspaceSlug === "__global__"
-        ? getGlobalStructuredMemoryDbPath()
-        : getWorkspaceMemoryDbPath(workspaceSlug),
-      workspaceSlug
-    }),
     ...deps
   };
 
   return {
     async "memory.search"(input) {
-      const includeWorkspace = input.includeWorkspace !== false;
-      const includeGlobal = defaultIncludeGlobal(input);
-      const constrainedInput = {
-        ...input,
-        includeGlobal,
-        includeLongTerm: isPrivateSessionType(input) ? false : input.includeLongTerm,
-        includeSessions: isPrivateSessionType(input) ? false : input.includeSessions
-      };
-      if (!includeWorkspace && includeGlobal) {
-        return resolved.searchGlobalMemory({
-          query: input.query,
-          maxResults: input.maxResults
-        });
-      }
-      return resolved.searchLayeredMemory(constrainedInput);
+      const v2Results = await searchMemoryV2({
+        workspaceSlug: input.workspaceSlug,
+        query: input.query,
+        maxResults: input.maxResults,
+        scopes: resolveMemoryV2SearchScopes(input)
+      });
+      return v2Results.map((item) => ({
+        id: item.id,
+        path: item.path,
+        snippet: item.statement,
+        citation: item.citation,
+        score: item.score,
+        kind: fromMemoryV2Kind(item.kind),
+        scope: item.scope,
+        source: "memory",
+        reason: item.reason
+      }));
     },
 
     async "memory.read"(input) {
       if (input.id) {
-        return readMemoryById({
+        const entry = createMemoryV2Store().listEntries({
           workspaceSlug: input.workspaceSlug,
-          id: input.id,
-          deps: { createRepository: resolved.createRepository }
-        });
+          includeStatuses: ["active", "suspected_stale", "archived", "superseded"]
+        }).find((item) => item.frontmatter.id === input.id);
+        if (!entry) throw new Error("记忆不存在");
+        return {
+          id: entry.frontmatter.id,
+          path: entry.path,
+          text: entry.statement,
+          metadata: {
+            id: entry.frontmatter.id,
+            workspaceSlug: input.workspaceSlug,
+            scope: entry.frontmatter.scope,
+            kind: fromMemoryV2Kind(entry.frontmatter.kind),
+            source: "memory",
+            tags: entry.frontmatter.tags,
+            confidence: confidenceNumber(entry.frontmatter.confidence)
+          },
+          citation: entry.path
+        };
       }
       if (!input.path) {
         throw new Error("memory.read requires id or path");
       }
-      const result = resolved.readLayeredMemoryFile({
-        workspaceSlug: input.workspaceSlug,
-        path: input.path,
-        from: input.from,
-        lines: input.lines
-      });
+      if (!existsSync(input.path)) {
+        throw new Error("记忆文件不存在");
+      }
+      const text = input.path.endsWith(".md")
+        ? readMemoryFileText(input.path, input.from, input.lines)
+        : readFileSync(input.path, "utf-8");
       return {
-        path: result.path,
-        text: result.text,
-        citation: `${result.path}#L${result.from}`
+        path: input.path,
+        text,
+        citation: input.from ? `${input.path}#L${input.from}` : input.path
       };
     },
 
     async "memory.remember"(input) {
-      const result = await resolved.writeWorkspaceMemory({
+      const scope = toMemoryV2Scope(input.scope);
+      const kind = toMemoryV2Kind(input.kind);
+      const result = smartAddMemoryV2Candidate({
         workspaceSlug: input.workspaceSlug,
-        content: input.content,
-        scope: input.scope,
-        kind: input.kind,
-        source: "manual",
-        title: input.title,
-        importance: input.importance,
-        confidence: input.confidence,
-        tags: input.tags,
-        sourceSessionId: input.sourceSessionId,
-        sourceMessageIds: input.sourceMessageIds,
-        requireReview: input.requireReview
+        candidate: {
+          targetScope: scope,
+          kind,
+          statement: input.content,
+          confidence: toMemoryV2Confidence(input.confidence),
+          tags: input.tags,
+          appliesWhen: scope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {},
+          evidence: {
+            runId: input.sourceSessionId,
+            recordIds: input.sourceMessageIds
+          }
+        }
       });
-      return resultToWriteResult({ result, kind: input.kind, scope: input.scope });
+      if (result.entry) {
+        return {
+          id: result.entry.frontmatter.id,
+          path: result.entry.path,
+          kind: input.kind,
+          scope: input.scope
+        };
+      }
+      if (result.pending) {
+        return {
+          id: result.pending.frontmatter.id,
+          path: result.pending.path,
+          kind: input.kind,
+          scope: input.scope
+        };
+      }
+      return {
+        kind: input.kind,
+        scope: input.scope
+      };
     },
 
     async "memory.writeEpisode"(input) {
@@ -370,4 +338,60 @@ export function createMemoryTools(deps: MemoryToolsDeps = {}): MemoryTools {
       return resolved.indexWorkspaceMemoryDocument(input);
     }
   };
+}
+
+function resolveMemoryV2SearchScopes(input: MemorySearchToolInput): MemoryV2Scope[] {
+  const scopes = input.scopes
+    ?.map(toMemoryV2Scope)
+    .filter((scope, index, all): scope is MemoryV2Scope => Boolean(scope) && all.indexOf(scope) === index);
+  if (scopes && scopes.length > 0) return scopes;
+  const includeWorkspace = input.includeWorkspace !== false;
+  const includeGlobal = defaultIncludeGlobal(input);
+  return [
+    ...(includeGlobal ? ["global" as const] : []),
+    ...(includeWorkspace ? ["workspace" as const] : [])
+  ];
+}
+
+function toMemoryV2Scope(scope?: string): MemoryV2Scope {
+  return scope === "global" ? "global" : "workspace";
+}
+
+function toMemoryV2Kind(kind?: string): MemoryV2Kind {
+  if (
+    kind === "preference"
+    || kind === "fact"
+    || kind === "decision"
+    || kind === "lesson"
+  ) {
+    return kind;
+  }
+  if (kind === "episode" || kind === "summary" || kind === "milestone") return "state";
+  return "fact";
+}
+
+function fromMemoryV2Kind(kind: MemoryV2Kind): MemorySearchResult["kind"] {
+  return kind === "state" ? "summary" : kind;
+}
+
+function confidenceNumber(confidence: "low" | "medium" | "high"): number {
+  if (confidence === "high") return 1;
+  if (confidence === "medium") return 0.65;
+  return 0.3;
+}
+
+function readMemoryFileText(path: string, from?: number, lines?: number): string {
+  const content = readFileSync(path, "utf-8");
+  if (!from && !lines) return content;
+  const allLines = content.split("\n");
+  const start = Math.max((from ?? 1) - 1, 0);
+  const end = lines ? start + Math.max(lines, 0) : allLines.length;
+  return allLines.slice(start, end).join("\n");
+}
+
+function toMemoryV2Confidence(confidence?: number): "low" | "medium" | "high" {
+  if (typeof confidence !== "number") return "medium";
+  if (confidence >= 0.75) return "high";
+  if (confidence < 0.45) return "low";
+  return "medium";
 }

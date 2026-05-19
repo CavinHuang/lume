@@ -19,6 +19,8 @@ import {
 import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
+import { appendRunArchive } from "../../memory-v2/markdown-store";
+import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -37,7 +39,7 @@ interface RunRuntimeCoreAttemptOptions {
 interface RuntimeSessionRunInput {
   params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
-  runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools">;
+  runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">;
   options: RunRuntimeCoreAttemptOptions;
   createCanUseTool: (askUserSignal: AbortSignal) => CanUseToolFn;
 }
@@ -191,7 +193,7 @@ export class LumeRunner {
       await applyResolvedThinkingLevel(agent, thinkingLevel);
       const maxTurns = resolveRuntimeCoreMaxTurns(input);
 
-      const query = agent.query(input.userMessage, {
+      const query = agent.query(runtimeSession.userMessageForModel || input.userMessage, {
         canUseTool: createCanUseTool(askUserAbortController.signal),
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
@@ -202,6 +204,8 @@ export class LumeRunner {
       if (streamResult.status !== "completed") {
         return streamResult;
       }
+
+      this.emitMemoryContextUsed(runtimeSession.memoryContextUsedItems ?? []);
 
       updateRuntimeThreadMetaIfPresent(runtime, {
         sdkThreadId: session.threadId ?? session.sessionId,
@@ -274,6 +278,22 @@ export class LumeRunner {
 
   async complete(): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
+    const workspaceSlug = this.observer.getWorkspaceSlug();
+    if (workspaceSlug) {
+      try {
+        appendRunArchive({
+          workspaceSlug,
+          runId: this.observer.getRunId(),
+          record: {
+            type: "run.completed",
+            threadId: this.observer.getThreadId(),
+            userMessage: this.observer.getUserMessage()
+          }
+        });
+      } catch {
+        // Run archive must not block completion.
+      }
+    }
     this.emit.onRuntimeEvent?.({
       id: `${this.observer.getRunId()}:run.completed`,
       type: "run.completed",
@@ -283,6 +303,27 @@ export class LumeRunner {
     });
     this.emit.onComplete();
     return this.finalizeResult({ status: "completed" });
+  }
+
+  private emitMemoryContextUsed(items: CreateRuntimeCoreSessionResult["memoryContextUsedItems"]): void {
+    if (items.length === 0) return;
+    if (resolveMemoryRuntimeConfig().citationsMode === "off") return;
+    this.emit.onRuntimeEvent?.({
+      id: `${this.observer.getRunId()}:memory.context.used`,
+      type: "memory.context.used",
+      threadId: this.observer.getThreadId(),
+      runId: this.observer.getRunId(),
+      createdAt: new Date().toISOString(),
+      items: items.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        scope: item.scope,
+        status: item.status,
+        citation: item.citation,
+        reason: item.reason
+      })),
+      hidden: true
+    });
   }
 
   async abort(): Promise<AgentRuntimeRunResult> {

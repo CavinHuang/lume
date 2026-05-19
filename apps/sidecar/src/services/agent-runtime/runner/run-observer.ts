@@ -14,6 +14,7 @@ import {
 } from "./run-item-events";
 import type { LumeRunState, LumeRunStatus } from "./run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "./run-state-store";
+import { stripMemoryUserMessagePrefix } from "../../memory-v2/user-message-prefix";
 
 export interface CreateLumeRunObserverInput {
   sessionDir: string;
@@ -240,6 +241,14 @@ export class LumeRunObserver {
     return this.state.threadId;
   }
 
+  getWorkspaceSlug(): string | undefined {
+    return this.state.workspaceSlug;
+  }
+
+  getUserMessage(): string {
+    return this.state.input.userMessage;
+  }
+
   async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string): Promise<void> {
     await this.flush();
     const completedAt = new Date().toISOString();
@@ -426,7 +435,7 @@ function mapSdkMessageToRunItems(
     return [{
       type: "user_message",
       id,
-      content: message.message.content,
+      content: stripUserMessageContent(message.message.content),
       createdAt
     }];
   }
@@ -504,6 +513,26 @@ function mapSdkMessageToRunItems(
     }];
   }
   return [];
+}
+
+function stripUserMessageContent(content: unknown): unknown {
+  if (typeof content === "string") {
+    return stripMemoryUserMessagePrefix(content);
+  }
+  if (Array.isArray(content)) {
+    return content.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const block = item as Record<string, unknown>;
+      if (typeof block.text === "string") {
+        return { ...block, text: stripMemoryUserMessagePrefix(block.text) };
+      }
+      if (typeof block.content === "string") {
+        return { ...block, content: stripMemoryUserMessagePrefix(block.content) };
+      }
+      return item;
+    });
+  }
+  return content;
 }
 
 function extractSubagentParentToolCallId(message: SDKMessage & Record<string, unknown>): string | undefined {

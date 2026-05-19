@@ -47,7 +47,7 @@ export const MEMORY_TOOL_POLICY_GROUPS = [
   {
     id: 'group:memory-write',
     label: '自动写入',
-    desc: '允许 remember、writeEpisode 和 flush 写入结构化记忆',
+    desc: '允许 Agent 写入一条语义记忆',
   },
   {
     id: 'group:memory-maintenance',

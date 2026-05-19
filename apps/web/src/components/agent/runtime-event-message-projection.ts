@@ -50,6 +50,18 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
       return
     }
 
+    if (event.type === 'memory.context.used') {
+      if (event.items.length === 0) return
+      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      currentAssistant.blocks = currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
+      currentAssistant.blocks.push({
+        type: 'memory_context_used',
+        id: `memory:${event.runId}:${event.createdAt}`,
+        event,
+      })
+      return
+    }
+
     if (terminalClosed) {
       return
     }
@@ -330,6 +342,7 @@ function flushAssistant(
   const hasContent = assistant.text.trim()
     || assistant.thinking.trim()
     || assistant.toolCalls.size > 0
+    || assistant.blocks.some((block) => block.type === 'memory_context_used')
     || assistant.error
   const shouldRenderPlaceholder = assistant.status === 'streaming'
   if (!hasContent && !shouldRenderPlaceholder) return
