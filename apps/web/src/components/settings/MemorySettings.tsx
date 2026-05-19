@@ -4,9 +4,7 @@ import {
   Clock3,
   FileText,
   Globe2,
-  ListFilter,
   RefreshCw,
-  Search,
   ShieldCheck,
 } from 'lucide-react'
 import { useAtomValue } from 'jotai'
@@ -14,7 +12,6 @@ import { toast } from 'sonner'
 import type {
   MemoryCitationsMode,
   MemoryRuntimeConfig,
-  MemorySearchResult,
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
   MemorySettingsPendingSummary,
@@ -27,7 +24,6 @@ import {
   getMemoryRuntimeConfig,
   getMemorySettingsSnapshot,
   openMemorySource,
-  searchMemory,
   updateMemoryRuntimeConfig,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
@@ -45,7 +41,6 @@ import {
   pendingNotice,
   setMemoryToolGroupEnabled,
   summarizeMemoryEntry,
-  summarizeMemoryResult,
   type MemorySettingsView,
   type MemoryToolPolicyGroupId,
 } from './memory-settings-state'
@@ -61,9 +56,6 @@ export function MemorySettings() {
   const [view, setView] = React.useState<MemorySettingsView>('overview')
   const [runtimeConfig, setRuntimeConfig] = React.useState<MemoryRuntimeConfig | null>(null)
   const [snapshot, setSnapshot] = React.useState<MemorySettingsSnapshot | null>(null)
-  const [query, setQuery] = React.useState('设计决策 偏好 当前状态')
-  const [results, setResults] = React.useState<MemorySearchResult[]>([])
-  const [includeGlobal, setIncludeGlobal] = React.useState(true)
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
 
   const refresh = React.useCallback(async () => {
@@ -91,18 +83,6 @@ export function MemorySettings() {
       setBusyAction(null)
     }
   }
-
-  const handleSearch = () => runAction('search', async () => {
-    if (!workspaceSlug || !query.trim()) return
-    const found = await searchMemory({
-      workspaceSlug,
-      query: query.trim(),
-      maxResults: 12,
-      includeGlobal,
-    })
-    setResults(found)
-    if (found.length === 0) toast.message('没有找到匹配的记忆')
-  })
 
   const handleOpenMemoryFile = (path: string) => runAction(`open-${path}`, async () => {
     if (!workspaceSlug) return
@@ -209,17 +189,6 @@ export function MemorySettings() {
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
         />
       )}
-
-      <SearchPanel
-        busy={busyAction === 'search'}
-        includeGlobal={includeGlobal}
-        query={query}
-        results={results}
-        onIncludeGlobalChange={setIncludeGlobal}
-        onOpenFile={(path) => void handleOpenMemoryFile(path)}
-        onQueryChange={setQuery}
-        onSearch={() => void handleSearch()}
-      />
     </div>
   )
 }
@@ -375,69 +344,6 @@ function PendingMemoryPanel({
           </button>
         ))}
         {openItems.length === 0 && <EmptyInline text="暂无待处理记忆" />}
-      </div>
-    </section>
-  )
-}
-
-function SearchPanel({
-  busy,
-  includeGlobal,
-  query,
-  results,
-  onIncludeGlobalChange,
-  onOpenFile,
-  onQueryChange,
-  onSearch,
-}: {
-  busy: boolean
-  includeGlobal: boolean
-  query: string
-  results: MemorySearchResult[]
-  onIncludeGlobalChange: (value: boolean) => void
-  onOpenFile: (path: string) => void
-  onQueryChange: (value: string) => void
-  onSearch: () => void
-}) {
-  return (
-    <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex h-9 min-w-[280px] flex-1 items-center gap-2 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
-          <Search size={15} />
-          <input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') onSearch()
-            }}
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
-            placeholder="搜索偏好、决策、事实、过程"
-          />
-        </label>
-        <label className="flex h-9 items-center gap-2 rounded-[8px] border border-border px-3 text-[13px] text-[var(--text-2)]">
-          全局
-          <Switch checked={includeGlobal} onCheckedChange={onIncludeGlobalChange} />
-        </label>
-        <Button onClick={onSearch} disabled={busy || !query.trim()} size="sm">
-          <ListFilter size={14} />
-          搜索
-        </Button>
-      </div>
-
-      <div className="mt-4 space-y-2">
-        {results.map((result) => (
-          <button
-            key={`${result.id}:${result.path}`}
-            type="button"
-            onClick={() => onOpenFile(result.path)}
-            className="block w-full rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]"
-          >
-            <div className="text-[12px] font-medium text-[var(--text-3)]">{summarizeMemoryResult(result)}</div>
-            <p className="mt-1 line-clamp-3 text-[13px] leading-5 text-[var(--text-1)]">{result.snippet}</p>
-            <div className="mt-2 truncate text-[12px] text-[var(--text-3)]">{result.citation ?? result.path}</div>
-          </button>
-        ))}
-        {results.length === 0 && <EmptyInline text="暂无搜索结果" />}
       </div>
     </section>
   )

@@ -4,16 +4,11 @@ import type {
   MemoryRememberToolInput,
   MemoryRuntimeConfig,
   MemorySettingsSnapshot,
-  MemorySearchInput,
-  MemorySearchResult,
   MemoryToolWriteResult,
   UpdateMemoryRuntimeConfigInput,
 } from '@lume/shared'
 import { MEMORY_IPC_CHANNELS } from '@lume/shared'
 import { sidecarCall } from './system'
-
-export const searchMemory = (input: MemorySearchInput) =>
-  sidecarCall<MemorySearchResult[]>(MEMORY_IPC_CHANNELS.SEARCH, input)
 
 export const readMemory = (input: MemoryReadToolInput) =>
   sidecarCall<MemoryReadToolResult>(MEMORY_IPC_CHANNELS.READ, input)

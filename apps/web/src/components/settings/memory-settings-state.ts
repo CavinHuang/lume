@@ -2,7 +2,6 @@ import type {
   MemoryKind,
   MemoryPendingCounts,
   MemoryRuntimeConfig,
-  MemorySearchResult,
   MemorySettingsEntrySummary,
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot,
@@ -147,12 +146,6 @@ export function pendingNotice(counts?: MemoryPendingCounts): string {
     counts.lowConfidence > 0 ? `${counts.lowConfidence} 个低置信` : '',
   ].filter(Boolean)
   return parts.join(' · ')
-}
-
-export function summarizeMemoryResult(result: MemorySearchResult): string {
-  const kind = result.kind ? MEMORY_KIND_LABELS[result.kind] : '记忆'
-  const scope = result.scope === 'global' ? '全局' : result.scope === 'session' ? '会话' : '工作区'
-  return `${scope} · ${kind} · ${(result.score * 100).toFixed(0)}%`
 }
 
 export function summarizeMemoryEntry(entry: MemorySettingsEntrySummary): string {

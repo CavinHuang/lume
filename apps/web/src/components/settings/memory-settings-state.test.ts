@@ -7,7 +7,6 @@ import {
   pendingNotice,
   setMemoryToolGroupEnabled,
   summarizeMemoryEntry,
-  summarizeMemoryResult,
 } from './memory-settings-state'
 
 describe('memory settings state', () => {
@@ -56,15 +55,6 @@ describe('memory settings state', () => {
   })
 
   test('labels keep memory UI compact and localized', () => {
-    expect(summarizeMemoryResult({
-      id: 'item-1',
-      path: 'MEMORY.md',
-      snippet: 'User prefers auditable memory.',
-      score: 0.86,
-      kind: 'preference',
-      scope: 'global',
-      source: 'memory',
-    })).toBe('全局 · 偏好 · 86%')
     expect(summarizeMemoryEntry({
       id: 'mem-1',
       path: 'MEMORY.md',
