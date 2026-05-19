@@ -33,11 +33,7 @@ describe("runtime-tool-safety", () => {
     });
   });
 
-  test("requires confirmation for global memory and automation mutations even outside bash", () => {
-    expect(evaluateRuntimeToolSafety("memory.promoteGlobal", { candidateId: "c1", approve: true })).toEqual({
-      behavior: "confirm",
-      reason: "提升到全局记忆会影响跨工作区记忆，需要用户确认"
-    });
+  test("requires confirmation for automation mutations even outside bash", () => {
     expect(evaluateRuntimeToolSafety("automation_set", { action: "delete", id: "job-1" })).toEqual({
       behavior: "confirm",
       reason: "修改自动化任务会影响未来定时执行，需要用户确认"

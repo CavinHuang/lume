@@ -228,7 +228,6 @@ export interface AgentContextCompactionMetadata {
     }
   }
   sourceMessageIds?: string[]
-  memoryFlushJobId?: string
   preservedSegment?: {
     head_uuid?: string
     anchor_uuid?: string
@@ -305,7 +304,6 @@ export interface SDKCompactBoundaryMessage {
     policy?: string
     source?: string
     source_message_ids?: string[]
-    memory_flush_job_id?: string
     preserved_segment?: {
       head_uuid?: string
       anchor_uuid?: string

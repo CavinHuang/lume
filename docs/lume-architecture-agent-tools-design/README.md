@@ -51,7 +51,6 @@ apps/sidecar/src/services/agent-runtime/interruption/ask-user-question-session.t
 apps/sidecar/src/services/agent-runtime/interruption/tool-permission-session.ts
 apps/sidecar/src/services/agent-runtime/service-runtime/service-runtime.ts
 apps/sidecar/src/services/agent-runtime/service-runtime/auto-title-job.ts
-apps/sidecar/src/services/agent-runtime/service-runtime/compaction-memory-flush-job.ts
 apps/web/src/hooks/runtime-event-state.ts
 apps/web/src/components/agent/runtime-event-message-projection.ts
 ```

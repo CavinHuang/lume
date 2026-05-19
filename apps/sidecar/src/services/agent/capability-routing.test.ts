@@ -8,7 +8,7 @@ import {
 describe("capability-routing", () => {
   test("inferCapabilityLanes 应按工具集合推导 lanes", () => {
     expect(
-      inferCapabilityLanes(["Skill", "browser", "memory_search", "web_search", "read", "write"])
+      inferCapabilityLanes(["Skill", "browser", "memory.search", "web_search", "read", "write"])
     ).toEqual(["skills", "browser", "memory", "web", "raw-tools"]);
     expect(inferCapabilityLanes(["memory.search", "memory.read"])).toEqual(["memory"]);
   });
@@ -49,7 +49,7 @@ describe("capability-routing", () => {
   test("历史连续性请求应优先 memory", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "回忆一下我们之前确认过的偏好",
-      availableTools: ["memory_search", "memory_get", "read"]
+      availableTools: ["memory.search", "memory.read", "read"]
     });
     expect(decision.preferredLane).toBe("memory");
   });

@@ -12,20 +12,10 @@ describe("create-runtime-memory-tools", () => {
     expect(names).toEqual(["memory.search", "memory.read"]);
   });
 
-  test("应保留旧 underscore memory tool 名称兼容", () => {
-    const tools = createSdkMemoryTools({
-      workspaceSlug: "demo",
-      enabledTools: new Set(["memory_search", "memory_get"]),
-      includeCitations: true
-    });
-    const names = tools.map((tool) => tool.name);
-    expect(names).toEqual(["memory_search", "memory_get"]);
-  });
-
   test("memory search 描述应保持按需召回而非强制查档", () => {
     const tools = createSdkMemoryTools({
       workspaceSlug: "demo",
-      enabledTools: new Set(["memory_search", "memory.search"]),
+      enabledTools: new Set(["memory.search"]),
       includeCitations: true
     });
     const descriptions = tools.map((tool) => tool.description).join("\n");
@@ -35,7 +25,7 @@ describe("create-runtime-memory-tools", () => {
     expect(descriptions).not.toContain("Mandatory recall step");
   });
 
-  test("应注册全局记忆和单文档索引工具", () => {
+  test("不再注册旧全局、索引和维护工具", () => {
     const tools = createSdkMemoryTools({
       workspaceSlug: "demo",
       enabledTools: new Set([
@@ -43,17 +33,14 @@ describe("create-runtime-memory-tools", () => {
         "memory.listGlobalCandidates",
         "memory.promoteGlobal",
         "memory.rejectGlobalCandidate",
-        "memory.indexDocument"
+        "memory.indexDocument",
+        "memory.writeEpisode",
+        "memory.flush",
+        "memory.distillWorkspace"
       ]),
       includeCitations: true
     });
     const names = tools.map((tool) => tool.name);
-    expect(names).toEqual([
-      "memory.searchGlobal",
-      "memory.listGlobalCandidates",
-      "memory.promoteGlobal",
-      "memory.rejectGlobalCandidate",
-      "memory.indexDocument"
-    ]);
+    expect(names).toEqual([]);
   });
 });

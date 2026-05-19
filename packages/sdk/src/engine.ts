@@ -477,9 +477,6 @@ export class QueryEngine {
         ...(Array.isArray(boundary.metadata?.sourceMessageIds)
           ? { source_message_ids: boundary.metadata.sourceMessageIds }
           : {}),
-        ...(typeof boundary.metadata?.memoryFlushJobId === 'string'
-          ? { memory_flush_job_id: boundary.metadata.memoryFlushJobId }
-          : {}),
         ...(boundary.metadata?.preservedSegment
           ? { preserved_segment: boundary.metadata.preservedSegment }
           : {}),

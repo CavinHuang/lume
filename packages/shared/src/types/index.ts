@@ -9,7 +9,6 @@ export * from "./agent-loop";
 export * from "./runtime-event";
 export * from "./memory";
 export * from "./workspace-bootstrap";
-export * from "./memory-flush";
 export * from "./heartbeat";
 export * from "./automation";
 export * from "./github-release";

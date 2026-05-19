@@ -40,17 +40,11 @@ const DEFAULT_EXTRA_PATHS: string[] = [];
 
 const MEMORY_TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory.search", "memory.read"],
-  "group:memory-write": ["memory.remember"],
-  "group:memory-maintenance": ["memory.distillWorkspace", "memory.status", "memory.indexWorkspace", "memory.indexDocument"],
-  "group:memory-global": ["memory.searchGlobal", "memory.listGlobalCandidates"],
-  "group:memory-global-write": ["memory.promoteGlobal", "memory.rejectGlobalCandidate"]
+  "group:memory-write": ["memory.remember"]
 };
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",
-  bash: "exec",
-  memory_search: "memory.search",
-  memory_get: "memory.read",
-  memory_save: "memory.remember"
+  bash: "exec"
 };
 
 function normalizeEntry(value: string): string {

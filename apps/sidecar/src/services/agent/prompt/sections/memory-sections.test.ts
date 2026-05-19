@@ -8,7 +8,7 @@ describe("memory-sections", () => {
 
   test("uses on-demand recall copy for memory search tools", () => {
     const sections = buildMemorySections({
-      availableTools: new Set(["memory_search", "memory_get"]),
+      availableTools: new Set(["memory.search", "memory.read"]),
       citationsMode: "auto"
     });
     const prompt = sections.join("\n\n");
@@ -30,11 +30,11 @@ describe("memory-sections", () => {
 
   test("write rules are durable-only and avoid task-by-task memory spam", () => {
     const prompt = buildMemorySections({
-      availableTools: new Set(["memory.remember", "memory.writeEpisode"])
+      availableTools: new Set(["memory.remember"])
     }).join("\n\n");
 
     expect(prompt).toContain("durable preference");
-    expect(prompt).toContain("meaningful collaboration episodes");
+    expect(prompt).toContain("use memory.remember");
     expect(prompt).not.toContain("After completing any non-trivial task");
     expect(prompt).not.toContain("At natural conversation breakpoints");
     expect(prompt).not.toContain("## Memory Write Rules");

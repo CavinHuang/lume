@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createAutomationJob } from "./automation-manager";
@@ -54,38 +54,5 @@ describe("automation-runner-service", () => {
     expect(existsSync(runsPath)).toBeTrue();
     const lines = readFileSync(runsPath, "utf-8").trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("应支持直接执行 workspace 记忆蒸馏系统动作", async () => {
-    const workspaceId = "ws-memory-distill";
-    const workspaceSlug = "memory-distill-workspace";
-    const indexPath = join(tempConfigDir, "agent-workspaces.json");
-    writeFileSync(indexPath, JSON.stringify({
-      version: 1,
-      workspaces: [{
-        id: workspaceId,
-        name: "Memory Distill Workspace",
-        slug: workspaceSlug,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      }]
-    }, null, 2), "utf-8");
-
-    const workspaceRoot = join(tempConfigDir, "agent-workspaces", workspaceSlug);
-    mkdirSync(join(workspaceRoot, "memory"), { recursive: true });
-    writeFileSync(join(workspaceRoot, "memory", "2026-04-11.md"), "- stable preference\n- stable preference\n", "utf-8");
-
-    const job = createAutomationJob({
-      name: "记忆蒸馏",
-      workspaceId,
-      schedule: { type: "interval", intervalMs: 60_000 },
-      prompt: "distill workspace memory",
-      systemAction: "memory_distill_workspace"
-    });
-
-    const run = await runAutomationJobNow({ id: job.id });
-    expect(run.status).toBe("success");
-    expect(run.message).toContain("记忆蒸馏完成");
-    expect(existsSync(join(workspaceRoot, "MEMORY.md"))).toBeTrue();
   });
 });

@@ -46,10 +46,7 @@ export function inferCapabilityLanes(inputTools?: string[]): CapabilityLane[] {
   if (normalized.has("skill")) lanes.push("skills");
   if (normalized.has("browser")) lanes.push("browser");
   if (
-    normalized.has("memory_search")
-    || normalized.has("memory_get")
-    || normalized.has("memory_save")
-    || normalized.has("memory.search")
+    normalized.has("memory.search")
     || normalized.has("memory.read")
     || normalized.has("memory.remember")
   ) {

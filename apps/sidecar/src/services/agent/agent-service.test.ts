@@ -259,14 +259,12 @@ describe("agent-service", () => {
   afterEach(async () => {
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
     const { resetAgentRuntimeKernelForTest, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
-    const { closeMemoryManagers } = await import("../memory/memory-service");
     const { drainServiceRuntimeForTest, resetServiceRuntimeForTest } = await import("../agent-runtime/service-runtime/service-runtime");
     await waitForAgentRuntimeKernelIdleForTest();
     await drainServiceRuntimeForTest();
     resetAgentRuntimeStatusManagerForTest();
     resetAgentRuntimeKernelForTest();
     resetServiceRuntimeForTest();
-    closeMemoryManagers();
     heldRunResolvers.clear();
     runAgentRuntimeCalls.length = 0;
     if (previousConfigDir === undefined) {
@@ -423,46 +421,6 @@ describe("agent-service", () => {
     });
 
     expect((runAgentRuntimeCalls.at(-1) as { runtime?: { workspaceId?: string } })?.runtime?.workspaceId).toBe(workspace.id);
-  });
-
-  test("sendAgentMessage 在 compaction boundary 后写入结构化 memory flush", async () => {
-    const { createAgentThread } = await import("./agent-thread-manager");
-    const { createAgentWorkspace } = await import("./agent-workspace-manager");
-    const { sendAgentMessage } = await import("./agent-service");
-    const { drainServiceRuntimeForTest } = await import("../agent-runtime/service-runtime/service-runtime");
-    const { searchLayeredMemory } = await import("../memory/memory-service");
-    const workspace = createAgentWorkspace("Memory Flush Workspace", { slug: "memory-flush-workspace" });
-    const thread = createAgentThread("compaction memory flush", "channel-test", workspace.id);
-
-    await sendAgentMessage({
-      threadId: thread.id,
-      userMessage: "compact-summary",
-      channelId: "channel-test",
-      modelId: "provider/model-test"
-    }, {
-      onMessageAppended: () => undefined,
-      onComplete: () => undefined,
-      onError: () => undefined,
-      onTitleUpdated: () => undefined,
-      onAskUserQuestion: () => undefined,
-      onToolPermissionRequest: () => undefined
-    });
-
-    await drainServiceRuntimeForTest();
-
-    const results = await searchLayeredMemory({
-      workspaceSlug: workspace.slug,
-      query: "structured memory flush compaction summaries",
-      maxResults: 5,
-      includeGlobal: false
-    });
-
-    expect(results[0]).toEqual(expect.objectContaining({
-      kind: "episode",
-      scope: "workspace",
-      source: "flush"
-    }));
-    expect(results[0]?.snippet).toContain("structured memory flush");
   });
 
   test("appendAgentMessage 应在运行中排队并在完成后自动发送下一条", async () => {

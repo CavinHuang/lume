@@ -116,7 +116,6 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     ...(input.defaultModel ? { defaultModel: input.defaultModel.trim() } : {}),
     ...(input.toolResourceIds ? { toolResourceIds: input.toolResourceIds } : {}),
     prompt: normalizePrompt(input.prompt),
-    ...(input.systemAction ? { systemAction: input.systemAction } : {}),
     createdAt: now,
     updatedAt: now
   };
@@ -147,7 +146,6 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel.trim() || undefined } : {}),
     ...(input.toolResourceIds !== undefined ? { toolResourceIds: input.toolResourceIds } : {}),
     ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
-    ...(input.systemAction !== undefined ? { systemAction: input.systemAction } : {}),
     updatedAt: Date.now()
   };
   index.jobs[targetIndex] = updated;

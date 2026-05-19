@@ -48,7 +48,6 @@ import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
-import { createCompactionMemoryFlushJob } from "../agent-runtime/service-runtime/compaction-memory-flush-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
 import { AgentRuntimeKernel } from "../agent-runtime/kernel/agent-runtime-kernel";
 
@@ -76,9 +75,9 @@ const ROUTING_HEURISTIC_TOOLS = [
   "browser",
   "WebSearch",
   "WebFetch",
-  "memory_search",
-  "memory_get",
-  "memory_save"
+  "memory.search",
+  "memory.read",
+  "memory.remember"
 ];
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
@@ -509,16 +508,6 @@ export async function sendAgentMessage(
       handleRuntimeThreadStateMessage(threadId, stampedMessage, sessionStateManager);
       if (stampedMessage.type === "system" && stampedMessage.subtype === "context_compaction_started") {
         runtimeStatusManager.markCompacting(threadId);
-      }
-      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
-        const job = createCompactionMemoryFlushJob({
-          workspaceSlug: stateWorkspaceSlug,
-          threadId,
-          message: stampedMessage
-        });
-        if (job) {
-          getServiceRuntime().schedule(job);
-        }
       }
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
         persistedSdkMessages.push(stampedMessage);

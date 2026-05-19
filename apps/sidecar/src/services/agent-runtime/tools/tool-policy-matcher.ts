@@ -2,18 +2,10 @@ import { canonicalizeAgentToolName } from "@lume/shared";
 import type { AgentSendInput, AgentToolPolicy, ProviderType } from "@lume/shared";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { applyMemoryToolPolicy, type MemoryToolPolicy } from "../../memory/memory-policy";
-import {
-  MEMORY_GET_TOOL_NAME,
-  MEMORY_SAVE_TOOL_NAME,
-  MEMORY_SEARCH_TOOL_NAME
-} from "../../memory/memory-mcp-service";
 
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",
   glob: "find",
-  memory_search: "memory.search",
-  memory_get: "memory.read",
-  memory_save: "memory.remember",
   websearch: "web_search",
   webfetch: "web_fetch"
 };
@@ -22,10 +14,8 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:fs": ["read", "write", "edit"],
   "group:runtime": ["bash"],
   "group:search": ["find", "grep", "ls"],
-  "group:memory": ["memory.search", "memory.read", "memory.remember", "memory.writeEpisode", "memory.flush", "memory.status"],
-  "group:memory-maintenance": ["memory.distillWorkspace", "memory.indexWorkspace", "memory.indexDocument"],
-  "group:memory-global": ["memory.searchGlobal", "memory.listGlobalCandidates"],
-  "group:memory-global-write": ["memory.promoteGlobal", "memory.rejectGlobalCandidate"],
+  "group:memory": ["memory.search", "memory.read"],
+  "group:memory-write": ["memory.remember"],
   "group:web": ["web_search", "web_fetch"],
   "group:planning": ["askuserquestion", "taskcontractwrite"]
 };
@@ -142,20 +132,7 @@ export function resolveEnabledMemoryToolNames(policy?: MemoryToolPolicy): string
     baseTools: [
       "memory.search",
       "memory.read",
-      "memory.remember",
-      "memory.writeEpisode",
-      "memory.flush",
-      "memory.distillWorkspace",
-      "memory.status",
-      "memory.indexWorkspace",
-      "memory.indexDocument",
-      "memory.searchGlobal",
-      "memory.listGlobalCandidates",
-      "memory.promoteGlobal",
-      "memory.rejectGlobalCandidate",
-      MEMORY_SEARCH_TOOL_NAME,
-      MEMORY_GET_TOOL_NAME,
-      MEMORY_SAVE_TOOL_NAME
+      "memory.remember"
     ],
     policy
   });

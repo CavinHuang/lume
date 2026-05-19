@@ -35,7 +35,7 @@ const standardPrompt = buildSystemPromptAppend({
   workspaceName: "测试工作区",
   workspaceSlug: "test-ws",
   sessionId: "test-session-001",
-  availableTools: ["read", "write", "edit", "bash", "memory_search", "memory_get", "memory_save", "browser", "web_search"],
+  availableTools: ["read", "write", "edit", "bash", "memory.search", "memory.read", "memory.remember", "browser", "web_search"],
   permissionMode: "default",
 });
 
@@ -156,7 +156,7 @@ const basePrompt = buildSystemPromptAppend({
   workspaceName: "测试工作区",
   workspaceSlug: "test-ws",
   sessionId: "base-session",
-  availableTools: ["read", "write", "edit", "bash", "memory_search", "memory_get", "memory_save"],
+  availableTools: ["read", "write", "edit", "bash", "memory.search", "memory.read", "memory.remember"],
 });
 
 // 粗略估算: 1 token ≈ 4 字符（中文约 1.5 字符/token）

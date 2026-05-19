@@ -564,7 +564,6 @@ function extractCompactionMetadata(message: SDKMessage): Record<string, unknown>
     summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
     policy: typeof metadata.policy === "string" ? metadata.policy : undefined,
     source: typeof metadata.source === "string" ? metadata.source : undefined,
-    memoryFlushJobId: typeof metadata.memory_flush_job_id === "string" ? metadata.memory_flush_job_id : undefined
   };
 }
 

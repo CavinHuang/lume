@@ -611,7 +611,7 @@ Plan 模式只允许：
 - Write/Edit。
 - Bash。
 - automation_set。
-- memory.promoteGlobal / rejectGlobalCandidate。
+- memory.remember。
 - 任何有不可逆副作用的 MCP tool。
 - 未声明 plan-safe 的 plugin tool。
 
@@ -689,8 +689,6 @@ memory.read
 
 ```text
 memory.remember
-memory.writeEpisode
-memory.flush
 ```
 
 需要策略控制。

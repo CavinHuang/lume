@@ -146,7 +146,6 @@ export function createKernelContextController(input: KernelContextControllerInpu
           policy: KERNEL_CONTEXT_POLICY,
           source: KERNEL_CONTEXT_SOURCE,
           contextWindow: input.contextWindow,
-          memoryFlushJobId: `memory.flush:${input.threadId}:compact_boundary`,
           ...(sourceMessageIds.length > 0 ? { sourceMessageIds } : {}),
           ...(preservedSegment ? { preservedSegment } : {}),
           budget

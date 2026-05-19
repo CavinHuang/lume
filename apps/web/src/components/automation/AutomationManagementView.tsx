@@ -1021,7 +1021,6 @@ function sanitizeResourceIds(ids: string[] | undefined): ResourceId[] {
 }
 
 function deriveTags(job: AutomationJob): string[] {
-  if (job.systemAction) return ['系统', '自动执行']
   if (job.schedule.type === 'manual') return ['产品', '文档生成']
   return ['定时', '自动化']
 }

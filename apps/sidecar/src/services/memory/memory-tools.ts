@@ -1,134 +1,31 @@
 import { existsSync, readFileSync } from "node:fs";
 import type {
-  GlobalMemoryCandidate,
-  MemoryIndexDocumentToolInput,
-  MemoryDistillationResult,
-  MemoryDistillWorkspaceToolInput,
-  MemoryFlushToolInput,
-  MemoryItem,
-  MemoryListGlobalCandidatesToolInput,
-  MemoryProviderStatus,
   MemoryReadToolInput,
   MemoryReadToolResult,
-  MemoryRejectGlobalCandidateToolInput,
   MemoryRememberToolInput,
-  MemorySaveInput,
   MemorySearchResult,
-  MemorySearchGlobalToolInput,
   MemorySearchToolInput,
   MemoryToolName,
-  MemoryToolWriteResult,
-  MemoryWriteEpisodeInput,
-  MemoryWriteEpisodeResult,
-  PromoteGlobalMemoryInput
+  MemoryToolWriteResult
 } from "@lume/shared";
-import { runStructuredMemoryFlush } from "./memory-flush-runner";
-import {
-  getLayeredMemoryStatus,
-  indexWorkspaceMemoryDocument,
-  indexWorkspaceMemoryCorpus,
-  runWorkspaceMemoryDistillation,
-  writeWorkspaceMemory
-} from "./memory-service";
-import {
-  listGlobalMemoryCandidates,
-  promoteGlobalMemory,
-  rejectGlobalMemoryCandidate,
-  searchGlobalMemory
-} from "./memory-global-promoter";
-import { searchMemoryV2 } from "../memory-v2/retrieval";
 import { createMemoryV2Store } from "../memory-v2/markdown-store";
+import { searchMemoryV2 } from "../memory-v2/retrieval";
 import { smartAddMemoryV2Candidate } from "../memory-v2/smart-add";
 import type { MemoryV2Kind, MemoryV2Scope } from "../memory-v2/types";
 
-export const MVP_MEMORY_TOOL_NAMES = [
+export const MEMORY_TOOL_NAMES = [
   "memory.search",
   "memory.read",
-  "memory.remember",
-  "memory.writeEpisode",
-  "memory.flush",
-  "memory.distillWorkspace",
-  "memory.status",
-  "memory.indexWorkspace"
+  "memory.remember"
 ] as const satisfies readonly MemoryToolName[];
-
-export const GLOBAL_MEMORY_TOOL_NAMES = [
-  "memory.searchGlobal",
-  "memory.listGlobalCandidates",
-  "memory.promoteGlobal",
-  "memory.rejectGlobalCandidate"
-] as const satisfies readonly MemoryToolName[];
-
-export const MEMORY_TOOL_NAMES = [
-  ...MVP_MEMORY_TOOL_NAMES,
-  ...GLOBAL_MEMORY_TOOL_NAMES,
-  "memory.indexDocument"
-] as const satisfies readonly MemoryToolName[];
-
-type MemoryToolsDeps = {
-  searchGlobalMemory?: typeof searchGlobalMemory;
-  listGlobalMemoryCandidates?: typeof listGlobalMemoryCandidates;
-  promoteGlobalMemory?: typeof promoteGlobalMemory;
-  rejectGlobalMemoryCandidate?: typeof rejectGlobalMemoryCandidate;
-  writeWorkspaceMemory?: typeof writeWorkspaceMemory;
-  runStructuredMemoryFlush?: typeof runStructuredMemoryFlush;
-  runWorkspaceMemoryDistillation?: typeof runWorkspaceMemoryDistillation;
-  getLayeredMemoryStatus?: typeof getLayeredMemoryStatus;
-  indexWorkspaceMemoryCorpus?: typeof indexWorkspaceMemoryCorpus;
-  indexWorkspaceMemoryDocument?: typeof indexWorkspaceMemoryDocument;
-};
 
 export type MemoryTools = {
   "memory.search": (input: MemorySearchToolInput) => Promise<MemorySearchResult[]>;
   "memory.read": (input: MemoryReadToolInput) => Promise<MemoryReadToolResult>;
   "memory.remember": (input: MemoryRememberToolInput) => Promise<MemoryToolWriteResult>;
-  "memory.writeEpisode": (input: MemoryWriteEpisodeInput) => Promise<MemoryWriteEpisodeResult>;
-  "memory.flush": (input: MemoryFlushToolInput) => Promise<Awaited<ReturnType<typeof runStructuredMemoryFlush>>>;
-  "memory.distillWorkspace": (input: MemoryDistillWorkspaceToolInput) => Promise<MemoryDistillationResult>;
-  "memory.status": (input: { workspaceSlug: string }) => Promise<MemoryProviderStatus>;
-  "memory.indexWorkspace": (input: { workspaceSlug: string; force?: boolean }) => Promise<{ indexedChunks: number }>;
-  "memory.searchGlobal": (input: MemorySearchGlobalToolInput) => Promise<MemorySearchResult[]>;
-  "memory.listGlobalCandidates": (input?: MemoryListGlobalCandidatesToolInput) => Promise<GlobalMemoryCandidate[]>;
-  "memory.promoteGlobal": (input: PromoteGlobalMemoryInput) => Promise<MemoryItem>;
-  "memory.rejectGlobalCandidate": (input: MemoryRejectGlobalCandidateToolInput) => Promise<GlobalMemoryCandidate>;
-  "memory.indexDocument": (input: MemoryIndexDocumentToolInput) => Promise<{ indexedChunks: number }>;
 };
 
-function defaultIncludeGlobal(input: MemorySearchToolInput): boolean {
-  if (typeof input.includeGlobal === "boolean") return input.includeGlobal;
-  return input.sessionType === undefined || input.sessionType === "main";
-}
-
-function formatEpisodeContent(input: MemoryWriteEpisodeInput): string {
-  const lines = [`# ${input.title}`, "", input.summary.trim()];
-  const addList = (heading: string, values?: string[]) => {
-    const items = (values ?? []).map((item) => item.trim()).filter(Boolean);
-    if (items.length === 0) return;
-    lines.push("", `## ${heading}`, ...items.map((item) => `- ${item}`));
-  };
-  addList("Outcomes", input.outcomes);
-  addList("Decisions", input.decisions);
-  addList("Preferences", input.preferences);
-  addList("Lessons", input.lessons);
-  addList("Next Steps", input.nextSteps);
-  return lines.join("\n").trim();
-}
-
-export function createMemoryTools(deps: MemoryToolsDeps = {}): MemoryTools {
-  const resolved = {
-    searchGlobalMemory,
-    listGlobalMemoryCandidates,
-    promoteGlobalMemory,
-    rejectGlobalMemoryCandidate,
-    writeWorkspaceMemory,
-    runStructuredMemoryFlush,
-    runWorkspaceMemoryDistillation,
-    getLayeredMemoryStatus,
-    indexWorkspaceMemoryCorpus,
-    indexWorkspaceMemoryDocument,
-    ...deps
-  };
-
+export function createMemoryTools(): MemoryTools {
   return {
     async "memory.search"(input) {
       const v2Results = await searchMemoryV2({
@@ -227,117 +124,13 @@ export function createMemoryTools(deps: MemoryToolsDeps = {}): MemoryTools {
         kind: input.kind,
         scope: input.scope
       };
-    },
-
-    async "memory.writeEpisode"(input) {
-      const writes: MemorySaveInput[] = [{
-        workspaceSlug: input.workspaceSlug,
-        content: formatEpisodeContent(input),
-        scope: "session",
-        kind: "episode",
-        source: "manual",
-        title: input.title,
-        summary: input.summary,
-        importance: 3,
-        confidence: 1,
-        sourceSessionId: input.sessionId,
-        sourceMessageIds: input.sourceMessageIds
-      }];
-      for (const content of input.decisions ?? []) {
-        writes.push({
-          workspaceSlug: input.workspaceSlug,
-          content,
-          scope: "workspace",
-          kind: "decision",
-          source: "manual",
-          importance: 4,
-          confidence: 1,
-          sourceSessionId: input.sessionId,
-          sourceMessageIds: input.sourceMessageIds
-        });
-      }
-      for (const content of input.preferences ?? []) {
-        writes.push({
-          workspaceSlug: input.workspaceSlug,
-          content,
-          scope: "workspace",
-          kind: "preference",
-          source: "manual",
-          importance: 4,
-          confidence: 1,
-          sourceSessionId: input.sessionId,
-          sourceMessageIds: input.sourceMessageIds
-        });
-      }
-      for (const content of input.lessons ?? []) {
-        writes.push({
-          workspaceSlug: input.workspaceSlug,
-          content,
-          scope: "workspace",
-          kind: "lesson",
-          source: "manual",
-          importance: 3,
-          confidence: 1,
-          sourceSessionId: input.sessionId,
-          sourceMessageIds: input.sourceMessageIds
-        });
-      }
-
-      const itemIds: string[] = [];
-      let savedCount = 0;
-      let skippedCount = 0;
-      for (const write of writes) {
-        try {
-          const result = await resolved.writeWorkspaceMemory(write);
-          if (result.itemId) itemIds.push(result.itemId);
-          savedCount += 1;
-        } catch {
-          skippedCount += 1;
-        }
-      }
-      return { savedCount, skippedCount, itemIds };
-    },
-
-    async "memory.flush"(input) {
-      return resolved.runStructuredMemoryFlush({
-        workspaceSlug: input.workspaceSlug,
-        sessionId: input.sessionId,
-        rawOutput: JSON.stringify({ entries: input.entries })
-      });
-    },
-
-    async "memory.distillWorkspace"(input) {
-      return resolved.runWorkspaceMemoryDistillation(input);
-    },
-
-    async "memory.status"(input) {
-      return resolved.getLayeredMemoryStatus(input.workspaceSlug);
-    },
-
-    async "memory.indexWorkspace"(input) {
-      return resolved.indexWorkspaceMemoryCorpus(input);
-    },
-
-    async "memory.searchGlobal"(input) {
-      return resolved.searchGlobalMemory(input);
-    },
-
-    async "memory.listGlobalCandidates"(input = {}) {
-      return resolved.listGlobalMemoryCandidates(input);
-    },
-
-    async "memory.promoteGlobal"(input) {
-      return resolved.promoteGlobalMemory(input);
-    },
-
-    async "memory.rejectGlobalCandidate"(input) {
-      return resolved.rejectGlobalMemoryCandidate(input.candidateId);
-    },
-
-    async "memory.indexDocument"(input) {
-      return resolved.indexWorkspaceMemoryDocument(input);
     }
   };
+}
+
+function defaultIncludeGlobal(input: MemorySearchToolInput): boolean {
+  if (typeof input.includeGlobal === "boolean") return input.includeGlobal;
+  return input.sessionType === undefined || input.sessionType === "main";
 }
 
 function resolveMemoryV2SearchScopes(input: MemorySearchToolInput): MemoryV2Scope[] {

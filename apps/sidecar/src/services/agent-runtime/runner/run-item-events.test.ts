@@ -268,7 +268,6 @@ describe("projectRunStateToRuntimeEvents", () => {
               policy: "kernel-v1",
               source: "agent-runtime-kernel",
               source_message_ids: ["msg-1"],
-              memory_flush_job_id: "memory.flush:thread-1:compact_boundary",
               context_window: 1000,
               budget: {
                 totalTokens: 1000,
@@ -361,8 +360,7 @@ describe("projectRunStateToRuntimeEvents", () => {
         totalTokens: 1000,
         sections: expect.objectContaining({ session: 650 })
       }),
-      summary: "kept the important decisions",
-      memoryFlushJobId: "memory.flush:thread-1:compact_boundary"
+      summary: "kept the important decisions"
     }));
     expect(events).toContainEqual(expect.objectContaining({
       id: "run-1:result:usage.updated",

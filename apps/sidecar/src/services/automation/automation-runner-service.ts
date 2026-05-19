@@ -9,8 +9,6 @@ import type {
 import { createAgentThreadWithModelRef } from "../agent/agent-thread-manager";
 import { getAgentThreadMeta } from "../agent/agent-thread-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { getAgentWorkspace } from "../agent/agent-workspace-manager";
-import { runWorkspaceMemoryDistillation } from "../memory/memory-service";
 import { listAutomationJobs, updateAutomationJob } from "./automation-manager";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
@@ -134,82 +132,66 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
   let runMessage = "任务执行完成";
 
   try {
-    if (job.systemAction === "memory_distill_workspace") {
-      if (!job.workspaceId) {
-        throw new Error("记忆蒸馏任务缺少 workspaceId");
-      }
-      const workspace = getAgentWorkspace(job.workspaceId);
-      if (!workspace) {
-        throw new Error(`记忆蒸馏任务的工作区不存在: ${job.workspaceId}`);
-      }
-      const result = await runWorkspaceMemoryDistillation({ workspaceSlug: workspace.slug });
-      runMessage = [
-        `记忆蒸馏完成: ${workspace.name}`,
-        `updatedWorkspaceMemory=${result.updatedWorkspaceMemory}`,
-        `promotedToGlobal=${result.promotedToGlobal.length}`
-      ].join(" · ");
+    const { channelId, modelId, modelRef } = pickExecutionChannel();
+    const boundThreadId = job.threadId?.trim();
+    if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
+      threadId = boundThreadId;
     } else {
-      const { channelId, modelId, modelRef } = pickExecutionChannel();
-      const boundThreadId = job.threadId?.trim();
-      if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
-        threadId = boundThreadId;
-      } else {
-        const thread = createAgentThreadWithModelRef(
-          `[自动化] ${job.name}`,
-          modelRef,
-          channelId,
-          job.workspaceId,
-          undefined,
-          modelId
-        );
-        threadId = thread.id;
-      }
-      if (!threadId) {
-        throw new Error("自动化执行缺少可用线程");
-      }
-
-      let runtimeError: string | null = null;
-      let waitingForApproval = false;
-      await sendAgentMessage(
-        {
-          threadId,
-          userMessage: job.prompt,
-          workspaceId: job.workspaceId,
-          modelRef,
-          channelId,
-          modelId,
-          permissionMode: "bypassPermissions",
-          messageMetadata: {
-            automationJobId: job.id,
-            automationTrigger: trigger
-          }
-        },
-        {
-          onComplete: () => {},
-          onError: (error) => {
-            runtimeError = error;
-          },
-          onTitleUpdated: () => {},
-          onAskUserQuestion: () => {
-            runtimeError = "任务执行需要用户交互，自动化模式当前不支持";
-          },
-          onToolPermissionRequest: () => {
-            waitingForApproval = true;
-          }
-        },
-        { appendUserMessage: true }
+      const thread = createAgentThreadWithModelRef(
+        `[自动化] ${job.name}`,
+        modelRef,
+        channelId,
+        job.workspaceId,
+        undefined,
+        modelId
       );
+      threadId = thread.id;
+    }
+    if (!threadId) {
+      throw new Error("自动化执行缺少可用线程");
+    }
 
-      if (runtimeError) {
-        throw new Error(runtimeError);
-      }
+    let runtimeError: string | null = null;
+    let waitingForApproval = false;
+    await sendAgentMessage(
+      {
+        threadId,
+        userMessage: job.prompt,
+        workspaceId: job.workspaceId,
+        modelRef,
+        channelId,
+        modelId,
+        permissionMode: "bypassPermissions",
+        messageMetadata: {
+          automationJobId: job.id,
+          automationTrigger: trigger
+        }
+      },
+      {
+        onComplete: () => {},
+        onError: (error) => {
+          runtimeError = error;
+        },
+        onTitleUpdated: () => {},
+        onAskUserQuestion: () => {
+          runtimeError = "任务执行需要用户交互，自动化模式当前不支持";
+        },
+        onToolPermissionRequest: () => {
+          waitingForApproval = true;
+        }
+      },
+      { appendUserMessage: true }
+    );
 
-      if (waitingForApproval) {
-        runStatus = "waiting_for_approval";
-        runMessage = `任务暂停：等待工具权限确认，线程: ${threadId}`;
-      } else {
-        runMessage = `任务执行完成，线程: ${threadId}`;
-      }
+    if (runtimeError) {
+      throw new Error(runtimeError);
+    }
+
+    if (waitingForApproval) {
+      runStatus = "waiting_for_approval";
+      runMessage = `任务暂停：等待工具权限确认，线程: ${threadId}`;
+    } else {
+      runMessage = `任务执行完成，线程: ${threadId}`;
     }
   } catch (error) {
     runStatus = "failed";
@@ -237,13 +219,13 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     finishedAt: Date.now()
   };
   appendRun(run);
-    if (notificationWriter) {
-      notificationWriter("automation:run-completed", {
-        run,
-        jobName: job.name,
-        jobEnabled: job.enabled
-      });
-    }
+  if (notificationWriter) {
+    notificationWriter("automation:run-completed", {
+      run,
+      jobName: job.name,
+      jobEnabled: job.enabled
+    });
+  }
   return run;
 }
 

@@ -236,7 +236,6 @@ export interface ContextCompactionCompletedRuntimeEvent extends RuntimeEventBase
   policy: string;
   source: string;
   summary?: string;
-  memoryFlushJobId?: string;
 }
 
 export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {

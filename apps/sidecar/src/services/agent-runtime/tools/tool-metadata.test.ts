@@ -2,15 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { getToolMetadata, isToolAllowedInPlanMode } from "./tool-metadata";
 
 describe("tool-metadata", () => {
-  test("classifies global memory mutations as high-risk writes", () => {
-    expect(getToolMetadata("memory.promoteGlobal")).toMatchObject({
+  test("classifies Memory V2 writes as medium-risk writes", () => {
+    expect(getToolMetadata("memory.remember")).toMatchObject({
       category: "write",
-      riskLevel: "high",
-      allowedInPlanMode: false
-    });
-    expect(getToolMetadata("memory.rejectGlobalCandidate")).toMatchObject({
-      category: "write",
-      riskLevel: "high",
+      riskLevel: "medium",
       allowedInPlanMode: false
     });
   });

@@ -241,8 +241,7 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
       ...optionalBudget(metadata),
       policy: stringValue(metadata.policy, "sdk-default"),
       source: stringValue(metadata.source, "agent-sdk"),
-      ...(typeof metadata.summary === "string" ? { summary: metadata.summary } : {}),
-      ...(typeof metadata.memory_flush_job_id === "string" ? { memoryFlushJobId: metadata.memory_flush_job_id } : {})
+      ...(typeof metadata.summary === "string" ? { summary: metadata.summary } : {})
     }];
   }
   if (item.name === "result") {

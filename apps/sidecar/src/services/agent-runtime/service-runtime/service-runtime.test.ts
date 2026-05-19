@@ -8,8 +8,8 @@ describe("ServiceRuntime", () => {
     let jobCompleted = false;
 
     runtime.schedule({
-      id: "slow-memory-flush",
-      type: "memory.flush",
+      id: "slow-background-job",
+      type: "background.test",
       run: async () => {
         await new Promise<void>((resolve) => {
           releaseJob = resolve;
@@ -25,8 +25,8 @@ describe("ServiceRuntime", () => {
 
     expect(jobCompleted).toBe(true);
     expect(results.at(-1)).toEqual(expect.objectContaining({
-      id: "slow-memory-flush",
-      type: "memory.flush",
+      id: "slow-background-job",
+      type: "background.test",
       status: "completed"
     }));
   });
@@ -37,9 +37,9 @@ describe("ServiceRuntime", () => {
     expect(() => {
       runtime.schedule({
         id: "failing-job",
-        type: "memory.flush",
+        type: "background.test",
         run: async () => {
-          throw new Error("flush failed");
+          throw new Error("job failed");
         }
       });
     }).not.toThrow();
@@ -48,9 +48,9 @@ describe("ServiceRuntime", () => {
 
     expect(results.at(-1)).toEqual(expect.objectContaining({
       id: "failing-job",
-      type: "memory.flush",
+      type: "background.test",
       status: "failed",
-      error: "flush failed"
+      error: "job failed"
     }));
   });
 });

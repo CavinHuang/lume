@@ -25,9 +25,6 @@ export interface AutomationSchedule {
 }
 
 /** 自动化任务定义 */
-export type AutomationSystemAction = 'memory_distill_workspace'
-
-/** 自动化任务定义 */
 export interface AutomationJob {
   /** 任务 ID */
   id: string
@@ -49,8 +46,6 @@ export interface AutomationJob {
   toolResourceIds?: string[]
   /** 执行提示词（后续可扩展为 workflow） */
   prompt: string
-  /** 内置系统动作（可选）。存在时优先执行系统动作，而不是发送 Agent prompt。 */
-  systemAction?: AutomationSystemAction
   /** 执行结果回写线程 ID（可选） */
   threadId?: string
   /** 创建时间戳 */
@@ -77,7 +72,6 @@ export interface AutomationCreateJobInput {
   defaultModel?: string
   toolResourceIds?: string[]
   prompt: string
-  systemAction?: AutomationSystemAction
 }
 
 /** 更新任务输入 */
@@ -93,7 +87,6 @@ export interface AutomationUpdateJobInput {
   defaultModel?: string
   toolResourceIds?: string[]
   prompt?: string
-  systemAction?: AutomationSystemAction
 }
 
 /** 删除任务输入 */

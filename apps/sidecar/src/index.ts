@@ -1,7 +1,6 @@
 import { argv, stdin, stdout, stderr } from "node:process";
 import { createInterface } from "node:readline";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
-import { startMemorySyncWatcher, stopMemorySyncWatcher } from "./services/memory/memory-sync-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
 import { initProxySettings } from "./services/system/proxy-settings-manager";
 import {
@@ -11,7 +10,6 @@ import {
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
-import { closeMemoryManagers } from "./rpc/memory-handlers";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
 import { formatConsoleArgs } from "./services/infra/log-format";
 
@@ -112,17 +110,12 @@ async function boot(): Promise<void> {
     seedDefaultSkills();
   }
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
-  if (envAutostartEnabled("LUME_MEMORY_SYNC_WATCHER_AUTOSTART", false)) {
-    startMemorySyncWatcher();
-  }
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_COMPLETED, event);
   });
   const stopWatcher = (): void => {
     unsubscribeSubagentAnnounce();
     stopWorkspaceWatcher();
-    stopMemorySyncWatcher();
-    closeMemoryManagers();
     void stopAutomationRunner().catch(() => {});
   };
   process.once("exit", stopWatcher);

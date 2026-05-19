@@ -37,7 +37,7 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 在工作区上下文中应包含按需记忆规则", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-1",
-      availableTools: ["memory_search", "memory_get"],
+      availableTools: ["memory.search", "memory.read"],
       memoryCitationsMode: "auto"
     });
     expect(prompt).toContain("## Memory");
@@ -143,7 +143,7 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 应注入合并后的 capability routing", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-capability-order",
-      availableTools: ["browser", "memory_search", "memory_get", "web_search", "web_fetch", "read", "write"]
+      availableTools: ["browser", "memory.search", "memory.read", "web_search", "web_fetch", "read", "write"]
     });
     expect(prompt).toContain("## Capability Routing");
     expect(prompt).toContain("1. Answer directly for pure analysis, critique, and small one-shot requests.");
@@ -182,7 +182,7 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 在 citations=off 时应输出关闭提示", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-1",
-      availableTools: ["memory_search", "memory_get"],
+      availableTools: ["memory.search", "memory.read"],
       memoryCitationsMode: "off"
     });
     expect(prompt).toContain("Citations are disabled");
@@ -235,7 +235,7 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 在 promptMode=none 时仅保留身份主句", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-none",
-      availableTools: ["memory_search", "memory_get"],
+      availableTools: ["memory.search", "memory.read"],
       promptMode: "none"
     });
     expect(prompt.trim()).toBe(LUME_AGENT_IDENTITY_LINE);
@@ -245,13 +245,13 @@ describe("agent-prompt-builder", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-minimal",
       workspaceSlug: "demo-workspace",
-      availableTools: ["memory_search", "memory_get"],
+      availableTools: ["memory.search", "memory.read"],
       promptMode: "minimal"
     });
     expect(prompt).toContain(LUME_AGENT_IDENTITY_LINE);
     expect(prompt).toContain("## Tooling");
     expect(prompt).toContain("Available tools are provided by the runtime tool schema");
-    expect(prompt).not.toContain("- memory_search");
+    expect(prompt).not.toContain("- memory.search");
     expect(prompt).toContain("## Workspace");
     expect(prompt).toContain("System config entry: ~/.lume/lume.yaml");
     expect(prompt).not.toContain(".lume-config");
@@ -277,15 +277,15 @@ describe("agent-prompt-builder", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-tool-order",
       promptMode: "minimal",
-      availableTools: ["memory_get", "Write", "read", "AskUserQuestion", "memory_search", "write"]
+      availableTools: ["memory.read", "Write", "read", "AskUserQuestion", "memory.search", "write"]
     });
 
     expect(prompt).toContain("Tool names are case-sensitive");
     expect(prompt).not.toContain("- read");
     expect(prompt).not.toContain("- Write");
     expect(prompt).not.toContain("- AskUserQuestion");
-    expect(prompt).not.toContain("- memory_search");
-    expect(prompt).not.toContain("- memory_get");
+    expect(prompt).not.toContain("- memory.search");
+    expect(prompt).not.toContain("- memory.read");
     expect(prompt.match(/- write/g)?.length ?? 0).toBe(0);
   });
 
@@ -333,7 +333,7 @@ describe("agent-prompt-builder", () => {
       workspaceName: "Dynamic Skill Workspace",
       workspaceSlug,
       agentCwd: "D:/workspace/projects/ai-projects/lume",
-      availableTools: ["Skill", "browser", "memory_search", "web_search", "read", "write"],
+      availableTools: ["Skill", "browser", "memory.search", "web_search", "read", "write"],
       userMessage: "help me create an execution plan"
     });
 

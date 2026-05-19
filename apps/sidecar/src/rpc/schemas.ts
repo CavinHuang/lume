@@ -18,25 +18,6 @@ export const agentSendInputSchema = z.object({
 
 export const agentAppendInputSchema = agentSendInputSchema;
 
-export const memoryIndexWorkspaceInputSchema = z.object({
-  workspaceSlug: idSchema,
-  force: z.boolean().optional()
-});
-
-export const memoryDistillInputSchema = z.object({
-  workspaceSlug: idSchema,
-  days: z.number().int().min(1).max(90).optional(),
-  dryRun: z.boolean().optional(),
-  updateWorkspaceBrief: z.boolean().optional(),
-  generateGlobalCandidates: z.boolean().optional()
-});
-
-export const memoryIndexFileInputSchema = z.object({
-  workspaceSlug: idSchema,
-  filePath: idSchema,
-  force: z.boolean().optional()
-});
-
 const memoryScopeSchema = z.enum(["global", "workspace", "agent", "session"]);
 const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);
 const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual", "flush", "distillation", "promotion"]);
@@ -58,52 +39,26 @@ export const memorySearchInputSchema = z.object({
   strategy: memorySearchStrategySchema.optional()
 });
 
-export const memoryGetInputSchema = z.object({
+export const memoryReadToolInputSchema = z.object({
   workspaceSlug: idSchema,
-  path: idSchema,
+  id: z.string().optional(),
+  path: z.string().optional(),
   from: z.number().int().min(1).optional(),
   lines: z.number().int().min(1).optional()
 });
 
-export const memorySaveInputSchema = z.object({
+export const memoryRememberToolInputSchema = z.object({
   workspaceSlug: idSchema,
+  scope: memoryScopeSchema,
+  kind: memoryKindSchema,
   content: z.string().min(1),
-  path: z.string().optional(),
-  date: z.string().optional(),
-  scope: memoryScopeSchema.optional(),
-  kind: memoryKindSchema.optional(),
-  source: memorySourceSchema.optional(),
   title: z.string().optional(),
-  summary: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  entities: z.array(z.string()).optional(),
-  topics: z.array(z.string()).optional(),
   importance: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
   confidence: z.number().min(0).max(1).optional(),
   sourceSessionId: z.string().optional(),
   sourceMessageIds: z.array(z.string()).optional(),
-  sourceToolCallId: z.string().optional(),
-  writeMode: z.enum(["append", "upsert", "replace-section"]).optional(),
   requireReview: z.boolean().optional()
-});
-
-export const listGlobalMemoryCandidatesInputSchema = z.object({
-  status: z.enum(["pending", "approved", "rejected", "ignored"]).optional()
-}).optional();
-
-export const promoteGlobalMemoryInputSchema = z.object({
-  candidateId: idSchema,
-  approve: z.boolean(),
-  editedContent: z.string().optional()
-});
-
-export const rejectGlobalMemoryCandidateInputSchema = z.object({
-  candidateId: idSchema
-});
-
-export const searchGlobalMemoryInputSchema = z.object({
-  query: z.string().min(1),
-  maxResults: z.number().int().min(1).max(50).optional()
 });
 
 export const memoryToolPolicySchema = z.object({

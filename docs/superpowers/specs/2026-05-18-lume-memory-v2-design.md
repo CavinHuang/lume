@@ -25,7 +25,7 @@ Lume should absorb the useful ideas, but not copy any system wholesale. It shoul
 - Keep the user out of the loop for normal memory writes.
 - Surface conflicts, stale memories, and low-confidence accumulation without interrupting work.
 - Make Markdown and run archives the source of truth.
-- Treat SQLite, FTS, and vector indexes as rebuildable caches.
+- Keep search Markdown-backed in V1; any later index must be disposable and derived from Markdown.
 - Keep the agent tool surface small and semantic.
 
 ## Non-Goals
@@ -37,7 +37,7 @@ Lume should absorb the useful ideas, but not copy any system wholesale. It shoul
 - Enabling LLM rerank on every query by default.
 - Coupling memory reflection with skill reflection.
 - Cloud sync or telemetry.
-- Exposing FTS, vector dimensions, chunk counts, and low-level index details in the main UI.
+- Exposing index internals, chunk counts, or low-level search diagnostics in the main UI.
 
 ## Implementation Phases
 
@@ -51,7 +51,7 @@ V1 must prove the core memory loop:
 - Run archive append-only JSONL.
 - YAML frontmatter schema and active/pending/archive status transitions.
 - smartAdd classification for duplicate, conflict, stale, low-confidence, and new.
-- Basic FTS/keyword/path search over `MEMORY.md`, entries, and recent daily files.
+- Basic keyword/path search over `MEMORY.md`, entries, and recent daily files.
 - Alice-style user message memory prefix with prefix stripping.
 - `memory.context.used` event and bottom citation notice.
 - Minimal settings surface for automatic memory, citation display, and pending counts.
@@ -60,7 +60,6 @@ V1 must prove the core memory loop:
 
 V1.1 may add:
 
-- Adaptive vector embeddings.
 - Rule-based rerank tuning by intent.
 - Deep archive search over run JSONL.
 - Rich pending review UI.
@@ -110,7 +109,7 @@ Durable memory entries only use `global` or `workspace` scope. `run` is a source
 
 ## Storage Layout
 
-Memory is Markdown-first. SQLite, FTS, and vector stores are indexes and caches.
+Memory is Markdown-first. V1 does not require SQLite, FTS, or vector storage.
 
 ```text
 ~/.lume/memory/
@@ -123,7 +122,6 @@ Memory is Markdown-first. SQLite, FTS, and vector stores are indexes and caches.
     conflicts/
     stale/
     low-confidence/
-  index/
 
 <workspace>/.lume/memory/
   MEMORY.md
@@ -137,7 +135,6 @@ Memory is Markdown-first. SQLite, FTS, and vector stores are indexes and caches.
     conflicts/
     stale/
     low-confidence/
-  index/
 ```
 
 ### MEMORY.md
@@ -174,7 +171,7 @@ applies_when: {}
 valid_from: null
 valid_to: null
 ---
-Lume memory uses Markdown as truth, while SQLite, FTS, and Vector are rebuildable indexes.
+Lume memory uses Markdown as truth; search caches are optional and disposable.
 ```
 
 ### daily/YYYY-MM-dd.md
@@ -254,20 +251,9 @@ entry status suspected_stale         <-> active/suspected entry plus pending fil
 
 The entry status controls recall. The pending file status controls review workflow.
 
-### index/
+### Search Cache
 
-`index/` may contain SQLite catalog, FTS tables, vector embeddings, and status metadata. It is disposable and rebuildable from Markdown and run JSONL.
-
-Index metadata records the source hash and index status:
-
-```json
-{
-  "schemaVersion": 1,
-  "sourceHash": "sha256:...",
-  "builtAt": "2026-05-18T12:00:00Z",
-  "vectorStatus": "disabled|available|indexing|ready|stale|degraded"
-}
-```
+V1 search reads Markdown directly. If a later cache is added, it must remain disposable and derived from Markdown and run JSONL.
 
 ## Memory Lifecycle
 
@@ -482,22 +468,14 @@ L1 Workspace Core
 
 L2 Relevant Recall
 - Global entries, workspace entries, and recent seven-day daily notes.
-- Uses FTS, keyword, path matching, vector search when available, and rerank.
+- Uses keyword, path matching, and rerank.
 
 L3 Deep Archive Search
 - Runs JSONL, historical daily files, and large tool output.
 - On-demand only.
 ```
 
-Vector strategy:
-
-- FTS/keyword/path search is always available.
-- Vector search is adaptive.
-- Local embedding is used when available.
-- External embedding is used only after explicit user configuration.
-- Vector failures degrade silently to FTS for normal work.
-
-Default indexed content:
+Default searched content:
 
 - Global `MEMORY.md`.
 - Global `entries/*.md`.
@@ -516,7 +494,6 @@ Rerank is rule-based by default:
 ```text
 score =
   lexical/path score
-+ vector score
 + pinned boost
 + scope boost
 + kind boost
@@ -643,7 +620,7 @@ memory.search
 memory.remember
 ```
 
-`memory.search` searches memory without exposing FTS/vector/source internals.
+`memory.search` searches memory without exposing storage or source internals.
 
 ```ts
 {
@@ -711,26 +688,22 @@ Lifecycle operations are runtime/service APIs, not ordinary agent tools:
 
 ```text
 memory.captureMicro
-memory.flushPreCompact
 memory.reflectRunCompleted
 memory.writeRunArchive
-memory.rebuildIndex
 ```
 
-The runtime owns capture timing, archive writing, reflection scheduling, and indexing.
+The runtime owns capture timing, archive writing, and reflection scheduling.
 
 ### Maintenance And UI APIs
 
 Settings and advanced operations use:
 
 ```text
-memory.status
 memory.read
 memory.update
 memory.archive
 memory.restore
 memory.resolvePending
-memory.rebuildIndex
 memory.deepSearchRuns
 ```
 
@@ -753,18 +726,12 @@ group/channel
 - no durable writes by default
 
 runtime
-- capture, flush, reflect, archive, index
+- capture, reflect, archive
 ```
 
 Do not expose these to normal agents by default:
 
 ```text
-memory.writeEpisode
-memory.distillWorkspace
-memory.promoteGlobal
-memory.rejectGlobalCandidate
-memory.indexDocument
-memory.indexWorkspace
 memory.audit
 memory.findConflicts
 ```
@@ -896,8 +863,7 @@ Retrieval/rerank tests:
 - Active entries are retrievable.
 - Pending, archived, and superseded entries are excluded from normal recall.
 - Suspected stale appears only as warned Maybe Useful when strongly relevant.
-- FTS works without vector.
-- Vector failure degrades to FTS.
+- Keyword/path search works without an external index.
 - Recent daily defaults to seven days.
 
 UI tests:
@@ -926,11 +892,8 @@ Failure handling tests:
 Risk: automatic memory pollutes future runs.
 Mitigation: smartAdd, evidence requirements, pending conflicts, low-confidence threshold, soft archive, bottom citations.
 
-Risk: Markdown and DB diverge.
-Mitigation: Markdown is truth, DB is cache, hash-based stale detection, rebuild command.
-
-Risk: vector provider instability harms recall.
-Mitigation: FTS is always available, vector is adaptive, degraded state is non-fatal.
+Risk: search cache diverges if a later cache is added.
+Mitigation: Markdown is truth and any cache must be disposable.
 
 Risk: daily becomes a junk drawer.
 Mitigation: only recent seven days are indexed by default, durable claims must be promoted to entries.
