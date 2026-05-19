@@ -16,7 +16,7 @@
 - Create `apps/sidecar/src/services/memory-v2/paths.ts`: global/workspace V2 memory root helpers.
 - Create `apps/sidecar/src/services/memory-v2/markdown-store.ts`: read/write frontmatter entries, daily notes, pending files, run archive JSONL.
 - Create `apps/sidecar/src/services/memory-v2/smart-add.ts`: duplicate/conflict/stale/low-confidence/new classification.
-- Create `apps/sidecar/src/services/memory-v2/extraction.ts`: explicit memory/correction intent extraction for automatic micro-capture.
+- Create `apps/sidecar/src/services/memory-v2/extraction.ts`: LLM memory intent extraction with explicit-rule fallback for automatic micro-capture.
 - Create `apps/sidecar/src/services/memory-v2/retrieval.ts`: FTS-like keyword/path search plus rule-based rerank.
 - Create `apps/sidecar/src/services/memory-v2/user-message-prefix.ts`: build and strip `<lume_memory_context>`.
 - Modify `apps/sidecar/src/services/agent-runtime/context/context-assembler.ts`: return Memory V2 recall context instead of appending old memory into the system prompt.
@@ -33,7 +33,7 @@
 - Memory V2 writes human-readable Markdown files and can rebuild recall from those files.
 - SmartAdd handles duplicate, conflict, stale, low-confidence, and new candidates.
 - Runtime sends the model an Alice-style memory prefix but never shows that prefix in the UI.
-- Runtime captures explicit memory intent automatically on run completion.
+- Runtime captures memory intent automatically on run completion using the configured extraction LLM when available.
 - Runtime strips the prefix before archive/reflection-facing transcript handling.
 - `memory.context.used` events include selected memory ids and citations.
 - Web renders a compact memory-citation notice and respects the existing citation display setting.
@@ -66,7 +66,8 @@
 - Test: `apps/sidecar/src/services/memory-v2/extraction.test.ts`
 - Test: `apps/sidecar/src/services/memory-v2/retrieval.test.ts`
 
-- [ ] Implement explicit-intent extraction for `remember`, `以后`, `prefer`, `actually`, and corrections.
+- [ ] Implement LLM extraction using `memory.extraction.modelRef`, with explicit-intent fallback for `remember`, `以后`, `prefer`, `actually`, and corrections.
+- [ ] Add tests for LLM JSON parsing, model-ref config resolution, and non-blocking fallback.
 - [ ] Implement deterministic duplicate detection by normalized statement.
 - [ ] Implement conflict and stale heuristics for same-kind/same-entity candidates.
 - [ ] Implement low-confidence routing to pending.

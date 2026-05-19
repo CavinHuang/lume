@@ -328,6 +328,9 @@ Extraction rules:
 - Every candidate must point to evidence.
 - User-stated facts and agent-inferred facts must be distinguishable.
 - Run evidence can support a global/workspace candidate, but the candidate itself cannot have durable `run` scope.
+- V1 extraction uses an LLM when configured, with deterministic explicit-intent extraction as a non-blocking fallback.
+- The recommended fast-model config is `memory.extraction.modelRef` in `lume.yaml`; `memory.extractionModelRef` is accepted as a compatibility shorthand.
+- Extraction model failures must not block run completion.
 
 ### Classify
 

@@ -21,7 +21,7 @@ import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
 import { appendDaily, appendRunArchive } from "../../memory-v2/markdown-store";
 import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
-import { extractExplicitMemoryCandidates } from "../../memory-v2/extraction";
+import { extractMemoryCandidatesWithLlm } from "../../memory-v2/extraction";
 import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
 
 interface PreparedRuntimeCoreAttempt {
@@ -298,7 +298,7 @@ export class LumeRunner {
             userMessage: this.observer.getUserMessage()
           }
         });
-        for (const candidate of extractExplicitMemoryCandidates({
+        for (const candidate of await extractMemoryCandidatesWithLlm({
           text: this.observer.getUserMessage(),
           workspaceSlug
         })) {
