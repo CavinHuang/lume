@@ -17,6 +17,7 @@ import {
   type AgentDefinition,
   type AgentOptions,
   type ApiType,
+  type ContentBlockParam,
   type McpServerConfig,
   type ToolContext,
   type ToolResult,
@@ -62,6 +63,7 @@ import {
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
 import { createKernelContextController } from "../context/context-controller";
+import { buildRuntimeUserMessageInput } from "./message-attachment-input";
 import { createTaskContractWriteTool } from "../plan/task-contract-write-tool";
 import { createTaskReportTool } from "../task-run/task-report-tool";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
@@ -129,7 +131,7 @@ export interface CreateRuntimeCoreSessionResult {
   session: RuntimeCoreSessionLike;
   sessionManager: RuntimeCoreSessionManager;
   systemPrompt: string;
-  userMessageForModel: string;
+  userMessageForModel: string | ContentBlockParam[];
   memoryContextUsedItems: MemoryV2RecallItem[];
   tools: ToolDefinition[];
 }
@@ -879,12 +881,20 @@ export async function createRuntimeCoreSession(
     }
   };
 
+  const userMessageForModel = buildRuntimeUserMessageInput({
+    userMessage: contextAssembly.userMessageForModel,
+    attachments: input.messageAttachments,
+    provider: input.provider,
+    workspaceSlug: input.workspaceSlug,
+    threadId: input.lumeSessionId
+  });
+
   return {
     agent,
     session,
     sessionManager,
     systemPrompt,
-    userMessageForModel: contextAssembly.userMessageForModel,
+    userMessageForModel,
     memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
     tools: resolvedTools
   };

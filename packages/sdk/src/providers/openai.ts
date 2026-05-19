@@ -26,11 +26,15 @@ import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from '../utils/retr
 
 interface OpenAIChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content?: string | null
+  content?: string | null | OpenAIContentPart[]
   reasoning_content?: string
   tool_calls?: OpenAIToolCall[]
   tool_call_id?: string
 }
+
+type OpenAIContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
 
 interface OpenAIToolCall {
   id: string
@@ -454,13 +458,20 @@ export class OpenAIProvider implements LLMProvider {
       return
     }
 
-    // Content blocks may contain text and/or tool_result blocks
+    // Content blocks may contain text, image, and/or tool_result blocks
     const textParts: string[] = []
+    const contentParts: OpenAIContentPart[] = []
     const toolResults: Array<{ tool_use_id: string; content: string }> = []
 
     for (const block of normalizeContentBlocks(msg.content)) {
       if (block.type === 'text') {
         textParts.push(block.text)
+        contentParts.push({ type: 'text', text: block.text })
+      } else if (block.type === 'image') {
+        const url = imageSourceToOpenAIUrl(block.source)
+        if (url) {
+          contentParts.push({ type: 'image_url', image_url: { url } })
+        }
       } else if (block.type === 'tool_result') {
         toolResults.push({
           tool_use_id: block.tool_use_id,
@@ -478,8 +489,10 @@ export class OpenAIProvider implements LLMProvider {
       })
     }
 
-    // Text parts become a user message
-    if (textParts.length > 0) {
+    // Text/image parts become a user message
+    if (contentParts.some((part) => part.type === 'image_url')) {
+      result.push({ role: 'user', content: contentParts })
+    } else if (textParts.length > 0) {
       result.push({ role: 'user', content: textParts.join('\n') })
     }
   }
@@ -628,4 +641,18 @@ export class OpenAIProvider implements LLMProvider {
         return reason
     }
   }
+}
+
+function imageSourceToOpenAIUrl(source: unknown): string | null {
+  if (!source || typeof source !== 'object') {
+    return null
+  }
+  const item = source as { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown }
+  if (typeof item.url === 'string' && item.url.trim()) {
+    return item.url
+  }
+  if (item.type === 'base64' && typeof item.media_type === 'string' && typeof item.data === 'string') {
+    return `data:${item.media_type};base64,${item.data}`
+  }
+  return null
 }
