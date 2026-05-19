@@ -45,7 +45,7 @@ import {
 import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
 import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
-import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory/memory-policy";
+import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";

@@ -22,8 +22,8 @@
 - Modify `apps/sidecar/src/services/agent-runtime/context/context-assembler.ts`: return Memory V2 recall context instead of appending old memory into the system prompt.
 - Modify `apps/sidecar/src/services/agent-runtime/runner/lume-runner.ts`: send prefixed user message to the model, emit memory-used event, and archive visible run evidence.
 - Modify `apps/sidecar/src/services/agent-runtime/runner/run-observer.ts`: strip injected memory prefixes from SDK user messages before user-facing run items.
-- Modify `apps/sidecar/src/services/memory/memory-tools.ts`: keep the tool surface small and route `memory.search`, `memory.read`, and `memory.remember` directly to Memory V2.
-- Modify `apps/sidecar/src/services/memory/memory-policy.ts`: expose the V1 semantic tool set by default.
+- Modify `apps/sidecar/src/services/memory-v2/tools.ts`: keep the tool surface small and route `memory.search`, `memory.read`, and `memory.remember` directly to Memory V2.
+- Modify `apps/sidecar/src/services/memory-v2/policy.ts`: expose the V1 semantic tool set by default.
 - Modify `packages/shared/src/types/runtime-event.ts`: add `memory.context.used`.
 - Modify `apps/web/src/components/agent/runtime-event-message-projection.ts` and related tests: render a compact bottom memory citation notice when enabled.
 - Reuse the existing memory citation setting; do not add a second V2 settings wrapper.
@@ -98,9 +98,9 @@
 ### Task 4: Agent Tools And Policy
 
 **Files:**
-- Modify: `apps/sidecar/src/services/memory/memory-tools.ts`
-- Modify: `apps/sidecar/src/services/memory/memory-policy.ts`
-- Update tests: `apps/sidecar/src/services/memory/memory-tools.test.ts`, `apps/sidecar/src/services/memory/memory-policy.test.ts`
+- Modify: `apps/sidecar/src/services/memory-v2/tools.ts`
+- Modify: `apps/sidecar/src/services/memory-v2/policy.ts`
+- Update tests: `apps/sidecar/src/services/memory-v2/tools.test.ts`, `apps/sidecar/src/services/memory-v2/policy.test.ts`
 
 - [ ] Route `memory.search` directly to Memory V2 retrieval without old-system fallback.
 - [ ] Route `memory.read` directly to Memory V2 entry/path reads.

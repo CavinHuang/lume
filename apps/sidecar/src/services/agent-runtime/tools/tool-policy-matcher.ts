@@ -1,7 +1,7 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
 import type { AgentSendInput, AgentToolPolicy, ProviderType } from "@lume/shared";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
-import { applyMemoryToolPolicy, type MemoryToolPolicy } from "../../memory/memory-policy";
+import { applyMemoryToolPolicy, type MemoryToolPolicy } from "../../memory-v2/policy";
 
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",

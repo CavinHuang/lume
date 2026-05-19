@@ -20,7 +20,7 @@ import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
 import { appendDaily, appendRunArchive } from "../../memory-v2/markdown-store";
-import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
+import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import { extractMemoryCandidatesWithLlm } from "../../memory-v2/extraction";
 import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
 

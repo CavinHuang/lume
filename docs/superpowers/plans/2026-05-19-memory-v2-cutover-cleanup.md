@@ -20,8 +20,9 @@ Cut the memory system over to Memory V2 as the only implementation path. Remove 
    - Simplify the settings memory surface so it no longer depends on indexing, distillation, provider status, or global candidates.
 
 4. Source deletion
-   - Delete old `apps/sidecar/src/services/memory/*` implementation files and obsolete tests.
-   - Keep only a small V2 tool/policy boundary if existing imports need the `services/memory` path.
+   - Delete the entire old `apps/sidecar/src/services/memory/` boundary.
+   - Move tool and policy code into `apps/sidecar/src/services/memory-v2/` so callers import V2 directly.
+   - Do not keep compatibility facades, bridge wrappers, or old path aliases.
 
 ## Verification
 

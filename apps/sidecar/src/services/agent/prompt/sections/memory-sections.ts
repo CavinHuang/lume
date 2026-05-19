@@ -1,4 +1,4 @@
-import type { MemoryCitationsMode } from "../../../memory/memory-policy";
+import type { MemoryCitationsMode } from "../../../memory-v2/policy";
 
 export function buildMemorySections(ctx: {
   availableTools?: Set<string>;

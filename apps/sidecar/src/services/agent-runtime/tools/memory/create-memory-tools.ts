@@ -1,6 +1,10 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
 import type { MemoryKind, MemoryScope, MemorySearchResult } from "@lume/shared";
-import { createMemoryTools } from "../../../memory/memory-tools";
+import {
+  readMemoryTool,
+  rememberMemoryTool,
+  searchMemoryTool
+} from "../../../memory-v2/tools";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 
 function formatCitation(path: string, startLine: number, endLine: number): string {
@@ -38,7 +42,6 @@ export function createSdkMemoryTools(params: {
   includeCitations: boolean;
 }): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
-  const memoryTools = createMemoryTools();
 
   if (params.enabledTools.has("memory.search")) {
     tools.push(createSdkJsonResultTool({
@@ -60,7 +63,7 @@ export function createSdkMemoryTools(params: {
       isReadOnly: true,
       isConcurrencySafe: true,
       async call(input) {
-        const results = await memoryTools["memory.search"]({
+        const results = await searchMemoryTool({
           workspaceSlug: params.workspaceSlug,
           query: String(input.query ?? ""),
           maxResults: typeof input.maxResults === "number" ? input.maxResults : undefined,
@@ -94,7 +97,7 @@ export function createSdkMemoryTools(params: {
       isReadOnly: true,
       isConcurrencySafe: true,
       async call(input) {
-        return memoryTools["memory.read"]({
+        return readMemoryTool({
           workspaceSlug: params.workspaceSlug,
           id: typeof input.id === "string" ? input.id : undefined,
           path: typeof input.path === "string" ? input.path : undefined,
@@ -125,7 +128,7 @@ export function createSdkMemoryTools(params: {
         required: ["scope", "kind", "content"]
       },
       async call(input) {
-        return memoryTools["memory.remember"]({
+        return rememberMemoryTool({
           workspaceSlug: params.workspaceSlug,
           scope: String(input.scope ?? "workspace") as MemoryScope,
           kind: String(input.kind ?? "fact") as MemoryKind,

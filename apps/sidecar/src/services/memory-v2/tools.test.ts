@@ -2,21 +2,23 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { createMemoryTools, MEMORY_TOOL_NAMES } from "./memory-tools";
+import {
+  MEMORY_V2_TOOL_NAMES,
+  readMemoryTool,
+  rememberMemoryTool,
+  searchMemoryTool
+} from "./tools";
 
-describe("memory-tools", () => {
-  test("createMemoryTools 只注册 Memory V2 主路径工具", () => {
-    const tools = createMemoryTools();
-    expect(MEMORY_TOOL_NAMES).toEqual(["memory.search", "memory.read", "memory.remember"]);
-    expect(Object.keys(tools)).toEqual(["memory.search", "memory.read", "memory.remember"]);
+describe("memory-v2 tools", () => {
+  test("只暴露 Memory V2 主路径工具名", () => {
+    expect(MEMORY_V2_TOOL_NAMES).toEqual(["memory.search", "memory.read", "memory.remember"]);
   });
 
   test("memory.search/read/remember 使用 Memory V2 主路径", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-memory-v2-tools-"));
     process.env.LUME_CONFIG_DIR = root;
     try {
-      const tools = createMemoryTools();
-      const written = await tools["memory.remember"]({
+      const written = await rememberMemoryTool({
         workspaceSlug: "demo",
         scope: "workspace",
         kind: "decision",
@@ -25,7 +27,7 @@ describe("memory-tools", () => {
         tags: ["memory"]
       });
 
-      const results = await tools["memory.search"]({
+      const results = await searchMemoryTool({
         workspaceSlug: "demo",
         query: "memory markdown search",
         maxResults: 3
@@ -36,7 +38,7 @@ describe("memory-tools", () => {
         scope: "workspace"
       });
 
-      const read = await tools["memory.read"]({
+      const read = await readMemoryTool({
         workspaceSlug: "demo",
         id: written.id
       });

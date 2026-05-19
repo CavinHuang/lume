@@ -1,7 +1,7 @@
 import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
 import type { AgentAskUserQuestionRequest, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
-import type { MemoryToolPolicy } from "../../memory/memory-policy";
+import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
 import { createSdkCronTools } from "./cron/create-cron-tools";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";

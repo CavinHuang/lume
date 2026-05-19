@@ -8,7 +8,7 @@ import {
   resolveAgentRuntimeRoutingTrace
 } from "../../agent/agent-runtime-context";
 import { createLogger } from "../../infra/logger";
-import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
+import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import {
   buildMemoryV2UserMessageContext,
   type MemoryV2UserMessageContext

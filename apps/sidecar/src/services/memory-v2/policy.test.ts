@@ -8,9 +8,9 @@ import {
   parseMemoryRuntimeConfigPayload,
   shouldIncludeCitations,
   updateMemoryRuntimeConfig
-} from "./memory-policy";
+} from "./policy";
 
-describe("memory-policy", () => {
+describe("memory-v2 policy", () => {
   test("group:memory allow 仅保留 search/get", () => {
     const result = applyMemoryToolPolicy({
       baseTools: ["memory.search", "memory.read", "memory.remember"],

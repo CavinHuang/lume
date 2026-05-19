@@ -1,7 +1,7 @@
 
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
-import type { MemoryCitationsMode } from "../memory/memory-policy";
+import type { MemoryCitationsMode } from "../memory-v2/policy";
 import { canonicalizeAgentToolName } from "@lume/shared";
 import type { AgentDefinition } from "@lume/agent-sdk";
 import { getPersistedGeneralSettings } from "../system/general-settings-service";
