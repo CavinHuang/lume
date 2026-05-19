@@ -7,6 +7,7 @@ import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "./types";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
+import { createMemoryV2Store } from "../../memory-v2/markdown-store";
 
 function createTestParams(threadId: string): AgentRuntimeRunParams {
   return {
@@ -149,6 +150,39 @@ describe("LumeRunner", () => {
     expect(result).toEqual({ status: "completed" });
     expect(events).toEqual(["complete"]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
+  });
+
+  test("complete captures explicit memory intent without blocking completion", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-"));
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-config-"));
+    dirs.push(agentDir, configDir);
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      const params = createTestParams("thread-1");
+      params.input.userMessage = "以后默认用中文回答";
+      const runner = await LumeRunner.create({
+        params,
+        prepared: {
+          ...createPrepared(agentDir),
+          workspaceSlug: "demo"
+        },
+        emit: createEmitter([])
+      });
+
+      const result = await runner.complete();
+      const entries = createMemoryV2Store().listEntries({
+        workspaceSlug: "demo",
+        scopes: ["global"],
+        includeStatuses: ["active"]
+      });
+
+      expect(result).toEqual({ status: "completed" });
+      expect(entries).toEqual([expect.objectContaining({
+        statement: "默认用中文回答"
+      })]);
+    } finally {
+      delete process.env.LUME_CONFIG_DIR;
+    }
   });
 
   test("complete waits for observed runtime events before terminal event", async () => {

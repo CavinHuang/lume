@@ -19,8 +19,10 @@ import {
 import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
-import { appendRunArchive } from "../../memory-v2/markdown-store";
+import { appendDaily, appendRunArchive } from "../../memory-v2/markdown-store";
 import { resolveMemoryRuntimeConfig } from "../../memory/memory-policy";
+import { extractExplicitMemoryCandidates } from "../../memory-v2/extraction";
+import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -281,6 +283,12 @@ export class LumeRunner {
     const workspaceSlug = this.observer.getWorkspaceSlug();
     if (workspaceSlug) {
       try {
+        appendDaily({
+          scope: "workspace",
+          workspaceSlug,
+          heading: `Run ${this.observer.getRunId()} completed`,
+          body: this.observer.getUserMessage()
+        });
         appendRunArchive({
           workspaceSlug,
           runId: this.observer.getRunId(),
@@ -290,8 +298,23 @@ export class LumeRunner {
             userMessage: this.observer.getUserMessage()
           }
         });
+        for (const candidate of extractExplicitMemoryCandidates({
+          text: this.observer.getUserMessage(),
+          workspaceSlug
+        })) {
+          smartAddMemoryV2Candidate({
+            workspaceSlug,
+            candidate: {
+              ...candidate,
+              evidence: {
+                ...candidate.evidence,
+                runId: this.observer.getRunId()
+              }
+            }
+          });
+        }
       } catch {
-        // Run archive must not block completion.
+        // Memory capture must not block completion.
       }
     }
     this.emit.onRuntimeEvent?.({
