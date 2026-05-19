@@ -331,6 +331,8 @@ Extraction rules:
 - V1 extraction uses an LLM when configured, with deterministic explicit-intent extraction as a non-blocking fallback.
 - The recommended fast-model config is `memory.extraction.modelRef` in `lume.yaml`; `memory.extractionModelRef` is accepted as a compatibility shorthand.
 - Extraction model failures must not block run completion.
+- LLM extraction follows Alice-style gatekeeping: first decide `shouldExtract`, then only accept candidates whose quoted `sourceText` exists in the user message and whose `sourceRole` is `user`.
+- A `shouldExtract: false` response is authoritative for that message and must not fall back into rule extraction.
 
 ### Classify
 

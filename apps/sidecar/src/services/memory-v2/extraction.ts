@@ -3,6 +3,7 @@ import type { LumeEffectiveConfig } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import type { MemoryV2Candidate } from "./types";
+import { stripMemoryUserMessagePrefix } from "./user-message-prefix";
 
 const DO_NOT_REMEMBER_RE = /\bdo not remember\b|\bdon't remember\b|\bdo not save\b|不要记住|别记住|不要保存/i;
 
@@ -45,7 +46,7 @@ export async function extractMemoryCandidatesWithLlm(input: {
   modelRef?: string;
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryV2Candidate[]> {
-  const text = input.text.trim();
+  const text = stripMemoryUserMessagePrefix(input.text).trim();
   if (!text || DO_NOT_REMEMBER_RE.test(text)) return [];
   const modelRef = input.modelRef ?? resolveMemoryExtractionModelRef(getEffectiveLumeConfig(input.workspaceSlug));
   if (!modelRef) {
@@ -79,9 +80,10 @@ export async function extractMemoryCandidatesWithLlm(input: {
       response.content
         .map((block) => block.type === "text" ? block.text : "")
         .filter(Boolean)
-        .join("\n")
+        .join("\n"),
+      text
     );
-    return parsed.length > 0 ? parsed : extractExplicitMemoryCandidates(input);
+    return parsed ?? extractExplicitMemoryCandidates(input);
   } catch {
     return extractExplicitMemoryCandidates(input);
   }
@@ -142,13 +144,19 @@ function stripTrailingNoise(value: string): string {
 
 function buildExtractionSystemPrompt(): string {
   return [
-    "You extract durable memory candidates from a single user message.",
-    "Return only strict JSON with shape {\"candidates\": [...]}.",
-    "Only include durable, future-useful memory. Prefer false negatives.",
-    "Never include secrets, API keys, tokens, passwords, or private keys.",
-    "If the user says not to remember/save something, return {\"candidates\": []}.",
-    "Each candidate must be one claim and use kind preference, fact, decision, lesson, or state.",
-    "Use targetScope global for cross-workspace user preferences; use workspace for project facts, decisions, lessons, and state."
+    "Gatekeeper task: decide whether a single user message contains durable memory worth extracting, then extract only verified candidates.",
+    "Return only strict JSON with shape {\"shouldExtract\": boolean, \"candidates\": [...]}.",
+    "Gate A: user profile or collaboration memory. True only for stable user preferences, identity/background, durable project facts, decisions, lessons, or current state that will matter later.",
+    "Reject greetings, temporary tasks, one-off requests, assistant self-description, generic conversation, secrets, API keys, tokens, passwords, private keys, and anything the user says not to remember/save.",
+    "Alice-style verification for each candidate:",
+    "- source_found: sourceText must be an exact substring of the user message.",
+    "- source_is_user: sourceRole must be \"user\".",
+    "- system_prompt_overlap: reject assistant persona or system-instruction-like claims.",
+    "Core principle: prefer false negatives; never invent or infer beyond the source text.",
+    "Each candidate must be one short standalone claim.",
+    "Use kind preference, fact, decision, lesson, or state.",
+    "Use targetScope global for cross-workspace user preferences; use workspace for project facts, decisions, lessons, and state.",
+    "Candidate fields: kind, targetScope, statement, confidence, sourceRole, sourceText, reason, tags, entities."
   ].join("\n");
 }
 
@@ -157,11 +165,15 @@ function buildExtractionUserPrompt(text: string, workspaceSlug?: string): string
     workspaceSlug: workspaceSlug ?? null,
     userMessage: text,
     output: {
+      shouldExtract: true,
       candidates: [{
         kind: "preference|fact|decision|lesson|state",
         targetScope: "global|workspace",
         statement: "short standalone claim",
         confidence: "low|medium|high",
+        sourceRole: "user",
+        sourceText: "exact substring from userMessage",
+        reason: "why this is durable",
         tags: ["optional"],
         entities: ["optional"]
       }]
@@ -169,9 +181,10 @@ function buildExtractionUserPrompt(text: string, workspaceSlug?: string): string
   });
 }
 
-function parseLlmExtractionResponse(text: string): MemoryV2Candidate[] {
+function parseLlmExtractionResponse(text: string, userMessage: string): MemoryV2Candidate[] | null {
   const parsed = safeJsonParse(extractJsonObject(text));
-  if (!isRecord(parsed) || !Array.isArray(parsed.candidates)) return [];
+  if (!isRecord(parsed) || typeof parsed.shouldExtract !== "boolean" || !Array.isArray(parsed.candidates)) return null;
+  if (!parsed.shouldExtract) return [];
   const candidates: MemoryV2Candidate[] = [];
   for (const item of parsed.candidates) {
     if (!isRecord(item)) continue;
@@ -180,17 +193,23 @@ function parseLlmExtractionResponse(text: string): MemoryV2Candidate[] {
       ? item.targetScope
       : undefined;
     const statement = normalizeOptionalString(item.statement);
+    const sourceRole = item.sourceRole;
+    const sourceText = normalizeOptionalString(item.sourceText);
     const confidence = item.confidence === "low" || item.confidence === "medium" || item.confidence === "high"
       ? item.confidence
       : "medium";
     if (!kind || !targetScope || !statement || DO_NOT_REMEMBER_RE.test(statement)) continue;
+    if (sourceRole !== "user" || !sourceText || !userMessage.includes(sourceText)) continue;
     candidates.push({
       kind,
       targetScope,
       statement,
       confidence,
       tags: normalizeStringList(item.tags),
-      entities: normalizeStringList(item.entities)
+      entities: normalizeStringList(item.entities),
+      evidence: {
+        quote: sourceText
+      }
     });
   }
   return candidates;

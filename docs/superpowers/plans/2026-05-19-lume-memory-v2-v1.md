@@ -66,8 +66,8 @@
 - Test: `apps/sidecar/src/services/memory-v2/extraction.test.ts`
 - Test: `apps/sidecar/src/services/memory-v2/retrieval.test.ts`
 
-- [ ] Implement LLM extraction using `memory.extraction.modelRef`, with explicit-intent fallback for `remember`, `以后`, `prefer`, `actually`, and corrections.
-- [ ] Add tests for LLM JSON parsing, model-ref config resolution, and non-blocking fallback.
+- [ ] Implement LLM extraction using `memory.extraction.modelRef`, with Alice-style gatekeeping and explicit-intent fallback for provider failures.
+- [ ] Add tests for LLM gate decisions, source-text verification, model-ref config resolution, and non-blocking fallback.
 - [ ] Implement deterministic duplicate detection by normalized statement.
 - [ ] Implement conflict and stale heuristics for same-kind/same-entity candidates.
 - [ ] Implement low-confidence routing to pending.
