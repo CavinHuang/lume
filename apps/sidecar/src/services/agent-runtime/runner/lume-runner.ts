@@ -260,6 +260,7 @@ export class LumeRunner {
       subagentType: runtime.subagentType,
       chatType: input.chatType,
       permissionMode: input.permissionMode,
+      messageAttachments: input.messageAttachments,
       messageMetadata: input.messageMetadata,
       emitSdkMessage: this.emit.onSdkMessage,
       emitAskUserQuestion: this.emit.onAskUserQuestion,

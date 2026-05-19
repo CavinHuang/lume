@@ -754,7 +754,11 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
     } else {
       throw new Error(`缺少文件内容: ${file.filename}`);
     }
-    results.push({ filename: file.filename, targetPath });
+    results.push({
+      filename: file.filename,
+      targetPath,
+      threadPath: toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath)
+    });
     if (file.sourcePath && file.sourcePath.trim() && isExternalSourcePath(input.workspaceSlug, file.sourcePath)) {
       upsertAttachmentMeta(scope, targetPath, {
         label: "外部附加",

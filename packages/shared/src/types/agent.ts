@@ -917,6 +917,7 @@ export interface AgentSaveFilesInput {
 export interface AgentSavedFile {
   filename: string
   targetPath: string
+  threadPath?: string
 }
 
 /** 文件树展示用的外部附加来源信息 */

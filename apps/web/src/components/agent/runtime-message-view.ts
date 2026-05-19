@@ -1,4 +1,4 @@
-import type { LumeRuntimeEvent } from '@lume/shared'
+import type { AgentMessageAttachmentInput, LumeRuntimeEvent } from '@lume/shared'
 
 export interface RuntimeToolCallView {
   id: string
@@ -41,6 +41,7 @@ export interface RuntimeUserMessageView {
   type: 'user'
   text: string
   createdAt: string
+  attachments?: AgentMessageAttachmentInput[]
   messageId?: string
   versionGroupId?: string
   versionIndex?: number

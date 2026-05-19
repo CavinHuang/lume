@@ -174,12 +174,13 @@ describe("agent-files-service file ops", () => {
     createdDirs.push(sourceRoot);
     writeFileSync(sourcePath, "# brief", "utf-8");
 
-    saveFilesToAgentSession({
+    const saved = saveFilesToAgentSession({
       workspaceSlug,
       threadId: sessionId,
       files: [{ filename: "brief.md", sourcePath }]
     });
 
+    expect(saved[0]?.threadPath).toBe("brief.md");
     const entries = listAgentDirectory(workspaceSlug, sessionId);
     const entry = entries.find((item) => item.name === "brief.md");
     expect(entry?.externalAttachment).toEqual({

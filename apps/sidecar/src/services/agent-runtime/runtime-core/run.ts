@@ -830,7 +830,6 @@ export async function createRuntimeCoreSession(
       cwd: input.cwd,
       sessionId: input.lumeSessionId,
       permissionMode: input.permissionMode,
-      messageAttachments: input.messageAttachments,
       messageMetadata: input.messageMetadata,
       policyInput: {
         provider: input.provider,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { getTaskProgressStatusText, getToolPermissionTitleBadgeText, showTemporaryCopiedFeedback, type CopyFeedbackState } from './RuntimeEventContentBlock'
+import { formatMessageAttachmentSize, getTaskProgressStatusText, getToolPermissionTitleBadgeText, showTemporaryCopiedFeedback, type CopyFeedbackState } from './RuntimeEventContentBlock'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
 import type { LumeRuntimeEvent } from '@lume/shared'
 
@@ -75,6 +75,14 @@ describe('getTaskProgressStatusText', () => {
     } as Extract<LumeRuntimeEvent, { type: 'task.progress' }>
 
     expect(getTaskProgressStatusText(progress)).toBe('正在执行：Run focused tests')
+  })
+})
+
+describe('formatMessageAttachmentSize', () => {
+  test('formats compact attachment sizes', () => {
+    expect(formatMessageAttachmentSize(512)).toBe('512 B')
+    expect(formatMessageAttachmentSize(2048)).toBe('2 KB')
+    expect(formatMessageAttachmentSize(2 * 1024 * 1024)).toBe('2 MB')
   })
 })
 

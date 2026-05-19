@@ -95,6 +95,36 @@ describe('runtime-event-message-projection', () => {
     }])
   })
 
+  test('projects user message attachments', () => {
+    expect(projectRuntimeEventMessages([
+      event({
+        type: 'message.user.submitted',
+        text: 'read this',
+        messageId: 'user-attachments',
+        attachments: [{
+          id: 'att-1',
+          filename: 'brief.md',
+          mediaType: 'text/markdown',
+          size: 2048,
+          threadPath: 'docs/brief.md',
+        }],
+      }),
+    ])[0]).toEqual({
+      id: 'user-attachments',
+      type: 'user',
+      text: 'read this',
+      createdAt: '2026-05-11T00:00:00.000Z',
+      attachments: [{
+        id: 'att-1',
+        filename: 'brief.md',
+        mediaType: 'text/markdown',
+        size: 2048,
+        threadPath: 'docs/brief.md',
+      }],
+      messageId: 'user-attachments',
+    })
+  })
+
   test('marks timed out tool permission failures for the tool title badge', () => {
     const messages = projectRuntimeEventMessages([
       event({

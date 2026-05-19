@@ -2,7 +2,7 @@ import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
-import { Send, Square, Paperclip } from 'lucide-react'
+import { Send, Square, Paperclip, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -12,6 +12,8 @@ import { listChannels } from '@/lib/desktop-api/channel'
 import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
+  type AgentMessageAttachmentInput,
+  type AgentSavedFile,
   type Channel,
   type LumeConfigAgentDefaultStrategy,
   type LumeConfigThinkingLevel,
@@ -39,6 +41,19 @@ import { getThreadSelectionSummary } from '@/components/model-selection/model-se
 interface AgentInputProps {
   threadId: string
   streaming?: boolean
+  pendingAttachments?: PendingMessageAttachment[]
+  onAddPendingAttachments?: (attachments: PendingMessageAttachment[]) => void
+  onRemovePendingAttachment?: (id: string) => void
+  onClearPendingAttachments?: () => void
+}
+
+export interface PendingMessageAttachment {
+  id: string
+  filename: string
+  mediaType: string
+  size: number
+  sourcePath?: string
+  data?: string
 }
 
 /** 获取各类 mention 的建议列表 */
@@ -160,7 +175,14 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: s
   wrapper.style.top = 'auto'
 }
 
-export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
+export function AgentInput({
+  threadId,
+  streaming = false,
+  pendingAttachments = [],
+  onAddPendingAttachments = () => undefined,
+  onRemovePendingAttachment = () => undefined,
+  onClearPendingAttachments = () => undefined,
+}: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -268,7 +290,7 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
   })
 
   const composerState = deriveLumeComposerState({
-    hasText: editorText.trim().length > 0,
+    hasText: editorText.trim().length > 0 || pendingAttachments.length > 0,
     mode: streaming ? 'streaming' : 'idle',
   })
   const selectedModelSummary = useMemo(() => getThreadSelectionSummary({
@@ -283,11 +305,39 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
 
   const handleSend = async () => {
     if (!editor || streaming) return
-    const text = editor.getText().trim()
-    if (!text) return
+    const rawText = editor.getText().trim()
+    if (!rawText && pendingAttachments.length === 0) return
+    const text = rawText || '请解读这些附件。'
+    let messageAttachments: AgentMessageAttachmentInput[] = []
+    try {
+      if (pendingAttachments.length > 0) {
+        const savedFiles = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
+          threadId,
+          files: pendingAttachments.map((attachment) => ({
+            filename: attachment.filename,
+            ...(attachment.sourcePath ? { sourcePath: attachment.sourcePath } : {}),
+            ...(attachment.data ? { data: attachment.data } : {}),
+          })),
+        })
+        messageAttachments = pendingAttachments.map((attachment, index) => {
+          const saved = savedFiles.find((file) => file.filename === attachment.filename) ?? savedFiles[index]
+          return {
+            id: attachment.id,
+            filename: attachment.filename,
+            mediaType: attachment.mediaType,
+            size: attachment.size,
+            threadPath: saved?.threadPath ?? attachment.filename,
+          }
+        })
+      }
+    } catch (error) {
+      console.error('[AgentInput] 文件上传失败:', error)
+      toast.error('文件上传失败')
+      return
+    }
+    const createdAt = new Date().toISOString()
     editor.commands.clearContent()
     setEditorText('')
-    const createdAt = new Date().toISOString()
     setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
       id: `optimistic:${threadId}:${createdAt}`,
       type: 'message.user.submitted',
@@ -295,15 +345,26 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
       runId: `optimistic:${threadId}:${createdAt}`,
       createdAt,
       text,
+      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
     }))
     setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
-    await agentSend({
-      threadId,
-      userMessage: text,
-      thinkingLevel,
-      permissionMode,
-      ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
-    })
+    try {
+      await agentSend({
+        threadId,
+        userMessage: text,
+        thinkingLevel,
+        permissionMode,
+        ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
+      })
+      if (pendingAttachments.length > 0) {
+        onClearPendingAttachments()
+      }
+    } catch (error) {
+      console.error('[AgentInput] 发送失败:', error)
+      toast.error('发送失败')
+      setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+    }
   }
 
   const handleStop = async () => {
@@ -332,17 +393,17 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
       const result = await openFileDialog()
       if (result.files.length === 0) return
 
-      await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
-        threadId,
-        files: result.files.map((f) => ({
-          filename: f.filename,
-          sourcePath: f.sourcePath,
-        })),
-      })
+      onAddPendingAttachments(result.files.map((file) => ({
+        id: createPendingAttachmentId(),
+        filename: file.filename,
+        mediaType: file.mediaType || 'application/octet-stream',
+        size: file.size,
+        sourcePath: file.sourcePath,
+      })))
       toast.success(`已添加 ${result.files.length} 个文件`)
     } catch (error) {
-      console.error('[AgentInput] 文件上传失败:', error)
-      toast.error('文件上传失败')
+      console.error('[AgentInput] 文件选择失败:', error)
+      toast.error('文件选择失败')
     }
   }
 
@@ -360,6 +421,12 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
                 className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
               />
             }
+            supportingContent={pendingAttachments.length > 0 ? (
+              <PendingAttachmentChips
+                attachments={pendingAttachments}
+                onRemove={onRemovePendingAttachment}
+              />
+            ) : undefined}
             leadingTools={
               <>
                 <button
@@ -409,4 +476,49 @@ export function AgentInput({ threadId, streaming = false }: AgentInputProps) {
       </div>
     </div>
   )
+}
+
+function PendingAttachmentChips({
+  attachments,
+  onRemove,
+}: {
+  attachments: PendingMessageAttachment[]
+  onRemove: (id: string) => void
+}) {
+  return (
+    <div className="relative flex flex-wrap gap-1.5 px-3 pb-2">
+      {attachments.map((attachment) => (
+        <div
+          key={attachment.id}
+          className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_44%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_82%,transparent)] px-2 py-1 text-[11px] text-[var(--text-2)]"
+          title={attachment.filename}
+        >
+          <Paperclip size={11} className="shrink-0 text-[var(--text-3)]" />
+          <span className="min-w-0 truncate">{attachment.filename}</span>
+          <span className="shrink-0 text-[var(--text-3)]">{formatAttachmentSize(attachment.size)}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(attachment.id)}
+            className="ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_90%,transparent)] hover:text-[var(--text-1)]"
+            title="移除附件"
+          >
+            <X size={10} />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function createPendingAttachmentId(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `attachment:${Date.now()}:${Math.random().toString(36).slice(2)}`
+}
+
+function formatAttachmentSize(size: number): string {
+  if (size < 1024) return `${size} B`
+  const kb = size / 1024
+  if (kb < 1024) return `${Math.round(kb)} KB`
+  return `${Math.round(kb / 1024)} MB`
 }

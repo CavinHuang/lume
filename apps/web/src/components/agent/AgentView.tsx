@@ -3,7 +3,7 @@ import { useAtom, useAtomValue } from 'jotai'
 import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
-import { AgentInput } from './AgentInput'
+import { AgentInput, type PendingMessageAttachment } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
 import { PlanApprovalOverlay } from './PlanApprovalOverlay'
@@ -12,8 +12,6 @@ import { SidePanel } from './SidePanel'
 import { Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
 
 interface AgentViewProps {
   threadId: string
@@ -46,9 +44,23 @@ export function AgentView({ threadId }: AgentViewProps) {
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useState({ current: 0 })[0]
+  const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([])
   const [threadFilePreview, setThreadFilePreview] = useState<{ path: string; key: number } | null>(null)
   const threadFilePathToPreview = threadFilePreview?.path
   const threadFilePreviewKey = threadFilePreview?.key ?? 0
+
+  const addPendingAttachments = useCallback((attachments: PendingMessageAttachment[]) => {
+    if (attachments.length === 0) return
+    setPendingAttachments((prev) => [...prev, ...attachments])
+  }, [])
+
+  const removePendingAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
+  }, [])
+
+  const clearPendingAttachments = useCallback(() => {
+    setPendingAttachments([])
+  }, [])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -80,7 +92,7 @@ export function AgentView({ threadId }: AgentViewProps) {
     if (files.length === 0) return
 
     try {
-      const fileEntries: Array<{ filename: string; data: string }> = []
+      const attachments: PendingMessageAttachment[] = []
       for (const file of files) {
         const data = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
@@ -91,19 +103,21 @@ export function AgentView({ threadId }: AgentViewProps) {
           reader.onerror = reject
           reader.readAsDataURL(file)
         })
-        fileEntries.push({ filename: file.name, data })
+        attachments.push({
+          id: createPendingAttachmentId(),
+          filename: file.name,
+          mediaType: file.type || 'application/octet-stream',
+          size: file.size,
+          data,
+        })
       }
-      await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
-        ...(workspaceSlug ? { workspaceSlug } : {}),
-        threadId,
-        files: fileEntries
-      })
+      addPendingAttachments(attachments)
       toast.success(`已添加 ${files.length} 个文件`)
     } catch (error) {
-      console.error('[AgentView] 文件拖拽上传失败:', error)
-      toast.error('文件上传失败')
+      console.error('[AgentView] 文件拖拽读取失败:', error)
+      toast.error('文件读取失败')
     }
-  }, [threadId, workspaceSlug, dragCounter])
+  }, [addPendingAttachments, dragCounter])
 
   const openThreadFilePreview = useCallback((path: string) => {
     setThreadFilePreview((prev) => ({
@@ -119,6 +133,7 @@ export function AgentView({ threadId }: AgentViewProps) {
 
   useEffect(() => {
     setThreadFilePreview(null)
+    setPendingAttachments([])
   }, [threadId])
 
   useEffect(() => {
@@ -149,7 +164,14 @@ export function AgentView({ threadId }: AgentViewProps) {
               hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible) && 'pointer-events-none select-none opacity-0',
             )}
           >
-            <AgentInput threadId={threadId} streaming={streamingState === 'streaming'} />
+            <AgentInput
+              threadId={threadId}
+              streaming={streamingState === 'streaming'}
+              pendingAttachments={pendingAttachments}
+              onAddPendingAttachments={addPendingAttachments}
+              onRemovePendingAttachment={removePendingAttachment}
+              onClearPendingAttachments={clearPendingAttachments}
+            />
           </div>
           {activeTaskApproval && (
             <div className="absolute inset-x-0 bottom-0 z-30">
@@ -200,4 +222,10 @@ export function AgentView({ threadId }: AgentViewProps) {
       )}
     </div>
   )
+}
+
+function createPendingAttachmentId(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `attachment:${Date.now()}:${Math.random().toString(36).slice(2)}`
 }

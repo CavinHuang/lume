@@ -47,7 +47,7 @@ export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThr
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
   if (message.type === 'user') {
-    return <UserMessageBlock message={message} threadId={threadId} className={cls} />
+    return <UserMessageBlock message={message} threadId={threadId} className={cls} onOpenThreadFile={onOpenThreadFile} />
   }
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
@@ -104,10 +104,12 @@ function UserMessageBlock({
   message,
   threadId,
   className,
+  onOpenThreadFile,
 }: {
   message: Extract<RuntimeMessageView, { type: 'user' }>
   threadId: string
   className: string
+  onOpenThreadFile?: (path: string) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(message.text)
@@ -170,6 +172,23 @@ function UserMessageBlock({
             <div className="whitespace-pre-wrap">{message.text}</div>
           )}
         </div>
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="flex max-w-[560px] flex-wrap justify-end gap-1.5">
+            {message.attachments.map((attachment) => (
+              <button
+                key={attachment.id}
+                type="button"
+                onClick={() => onOpenThreadFile?.(attachment.threadPath)}
+                className="inline-flex max-w-[240px] items-center gap-1.5 rounded-full border border-[#ded6ff] bg-white/82 px-2 py-1 text-[11px] font-medium text-[#5f6477] shadow-[0_1px_0_rgba(101,91,255,0.06)] transition-colors hover:border-[#bdb3ff] hover:text-[#675cff]"
+                title={attachment.filename}
+              >
+                <FileTypeIcon filename={attachment.filename} size={12} className="text-[#8b7df1]" />
+                <span className="min-w-0 truncate">{attachment.filename}</span>
+                <span className="shrink-0 text-[#9aa0b4]">{formatMessageAttachmentSize(attachment.size)}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-center gap-1 text-[#8b8fa3] opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           {canShowVersions && (
             <button
@@ -251,6 +270,13 @@ function UserMessageBlock({
       </div>
     </div>
   )
+}
+
+export function formatMessageAttachmentSize(size: number): string {
+  if (size < 1024) return `${size} B`
+  const kb = size / 1024
+  if (kb < 1024) return `${Math.round(kb)} KB`
+  return `${Math.round(kb / 1024)} MB`
 }
 
 function RuntimeEventAssistantBlockItem({

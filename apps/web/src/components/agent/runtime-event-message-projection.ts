@@ -25,6 +25,7 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         type: 'user',
         text: event.text,
         createdAt: event.createdAt,
+        ...(event.attachments && event.attachments.length > 0 ? { attachments: event.attachments } : {}),
         ...(event.messageId ? { messageId: event.messageId } : {}),
         ...(event.versionGroupId ? { versionGroupId: event.versionGroupId } : {}),
         ...(typeof event.versionIndex === 'number' ? { versionIndex: event.versionIndex } : {}),
