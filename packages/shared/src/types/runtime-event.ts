@@ -1,3 +1,5 @@
+import type { AgentMessageAttachmentInput } from "./agent";
+
 export type RuntimeEventType =
   | "run.started"
   | "run.completed"
@@ -59,6 +61,7 @@ export interface RunStartedRuntimeEvent extends RuntimeEventBase {
 export interface UserMessageSubmittedRuntimeEvent extends RuntimeEventBase {
   type: "message.user.submitted";
   text: string;
+  attachments?: AgentMessageAttachmentInput[];
   messageId?: string;
   versionGroupId?: string;
   versionIndex?: number;

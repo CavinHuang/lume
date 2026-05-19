@@ -422,6 +422,8 @@ export interface AgentSendInput {
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk'
   /** Agent 思考等级 */
   thinkingLevel?: AgentThinkingLevel
+  /** 已保存到线程文件区、并绑定到本轮用户消息的附件引用 */
+  messageAttachments?: AgentMessageAttachmentInput[]
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */
@@ -893,6 +895,15 @@ export interface AgentPendingFile {
   sourcePath?: string
   /** 图片预览 URL（blob/data URL） */
   previewUrl?: string
+}
+
+/** 已保存到线程文件区、并绑定到某条用户消息的附件引用 */
+export interface AgentMessageAttachmentInput {
+  id: string
+  filename: string
+  mediaType: string
+  size: number
+  threadPath: string
 }
 
 /** Agent 文件保存到 thread 的输入 */

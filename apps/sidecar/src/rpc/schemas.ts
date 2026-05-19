@@ -1,5 +1,23 @@
 import { idSchema, optionalIdSchema, z } from "./validation";
 
+const relativeThreadPathSchema = z.string()
+  .min(1)
+  .refine((value) => (
+    !value.startsWith("/")
+    && !/^[a-zA-Z]:[\\/]/.test(value)
+    && !value.split(/[\\/]/).includes("..")
+  ), {
+    message: "附件路径必须是线程内相对路径"
+  });
+
+const agentMessageAttachmentInputSchema = z.object({
+  id: z.string().min(1),
+  filename: z.string().min(1),
+  mediaType: z.string().min(1),
+  size: z.number().int().min(0),
+  threadPath: relativeThreadPathSchema
+});
+
 export const agentSendInputSchema = z.object({
   threadId: z.string().min(1),
   userMessage: z.string(),
@@ -11,6 +29,7 @@ export const agentSendInputSchema = z.object({
   threadType: z.enum(["main", "subagent", "group", "channel"]).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).optional(),
   thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
+  messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
   resendFromMessageId: z.string().optional(),
   editFromMessageId: z.string().optional()
