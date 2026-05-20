@@ -343,10 +343,10 @@ function MemoryContextUsedNotice({
       </button>
 
       {expanded && (
-        <div className="mt-1.5 space-y-1.5 border-l border-[#d9deea] pl-3">
+        <div className="mt-1.5 space-y-2 border-l border-[#d9deea] pl-3">
           {groups.map((group) => (
-            <div key={group.key} className="grid grid-cols-[42px_minmax(0,1fr)] gap-2">
-              <div className="shrink-0 text-[#9aa3b8]">{group.label}</div>
+            <div key={group.key} className="min-w-0">
+              <div className="mb-0.5 text-[#9aa3b8]">{group.label}</div>
               <ol className="min-w-0 space-y-1">
                 {group.items.map((item, index) => {
                   const sourcePath = normalizeMemoryCitationPath(item.citation)
