@@ -398,11 +398,11 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   if (ctx.sessionTitle) sessionLines.push(`title: ${ctx.sessionTitle}`);
   if (ctx.sessionType) sessionLines.push(`threadType: ${ctx.sessionType}`);
   if (ctx.chatType) sessionLines.push(`chatType: ${ctx.chatType}`);
-    if (ctx.parentSessionId) sessionLines.push(`parentThreadId: ${ctx.parentSessionId}`);
-    if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
-    if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
-    if (ctx.modelRef) sessionLines.push(`modelRef: ${ctx.modelRef}`);
-    if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
+  if (ctx.parentSessionId) sessionLines.push(`parentThreadId: ${ctx.parentSessionId}`);
+  if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
+  if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
+  if (ctx.modelRef) sessionLines.push(`modelRef: ${ctx.modelRef}`);
+  if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
   if (sessionLines.length > 0) {
     sections.push(`<thread_state>\n${sessionLines.join("\n")}\n</thread_state>`);
   }

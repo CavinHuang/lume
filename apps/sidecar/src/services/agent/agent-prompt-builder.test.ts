@@ -355,6 +355,7 @@ describe("agent-prompt-builder", () => {
 
     const prompt = buildSystemPromptAppend({
       sessionId: "session-sanitized-context",
+      workspaceName: "Prompt Sanitized Workspace",
       workspaceSlug,
       chatType: "direct",
       availableTools: ["read"]
@@ -368,6 +369,8 @@ describe("agent-prompt-builder", () => {
     expect(prompt).not.toContain("## TOOLS.md");
     expect(prompt).not.toContain("## HEARTBEAT.md");
     expect(prompt).not.toContain("Ping the user every morning.");
+    expect(prompt).toContain("~/.lume/agent-workspaces/" + workspaceSlug + "/session-sanitized-context/");
+    expect(prompt).toContain("Do not use or reveal runtime metadata as the user's identity");
   });
 
   test("brainstorming 与 loaded skills 应弱触发并压缩 manifest", () => {

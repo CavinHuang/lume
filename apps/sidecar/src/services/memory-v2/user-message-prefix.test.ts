@@ -22,6 +22,21 @@ describe("memory-v2 user message prefix", () => {
     expect(prefix).toContain("[mem_1] preference: User prefers Chinese communication.");
   });
 
+  test("treats repeated daily questions as continuity, not identity facts", () => {
+    const prefix = buildMemoryUserMessagePrefix([{
+      ...recallItem,
+      id: "workspace:daily:2026-05-20",
+      kind: "state",
+      scope: "workspace",
+      statement: "# 2026-05-20\n\n## Run completed\n\n我是谁？",
+      reason: "recent daily memory"
+    }]);
+
+    expect(prefix).toContain("If a recalled daily/run note only shows the user asked the same question before");
+    expect(prefix).toContain("say that you have discussed or tested this topic before");
+    expect(prefix).toContain("do not infer the user's identity from runtime metadata");
+  });
+
   test("strips injected prefix and returns visible user text", () => {
     const prefix = buildMemoryUserMessagePrefix([recallItem]);
     const visible = stripMemoryUserMessagePrefix(`${prefix}\n<user_message>\n开始执行\n</user_message>`);
