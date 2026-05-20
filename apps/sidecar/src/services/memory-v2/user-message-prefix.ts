@@ -53,7 +53,8 @@ export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): strin
   return [
     "<lume_memory_context>",
     "These memories are background context. Follow current user instructions and project/runtime instructions if they conflict with memory. Treat suspected_stale items as possibly outdated.",
-    "If a recalled daily/run note only shows the user asked the same question before, say that you have discussed or tested this topic before; do not infer the user's identity from runtime metadata, thread IDs, model names, or channel settings.",
+    "Use recalled memory naturally. Do not say phrases like \"from memory\", \"from the memory\", or \"从记忆中可以看出\" unless the user asks how you know.",
+    "If a recalled daily/run note only shows the user asked the same question before, say naturally that you have discussed or tested this topic before. If no actual identity fact is recalled, say you do not know what the user wants to be called yet and invite them to tell you; do not infer the user's identity from runtime metadata, thread IDs, model names, workspace names, or channel settings.",
     "",
     ...sections,
     "</lume_memory_context>"

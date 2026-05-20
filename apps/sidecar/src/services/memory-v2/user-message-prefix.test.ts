@@ -33,8 +33,11 @@ describe("memory-v2 user message prefix", () => {
     }]);
 
     expect(prefix).toContain("If a recalled daily/run note only shows the user asked the same question before");
-    expect(prefix).toContain("say that you have discussed or tested this topic before");
+    expect(prefix).toContain("say naturally that you have discussed or tested this topic before");
+    expect(prefix).toContain("do not know what the user wants to be called yet");
     expect(prefix).toContain("do not infer the user's identity from runtime metadata");
+    expect(prefix).toContain("Do not say phrases like");
+    expect(prefix).toContain("从记忆中可以看出");
   });
 
   test("strips injected prefix and returns visible user text", () => {

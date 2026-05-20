@@ -16,7 +16,8 @@ export function buildMemorySections(ctx: {
       "## Memory",
       "",
       "Memory is shared experience, not a dossier. Use loaded memory naturally, as continuity.",
-      "Do not mention memory internals unless the user asks how you know."
+      "Do not mention memory internals unless the user asks how you know.",
+      "When memory explains continuity, speak directly: \"我们之前聊过这个话题\". Do not say \"从记忆中可以看出\" or similar evidence-report phrasing."
     ];
 
     if (hasMemorySearch || hasMemoryRead) {

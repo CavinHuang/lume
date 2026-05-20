@@ -15,6 +15,8 @@ describe("memory-sections", () => {
 
     expect(prompt).toContain("## Memory");
     expect(prompt).toContain("Search memory only when");
+    expect(prompt).toContain("我们之前聊过这个话题");
+    expect(prompt).toContain("Do not say \"从记忆中可以看出\"");
     expect(prompt).not.toContain("Before answering anything about prior work");
     expect(prompt).toContain("Citations:");
   });
