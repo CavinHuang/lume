@@ -17,7 +17,8 @@ export function buildMemorySections(ctx: {
       "",
       "Memory is shared experience, not a dossier. Use loaded memory naturally, as continuity.",
       "Do not mention memory internals unless the user asks how you know.",
-      "When memory explains continuity, speak directly: \"我们之前聊过这个话题\". Do not say \"从记忆中可以看出\" or similar evidence-report phrasing."
+      "When memory explains continuity, speak directly: \"我们之前聊过这个话题\". Do not say \"从记忆中可以看出\" or similar evidence-report phrasing.",
+      "When identity is unknown, do not sound like a profile system. Say the gap like a person: you have talked about it before, but you still do not have a real name or preferred way to address the user yet. Invite the user lightly instead of saying \"身份信息\" or listing system/project/permission interpretations."
     ];
 
     if (hasMemorySearch || hasMemoryRead) {

@@ -34,8 +34,11 @@ describe("memory-v2 user message prefix", () => {
 
     expect(prefix).toContain("If a recalled daily/run note only shows the user asked the same question before");
     expect(prefix).toContain("say naturally that you have discussed or tested this topic before");
-    expect(prefix).toContain("do not know what the user wants to be called yet");
-    expect(prefix).toContain("do not infer the user's identity from runtime metadata");
+    expect(prefix).toContain("For identity-style questions");
+    expect(prefix).toContain("没有一个真正能叫出你的称呼");
+    expect(prefix).toContain("Do not turn missing identity memory into profile-system wording");
+    expect(prefix).toContain("目前我这边还没有记录你的身份信息");
+    expect(prefix).toContain("Do not infer identity from runtime metadata");
     expect(prefix).toContain("Do not say phrases like");
     expect(prefix).toContain("从记忆中可以看出");
   });

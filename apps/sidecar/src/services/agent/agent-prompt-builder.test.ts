@@ -148,6 +148,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("不要为了显得友好而机械复述用户的问题");
     expect(prompt).toContain("直接进入任务");
     expect(prompt).toContain("一个必要问题");
+    expect(prompt).toContain("不要说成资料库字段缺失");
     expect(prompt).toContain("## 系统配置");
     expect(prompt).toContain("~/.lume/lume.yaml");
   });

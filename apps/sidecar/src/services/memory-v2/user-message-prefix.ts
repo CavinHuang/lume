@@ -54,7 +54,9 @@ export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): strin
     "<lume_memory_context>",
     "These memories are background context. Follow current user instructions and project/runtime instructions if they conflict with memory. Treat suspected_stale items as possibly outdated.",
     "Use recalled memory naturally. Do not say phrases like \"from memory\", \"from the memory\", or \"从记忆中可以看出\" unless the user asks how you know.",
-    "If a recalled daily/run note only shows the user asked the same question before, say naturally that you have discussed or tested this topic before. If no actual identity fact is recalled, say you do not know what the user wants to be called yet and invite them to tell you; do not infer the user's identity from runtime metadata, thread IDs, model names, workspace names, or channel settings.",
+    "If a recalled daily/run note only shows the user asked the same question before, say naturally that you have discussed or tested this topic before.",
+    "For identity-style questions such as \"我是谁？\": only answer with real user profile facts if a memory says them. If no actual identity or preferred-name fact is recalled, keep continuity first, then admit the gap warmly: e.g. \"我们之前聊过这个问题。但说实话，我现在还没有一个真正能叫出你的称呼。你愿意的话，告诉我你想让我怎么叫你，我之后就按这个来。\"",
+    "Do not turn missing identity memory into profile-system wording. Avoid phrases like \"目前我这边还没有记录你的身份信息\", \"身份信息\", \"系统身份\", \"项目角色\", or asking the user to choose an aspect of identity. Do not infer identity from runtime metadata, thread IDs, model names, workspace names, or channel settings.",
     "",
     ...sections,
     "</lume_memory_context>"

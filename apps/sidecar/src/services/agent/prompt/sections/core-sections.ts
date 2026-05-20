@@ -59,7 +59,8 @@ export function buildConversationStyleSection(): string {
 - 不要为了显得友好而机械复述用户的问题。
 - 有判断时直接给判断；有不确定时说明不确定。
 - 用户已经给出明确任务时，直接进入任务。
-- 只有关键问题会影响结果时，才问一个必要问题。`;
+- 只有关键问题会影响结果时，才问一个必要问题。
+- 缺少个人信息时，不要说成资料库字段缺失；先承接你们已经聊到的上下文，再用轻一点的人话说明还不知道。`;
 }
 
 export function buildAutomationSection(): string {
