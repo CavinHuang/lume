@@ -326,30 +326,62 @@ function MemoryContextUsedNotice({
   event: Extract<RuntimeAssistantBlock, { type: 'memory_context_used' }>['event']
   onOpenMemorySource?: (path: string) => void
 }) {
+  const [expanded, setExpanded] = useState(false)
   const count = event.items.length
-  const items = event.items.slice(0, 3)
+  const groups = groupMemoryCitationItems(event.items)
   return (
-    <div className="mt-2 flex min-h-6 max-w-full flex-wrap items-center gap-2 text-[11px] leading-5 text-[#8a92a6]">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa3b8]" />
-      <span className="shrink-0">引用了 {count} 条记忆：</span>
-      {items.map((item) => {
-        const sourcePath = normalizeMemoryCitationPath(item.citation)
-        const label = compactMemoryCitationLabel(item.citation)
-        if (!sourcePath || !onOpenMemorySource) {
-          return <span key={item.id} className="max-w-[620px] truncate">{label}</span>
-        }
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onOpenMemorySource(sourcePath)}
-            className="inline-flex max-w-[720px] items-center rounded-md px-1.5 py-0.5 font-mono text-[11px] text-[#7b849c] transition-colors hover:bg-[#f1f3f8] hover:text-[#4f46e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/30"
-            title="在右侧查看记忆文件"
-          >
-            <span className="truncate">{label}</span>
-          </button>
-        )
-      })}
+    <div className="mt-2 max-w-full text-[11px] leading-5 text-[#8a92a6]">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="inline-flex min-h-6 max-w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-[#f5f6fb] hover:text-[#6f778d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/25"
+      >
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa3b8]" />
+        <span className="shrink-0 font-medium">引用了 {count} 条记忆</span>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+
+      {expanded && (
+        <div className="mt-1.5 space-y-1.5 border-l border-[#d9deea] pl-3">
+          {groups.map((group) => (
+            <div key={group.key} className="grid grid-cols-[42px_minmax(0,1fr)] gap-2">
+              <div className="shrink-0 text-[#9aa3b8]">{group.label}</div>
+              <ol className="min-w-0 space-y-1">
+                {group.items.map((item, index) => {
+                  const sourcePath = normalizeMemoryCitationPath(item.citation)
+                  const label = compactMemoryCitationLabel(item.citation)
+                  const content = (
+                    <>
+                      <span className="shrink-0 tabular-nums">{index + 1}.</span>
+                      <span className="truncate">{label}</span>
+                    </>
+                  )
+                  if (!sourcePath || !onOpenMemorySource) {
+                    return (
+                      <li key={item.id} className="flex min-w-0 items-center gap-1.5 font-mono text-[#7b849c]" title={item.citation}>
+                        {content}
+                      </li>
+                    )
+                  }
+                  return (
+                    <li key={item.id} className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => onOpenMemorySource(sourcePath)}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[#7b849c] transition-colors hover:bg-[#f1f3f8] hover:text-[#4f46e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/30"
+                        title={item.citation}
+                      >
+                        {content}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ol>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -361,8 +393,42 @@ export function normalizeMemoryCitationPath(citation: string): string | null {
   return path.trim() || null
 }
 
-function compactMemoryCitationLabel(citation: string): string {
-  return citation.replace(/^[a-z]+:[a-z-]+:/i, '')
+type MemoryCitationItem = Extract<RuntimeAssistantBlock, { type: 'memory_context_used' }>['event']['items'][number]
+type MemoryCitationGroupKey = 'thread' | 'workspace' | 'global'
+
+export function groupMemoryCitationItems(items: MemoryCitationItem[]): Array<{
+  key: MemoryCitationGroupKey
+  label: string
+  items: MemoryCitationItem[]
+}> {
+  const groups: Record<MemoryCitationGroupKey, MemoryCitationItem[]> = {
+    thread: [],
+    workspace: [],
+    global: [],
+  }
+
+  for (const item of items) {
+    groups[getMemoryCitationGroupKey(item)].push(item)
+  }
+
+  return [
+    { key: 'thread' as const, label: '线程', items: groups.thread },
+    { key: 'workspace' as const, label: '工作区', items: groups.workspace },
+    { key: 'global' as const, label: '全局', items: groups.global },
+  ].filter((group) => group.items.length > 0)
+}
+
+function getMemoryCitationGroupKey(item: MemoryCitationItem): MemoryCitationGroupKey {
+  const scope = item.scope as string
+  if (scope === 'global') return 'global'
+  if (scope === 'thread' || /^thread:/i.test(item.citation)) return 'thread'
+  return 'workspace'
+}
+
+export function compactMemoryCitationLabel(citation: string): string {
+  const withoutLines = citation.replace(/#L\d+(?:-L?\d+)?$/i, '')
+  const withoutScheme = withoutLines.replace(/^[a-z]+:[a-z-]+:/i, '')
+  return withoutScheme.split('/').filter(Boolean).at(-1) ?? withoutScheme
 }
 
 function findLatestTaskProgressBlock(blocks: RuntimeAssistantBlock[]): Extract<RuntimeAssistantBlock, { type: 'task_progress' }> | undefined {

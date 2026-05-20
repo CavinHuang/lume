@@ -3,6 +3,8 @@ import {
   formatMessageAttachmentSize,
   getTaskProgressStatusText,
   getToolPermissionTitleBadgeText,
+  compactMemoryCitationLabel,
+  groupMemoryCitationItems,
   normalizeMemoryCitationPath,
   showTemporaryCopiedFeedback,
   type CopyFeedbackState,
@@ -81,6 +83,47 @@ describe('normalizeMemoryCitationPath', () => {
   test('rejects non-file citations', () => {
     expect(normalizeMemoryCitationPath('memory-entry-id')).toBeNull()
     expect(normalizeMemoryCitationPath('workspace:daily:relative/path.md')).toBeNull()
+  })
+})
+
+describe('memory citation grouping', () => {
+  test('groups memory citations in thread, workspace, global order and hides empty groups', () => {
+    const groups = groupMemoryCitationItems([
+      {
+        id: 'global-1',
+        kind: 'preference',
+        scope: 'global',
+        status: 'active',
+        citation: 'global:memory:/Users/me/.lume/memory/MEMORY.md',
+        reason: 'matched memory entry',
+      },
+      {
+        id: 'workspace-1',
+        kind: 'state',
+        scope: 'workspace',
+        status: 'active',
+        citation: 'workspace:daily:/Users/me/.lume/agent-workspaces/default/memory/daily/2026-05-20.md',
+        reason: 'recent daily memory',
+      },
+      {
+        id: 'thread-1',
+        kind: 'state',
+        scope: 'thread',
+        status: 'active',
+        citation: 'thread:daily:/Users/me/.lume/agent-workspaces/default/thread/memory.md',
+        reason: 'thread memory',
+      },
+    ] as any)
+
+    expect(groups.map((group) => group.key)).toEqual(['thread', 'workspace', 'global'])
+    expect(groups.map((group) => group.items[0]?.id)).toEqual(['thread-1', 'workspace-1', 'global-1'])
+  })
+
+  test('compacts memory citation labels to file names', () => {
+    expect(compactMemoryCitationLabel('workspace:daily:/Users/me/.lume/agent-workspaces/default/memory/daily/2026-05-20.md'))
+      .toBe('2026-05-20.md')
+    expect(compactMemoryCitationLabel('/Users/me/.lume/agent-workspaces/default/MEMORY.md#L3-L4'))
+      .toBe('MEMORY.md')
   })
 })
 
