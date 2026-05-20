@@ -16,6 +16,7 @@ interface RuntimeEventContentBlockProps {
   animate?: boolean
   threadId: string
   onOpenThreadFile?: (path: string) => void
+  onOpenMemorySource?: (path: string) => void
 }
 
 export interface CopyFeedbackState {
@@ -43,7 +44,7 @@ export function showTemporaryCopiedFeedback(
   }, delayMs)
 }
 
-export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThreadFile }: RuntimeEventContentBlockProps) {
+export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThreadFile, onOpenMemorySource }: RuntimeEventContentBlockProps) {
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
   if (message.type === 'user') {
@@ -78,6 +79,7 @@ export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThr
             block={block}
             threadId={threadId}
             onOpenThreadFile={onOpenThreadFile}
+            onOpenMemorySource={onOpenMemorySource}
             isStreaming={animate === true && message.status === 'streaming'}
             isActiveThinking={block.type === 'thinking'
               && animate === true
@@ -283,12 +285,14 @@ function RuntimeEventAssistantBlockItem({
   block,
   threadId,
   onOpenThreadFile,
+  onOpenMemorySource,
   isStreaming,
   isActiveThinking,
 }: {
   block: RuntimeAssistantBlock
   threadId: string
   onOpenThreadFile?: (path: string) => void
+  onOpenMemorySource?: (path: string) => void
   isStreaming: boolean
   isActiveThinking: boolean
 }) {
@@ -309,7 +313,7 @@ function RuntimeEventAssistantBlockItem({
   }
 
   if (block.type === 'memory_context_used') {
-    return <MemoryContextUsedNotice event={block.event} />
+    return <MemoryContextUsedNotice event={block.event} onOpenMemorySource={onOpenMemorySource} />
   }
 
   return <RuntimeEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
@@ -317,19 +321,48 @@ function RuntimeEventAssistantBlockItem({
 
 function MemoryContextUsedNotice({
   event,
+  onOpenMemorySource,
 }: {
   event: Extract<RuntimeAssistantBlock, { type: 'memory_context_used' }>['event']
+  onOpenMemorySource?: (path: string) => void
 }) {
   const count = event.items.length
-  const ids = event.items.slice(0, 3).map((item) => item.id).join(' · ')
+  const items = event.items.slice(0, 3)
   return (
-    <div className="mt-2 flex min-h-6 max-w-full items-center gap-2 text-[11px] leading-5 text-[#8a92a6]">
+    <div className="mt-2 flex min-h-6 max-w-full flex-wrap items-center gap-2 text-[11px] leading-5 text-[#8a92a6]">
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa3b8]" />
-      <span className="truncate">
-        引用了 {count} 条记忆{ids ? `：${ids}` : ''}
-      </span>
+      <span className="shrink-0">引用了 {count} 条记忆：</span>
+      {items.map((item) => {
+        const sourcePath = normalizeMemoryCitationPath(item.citation)
+        const label = compactMemoryCitationLabel(item.citation)
+        if (!sourcePath || !onOpenMemorySource) {
+          return <span key={item.id} className="max-w-[620px] truncate">{label}</span>
+        }
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onOpenMemorySource(sourcePath)}
+            className="inline-flex max-w-[720px] items-center rounded-md px-1.5 py-0.5 font-mono text-[11px] text-[#7b849c] transition-colors hover:bg-[#f1f3f8] hover:text-[#4f46e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/30"
+            title="在右侧查看记忆文件"
+          >
+            <span className="truncate">{label}</span>
+          </button>
+        )
+      })}
     </div>
   )
+}
+
+export function normalizeMemoryCitationPath(citation: string): string | null {
+  const withoutLines = citation.replace(/#L\d+(?:-L?\d+)?$/i, '')
+  const schemeMatch = withoutLines.match(/^[a-z]+:[a-z-]+:(\/.+)$/i)
+  const path = schemeMatch?.[1] ?? (withoutLines.startsWith('/') ? withoutLines : '')
+  return path.trim() || null
+}
+
+function compactMemoryCitationLabel(citation: string): string {
+  return citation.replace(/^[a-z]+:[a-z-]+:/i, '')
 }
 
 function findLatestTaskProgressBlock(blocks: RuntimeAssistantBlock[]): Extract<RuntimeAssistantBlock, { type: 'task_progress' }> | undefined {

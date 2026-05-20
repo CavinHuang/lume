@@ -6,13 +6,15 @@ import { FileBrowser } from '@/components/file-browser/FileBrowser'
 import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
 import { TaskProgressPanel } from './TaskProgressPanel'
 import { TracePanel } from './TracePanel'
+import { SourceCodePreview } from './SourceCodePreview'
 import { cn } from '@/lib/utils'
 import { agentSidePanelViewAtom, type SidePanelView } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
+import { openMemorySource, readMemory } from '@/lib/desktop-api/memory'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import type { Dispatch, PointerEvent as ReactPointerEvent, ReactNode, SetStateAction } from 'react'
 
-type FileTab = 'thread' | 'workspace'
+type FileTab = 'thread' | 'workspace' | 'memory'
 type PanelTabView = Exclude<SidePanelView, null>
 
 const MIN_SIDE_PANEL_WIDTH = 360
@@ -26,6 +28,8 @@ interface SidePanelProps {
   workspaceSlug?: string
   threadFilePathToPreview?: string
   threadFilePreviewKey?: number
+  memoryFilePathToPreview?: string
+  memoryFilePreviewKey?: number
 }
 
 interface PreviewPayload {
@@ -33,7 +37,15 @@ interface PreviewPayload {
   truncated: boolean
 }
 
-export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPreview, threadFilePreviewKey }: SidePanelProps) {
+export function SidePanel({
+  threadId,
+  view,
+  workspaceSlug,
+  threadFilePathToPreview,
+  threadFilePreviewKey,
+  memoryFilePathToPreview,
+  memoryFilePreviewKey,
+}: SidePanelProps) {
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const refreshToken = 0
   const [fileTab, setFileTab] = useState<FileTab>('thread')
@@ -60,7 +72,7 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
   const menuRef = useRef<HTMLDivElement | null>(null)
   const tabMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const activeSourceLabel = fileTab === 'thread' ? '线程文件' : '工作区共享'
+  const activeSourceLabel = fileTab === 'thread' ? '线程文件' : fileTab === 'workspace' ? '工作区共享' : '记忆文件'
   const breadcrumb = useMemo(() => buildBreadcrumb(activeSourceLabel, selectedPath), [activeSourceLabel, selectedPath])
   const selectedIsMarkdown = selectedPath ? /\.(md|mdx|markdown)$/i.test(selectedPath) : false
   const canActOnSelection = Boolean(selectedPath)
@@ -95,12 +107,13 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
 
   useEffect(() => {
     if (threadFilePathToPreview && fileTab === 'thread') return
+    if (memoryFilePathToPreview && fileTab === 'memory') return
     setSelectedPath(null)
     setPreviewContent('')
     setPreviewError(null)
     setPreviewTruncated(false)
     setSearchQuery('')
-  }, [fileTab, threadId, workspaceSlug, threadFilePathToPreview])
+  }, [fileTab, threadId, workspaceSlug, threadFilePathToPreview, memoryFilePathToPreview])
 
   useEffect(() => {
     if (!view) return
@@ -116,6 +129,16 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
     setPreviewTruncated(false)
     setSearchQuery('')
   }, [threadFilePathToPreview, threadFilePreviewKey, threadId])
+
+  useEffect(() => {
+    if (!memoryFilePathToPreview) return
+    setFileTab('memory')
+    setSelectedPath(memoryFilePathToPreview)
+    setPreviewError(null)
+    setPreviewTruncated(false)
+    setSearchQuery('')
+    setFileTreeOpen(false)
+  }, [memoryFilePathToPreview, memoryFilePreviewKey, threadId])
 
   useEffect(() => {
     writeStoredPanelWidth(SIDE_PANEL_WIDTH_STORAGE_KEY, sidePanelWidth)
@@ -151,7 +174,17 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
     setPreviewError(null)
     try {
       let result: PreviewPayload
-      if (fileTab === 'workspace') {
+      if (fileTab === 'memory') {
+        if (!workspaceSlug) throw new Error('请先选择工作区')
+        const memory = await readMemory({
+          workspaceSlug,
+          path: selectedPath,
+        })
+        result = {
+          content: memory.text,
+          truncated: false,
+        }
+      } else if (fileTab === 'workspace') {
         if (!workspaceSlug) throw new Error('请先选择工作区')
         result = await sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE, {
           workspaceSlug,
@@ -202,7 +235,13 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
   const handleOpenExternally = useCallback(async () => {
     if (!selectedPath) return
     try {
-      if (fileTab === 'workspace') {
+      if (fileTab === 'memory') {
+        if (!workspaceSlug) return
+        await openMemorySource({
+          workspaceSlug,
+          path: selectedPath,
+        })
+      } else if (fileTab === 'workspace') {
         if (!workspaceSlug) return
         await sidecarCall(AGENT_IPC_CHANNELS.OPEN_WORKSPACE_FILE, {
           workspaceSlug,
@@ -303,7 +342,14 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
                     </button>
                     <button
                       type="button"
-                      onClick={() => setFileTreeOpen((value) => !value)}
+                      onClick={() => {
+                        if (fileTab === 'memory') {
+                          setFileTab('thread')
+                          setFileTreeOpen(true)
+                          return
+                        }
+                        setFileTreeOpen((value) => !value)
+                      }}
                       className={cn(
                         'flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
                         fileTreeOpen && 'bg-[var(--surface-2)] text-[var(--text-1)]',
@@ -402,9 +448,7 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
                                 {previewContent}
                               </XMarkdown>
                             ) : (
-                              <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[var(--surface-1)] px-4 py-3 font-mono text-[13px] leading-6 text-[var(--text-1)]">
-                                {previewContent}
-                              </pre>
+                              <SourceCodePreview content={previewContent} path={selectedPath} />
                             )}
                           </>
                         )}
@@ -421,7 +465,7 @@ export function SidePanel({ threadId, view, workspaceSlug, threadFilePathToPrevi
                 )}
               </div>
 
-              {activePanelView === 'files' && fileTreeOpen && (
+              {activePanelView === 'files' && fileTreeOpen && fileTab !== 'memory' && (
                 <aside className="flex w-[312px] shrink-0 flex-col border-l border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[var(--background)]">
                   <div className="flex shrink-0 items-center gap-2 px-4 pt-4">
                     <label className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_38%,transparent)] bg-[var(--surface-1)] px-3 text-[var(--text-3)]">

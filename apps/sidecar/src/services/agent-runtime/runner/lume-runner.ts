@@ -332,8 +332,8 @@ export class LumeRunner {
   private emitMemoryContextUsed(items: CreateRuntimeCoreSessionResult["memoryContextUsedItems"]): void {
     if (items.length === 0) return;
     if (resolveMemoryRuntimeConfig().citationsMode === "off") return;
-    this.emit.onRuntimeEvent?.({
-      id: `${this.observer.getRunId()}:memory.context.used`,
+    const event = {
+      id: `${this.observer.getRunId()}:memory-context-used:memory.context.used`,
       type: "memory.context.used",
       threadId: this.observer.getThreadId(),
       runId: this.observer.getRunId(),
@@ -347,7 +347,9 @@ export class LumeRunner {
         reason: item.reason
       })),
       hidden: true
-    });
+    } as const;
+    this.observer.recordMemoryContextUsed(event);
+    this.emit.onRuntimeEvent?.(event);
   }
 
   async abort(): Promise<AgentRuntimeRunResult> {

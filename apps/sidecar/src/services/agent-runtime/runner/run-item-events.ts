@@ -218,6 +218,19 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
   if (item.type !== "system_event") return [];
   const payload = asRecord(item.payload);
   const metadata = asRecord(payload.compact_metadata);
+  if (item.name === "memory_context_used") {
+    const items = normalizeMemoryContextUsedItems(payload.items);
+    if (items.length === 0) return [];
+    return [{
+      id: `${run.runId}:${item.id}:memory.context.used`,
+      type: "memory.context.used",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      items,
+      hidden: payload.hidden !== false
+    }];
+  }
   if (item.name === "context_compaction_started") {
     return [{
       id: `${run.runId}:${item.id}:context.compaction.started`,
@@ -275,6 +288,51 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
     }];
   }
   return [];
+}
+
+type MemoryContextUsedItem = Extract<LumeRuntimeEvent, { type: "memory.context.used" }>["items"][number];
+
+function normalizeMemoryContextUsedItems(value: unknown): MemoryContextUsedItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const record = asRecord(item);
+      if (
+        !isMemoryKind(record.kind)
+        || !isMemoryScope(record.scope)
+        || !isMemoryStatus(record.status)
+        || typeof record.id !== "string"
+        || typeof record.citation !== "string"
+        || typeof record.reason !== "string"
+      ) {
+        return null;
+      }
+      return {
+        id: record.id,
+        kind: record.kind,
+        scope: record.scope,
+        status: record.status,
+        citation: record.citation,
+        reason: record.reason
+      };
+    })
+    .filter((item): item is MemoryContextUsedItem => item !== null);
+}
+
+function isMemoryKind(value: unknown): value is MemoryContextUsedItem["kind"] {
+  return value === "preference"
+    || value === "fact"
+    || value === "decision"
+    || value === "lesson"
+    || value === "state";
+}
+
+function isMemoryScope(value: unknown): value is MemoryContextUsedItem["scope"] {
+  return value === "global" || value === "workspace";
+}
+
+function isMemoryStatus(value: unknown): value is MemoryContextUsedItem["status"] {
+  return value === "active" || value === "suspected_stale";
 }
 
 export function projectAssistantMessageFinalRuntimeEvent(

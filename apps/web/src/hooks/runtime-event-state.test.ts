@@ -66,6 +66,34 @@ describe('runtime-event-state', () => {
     expect(hydrated['thread-1']?.events).toHaveLength(2)
   })
 
+  test('hydrates memory context events before terminal events with the same timestamp', () => {
+    const result: AgentThreadRuntimeEventsResult = {
+      threadId: 'thread-1',
+      events: [
+        runtimeEvent({ type: 'run.completed' }),
+        runtimeEvent({
+          type: 'memory.context.used',
+          items: [{
+            id: 'mem_1',
+            kind: 'decision',
+            scope: 'workspace',
+            status: 'active',
+            citation: '/tmp/memory/entries/mem_1.md',
+            reason: 'matched memory entry',
+          }],
+          hidden: true,
+        }),
+      ],
+    }
+
+    const hydrated = hydrateRuntimeEvents({}, result)
+
+    expect(hydrated['thread-1']?.events.map((event) => event.type)).toEqual([
+      'memory.context.used',
+      'run.completed',
+    ])
+  })
+
   test('hydrates missing persisted user events into existing live state', () => {
     const result: AgentThreadRuntimeEventsResult = {
       threadId: 'thread-1',

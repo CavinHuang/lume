@@ -46,8 +46,11 @@ export function AgentView({ threadId }: AgentViewProps) {
   const dragCounter = useState({ current: 0 })[0]
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([])
   const [threadFilePreview, setThreadFilePreview] = useState<{ path: string; key: number } | null>(null)
+  const [memoryFilePreview, setMemoryFilePreview] = useState<{ path: string; key: number } | null>(null)
   const threadFilePathToPreview = threadFilePreview?.path
   const threadFilePreviewKey = threadFilePreview?.key ?? 0
+  const memoryFilePathToPreview = memoryFilePreview?.path
+  const memoryFilePreviewKey = memoryFilePreview?.key ?? 0
 
   const addPendingAttachments = useCallback((attachments: PendingMessageAttachment[]) => {
     if (attachments.length === 0) return
@@ -120,7 +123,21 @@ export function AgentView({ threadId }: AgentViewProps) {
   }, [addPendingAttachments, dragCounter])
 
   const openThreadFilePreview = useCallback((path: string) => {
+    setMemoryFilePreview(null)
     setThreadFilePreview((prev) => ({
+      path,
+      key: (prev?.key ?? 0) + 1,
+    }))
+    setSidePanelViews((prev) => (
+      prev[threadId] === 'files'
+        ? prev
+        : { ...prev, [threadId]: 'files' }
+    ))
+  }, [setSidePanelViews, threadId])
+
+  const openMemoryFilePreview = useCallback((path: string) => {
+    setThreadFilePreview(null)
+    setMemoryFilePreview((prev) => ({
       path,
       key: (prev?.key ?? 0) + 1,
     }))
@@ -133,6 +150,7 @@ export function AgentView({ threadId }: AgentViewProps) {
 
   useEffect(() => {
     setThreadFilePreview(null)
+    setMemoryFilePreview(null)
     setPendingAttachments([])
   }, [threadId])
 
@@ -155,6 +173,7 @@ export function AgentView({ threadId }: AgentViewProps) {
           threadId={threadId}
           streaming={streamingState === 'streaming'}
           onOpenThreadFile={openThreadFilePreview}
+          onOpenMemorySource={openMemoryFilePreview}
         />
         {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
         <div className="relative">
@@ -203,6 +222,8 @@ export function AgentView({ threadId }: AgentViewProps) {
           workspaceSlug={workspaceSlug}
           threadFilePathToPreview={threadFilePathToPreview}
           threadFilePreviewKey={threadFilePreviewKey}
+          memoryFilePathToPreview={memoryFilePathToPreview}
+          memoryFilePreviewKey={memoryFilePreviewKey}
         />
       )}
 

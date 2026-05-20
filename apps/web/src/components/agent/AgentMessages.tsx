@@ -16,6 +16,7 @@ interface AgentMessagesProps {
   threadId: string
   streaming: boolean
   onOpenThreadFile?: (path: string) => void
+  onOpenMemorySource?: (path: string) => void
 }
 
 function isNearBottom(el: HTMLElement | null): boolean {
@@ -61,7 +62,7 @@ export function reconcileUserMessageVersions(
   })
 }
 
-export function AgentMessages({ threadId, streaming, onOpenThreadFile }: AgentMessagesProps) {
+export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMemorySource }: AgentMessagesProps) {
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -375,6 +376,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile }: AgentMe
         animate={streaming && i === liveMessages.length - 1}
         threadId={threadId}
         onOpenThreadFile={onOpenThreadFile}
+        onOpenMemorySource={onOpenMemorySource}
       />
     )
   }

@@ -10,7 +10,7 @@
  * - highlightToTokens()  同步 token 结构，适合逐行 React 渲染（流式最优）
  */
 
-import { createHighlighter, bundledLanguages } from 'shiki'
+import { createHighlighter, bundledLanguages, createJavaScriptRegexEngine } from 'shiki'
 import type { HighlighterGeneric, BundledLanguage, BundledTheme } from 'shiki'
 
 /** Shiki 高亮器实例类型 */
@@ -108,6 +108,7 @@ export function clearHighlightCache(): boolean {
 function getHighlighter(): Promise<ShikiHighlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
+      engine: createJavaScriptRegexEngine(),
       themes: DEFAULT_THEMES,
       langs: DEFAULT_LANGS,
     }).then((hl) => {

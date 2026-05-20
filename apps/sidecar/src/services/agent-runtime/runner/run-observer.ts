@@ -193,6 +193,22 @@ export class LumeRunObserver {
     });
   }
 
+  recordMemoryContextUsed(event: Extract<LumeRuntimeEvent, { type: "memory.context.used" }>): void {
+    this.enqueue(async () => {
+      const item: LumeRunItem = {
+        type: "system_event",
+        id: "memory-context-used",
+        name: "memory_context_used",
+        payload: {
+          items: event.items,
+          hidden: event.hidden
+        },
+        createdAt: event.createdAt
+      };
+      await this.stateStore.appendItem(this.state.runId, item);
+    });
+  }
+
   recordInterruption(interruption: LumeInterruption): void {
     this.enqueue(async () => {
       const stored = await this.stateStore.get(this.state.runId);

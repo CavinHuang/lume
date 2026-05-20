@@ -420,6 +420,45 @@ describe("projectRunStateToRuntimeEvents", () => {
       costUSD: 0.01
     }));
   });
+
+  test("projects persisted memory context usage into product runtime events", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      generatedItems: [{
+        type: "system_event",
+        id: "memory-context-used",
+        name: "memory_context_used",
+        payload: {
+          items: [{
+            id: "mem_1",
+            kind: "decision",
+            scope: "workspace",
+            status: "active",
+            citation: "/tmp/memory/entries/mem_1.md",
+            reason: "matched memory entry"
+          }],
+          hidden: true
+        },
+        createdAt: "2026-04-30T00:00:01.000Z"
+      }]
+    }));
+
+    expect(events).toContainEqual({
+      id: "run-1:memory-context-used:memory.context.used",
+      type: "memory.context.used",
+      threadId: "thread-1",
+      runId: "run-1",
+      createdAt: "2026-04-30T00:00:01.000Z",
+      items: [{
+        id: "mem_1",
+        kind: "decision",
+        scope: "workspace",
+        status: "active",
+        citation: "/tmp/memory/entries/mem_1.md",
+        reason: "matched memory entry"
+      }],
+      hidden: true
+    });
+  });
 });
 
 describe("projectAssistantMessageFinalRuntimeEvent", () => {

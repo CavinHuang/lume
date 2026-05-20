@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { formatMessageAttachmentSize, getTaskProgressStatusText, getToolPermissionTitleBadgeText, showTemporaryCopiedFeedback, type CopyFeedbackState } from './RuntimeEventContentBlock'
+import {
+  formatMessageAttachmentSize,
+  getTaskProgressStatusText,
+  getToolPermissionTitleBadgeText,
+  normalizeMemoryCitationPath,
+  showTemporaryCopiedFeedback,
+  type CopyFeedbackState,
+} from './RuntimeEventContentBlock'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
 import type { LumeRuntimeEvent } from '@lume/shared'
 
@@ -60,6 +67,20 @@ describe('normalizeThreadFilePathCandidate', () => {
     expect(normalizeThreadFilePathCandidate('/Users/me/report.md')).toBeNull()
     expect(normalizeThreadFilePathCandidate('../report.md')).toBeNull()
     expect(normalizeThreadFilePathCandidate('report.md')).toBeNull()
+  })
+})
+
+describe('normalizeMemoryCitationPath', () => {
+  test('extracts absolute paths from memory citation schemes', () => {
+    expect(normalizeMemoryCitationPath('workspace:daily:/Users/me/.lume/agent-workspaces/default/memory/daily/2026-05-19.md'))
+      .toBe('/Users/me/.lume/agent-workspaces/default/memory/daily/2026-05-19.md')
+    expect(normalizeMemoryCitationPath('workspace:memory:/Users/me/.lume/agent-workspaces/default/MEMORY.md#L3-L4'))
+      .toBe('/Users/me/.lume/agent-workspaces/default/MEMORY.md')
+  })
+
+  test('rejects non-file citations', () => {
+    expect(normalizeMemoryCitationPath('memory-entry-id')).toBeNull()
+    expect(normalizeMemoryCitationPath('workspace:daily:relative/path.md')).toBeNull()
   })
 })
 
