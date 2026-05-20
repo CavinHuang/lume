@@ -1,5 +1,4 @@
 interface CorePromptContext {
-  userName: string;
   workspaceName?: string;
   workspaceSlug?: string;
   sessionId: string;
@@ -23,12 +22,6 @@ Persona affects tone and relationship style, not truth, privacy, permissions, or
 
 export function buildParallelAgentPolicySection(): string {
   return "";
-}
-
-export function buildUserSection(ctx: Pick<CorePromptContext, "userName">): string {
-  return `## 用户信息
-
-- 用户名: ${ctx.userName}`;
 }
 
 export function buildSystemConfigSection(): string {

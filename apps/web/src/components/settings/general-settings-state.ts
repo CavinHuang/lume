@@ -107,15 +107,9 @@ export function mergeGeneralSettings(
   updates: UpdateGeneralSettingsInput
 ): GeneralSettings {
   const base = current ?? GENERAL_SETTINGS_DEFAULTS
-  const nextDisplayName = updates.userProfile?.displayName
 
   return {
     themeMode: updates.themeMode ?? base.themeMode,
-    userProfile: {
-      displayName: typeof nextDisplayName === 'string'
-        ? nextDisplayName.trim()
-        : base.userProfile.displayName,
-    },
     windowBehavior: {
       minimizeToTray: updates.windowBehavior?.minimizeToTray ?? base.windowBehavior.minimizeToTray,
       closeToTray: updates.windowBehavior?.closeToTray ?? base.windowBehavior.closeToTray,

@@ -4,7 +4,6 @@ import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capabil
 import type { MemoryCitationsMode } from "../memory-v2/policy";
 import { canonicalizeAgentToolName } from "@lume/shared";
 import type { AgentDefinition } from "@lume/agent-sdk";
-import { getPersistedGeneralSettings } from "../system/general-settings-service";
 import type { SessionType as ThreadType } from "@lume/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";
@@ -32,7 +31,6 @@ import {
   buildSafetySection,
   buildSystemConfigSection,
   buildThreadBootstrapSection,
-  buildUserSection,
   buildWorkspaceRulesSection
 } from "./prompt/sections/core-sections";
 
@@ -283,7 +281,6 @@ function buildRuntimeSection(ctx: SystemPromptContext, promptMode: SystemPromptM
 }
 
 export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
-  const userName = getPersistedGeneralSettings().userProfile.displayName || "用户";
   const promptMode = resolveSystemPromptMode(ctx);
   const sections: string[] = [LUME_AGENT_IDENTITY_LINE];
 
@@ -300,7 +297,6 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 
   sections.push(buildToolingSection(ctx.availableTools).join("\n"));
 
-  sections.push(buildUserSection({ userName }));
   sections.push(buildSystemConfigSection());
 
   if (ctx.workspaceName && ctx.workspaceSlug) {

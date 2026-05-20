@@ -5,10 +5,6 @@ export interface GeneralSettingsWindowBehavior {
   closeToTray: boolean
 }
 
-export interface GeneralSettingsUserProfile {
-  displayName: string
-}
-
 export interface GeneralSettingsUpdateSettings {
   autoCheckUpdates: boolean
   notifyAfterDownload: boolean
@@ -18,23 +14,18 @@ export interface GeneralSettingsUpdateSettings {
 
 export interface GeneralSettings {
   themeMode: ThemeMode
-  userProfile: GeneralSettingsUserProfile
   windowBehavior: GeneralSettingsWindowBehavior
   updateSettings: GeneralSettingsUpdateSettings
 }
 
 export interface UpdateGeneralSettingsInput {
   themeMode?: ThemeMode
-  userProfile?: Partial<GeneralSettingsUserProfile>
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
 }
 
 export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
-  userProfile: {
-    displayName: ""
-  },
   windowBehavior: {
     minimizeToTray: false,
     closeToTray: false

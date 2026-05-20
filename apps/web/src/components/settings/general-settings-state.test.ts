@@ -51,9 +51,6 @@ describe('general settings state', () => {
   test('general settings defaults stay app-wide and conservative', () => {
     expect(GENERAL_SETTINGS_DEFAULTS).toEqual({
       themeMode: 'system',
-      userProfile: {
-        displayName: '',
-      },
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false,
@@ -74,9 +71,6 @@ describe('general settings state', () => {
       },
     })).toEqual({
       themeMode: 'system',
-      userProfile: {
-        displayName: '',
-      },
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: true,
@@ -90,12 +84,9 @@ describe('general settings state', () => {
     })
   })
 
-  test('mergeGeneralSettings trims user display name and preserves window behavior', () => {
+  test('mergeGeneralSettings preserves window behavior when only theme changes', () => {
     expect(mergeGeneralSettings({
       themeMode: 'dark',
-      userProfile: {
-        displayName: 'Cavin',
-      },
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,
@@ -107,14 +98,9 @@ describe('general settings state', () => {
         lastUpdateCheckAt: null,
       },
     }, {
-      userProfile: {
-        displayName: '  Minator Huang  ',
-      },
+      themeMode: 'light',
     })).toEqual({
-      themeMode: 'dark',
-      userProfile: {
-        displayName: 'Minator Huang',
-      },
+      themeMode: 'light',
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,

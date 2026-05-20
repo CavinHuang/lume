@@ -47,22 +47,6 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("Citations:");
   });
 
-  test("buildSystemPromptAppend 应使用本地通用设置中的用户名称", () => {
-    writeFileSync(join(tempConfigDir, "settings.json"), JSON.stringify({
-      generalSettings: {
-        userProfile: {
-          displayName: "Minator Huang"
-        }
-      }
-    }, null, 2), "utf-8");
-
-    const prompt = buildSystemPromptAppend({
-      sessionId: "session-user-name"
-    });
-
-    expect(prompt).toContain("- 用户名: Minator Huang");
-  });
-
   test("buildSystemPromptAppend 应注入合并后的执行模式", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-agentic",

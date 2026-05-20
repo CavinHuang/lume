@@ -18,7 +18,6 @@ export {
   buildSafetySection,
   buildSystemConfigSection,
   buildThreadBootstrapSection,
-  buildUserSection,
   buildWorkspaceFilesIntroSection,
   buildWorkspaceRulesSection
 } from "./sections/core-sections";

@@ -550,9 +550,6 @@ export const updateUiStateInputSchema = z.object({
 
 export const updateGeneralSettingsInputSchema = z.object({
   themeMode: z.enum(["system", "light", "dark"]).optional(),
-  userProfile: z.object({
-    displayName: z.string().optional()
-  }).optional(),
   windowBehavior: z.object({
     minimizeToTray: z.boolean().optional(),
     closeToTray: z.boolean().optional()

@@ -9,7 +9,6 @@ import {
   Network,
   Sun,
   Trash2,
-  UserRound,
   type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -55,7 +54,6 @@ export function GeneralSettings() {
   const [settings, setSettings] = React.useState<GeneralSettingsModel>(GENERAL_SETTINGS_DEFAULTS)
   const [proxyStatus, setProxyStatus] = React.useState<AgentProxyStatus | null>(null)
   const [proxyDraft, setProxyDraft] = React.useState<AgentProxySettings>(DEFAULT_PROXY_SETTINGS)
-  const [displayNameDraft, setDisplayNameDraft] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [clearCacheOpen, setClearCacheOpen] = React.useState(false)
@@ -64,10 +62,6 @@ export function GeneralSettings() {
     () => workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null,
     [currentWorkspaceId, workspaces]
   )
-  const trimmedDisplayName = displayNameDraft.trim()
-  const effectiveDisplayName = settings.userProfile.displayName || '本地用户'
-  const avatarLabel = Array.from(effectiveDisplayName.trim())[0]?.toUpperCase() ?? 'L'
-  const displayNameChanged = trimmedDisplayName !== settings.userProfile.displayName
   const normalizedProxyDraft = React.useMemo(() => normalizeProxyDraft(proxyDraft), [proxyDraft])
   const proxyChanged = React.useMemo(
     () => JSON.stringify(normalizedProxyDraft) !== JSON.stringify(normalizeProxyDraft(proxyStatus?.settings ?? DEFAULT_PROXY_SETTINGS)),
@@ -83,7 +77,6 @@ export function GeneralSettings() {
         setSettings(loaded)
         setProxyStatus(loadedProxy)
         setProxyDraft(loadedProxy.settings)
-        setDisplayNameDraft(loaded.userProfile.displayName)
       })
       .catch((error) => {
         console.error('[GeneralSettings] load FAILED:', error)
@@ -107,7 +100,6 @@ export function GeneralSettings() {
     try {
       const saved = await updateGeneralSettings(updates)
       setSettings(saved)
-      setDisplayNameDraft(saved.userProfile.displayName)
       if (updates.themeMode) {
         setThemeMode(saved.themeMode)
       }
@@ -115,7 +107,6 @@ export function GeneralSettings() {
     } catch (error) {
       console.error('[GeneralSettings] save FAILED:', error)
       setSettings(settings)
-      setDisplayNameDraft(settings.userProfile.displayName)
       toast.error('保存通用设置失败')
     } finally {
       setSaving(false)
@@ -161,15 +152,6 @@ export function GeneralSettings() {
     }
   }
 
-  const handleSaveDisplayName = () => {
-    if (!displayNameChanged || saving) return
-    void persistSettings({
-      userProfile: {
-        displayName: trimmedDisplayName,
-      },
-    }, trimmedDisplayName ? '用户名称已保存' : '用户名称已清空')
-  }
-
   if (loading) {
     return (
       <div className="flex h-[260px] items-center justify-center rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
@@ -182,40 +164,6 @@ export function GeneralSettings() {
   return (
     <>
       <div className="space-y-3">
-        <SettingsCard title="本地用户">
-          <div className="flex items-center gap-4">
-            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[16px] font-semibold text-[var(--brand)]">
-              {avatarLabel}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 text-[13px] font-medium leading-5 text-[var(--text-2)]">
-                <UserRound size={15} className="text-[var(--text-2)]" />
-                用户名称
-              </div>
-              <input
-                value={displayNameDraft}
-                onChange={(event) => setDisplayNameDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    handleSaveDisplayName()
-                  }
-                }}
-                placeholder="本地用户"
-                className="mt-2 h-9 w-full max-w-[360px] rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] outline-none transition-colors placeholder:text-[var(--text-3)] focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
-              />
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!displayNameChanged || saving}
-              onClick={handleSaveDisplayName}
-              className="h-9 rounded-[8px] border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] bg-[var(--surface-1)] px-4 text-[13px] font-medium text-[var(--brand)] shadow-none hover:bg-[color-mix(in_oklab,var(--brand)_8%,var(--surface-1))] disabled:opacity-50"
-            >
-              保存
-            </Button>
-          </div>
-        </SettingsCard>
-
         <SettingsCard title="工作区">
           <SettingsRow label="默认工作区" desc="新会话默认使用的本地工作区">
             <SelectShell className="w-[180px]">
