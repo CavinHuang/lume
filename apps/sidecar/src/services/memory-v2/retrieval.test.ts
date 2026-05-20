@@ -50,4 +50,29 @@ describe("searchMemoryV2", () => {
       scope: "workspace"
     });
   });
+
+  test("recalls preferred-name memories for Chinese name questions", async () => {
+    smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "User wants to be called Mason.",
+        confidence: "high",
+        tags: ["preferred-name"]
+      }
+    });
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "我叫什么名字？",
+      maxResults: 3
+    });
+
+    expect(results[0]).toMatchObject({
+      kind: "preference",
+      scope: "global",
+      statement: "User wants to be called Mason."
+    });
+  });
 });

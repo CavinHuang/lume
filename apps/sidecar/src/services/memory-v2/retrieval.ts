@@ -22,6 +22,7 @@ export interface MemoryV2SearchInput {
 export type MemoryV2SearchIntent =
   | "architecture"
   | "continue_task"
+  | "identity"
   | "preference"
   | "debug"
   | "commit"
@@ -64,6 +65,7 @@ export function inferSearchIntent(query: string): MemoryV2SearchIntent {
   const text = query.toLowerCase();
   if (/architecture|design|boundary|架构|设计|边界/.test(text)) return "architecture";
   if (/continue|next|todo|state|继续|下一步|进度|状态/.test(text)) return "continue_task";
+  if (/who am i|what'?s my name|what is my name|call me|my name|我是谁|我叫什么|我的名字|叫我什么|怎么称呼|称呼我|名字/.test(text)) return "identity";
   if (/prefer|preference|rule|habit|偏好|习惯|规则/.test(text)) return "preference";
   if (/debug|error|fail|bug|报错|失败|修复/.test(text)) return "debug";
   if (/commit|push|pr|提交|推送/.test(text)) return "commit";
@@ -136,25 +138,35 @@ function scoreRecallItem(item: MemoryV2RecallItem, query: string, intent: Memory
   const queryTokens = new Set(tokenize(query));
   const itemTokens = tokenize(`${item.statement} ${item.path}`);
   const lexical = itemTokens.reduce((score, token) => score + (queryTokens.has(token) ? 1 : 0), 0);
-  if (lexical === 0 && !item.pinned) return 0;
+  const semanticScore = semanticIntentBoost(item, intent);
+  if (lexical === 0 && semanticScore === 0 && !item.pinned) return 0;
   const pathScore = [...queryTokens].some((token) => item.path.toLowerCase().includes(token)) ? 1.5 : 0;
   const pinnedScore = item.pinned ? 2 : 0;
   const scopeScore = item.scope === "workspace" ? 1 : 0.5;
   const kindScore = kindIntentBoost(item.kind, intent);
   const stalePenalty = item.status === "suspected_stale" ? -3 : 0;
-  return lexical + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
+  return lexical + semanticScore + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
 }
 
 function kindIntentBoost(kind: MemoryV2Kind, intent: MemoryV2SearchIntent): number {
   const boosts: Record<MemoryV2SearchIntent, Partial<Record<MemoryV2Kind, number>>> = {
     architecture: { decision: 3, fact: 2, lesson: 2 },
     continue_task: { state: 3, decision: 1 },
+    identity: { preference: 3, fact: 2 },
     preference: { preference: 3 },
     debug: { lesson: 3, fact: 1 },
     commit: { preference: 2, fact: 1, state: 1 },
     general: {}
   };
   return boosts[intent][kind] ?? 0;
+}
+
+function semanticIntentBoost(item: MemoryV2RecallItem, intent: MemoryV2SearchIntent): number {
+  if (intent !== "identity") return 0;
+  const text = `${item.statement} ${(item.path ?? "")}`.toLowerCase();
+  const nameLikeMemory = /preferred[-_\s]?name|nickname|call me|called|my name|user name|名字|称呼|叫我|叫作|叫做/.test(text);
+  if (!nameLikeMemory) return 0;
+  return item.kind === "preference" || item.kind === "fact" ? 5 : 2;
 }
 
 function recentDailyFiles(dir: string, maxDays: number): string[] {
