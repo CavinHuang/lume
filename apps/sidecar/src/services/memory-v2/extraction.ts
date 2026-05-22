@@ -2,6 +2,8 @@ import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk"
 import type { LumeEffectiveConfig } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
+import { extractAssistantPreferredNameCandidate, extractPreferredNameCandidate } from "./profile";
 import type { MemoryV2Candidate } from "./types";
 import { stripMemoryUserMessagePrefix } from "./user-message-prefix";
 
@@ -20,6 +22,11 @@ export function extractExplicitMemoryCandidates(input: {
   const text = input.text.trim();
   if (!text || DO_NOT_REMEMBER_RE.test(text)) return [];
 
+  const preferredName = extractPreferredNameCandidate(input);
+  if (preferredName) return [preferredName];
+  const assistantPreferredName = extractAssistantPreferredNameCandidate(input);
+  if (assistantPreferredName) return [assistantPreferredName];
+
   const statement = extractStatement(text);
   if (!statement) return [];
   const kind = inferKind(text, statement);
@@ -31,6 +38,7 @@ export function extractExplicitMemoryCandidates(input: {
     confidence: "high",
     tags: inferTags(text),
     entities: inferEntities(text),
+    claim: inferMemoryV2Claim({ statement, tags: inferTags(text) }),
     appliesWhen: targetScope === "workspace" && input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug }
       : {},
@@ -156,7 +164,14 @@ function buildExtractionSystemPrompt(): string {
     "Each candidate must be one short standalone claim.",
     "Use kind preference, fact, decision, lesson, or state.",
     "Use targetScope global for cross-workspace user preferences; use workspace for project facts, decisions, lessons, and state.",
-    "Candidate fields: kind, targetScope, statement, confidence, sourceRole, sourceText, reason, tags, entities."
+    "Add claim when the memory can be represented as a stable fact edge: {subject, predicate, object}.",
+    "Common claim examples:",
+    "- \"叫我 Mason\" -> subject=user/self, predicate=preferred_name, object=Mason.",
+    "- \"我叫 Mason\" -> subject=user/self, predicate=preferred_name, object=Mason.",
+    "- \"就想叫你 Alice\" -> subject=assistant/self, predicate=preferred_name, object=Alice.",
+    "- \"Lume Memory V2 使用 Markdown 作为事实源\" -> subject=workspace/default, predicate=source_of_truth, object=Markdown.",
+    "Do not use assistant/self claims to overwrite product/system identity; they are user-given naming preferences.",
+    "Candidate fields: kind, targetScope, statement, confidence, sourceRole, sourceText, reason, tags, entities, claim."
   ].join("\n");
 }
 
@@ -175,7 +190,12 @@ function buildExtractionUserPrompt(text: string, workspaceSlug?: string): string
         sourceText: "exact substring from userMessage",
         reason: "why this is durable",
         tags: ["optional"],
-        entities: ["optional"]
+        entities: ["optional"],
+        claim: {
+          subject: "user/self|assistant/self|workspace/default|open string",
+          predicate: "preferred_name|identity|preference|open string",
+          object: "fact value"
+        }
       }]
     }
   });
@@ -200,13 +220,15 @@ function parseLlmExtractionResponse(text: string, userMessage: string): MemoryV2
       : "medium";
     if (!kind || !targetScope || !statement || DO_NOT_REMEMBER_RE.test(statement)) continue;
     if (sourceRole !== "user" || !sourceText || !userMessage.includes(sourceText)) continue;
+    const tags = normalizeStringList(item.tags);
     candidates.push({
       kind,
       targetScope,
       statement,
       confidence,
-      tags: normalizeStringList(item.tags),
+      tags,
       entities: normalizeStringList(item.entities),
+      claim: normalizeMemoryV2Claim(item.claim) ?? inferMemoryV2Claim({ statement, tags }),
       evidence: {
         quote: sourceText
       }

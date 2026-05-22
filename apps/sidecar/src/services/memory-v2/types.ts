@@ -19,6 +19,13 @@ export interface MemoryV2Source {
   path?: string;
 }
 
+export interface MemoryV2Claim {
+  subject: string;
+  predicate: string;
+  object: string;
+  qualifiers?: Record<string, string>;
+}
+
 export interface MemoryV2EntryFrontmatter {
   id: string;
   kind: MemoryV2Kind;
@@ -37,6 +44,7 @@ export interface MemoryV2EntryFrontmatter {
   applies_when: Record<string, string>;
   valid_from: string | null;
   valid_to: string | null;
+  claim?: MemoryV2Claim;
 }
 
 export interface MemoryV2Entry {
@@ -55,6 +63,7 @@ export interface MemoryV2PendingFrontmatter {
     kind: MemoryV2Kind;
     targetScope: MemoryV2Scope;
     statement: string;
+    claim?: MemoryV2Claim;
   };
   existing?: {
     ids: string[];
@@ -88,6 +97,7 @@ export interface MemoryV2Candidate {
   tags?: string[];
   entities?: string[];
   appliesWhen?: Record<string, string>;
+  claim?: MemoryV2Claim;
 }
 
 export type MemoryV2SmartAddAction =
@@ -119,4 +129,5 @@ export interface MemoryV2RecallItem {
   reason: string;
   score: number;
   pinned?: boolean;
+  claim?: MemoryV2Claim;
 }

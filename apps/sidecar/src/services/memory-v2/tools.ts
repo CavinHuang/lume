@@ -11,7 +11,9 @@ import type {
 import { createMemoryV2Store } from "./markdown-store";
 import { searchMemoryV2 } from "./retrieval";
 import { smartAddMemoryV2Candidate } from "./smart-add";
-import type { MemoryV2Kind, MemoryV2Scope } from "./types";
+import { extractExplicitMemoryCandidates } from "./extraction";
+import { claimFromEntry, inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
+import type { MemoryV2Candidate, MemoryV2Kind, MemoryV2Scope } from "./types";
 
 export const MEMORY_V2_TOOL_NAMES = [
   "memory.search",
@@ -35,7 +37,8 @@ export async function searchMemoryTool(input: MemorySearchToolInput): Promise<Me
     kind: fromMemoryV2Kind(item.kind),
     scope: item.scope,
     source: "memory",
-    reason: item.reason
+    reason: item.reason,
+    claim: item.claim
   }));
 }
 
@@ -57,7 +60,8 @@ export async function readMemoryTool(input: MemoryReadToolInput): Promise<Memory
         kind: fromMemoryV2Kind(entry.frontmatter.kind),
         source: "memory",
         tags: entry.frontmatter.tags,
-        confidence: confidenceNumber(entry.frontmatter.confidence)
+        confidence: confidenceNumber(entry.frontmatter.confidence),
+        claim: claimFromEntry(entry)
       },
       citation: entry.path
     };
@@ -81,40 +85,61 @@ export async function readMemoryTool(input: MemoryReadToolInput): Promise<Memory
 export async function rememberMemoryTool(input: MemoryRememberToolInput): Promise<MemoryToolWriteResult> {
   const scope = toMemoryV2Scope(input.scope);
   const kind = toMemoryV2Kind(input.kind);
+  const candidate = normalizeRememberCandidate(input, scope, kind);
   const result = smartAddMemoryV2Candidate({
     workspaceSlug: input.workspaceSlug,
-    candidate: {
-      targetScope: scope,
-      kind,
-      statement: input.content,
-      confidence: toMemoryV2Confidence(input.confidence),
-      tags: input.tags,
-      appliesWhen: scope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {},
-      evidence: {
-        runId: input.sourceSessionId,
-        recordIds: input.sourceMessageIds
-      }
-    }
+    candidate
   });
   if (result.entry) {
     return {
       id: result.entry.frontmatter.id,
       path: result.entry.path,
-      kind: input.kind,
-      scope: input.scope
+      kind: fromMemoryV2Kind(result.entry.frontmatter.kind),
+      scope: result.entry.frontmatter.scope
     };
   }
   if (result.pending) {
     return {
       id: result.pending.frontmatter.id,
       path: result.pending.path,
-      kind: input.kind,
-      scope: input.scope
+      kind: fromMemoryV2Kind(result.pending.frontmatter.candidate.kind),
+      scope: result.pending.frontmatter.candidate.targetScope
     };
   }
   return {
     kind: input.kind,
     scope: input.scope
+  };
+}
+
+function normalizeRememberCandidate(
+  input: MemoryRememberToolInput,
+  fallbackScope: MemoryV2Scope,
+  fallbackKind: MemoryV2Kind
+): MemoryV2Candidate {
+  const explicit = extractExplicitMemoryCandidates({
+    text: input.content,
+    workspaceSlug: input.workspaceSlug
+  })[0];
+  const targetScope = explicit?.targetScope ?? fallbackScope;
+  const tags = uniqueStrings([...(explicit?.tags ?? []), ...(input.tags ?? [])]);
+  return {
+    targetScope,
+    kind: explicit?.kind ?? fallbackKind,
+    statement: explicit?.statement ?? input.content,
+    confidence: explicit?.confidence ?? toMemoryV2Confidence(input.confidence),
+    tags,
+    entities: explicit?.entities,
+    appliesWhen: explicit?.appliesWhen ?? (targetScope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {}),
+    claim: normalizeMemoryV2Claim(input.claim) ?? explicit?.claim ?? inferMemoryV2Claim({
+      statement: explicit?.statement ?? input.content,
+      tags
+    }),
+    evidence: {
+      ...explicit?.evidence,
+      runId: input.sourceSessionId,
+      recordIds: input.sourceMessageIds
+    }
   };
 }
 
@@ -170,6 +195,10 @@ function readMemoryFileText(path: string, from?: number, lines?: number): string
   const start = Math.max((from ?? 1) - 1, 0);
   const end = lines ? start + Math.max(lines, 0) : allLines.length;
   return allLines.slice(start, end).join("\n");
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }
 
 function toMemoryV2Confidence(confidence?: number): "low" | "medium" | "high" {

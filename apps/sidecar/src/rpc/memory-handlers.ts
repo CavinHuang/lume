@@ -6,11 +6,13 @@ import {
 } from "../services/memory-v2/tools";
 import { getMemoryV2SettingsSnapshot } from "../services/memory-v2/settings-snapshot";
 import { openMemoryV2Source } from "../services/memory-v2/source-open";
+import { organizeMemoryHistory } from "../services/memory-v2/history-organizer";
 import {
   getMemoryRuntimeConfig,
   updateMemoryRuntimeConfig
 } from "../services/memory-v2/policy";
 import {
+  memoryOrganizeHistoryInputSchema,
   memoryOpenSourceInputSchema,
   memoryReadToolInputSchema,
   memoryRememberToolInputSchema,
@@ -41,6 +43,11 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     [MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT);
       return getMemoryV2SettingsSnapshot(input.workspaceSlug);
+    },
+    [MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY]: async (params) => {
+      return organizeMemoryHistory(
+        validateInput(memoryOrganizeHistoryInputSchema, params, MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY)
+      );
     },
     [MEMORY_IPC_CHANNELS.OPEN_SOURCE]: async (params) => {
       return openMemoryV2Source(

@@ -100,13 +100,21 @@ describe("memory-v2 policy", () => {
       citations: "on",
       tools: { allow: ["group:memory", "memory.remember"], deny: ["memory.read"] },
       sources: ["memory", "sessions"],
-      extraPaths: ["/data/memory", " docs/memory "]
+      extraPaths: ["/data/memory", " docs/memory "],
+      retrieval: {
+        semantic: "off",
+        rerankModelRef: "openai/gpt-5-mini"
+      }
     });
     expect(result.citationsMode).toBe("on");
     expect(result.toolPolicy?.allow).toEqual(["group:memory", "memory.remember"]);
     expect(result.toolPolicy?.deny).toEqual(["memory.read"]);
     expect(result.sources).toEqual(["memory", "sessions"]);
     expect(result.extraPaths).toEqual(["/data/memory", "docs/memory"]);
+    expect(result.retrieval).toEqual({
+      semantic: "off",
+      rerankModelRef: "openai/gpt-5-mini"
+    });
   });
 
   test("parseMemoryRuntimeConfigPayload 非法内容回退默认", () => {
@@ -120,6 +128,7 @@ describe("memory-v2 policy", () => {
     expect(result.toolPolicy?.deny).toEqual(["memory.search"]);
     expect(result.sources).toEqual(["memory"]);
     expect(result.extraPaths).toEqual([]);
+    expect(result.retrieval.semantic).toBe("auto");
   });
 
   test("默认配置应仅开放 group:memory（不含写入工具）", () => {
@@ -140,13 +149,21 @@ describe("memory-v2 policy", () => {
         deny: ["memory.read"]
       },
       citations: "on",
-      sources: ["memory", "sessions"]
+      sources: ["memory", "sessions"],
+      retrieval: {
+        semantic: "off",
+        rerankModelRef: "openai/gpt-5-mini"
+      }
     });
 
     expect(saved.tools.allow).toEqual(["group:memory", "group:memory-write"]);
     expect(saved.tools.deny).toEqual(["memory.read"]);
     expect(saved.citations).toBe("on");
     expect(saved.sources).toEqual(["memory", "sessions"]);
+    expect(saved.retrieval).toEqual({
+      semantic: "off",
+      rerankModelRef: "openai/gpt-5-mini"
+    });
     expect(getMemoryRuntimeConfig()).toEqual(saved);
   });
 });

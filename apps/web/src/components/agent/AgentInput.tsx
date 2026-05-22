@@ -5,7 +5,7 @@ import Mention from '@tiptap/extension-mention'
 import { Send, Square, Paperclip, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { agentSend } from '@/lib/desktop-api'
 import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
@@ -32,6 +32,7 @@ import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/component
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { composerControlTriggerClassName } from './composer-control-styles'
+import { cancelPendingDebouncedAgentInputSend, createDebouncedAgentInputSend } from './agent-input-send-debounce'
 import { syncPermissionModeWithPlanModePhase } from './agent-input-state'
 import { buildSlashSuggestionItems, type MentionItem } from './slash-command-state'
 import { buildContextWindowProgress } from './runtime-state-projections'
@@ -201,6 +202,12 @@ export function AgentInput({
   const [channelsLoaded, setChannelsLoaded] = useState(false)
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
+  const [localSending, setLocalSending] = useState(false)
+  const sendNowRef = useRef<() => void>(() => undefined)
+  const debouncedSend = useMemo(
+    () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
+    [threadId],
+  )
 
   useEffect(() => {
     listChannels()
@@ -242,6 +249,10 @@ export function AgentInput({
     workspaceSlugRef.current = ws?.slug ?? null
   }, [thread?.workspaceId, workspaces, currentWorkspaceId])
 
+  useEffect(() => {
+    if (!streaming) setLocalSending(false)
+  }, [streaming, threadId])
+
   const getWorkspaceSlug = () => workspaceSlugRef.current
 
   const editor = useEditor({
@@ -275,7 +286,7 @@ export function AgentInput({
       handleKeyDown(_, event) {
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault()
-          handleSend()
+          debouncedSend()
           return true
         }
         return false
@@ -291,7 +302,7 @@ export function AgentInput({
 
   const composerState = deriveLumeComposerState({
     hasText: editorText.trim().length > 0 || pendingAttachments.length > 0,
-    mode: streaming ? 'streaming' : 'idle',
+    mode: streaming ? 'streaming' : localSending ? 'busy' : 'idle',
   })
   const selectedModelSummary = useMemo(() => getThreadSelectionSummary({
     channels,
@@ -303,10 +314,12 @@ export function AgentInput({
     contextWindow: selectedModelSummary.meta?.contextWindow,
   })
 
-  const handleSend = async () => {
-    if (!editor || streaming) return
+  const handleSend = useCallback(async () => {
+    if (!editor || streaming || localSending) return
     const rawText = editor.getText().trim()
     if (!rawText && pendingAttachments.length === 0) return
+
+    setLocalSending(true)
     const text = rawText || '请解读这些附件。'
     let messageAttachments: AgentMessageAttachmentInput[] = []
     try {
@@ -333,6 +346,7 @@ export function AgentInput({
     } catch (error) {
       console.error('[AgentInput] 文件上传失败:', error)
       toast.error('文件上传失败')
+      setLocalSending(false)
       return
     }
     const createdAt = new Date().toISOString()
@@ -364,8 +378,23 @@ export function AgentInput({
       console.error('[AgentInput] 发送失败:', error)
       toast.error('发送失败')
       setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+      setLocalSending(false)
     }
-  }
+  }, [
+    editor,
+    localSending,
+    onClearPendingAttachments,
+    pendingAttachments,
+    permissionMode,
+    setRuntimeEvents,
+    setStreamingStates,
+    streaming,
+    thinkingLevel,
+    threadId,
+  ])
+  sendNowRef.current = () => { void handleSend() }
+
+  useEffect(() => () => cancelPendingDebouncedAgentInputSend(debouncedSend), [debouncedSend])
 
   const handleStop = async () => {
     try {
@@ -458,7 +487,7 @@ export function AgentInput({
               ) : (
                 <button
                   type="button"
-                  onClick={handleSend}
+                  onClick={debouncedSend}
                   disabled={!composerState.canSend}
                   className={getLumeComposerPrimaryActionClassName({
                     enabled: composerState.canSend,

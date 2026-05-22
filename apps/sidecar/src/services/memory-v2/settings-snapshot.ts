@@ -10,6 +10,11 @@ import type {
 } from "@lume/shared";
 import { getMemoryV2ScopePaths } from "./paths";
 import { createMemoryV2Store } from "./markdown-store";
+import { resolveMemoryEmbeddingModelRef } from "./embedding";
+import { resolveMemoryRerankModelRef } from "./rerank";
+import { getSemanticIndexStatus } from "./semantic-index";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { getMemoryRuntimeConfig } from "./policy";
 import type { MemoryV2Entry, MemoryV2Kind, MemoryV2PendingItem, MemoryV2Status } from "./types";
 
 export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettingsSnapshot {
@@ -28,6 +33,18 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
   const pending = store.listPending({
     workspaceSlug,
     scopes: ["workspace", "global"]
+  });
+  const runtimeConfig = getMemoryRuntimeConfig();
+  const lumeConfig = getEffectiveLumeConfig(workspaceSlug);
+  const embeddingModelRef = resolveMemoryEmbeddingModelRef(lumeConfig);
+  const semanticStatus = getSemanticIndexStatus({
+    workspaceSlug,
+    semantic: runtimeConfig.retrieval.semantic,
+    embeddingModelRef
+  });
+  const rerank = resolveMemoryRerankModelRef({
+    workspaceSlug,
+    explicitModelRef: runtimeConfig.retrieval.rerankModelRef
   });
   const openPending = pending.filter((item) => item.frontmatter.status === "open");
   const dailyFiles = listFiles(workspacePaths.dailyDir, "daily", "workspace");
@@ -53,7 +70,19 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     files,
     workspaceEntries: workspaceEntries.map(entrySummary),
     globalEntries: globalEntries.map(entrySummary),
-    pending: pending.map(pendingSummary)
+    pending: pending.map(pendingSummary),
+    retrieval: {
+      semantic: {
+        mode: runtimeConfig.retrieval.semantic,
+        ...(embeddingModelRef ? { embeddingModelRef } : {}),
+        status: semanticStatus.status,
+        message: semanticStatus.message
+      },
+      rerank: {
+        ...(rerank.modelRef ? { modelRef: rerank.modelRef } : {}),
+        source: rerank.source
+      }
+    }
   };
 }
 

@@ -81,6 +81,7 @@ function coerceKnownProvider(provider: string): ProviderType {
     "anthropic-compatible",
     "openai",
     "jina",
+    "siliconflow",
     "openrouter",
     "deepseek",
     "google",

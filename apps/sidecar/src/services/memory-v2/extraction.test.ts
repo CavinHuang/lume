@@ -6,6 +6,58 @@ import {
 } from "./extraction";
 
 describe("extractExplicitMemoryCandidates", () => {
+  test("extracts preferred-name profile memory as global by default", () => {
+    expect(extractExplicitMemoryCandidates({
+      text: "叫我 Mason",
+      workspaceSlug: "demo"
+    })).toEqual([expect.objectContaining({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户希望被称呼为 Mason",
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Mason"
+      },
+      tags: expect.arrayContaining(["profile", "identity", "preferred-name"])
+    })]);
+  });
+
+  test("extracts assistant preferred-name claim without changing product identity", () => {
+    expect(extractExplicitMemoryCandidates({
+      text: "就想叫你 Alice",
+      workspaceSlug: "demo"
+    })).toEqual([expect.objectContaining({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户希望用 Alice 称呼助手",
+      claim: {
+        subject: "assistant/self",
+        predicate: "preferred_name",
+        object: "Alice"
+      },
+      tags: expect.arrayContaining(["profile", "identity", "preferred-name"])
+    })]);
+  });
+
+  test("extracts workspace-scoped preferred-name when explicitly limited", () => {
+    expect(extractExplicitMemoryCandidates({
+      text: "在这个工作区叫我 Mason",
+      workspaceSlug: "demo"
+    })).toEqual([expect.objectContaining({
+      kind: "preference",
+      targetScope: "workspace",
+      statement: "用户希望在当前工作区被称呼为 Mason",
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Mason"
+      },
+      tags: expect.arrayContaining(["profile", "identity", "preferred-name"]),
+      appliesWhen: { workspaceSlug: "demo" }
+    })]);
+  });
+
   test("extracts explicit preference intent", () => {
     expect(extractExplicitMemoryCandidates({
       text: "以后默认用中文回答",
@@ -24,7 +76,12 @@ describe("extractExplicitMemoryCandidates", () => {
     })).toEqual([expect.objectContaining({
       kind: "fact",
       targetScope: "workspace",
-      statement: "Lume Memory V2 使用 Markdown 作为事实源"
+      statement: "Lume Memory V2 使用 Markdown 作为事实源",
+      claim: {
+        subject: "workspace/default",
+        predicate: "source_of_truth",
+        object: "Markdown"
+      }
     })]);
   });
 
@@ -57,7 +114,12 @@ describe("extractExplicitMemoryCandidates", () => {
                   sourceRole: "user",
                   sourceText: "以后默认用中文回答",
                   reason: "User stated a durable language preference.",
-                  tags: ["language"]
+                  tags: ["language"],
+                  claim: {
+                    subject: "user/self",
+                    predicate: "preference",
+                    object: "默认用中文回答"
+                  }
                 }]
               })
             }],
@@ -75,6 +137,11 @@ describe("extractExplicitMemoryCandidates", () => {
       kind: "preference",
       targetScope: "global",
       statement: "User prefers Chinese responses by default.",
+      claim: {
+        subject: "user/self",
+        predicate: "preference",
+        object: "默认用中文回答"
+      },
       evidence: expect.objectContaining({
         quote: "以后默认用中文回答"
       })

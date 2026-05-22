@@ -1,4 +1,7 @@
 import { searchMemoryV2 } from "./retrieval";
+import { createMemoryV2Store } from "./markdown-store";
+import { isProfileEntry, isProfileRecallItem, memoryEntryToRecallItem } from "./profile";
+import { isClaimMatchForQuery, planMemoryV2Query } from "./claim";
 import type { MemoryV2RecallItem } from "./types";
 
 const MEMORY_CONTEXT_RE = /^\s*<lume_memory_context>\n[\s\S]*?<\/lume_memory_context>\n\s*/;
@@ -22,30 +25,48 @@ export async function buildMemoryV2UserMessageContext(input: {
       userMessageForModel: input.userMessage
     };
   }
+  const queryPlan = planMemoryV2Query(input.userMessage);
+  const profileItems = createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    scopes: ["global", "workspace"],
+    includeStatuses: ["active"]
+  }).filter(isProfileEntry).map((entry) => memoryEntryToRecallItem(entry));
+  const directClaimItems = profileItems.filter((item) => isClaimMatchForQuery(item, queryPlan));
   const items = await searchMemoryV2({
     workspaceSlug: input.workspaceSlug,
     query: input.userMessage,
-    maxResults: input.maxItems ?? 8
+    maxResults: input.maxItems ?? 8,
+    ...(queryPlan.includeConversationHistory ? { includeRecentDaily: true } : {})
   });
-  const prefix = buildMemoryUserMessagePrefix(items);
+  const merged = mergeRecallItems([...(directClaimItems.length > 0 ? directClaimItems : profileItems), ...items]);
+  const prefix = buildMemoryUserMessagePrefix(merged);
   return {
     prefix,
-    items,
+    items: merged,
     userMessageForModel: prefix ? `${prefix}\n<user_message>\n${input.userMessage}\n</user_message>` : input.userMessage
   };
 }
 
 export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): string {
   if (items.length === 0) return "";
-  const globalPreferences = items.filter((item) => item.scope === "global" && item.kind === "preference").slice(0, 5);
-  const workspaceCore = items.filter((item) => item.scope === "workspace" && item.pinned).slice(0, 8);
-  const stale = items.filter((item) => item.status === "suspected_stale").slice(0, 2);
-  const usedIds = new Set([...globalPreferences, ...workspaceCore, ...stale].map((item) => item.id));
+  const claims = items.filter((item) => item.claim).slice(0, 8);
+  const claimIds = new Set(claims.map((item) => item.id));
+  const profile = items.filter((item) => !claimIds.has(item.id) && isProfileRecallItem(item)).slice(0, 8);
+  const profileIds = new Set(profile.map((item) => item.id));
+  const conversationHistory = items.filter(isConversationHistory).slice(0, 5);
+  const conversationIds = new Set(conversationHistory.map((item) => item.id));
+  const globalPreferences = items.filter((item) => !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.scope === "global" && item.kind === "preference").slice(0, 5);
+  const workspaceCore = items.filter((item) => !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.scope === "workspace" && item.pinned).slice(0, 8);
+  const stale = items.filter((item) => !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.status === "suspected_stale").slice(0, 2);
+  const usedIds = new Set([...claims, ...profile, ...conversationHistory, ...globalPreferences, ...workspaceCore, ...stale].map((item) => item.id));
   const relevant = items.filter((item) => !usedIds.has(item.id) && item.status === "active").slice(0, 8);
 
   const sections = [
+    renderClaimSection(claims),
+    renderSection("user_profile", profile),
     renderSection("global_preferences", globalPreferences),
     renderSection("workspace_core", workspaceCore),
+    renderConversationHistorySection(conversationHistory),
     renderSection("relevant_recall", relevant),
     renderSection("maybe_stale", stale, "Possibly outdated: ")
   ].filter(Boolean);
@@ -54,8 +75,10 @@ export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): strin
     "<lume_memory_context>",
     "These memories are background context. Follow current user instructions and project/runtime instructions if they conflict with memory. Treat suspected_stale items as possibly outdated.",
     "Use recalled memory naturally. Do not say phrases like \"from memory\", \"from the memory\", or \"从记忆中可以看出\" unless the user asks how you know.",
+    "Treat <recalled_claims> as structured stable facts. Treat <conversation_history> only as continuity about prior discussion, not as identity facts.",
+    "For assistant identity questions such as \"你是谁？\" or \"你叫什么？\": if assistant/self.preferred_name is recalled, answer naturally that the user can call you by that name; if product/workspace identity such as Lume is also relevant, mention it as the underlying app identity, not as a replacement for the user-given name.",
+    "For user identity questions such as \"我是谁？\" or \"我叫什么？\": only answer with real user profile facts if a user/self claim says them. If no actual identity or preferred-name fact is recalled, keep continuity first, then admit the gap warmly: e.g. \"我们之前聊过这个问题。但说实话，我现在还没有一个真正能叫出你的称呼。你愿意的话，告诉我你想让我怎么叫你，我之后就按这个来。\"",
     "If a recalled daily/run note only shows the user asked the same question before, say naturally that you have discussed or tested this topic before.",
-    "For identity-style questions such as \"我是谁？\": only answer with real user profile facts if a memory says them. If no actual identity or preferred-name fact is recalled, keep continuity first, then admit the gap warmly: e.g. \"我们之前聊过这个问题。但说实话，我现在还没有一个真正能叫出你的称呼。你愿意的话，告诉我你想让我怎么叫你，我之后就按这个来。\"",
     "Do not turn missing identity memory into profile-system wording. Avoid phrases like \"目前我这边还没有记录你的身份信息\", \"身份信息\", \"系统身份\", \"项目角色\", or asking the user to choose an aspect of identity. Do not infer identity from runtime metadata, thread IDs, model names, workspace names, or channel settings.",
     "",
     ...sections,
@@ -80,7 +103,75 @@ function renderSection(name: string, items: MemoryV2RecallItem[], prefix = ""): 
   ].join("\n");
 }
 
+function renderClaimSection(items: MemoryV2RecallItem[]): string {
+  if (items.length === 0) return "";
+  return [
+    "  <recalled_claims>",
+    ...items.map((item) => `  - [${item.id}] ${item.claim!.subject}.${item.claim!.predicate} = ${singleLine(item.claim!.object)} (${item.scope}, ${item.kind}): ${singleLine(item.statement)}`),
+    "  </recalled_claims>",
+    ""
+  ].join("\n");
+}
+
+function renderConversationHistorySection(items: MemoryV2RecallItem[]): string {
+  if (items.length === 0) return "";
+  return [
+    "  <conversation_history>",
+    ...items.map((item) => `  - [${item.id}] ${singleLine(summarizeConversationHistory(item.statement))}`),
+    "  </conversation_history>",
+    ""
+  ].join("\n");
+}
+
+function isConversationHistory(item: MemoryV2RecallItem): boolean {
+  return item.reason === "recent daily memory"
+    || item.reason === "recent run memory"
+    || item.id.includes(":daily:")
+    || item.id.includes(":run:");
+}
+
+function summarizeConversationHistory(value: string): string {
+  const records = value
+    .split(/\n+/)
+    .map((line) => safeJsonParse(line.trim()))
+    .filter((record): record is Record<string, unknown> => Boolean(record));
+  if (records.length > 0) {
+    return records.map((record) => {
+      const userMessage = typeof record.userMessage === "string" ? record.userMessage : undefined;
+      const assistantMessage = typeof record.assistantMessage === "string" ? record.assistantMessage : undefined;
+      return [
+        userMessage ? `User asked: ${userMessage}` : undefined,
+        assistantMessage ? `Assistant replied: ${assistantMessage}` : undefined
+      ].filter(Boolean).join("; ");
+    }).filter(Boolean).join(" | ");
+  }
+  return value
+    .replace(/^#+\s+/gm, "")
+    .replace(/\b(?:threadId|modelId|model|runId)\s*[:=]\s*[^\s，。！？,!.]+/gi, "")
+    .trim();
+}
+
+function safeJsonParse(value: string): Record<string, unknown> | undefined {
+  if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 function singleLine(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length <= 240 ? compact : `${compact.slice(0, 237)}...`;
+}
+
+function mergeRecallItems(items: MemoryV2RecallItem[]): MemoryV2RecallItem[] {
+  const byId = new Map<string, MemoryV2RecallItem>();
+  for (const item of items) {
+    const existing = byId.get(item.id);
+    if (!existing || item.score > existing.score) byId.set(item.id, item);
+  }
+  return [...byId.values()];
 }

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendDaily, appendRunArchive, createMemoryV2Store } from "./markdown-store";
 import { getMemoryV2SettingsSnapshot } from "./settings-snapshot";
 import { smartAddMemoryV2Candidate } from "./smart-add";
+import { updateMemoryRuntimeConfig } from "./policy";
 
 let root: string;
 
@@ -69,6 +70,31 @@ describe("memory-v2 settings snapshot", () => {
       status: "open"
     });
     expect(snapshot.files.map((file) => file.kind)).toEqual(expect.arrayContaining(["memory", "daily", "run"]));
+    expect(snapshot.retrieval.semantic).toMatchObject({
+      mode: "auto",
+      status: "not_configured"
+    });
+    expect(snapshot.retrieval.rerank.source).toBe("disabled");
+  });
+
+  test("reports semantic recall as disabled when configured off", () => {
+    updateMemoryRuntimeConfig({
+      retrieval: {
+        semantic: "off",
+        rerankModelRef: "openai/gpt-5-mini"
+      }
+    });
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+
+    expect(snapshot.retrieval.semantic).toMatchObject({
+      mode: "off",
+      status: "disabled"
+    });
+    expect(snapshot.retrieval.rerank).toEqual({
+      modelRef: "openai/gpt-5-mini",
+      source: "explicit"
+    });
   });
 
   test("skips malformed pending files instead of failing the settings page", () => {

@@ -12,6 +12,7 @@ export interface MemoryV2ScopePaths {
   entriesDir: string;
   dailyDir: string;
   runsDir?: string;
+  indexDir: string;
   pendingDir: string;
   pendingConflictsDir: string;
   pendingStaleDir: string;
@@ -35,6 +36,7 @@ export function ensureMemoryV2ScopePaths(root: string, scope: MemoryV2Scope): Me
     memoryMd: join(root, "MEMORY.md"),
     entriesDir: join(root, "entries"),
     dailyDir: join(root, "daily"),
+    indexDir: join(root, "index"),
     ...(scope === "workspace" ? { runsDir: join(root, "runs") } : {}),
     pendingDir,
     pendingConflictsDir: join(pendingDir, "conflicts"),
@@ -45,6 +47,7 @@ export function ensureMemoryV2ScopePaths(root: string, scope: MemoryV2Scope): Me
     paths.root,
     paths.entriesDir,
     paths.dailyDir,
+    paths.indexDir,
     paths.runsDir,
     paths.pendingDir,
     paths.pendingConflictsDir,

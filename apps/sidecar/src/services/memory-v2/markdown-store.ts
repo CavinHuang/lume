@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync,
 import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import { getMemoryV2ScopePaths, type MemoryV2ScopePaths } from "./paths";
+import { normalizeMemoryV2Claim } from "./claim";
 import type {
   MemoryV2Candidate,
   MemoryV2Entry,
@@ -118,7 +119,8 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
     superseded_by: null,
     applies_when: candidate.appliesWhen ?? {},
     valid_from: null,
-    valid_to: null
+    valid_to: null,
+    ...(candidate.claim ? { claim: candidate.claim } : {})
   };
   const filename = `${now.slice(0, 10)}-${id}.md`;
   const path = join(paths.entriesDir, filename);
@@ -173,7 +175,8 @@ export function writePending(input: {
     candidate: {
       kind: input.candidate.kind,
       targetScope: input.candidate.targetScope,
-      statement: input.candidate.statement.trim()
+      statement: input.candidate.statement.trim(),
+      ...(input.candidate.claim ? { claim: input.candidate.claim } : {})
     },
     existing: input.existingIds?.length ? { ids: input.existingIds } : undefined,
     reason: input.reason,
@@ -390,7 +393,8 @@ function normalizeEntryFrontmatter(raw: MemoryV2EntryFrontmatter, path: string):
     applies_when: raw.applies_when ?? {},
     valid_from: raw.valid_from ?? null,
     valid_to: raw.valid_to ?? null,
-    pinned: Boolean(raw.pinned)
+    pinned: Boolean(raw.pinned),
+    claim: normalizeMemoryV2Claim(raw.claim)
   };
 }
 
@@ -400,6 +404,10 @@ function normalizePendingFrontmatter(raw: MemoryV2PendingFrontmatter, path: stri
   }
   return {
     ...raw,
+    candidate: {
+      ...raw.candidate,
+      claim: normalizeMemoryV2Claim(raw.candidate.claim)
+    },
     existing: raw.existing?.ids?.length ? { ids: cleanList(raw.existing.ids) } : undefined,
     evidence: raw.evidence ?? undefined,
     status: raw.status ?? "open"

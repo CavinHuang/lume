@@ -84,4 +84,165 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
     expect(second.pending?.frontmatter.type).toBe("stale");
   });
+
+  test("does not append duplicate preferred-name profile memories", () => {
+    const first = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Mason",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"]
+      }
+    });
+    const second = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Mason",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"]
+      }
+    });
+
+    expect(first.action).toBe("new");
+    expect(second.action).toBe("duplicate");
+    expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
+  });
+
+  test("uses claim key to skip duplicate preferred-name memories", () => {
+    const first = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被叫 Mason",
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }
+    });
+    const second = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Mason",
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }
+    });
+
+    expect(first.action).toBe("new");
+    expect(second.action).toBe("duplicate");
+    expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
+  });
+
+  test("routes preferred-name changes to conflict review", () => {
+    const first = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Mason",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"]
+      }
+    });
+    const second = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Cavin",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"]
+      }
+    });
+
+    expect(second.action).toBe("conflict");
+    expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
+    expect(second.pending?.frontmatter.type).toBe("conflict");
+  });
+
+  test("routes same claim key with different object to conflict review", () => {
+    const first = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Mason",
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }
+    });
+    const second = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Cavin",
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Cavin"
+        }
+      }
+    });
+
+    expect(first.action).toBe("new");
+    expect(second.action).toBe("conflict");
+    expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
+    expect(second.pending?.frontmatter.type).toBe("conflict");
+  });
+
+  test("does not conflict assistant preferred name with user preferred name", () => {
+    const userName = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Mason",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"],
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }
+    });
+    const assistantName = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望用 Alice 称呼助手",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"],
+        claim: {
+          subject: "assistant/self",
+          predicate: "preferred_name",
+          object: "Alice"
+        }
+      }
+    });
+
+    expect(userName.action).toBe("new");
+    expect(assistantName.action).toBe("new");
+  });
 });

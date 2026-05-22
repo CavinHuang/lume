@@ -14,6 +14,7 @@ export type ProviderType =
   | 'anthropic-compatible'
   | 'openai'
   | 'jina'
+  | 'siliconflow'
   | 'openrouter'
   | 'deepseek'
   | 'google'
@@ -45,6 +46,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   'anthropic-compatible': 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
   jina: 'https://api.jina.ai/v1',
+  siliconflow: 'https://api.siliconflow.cn/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   deepseek: 'https://api.deepseek.com/v1',
   google: 'https://generativelanguage.googleapis.com',
@@ -69,6 +71,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   'anthropic-compatible': 'Anthropic 兼容模式',
   openai: 'OpenAI',
   jina: 'Jina AI',
+  siliconflow: '硅基流动',
   openrouter: 'OpenRouter',
   deepseek: 'DeepSeek',
   google: 'Google',
@@ -91,6 +94,7 @@ export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   'anthropic-compatible': 'anthropic',
   openai: 'openai',
   jina: 'openai',
+  siliconflow: 'openai',
   openrouter: 'openai',
   deepseek: 'openai',
   google: 'google',
@@ -133,7 +137,7 @@ export interface ChannelModel {
 function includesEmbeddingKeyword(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase() ?? ''
   if (!normalized) return false
-  return normalized.includes('embedding') || normalized.includes('embed')
+  return normalized.includes('embedding') || normalized.includes('embed') || normalized.includes('bge-m3')
 }
 
 export function inferChannelModelCapabilities(input: {
@@ -199,6 +203,19 @@ export function getSuggestedProviderModels(provider: ProviderType): ChannelModel
       { id: 'jina-embeddings-v5-text-nano', name: 'jina-embeddings-v5-text-nano', enabled: true },
       { id: 'jina-embeddings-v4', name: 'jina-embeddings-v4', enabled: true },
       { id: 'jina-embeddings-v3', name: 'jina-embeddings-v3', enabled: true },
+    ].map((model) => normalizeChannelModel({ ...model, provider }))
+  }
+  if (provider === 'siliconflow') {
+    return [
+      { id: 'Qwen/Qwen3-Embedding-0.6B', name: 'Qwen/Qwen3-Embedding-0.6B', enabled: true },
+      { id: 'Qwen/Qwen3-Embedding-4B', name: 'Qwen/Qwen3-Embedding-4B', enabled: true },
+      { id: 'Qwen/Qwen3-Embedding-8B', name: 'Qwen/Qwen3-Embedding-8B', enabled: true },
+      {
+        id: 'BAAI/bge-m3',
+        name: 'BAAI/bge-m3',
+        enabled: true,
+        capabilities: { chat: false, embedding: true },
+      },
     ].map((model) => normalizeChannelModel({ ...model, provider }))
   }
   return []

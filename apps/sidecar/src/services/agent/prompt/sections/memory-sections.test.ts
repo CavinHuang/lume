@@ -39,6 +39,9 @@ describe("memory-sections", () => {
 
     expect(prompt).toContain("durable preference");
     expect(prompt).toContain("use memory.remember");
+    expect(prompt).toContain("claim");
+    expect(prompt).toContain("user/self");
+    expect(prompt).toContain("assistant/self");
     expect(prompt).not.toContain("After completing any non-trivial task");
     expect(prompt).not.toContain("At natural conversation breakpoints");
     expect(prompt).not.toContain("## Memory Write Rules");

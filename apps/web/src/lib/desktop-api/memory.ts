@@ -1,6 +1,8 @@
 import type {
   MemoryReadToolInput,
   MemoryReadToolResult,
+  MemoryOrganizeHistoryInput,
+  MemoryOrganizeHistoryResult,
   MemoryRememberToolInput,
   MemoryRuntimeConfig,
   MemorySettingsSnapshot,
@@ -18,6 +20,9 @@ export const rememberMemory = (input: MemoryRememberToolInput) =>
 
 export const getMemorySettingsSnapshot = (workspaceSlug: string) =>
   sidecarCall<MemorySettingsSnapshot>(MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT, { workspaceSlug })
+
+export const organizeMemoryHistory = (input: MemoryOrganizeHistoryInput) =>
+  sidecarCall<MemoryOrganizeHistoryResult>(MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY, input)
 
 export const openMemorySource = (input: { workspaceSlug: string; path: string }) =>
   sidecarCall<{ ok: true }>(MEMORY_IPC_CHANNELS.OPEN_SOURCE, input)

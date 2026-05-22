@@ -406,51 +406,66 @@ fn open_file_dialog() -> Result<serde_json::Value, String> {
 
     let mut out = Vec::<serde_json::Value>::new();
     for file_path in files {
-        let filename = file_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
-        let ext = file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let media_type = match ext.as_str() {
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "pdf" => "application/pdf",
-            "txt" => "text/plain",
-            "md" => "text/markdown",
-            "json" => "application/json",
-            "csv" => "text/csv",
-            "xml" => "application/xml",
-            "html" => "text/html",
-            "doc" => "application/msword",
-            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "xls" => "application/vnd.ms-excel",
-            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "ppt" => "application/vnd.ms-powerpoint",
-            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "odt" => "application/vnd.oasis.opendocument.text",
-            "odp" => "application/vnd.oasis.opendocument.presentation",
-            "ods" => "application/vnd.oasis.opendocument.spreadsheet",
-            _ => "application/octet-stream",
-        };
-        let size = std::fs::metadata(&file_path)
-            .map_err(|e| format!("stat selected file failed ({}): {e}", file_path.display()))?
-            .len() as usize;
-        out.push(serde_json::json!({
-            "filename": filename,
-            "mediaType": media_type,
-            "size": size,
-            "sourcePath": file_path.to_string_lossy().to_string()
-        }));
+        out.push(file_metadata_json(&file_path)?);
     }
 
     Ok(serde_json::json!({ "files": out }))
+}
+
+#[tauri::command]
+fn stat_file_paths(paths: Vec<String>) -> Result<serde_json::Value, String> {
+    let mut out = Vec::<serde_json::Value>::new();
+    for path in paths {
+        out.push(file_metadata_json(Path::new(&path))?);
+    }
+    Ok(serde_json::json!({ "files": out }))
+}
+
+fn file_metadata_json(file_path: &Path) -> Result<serde_json::Value, String> {
+    let metadata = std::fs::metadata(file_path)
+        .map_err(|e| format!("stat file failed ({}): {e}", file_path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("path is not a file: {}", file_path.display()));
+    }
+    let filename = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let media_type = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        "xml" => "application/xml",
+        "html" => "text/html",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "odt" => "application/vnd.oasis.opendocument.text",
+        "odp" => "application/vnd.oasis.opendocument.presentation",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        _ => "application/octet-stream",
+    };
+    Ok(serde_json::json!({
+        "filename": filename,
+        "mediaType": media_type,
+        "size": metadata.len() as usize,
+        "sourcePath": file_path.to_string_lossy().to_string()
+    }))
 }
 
 #[tauri::command]
@@ -1214,6 +1229,7 @@ fn main() {
             sidecar_call,
             desktop_sync_window_behavior,
             open_file_dialog,
+            stat_file_paths,
             open_folder_dialog,
             open_external,
             read_text_file

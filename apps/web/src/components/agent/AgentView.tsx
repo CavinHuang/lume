@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
-import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, type SidePanelView } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput, type PendingMessageAttachment } from './AgentInput'
@@ -12,10 +12,17 @@ import { SidePanel } from './SidePanel'
 import { Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import {
+  createPendingAttachmentsFromSourcePaths,
+  isFileDragPayload,
+  type DragDropPayload,
+} from './agent-file-drop'
 
 interface AgentViewProps {
   threadId: string
 }
+
+const SIDE_PANEL_ANIMATION_MS = 220
 
 export function AgentView({ threadId }: AgentViewProps) {
   const streamingState = useAtomValue(agentStreamingStatesAtom)[threadId] ?? 'idle'
@@ -31,6 +38,10 @@ export function AgentView({ threadId }: AgentViewProps) {
 
   const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
   const sidePanelView = sidePanelViews[threadId] ?? null
+  const [renderedSidePanelView, setRenderedSidePanelView] = useState<SidePanelView>(sidePanelView)
+  const [sidePanelVisible, setSidePanelVisible] = useState(Boolean(sidePanelView))
+  const sidePanelCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sidePanelOpenTimerRef = useRef<number | null>(null)
 
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -43,7 +54,6 @@ export function AgentView({ threadId }: AgentViewProps) {
 
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
-  const dragCounter = useState({ current: 0 })[0]
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([])
   const [threadFilePreview, setThreadFilePreview] = useState<{ path: string; key: number } | null>(null)
   const [memoryFilePreview, setMemoryFilePreview] = useState<{ path: string; key: number } | null>(null)
@@ -64,63 +74,6 @@ export function AgentView({ threadId }: AgentViewProps) {
   const clearPendingAttachments = useCallback(() => {
     setPendingAttachments([])
   }, [])
-
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    dragCounter.current++
-    if (e.dataTransfer.types.includes('Files')) {
-      setIsDragOver(true)
-    }
-  }, [dragCounter])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    dragCounter.current--
-    if (dragCounter.current <= 0) {
-      dragCounter.current = 0
-      setIsDragOver(false)
-    }
-  }, [dragCounter])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-  }, [])
-
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    dragCounter.current = 0
-    setIsDragOver(false)
-
-    const files = Array.from(e.dataTransfer.files)
-    if (files.length === 0) return
-
-    try {
-      const attachments: PendingMessageAttachment[] = []
-      for (const file of files) {
-        const data = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => {
-            const result = reader.result as string
-            resolve(result.split(',')[1] ?? '')
-          }
-          reader.onerror = reject
-          reader.readAsDataURL(file)
-        })
-        attachments.push({
-          id: createPendingAttachmentId(),
-          filename: file.name,
-          mediaType: file.type || 'application/octet-stream',
-          size: file.size,
-          data,
-        })
-      }
-      addPendingAttachments(attachments)
-      toast.success(`已添加 ${files.length} 个文件`)
-    } catch (error) {
-      console.error('[AgentView] 文件拖拽读取失败:', error)
-      toast.error('文件读取失败')
-    }
-  }, [addPendingAttachments, dragCounter])
 
   const openThreadFilePreview = useCallback((path: string) => {
     setMemoryFilePreview(null)
@@ -155,17 +108,86 @@ export function AgentView({ threadId }: AgentViewProps) {
   }, [threadId])
 
   useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    import('@tauri-apps/api/window')
+      .then(async ({ getCurrentWindow }) => {
+        unlisten = await getCurrentWindow().onDragDropEvent(async (event) => {
+          if (disposed) return
+          const payload = event.payload as DragDropPayload
+
+          if (isFileDragPayload(payload)) {
+            setIsDragOver(payload.type === 'enter')
+          } else if (payload.type === 'leave') {
+            setIsDragOver(false)
+          }
+
+          if (payload.type !== 'drop') return
+          setIsDragOver(false)
+          try {
+            const attachments = await createPendingAttachmentsFromSourcePaths(payload.paths)
+            if (attachments.length === 0) return
+            addPendingAttachments(attachments)
+            toast.success(`已添加 ${attachments.length} 个文件`)
+          } catch (error) {
+            console.error('[AgentView] 桌面文件拖拽读取失败:', error)
+            toast.error('文件读取失败')
+          }
+        })
+      })
+      .catch(() => undefined)
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [addPendingAttachments, threadId])
+
+  useEffect(() => {
     setApprovalOverlayVisible(Boolean(activeTaskApproval))
   }, [activeTaskApproval?.contractId, threadId])
 
+  useEffect(() => {
+    if (sidePanelCloseTimerRef.current !== null) {
+      clearTimeout(sidePanelCloseTimerRef.current)
+      sidePanelCloseTimerRef.current = null
+    }
+    if (sidePanelOpenTimerRef.current !== null) {
+      cancelAnimationFrame(sidePanelOpenTimerRef.current)
+      sidePanelOpenTimerRef.current = null
+    }
+
+    if (sidePanelView) {
+      setRenderedSidePanelView(sidePanelView)
+      setSidePanelVisible(false)
+      sidePanelOpenTimerRef.current = requestAnimationFrame(() => {
+        sidePanelOpenTimerRef.current = requestAnimationFrame(() => {
+          setSidePanelVisible(true)
+          sidePanelOpenTimerRef.current = null
+        })
+      })
+      return
+    }
+
+    setSidePanelVisible(false)
+    sidePanelCloseTimerRef.current = setTimeout(() => {
+      setRenderedSidePanelView(null)
+      sidePanelCloseTimerRef.current = null
+    }, SIDE_PANEL_ANIMATION_MS)
+  }, [sidePanelView])
+
+  useEffect(() => () => {
+    if (sidePanelCloseTimerRef.current !== null) {
+      clearTimeout(sidePanelCloseTimerRef.current)
+    }
+    if (sidePanelOpenTimerRef.current !== null) {
+      cancelAnimationFrame(sidePanelOpenTimerRef.current)
+    }
+  }, [])
+
   return (
-    <div
-      className="flex-1 flex min-h-0 relative"
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
+    <div className="flex-1 flex min-h-0 relative">
       {/* 主列 */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <AgentHeader threadId={threadId} />
@@ -215,16 +237,19 @@ export function AgentView({ threadId }: AgentViewProps) {
       </div>
 
       {/* 右侧面板 */}
-      {sidePanelView && (
-        <SidePanel
-          threadId={threadId}
-          view={sidePanelView}
-          workspaceSlug={workspaceSlug}
-          threadFilePathToPreview={threadFilePathToPreview}
-          threadFilePreviewKey={threadFilePreviewKey}
-          memoryFilePathToPreview={memoryFilePathToPreview}
-          memoryFilePreviewKey={memoryFilePreviewKey}
-        />
+      {renderedSidePanelView && (
+        <div className="flex min-h-0 shrink-0">
+          <SidePanel
+            threadId={threadId}
+            view={renderedSidePanelView}
+            open={sidePanelVisible}
+            workspaceSlug={workspaceSlug}
+            threadFilePathToPreview={threadFilePathToPreview}
+            threadFilePreviewKey={threadFilePreviewKey}
+            memoryFilePathToPreview={memoryFilePathToPreview}
+            memoryFilePreviewKey={memoryFilePreviewKey}
+          />
+        </div>
       )}
 
       {/* 拖拽覆盖层 */}
@@ -243,10 +268,4 @@ export function AgentView({ threadId }: AgentViewProps) {
       )}
     </div>
   )
-}
-
-function createPendingAttachmentId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `attachment:${Date.now()}:${Math.random().toString(36).slice(2)}`
 }

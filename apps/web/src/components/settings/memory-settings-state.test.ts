@@ -2,10 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import {
   MEMORY_SETTINGS_VIEWS,
   MEMORY_TOOL_POLICY_GROUPS,
+  buildEmbeddingModelOptions,
+  buildRerankModelOptions,
   buildMemoryOverviewMetrics,
   isMemoryToolGroupEnabled,
   pendingNotice,
   setMemoryToolGroupEnabled,
+  summarizeMemoryOrganizeResult,
   summarizeMemoryEntry,
 } from './memory-settings-state'
 
@@ -41,6 +44,16 @@ describe('memory settings state', () => {
       workspaceEntries: [],
       globalEntries: [],
       pending: [],
+      retrieval: {
+        semantic: {
+          mode: 'auto',
+          status: 'not_configured',
+          message: '未配置 embedding，基础召回仍可用',
+        },
+        rerank: {
+          source: 'disabled',
+        },
+      },
     })
 
     expect(metrics.map((item) => item.value)).toEqual(['3', '2', '1', '1', '2'])
@@ -69,6 +82,26 @@ describe('memory settings state', () => {
     })).toBe('工作区 · 决策 · 可能过期')
   })
 
+  test('organize result summary keeps the history action scannable', () => {
+    expect(summarizeMemoryOrganizeResult({
+      workspaceSlug: 'demo',
+      scannedSources: 2,
+      scannedMessages: 20,
+      candidateCount: 4,
+      actions: {
+        duplicate: 1,
+        related: 1,
+        mergeable: 0,
+        conflict: 1,
+        suspected_stale: 0,
+        low_confidence: 0,
+        new: 1,
+        suppressed: 0,
+      },
+      items: [],
+    })).toBe('扫描 20 条用户消息 · 抽取 4 条候选 · 写入 2 条 · 重复 1 条 · 待处理 1 条')
+  })
+
   test('memory tool policy group helpers toggle allow entries', () => {
     const config = {
       version: 1,
@@ -88,5 +121,73 @@ describe('memory settings state', () => {
       'group:memory-write',
     ])
     expect(setMemoryToolGroupEnabled(config, 'group:memory', false).allow).toEqual([])
+  })
+
+  test('embedding options only include enabled embedding-capable models', () => {
+    expect(buildEmbeddingModelOptions([{
+      id: 'openai-main',
+      name: 'OpenAI',
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'encrypted',
+      enabled: true,
+      createdAt: 1,
+      updatedAt: 1,
+      models: [
+        { id: 'gpt-5', name: 'GPT-5', enabled: true, capabilities: { chat: true } },
+        { id: 'text-embedding-3-small', name: 'Embed small', enabled: true, capabilities: { embedding: true } },
+        { id: 'text-embedding-disabled', name: 'Disabled embed', enabled: false, capabilities: { embedding: true } },
+      ],
+    }, {
+      id: 'siliconflow',
+      name: 'SiliconFlow',
+      provider: 'siliconflow',
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      apiKey: 'encrypted',
+      enabled: true,
+      createdAt: 1,
+      updatedAt: 1,
+      models: [
+        { id: 'Qwen/Qwen3-Embedding-0.6B', name: 'Qwen3 0.6B', enabled: true, capabilities: { embedding: true } },
+      ],
+    }, {
+      id: 'disabled',
+      name: 'Disabled',
+      provider: 'jina',
+      baseUrl: 'https://api.jina.ai/v1',
+      apiKey: 'encrypted',
+      enabled: false,
+      createdAt: 1,
+      updatedAt: 1,
+      models: [
+        { id: 'jina-embeddings-v3', name: 'Jina v3', enabled: true, capabilities: { embedding: true } },
+      ],
+    }])).toEqual([{
+      modelRef: 'openai/text-embedding-3-small',
+      label: 'Embed small · OpenAI',
+    }, {
+      modelRef: 'siliconflow/Qwen/Qwen3-Embedding-0.6B',
+      label: 'Qwen3 0.6B · SiliconFlow',
+    }])
+  })
+
+  test('rerank options include enabled chat models but skip embedding-only models', () => {
+    expect(buildRerankModelOptions([{
+      id: 'glm',
+      name: 'GLM',
+      provider: 'zai',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: 'encrypted',
+      enabled: true,
+      createdAt: 1,
+      updatedAt: 1,
+      models: [
+        { id: 'glm-4.5-air', name: 'GLM 4.5 Air', enabled: true, capabilities: { chat: true } },
+        { id: 'embedding-3', name: 'Embedding 3', enabled: true, capabilities: { embedding: true, chat: false } },
+      ],
+    }])).toEqual([{
+      modelRef: 'zai/glm-4.5-air',
+      label: 'GLM 4.5 Air · GLM',
+    }])
   })
 })

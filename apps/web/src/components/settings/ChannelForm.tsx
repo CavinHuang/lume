@@ -22,6 +22,38 @@ interface Props {
 
 const PROVIDERS = Object.entries(PROVIDER_LABELS) as [ProviderType, string][]
 
+function normalizeModelSearch(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+export function filterChannelModels(models: ChannelModel[], query: string): ChannelModel[] {
+  const normalizedQuery = normalizeModelSearch(query)
+  if (!normalizedQuery) return models
+  return models.filter((model) => {
+    const id = model.id.toLowerCase()
+    const name = model.name.toLowerCase()
+    return id.includes(normalizedQuery) || name.includes(normalizedQuery)
+  })
+}
+
+export function setChannelModelsEnabled(
+  models: ChannelModel[],
+  modelIds: string[],
+  enabled: boolean,
+): ChannelModel[] {
+  const selectedIds = new Set(modelIds)
+  return models.map((model) => (
+    selectedIds.has(model.id) ? { ...model, enabled } : model
+  ))
+}
+
+export function invertChannelModelsEnabled(models: ChannelModel[], modelIds: string[]): ChannelModel[] {
+  const selectedIds = new Set(modelIds)
+  return models.map((model) => (
+    selectedIds.has(model.id) ? { ...model, enabled: !model.enabled } : model
+  ))
+}
+
 export function ChannelForm({
   mode = 'create',
   initialValue,
@@ -35,6 +67,7 @@ export function ChannelForm({
   const [apiKey, setApiKey] = useState(initialValue?.apiKey ?? '')
   const [baseUrl, setBaseUrl] = useState(initialValue?.baseUrl ?? PROVIDER_DEFAULT_URLS['anthropic'])
   const [models, setModels] = useState<ChannelModel[]>(initialValue?.models ?? [])
+  const [modelSearch, setModelSearch] = useState('')
   const [fetching, setFetching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [fetchMsg, setFetchMsg] = useState('')
@@ -46,6 +79,7 @@ export function ChannelForm({
       setApiKey('')
       setBaseUrl(PROVIDER_DEFAULT_URLS.anthropic)
       setModels([])
+      setModelSearch('')
       setFetchMsg('')
       return
     }
@@ -55,6 +89,7 @@ export function ChannelForm({
     setApiKey(initialValue.apiKey)
     setBaseUrl(initialValue.baseUrl)
     setModels(initialValue.models)
+    setModelSearch('')
     setFetchMsg('')
   }, [initialValue])
 
@@ -62,6 +97,7 @@ export function ChannelForm({
     setProvider(p)
     setBaseUrl(PROVIDER_DEFAULT_URLS[p])
     setModels([])
+    setModelSearch('')
     setFetchMsg('')
   }
 
@@ -92,6 +128,9 @@ export function ChannelForm({
       setSaving(false)
     }
   }
+
+  const visibleModels = filterChannelModels(models, modelSearch)
+  const visibleModelIds = visibleModels.map((model) => model.id)
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5 max-w-lg">
@@ -150,21 +189,58 @@ export function ChannelForm({
         </div>
         {fetchMsg && <p className="text-[11px] text-muted-foreground">{fetchMsg}</p>}
         {models.length > 0 && (
-          <ScrollArea className="max-h-48 rounded-lg border">
-            <div className="divide-y">
-              {models.map((m) => (
-                <label key={m.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/50">
-                  <input
-                    type="checkbox"
-                    checked={m.enabled}
-                    disabled={disabled}
-                    onChange={(e) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: e.target.checked } : x))}
-                  />
-                  <span className="text-[12px] font-mono truncate">{m.id}</span>
-                </label>
-              ))}
+          <div className="space-y-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                value={modelSearch}
+                onChange={(e) => setModelSearch(e.target.value)}
+                placeholder="搜索模型 ID 或名称"
+                className="h-8 text-[12px]"
+                disabled={disabled}
+              />
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={disabled || visibleModelIds.length === 0}
+                  onClick={() => setModels((prev) => setChannelModelsEnabled(prev, visibleModelIds, true))}
+                >
+                  全选
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={disabled || visibleModelIds.length === 0}
+                  onClick={() => setModels((prev) => invertChannelModelsEnabled(prev, visibleModelIds))}
+                >
+                  反选
+                </Button>
+              </div>
             </div>
-          </ScrollArea>
+            {modelSearch.trim() && (
+              <p className="text-[11px] text-muted-foreground">匹配 {visibleModels.length} / {models.length} 个模型</p>
+            )}
+            <ScrollArea className="max-h-48 rounded-lg border">
+              <div className="divide-y">
+                {visibleModels.map((m) => (
+                  <label key={m.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/50">
+                    <input
+                      type="checkbox"
+                      checked={m.enabled}
+                      disabled={disabled}
+                      onChange={(e) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: e.target.checked } : x))}
+                    />
+                    <span className="text-[12px] font-mono truncate">{m.id}</span>
+                  </label>
+                ))}
+                {visibleModels.length === 0 && (
+                  <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">没有匹配的模型</div>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
         )}
       </div>
 

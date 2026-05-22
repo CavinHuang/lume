@@ -47,6 +47,8 @@ mock.module('@/lib/desktop-api', () => ({
     (globalThis as any).__lumeDesktopAgentSend?.(...args) ?? Promise.resolve(undefined),
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
+  statFilePaths: () =>
+    (globalThis as any).__lumeDesktopStatFilePaths?.() ?? Promise.resolve({ files: [] }),
   openExternal: () => Promise.resolve(undefined),
   executeTaskContract: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopExecuteTaskContract?.(...args) ?? Promise.resolve({ ok: true }),

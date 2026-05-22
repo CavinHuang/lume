@@ -43,6 +43,10 @@ Structured memory — use memory.remember:
 - When a mistake or correction should prevent future errors
 
 Use memory.remember when the user says "记住这个", "以后都这样", "这是我的偏好", or states a durable preference/fact/decision.
+When the memory is a stable fact edge, include claim:
+- User's preferred name: claim subject=user/self, predicate=preferred_name, object=<name>
+- Assistant nickname given by the user: claim subject=assistant/self, predicate=preferred_name, object=<name>
+Assistant nickname claims are user preferences; do not treat them as product identity changes.
 Do NOT save trivial exchanges, greetings, or information already in MEMORY.md.`
       );
     }

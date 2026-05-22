@@ -12,7 +12,9 @@
       {
         "title": "Lume",
         "width": 1640,
-        "height": 960
+        "height": 960,
+        "theme": "Light",
+        "titleBarStyle": "Overlay"
       }
     ],
     "security": {

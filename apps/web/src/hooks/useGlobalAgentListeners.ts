@@ -11,6 +11,7 @@ import {
   agentThreadsAtom,
   agentErrorMessagesAtom,
   agentSidePanelViewAtom,
+  tabsAtom,
 } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
@@ -42,6 +43,7 @@ export function useGlobalAgentListeners() {
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
+  const setTabs = useSetAtom(tabsAtom)
 
   useEffect(() => {
     sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE)
@@ -198,10 +200,15 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.TITLE_UPDATED: {
           const { threadId, title } = params as { threadId: string; title: string }
           setThreads((prev) => prev.map((t) => t.id === threadId ? { ...t, title } : t))
+          setTabs((prev) => prev.map((tab) => (
+            tab.type === 'agent' && (tab.id === threadId || tab.threadId === threadId)
+              ? { ...tab, title }
+              : tab
+          )))
           break
         }
       }
     })
     return () => { unlisten.then((fn) => fn()) }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs])
 }

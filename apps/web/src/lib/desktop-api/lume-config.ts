@@ -33,6 +33,15 @@ export const updateSubagentModelStrategy = (value: LumeConfigSubagentModelStrate
     summary: 'update subagent default model strategy',
   })
 
+export const updateEmbeddingModelRef = (modelRef: string, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'models.embedding.defaultModelRef',
+    value: modelRef,
+    summary: 'update memory embedding model',
+  })
+
 export const updateAgentThinkingLevel = (value: LumeConfigThinkingLevel, workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
     source: 'user',

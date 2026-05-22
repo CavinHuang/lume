@@ -78,6 +78,11 @@ export const memoryRememberToolInputSchema = z.object({
   requireReview: z.boolean().optional()
 });
 
+export const memoryOrganizeHistoryInputSchema = z.object({
+  workspaceSlug: idSchema,
+  limit: z.number().int().min(1).max(1000).optional()
+});
+
 export const memoryOpenSourceInputSchema = z.object({
   workspaceSlug: idSchema,
   path: z.string().min(1)
@@ -88,11 +93,17 @@ export const memoryToolPolicySchema = z.object({
   deny: z.array(z.string()).optional()
 });
 
+const memoryRetrievalConfigSchema = z.object({
+  semantic: z.enum(["auto", "off"]).optional(),
+  rerankModelRef: z.string().trim().min(1).optional()
+}).strict();
+
 export const updateMemoryRuntimeConfigInputSchema = z.object({
   tools: memoryToolPolicySchema.optional(),
   citations: z.enum(["on", "off", "auto"]).optional(),
   sources: z.array(z.enum(["memory", "sessions"])).optional(),
-  extraPaths: z.array(z.string()).optional()
+  extraPaths: z.array(z.string()).optional(),
+  retrieval: memoryRetrievalConfigSchema.optional()
 });
 
 export const agentCreateThreadInputSchema = z.object({
@@ -197,6 +208,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   }),
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.subagent.defaultModelRef"),
+    value: nonEmptyTrimmedStringSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.embedding.defaultModelRef"),
     value: nonEmptyTrimmedStringSchema
   }),
   lumeConfigUpdateBaseSchema.extend({

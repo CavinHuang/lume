@@ -1,6 +1,8 @@
 import type {
+  Channel,
   MemoryKind,
   MemoryPendingCounts,
+  MemoryOrganizeHistoryResult,
   MemoryRuntimeConfig,
   MemorySettingsEntrySummary,
   MemorySettingsPendingSummary,
@@ -86,6 +88,38 @@ export const MEMORY_TOOL_POLICY_GROUPS = [
 
 export type MemoryToolPolicyGroupId = typeof MEMORY_TOOL_POLICY_GROUPS[number]['id']
 
+export interface MemoryEmbeddingModelOption {
+  modelRef: string
+  label: string
+}
+
+function buildChannelModelRef(channel: Channel, modelId: string): string {
+  return modelId.startsWith(`${channel.provider}/`) ? modelId : `${channel.provider}/${modelId}`
+}
+
+export function buildEmbeddingModelOptions(channels: Channel[]): MemoryEmbeddingModelOption[] {
+  return channels
+    .filter((channel) => channel.enabled)
+    .flatMap((channel) => channel.models
+      .filter((model) => model.enabled && model.capabilities?.embedding === true)
+      .map((model) => ({
+        modelRef: buildChannelModelRef(channel, model.id),
+        label: `${model.name} · ${channel.name}`,
+      })))
+}
+
+export function buildRerankModelOptions(channels: Channel[]): MemoryEmbeddingModelOption[] {
+  return channels
+    .filter((channel) => channel.enabled)
+    .flatMap((channel) => channel.models
+      .filter((model) => model.enabled && model.capabilities?.chat !== false)
+      .filter((model) => model.capabilities?.embedding !== true || model.capabilities?.chat === true)
+      .map((model) => ({
+        modelRef: buildChannelModelRef(channel, model.id),
+        label: `${model.name} · ${channel.name}`,
+      })))
+}
+
 export function isMemoryToolGroupEnabled(policy: MemoryToolPolicy | undefined, groupId: MemoryToolPolicyGroupId): boolean {
   return Boolean(policy?.allow?.includes(groupId))
 }
@@ -146,6 +180,18 @@ export function pendingNotice(counts?: MemoryPendingCounts): string {
     counts.lowConfidence > 0 ? `${counts.lowConfidence} 个低置信` : '',
   ].filter(Boolean)
   return parts.join(' · ')
+}
+
+export function summarizeMemoryOrganizeResult(result: MemoryOrganizeHistoryResult): string {
+  const written = result.actions.new + result.actions.related
+  const pending = result.actions.conflict + result.actions.suspected_stale + result.actions.low_confidence
+  return [
+    `扫描 ${result.scannedMessages} 条用户消息`,
+    `抽取 ${result.candidateCount} 条候选`,
+    `写入 ${written} 条`,
+    `重复 ${result.actions.duplicate} 条`,
+    `待处理 ${pending} 条`,
+  ].join(' · ')
 }
 
 export function summarizeMemoryEntry(entry: MemorySettingsEntrySummary): string {

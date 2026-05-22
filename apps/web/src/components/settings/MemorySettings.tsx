@@ -4,13 +4,17 @@ import {
   Clock3,
   FileText,
   Globe2,
+  History,
   RefreshCw,
+  SearchCheck,
   ShieldCheck,
 } from 'lucide-react'
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import type {
+  Channel,
   MemoryCitationsMode,
+  MemoryOrganizeHistoryResult,
   MemoryRuntimeConfig,
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
@@ -23,7 +27,10 @@ import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   getMemoryRuntimeConfig,
   getMemorySettingsSnapshot,
+  listChannels,
   openMemorySource,
+  organizeMemoryHistory,
+  updateEmbeddingModelRef,
   updateMemoryRuntimeConfig,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
@@ -36,10 +43,13 @@ import {
   MEMORY_SETTINGS_VIEWS,
   MEMORY_STATUS_LABELS,
   MEMORY_TOOL_POLICY_GROUPS,
+  buildEmbeddingModelOptions,
   buildMemoryOverviewMetrics,
+  buildRerankModelOptions,
   isMemoryToolGroupEnabled,
   pendingNotice,
   setMemoryToolGroupEnabled,
+  summarizeMemoryOrganizeResult,
   summarizeMemoryEntry,
   type MemorySettingsView,
   type MemoryToolPolicyGroupId,
@@ -56,15 +66,19 @@ export function MemorySettings() {
   const [view, setView] = React.useState<MemorySettingsView>('overview')
   const [runtimeConfig, setRuntimeConfig] = React.useState<MemoryRuntimeConfig | null>(null)
   const [snapshot, setSnapshot] = React.useState<MemorySettingsSnapshot | null>(null)
+  const [channels, setChannels] = React.useState<Channel[]>([])
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
+  const [organizeResult, setOrganizeResult] = React.useState<MemoryOrganizeHistoryResult | null>(null)
 
   const refresh = React.useCallback(async () => {
     if (!workspaceSlug) return
     try {
       const nextConfig = await getMemoryRuntimeConfig()
       const nextSnapshot = await getMemorySettingsSnapshot(workspaceSlug)
+      const nextChannels = await listChannels()
       setRuntimeConfig(nextConfig)
       setSnapshot(nextSnapshot)
+      setChannels(nextChannels)
     } catch (error) {
       console.error('[MemorySettings] refresh FAILED:', error)
       toast.error(memorySettingsErrorMessage(error))
@@ -103,6 +117,44 @@ export function MemorySettings() {
   const handleCitationsMode = (citations: MemoryCitationsMode) => runAction(`citations-${citations}`, async () => {
     const nextConfig = await updateMemoryRuntimeConfig({ citations })
     setRuntimeConfig(nextConfig)
+  })
+
+  const handleSemanticMode = (semantic: MemoryRuntimeConfig['retrieval']['semantic']) => runAction(`semantic-${semantic}`, async () => {
+    if (!runtimeConfig) return
+    const nextConfig = await updateMemoryRuntimeConfig({
+      retrieval: {
+        ...runtimeConfig.retrieval,
+        semantic,
+      },
+    })
+    setRuntimeConfig(nextConfig)
+    await refresh()
+  })
+
+  const handleEmbeddingModel = (modelRef: string) => runAction('embedding-model', async () => {
+    if (!workspaceSlug || !modelRef) return
+    await updateEmbeddingModelRef(modelRef, workspaceSlug)
+    await refresh()
+  })
+
+  const handleRerankModel = (modelRef: string) => runAction('rerank-model', async () => {
+    if (!runtimeConfig) return
+    const nextConfig = await updateMemoryRuntimeConfig({
+      retrieval: {
+        ...runtimeConfig.retrieval,
+        rerankModelRef: modelRef.trim() || undefined,
+      },
+    })
+    setRuntimeConfig(nextConfig)
+    await refresh()
+  })
+
+  const handleOrganizeHistory = () => runAction('organize-history', async () => {
+    if (!workspaceSlug) return
+    const result = await organizeMemoryHistory({ workspaceSlug, limit: 200 })
+    setOrganizeResult(result)
+    await refresh()
+    toast.success(summarizeMemoryOrganizeResult(result))
   })
 
   if (!workspaceSlug) {
@@ -158,10 +210,16 @@ export function MemorySettings() {
       {view === 'overview' && (
         <OverviewPanel
           busyAction={busyAction}
+          channels={channels}
           runtimeConfig={runtimeConfig}
           snapshot={snapshot}
           onCitationsMode={(mode) => void handleCitationsMode(mode)}
+          onEmbeddingModel={(modelRef) => void handleEmbeddingModel(modelRef)}
+          onOrganizeHistory={() => void handleOrganizeHistory()}
+          onRerankModel={(modelRef) => void handleRerankModel(modelRef)}
+          onSemanticMode={(mode) => void handleSemanticMode(mode)}
           onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
+          organizeResult={organizeResult}
         />
       )}
 
@@ -195,18 +253,32 @@ export function MemorySettings() {
 
 function OverviewPanel({
   busyAction,
+  channels,
   runtimeConfig,
   snapshot,
   onCitationsMode,
+  onEmbeddingModel,
+  onOrganizeHistory,
+  onRerankModel,
+  onSemanticMode,
   onToggle,
+  organizeResult,
 }: {
   busyAction: string | null
+  channels: Channel[]
   runtimeConfig: MemoryRuntimeConfig | null
   snapshot: MemorySettingsSnapshot | null
   onCitationsMode: (mode: MemoryCitationsMode) => void
+  onEmbeddingModel: (modelRef: string) => void
+  onOrganizeHistory: () => void
+  onRerankModel: (modelRef: string) => void
+  onSemanticMode: (mode: MemoryRuntimeConfig['retrieval']['semantic']) => void
   onToggle: (groupId: MemoryToolPolicyGroupId, enabled: boolean) => void
+  organizeResult: MemoryOrganizeHistoryResult | null
 }) {
   const metrics = buildMemoryOverviewMetrics(snapshot)
+  const embeddingOptions = React.useMemo(() => buildEmbeddingModelOptions(channels), [channels])
+  const rerankOptions = React.useMemo(() => buildRerankModelOptions(channels), [channels])
   return (
     <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -275,6 +347,95 @@ function OverviewPanel({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
+              <SearchCheck size={15} />
+              语义召回
+            </div>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+              {snapshot?.retrieval.semantic.message ?? '基础召回可用'}
+            </p>
+          </div>
+          <div className="flex rounded-[8px] border border-border bg-[var(--surface-1)] p-0.5">
+            {(['auto', 'off'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={!runtimeConfig || busyAction !== null}
+                onClick={() => onSemanticMode(mode)}
+                className={cn(
+                  'h-7 rounded-[6px] px-2 text-[12px] font-medium',
+                  runtimeConfig?.retrieval.semantic === mode
+                    ? 'bg-[var(--surface-2)] text-[var(--text-1)] shadow-sm'
+                    : 'text-[var(--text-3)]',
+                )}
+              >
+                {mode === 'auto' ? '自动' : '关闭'}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="block">
+            <span className="text-[12px] font-medium text-[var(--text-3)]">Embedding 模型</span>
+            <select
+              className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
+              disabled={embeddingOptions.length === 0 || busyAction !== null}
+              value={snapshot?.retrieval.semantic.embeddingModelRef ?? ''}
+              onChange={(event) => onEmbeddingModel(event.target.value)}
+            >
+              <option value="">{embeddingOptions.length === 0 ? '未检测到 Embedding 模型' : '未配置'}</option>
+              {embeddingOptions.map((option) => (
+                <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[12px] font-medium text-[var(--text-3)]">Rerank 模型</span>
+            <select
+              className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
+              disabled={rerankOptions.length === 0 || busyAction !== null}
+              value={runtimeConfig?.retrieval.rerankModelRef ?? ''}
+              onChange={(event) => onRerankModel(event.target.value)}
+            >
+              <option value="">
+                {snapshot?.retrieval.rerank.source === 'extraction' && snapshot.retrieval.rerank.modelRef
+                  ? `复用提取模型：${snapshot.retrieval.rerank.modelRef}`
+                  : '未启用'}
+              </option>
+              {rerankOptions.map((option) => (
+                <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
+            <History size={15} />
+            整理已有对话
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+            {organizeResult
+              ? summarizeMemoryOrganizeResult(organizeResult)
+              : '从当前工作区历史线程里提取稳定记忆，重复和冲突会自动归并。'}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busyAction !== null}
+          onClick={onOrganizeHistory}
+        >
+          <RefreshCw size={14} className={busyAction === 'organize-history' ? 'animate-spin' : undefined} />
+          {busyAction === 'organize-history' ? '整理中' : '开始整理'}
+        </Button>
       </div>
     </section>
   )

@@ -2,6 +2,18 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getMemoryV2ScopePaths } from "./paths";
 import { createMemoryV2Store, type MemoryV2Store } from "./markdown-store";
+import { createMemoryV2EmbeddingProvider, resolveMemoryEmbeddingModelRef, type MemoryV2EmbedTexts } from "./embedding";
+import { createMemoryV2Reranker, type MemoryV2RerankItems } from "./rerank";
+import { searchSemanticRecall } from "./semantic-index";
+import { getMemoryRuntimeConfig } from "./policy";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import {
+  claimFromEntry,
+  isClaimMatchForQuery,
+  planMemoryV2Query,
+  sortClaimMatchesFirst,
+  type MemoryV2QueryPlan
+} from "./claim";
 import type {
   MemoryV2Entry,
   MemoryV2Kind,
@@ -17,6 +29,9 @@ export interface MemoryV2SearchInput {
   intent?: MemoryV2SearchIntent;
   includeRecentDaily?: boolean;
   store?: MemoryV2Store;
+  semantic?: "auto" | "off";
+  embedTexts?: MemoryV2EmbedTexts;
+  rerankItems?: MemoryV2RerankItems;
 }
 
 export type MemoryV2SearchIntent =
@@ -33,39 +48,61 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
   const query = input.query.trim();
   if (!query) return [];
   const intent = input.intent ?? inferSearchIntent(query);
+  const queryPlan = planMemoryV2Query(query);
+  const runtimeConfig = getMemoryRuntimeConfig();
   const scopes = input.scopes ?? (input.workspaceSlug ? ["global", "workspace"] : ["global"]);
+  const entryCandidates = entryRecallCandidates(store.listEntries({
+    workspaceSlug: input.workspaceSlug,
+    scopes,
+    includeStatuses: ["active", "suspected_stale"]
+  }));
+  const scoredEntries = scoreRecallCandidates(entryCandidates, query, intent, queryPlan);
+  const hasExactClaimMatch = scoredEntries.some((item) => isClaimMatchForQuery(item, queryPlan));
   const candidates = [
-    ...entryRecallCandidates(store.listEntries({
-      workspaceSlug: input.workspaceSlug,
-      scopes,
-      includeStatuses: ["active", "suspected_stale"]
-    })),
+    ...entryCandidates,
     ...markdownRecallCandidates({
       workspaceSlug: input.workspaceSlug,
       scopes,
-      includeRecentDaily: input.includeRecentDaily ?? true
+      includeRecentDaily: input.includeRecentDaily ?? (!hasExactClaimMatch || queryPlan.includeConversationHistory)
     })
   ];
-  const scored = candidates
-    .map((item) => ({
-      item,
-      score: scoreRecallItem(item, query, intent)
-    }))
-    .filter(({ item, score }) => {
-      if (item.status === "suspected_stale") return score >= 7;
-      return score > 0;
-    })
+  const semanticCandidates = candidates.filter((item) => shouldKeepCandidateForQueryPlan(item, queryPlan));
+  const scored = [
+    ...scoredEntries,
+    ...scoreRecallCandidates(candidates.slice(entryCandidates.length), query, intent, queryPlan)
+  ];
+  const semantic = await maybeSemanticRecall({
+    input,
+    query,
+    candidates: semanticCandidates,
+    semantic: input.semantic ?? runtimeConfig.retrieval.semantic,
+    maxResults: input.maxResults ?? 8
+  });
+  const merged = mergeRecallItems([...scored, ...semantic])
     .sort((a, b) => b.score - a.score)
-    .slice(0, input.maxResults ?? 8)
-    .map(({ item, score }) => ({ ...item, score }));
-  return scored;
+    .slice(0, input.maxResults ?? 8);
+  const reranker = input.rerankItems ?? createMemoryV2Reranker({
+    workspaceSlug: input.workspaceSlug,
+    modelRef: runtimeConfig.retrieval.rerankModelRef
+  });
+  if (!reranker) return sortClaimMatchesFirst(merged, queryPlan);
+  try {
+    return sortClaimMatchesFirst((await reranker(merged, query)).slice(0, input.maxResults ?? 8), queryPlan);
+  } catch {
+    return sortClaimMatchesFirst(merged, queryPlan);
+  }
+}
+
+function shouldKeepCandidateForQueryPlan(item: MemoryV2RecallItem, queryPlan: MemoryV2QueryPlan): boolean {
+  if (!item.claim || !queryPlan.querySubject || queryPlan.desiredPredicates.length === 0) return true;
+  return isClaimMatchForQuery(item, queryPlan);
 }
 
 export function inferSearchIntent(query: string): MemoryV2SearchIntent {
   const text = query.toLowerCase();
   if (/architecture|design|boundary|架构|设计|边界/.test(text)) return "architecture";
   if (/continue|next|todo|state|继续|下一步|进度|状态/.test(text)) return "continue_task";
-  if (/who am i|what'?s my name|what is my name|call me|my name|我是谁|我叫什么|我的名字|叫我什么|怎么称呼|称呼我|名字/.test(text)) return "identity";
+  if (/who am i|who are you|what'?s my name|what is my name|what'?s your name|what is your name|call me|my name|your name|我是谁|你是谁|我叫什么|你叫什么|我的名字|你的名字|叫我什么|怎么称呼|称呼我|称呼你|名字/.test(text)) return "identity";
   if (/prefer|preference|rule|habit|偏好|习惯|规则/.test(text)) return "preference";
   if (/debug|error|fail|bug|报错|失败|修复/.test(text)) return "debug";
   if (/commit|push|pr|提交|推送/.test(text)) return "commit";
@@ -83,7 +120,8 @@ function entryRecallCandidates(entries: MemoryV2Entry[]): MemoryV2RecallItem[] {
     citation: entry.path,
     reason: entry.frontmatter.pinned ? "pinned memory" : "matched memory entry",
     score: 0,
-    pinned: entry.frontmatter.pinned
+    pinned: entry.frontmatter.pinned,
+    claim: claimFromEntry(entry)
   }));
 }
 
@@ -129,23 +167,67 @@ function markdownRecallCandidates(input: {
           score: 0
         });
       }
+      if (scope === "workspace") {
+        for (const path of recentRunFiles(paths.runsDir, 20)) {
+          const text = readFileSync(path, "utf-8").trim();
+          if (!text) continue;
+          items.push({
+            id: `${scope}:run:${path}`,
+            kind: "state",
+            scope,
+            status: "active",
+            statement: text,
+            path,
+            citation: path,
+            reason: "recent run memory",
+            score: 0
+          });
+        }
+      }
     }
   }
   return items;
 }
 
-function scoreRecallItem(item: MemoryV2RecallItem, query: string, intent: MemoryV2SearchIntent): number {
+function scoreRecallCandidates(
+  candidates: MemoryV2RecallItem[],
+  query: string,
+  intent: MemoryV2SearchIntent,
+  queryPlan: MemoryV2QueryPlan
+): MemoryV2RecallItem[] {
+  return candidates
+    .map((item) => ({
+      item,
+      score: scoreRecallItem(item, query, intent, queryPlan)
+    }))
+    .filter(({ item, score }) => {
+      if (item.status === "suspected_stale") return score >= 7;
+      return score > 0;
+    })
+    .map(({ item, score }) => ({ ...item, score }));
+}
+
+function scoreRecallItem(
+  item: MemoryV2RecallItem,
+  query: string,
+  intent: MemoryV2SearchIntent,
+  queryPlan: MemoryV2QueryPlan
+): number {
+  const claimScore = isClaimMatchForQuery(item, queryPlan) ? 100 : 0;
+  if (item.claim && queryPlan.querySubject && queryPlan.desiredPredicates.length > 0 && claimScore === 0) {
+    return 0;
+  }
   const queryTokens = new Set(tokenize(query));
   const itemTokens = tokenize(`${item.statement} ${item.path}`);
   const lexical = itemTokens.reduce((score, token) => score + (queryTokens.has(token) ? 1 : 0), 0);
   const semanticScore = semanticIntentBoost(item, intent);
-  if (lexical === 0 && semanticScore === 0 && !item.pinned) return 0;
+  if (claimScore === 0 && lexical === 0 && semanticScore === 0 && !item.pinned) return 0;
   const pathScore = [...queryTokens].some((token) => item.path.toLowerCase().includes(token)) ? 1.5 : 0;
   const pinnedScore = item.pinned ? 2 : 0;
   const scopeScore = item.scope === "workspace" ? 1 : 0.5;
   const kindScore = kindIntentBoost(item.kind, intent);
   const stalePenalty = item.status === "suspected_stale" ? -3 : 0;
-  return lexical + semanticScore + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
+  return claimScore + lexical + semanticScore + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
 }
 
 function kindIntentBoost(kind: MemoryV2Kind, intent: MemoryV2SearchIntent): number {
@@ -170,9 +252,18 @@ function semanticIntentBoost(item: MemoryV2RecallItem, intent: MemoryV2SearchInt
 }
 
 function recentDailyFiles(dir: string, maxDays: number): string[] {
+  return recentFiles(dir, maxDays, /^\d{4}-\d{2}-\d{2}\.md$/);
+}
+
+function recentRunFiles(dir: string | undefined, maxFiles: number): string[] {
+  if (!dir) return [];
+  return recentFiles(dir, maxFiles, /^run_.+\.jsonl$/);
+}
+
+function recentFiles(dir: string, maxFiles: number, pattern: RegExp): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name))
+    .filter((name) => pattern.test(name))
     .map((name) => join(dir, name))
     .filter((path) => {
       try {
@@ -183,7 +274,7 @@ function recentDailyFiles(dir: string, maxDays: number): string[] {
     })
     .sort()
     .reverse()
-    .slice(0, maxDays);
+    .slice(0, maxFiles);
 }
 
 function tokenize(value: string): string[] {
@@ -193,4 +284,39 @@ function tokenize(value: string): string[] {
     .split(/\s+/)
     .map((token) => token.trim())
     .filter((token) => token.length > 1);
+}
+
+async function maybeSemanticRecall(input: {
+  input: MemoryV2SearchInput;
+  query: string;
+  candidates: MemoryV2RecallItem[];
+  semantic: "auto" | "off";
+  maxResults: number;
+}): Promise<MemoryV2RecallItem[]> {
+  if (input.semantic === "off") return [];
+  const embedTexts = input.input.embedTexts ?? createMemoryV2EmbeddingProvider(input.input.workspaceSlug);
+  if (!embedTexts) return [];
+  try {
+    return await searchSemanticRecall({
+      workspaceSlug: input.input.workspaceSlug,
+      query: input.query,
+      candidates: input.candidates,
+      embedTexts,
+      modelKey: input.input.embedTexts
+        ? "test-embedding"
+        : resolveMemoryEmbeddingModelRef(getEffectiveLumeConfig(input.input.workspaceSlug)) ?? "configured-embedding",
+      maxResults: input.maxResults
+    });
+  } catch {
+    return [];
+  }
+}
+
+function mergeRecallItems(items: MemoryV2RecallItem[]): MemoryV2RecallItem[] {
+  const byId = new Map<string, MemoryV2RecallItem>();
+  for (const item of items) {
+    const existing = byId.get(item.id);
+    if (!existing || item.score > existing.score) byId.set(item.id, item);
+  }
+  return [...byId.values()];
 }

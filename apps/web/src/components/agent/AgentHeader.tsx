@@ -1,12 +1,17 @@
 import { useAtom, useAtomValue } from 'jotai'
-import { ActivitySquare, FolderOpen, ListTodo } from 'lucide-react'
+import { FolderOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentRuntimeEventsAtom, agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, type SidePanelView } from '@/atoms'
+import { agentRuntimeEventsAtom, agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, agentFileTreeOpenAtom } from '@/atoms'
 import { WorkspacePicker } from './WorkspacePicker'
 import type { AgentRuntimePhase } from '@lume/shared'
 
 interface AgentHeaderProps {
   threadId: string
+}
+
+interface AgentSidePanelToolbarProps {
+  threadId: string
+  className?: string
 }
 
 const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text: string }> = {
@@ -19,23 +24,67 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
   errored: { label: '出错', dot: 'bg-destructive', text: 'text-destructive' },
 }
 
+export function AgentSidePanelToolbar({ threadId, className }: AgentSidePanelToolbarProps) {
+  const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
+  const [fileTreeOpenByThread, setFileTreeOpenByThread] = useAtom(agentFileTreeOpenAtom)
+  const currentView = sidePanelViews[threadId] ?? null
+  const panelOpen = currentView !== null
+  const fileTreeOpen = fileTreeOpenByThread[threadId] ?? false
+
+  const toggleSidePanel = () => {
+    setSidePanelViews((prev) => {
+      const next = { ...prev }
+      const keys = Object.keys(next)
+      if (keys.length > 50) delete next[keys[0]]
+      next[threadId] = panelOpen ? null : 'files'
+      return next
+    })
+    if (!panelOpen) {
+      setFileTreeOpenByThread((prev) => ({ ...prev, [threadId]: false }))
+    }
+  }
+
+  return (
+    <div className={cn('flex items-center gap-1 flex-shrink-0', className)}>
+      {panelOpen && (
+        <button
+          type="button"
+          onClick={() => {
+            setSidePanelViews((prev) => ({ ...prev, [threadId]: 'files' }))
+            setFileTreeOpenByThread((prev) => ({ ...prev, [threadId]: !fileTreeOpen }))
+          }}
+          className={cn(
+            'flex h-7 items-center gap-1.5 rounded-lg px-2 text-[12px] font-medium transition-colors',
+            currentView === 'files' && fileTreeOpen
+              ? 'bg-foreground/10 text-foreground'
+              : 'text-foreground/50 hover:bg-foreground/[0.04] hover:text-foreground/70',
+          )}
+          title={fileTreeOpen ? '收起文件树' : '展开文件树'}
+        >
+          <FolderOpen size={15} />
+        </button>
+      )}
+      <button
+        onClick={toggleSidePanel}
+        className={cn(
+          'p-1.5 rounded-lg transition-colors',
+          panelOpen
+            ? 'bg-foreground/10 text-foreground'
+            : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
+        )}
+        title={panelOpen ? '收起侧栏' : '展开侧栏'}
+      >
+        {panelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+      </button>
+    </div>
+  )
+}
+
 export function AgentHeader({ threadId }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const thread = threads.find((t) => t.id === threadId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusAtom)[threadId]
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
-  const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
-  const currentView = sidePanelViews[threadId] ?? null
-
-  const openSidePanel = (view: Exclude<SidePanelView, null>) => {
-    setSidePanelViews((prev) => {
-      const next = { ...prev }
-      const keys = Object.keys(next)
-      if (keys.length > 50) delete next[keys[0]]
-      next[threadId] = view
-      return next
-    })
-  }
 
   const phase = runtimeStatus?.phase
   const phaseStyle = phase && phase !== 'idle' ? PHASE_STYLE[phase] : null
@@ -46,7 +95,7 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
   const toolName = runtimeStatus?.toolName
 
   return (
-    <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 gap-3">
+    <div className="flex items-center px-4 py-3 border-b border-border/50 gap-3">
       <div className="flex items-center gap-2 min-w-0 flex-1">
         <span className="text-[14px] font-medium text-foreground truncate">
           {thread?.title ?? '新会话'}
@@ -66,44 +115,6 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
             {runtimeStatus?.queuedCount ? ` · 队列 ${runtimeStatus.queuedCount}` : ''}
           </span>
         )}
-      </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <button
-          onClick={() => openSidePanel('files')}
-          className={cn(
-            'p-1.5 rounded-lg transition-colors',
-            currentView === 'files'
-              ? 'bg-foreground/10 text-foreground'
-              : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
-          )}
-          title="展开文件面板"
-        >
-          <FolderOpen size={16} />
-        </button>
-        <button
-          onClick={() => openSidePanel('task-progress')}
-          className={cn(
-            'p-1.5 rounded-lg transition-colors',
-            currentView === 'task-progress'
-              ? 'bg-foreground/10 text-foreground'
-              : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
-          )}
-          title="展开任务进度"
-        >
-          <ListTodo size={16} />
-        </button>
-        <button
-          onClick={() => openSidePanel('trace')}
-          className={cn(
-            'p-1.5 rounded-lg transition-colors',
-            currentView === 'trace'
-              ? 'bg-foreground/10 text-foreground'
-              : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
-          )}
-          title="展开 Runtime Trace"
-        >
-          <ActivitySquare size={16} />
-        </button>
       </div>
     </div>
   )

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  getSuggestedProviderModels,
   inferChannelModelCapabilities,
   normalizeChannelModel,
   PROVIDER_API_FAMILIES,
@@ -22,6 +23,16 @@ describe("channel model capabilities", () => {
     expect(inferChannelModelCapabilities({
       provider: "jina",
       modelId: "jina-embeddings-v3"
+    })).toEqual({
+      chat: false,
+      embedding: true
+    });
+  });
+
+  test("BGE-M3 模型应识别 embedding 能力", () => {
+    expect(inferChannelModelCapabilities({
+      provider: "siliconflow",
+      modelId: "BAAI/bge-m3"
     })).toEqual({
       chat: false,
       embedding: true
@@ -66,6 +77,21 @@ describe("channel model capabilities", () => {
     })).toEqual({
       chat: true
     });
+  });
+
+  test("SiliconFlow 应作为 OpenAI 兼容渠道提供中文 embedding 推荐模型", () => {
+    expect(PROVIDER_API_FAMILIES.siliconflow).toBe("openai");
+    expect(PROVIDER_DEFAULT_URLS.siliconflow).toBe("https://api.siliconflow.cn/v1");
+    expect(PROVIDER_LABELS.siliconflow).toBe("硅基流动");
+
+    const models = getSuggestedProviderModels("siliconflow");
+    expect(models.map((model) => model.id)).toEqual([
+      "Qwen/Qwen3-Embedding-0.6B",
+      "Qwen/Qwen3-Embedding-4B",
+      "Qwen/Qwen3-Embedding-8B",
+      "BAAI/bge-m3"
+    ]);
+    expect(models.every((model) => model.enabled && model.capabilities?.embedding === true)).toBe(true);
   });
 
   test("normalizeChannelModel 应补齐能力并清理空白", () => {

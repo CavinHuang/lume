@@ -1,11 +1,16 @@
 import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { useStickToBottom } from 'use-stick-to-bottom'
 import { agentRuntimeEventsAtom, agentSubagentRunsAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useScrollPositionMemory } from '@/hooks/useScrollPositionMemory'
 import { getThreadMessages, getThreadRuntimeEvents, sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentListSubagentRunsResult, type AgentMessage } from '@lume/shared'
+import {
+  AGENT_IPC_CHANNELS,
+  type AgentListSubagentRunsResult,
+  type AgentMessage,
+  type AgentMessageAttachmentInput,
+} from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
 import type { RuntimeMessageView } from './runtime-message-view'
@@ -19,11 +24,6 @@ interface AgentMessagesProps {
   onOpenMemorySource?: (path: string) => void
 }
 
-function isNearBottom(el: HTMLElement | null): boolean {
-  if (!el) return true
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 100
-}
-
 export function reconcileUserMessageVersions(
   messages: RuntimeMessageView[],
   visibleThreadMessages: AgentMessage[],
@@ -35,7 +35,8 @@ export function reconcileUserMessageVersions(
   return messages.map((message) => {
     if (message.type === 'user') {
       if (message.messageId) {
-        return message
+        const visible = visibleUsers.find((item) => item.id === message.messageId)
+        return visible ? withPersistedUserAttachments(message, visible) : message
       }
 
       const visible = visibleUsers.find((item) => (
@@ -46,14 +47,14 @@ export function reconcileUserMessageVersions(
 
       if (visible) {
         usedVisibleIds.add(visible.id)
-        return {
+        return withPersistedUserAttachments({
           ...message,
           id: visible.id,
           messageId: visible.id,
           versionGroupId: visible.versionGroupId,
           versionIndex: visible.versionIndex,
           versionCount: visible.versionCount,
-        }
+        }, visible)
       }
       return message
     }
@@ -62,29 +63,44 @@ export function reconcileUserMessageVersions(
   })
 }
 
+function withPersistedUserAttachments(
+  message: Extract<RuntimeMessageView, { type: 'user' }>,
+  visible: AgentMessage,
+): Extract<RuntimeMessageView, { type: 'user' }> {
+  if (message.attachments?.length) return message
+  const attachments = readPersistedMessageAttachments(visible.metadata)
+  return attachments.length > 0 ? { ...message, attachments } : message
+}
+
+function readPersistedMessageAttachments(metadata: Record<string, unknown> | undefined): AgentMessageAttachmentInput[] {
+  const raw = metadata?.messageAttachments
+  if (!Array.isArray(raw)) return []
+  return raw.filter((item): item is AgentMessageAttachmentInput => (
+    item !== null
+    && typeof item === 'object'
+    && typeof (item as AgentMessageAttachmentInput).id === 'string'
+    && typeof (item as AgentMessageAttachmentInput).filename === 'string'
+    && typeof (item as AgentMessageAttachmentInput).mediaType === 'string'
+    && typeof (item as AgentMessageAttachmentInput).size === 'number'
+    && typeof (item as AgentMessageAttachmentInput).threadPath === 'string'
+  ))
+}
+
 export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMemorySource }: AgentMessagesProps) {
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const prevThreadIdRef = useRef(threadId)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
-  const wasNearBottomRef = useRef(true)
-  const prevStreamingRef = useRef(streaming)
-  const pendingRestoreThreadIdRef = useRef<string | null>(threadId)
-  const restoreVersionRef = useRef(0)
-  const threadRestoreRafRef = useRef<number | null>(null)
-  const contentRestoreRafRef = useRef<number | null>(null)
-  const initialBottomFollowCleanupRef = useRef<(() => void) | null>(null)
-  const shouldFollowInitialBottomRef = useRef(false)
-  const suppressProgrammaticSaveRef = useRef(false)
-  const userScrollIntentRef = useRef(false)
-  const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
-
-  const { save, restore, hasSavedPosition } = useScrollPositionMemory()
+  const {
+    contentRef: stickContentRef,
+    scrollRef: stickScrollRef,
+    scrollToBottom,
+    isAtBottom,
+  } = useStickToBottom({ resize: 'smooth', initial: 'instant' })
   const projectedMessages = useMemo(() => (
     runtimeEvents.length > 0
       ? projectRuntimeEventMessages(runtimeEvents)
@@ -101,137 +117,13 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       .join('|'),
     [projectedMessages],
   )
-  const followSignal = JSON.stringify(liveMessages.at(-1) ?? null)
-  const getScrollElement = useCallback(() => {
-    const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
-    return viewport instanceof HTMLDivElement ? viewport : null
-  }, [])
-  const cancelScheduledRestores = useCallback(() => {
-    if (threadRestoreRafRef.current !== null) {
-      cancelAnimationFrame(threadRestoreRafRef.current)
-      threadRestoreRafRef.current = null
-    }
-    if (contentRestoreRafRef.current !== null) {
-      cancelAnimationFrame(contentRestoreRafRef.current)
-      contentRestoreRafRef.current = null
-    }
-    initialBottomFollowCleanupRef.current?.()
-    initialBottomFollowCleanupRef.current = null
-    shouldFollowInitialBottomRef.current = false
-    suppressProgrammaticSaveRef.current = false
-    userScrollIntentRef.current = false
-  }, [])
-  const startInitialBottomFollow = useCallback(() => {
-    const scrollElement = getScrollElement()
-    const containerElement = containerRef.current
-    if (!scrollElement || !containerElement) return
-
-    initialBottomFollowCleanupRef.current?.()
-    shouldFollowInitialBottomRef.current = true
-    suppressProgrammaticSaveRef.current = true
-
-    let rafId: number | null = null
-    let frameCount = 0
-    let stableFrames = 0
-    let lastHeight = scrollElement.scrollHeight
-
-    const syncToBottom = () => {
-      scrollElement.scrollTop = scrollElement.scrollHeight
-      wasNearBottomRef.current = true
-      setShowJumpToBottom(false)
-    }
-
-    const stopFollowing = (saveFinalPosition = true) => {
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId)
-        rafId = null
-      }
-      observer.disconnect()
-      window.clearTimeout(timeoutId)
-      scrollElement.removeEventListener('wheel', stopForUserScroll)
-      scrollElement.removeEventListener('touchstart', stopForUserScroll)
-      scrollElement.removeEventListener('pointerdown', stopForUserScroll)
-      initialBottomFollowCleanupRef.current = null
-      shouldFollowInitialBottomRef.current = false
-      suppressProgrammaticSaveRef.current = false
-      if (saveFinalPosition) {
-        save(threadId, scrollElement)
-      }
-    }
-
-    const stopForUserScroll = () => {
-      userScrollIntentRef.current = true
-      stopFollowing(true)
-    }
-
-    const tick = () => {
-      if (!shouldFollowInitialBottomRef.current) {
-        stopFollowing()
-        return
-      }
-
-      const nextHeight = scrollElement.scrollHeight
-      if (nextHeight !== lastHeight) {
-        lastHeight = nextHeight
-        stableFrames = 0
-      } else {
-        stableFrames += 1
-      }
-
-      syncToBottom()
-      frameCount += 1
-
-      if ((frameCount >= 90 && stableFrames >= 12) || frameCount >= 300) {
-        stopFollowing()
-        return
-      }
-
-      rafId = requestAnimationFrame(tick)
-    }
-
-    const observer = new ResizeObserver(() => {
-      stableFrames = 0
-      lastHeight = scrollElement.scrollHeight
-      syncToBottom()
-    })
-
-    observer.observe(containerElement)
-    scrollElement.addEventListener('wheel', stopForUserScroll, { passive: true })
-    scrollElement.addEventListener('touchstart', stopForUserScroll, { passive: true })
-    scrollElement.addEventListener('pointerdown', stopForUserScroll, { passive: true })
-    const timeoutId = window.setTimeout(() => {
-      stopFollowing()
-    }, 5000)
-
-    initialBottomFollowCleanupRef.current = () => {
-      stopFollowing(false)
-    }
-    rafId = requestAnimationFrame(tick)
-  }, [getScrollElement, save, threadId])
-  const restoreCurrentThread = useCallback(() => {
-    const scrollElement = getScrollElement()
-    if (shouldFollowInitialBottomRef.current && scrollElement && liveMessages.length > 0) {
-      startInitialBottomFollow()
-      return
-    }
-    const restored = restore(threadId, scrollElement)
-    if (!restored && scrollElement && liveMessages.length > 0) {
-      startInitialBottomFollow()
-      return
-    }
-    wasNearBottomRef.current = isNearBottom(scrollElement)
-    setShowJumpToBottom(!wasNearBottomRef.current)
-  }, [getScrollElement, liveMessages.length, restore, startInitialBottomFollow, threadId])
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    bottomRef.current?.scrollIntoView({ behavior, block: 'end' })
-    wasNearBottomRef.current = true
-    setShowJumpToBottom(false)
-
-    const scrollElement = getScrollElement()
-    if (scrollElement) {
-      requestAnimationFrame(() => save(threadId, scrollElement))
-    }
-  }, [getScrollElement, save, threadId])
+  const setContentRef = useCallback((element: HTMLDivElement | null) => {
+    containerRef.current = element
+    stickContentRef(element)
+  }, [stickContentRef])
+  const scrollMessagesToBottom = useCallback((animation: 'instant' | 'smooth' = 'smooth') => {
+    void scrollToBottom({ animation, ignoreEscapes: true })
+  }, [scrollToBottom])
 
   // 首次访问线程时拉取 subagent runs
   useEffect(() => {
@@ -264,107 +156,27 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       .catch((err) => console.error('[AgentMessages] 加载线程消息失败:', err))
   }, [threadId, userVersionRefreshKey])
 
-  useEffect(() => {
-    const scrollElement = getScrollElement()
-    if (!scrollElement) return
+  useLayoutEffect(() => {
+    const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
+    if (!(viewport instanceof HTMLDivElement)) return
 
-    const markUserScrollIntent = () => {
-      userScrollIntentRef.current = true
-    }
-
-    const handleScroll = () => {
-      const nearBottom = isNearBottom(scrollElement)
-      wasNearBottomRef.current = nearBottom
-      setShowJumpToBottom(!nearBottom)
-      if (suppressProgrammaticSaveRef.current) return
-      if (pendingRestoreThreadIdRef.current === threadId) return
-      if (!userScrollIntentRef.current) return
-      save(threadId, scrollElement)
-    }
-
-    const nearBottom = isNearBottom(scrollElement)
-    wasNearBottomRef.current = nearBottom
-    setShowJumpToBottom(!nearBottom)
-    scrollElement.addEventListener('wheel', markUserScrollIntent, { passive: true })
-    scrollElement.addEventListener('touchstart', markUserScrollIntent, { passive: true })
-    scrollElement.addEventListener('pointerdown', markUserScrollIntent, { passive: true })
-    scrollElement.addEventListener('scroll', handleScroll, { passive: true })
+    stickScrollRef(viewport)
     return () => {
-      scrollElement.removeEventListener('wheel', markUserScrollIntent)
-      scrollElement.removeEventListener('touchstart', markUserScrollIntent)
-      scrollElement.removeEventListener('pointerdown', markUserScrollIntent)
-      scrollElement.removeEventListener('scroll', handleScroll)
+      stickScrollRef(null)
     }
-  }, [getScrollElement, save, threadId])
+  }, [stickScrollRef])
 
-  // 切换 thread 时保存/恢复滚动位置
   useLayoutEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
-      cancelScheduledRestores()
-      userScrollIntentRef.current = false
-      restoreVersionRef.current += 1
-      const restoreVersion = restoreVersionRef.current
       prevThreadIdRef.current = threadId
-      shouldFollowInitialBottomRef.current = !hasSavedPosition(threadId)
-      pendingRestoreThreadIdRef.current = threadId
-      threadRestoreRafRef.current = requestAnimationFrame(() => {
-        threadRestoreRafRef.current = null
-        if (
-          restoreVersionRef.current !== restoreVersion ||
-          pendingRestoreThreadIdRef.current !== threadId
-        ) {
-          return
-        }
-        const hasMessages = liveMessages.length > 0
-        restoreCurrentThread()
-        if (hasMessages && !shouldFollowInitialBottomRef.current) {
-          pendingRestoreThreadIdRef.current = null
-        }
-      })
-    }
-  }, [cancelScheduledRestores, hasSavedPosition, liveMessages.length, restoreCurrentThread, threadId])
-
-  useLayoutEffect(() => {
-    if (pendingRestoreThreadIdRef.current !== threadId || liveMessages.length === 0) return
-
-    if (contentRestoreRafRef.current !== null) {
-      cancelAnimationFrame(contentRestoreRafRef.current)
+      requestAnimationFrame(() => scrollMessagesToBottom('instant'))
+      return
     }
 
-    const restoreVersion = restoreVersionRef.current
-    contentRestoreRafRef.current = requestAnimationFrame(() => {
-      contentRestoreRafRef.current = null
-      if (
-        restoreVersionRef.current !== restoreVersion ||
-        pendingRestoreThreadIdRef.current !== threadId
-      ) {
-        return
-      }
-      restoreCurrentThread()
-      if (!shouldFollowInitialBottomRef.current) {
-        pendingRestoreThreadIdRef.current = null
-      }
-    })
-  }, [liveMessages.length, restoreCurrentThread, threadId])
-
-  useEffect(() => {
-    if (!shouldFollowInitialBottomRef.current) return
-    if (liveMessages.length === 0) return
-    startInitialBottomFollow()
-    pendingRestoreThreadIdRef.current = null
-  }, [liveMessages.length, startInitialBottomFollow])
-
-  useEffect(() => cancelScheduledRestores, [cancelScheduledRestores])
-
-  // 流式输出时根据更新前的滚动状态决定是否继续跟随到底部
-  useLayoutEffect(() => {
-    const wasStreaming = prevStreamingRef.current
-    prevStreamingRef.current = streaming
-
-    if ((streaming || wasStreaming) && wasNearBottomRef.current) {
-      requestAnimationFrame(() => scrollToBottom(streaming ? 'smooth' : 'auto'))
+    if (liveMessages.length === 1) {
+      requestAnimationFrame(() => scrollMessagesToBottom('instant'))
     }
-  }, [followSignal, scrollToBottom, streaming])
+  }, [liveMessages.length, scrollMessagesToBottom, threadId])
 
   const items: React.ReactNode[] = []
   for (let i = 0; i < liveMessages.length; i++) {
@@ -385,7 +197,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
   return (
     <ScrollArea className="flex-1 min-h-0">
       <div
-        ref={containerRef}
+        ref={setContentRef}
         className={cn(
           'min-h-full w-full px-3 py-5',
           !hasRenderableMessages ? 'flex items-center justify-center' : 'space-y-7'
@@ -399,14 +211,13 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
         ) : (
           <>
             {items}
-            <div ref={bottomRef} />
           </>
         )}
       </div>
-      {showJumpToBottom && hasRenderableMessages && (
+      {!isAtBottom && hasRenderableMessages && (
         <button
           type="button"
-          onClick={() => scrollToBottom('smooth')}
+          onClick={() => scrollMessagesToBottom('smooth')}
           className="absolute bottom-4 right-5 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[#e2e5ef] bg-white text-[#667085] shadow-[0_8px_22px_rgba(27,31,45,0.12)] transition-colors hover:border-[#c9cdfb] hover:text-[#625cff]"
           aria-label="回到底部"
           title="回到底部"

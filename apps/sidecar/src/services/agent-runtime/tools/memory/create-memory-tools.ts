@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
-import type { MemoryKind, MemoryScope, MemorySearchResult } from "@lume/shared";
+import type { MemoryClaim, MemoryKind, MemoryScope, MemorySearchResult } from "@lume/shared";
 import {
   readMemoryTool,
   rememberMemoryTool,
@@ -34,6 +34,34 @@ function optionalStringArray(value: unknown): string[] | undefined {
 function optionalImportance(value: unknown): 1 | 2 | 3 | 4 | 5 | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.min(5, Math.max(1, Math.round(value))) as 1 | 2 | 3 | 4 | 5;
+}
+
+function optionalClaim(value: unknown): MemoryClaim | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.subject !== "string"
+    || typeof record.predicate !== "string"
+    || typeof record.object !== "string"
+  ) {
+    return undefined;
+  }
+  const qualifiers = optionalStringRecord(record.qualifiers);
+  return {
+    subject: record.subject,
+    predicate: record.predicate,
+    object: record.object,
+    ...(qualifiers ? { qualifiers } : {})
+  };
+}
+
+function optionalStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (typeof rawValue === "string") out[key] = rawValue;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function createSdkMemoryTools(params: {
@@ -122,6 +150,19 @@ export function createSdkMemoryTools(params: {
           importance: { type: "number", minimum: 1, maximum: 5 },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           tags: { type: "array", items: { type: "string" } },
+          claim: {
+            type: "object",
+            properties: {
+              subject: { type: "string" },
+              predicate: { type: "string" },
+              object: { type: "string" },
+              qualifiers: {
+                type: "object",
+                additionalProperties: { type: "string" }
+              }
+            },
+            required: ["subject", "predicate", "object"]
+          },
           sourceMessageIds: { type: "array", items: { type: "string" } },
           requireReview: { type: "boolean" }
         },
@@ -137,6 +178,7 @@ export function createSdkMemoryTools(params: {
           importance: optionalImportance(input.importance),
           confidence: typeof input.confidence === "number" ? input.confidence : undefined,
           tags: optionalStringArray(input.tags),
+          claim: optionalClaim(input.claim),
           sourceMessageIds: optionalStringArray(input.sourceMessageIds),
           requireReview: typeof input.requireReview === "boolean" ? input.requireReview : undefined
         });

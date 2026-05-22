@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type {
   MemoryCitationsMode,
   MemoryRuntimeConfig,
+  MemoryRetrievalConfig,
   MemorySourceMode,
   MemoryToolPolicy,
   UpdateMemoryRuntimeConfigInput
@@ -26,6 +27,7 @@ interface MemoryRuntimeConfigFile {
   citations?: MemoryCitationsMode;
   sources?: MemorySourceMode[];
   extraPaths?: string[];
+  retrieval?: Partial<MemoryRetrievalConfig>;
 }
 
 export const MEMORY_CONFIG_VERSION = 1;
@@ -37,6 +39,7 @@ const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | 
 };
 const DEFAULT_SOURCES: MemorySourceMode[] = ["memory"];
 const DEFAULT_EXTRA_PATHS: string[] = [];
+const DEFAULT_RETRIEVAL: MemoryRetrievalConfig = { semantic: "auto" };
 
 const MEMORY_TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory.search", "memory.read"],
@@ -105,6 +108,7 @@ export function parseMemoryRuntimeConfigPayload(payload: unknown): {
   citationsMode: MemoryCitationsMode;
   sources: MemorySourceMode[];
   extraPaths: string[];
+  retrieval: MemoryRetrievalConfig;
 } {
   const parsed = payload && typeof payload === "object" ? (payload as MemoryRuntimeConfigFile) : {};
   const citationsMode =
@@ -139,12 +143,14 @@ export function parseMemoryRuntimeConfigPayload(payload: unknown): {
         )
       )
     : [];
+  const retrieval = normalizeRetrievalConfig(parsed.retrieval);
 
   return {
     toolPolicy,
     citationsMode,
     sources: sources.length > 0 ? sources : [...DEFAULT_SOURCES],
-    extraPaths
+    extraPaths,
+    retrieval
   };
 }
 
@@ -155,7 +161,8 @@ function normalizeRuntimeConfig(payload: unknown): MemoryRuntimeConfig {
     tools: parsed.toolPolicy ?? { ...DEFAULT_MEMORY_CONFIG.tools },
     citations: parsed.citationsMode,
     sources: parsed.sources,
-    extraPaths: parsed.extraPaths
+    extraPaths: parsed.extraPaths,
+    retrieval: parsed.retrieval
   };
 }
 
@@ -189,6 +196,7 @@ export function resolveMemoryRuntimeConfig(): {
   citationsMode: MemoryCitationsMode;
   sources: MemorySourceMode[];
   extraPaths: string[];
+  retrieval: MemoryRetrievalConfig;
 } {
   const configPath = getMemoryConfigPath();
   if (!existsSync(configPath)) {
@@ -199,7 +207,8 @@ export function resolveMemoryRuntimeConfig(): {
           {
             ...DEFAULT_MEMORY_CONFIG,
             sources: DEFAULT_SOURCES,
-            extraPaths: DEFAULT_EXTRA_PATHS
+            extraPaths: DEFAULT_EXTRA_PATHS,
+            retrieval: DEFAULT_RETRIEVAL
           },
           null,
           2
@@ -213,7 +222,8 @@ export function resolveMemoryRuntimeConfig(): {
       toolPolicy: { ...DEFAULT_MEMORY_CONFIG.tools },
       citationsMode: DEFAULT_MEMORY_CONFIG.citations,
       sources: [...DEFAULT_SOURCES],
-      extraPaths: [...DEFAULT_EXTRA_PATHS]
+      extraPaths: [...DEFAULT_EXTRA_PATHS],
+      retrieval: { ...DEFAULT_RETRIEVAL }
     };
   }
   try {
@@ -225,7 +235,8 @@ export function resolveMemoryRuntimeConfig(): {
       toolPolicy: { ...DEFAULT_MEMORY_CONFIG.tools },
       citationsMode: DEFAULT_MEMORY_CONFIG.citations,
       sources: [...DEFAULT_SOURCES],
-      extraPaths: [...DEFAULT_EXTRA_PATHS]
+      extraPaths: [...DEFAULT_EXTRA_PATHS],
+      retrieval: { ...DEFAULT_RETRIEVAL }
     };
   }
 }
@@ -252,8 +263,24 @@ export function updateMemoryRuntimeConfig(input: UpdateMemoryRuntimeConfigInput)
     tools: input.tools ?? current.tools,
     citations: input.citations ?? current.citations,
     sources: input.sources ?? current.sources,
-    extraPaths: input.extraPaths ?? current.extraPaths
+    extraPaths: input.extraPaths ?? current.extraPaths,
+    retrieval: {
+      ...current.retrieval,
+      ...(input.retrieval ?? {})
+    }
   });
   writeFileSync(getMemoryConfigPath(), JSON.stringify(next, null, 2), "utf-8");
   return next;
+}
+
+function normalizeRetrievalConfig(value: unknown): MemoryRetrievalConfig {
+  const raw = value && typeof value === "object" ? value as Partial<MemoryRetrievalConfig> : {};
+  const semantic = raw.semantic === "off" ? "off" : "auto";
+  const rerankModelRef = typeof raw.rerankModelRef === "string" && raw.rerankModelRef.trim()
+    ? raw.rerankModelRef.trim()
+    : undefined;
+  return {
+    semantic,
+    ...(rerankModelRef ? { rerankModelRef } : {})
+  };
 }

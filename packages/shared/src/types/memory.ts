@@ -28,6 +28,13 @@ export type MemoryToolName =
   | "memory.read"
   | "memory.remember";
 
+export interface MemoryClaim {
+  subject: string;
+  predicate: string;
+  object: string;
+  qualifiers?: Record<string, string>;
+}
+
 export interface MemoryItem {
   id: string;
   workspaceSlug: string;
@@ -48,6 +55,7 @@ export interface MemoryItem {
   tags?: string[];
   entities?: string[];
   topics?: string[];
+  claim?: MemoryClaim;
 
   importance: 1 | 2 | 3 | 4 | 5;
   confidence: number;
@@ -93,6 +101,7 @@ export interface MemorySearchResult {
   scope?: MemoryScope;
   source: MemorySource;
   reason?: string;
+  claim?: MemoryClaim;
 }
 
 export interface MemoryReadToolInput {
@@ -125,6 +134,7 @@ export interface MemoryRememberToolInput {
   importance?: 1 | 2 | 3 | 4 | 5;
   confidence?: number;
   tags?: string[];
+  claim?: MemoryClaim;
   sourceSessionId?: string;
   sourceMessageIds?: string[];
   requireReview?: boolean;
@@ -151,6 +161,7 @@ export interface MemoryRuntimeConfig {
   citations: MemoryCitationsMode;
   sources: MemorySourceMode[];
   extraPaths: string[];
+  retrieval: MemoryRetrievalConfig;
 }
 
 export interface UpdateMemoryRuntimeConfigInput {
@@ -158,6 +169,53 @@ export interface UpdateMemoryRuntimeConfigInput {
   citations?: MemoryCitationsMode;
   sources?: MemorySourceMode[];
   extraPaths?: string[];
+  retrieval?: Partial<MemoryRetrievalConfig>;
+}
+
+export interface MemoryOrganizeHistoryInput {
+  workspaceSlug: string;
+  limit?: number;
+}
+
+export type MemoryOrganizeHistoryAction =
+  | "duplicate"
+  | "related"
+  | "mergeable"
+  | "conflict"
+  | "suspected_stale"
+  | "low_confidence"
+  | "new"
+  | "suppressed";
+
+export type MemoryOrganizeHistoryActionCounts = Record<MemoryOrganizeHistoryAction, number>;
+
+export interface MemoryOrganizeHistoryItem {
+  sourcePath: string;
+  sourceMessageId?: string;
+  statement: string;
+  scope: "global" | "workspace";
+  kind: "preference" | "fact" | "decision" | "lesson" | "state";
+  confidence: "low" | "medium" | "high";
+  action: MemoryOrganizeHistoryAction;
+  reason: string;
+  entryId?: string;
+  pendingId?: string;
+}
+
+export interface MemoryOrganizeHistoryResult {
+  workspaceSlug: string;
+  scannedSources: number;
+  scannedMessages: number;
+  candidateCount: number;
+  actions: MemoryOrganizeHistoryActionCounts;
+  items: MemoryOrganizeHistoryItem[];
+}
+
+export type MemorySemanticMode = "auto" | "off";
+
+export interface MemoryRetrievalConfig {
+  semantic: MemorySemanticMode;
+  rerankModelRef?: string;
 }
 
 export interface MemorySettingsFileSummary {
@@ -215,6 +273,20 @@ export interface MemorySettingsSnapshot {
   workspaceEntries: MemorySettingsEntrySummary[];
   globalEntries: MemorySettingsEntrySummary[];
   pending: MemorySettingsPendingSummary[];
+  retrieval: MemorySettingsRetrievalStatus;
+}
+
+export interface MemorySettingsRetrievalStatus {
+  semantic: {
+    mode: MemorySemanticMode;
+    embeddingModelRef?: string;
+    status: "disabled" | "not_configured" | "available" | "stale" | "failed";
+    message: string;
+  };
+  rerank: {
+    modelRef?: string;
+    source: "explicit" | "extraction" | "disabled";
+  };
 }
 
 export interface MemoryOpenSourceInput {
@@ -227,6 +299,7 @@ export const MEMORY_IPC_CHANNELS = {
   READ: "memory:read",
   REMEMBER: "memory:remember",
   SETTINGS_SNAPSHOT: "memory:settings-snapshot",
+  ORGANIZE_HISTORY: "memory:organize-history",
   OPEN_SOURCE: "memory:open-source",
   GET_RUNTIME_CONFIG: "memory:get-runtime-config",
   UPDATE_RUNTIME_CONFIG: "memory:update-runtime-config"

@@ -20,3 +20,6 @@ export type SidePanelView = 'files' | 'task-progress' | 'trace' | null
 export const agentSidePanelViewAtom = atomWithStorage<Record<string, SidePanelView>>(
   'agent-side-panel-view', {}
 )
+export const agentFileTreeOpenAtom = atomWithStorage<Record<string, boolean>>(
+  'agent-file-tree-open', {}
+)

@@ -4,6 +4,14 @@ import type {
   MemoryV2Entry,
   MemoryV2SmartAddResult
 } from "./types";
+import { isPreferredNameMemory } from "./profile";
+import {
+  claimFromEntry,
+  claimKey,
+  claimObjectEquals,
+  inferMemoryV2Claim,
+  normalizeMemoryV2Claim
+} from "./claim";
 
 export function shouldSuppressDurableMemory(text: string): boolean {
   return /\bdo not remember\b|\bdon't remember\b|\bdo not save\b|不要记住|别记住|不要保存/i.test(text);
@@ -31,7 +39,11 @@ export function smartAddMemoryV2Candidate(input: {
       ...(input.candidate.targetScope === "workspace" && input.workspaceSlug
         ? { workspaceSlug: input.workspaceSlug }
         : {})
-    }
+    },
+    claim: normalizeMemoryV2Claim(input.candidate.claim) ?? inferMemoryV2Claim({
+      statement,
+      tags: input.candidate.tags
+    })
   };
   const existing = store.listEntries({
     workspaceSlug: input.workspaceSlug,
@@ -44,6 +56,38 @@ export function smartAddMemoryV2Candidate(input: {
       action: "duplicate",
       existingIds: [duplicate.frontmatter.id],
       reason: "Candidate duplicates an active memory."
+    };
+  }
+  const claimMatch = candidate.claim
+    ? existing.find((entry) => claimKey({
+      scope: candidate.targetScope,
+      claim: candidate.claim!,
+      appliesWhen: candidate.appliesWhen
+    }) === claimKey({
+      scope: entry.frontmatter.scope,
+      claim: claimFromEntry(entry) ?? candidate.claim!,
+      appliesWhen: entry.frontmatter.applies_when
+    }) && claimFromEntry(entry))
+    : undefined;
+  if (claimMatch) {
+    const existingClaim = claimFromEntry(claimMatch)!;
+    if (claimObjectEquals(candidate.claim!, existingClaim)) {
+      return {
+        action: "duplicate",
+        existingIds: [claimMatch.frontmatter.id],
+        reason: "Candidate duplicates an active claim memory."
+      };
+    }
+    return {
+      action: "conflict",
+      existingIds: [claimMatch.frontmatter.id],
+      pending: store.writePending({
+        type: "conflict",
+        candidate,
+        existingIds: [claimMatch.frontmatter.id],
+        reason: "Candidate changes an active claim memory."
+      }),
+      reason: "Claim memory routed to conflict review."
     };
   }
 
@@ -61,6 +105,26 @@ export function smartAddMemoryV2Candidate(input: {
   }
 
   const related = findRelatedEntries(candidate, existing);
+  const preferredNameConflict = related.find((entry) =>
+    !hasDifferentClaimKey(candidate, entry)
+    &&
+    isPreferredNameMemory({ tags: candidate.tags, statement: candidate.statement })
+    && isPreferredNameMemory({ tags: entry.frontmatter.tags, statement: entry.statement })
+    && normalizeStatement(entry.statement) !== normalizeStatement(candidate.statement)
+  );
+  if (preferredNameConflict) {
+    return {
+      action: "conflict",
+      existingIds: [preferredNameConflict.frontmatter.id],
+      pending: store.writePending({
+        type: "conflict",
+        candidate,
+        existingIds: [preferredNameConflict.frontmatter.id],
+        reason: "Candidate changes the user's preferred name."
+      }),
+      reason: "Preferred-name memory routed to conflict review."
+    };
+  }
   const conflict = related.find((entry) => looksConflicting(candidate.statement, entry.statement));
   if (conflict) {
     return {
@@ -108,11 +172,27 @@ export function smartAddMemoryV2Candidate(input: {
   };
 }
 
+function hasDifferentClaimKey(candidate: MemoryV2Candidate, entry: MemoryV2Entry): boolean {
+  if (!candidate.claim) return false;
+  const entryClaim = claimFromEntry(entry);
+  if (!entryClaim) return false;
+  return claimKey({
+    scope: candidate.targetScope,
+    claim: candidate.claim,
+    appliesWhen: candidate.appliesWhen
+  }) !== claimKey({
+    scope: entry.frontmatter.scope,
+    claim: entryClaim,
+    appliesWhen: entry.frontmatter.applies_when
+  });
+}
+
 function findRelatedEntries(candidate: MemoryV2Candidate, entries: MemoryV2Entry[]): MemoryV2Entry[] {
   const candidateEntities = new Set((candidate.entities ?? []).map(normalizeToken));
   const candidateTags = new Set((candidate.tags ?? []).map(normalizeToken));
   const candidateTokens = new Set(tokenize(candidate.statement));
   return entries.filter((entry) => {
+    if (hasDifferentClaimKey(candidate, entry)) return false;
     if (entry.frontmatter.kind !== candidate.kind) return false;
     const sharesEntity = entry.frontmatter.entities.some((entity) => candidateEntities.has(normalizeToken(entity)));
     const sharesTag = entry.frontmatter.tags.some((tag) => candidateTags.has(normalizeToken(tag)));

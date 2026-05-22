@@ -23,10 +23,10 @@ export function AppShell() {
   return (
     <div className="h-screen w-screen flex overflow-hidden bg-background text-foreground">
       <TitleBar />
-      <div className="p-2 pr-0 relative z-[60]">
+      <div className="pb-2 pl-2 pr-0 pt-5 relative z-[60]">
         <LeftSidebar />
       </div>
-      <div className="flex-1 min-w-0 p-2 relative z-[60]">
+      <div className="flex-1 min-w-0 pb-2 pl-2 pr-2 pt-5 relative z-[60]">
         <MainArea />
       </div>
       <CommandPalette />

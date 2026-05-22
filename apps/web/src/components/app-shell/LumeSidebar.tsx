@@ -438,88 +438,88 @@ function WorkspaceTree({
     return (
       <>
         <div className="group/ws relative">
-        <button
-          type="button"
-          onClick={() => onToggleWorkspace(workspace.id)}
-          className={cn(
-            'flex h-7 w-full items-center gap-2 rounded-md px-0 text-left transition-colors',
-            workspace.isCurrent
-              ? 'text-[var(--text-1)]'
-              : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-          )}
-        >
-          <ChevronRight
-            size={13}
+          <button
+            type="button"
+            onClick={() => onToggleWorkspace(workspace.id)}
             className={cn(
-              'ml-0.5 shrink-0 text-[var(--text-3)] transition-transform duration-150',
-              workspace.isExpanded && 'rotate-90',
-            )}
-          />
-          <WorkspaceIcon workspace={workspace} />
-          <span className="flex-1 truncate text-[13px] font-semibold">{workspace.name}</span>
-          <span
-            className={cn(
-              'shrink-0 pr-2 text-[12px] font-medium leading-none text-[var(--text-3)]',
-              'group-hover/ws:opacity-0',
-              menuOpen && 'opacity-0',
+              'flex h-7 w-full items-center gap-2 rounded-md px-0 text-left transition-colors',
+              workspace.isCurrent
+                ? 'text-[var(--text-1)]'
+                : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
             )}
           >
-            {workspace.count}
-          </span>
-        </button>
+            <ChevronRight
+              size={13}
+              className={cn(
+                'ml-0.5 shrink-0 text-[var(--text-3)] transition-transform duration-150',
+                workspace.isExpanded && 'rotate-90',
+              )}
+            />
+            <WorkspaceIcon workspace={workspace} />
+            <span className="flex-1 truncate text-[13px] font-semibold">{workspace.name}</span>
+            <span
+              className={cn(
+                'shrink-0 pr-2 text-[12px] font-medium leading-none text-[var(--text-3)]',
+                'group-hover/ws:opacity-0',
+                menuOpen && 'opacity-0',
+              )}
+            >
+              {workspace.count}
+            </span>
+          </button>
 
-        <button
-          ref={triggerRef}
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            setMenuOpen((current) => !current)
-          }}
-          className={cn(
-            'absolute right-0 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center text-[var(--text-3)] transition-all hover:text-[var(--text-1)]',
-            'opacity-0 group-hover/ws:opacity-100',
-            menuOpen && 'opacity-100',
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              setMenuOpen((current) => !current)
+            }}
+            className={cn(
+              'absolute right-0 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center text-[var(--text-3)] transition-all hover:text-[var(--text-1)]',
+              'opacity-0 group-hover/ws:opacity-100',
+              menuOpen && 'opacity-100',
+            )}
+          >
+            <MoreHorizontal size={14} />
+          </button>
+
+          {menuOpen && (
+            <div
+              ref={menuRef}
+              className="absolute right-1 top-full z-50 mt-1 min-w-[148px] rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)]"
+            >
+              <ThreadMenuItem
+                icon={workspace.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                onClick={() => {
+                  onToggleWorkspacePin(workspace.id)
+                  setMenuOpen(false)
+                }}
+              >
+                {workspace.pinned ? '取消置顶' : '置顶'}
+              </ThreadMenuItem>
+              <ThreadMenuItem
+                icon={<Pencil size={13} />}
+                onClick={() => {
+                  setEditing(true)
+                  setMenuOpen(false)
+                }}
+              >
+                重命名
+              </ThreadMenuItem>
+              <ThreadMenuItem
+                icon={<Trash2 size={13} />}
+                destructive
+                onClick={() => {
+                  onDeleteWorkspace(workspace.id)
+                  setMenuOpen(false)
+                }}
+              >
+                删除
+              </ThreadMenuItem>
+            </div>
           )}
-        >
-          <MoreHorizontal size={14} />
-        </button>
         </div>
-
-        {menuOpen && (
-          <div
-            ref={menuRef}
-            className="absolute right-1 top-full z-50 mt-1 min-w-[148px] rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)]"
-          >
-            <ThreadMenuItem
-              icon={workspace.pinned ? <PinOff size={13} /> : <Pin size={13} />}
-              onClick={() => {
-                onToggleWorkspacePin(workspace.id)
-                setMenuOpen(false)
-              }}
-            >
-              {workspace.pinned ? '取消置顶' : '置顶'}
-            </ThreadMenuItem>
-            <ThreadMenuItem
-              icon={<Pencil size={13} />}
-              onClick={() => {
-                setEditing(true)
-                setMenuOpen(false)
-              }}
-            >
-              重命名
-            </ThreadMenuItem>
-            <ThreadMenuItem
-              icon={<Trash2 size={13} />}
-              destructive
-              onClick={() => {
-                onDeleteWorkspace(workspace.id)
-                setMenuOpen(false)
-              }}
-            >
-              删除
-            </ThreadMenuItem>
-          </div>
-        )}
       </>
     )
   }
