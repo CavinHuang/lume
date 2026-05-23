@@ -218,18 +218,18 @@ UI 使用方式：
 
 ```text
 apps/web/src/assets/agents/
-  researcher.png
-  translator.png
-  writer.png
-  voice.png
-  designer.png
-  artist.png
-  analyst.png
-  quant.png
-  novelist.png
-  docsmith.png
-  developer.png
-  agents-team.png
+  researcher.jpg
+  translator.jpg
+  writer.jpg
+  voice.jpg
+  designer.jpg
+  artist.jpg
+  analyst.jpg
+  quant.jpg
+  novelist.jpg
+  docsmith.jpg
+  developer.jpg
+  agents-team.jpg
 ```
 
 源图当前位于：
