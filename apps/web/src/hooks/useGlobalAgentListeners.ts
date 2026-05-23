@@ -156,6 +156,7 @@ export function useGlobalAgentListeners() {
               rootThreadId: e.threadId,
               depth: 0,
               childThreadId: e.childThreadId,
+              parentToolUseId: e.parentToolUseId,
               label: e.label,
               task: e.label ?? '',
               status: e.status,

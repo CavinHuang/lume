@@ -110,7 +110,7 @@ describe("agent-prompt-builder", () => {
       availableTools: ["task", "read"]
     });
 
-    expect(prompt).toContain("Built-ins include explorer, planner, researcher, and code-reviewer");
+    expect(prompt).toContain("Built-ins include explorer, planner, code-reviewer, researcher, translator");
     expect(prompt).not.toContain("指定 model: \"haiku\" 降低成本");
   });
 

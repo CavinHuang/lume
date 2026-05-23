@@ -6,6 +6,8 @@ import type {
   RuntimeToolCallView,
 } from './runtime-message-view'
 
+const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。'
+
 export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): RuntimeMessageView[] {
   events = keepLatestVersionTurns(events)
   const messages: RuntimeMessageView[] = []
@@ -64,6 +66,17 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
     }
 
     if (terminalClosed) {
+      return
+    }
+
+    const subagentOwner = getSubagentOwner(event)
+    if (subagentOwner) {
+      if (currentAssistant) {
+        markSubagentToolCall(currentAssistant, subagentOwner.parentToolUseId, {
+          subagentRunId: subagentOwner.subagentRunId,
+          status: 'running',
+        })
+      }
       return
     }
 
@@ -136,6 +149,10 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         output: isError ? event.error.message : event.resultPreview,
         isError,
         ...(permissionState ? { permissionState } : {}),
+        ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
+        ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
+          ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
+          : existing?.subagentStatus ? { subagentStatus: existing.subagentStatus } : {}),
       }
       upsertToolCallBlock(currentAssistant, event.toolCallId, toolCall)
       return
@@ -159,6 +176,10 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
 
     if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
       currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+      if (event.type === 'run.turn_limited') {
+        appendAssistantTextBlock(currentAssistant, TURN_LIMIT_NOTICE)
+        recomputeAssistantContent(currentAssistant)
+      }
       currentAssistant.status = 'completed'
       flushAssistant(messages, currentAssistant)
       currentAssistant = null
@@ -182,6 +203,28 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
 
 function isToolPermissionTimeoutMessage(message: string): boolean {
   return message.includes('工具权限确认超时')
+}
+
+function getSubagentOwner(event: LumeRuntimeEvent): { parentToolUseId: string; subagentRunId?: string } | null {
+  if (!event.parentToolUseId) return null
+  return {
+    parentToolUseId: event.parentToolUseId,
+    ...(event.subagentRunId ? { subagentRunId: event.subagentRunId } : {}),
+  }
+}
+
+function markSubagentToolCall(
+  assistant: MutableAssistantMessage,
+  parentToolUseId: string,
+  patch: { subagentRunId?: string; status: NonNullable<RuntimeToolCallView['subagentStatus']> },
+): void {
+  const existing = assistant.toolCalls.get(parentToolUseId)
+  if (!existing) return
+  upsertToolCallBlock(assistant, parentToolUseId, {
+    ...existing,
+    ...(patch.subagentRunId ? { subagentRunId: patch.subagentRunId } : {}),
+    subagentStatus: patch.status,
+  })
 }
 
 function upsertToolCallBlock(

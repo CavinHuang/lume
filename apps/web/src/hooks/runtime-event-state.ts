@@ -18,7 +18,7 @@ export function appendRuntimeEvent(
   if (isDuplicateUserSubmit(current?.events.at(-1), event)) {
     return prev
   }
-  const events = trimRuntimeEvents(appendOrMergeRuntimeEvent(current?.events ?? [], event))
+  const events = trimRuntimeEvents(sortRuntimeEvents(appendOrMergeRuntimeEvent(current?.events ?? [], event)))
   return {
     ...prev,
     [event.threadId]: {
@@ -66,10 +66,19 @@ function mergeHydratedRuntimeEvents(
     seenIds.add(event.id)
     merged.push(event)
   }
-  return merged.sort((a, b) => {
+  return sortRuntimeEvents(merged)
+}
+
+function sortRuntimeEvents(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
+  return [...events].sort((a, b) => {
     const timeOrder = a.createdAt.localeCompare(b.createdAt)
     if (timeOrder !== 0) return timeOrder
-    return runtimeEventOrder(a) - runtimeEventOrder(b)
+    const semanticOrder = runtimeEventOrder(a) - runtimeEventOrder(b)
+    if (semanticOrder !== 0) return semanticOrder
+    if (typeof a.sequence === 'number' && typeof b.sequence === 'number') {
+      return a.sequence - b.sequence
+    }
+    return 0
   })
 }
 
@@ -93,24 +102,49 @@ function isDuplicateSubmittedUserEvent(
 function runtimeEventOrder(event: LumeRuntimeEvent): number {
   if (event.type === 'run.started') return 0
   if (event.type === 'message.user.submitted') return 1
-  if (event.type.startsWith('assistant.')) return 2
-  if (event.type.startsWith('tool.')) return 3
-  if (event.type === 'plan.preview') return 4
-  if (event.type === 'memory.context.used') return 5
-  if (event.type === 'task.progress') return 6
-  if (event.type.startsWith('run.')) return 7
+  if (event.type === 'assistant.thinking_delta') return 2
+  if (event.type === 'assistant.delta') return 2
+  if (event.type === 'assistant.final') return 3
+  if (event.type === 'tool.started') return 4
+  if (event.type === 'tool.completed') return 5
+  if (event.type === 'tool.failed') return 5
+  if (event.type === 'tool.permission_timeout') return 5
+  if (event.type === 'plan.preview') return 6
+  if (event.type === 'memory.context.used') return 8
+  if (event.type === 'task.progress') return 9
+  if (event.type.startsWith('context.compaction.')) return 10
+  if (event.type === 'usage.updated') return 10
+  if (event.type.startsWith('run.')) return 11
   return 9
 }
 
 function appendOrMergeRuntimeEvent(events: LumeRuntimeEvent[], event: LumeRuntimeEvent): LumeRuntimeEvent[] {
   const last = events.at(-1)
-  if (last?.type === 'assistant.delta' && event.type === 'assistant.delta') {
+  if (last?.type === 'assistant.delta' && event.type === 'assistant.delta' && hasSameAssistantStreamOwner(last, event)) {
     return [...events.slice(0, -1), { ...last, delta: last.delta + event.delta }]
   }
-  if (last?.type === 'assistant.thinking_delta' && event.type === 'assistant.thinking_delta') {
+  if (
+    last?.type === 'assistant.thinking_delta'
+    && event.type === 'assistant.thinking_delta'
+    && hasSameAssistantStreamOwner(last, event)
+  ) {
     return [...events.slice(0, -1), { ...last, delta: last.delta + event.delta }]
   }
   return [...events, event]
+}
+
+function hasSameAssistantStreamOwner(a: LumeRuntimeEvent, b: LumeRuntimeEvent): boolean {
+  return a.runId === b.runId
+    && a.parentToolUseId === b.parentToolUseId
+    && a.subagentRunId === b.subagentRunId
+    && getAssistantMessageId(a) === getAssistantMessageId(b)
+}
+
+function getAssistantMessageId(event: LumeRuntimeEvent): string | undefined {
+  if (event.type === 'assistant.delta' || event.type === 'assistant.thinking_delta') {
+    return event.messageId
+  }
+  return undefined
 }
 
 function trimRuntimeEvents(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {

@@ -55,20 +55,8 @@ interface PreparedRuntimeCoreRunInput {
 }
 
 export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]): number | undefined {
-  const metadata = input.messageMetadata ?? {};
-  const taskControlEvent = metadata.taskControlEvent;
-  if (
-    typeof metadata.taskRunId === "string"
-    || taskControlEvent === "execute_task"
-    || taskControlEvent === "continue_task"
-    || taskControlEvent === "retry_task"
-  ) {
-    return 20;
-  }
-  if (input.permissionMode === "plan") {
-    return 12;
-  }
-  return undefined;
+  void input;
+  return 80;
 }
 
 export class LumeRunner {
@@ -128,6 +116,7 @@ export class LumeRunner {
       emit: this.emit
     });
     if (result.status === "turn_limited") {
+      this.observer.recordTurnLimited(result.errorMessage);
       await this.observer.flush();
       this.emit.onRuntimeEvent?.({
         id: `${this.observer.getRunId()}:run.turn_limited`,

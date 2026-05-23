@@ -24,4 +24,35 @@ describe('MentionList', () => {
     expect(html).toContain('/debug')
     expect(html).toContain('个人')
   })
+
+  test('renders @ agents ahead of file mentions', () => {
+    const html = renderToStaticMarkup(
+      <MentionList
+        trigger="@"
+        items={[
+          {
+            id: 'writer',
+            label: 'writer',
+            type: 'agent',
+            title: '江岚 · 作家',
+            subtitle: '长文写作、品牌文案、文章结构和报告表达。',
+            section: 'agent',
+            meta: '前台',
+          },
+          {
+            id: 'brief.md',
+            label: 'brief.md',
+            type: 'file',
+            section: 'file',
+          },
+        ]}
+        command={() => {}}
+      />,
+    )
+
+    expect(html).toContain('Agents &amp; Files')
+    expect(html).toContain('Agents')
+    expect(html).toContain('Files')
+    expect(html.indexOf('江岚 · 作家')).toBeLessThan(html.indexOf('brief.md'))
+  })
 })

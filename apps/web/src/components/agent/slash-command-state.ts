@@ -1,7 +1,7 @@
 import type { SkillMeta } from '@lume/shared'
 
-export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command'
-export type MentionSection = 'capability' | 'skill'
+export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent'
+export type MentionSection = 'capability' | 'skill' | 'agent' | 'file'
 
 export interface MentionItem {
   id: string

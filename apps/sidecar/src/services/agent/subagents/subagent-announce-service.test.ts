@@ -47,8 +47,11 @@ function buildRun(parentThreadId: string): SubagentRun {
 describe("subagent-announce-service", () => {
   test("应向父线程发送结构化 completion 事件，而不是追加 transcript 消息", async () => {
     const parent = createAgentThread("父线程", "channel-x");
-    const run = buildRun(parent.id);
-    const events: Array<{ threadId: string; runId: string; childThreadId: string }> = [];
+    const run = {
+      ...buildRun(parent.id),
+      parentToolUseId: "agent-tool-1"
+    };
+    const events: Array<{ threadId: string; runId: string; childThreadId: string; parentToolUseId?: string }> = [];
     const unsubscribe = subscribeSubagentAnnounceEvent((event) => {
       events.push(event);
     });
@@ -60,6 +63,7 @@ describe("subagent-announce-service", () => {
     expect(events[0]?.threadId).toBe(parent.id);
     expect(events[0]?.runId).toBe(run.runId);
     expect(events[0]?.childThreadId).toBe(run.childThreadId);
+    expect(events[0]?.parentToolUseId).toBe("agent-tool-1");
 
     const messages = getAgentThreadMessages(parent.id);
     expect(messages).toHaveLength(0);

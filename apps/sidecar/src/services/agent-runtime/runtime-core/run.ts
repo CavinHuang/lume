@@ -75,6 +75,7 @@ import type { LumeToolDescriptor } from "../tools/tool-types";
 import type { TaskContractRecord } from "../plan/task-contract-record-types";
 
 const log = createLogger("runtime-core-prompt");
+const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface RuntimeCoreResolvedModel {
   id: string;
@@ -295,7 +296,7 @@ async function runSidecarSubagent(input: {
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }): Promise<{
   result: ToolResult;
-  status: "completed" | "errored" | "aborted";
+  status: "completed" | "errored" | "aborted" | "timed_out";
   output?: string;
   error?: string;
 }> {
@@ -434,6 +435,76 @@ async function runSidecarSubagent(input: {
       ...(subagentStatus !== "completed" ? { is_error: true } : {})
     }
   };
+}
+
+export async function runForegroundSubagentWithTimeout(input: {
+  execution: Promise<{
+    result: ToolResult;
+    status: "completed" | "errored" | "aborted" | "timed_out";
+    output?: string;
+    error?: string;
+  }>;
+  childThreadId: string;
+  timeoutMs: number;
+  stopSubagent: (threadId: string) => Promise<boolean>;
+}): Promise<{
+  result: ToolResult;
+  status: "completed" | "errored" | "aborted" | "timed_out";
+  output?: string;
+  error?: string;
+}> {
+  if (input.timeoutMs <= 0) {
+    return input.execution;
+  }
+
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{
+    result: ToolResult;
+    status: "timed_out";
+    output: string;
+    error: string;
+  }>((resolve) => {
+    timeoutId = setTimeout(async () => {
+      timedOut = true;
+      await input.stopSubagent(input.childThreadId).catch(() => false);
+      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.`;
+      resolve({
+        status: "timed_out",
+        output: error,
+        error,
+        result: {
+          type: "tool_result",
+          tool_use_id: "",
+          content: error,
+          is_error: true
+        }
+      });
+    }, input.timeoutMs);
+    if (typeof timeoutId === "object" && "unref" in timeoutId && typeof timeoutId.unref === "function") {
+      timeoutId.unref();
+    }
+  });
+
+  const result = await Promise.race([input.execution, timeout]);
+  if (!timedOut && timeoutId) {
+    clearTimeout(timeoutId);
+  }
+  if (timedOut) {
+    input.execution.catch(() => undefined);
+  }
+  return result;
+}
+
+function resolveForegroundSubagentTimeoutMs(): number {
+  const raw = process.env.LUME_SUBAGENT_FOREGROUND_TIMEOUT_MS?.trim();
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.floor(parsed);
+    }
+  }
+  return DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS;
 }
 
 const ListDirectoryTool = defineTool({
@@ -597,7 +668,7 @@ function buildRuntimeCoreTools(input: {
         emitEvent: input.emitSdkMessage
           ? (event: SDKMessage) => { input.emitSdkMessage!(event); }
           : context.emitEvent,
-        onSubagentEnd: async ({ status, output, error }: { status: "completed" | "errored" | "aborted"; output?: string; error?: string }) => {
+        onSubagentEnd: async ({ status, output, error }: { status: "completed" | "errored" | "aborted" | "timed_out"; output?: string; error?: string }) => {
           getSubagentRunRegistry().update(subagentRun.runId, { status, outcome: { output, error } });
           const run = getSubagentRunRegistry().get(subagentRun.runId);
           if (run) await announceSubagentCompletion({ run });
@@ -660,7 +731,15 @@ function buildRuntimeCoreTools(input: {
         };
       }
       try {
-        const execution = await executeSubagent();
+        const execution = await runForegroundSubagentWithTimeout({
+          execution: executeSubagent(),
+          childThreadId: subagentRun.childThreadId,
+          timeoutMs: resolveForegroundSubagentTimeoutMs(),
+          stopSubagent: async (threadId) => {
+            const { stopAgentRuntime } = await import("./attempt");
+            return stopAgentRuntime(threadId);
+          }
+        });
         await enrichedContext.onSubagentEnd?.({
           runId: subagentRun.runId,
           status: execution.status,

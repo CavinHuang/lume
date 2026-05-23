@@ -8,6 +8,8 @@ export interface RuntimeToolCallView {
   output?: unknown
   isError?: boolean
   permissionState?: 'timeout'
+  subagentRunId?: string
+  subagentStatus?: 'running' | 'completed' | 'errored'
 }
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>

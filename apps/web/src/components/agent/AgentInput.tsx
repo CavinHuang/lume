@@ -2,7 +2,7 @@ import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
-import { Send, Square, Paperclip, X } from 'lucide-react'
+import { Bot, Send, Square, Paperclip, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -33,11 +33,18 @@ import { deriveLumeComposerState } from '@/components/composer/lume-composer-sta
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { composerControlTriggerClassName } from './composer-control-styles'
 import { cancelPendingDebouncedAgentInputSend, createDebouncedAgentInputSend } from './agent-input-send-debounce'
-import { syncPermissionModeWithPlanModePhase } from './agent-input-state'
+import { shouldSendAgentInputOnEnter, syncPermissionModeWithPlanModePhase } from './agent-input-state'
 import { buildSlashSuggestionItems, type MentionItem } from './slash-command-state'
 import { buildContextWindowProgress } from './runtime-state-projections'
 import { ContextWindowIndicator } from './ContextWindowIndicator'
 import { getThreadSelectionSummary } from '@/components/model-selection/model-selection-state'
+import {
+  applyAgentRoleMentions,
+  applyAgentRoleRecommendation,
+  buildAgentRoleMentionItems,
+  buildAgentInputRoleRecommendations,
+  type AgentInputRoleRecommendation,
+} from './agent-input-role-recommendations'
 
 interface AgentInputProps {
   threadId: string
@@ -66,14 +73,25 @@ async function fetchSuggestions(
 ): Promise<MentionItem[]> {
   try {
     if (trigger === '@') {
-      const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_DIRECTORY, { threadId, path: '.' }) as {
-        entries: Array<{ name: string; type: string }>
+      const agentItems = buildAgentRoleMentionItems(query)
+      try {
+        const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_DIRECTORY, { threadId, path: '.' }) as {
+          entries: Array<{ name: string; type: string }>
+        }
+        const entries = result?.entries ?? []
+        const fileItems = entries
+          .filter((e) => e.name.toLowerCase().includes(query.toLowerCase()))
+          .slice(0, 10)
+          .map((e) => ({
+            id: e.name,
+            label: e.name,
+            type: 'file' as const,
+            section: 'file' as const,
+          }))
+        return [...agentItems, ...fileItems]
+      } catch {
+        return agentItems
       }
-      const entries = result?.entries ?? []
-      return entries
-        .filter((e) => e.name.toLowerCase().includes(query.toLowerCase()))
-        .slice(0, 10)
-        .map((e) => ({ id: e.name, label: e.name, type: 'file' as const }))
     }
 
     if (trigger === '/') {
@@ -103,7 +121,8 @@ function createSuggestionRenderer(
   trigger: string,
   threadId: string,
   char: string,
-  getWorkspaceSlug: () => string | null
+  getWorkspaceSlug: () => string | null,
+  setSuggestionOpen: (open: boolean) => void
 ) {
   return {
     char,
@@ -114,6 +133,7 @@ function createSuggestionRenderer(
 
       return {
         onStart: (props: SuggestionProps) => {
+          setSuggestionOpen(true)
           wrapper = document.createElement('div')
           wrapper.style.position = 'fixed'
           wrapper.style.zIndex = '9999'
@@ -135,6 +155,7 @@ function createSuggestionRenderer(
 
         onKeyDown: (props: SuggestionKeyDownProps) => {
           if (props.event.key === 'Escape') {
+            setSuggestionOpen(false)
             wrapper?.remove()
             return true
           }
@@ -142,6 +163,7 @@ function createSuggestionRenderer(
         },
 
         onExit: () => {
+          setSuggestionOpen(false)
           component?.destroy()
           wrapper?.remove()
         },
@@ -203,6 +225,7 @@ export function AgentInput({
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
   const [localSending, setLocalSending] = useState(false)
+  const mentionSuggestionOpenRef = useRef(false)
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
@@ -254,28 +277,31 @@ export function AgentInput({
   }, [streaming, threadId])
 
   const getWorkspaceSlug = () => workspaceSlugRef.current
+  const setMentionSuggestionOpen = useCallback((open: boolean) => {
+    mentionSuggestionOpenRef.current = open
+  }, [])
 
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ undoRedo: false }),
-      Placeholder.configure({ placeholder: '输入任务... 支持 @文件 /Skill #MCP' }),
+      Placeholder.configure({ placeholder: '输入任务... 支持 @Agent/@文件 /Skill #MCP' }),
       Mention.configure({
         HTMLAttributes: {
           class: 'mention bg-blue-500/10 text-blue-600 dark:text-blue-400 px-0.5 rounded font-medium text-[13px]',
         },
-        suggestion: createSuggestionRenderer('@', threadId, '@', getWorkspaceSlug),
+        suggestion: createSuggestionRenderer('@', threadId, '@', getWorkspaceSlug, setMentionSuggestionOpen),
       }),
       Mention.extend({ name: 'skillMention' }).configure({
         HTMLAttributes: {
           class: 'mention bg-orange-500/10 text-orange-600 dark:text-orange-400 px-0.5 rounded font-medium text-[13px]',
         },
-        suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug),
+        suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen),
       }),
       Mention.extend({ name: 'mcpMention' }).configure({
         HTMLAttributes: {
           class: 'mention bg-purple-500/10 text-purple-600 dark:text-purple-400 px-0.5 rounded font-medium text-[13px]',
         },
-        suggestion: createSuggestionRenderer('#', threadId, '#', getWorkspaceSlug),
+        suggestion: createSuggestionRenderer('#', threadId, '#', getWorkspaceSlug, setMentionSuggestionOpen),
       }),
     ],
     editorProps: {
@@ -284,7 +310,7 @@ export function AgentInput({
           'outline-none min-h-[72px] max-h-[220px] overflow-y-auto text-[14px] leading-7 text-[var(--text-1)]',
       },
       handleKeyDown(_, event) {
-        if (event.key === 'Enter' && !event.shiftKey) {
+        if (shouldSendAgentInputOnEnter(event, mentionSuggestionOpenRef.current)) {
           event.preventDefault()
           debouncedSend()
           return true
@@ -313,10 +339,27 @@ export function AgentInput({
   const contextWindowProgress = buildContextWindowProgress(runtimeEvents, {
     contextWindow: selectedModelSummary.meta?.contextWindow,
   })
+  const roleRecommendations = useMemo(
+    () => streaming || localSending ? [] : buildAgentInputRoleRecommendations(editorText),
+    [editorText, localSending, streaming],
+  )
+
+  const applyRoleRecommendation = useCallback((recommendation: AgentInputRoleRecommendation) => {
+    if (!editor) return
+    const nextText = applyAgentRoleRecommendation(editor.getText(), recommendation.role.id)
+    editor.commands.setContent(
+      nextText.split('\n').map((line) => ({
+        type: 'paragraph',
+        content: line.length > 0 ? [{ type: 'text', text: line }] : undefined,
+      })),
+    )
+    editor.commands.focus('end')
+    setEditorText(nextText)
+  }, [editor])
 
   const handleSend = useCallback(async () => {
     if (!editor || streaming || localSending) return
-    const rawText = editor.getText().trim()
+    const rawText = applyAgentRoleMentions(editor.getText()).trim()
     if (!rawText && pendingAttachments.length === 0) return
 
     setLocalSending(true)
@@ -450,12 +493,24 @@ export function AgentInput({
                 className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
               />
             }
-            supportingContent={pendingAttachments.length > 0 ? (
-              <PendingAttachmentChips
-                attachments={pendingAttachments}
-                onRemove={onRemovePendingAttachment}
-              />
-            ) : undefined}
+            supportingContent={
+              pendingAttachments.length > 0 || roleRecommendations.length > 0 ? (
+                <div className="space-y-2 px-3 pb-2">
+                  {pendingAttachments.length > 0 && (
+                    <PendingAttachmentChips
+                      attachments={pendingAttachments}
+                      onRemove={onRemovePendingAttachment}
+                    />
+                  )}
+                  {roleRecommendations.length > 0 && (
+                    <AgentRoleRecommendationChips
+                      recommendations={roleRecommendations}
+                      onSelect={applyRoleRecommendation}
+                    />
+                  )}
+                </div>
+              ) : undefined
+            }
             leadingTools={
               <>
                 <button
@@ -515,7 +570,7 @@ function PendingAttachmentChips({
   onRemove: (id: string) => void
 }) {
   return (
-    <div className="relative flex flex-wrap gap-1.5 px-3 pb-2">
+    <div className="relative flex flex-wrap gap-1.5">
       {attachments.map((attachment) => (
         <div
           key={attachment.id}
@@ -534,6 +589,35 @@ function PendingAttachmentChips({
             <X size={10} />
           </button>
         </div>
+      ))}
+    </div>
+  )
+}
+
+function AgentRoleRecommendationChips({
+  recommendations,
+  onSelect,
+}: {
+  recommendations: AgentInputRoleRecommendation[]
+  onSelect: (recommendation: AgentInputRoleRecommendation) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="inline-flex h-6 items-center gap-1 rounded-full border border-[color:color-mix(in_oklab,var(--brand)_22%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] px-2 text-[11px] font-medium text-[var(--text-2)]">
+        <Bot size={11} />
+        推荐角色
+      </span>
+      {recommendations.map((recommendation) => (
+        <button
+          key={recommendation.role.id}
+          type="button"
+          onClick={() => onSelect(recommendation)}
+          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_86%,transparent)] px-2 text-[11px] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_38%,var(--border-strong))] hover:text-[var(--text-1)]"
+          title={`使用 ${recommendation.role.id} agent`}
+        >
+          <span className="truncate font-medium">{recommendation.label}</span>
+          <span className="shrink-0 text-[var(--text-3)]">命中 {recommendation.score}</span>
+        </button>
       ))}
     </div>
   )

@@ -1,21 +1,25 @@
 import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useStickToBottom } from 'use-stick-to-bottom'
 import { agentRuntimeEventsAtom, agentSubagentRunsAtom } from '@/atoms'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { getThreadMessages, getThreadRuntimeEvents, sidecarCall } from '@/lib/desktop-api'
 import {
   AGENT_IPC_CHANNELS,
   type AgentListSubagentRunsResult,
   type AgentMessage,
-  type AgentMessageAttachmentInput,
 } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
-import type { RuntimeMessageView } from './runtime-message-view'
 import { projectRuntimeEventMessages } from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
+import {
+  collectNewRuntimeMessageIds,
+  collectRuntimeMessageIds,
+  getPreservedScrollTopAfterResize,
+  isNearScrollBottom,
+  reconcileUserMessageVersions,
+  shouldAutoScrollAfterUserScroll,
+} from './agent-message-state'
 
 interface AgentMessagesProps {
   threadId: string
@@ -24,83 +28,22 @@ interface AgentMessagesProps {
   onOpenMemorySource?: (path: string) => void
 }
 
-export function reconcileUserMessageVersions(
-  messages: RuntimeMessageView[],
-  visibleThreadMessages: AgentMessage[],
-): RuntimeMessageView[] {
-  const visibleUsers = visibleThreadMessages.filter((message) => message.role === 'user')
-  if (visibleUsers.length === 0) return messages
-  const usedVisibleIds = new Set<string>()
-
-  return messages.map((message) => {
-    if (message.type === 'user') {
-      if (message.messageId) {
-        const visible = visibleUsers.find((item) => item.id === message.messageId)
-        return visible ? withPersistedUserAttachments(message, visible) : message
-      }
-
-      const visible = visibleUsers.find((item) => (
-        !usedVisibleIds.has(item.id)
-        && item.content === message.text
-        && Math.abs(item.createdAt - Date.parse(message.createdAt)) < 10_000
-      )) ?? visibleUsers.find((item) => !usedVisibleIds.has(item.id) && item.content === message.text)
-
-      if (visible) {
-        usedVisibleIds.add(visible.id)
-        return withPersistedUserAttachments({
-          ...message,
-          id: visible.id,
-          messageId: visible.id,
-          versionGroupId: visible.versionGroupId,
-          versionIndex: visible.versionIndex,
-          versionCount: visible.versionCount,
-        }, visible)
-      }
-      return message
-    }
-
-    return message
-  })
-}
-
-function withPersistedUserAttachments(
-  message: Extract<RuntimeMessageView, { type: 'user' }>,
-  visible: AgentMessage,
-): Extract<RuntimeMessageView, { type: 'user' }> {
-  if (message.attachments?.length) return message
-  const attachments = readPersistedMessageAttachments(visible.metadata)
-  return attachments.length > 0 ? { ...message, attachments } : message
-}
-
-function readPersistedMessageAttachments(metadata: Record<string, unknown> | undefined): AgentMessageAttachmentInput[] {
-  const raw = metadata?.messageAttachments
-  if (!Array.isArray(raw)) return []
-  return raw.filter((item): item is AgentMessageAttachmentInput => (
-    item !== null
-    && typeof item === 'object'
-    && typeof (item as AgentMessageAttachmentInput).id === 'string'
-    && typeof (item as AgentMessageAttachmentInput).filename === 'string'
-    && typeof (item as AgentMessageAttachmentInput).mediaType === 'string'
-    && typeof (item as AgentMessageAttachmentInput).size === 'number'
-    && typeof (item as AgentMessageAttachmentInput).threadPath === 'string'
-  ))
-}
-
 export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMemorySource }: AgentMessagesProps) {
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
-  const containerRef = useRef<HTMLDivElement | null>(null)
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const prevThreadIdRef = useRef(threadId)
+  const previousMessageIdsRef = useRef<{ threadId: string; ids: Set<string> }>({ threadId, ids: new Set() })
+  const previousScrollTopRef = useRef(0)
+  const suspendResizeCompensationUntilRef = useRef(0)
+  const shouldAutoScrollRef = useRef(true)
+  const showScrollButtonRef = useRef(false)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
-  const {
-    contentRef: stickContentRef,
-    scrollRef: stickScrollRef,
-    scrollToBottom,
-    isAtBottom,
-  } = useStickToBottom({ resize: 'smooth', initial: 'instant' })
+  const [showScrollButton, setShowScrollButton] = useState(false)
   const projectedMessages = useMemo(() => (
     runtimeEvents.length > 0
       ? projectRuntimeEventMessages(runtimeEvents)
@@ -110,6 +53,12 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
     () => reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
     [projectedMessages, visibleThreadMessages],
   )
+  const newMessageIds = useMemo(() => {
+    const previousIds = previousMessageIdsRef.current.threadId === threadId
+      ? previousMessageIdsRef.current.ids
+      : new Set<string>()
+    return collectNewRuntimeMessageIds(previousIds, liveMessages)
+  }, [liveMessages, threadId])
   const userVersionRefreshKey = useMemo(
     () => projectedMessages
       .filter((message) => message.type === 'user')
@@ -117,13 +66,46 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       .join('|'),
     [projectedMessages],
   )
-  const setContentRef = useCallback((element: HTMLDivElement | null) => {
-    containerRef.current = element
-    stickContentRef(element)
-  }, [stickContentRef])
+  const setScrollButtonVisible = useCallback((visible: boolean) => {
+    if (showScrollButtonRef.current === visible) return
+    showScrollButtonRef.current = visible
+    setShowScrollButton(visible)
+  }, [])
+  const suspendScrollCompensationForUserResize = useCallback(() => {
+    shouldAutoScrollRef.current = false
+    suspendResizeCompensationUntilRef.current = performance.now() + 800
+  }, [])
   const scrollMessagesToBottom = useCallback((animation: 'instant' | 'smooth' = 'smooth') => {
-    void scrollToBottom({ animation, ignoreEscapes: true })
-  }, [scrollToBottom])
+    const container = scrollContainerRef.current
+    if (!container) return undefined
+
+    shouldAutoScrollRef.current = true
+
+    const scrollOnce = () => {
+      if (animation === 'smooth' && typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+      } else {
+        container.scrollTop = container.scrollHeight
+      }
+      previousScrollTopRef.current = container.scrollTop
+      setScrollButtonVisible(false)
+    }
+
+    scrollOnce()
+
+    if (animation === 'smooth') return undefined
+
+    let secondFrame = 0
+    const firstFrame = requestAnimationFrame(() => {
+      scrollOnce()
+      secondFrame = requestAnimationFrame(scrollOnce)
+    })
+
+    return () => {
+      cancelAnimationFrame(firstFrame)
+      cancelAnimationFrame(secondFrame)
+    }
+  }, [setScrollButtonVisible])
 
   // 首次访问线程时拉取 subagent runs
   useEffect(() => {
@@ -156,65 +138,124 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       .catch((err) => console.error('[AgentMessages] 加载线程消息失败:', err))
   }, [threadId, userVersionRefreshKey])
 
-  useLayoutEffect(() => {
-    const viewport = containerRef.current?.closest('[data-slot="scroll-area-viewport"]')
-    if (!(viewport instanceof HTMLDivElement)) return
-
-    stickScrollRef(viewport)
-    return () => {
-      stickScrollRef(null)
+  useEffect(() => {
+    previousMessageIdsRef.current = {
+      threadId,
+      ids: collectRuntimeMessageIds(liveMessages),
     }
-  }, [stickScrollRef])
+  }, [liveMessages, threadId])
+
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const currentScrollTop = container.scrollTop
+    const nearBottom = isNearScrollBottom(container)
+    shouldAutoScrollRef.current = shouldAutoScrollAfterUserScroll({
+      currentScrollTop,
+      previousScrollTop: previousScrollTopRef.current,
+      nearBottom,
+    })
+    previousScrollTopRef.current = currentScrollTop
+    setScrollButtonVisible(!nearBottom && liveMessages.length > 0)
+  }, [liveMessages.length, setScrollButtonVisible])
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current
+    const content = contentRef.current
+    if (!container || !content) return
+
+    let previousScrollHeight = container.scrollHeight
+    let previousContentHeight = content.getBoundingClientRect().height
+    const resizeObserver = new ResizeObserver(() => {
+      const nextContentHeight = content.getBoundingClientRect().height
+      if (nextContentHeight === previousContentHeight) return
+      previousContentHeight = nextContentHeight
+
+      const nextScrollHeight = container.scrollHeight
+      if (performance.now() < suspendResizeCompensationUntilRef.current) {
+        previousScrollTopRef.current = container.scrollTop
+        previousScrollHeight = nextScrollHeight
+        setScrollButtonVisible(!isNearScrollBottom(container) && liveMessages.length > 0)
+        return
+      }
+
+      if (shouldAutoScrollRef.current) {
+        container.scrollTop = container.scrollHeight
+      } else {
+        container.scrollTop = getPreservedScrollTopAfterResize({
+          currentScrollTop: container.scrollTop,
+          previousScrollHeight,
+          nextScrollHeight,
+        })
+      }
+      previousScrollTopRef.current = container.scrollTop
+      previousScrollHeight = container.scrollHeight
+      setScrollButtonVisible(!isNearScrollBottom(container) && liveMessages.length > 0)
+    })
+
+    resizeObserver.observe(content)
+    return () => resizeObserver.disconnect()
+  }, [liveMessages.length, setScrollButtonVisible])
 
   useLayoutEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
       prevThreadIdRef.current = threadId
-      requestAnimationFrame(() => scrollMessagesToBottom('instant'))
-      return
+      shouldAutoScrollRef.current = true
+      return scrollMessagesToBottom('instant')
     }
 
-    if (liveMessages.length === 1) {
-      requestAnimationFrame(() => scrollMessagesToBottom('instant'))
+    if (shouldAutoScrollRef.current && liveMessages.length > 0) {
+      return scrollMessagesToBottom('instant')
     }
   }, [liveMessages.length, scrollMessagesToBottom, threadId])
 
   const items: React.ReactNode[] = []
   for (let i = 0; i < liveMessages.length; i++) {
     const msg = liveMessages[i]
+    const activeStreamingMessage = streaming && i === liveMessages.length - 1
     items.push(
       <RuntimeEventContentBlock
         key={`runtime-event-${msg.id}`}
         message={msg}
-        animate={streaming && i === liveMessages.length - 1}
+        animate={activeStreamingMessage && newMessageIds.has(msg.id)}
+        streaming={activeStreamingMessage}
         threadId={threadId}
         onOpenThreadFile={onOpenThreadFile}
         onOpenMemorySource={onOpenMemorySource}
+        onUserResizeStart={suspendScrollCompensationForUserResize}
       />
     )
   }
   const hasRenderableMessages = liveMessages.length > 0
 
   return (
-    <ScrollArea className="flex-1 min-h-0">
+    <div className="relative flex-1 min-h-0">
       <div
-        ref={setContentRef}
-        className={cn(
-          'min-h-full w-full px-3 py-5',
-          !hasRenderableMessages ? 'flex items-center justify-center' : 'space-y-7'
-        )}
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="h-full w-full overflow-y-auto"
       >
-        {!hasRenderableMessages ? (
-          <div className="text-center space-y-1">
-            <p className="text-foreground/50 text-sm font-medium">Agent 已就绪</p>
-            <p className="text-foreground/30 text-xs">输入任务开始</p>
-          </div>
-        ) : (
-          <>
-            {items}
-          </>
-        )}
+        <div
+          ref={contentRef}
+          className={cn(
+            'min-h-full w-full px-3 py-5',
+            !hasRenderableMessages ? 'flex items-center justify-center' : 'space-y-7'
+          )}
+        >
+          {!hasRenderableMessages ? (
+            <div className="text-center space-y-1">
+              <p className="text-foreground/50 text-sm font-medium">Agent 已就绪</p>
+              <p className="text-foreground/30 text-xs">输入任务开始</p>
+            </div>
+          ) : (
+            <>
+              {items}
+            </>
+          )}
+        </div>
       </div>
-      {!isAtBottom && hasRenderableMessages && (
+      {showScrollButton && hasRenderableMessages && (
         <button
           type="button"
           onClick={() => scrollMessagesToBottom('smooth')}
@@ -225,6 +266,6 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
           <ArrowDown size={17} strokeWidth={2.2} />
         </button>
       )}
-    </ScrollArea>
+    </div>
   )
 }

@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { Blocks, Box, File, Hash, TerminalSquare } from 'lucide-react'
+import { Blocks, Bot, Box, File, Hash, TerminalSquare } from 'lucide-react'
 import { normalizeSlashSuggestionItems, type MentionItem } from './slash-command-state'
 
 interface MentionListProps {
@@ -46,7 +46,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
     if (displayItems.length === 0) {
       const emptyLabel = trigger === '@'
-        ? '继续输入关键词搜索文件'
+        ? '继续输入关键词搜索 Agent 或文件'
         : trigger === '#'
           ? '继续输入关键词搜索 MCP 服务'
           : '继续输入关键词搜索技能或 slash 能力'
@@ -59,6 +59,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     }
 
     const iconMap = {
+      agent: <Bot size={13} className="text-[var(--brand)]" />,
       file: <File size={13} className="text-blue-500" />,
       skill: <Box size={16} className="text-[var(--text-2)]" />,
       mcp: <Hash size={13} className="text-purple-500" />,
@@ -119,9 +120,9 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       )
     }
 
-    const panelTitle = trigger === '@' ? 'File Mentions' : trigger === '#' ? 'MCP Servers' : 'Slash Commands'
+    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : 'Slash Commands'
     const panelDescription = trigger === '@'
-      ? '从当前工作区快速引用文件'
+      ? '选择专业 Agent 或引用当前工作区文件'
       : trigger === '#'
         ? '选择可用的 MCP 服务与工具入口'
         : '常用能力和工作区技能都可以在这里快速插入'
@@ -146,7 +147,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
               <div key={`${item.type}:${item.id}`} className="mb-1 last:mb-0">
                 {showSectionHeader ? (
                   <div className="px-2 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-3)]">
-                    {item.section === 'capability' ? '常用能力' : 'Workspace Skills'}
+                    {getMentionSectionLabel(item.section)}
                   </div>
                 ) : null}
                 <button
@@ -173,6 +174,11 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                             Quick
                           </span>
                         ) : null}
+                        {item.type === 'agent' && item.meta ? (
+                          <span className="rounded-full bg-[color:color-mix(in_oklab,var(--brand)_10%,transparent)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--brand)]">
+                            {item.meta}
+                          </span>
+                        ) : null}
                       </div>
                       {item.subtitle ? (
                         <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--text-3)]">
@@ -196,3 +202,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     )
   }
 )
+
+function getMentionSectionLabel(section: MentionItem['section']): string {
+  if (section === 'capability') return '常用能力'
+  if (section === 'agent') return 'Agents'
+  if (section === 'file') return 'Files'
+  return 'Workspace Skills'
+}

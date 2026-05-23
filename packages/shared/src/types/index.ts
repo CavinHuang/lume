@@ -5,6 +5,7 @@
 export * from "./runtime";
 export * from "./channel";
 export * from "./agent";
+export * from "./agent-roles";
 export * from "./agent-loop";
 export * from "./runtime-event";
 export * from "./memory";

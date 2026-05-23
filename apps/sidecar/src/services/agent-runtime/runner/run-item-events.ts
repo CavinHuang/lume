@@ -43,7 +43,8 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
     item.type === "assistant_message" && extractText(item.content).trim().length > 0
   );
 
-  for (const item of run.generatedItems) {
+  for (let index = 0; index < run.generatedItems.length; index += 1) {
+    const item = withInferredSubagentOwner(run.generatedItems, index);
     events.push(...projectRunItemToRuntimeEvents(run, item, {
       includeAssistantText: true,
       includeAssistantThinking: true,
@@ -91,6 +92,25 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
   return events;
 }
 
+function withInferredSubagentOwner(items: LumeRunItem[], index: number): LumeRunItem {
+  const item = items[index];
+  if (!item) {
+    throw new Error(`Missing run item at index ${index}`);
+  }
+  if (item.type !== "assistant_message" || item.parentToolCallId || item.subagentRunId) {
+    return item;
+  }
+  const next = items[index + 1];
+  if (next?.type !== "tool_call" || !next.parentToolCallId || next.createdAt !== item.createdAt) {
+    return item;
+  }
+  return {
+    ...item,
+    parentToolCallId: next.parentToolCallId,
+    ...(next.subagentRunId ? { subagentRunId: next.subagentRunId } : {})
+  };
+}
+
 function isRuntimeContinuationRun(run: LumeRunState): boolean {
   const metadata = run.input.messageMetadata;
   return Boolean(metadata?.runtimeContinuation && typeof metadata.runtimeContinuation === "object");
@@ -105,6 +125,8 @@ export function projectRunItemToRuntimeEvents(
   item: LumeRunItem,
   options: { includeAssistantText: boolean; includeAssistantThinking?: boolean; includeModelStreamText: boolean }
 ): LumeRuntimeEvent[] {
+  const subagentFields = subagentRuntimeFields(item);
+
   if (item.type === "assistant_message") {
     const events: LumeRuntimeEvent[] = [];
     for (const block of extractAssistantContentBlocks(item.content)) {
@@ -116,7 +138,8 @@ export function projectRunItemToRuntimeEvents(
           runId: run.runId,
           createdAt: item.createdAt,
           delta: block.text,
-          messageId: item.id
+          messageId: item.id,
+          ...subagentFields
         });
       }
       if (block.kind === "text" && options.includeAssistantText && block.text.trim()) {
@@ -127,7 +150,8 @@ export function projectRunItemToRuntimeEvents(
           runId: run.runId,
           createdAt: item.createdAt,
           delta: block.text,
-          messageId: item.id
+          messageId: item.id,
+          ...subagentFields
         });
       }
     }
@@ -144,7 +168,8 @@ export function projectRunItemToRuntimeEvents(
       threadId: run.threadId,
       runId: run.runId,
       createdAt: item.createdAt,
-      delta: delta.text
+      delta: delta.text,
+      ...subagentFields
     }];
   }
 
@@ -157,7 +182,8 @@ export function projectRunItemToRuntimeEvents(
       createdAt: item.createdAt,
       toolCallId: item.id,
       toolName: item.toolName,
-      inputPreview: item.input
+      inputPreview: item.input,
+      ...subagentFields
     }];
   }
 
@@ -175,7 +201,8 @@ export function projectRunItemToRuntimeEvents(
         error: {
           code: "tool_error",
           message: previewRuntimePayload(item.output)
-        }
+        },
+        ...subagentFields
       }];
     }
     return [{
@@ -186,7 +213,8 @@ export function projectRunItemToRuntimeEvents(
       createdAt: item.createdAt,
       toolCallId: item.toolCallId,
       toolName: item.toolName,
-      resultPreview: previewRuntimePayload(item.output)
+      resultPreview: previewRuntimePayload(item.output),
+      ...subagentFields
     }];
   }
 
@@ -212,6 +240,25 @@ export function projectRunItemToRuntimeEvents(
   }
 
   return [];
+}
+
+function subagentRuntimeFields(item: LumeRunItem): Pick<LumeRuntimeEvent, "subagentRunId" | "parentToolUseId"> {
+  const source = item as LumeRunItem & {
+    subagentRunId?: string;
+    parentToolCallId?: string;
+    event?: unknown;
+  };
+  const event = asRecord(source.event);
+  const subagentRunId = stringField(source.subagentRunId) ?? stringField(event.subagent_run_id);
+  const parentToolUseId = stringField(source.parentToolCallId) ?? stringField(event.parent_tool_use_id);
+  return {
+    ...(subagentRunId ? { subagentRunId } : {}),
+    ...(parentToolUseId ? { parentToolUseId } : {})
+  };
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): LumeRuntimeEvent[] {

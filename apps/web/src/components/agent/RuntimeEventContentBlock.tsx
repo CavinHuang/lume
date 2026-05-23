@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Edit3, FileText, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
@@ -9,14 +9,18 @@ import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
-import type { AgentMessage } from '@lume/shared'
+import { getAgentRole, type AgentMessage, type AgentRoleDefinition } from '@lume/shared'
+import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
+import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 
 interface RuntimeEventContentBlockProps {
   message: RuntimeMessageView
   animate?: boolean
+  streaming?: boolean
   threadId: string
   onOpenThreadFile?: (path: string) => void
   onOpenMemorySource?: (path: string) => void
+  onUserResizeStart?: () => void
 }
 
 export interface CopyFeedbackState {
@@ -44,7 +48,15 @@ export function showTemporaryCopiedFeedback(
   }, delayMs)
 }
 
-export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThreadFile, onOpenMemorySource }: RuntimeEventContentBlockProps) {
+export function RuntimeEventContentBlock({
+  message,
+  animate,
+  streaming,
+  threadId,
+  onOpenThreadFile,
+  onOpenMemorySource,
+  onUserResizeStart,
+}: RuntimeEventContentBlockProps) {
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
   if (message.type === 'user') {
@@ -63,12 +75,12 @@ export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThr
     })
     .join('|')
   const showIdleStatus = useDelayedAssistantIdleStatus(
-    animate === true && message.status === 'streaming' && !latestTaskProgressBlock,
+    streaming === true && message.status === 'streaming' && !latestTaskProgressBlock,
     activitySignature,
   )
 
   return (
-    <div className={cn('flex min-w-0 gap-4', cls)}>
+    <div className={cn('flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
       <div className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[#ded6ff] bg-white text-[#675cff] shadow-[0_2px_8px_rgba(103,92,255,0.07)]">
         <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
       </div>
@@ -80,9 +92,10 @@ export function RuntimeEventContentBlock({ message, animate, threadId, onOpenThr
             threadId={threadId}
             onOpenThreadFile={onOpenThreadFile}
             onOpenMemorySource={onOpenMemorySource}
-            isStreaming={animate === true && message.status === 'streaming'}
+            onUserResizeStart={onUserResizeStart}
+            isStreaming={streaming === true && message.status === 'streaming'}
             isActiveThinking={block.type === 'thinking'
-              && animate === true
+              && streaming === true
               && message.status === 'streaming'
               && index === contentBlocks.length - 1}
           />
@@ -121,6 +134,8 @@ function UserMessageBlock({
   const [submitting, setSubmitting] = useState(false)
   const canEdit = Boolean(message.messageId)
   const canShowVersions = Boolean(message.versionGroupId && (message.versionCount ?? 0) > 1)
+  const agentInvocation = parseAgentRoleInstructionMessage(message.text)
+  const visibleMessageText = agentInvocation?.task || message.text
 
   const loadVersions = async () => {
     if (!message.versionGroupId) return
@@ -160,7 +175,7 @@ function UserMessageBlock({
   }
 
   return (
-    <div className={cn('group flex justify-end gap-2', className)}>
+    <div className={cn('group ml-auto flex w-full max-w-[920px] justify-end gap-2', className)}>
       <div className="flex max-w-[560px] flex-col items-end gap-1.5">
         <div className="rounded-[12px] rounded-tr-[10px] bg-[#e4ddff] px-3 py-2 text-[15px] font-medium leading-[22px] text-[#34384c] shadow-[0_1px_0_rgba(101,91,255,0.08)]">
           {editing ? (
@@ -171,7 +186,7 @@ function UserMessageBlock({
               autoFocus
             />
           ) : (
-            <div className="whitespace-pre-wrap">{message.text}</div>
+            <UserAgentRoleInvocationContent text={message.text} />
           )}
         </div>
         {message.attachments && message.attachments.length > 0 && (
@@ -204,7 +219,7 @@ function UserMessageBlock({
             </button>
           )}
           <CopyMessageButton
-            text={message.text}
+            text={visibleMessageText}
             className="rounded-md p-1 transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff] data-[state=copied]:text-emerald-600"
             iconSize={14}
           />
@@ -274,6 +289,53 @@ function UserMessageBlock({
   )
 }
 
+export interface AgentRoleInstructionMessage {
+  role: AgentRoleDefinition
+  task: string
+}
+
+export function parseAgentRoleInstructionMessage(text: string): AgentRoleInstructionMessage | null {
+  const match = text.match(/^请调用 Agent 工具，并将 subagent_type 设置为 "([^"]+)" 来处理这个任务：\s*([\s\S]*)$/u)
+  if (!match) return null
+
+  const role = getAgentRole(match[1] ?? '')
+  if (!role) return null
+
+  return {
+    role,
+    task: (match[2] ?? '').trim(),
+  }
+}
+
+export function UserAgentRoleInvocationContent({ text }: { text: string }) {
+  const invocation = parseAgentRoleInstructionMessage(text)
+
+  if (!invocation) {
+    return <div className="whitespace-pre-wrap">{text}</div>
+  }
+
+  return (
+    <div data-agent-role-message={invocation.role.id} className="min-w-0 space-y-2">
+      <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-white/45 bg-white/50 px-2 py-1 shadow-[0_1px_0_rgba(101,91,255,0.08)]">
+        <img
+          src={AGENT_ROLE_ASSETS.roles[invocation.role.id]}
+          alt=""
+          className="size-6 shrink-0 rounded-full object-cover ring-1 ring-white/80"
+        />
+        <span className="min-w-0 truncate text-[13px] font-semibold leading-5 text-[#34384c]">
+          {invocation.role.displayName}
+        </span>
+        <span className="shrink-0 text-[12px] font-medium leading-5 text-[#6f7488]">
+          {invocation.role.title}
+        </span>
+      </div>
+      {invocation.task && (
+        <div className="whitespace-pre-wrap text-[15px] leading-[22px] text-[#34384c]">{invocation.task}</div>
+      )}
+    </div>
+  )
+}
+
 export function formatMessageAttachmentSize(size: number): string {
   if (size < 1024) return `${size} B`
   const kb = size / 1024
@@ -288,6 +350,7 @@ function RuntimeEventAssistantBlockItem({
   onOpenMemorySource,
   isStreaming,
   isActiveThinking,
+  onUserResizeStart,
 }: {
   block: RuntimeAssistantBlock
   threadId: string
@@ -295,6 +358,7 @@ function RuntimeEventAssistantBlockItem({
   onOpenMemorySource?: (path: string) => void
   isStreaming: boolean
   isActiveThinking: boolean
+  onUserResizeStart?: () => void
 }) {
   if (block.type === 'text') {
     return <SmoothText text={block.text} isStreaming={isStreaming} onOpenThreadFile={onOpenThreadFile} />
@@ -316,7 +380,13 @@ function RuntimeEventAssistantBlockItem({
     return <MemoryContextUsedNotice event={block.event} onOpenMemorySource={onOpenMemorySource} />
   }
 
-  return <RuntimeEventToolCallBlock toolCall={block.toolCall} threadId={threadId} />
+  return (
+    <RuntimeEventToolCallBlock
+      toolCall={block.toolCall}
+      threadId={threadId}
+      onUserResizeStart={onUserResizeStart}
+    />
+  )
 }
 
 function MemoryContextUsedNotice({
@@ -530,6 +600,12 @@ function useIsDark(): boolean {
   )
 }
 
+const MARKDOWN_INCOMPLETE_COMPONENTS = {
+  link: 'incomplete-link',
+  image: 'incomplete-image',
+  table: 'incomplete-table',
+} as const
+
 function SmoothText({
   text,
   isStreaming,
@@ -544,33 +620,31 @@ function SmoothText({
     isStreaming,
   })
   const isDark = useIsDark()
+  const markdownStreaming = useMemo(() => ({
+    hasNextChunk: isStreaming,
+    enableAnimation: isStreaming,
+    tail: isStreaming,
+    incompleteMarkdownComponentMap: MARKDOWN_INCOMPLETE_COMPONENTS,
+  }), [isStreaming])
+  const markdownComponents = useMemo(() => ({
+    code: (props: MarkdownCodeProps) => (
+      <MarkdownCode
+        {...props}
+        onOpenThreadFile={onOpenThreadFile}
+      />
+    ),
+    'incomplete-link': IncompleteLink,
+    'incomplete-image': IncompleteImage,
+    'incomplete-table': IncompleteTable,
+  }), [onOpenThreadFile])
 
   return (
     <div className="min-w-0 w-full">
       <XMarkdown
         className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
         rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
-        streaming={{
-          hasNextChunk: false,
-          enableAnimation: true,
-          tail: true,
-          incompleteMarkdownComponentMap: {
-            link: 'incomplete-link',
-            image: 'incomplete-image',
-            table: 'incomplete-table',
-          },
-        }}
-        components={{
-          code: (props) => (
-            <MarkdownCode
-              {...(props as MarkdownCodeProps)}
-              onOpenThreadFile={onOpenThreadFile}
-            />
-          ),
-          'incomplete-link': IncompleteLink,
-          'incomplete-image': IncompleteImage,
-          'incomplete-table': IncompleteTable,
-        }}
+        streaming={markdownStreaming}
+        components={markdownComponents}
       >
         {displayedContent}
       </XMarkdown>
@@ -795,7 +869,15 @@ function IncompleteTable() {
   )
 }
 
-function RuntimeEventToolCallBlock({ toolCall, threadId }: { toolCall: RuntimeToolCallView; threadId: string }) {
+function RuntimeEventToolCallBlock({
+  toolCall,
+  threadId,
+  onUserResizeStart,
+}: {
+  toolCall: RuntimeToolCallView
+  threadId: string
+  onUserResizeStart?: () => void
+}) {
   const [collapsed, setCollapsed] = useState(true)
   const isRunning = toolCall.status === 'running'
   const input = asRecord(toolCall.input)
@@ -805,21 +887,29 @@ function RuntimeEventToolCallBlock({ toolCall, threadId }: { toolCall: RuntimeTo
       <SubagentInlinePanel
         threadId={threadId}
         toolUseId={toolCall.id}
+        runId={toolCall.subagentRunId}
+        status={toolCall.subagentStatus}
         description={asString(input.description ?? input.prompt)}
         agentType={asString(input.subagent_type)}
         prompt={asString(input.prompt)}
+        onUserResizeStart={onUserResizeStart}
       />
     )
   }
 
   const isBash = toolCall.toolName === 'Bash'
   const Icon = isBash ? Terminal : Wrench
-  let resultData: unknown = toolCall.output
-  if (typeof toolCall.output === 'string') {
-    try {
-      resultData = JSON.parse(toolCall.output)
-    } catch {
-      resultData = toolCall.output
+  const resultOpen = !isRunning && !collapsed
+  const shouldRenderResult = useDeferredUnmount(resultOpen)
+  let resultData: unknown
+  if (shouldRenderResult) {
+    resultData = toolCall.output
+    if (typeof toolCall.output === 'string') {
+      try {
+        resultData = JSON.parse(toolCall.output)
+      } catch {
+        resultData = toolCall.output
+      }
     }
   }
 
@@ -827,7 +917,12 @@ function RuntimeEventToolCallBlock({ toolCall, threadId }: { toolCall: RuntimeTo
     <div className="w-full max-w-[460px] overflow-hidden rounded-[10px] border border-[#e1e4ec] bg-white shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       <button
         type="button"
-        onClick={() => setCollapsed((value) => !value)}
+        onClick={() => {
+          if (!isRunning) {
+            onUserResizeStart?.()
+          }
+          setCollapsed((value) => !value)
+        }}
         className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[#59637a] transition-colors hover:bg-[#fbfcff]"
       >
         <Icon size={15} className="shrink-0 text-[#68718a]" />
@@ -854,19 +949,12 @@ function RuntimeEventToolCallBlock({ toolCall, threadId }: { toolCall: RuntimeTo
           />
         )}
       </button>
-      {!isRunning && (
-        <div
-          className={cn(
-            'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
-            collapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100',
-          )}
-        >
-          <div className="min-h-0 overflow-hidden">
-            <div className="border-t border-[#edf0f5] p-3">
-              <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
-            </div>
+      {shouldRenderResult && (
+        <AnimatedCollapsiblePanel open={resultOpen}>
+          <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[#edf0f5] p-3">
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
-        </div>
+        </AnimatedCollapsiblePanel>
       )}
     </div>
   )

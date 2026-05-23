@@ -50,4 +50,47 @@ describe('RuntimeEvent UI boundary', () => {
       expect(source(file)).not.toContain('run-event')
     }
   })
+
+  test('agent transcript uses native scrolling for the hot scroll path', () => {
+    const content = source('apps/web/src/components/agent/AgentMessages.tsx')
+
+    expect(content).not.toContain('use-stick-to-bottom')
+    expect(content).not.toContain('@/components/ui/scroll-area')
+    expect(content).toContain('overflow-y-auto')
+  })
+
+  test('user-expanded tool blocks skip regular list resize compensation', () => {
+    const messages = source('apps/web/src/components/agent/AgentMessages.tsx')
+    const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
+    const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
+
+    expect(messages).toContain('suspendResizeCompensationUntilRef')
+    expect(messages).toContain('suspendScrollCompensationForUserResize')
+    expect(contentBlock).toContain('onUserResizeStart')
+    expect(subagentPanel).toContain('onUserResizeStart')
+    expect(subagentPanel).not.toContain('max-h-[min(70vh,720px)]')
+    expect(subagentPanel).not.toContain('overflow-y-auto overscroll-contain')
+    expect(subagentPanel).toContain('sticky top-0 z-10')
+    expect(subagentPanel).not.toContain('overflow-anchor:none')
+  })
+
+  test('tool and subagent expansion use animated delayed-unmount panels', () => {
+    const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
+    const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
+    const animatedPanelPath = 'apps/web/src/components/agent/AnimatedCollapsiblePanel.tsx'
+    const animatedPanelExists = existsSync(join(repoRoot, animatedPanelPath))
+    const animatedPanel = animatedPanelExists ? source(animatedPanelPath) : ''
+
+    expect(animatedPanelExists).toBeTrue()
+    expect(contentBlock).toContain('AnimatedCollapsiblePanel')
+    expect(contentBlock).toContain('useDeferredUnmount')
+    expect(subagentPanel).toContain('AnimatedCollapsiblePanel')
+    expect(subagentPanel).toContain('useDeferredUnmount')
+    expect(subagentPanel).toContain('!expanded && !isPending && isDone')
+    expect(animatedPanel).toContain('grid-rows-[0fr]')
+    expect(animatedPanel).toContain('grid-rows-[1fr]')
+    expect(animatedPanel).toContain('duration-200')
+    expect(animatedPanel).toContain('visualOpen')
+    expect(animatedPanel).toContain('requestAnimationFrame')
+  })
 })

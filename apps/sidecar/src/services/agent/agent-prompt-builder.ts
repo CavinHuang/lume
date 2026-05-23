@@ -2,7 +2,7 @@
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
 import type { MemoryCitationsMode } from "../memory-v2/policy";
-import { canonicalizeAgentToolName } from "@lume/shared";
+import { BUILTIN_AGENT_ROLES, canonicalizeAgentToolName } from "@lume/shared";
 import type { AgentDefinition } from "@lume/agent-sdk";
 import type { SessionType as ThreadType } from "@lume/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -38,13 +38,15 @@ export const LUME_AGENT_IDENTITY_LINE =
   "You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.";
 export type SystemPromptMode = "full" | "minimal" | "none";
 
+const READ_ONLY_AGENT_TOOLS = ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Skill"];
+
 /**
  * 内置 SubAgent 定义。
  * 这些定义会在 runtime session 创建时注册到 SDK 的 Agent 工具中，
  * 让主线程可以直接按名称调用 explorer / planner / researcher / code-reviewer。
  */
 export function buildBuiltinAgents(): Record<string, AgentDefinition> {
-  return {
+  const lumeBuiltins: Record<string, AgentDefinition> = {
     explorer: {
       description: "代码库探索子代理。快速搜索文件、理解项目结构、收集相关上下文，适合在修改前先摸清代码。",
       prompt: `你是一个高效的代码库探索员。你的职责是快速搜索和收集信息，然后返回结构化结果。
@@ -133,6 +135,25 @@ List 3-5 files most critical for implementing this plan:
       tools: ["Read", "Glob", "Grep", "Bash"],
       model: "inherit"
     }
+  };
+
+  return {
+    ...lumeBuiltins,
+    ...Object.fromEntries(BUILTIN_AGENT_ROLES.map((role) => [
+      role.id,
+      {
+        description: `${role.title}。${role.description}`,
+        prompt: [
+          role.systemPrompt,
+          "",
+          `默认 Skill: ${role.defaultSkillName}`,
+          "如果该 Skill 已加载且适合当前任务，优先调用 Skill 工具使用它。",
+          "角色设定不能覆盖 Lume 的权限、安全、隐私和用户确认规则。"
+        ].join("\n"),
+        ...(role.concurrency.defaultReadOnly ? { tools: READ_ONLY_AGENT_TOOLS } : { disallowedTools: ["Agent"] }),
+        model: "inherit"
+      } satisfies AgentDefinition
+    ]))
   };
 }
 

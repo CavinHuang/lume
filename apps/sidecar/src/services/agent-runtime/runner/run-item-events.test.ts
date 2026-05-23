@@ -170,6 +170,85 @@ describe("projectRunStateToRuntimeEvents", () => {
     }))).not.toContainEqual(expect.objectContaining({ type: "assistant.delta", delta: "duplicate" }));
   });
 
+  test("preserves subagent ownership on projected runtime events", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      status: "running",
+      generatedItems: [
+        {
+          type: "model_stream",
+          id: "stream-subagent-1",
+          event: {
+            type: "stream_event",
+            event: { delta: { type: "thinking_delta", thinking: "writer thinking" } },
+            subagent_run_id: "subagent-run-1",
+            parent_tool_use_id: "agent-tool-1"
+          },
+          createdAt: "2026-04-30T00:00:01.000Z"
+        },
+        {
+          type: "assistant_message",
+          id: "assistant-subagent-1",
+          content: [{ type: "text", text: "writer output" }],
+          subagentRunId: "subagent-run-1",
+          parentToolCallId: "agent-tool-1",
+          createdAt: "2026-04-30T00:00:02.000Z"
+        } as any,
+        {
+          type: "tool_call",
+          id: "skill-tool-1",
+          toolName: "Skill",
+          input: { skill: "writing-plans" },
+          parentAgentId: "runtime-core",
+          parentToolCallId: "agent-tool-1",
+          status: "pending",
+          createdAt: "2026-04-30T00:00:03.000Z"
+        }
+      ]
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "assistant.delta",
+      delta: "writer output",
+      subagentRunId: "subagent-run-1",
+      parentToolUseId: "agent-tool-1"
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool.started",
+      toolCallId: "skill-tool-1",
+      parentToolUseId: "agent-tool-1"
+    }));
+  });
+
+  test("infers subagent ownership for old assistant items from the adjacent child tool call", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      status: "running",
+      generatedItems: [
+        {
+          type: "assistant_message",
+          id: "assistant-subagent-old",
+          content: [{ type: "text", text: "old writer output" }],
+          createdAt: "2026-04-30T00:00:02.000Z"
+        },
+        {
+          type: "tool_call",
+          id: "skill-tool-old",
+          toolName: "Skill",
+          input: { skill: "writing-plans" },
+          parentAgentId: "runtime-core",
+          parentToolCallId: "agent-tool-1",
+          status: "pending",
+          createdAt: "2026-04-30T00:00:02.000Z"
+        }
+      ]
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "assistant.delta",
+      delta: "old writer output",
+      parentToolUseId: "agent-tool-1"
+    }));
+  });
+
   test("does not project internal runtime continuation runs into product events", () => {
     expect(projectRunStateToRuntimeEvents(baseRun({
       input: {

@@ -50,6 +50,8 @@ import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
 import { AgentRuntimeKernel } from "../agent-runtime/kernel/agent-runtime-kernel";
+import { getRuntimeCoreSessionDir } from "../agent-runtime/runtime-core/session-store";
+import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -79,6 +81,13 @@ const ROUTING_HEURISTIC_TOOLS = [
   "memory.read",
   "memory.remember"
 ];
+
+const TURN_LIMIT_CONTINUATION_PREFIX = "请继续完成上一轮未完成的原始任务。不要把这看作新任务；基于当前线程历史、已有工具结果和最后一个 assistant 状态继续。";
+const CONTINUE_ONLY_MESSAGES = new Set([
+  "继续",
+  "请继续",
+  "continue"
+]);
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   execute: async (dispatch) => {
@@ -112,6 +121,42 @@ function mergeToolPolicies(
     ...(allow.length > 0 ? { allow } : {}),
     ...(deny.length > 0 ? { deny } : {})
   };
+}
+
+function isContinueOnlyMessage(userMessage: string): boolean {
+  return CONTINUE_ONLY_MESSAGES.has(userMessage.trim().toLowerCase());
+}
+
+function hasTurnLimitedMarker(item: unknown): boolean {
+  if (!item || typeof item !== "object") return false;
+  const record = item as Record<string, unknown>;
+  if (record.type !== "system_event") return false;
+  if (record.name === "turn_limited") return true;
+  if (record.name !== "result") return false;
+  const payload = record.payload;
+  return Boolean(
+    payload
+    && typeof payload === "object"
+    && (payload as Record<string, unknown>).subtype === "error_max_turns"
+  );
+}
+
+async function shouldExpandTurnLimitedContinuation(threadId: string, userMessage: string): Promise<boolean> {
+  if (!isContinueOnlyMessage(userMessage)) return false;
+  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
+  const runs = await store.listByThread(threadId);
+  const latestCompletedRun = [...runs].reverse().find((run) => run.status === "completed");
+  return Boolean(latestCompletedRun?.generatedItems.some(hasTurnLimitedMarker));
+}
+
+async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
+  if (!await shouldExpandTurnLimitedContinuation(threadId, userMessage)) {
+    return userMessage;
+  }
+  return [
+    TURN_LIMIT_CONTINUATION_PREFIX,
+    `用户发送的继续指令：${userMessage.trim()}`
+  ].join("\n\n");
 }
 
 function handleRuntimeThreadStateMessage(
@@ -401,6 +446,7 @@ export async function sendAgentMessage(
     toolPolicy: mergeToolPolicies(existingToolPolicy, routingToolPolicy)
   };
   let runtimeMessageMetadata: Record<string, unknown> = effectiveMessageMetadata;
+  let modelFacingUserMessage = userMessage;
 
   const sendStartTime = Date.now();
   log.info("[Agent 会话] 开始发送消息", buildAgentSendStartLogData({
@@ -451,6 +497,7 @@ export async function sendAgentMessage(
       message: createdUserVersion.message
     });
   }
+  modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, userMessage);
 
   const sessionStateManager = getSessionStateManager();
   const runtimeStatusManager = getAgentRuntimeStatusManager();
@@ -484,6 +531,7 @@ export async function sendAgentMessage(
   const runtimeResult = await runAgentRuntime({
     input: {
       ...input,
+      userMessage: modelFacingUserMessage,
       ...(effectiveWorkspaceId ? { workspaceId: effectiveWorkspaceId } : {}),
       messageMetadata: runtimeMessageMetadata,
       channelId: resolvedChannelId,

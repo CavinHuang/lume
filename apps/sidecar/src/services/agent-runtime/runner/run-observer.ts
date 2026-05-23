@@ -209,6 +209,21 @@ export class LumeRunObserver {
     });
   }
 
+  recordTurnLimited(reason?: string): void {
+    this.enqueue(async () => {
+      const item: LumeRunItem = {
+        type: "system_event",
+        id: "turn-limited",
+        name: "turn_limited",
+        payload: {
+          reason
+        },
+        createdAt: new Date().toISOString()
+      };
+      await this.stateStore.appendItem(this.state.runId, item);
+    });
+  }
+
   recordInterruption(interruption: LumeInterruption): void {
     this.enqueue(async () => {
       const stored = await this.stateStore.get(this.state.runId);
@@ -457,12 +472,17 @@ function mapSdkMessageToRunItems(
   }
   if (message.type === "assistant") {
     const items: LumeRunItem[] = [];
+    const subagentRunId = typeof message.subagent_run_id === "string" ? message.subagent_run_id : undefined;
+    const parentToolCallId = extractSubagentParentToolCallId(message as SDKMessage & Record<string, unknown>)
+      ?? (subagentRunId ? context.subagentParentToolCallIds.get(subagentRunId) : undefined);
     const textContent = message.message.content.filter((block) => block.type === "text" || block.type === "thinking");
     if (textContent.length > 0) {
       items.push({
         type: "assistant_message",
         id,
         content: textContent,
+        ...(subagentRunId ? { subagentRunId } : {}),
+        ...(parentToolCallId ? { parentToolCallId } : {}),
         createdAt
       });
     }
@@ -473,7 +493,8 @@ function mapSdkMessageToRunItems(
         toolName: toolUse.name,
         input: toolUse.input,
         parentAgentId: context.currentAgentId,
-        parentToolCallId: message.parent_tool_use_id ?? undefined,
+        ...(parentToolCallId ? { parentToolCallId } : {}),
+        ...(subagentRunId ? { subagentRunId } : {}),
         status: "pending",
         createdAt
       });
@@ -481,12 +502,15 @@ function mapSdkMessageToRunItems(
     return items;
   }
   if (message.type === "tool_result") {
+    const metadata = message as SDKMessage & { parent_tool_use_id?: string; subagent_run_id?: string };
     return [{
       type: "tool_result",
       id,
       toolCallId: message.result.tool_use_id,
       toolName: message.result.tool_name,
       output: message.result.output,
+      parentToolCallId: metadata.parent_tool_use_id ?? undefined,
+      subagentRunId: typeof metadata.subagent_run_id === "string" ? metadata.subagent_run_id : undefined,
       createdAt
     }];
   }

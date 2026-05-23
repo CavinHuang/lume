@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { GeneralSettings } from './GeneralSettings'
 import { AgentSettings } from './AgentSettings'
+import { AgentsSettings } from './AgentsSettings'
 import { McpSettings } from './McpSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
@@ -68,6 +69,7 @@ export function SettingsView() {
             />
           )}
           {tab === 'models' && <AgentSettings />}
+          {tab === 'agents' && <AgentsSettings />}
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
           {tab === 'files' && <SettingsContentShell><SkillsSettings /></SettingsContentShell>}

@@ -846,6 +846,7 @@ export interface AgentSubagentCompletionEvent {
   threadId: string
   runId: string
   childThreadId: string
+  parentToolUseId?: string
   label: string
   status: SubagentRunStatus
   outputText?: string

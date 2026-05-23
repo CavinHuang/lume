@@ -436,6 +436,80 @@ describe("agent-service", () => {
     }));
   });
 
+  test("sendAgentMessage 在 turn-limited 后应把裸继续扩展为模型侧续跑指令", async () => {
+    const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const thread = createAgentThread("turn limited continue", "channel-test");
+    const sessionDir = getRuntimeCoreSessionDir(thread.id);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId: "run-turn-limited",
+      threadId: thread.id,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "completed",
+      currentStep: {
+        id: "step-finalize",
+        type: "finalize",
+        status: "completed",
+        startedAt: "2026-05-22T00:00:00.000Z",
+        endedAt: "2026-05-22T00:00:00.000Z"
+      },
+      input: {
+        userMessage: "original task",
+        permissionMode: "default"
+      },
+      generatedItems: [{
+        type: "system_event",
+        id: "turn-limited",
+        name: "turn_limited",
+        payload: {
+          reason: "Agent SDK 达到最大回合数（80），本轮需要继续执行。"
+        },
+        createdAt: "2026-05-22T00:00:00.000Z"
+      }],
+      pendingInterruptions: [],
+      approvals: {
+        alwaysAllowedTools: []
+      },
+      traceId: "trace-1",
+      model: {
+        provider: "provider",
+        modelId: "model-test"
+      },
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0
+      },
+      createdAt: "2026-05-22T00:00:00.000Z",
+      updatedAt: "2026-05-22T00:00:00.000Z",
+      completedAt: "2026-05-22T00:00:00.000Z"
+    });
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "继续",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    expect(getAgentThreadMessages(thread.id)[0]?.content).toBe("继续");
+    expect((runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage)
+      .toContain("请继续完成上一轮未完成的原始任务");
+    expect((runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage)
+      .toContain("用户发送的继续指令：继续");
+  });
+
   test("sendAgentMessage 应继承线程工作区传给 runtime", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { createAgentWorkspace } = await import("./agent-workspace-manager");

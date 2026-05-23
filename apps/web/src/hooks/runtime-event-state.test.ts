@@ -27,6 +27,55 @@ describe('runtime-event-state', () => {
     })
   })
 
+  test('does not merge main assistant deltas with subagent-owned deltas', () => {
+    const withMainDelta = appendRuntimeEvent({}, runtimeEvent({
+      id: 'main-delta',
+      type: 'assistant.delta',
+      delta: 'main text',
+    }))
+    const withSubagentDelta = appendRuntimeEvent(withMainDelta, runtimeEvent({
+      id: 'subagent-delta',
+      type: 'assistant.delta',
+      delta: 'subagent text',
+      parentToolUseId: 'agent-tool-1',
+      subagentRunId: 'subagent-run-1',
+    }))
+
+    expect(withSubagentDelta['thread-1']?.events).toEqual([
+      expect.objectContaining({ id: 'main-delta', delta: 'main text' }),
+      expect.objectContaining({
+        id: 'subagent-delta',
+        delta: 'subagent text',
+        parentToolUseId: 'agent-tool-1',
+        subagentRunId: 'subagent-run-1',
+      }),
+    ])
+    expect(withSubagentDelta['thread-1']?.events[0]?.parentToolUseId).toBeUndefined()
+  })
+
+  test('keeps live RuntimeEvents in semantic order when final assistant content arrives after tool start', () => {
+    const timestamp = '2026-05-11T00:00:00.000Z'
+    const withTool = appendRuntimeEvent({}, runtimeEvent({
+      id: 'tool-start',
+      type: 'tool.started',
+      createdAt: timestamp,
+      toolCallId: 'agent-tool-1',
+      toolName: 'Agent',
+      inputPreview: { description: 'write article' },
+    }))
+    const withLateFinal = appendRuntimeEvent(withTool, runtimeEvent({
+      id: 'assistant-final',
+      type: 'assistant.final',
+      createdAt: timestamp,
+      blocks: [{ type: 'text', text: 'handoff first' }],
+    }))
+
+    expect(withLateFinal['thread-1']?.events.map((event) => event.id)).toEqual([
+      'assistant-final',
+      'tool-start',
+    ])
+  })
+
   test('treats turn-limited RuntimeEvents as completed for UI state', () => {
     const state = appendRuntimeEvent({}, runtimeEvent({ type: 'run.turn_limited', reason: 'max turns' }))
 

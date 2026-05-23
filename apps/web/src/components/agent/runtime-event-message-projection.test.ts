@@ -79,6 +79,47 @@ describe('runtime-event-message-projection', () => {
     ])
   })
 
+  test('routes subagent stream events to the Agent tool card instead of the main assistant', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: '写一篇文章', messageId: 'user-1' }),
+      event({
+        type: 'tool.started',
+        toolCallId: 'agent-tool-1',
+        toolName: 'Agent',
+        inputPreview: { description: '起草文章', subagent_type: 'writer' },
+      }),
+      event({
+        type: 'assistant.thinking_delta',
+        delta: 'writer thinking',
+        subagentRunId: 'subagent-run-1',
+        parentToolUseId: 'agent-tool-1',
+      } as any),
+      event({
+        type: 'assistant.delta',
+        delta: 'writer output',
+        subagentRunId: 'subagent-run-1',
+        parentToolUseId: 'agent-tool-1',
+      } as any),
+    ])
+
+    expect(messages[1]?.type).toBe('assistant')
+    if (messages[1]?.type !== 'assistant') return
+    expect(messages[1].text).toBe('')
+    expect(messages[1].thinking).toBe('')
+    expect(messages[1].blocks).toEqual([{
+      type: 'tool_call',
+      id: 'tool:agent-tool-1',
+      toolCall: {
+        id: 'agent-tool-1',
+        toolName: 'Agent',
+        input: { description: '起草文章', subagent_type: 'writer' },
+        status: 'running',
+        subagentRunId: 'subagent-run-1',
+        subagentStatus: 'running',
+      },
+    }])
+  })
+
   test('marks failed RuntimeEvent terminal state without dropping accumulated text', () => {
     expect(projectRuntimeEventMessages([
       event({ type: 'assistant.delta', delta: 'before failure' }),
@@ -93,6 +134,34 @@ describe('runtime-event-message-projection', () => {
       error: 'boom',
       toolCalls: [],
     }])
+  })
+
+  test('shows a visible assistant notice when a run hits the turn limit without text', () => {
+    expect(projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: '继续', messageId: 'user-1' }),
+      event({ type: 'run.turn_limited', reason: 'Agent SDK 达到最大回合数（80），本轮需要继续执行。' }),
+    ])).toEqual([
+      {
+        id: 'user-1',
+        type: 'user',
+        text: '继续',
+        createdAt: '2026-05-11T00:00:00.000Z',
+        messageId: 'user-1',
+      },
+      {
+        id: 'assistant:run-1',
+        type: 'assistant',
+        text: '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。',
+        thinking: '',
+        blocks: [{
+          type: 'text',
+          id: 'text:0',
+          text: '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。',
+        }],
+        status: 'completed',
+        toolCalls: [],
+      },
+    ])
   })
 
   test('projects user message attachments', () => {

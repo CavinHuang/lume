@@ -55,6 +55,7 @@ function buildAnnounceEvent(run: SubagentRun, threadId: string): AgentSubagentCo
     threadId,
     runId: run.runId,
     childThreadId: run.childThreadId,
+    ...(run.parentToolUseId ? { parentToolUseId: run.parentToolUseId } : {}),
     label,
     status: run.status,
     outputText: output ? truncateText(output, ANNOUNCE_OUTPUT_SUMMARY_MAX_CHARS) : undefined,

@@ -117,12 +117,12 @@ describe("LumeRunner", () => {
     }
   });
 
-  test("uses larger turn budgets for planning and task execution", () => {
+  test("uses 80 turn budget for direct, planning, and task execution", () => {
     expect(resolveRuntimeCoreMaxTurns({
       threadId: "thread-1",
       userMessage: "plan",
       permissionMode: "plan"
-    })).toBe(12);
+    })).toBe(80);
     expect(resolveRuntimeCoreMaxTurns({
       threadId: "thread-1",
       userMessage: "task",
@@ -131,12 +131,12 @@ describe("LumeRunner", () => {
         taskRunId: "taskrun-1",
         taskControlEvent: "execute_task"
       }
-    })).toBe(20);
+    })).toBe(80);
     expect(resolveRuntimeCoreMaxTurns({
       threadId: "thread-1",
       userMessage: "hello",
       permissionMode: "default"
-    })).toBeUndefined();
+    })).toBe(80);
   });
 
   test("complete emits completion and finalizes run state", async () => {
@@ -295,6 +295,10 @@ describe("LumeRunner", () => {
     });
     expect(events).toEqual(["sdk:result", "runtime:usage.updated", "runtime:run.turn_limited"]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
+    expect(readRunItems(agentDir)).toContainEqual(expect.objectContaining({
+      type: "system_event",
+      name: "turn_limited"
+    }));
   });
 
   test("records tool call spans from SDK stream messages", async () => {

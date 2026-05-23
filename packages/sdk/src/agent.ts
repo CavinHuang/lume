@@ -148,8 +148,25 @@ function normalizeHistoryFromSessionMessages(
     )
     .map((message) => ({
       role: message.role,
-      content: message.content as NormalizedMessageParam['content'],
+      content: normalizeSessionMessageContent(message),
     }))
+}
+
+function normalizeSessionMessageContent(
+  message: SessionMessage & { role: 'user' | 'assistant' },
+): NormalizedMessageParam['content'] {
+  if (
+    message.role === 'assistant' &&
+    message.content &&
+    typeof message.content === 'object' &&
+    !Array.isArray(message.content) &&
+    'role' in message.content &&
+    (message.content as { role?: unknown }).role === 'assistant' &&
+    'content' in message.content
+  ) {
+    return (message.content as { content: NormalizedMessageParam['content'] }).content
+  }
+  return message.content as NormalizedMessageParam['content']
 }
 
 export class Agent {
@@ -708,6 +725,41 @@ export class Agent {
     }
   }
 
+  private async persistCurrentSession(
+    cwd: string,
+    opts: AgentOptions,
+  ): Promise<SDKMessage | null> {
+    if (opts.persistSession === false || this.history.length === 0) {
+      return null
+    }
+
+    try {
+      await saveSession(this.sid, this.history, {
+        cwd,
+        model: opts.model || this.modelId,
+        summary: extractSummary(this.messageLog),
+        sessionMessages: this.sessionMessages,
+        checkpoints: this.fileCheckpointState,
+      })
+      return {
+        type: 'system',
+        subtype: 'files_persisted',
+        files: [
+          {
+            filename: 'transcript.json',
+            file_id: this.sid,
+          },
+        ],
+        failed: [],
+        processed_at: new Date().toISOString(),
+        session_id: this.sid,
+      }
+    } catch {
+      // Session persistence is best-effort.
+      return null
+    }
+  }
+
   private async *runSinglePrompt(
     prompt: QueryInput,
     overrides?: Partial<AgentOptions>,
@@ -837,55 +889,36 @@ export class Agent {
       session_id: this.sid,
     }
 
-    for await (const event of engine.submitMessage(normalizedPrompt)) {
-      if (event.type === 'assistant') {
-        const assistantMessage = toSessionMessage('assistant', event.message)
-        this.sessionMessages.push(assistantMessage)
-        this.messageLog.push({
-          type: 'assistant',
-          message: event.message,
-          uuid: assistantMessage.uuid,
-          timestamp: assistantMessage.timestamp,
-        })
-      } else if (event.type === 'system') {
-        this.sessionMessages.push(toSessionMessage('system', event))
-      }
+    let persistedSessionEvent: SDKMessage | null = null
+    try {
+      for await (const event of engine.submitMessage(normalizedPrompt)) {
+        if (event.type === 'assistant') {
+          const assistantMessage = toSessionMessage('assistant', event.message)
+          this.sessionMessages.push(assistantMessage)
+          this.messageLog.push({
+            type: 'assistant',
+            message: event.message,
+            uuid: assistantMessage.uuid,
+            timestamp: assistantMessage.timestamp,
+          })
+        } else if (event.type === 'system') {
+          this.sessionMessages.push(toSessionMessage('system', event))
+        }
 
-      yield event
-      for (const queued of this.drainQueuedSdkEvents()) {
-        yield queued
+        yield event
+        for (const queued of this.drainQueuedSdkEvents()) {
+          yield queued
+        }
       }
+    } finally {
+      this.history = engine.getMessages()
+      this.lastContextUsage = engine.getContextUsage()
+      this.currentEngine = null
+      persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
 
-    this.history = engine.getMessages()
-    this.lastContextUsage = engine.getContextUsage()
-    this.currentEngine = null
-
-    if (opts.persistSession !== false && this.history.length > 0) {
-      try {
-        await saveSession(this.sid, this.history, {
-          cwd,
-          model: opts.model || this.modelId,
-          summary: extractSummary(this.messageLog),
-          sessionMessages: this.sessionMessages,
-          checkpoints: this.fileCheckpointState,
-        })
-        yield {
-          type: 'system',
-          subtype: 'files_persisted',
-          files: [
-            {
-              filename: 'transcript.json',
-              file_id: this.sid,
-            },
-          ],
-          failed: [],
-          processed_at: new Date().toISOString(),
-          session_id: this.sid,
-        }
-      } catch {
-        // Session persistence is best-effort.
-      }
+    if (persistedSessionEvent) {
+      yield persistedSessionEvent
     }
 
     for (const queued of this.drainQueuedSdkEvents()) {

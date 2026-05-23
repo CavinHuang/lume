@@ -30,6 +30,8 @@ export interface RuntimeEventBase {
   runId: string;
   createdAt: string;
   sequence?: number;
+  subagentRunId?: string;
+  parentToolUseId?: string;
 }
 
 export interface ContextBudgetRuntimeSnapshot {

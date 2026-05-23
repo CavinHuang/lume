@@ -8,6 +8,7 @@ import {
   buildSidecarSubagentExecutionInput,
   buildSidecarSubagentRunContext,
   createRuntimeCoreSession,
+  runForegroundSubagentWithTimeout,
   resolveSubagentModelOverride
 } from "./run";
 import { runRuntimeCoreAttempt } from "./attempt";
@@ -750,5 +751,73 @@ describe("runtime-core run", () => {
     expect(background.run_in_background).toBe(true);
     expect(background.isolation).toBeUndefined();
     expect(foreground.run_in_background).toBe(false);
+  });
+
+  test("前台 subagent 必须等待执行结果，不能提前让主 agent 继续", async () => {
+    let resolveExecution: ((value: {
+      status: "completed";
+      output: string;
+      result: { type: "tool_result"; tool_use_id: string; content: string };
+    }) => void) | undefined;
+    let settled = false;
+
+    const pending = new Promise<{
+      status: "completed";
+      output: string;
+      result: { type: "tool_result"; tool_use_id: string; content: string };
+    }>((resolve) => {
+      resolveExecution = resolve;
+    });
+    const foreground = runForegroundSubagentWithTimeout({
+      execution: pending,
+      childThreadId: "child-thread",
+      timeoutMs: 0,
+      stopSubagent: async () => false
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveExecution?.({
+      status: "completed",
+      output: "writer result",
+      result: { type: "tool_result", tool_use_id: "", content: "writer result" }
+    });
+
+    await expect(foreground).resolves.toMatchObject({
+      status: "completed",
+      output: "writer result"
+    });
+    expect(settled).toBe(true);
+  });
+
+  test("前台 subagent 超时时应取消子任务并返回错误结果", async () => {
+    let stoppedThreadId = "";
+    const execution = new Promise<{
+      status: "completed";
+      output: string;
+      result: { type: "tool_result"; tool_use_id: string; content: string };
+    }>(() => {});
+
+    const result = await runForegroundSubagentWithTimeout({
+      execution,
+      childThreadId: "child-thread-timeout",
+      timeoutMs: 1,
+      stopSubagent: async (threadId) => {
+        stoppedThreadId = threadId;
+        return true;
+      }
+    });
+
+    expect(stoppedThreadId).toBe("child-thread-timeout");
+    expect(result.status).toBe("timed_out");
+    expect(result.result).toMatchObject({
+      type: "tool_result",
+      is_error: true
+    });
+    expect(result.result.content).toContain("timed out");
   });
 });

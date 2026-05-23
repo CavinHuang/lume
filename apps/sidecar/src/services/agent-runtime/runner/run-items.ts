@@ -21,6 +21,8 @@ export interface LumeAssistantMessageItem {
   type: "assistant_message";
   id: string;
   content: unknown;
+  subagentRunId?: string;
+  parentToolCallId?: string;
   traceSpanId?: string;
   createdAt: string;
 }
@@ -32,6 +34,7 @@ export interface LumeToolCallItem {
   input: unknown;
   parentAgentId: string;
   parentToolCallId?: string;
+  subagentRunId?: string;
   status: "pending" | "approved" | "running" | "completed" | "failed" | "denied";
   traceSpanId?: string;
   createdAt: string;
@@ -43,6 +46,8 @@ export interface LumeToolResultItem {
   toolCallId: string;
   toolName?: string;
   output: unknown;
+  parentToolCallId?: string;
+  subagentRunId?: string;
   isError?: boolean;
   traceSpanId?: string;
   createdAt: string;
@@ -52,6 +57,8 @@ export interface LumeModelStreamItem {
   type: "model_stream";
   id: string;
   event: unknown;
+  parentToolCallId?: string;
+  subagentRunId?: string;
   createdAt: string;
 }
 
