@@ -14,6 +14,10 @@ import { toast } from 'sonner'
 import type {
   Channel,
   MemoryCitationsMode,
+  MemoryIngestSourceInput,
+  MemoryIngestSourcesJob,
+  MemoryIngestSourcesResult,
+  MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryResult,
   MemoryRuntimeConfig,
   MemorySettingsEntrySummary,
@@ -23,12 +27,18 @@ import type {
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   getMemoryRuntimeConfig,
+  getMemoryIngestJob,
   getMemorySettingsSnapshot,
+  ingestMemorySources,
   listChannels,
+  openFileDialog,
+  openFolderDialog,
   openMemorySource,
+  organizeMemoryEntries,
   organizeMemoryHistory,
   updateEmbeddingModelRef,
   updateMemoryRuntimeConfig,
@@ -49,7 +59,10 @@ import {
   isMemoryToolGroupEnabled,
   pendingNotice,
   setMemoryToolGroupEnabled,
+  summarizeMemoryIngestSourcesJob,
+  summarizeMemoryOrganizeEntriesResult,
   summarizeMemoryOrganizeResult,
+  summarizeMemoryIngestSourcesResult,
   summarizeMemoryEntry,
   type MemorySettingsView,
   type MemoryToolPolicyGroupId,
@@ -68,7 +81,12 @@ export function MemorySettings() {
   const [snapshot, setSnapshot] = React.useState<MemorySettingsSnapshot | null>(null)
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
+  const [entryOrganizeResult, setEntryOrganizeResult] = React.useState<MemoryOrganizeEntriesResult | null>(null)
   const [organizeResult, setOrganizeResult] = React.useState<MemoryOrganizeHistoryResult | null>(null)
+  const [ingestJob, setIngestJob] = React.useState<MemoryIngestSourcesJob | null>(null)
+  const [ingestResult, setIngestResult] = React.useState<MemoryIngestSourcesResult | null>(null)
+  const [externalText, setExternalText] = React.useState('')
+  const [workspaceFilePath, setWorkspaceFilePath] = React.useState('')
 
   const refresh = React.useCallback(async () => {
     if (!workspaceSlug) return
@@ -88,6 +106,53 @@ export function MemorySettings() {
   React.useEffect(() => {
     void refresh()
   }, [refresh])
+
+  React.useEffect(() => {
+    if (!ingestJob || ingestJob.status !== 'running') return undefined
+
+    let disposed = false
+    let timer: number | undefined
+
+    const poll = async () => {
+      try {
+        const nextJob = await getMemoryIngestJob({ jobId: ingestJob.jobId })
+        if (disposed) return
+        setIngestJob(nextJob)
+        if (nextJob.status === 'running') {
+          timer = window.setTimeout(poll, 1200)
+          return
+        }
+        if (nextJob.status === 'completed') {
+          if (nextJob.result) {
+            setIngestResult(nextJob.result)
+            toast.success(summarizeMemoryIngestSourcesResult(nextJob.result))
+          }
+          await refresh()
+          return
+        }
+        toast.error(summarizeMemoryIngestSourcesJob(nextJob))
+      } catch (error) {
+        if (!disposed) {
+          const message = memorySettingsErrorMessage(error)
+          setIngestJob((current) => current?.jobId === ingestJob.jobId
+            ? {
+              ...current,
+              status: 'failed',
+              completedAt: Date.now(),
+              error: message,
+            }
+            : current)
+          toast.error(message)
+        }
+      }
+    }
+
+    timer = window.setTimeout(poll, 800)
+    return () => {
+      disposed = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [ingestJob?.jobId, ingestJob?.status, refresh])
 
   const runAction = async (name: string, action: () => Promise<void>) => {
     setBusyAction(name)
@@ -157,6 +222,73 @@ export function MemorySettings() {
     toast.success(summarizeMemoryOrganizeResult(result))
   })
 
+  const handleOrganizeEntries = () => runAction('organize-entries', async () => {
+    if (!workspaceSlug) return
+    const result = await organizeMemoryEntries({ workspaceSlug })
+    setEntryOrganizeResult(result)
+    await refresh()
+    toast.success(summarizeMemoryOrganizeEntriesResult(result))
+  })
+
+  const startIngestJob = async (sources: MemoryIngestSourceInput[]) => {
+    if (!workspaceSlug) return
+    setIngestResult(null)
+    const job = await ingestMemorySources({
+      workspaceSlug,
+      sources,
+    })
+    setIngestJob(job)
+    toast.success('已开始后台整理资料')
+  }
+
+  const handleIngestPastedText = () => runAction('ingest-text', async () => {
+    if (!workspaceSlug) return
+    const content = externalText.trim()
+    if (!content) {
+      toast.error('请先粘贴要整理的资料')
+      return
+    }
+    await startIngestJob([{
+      kind: 'pasted_text',
+      title: '粘贴资料',
+      content,
+    }])
+    setExternalText('')
+  })
+
+  const handleIngestWorkspaceFile = () => runAction('ingest-workspace-file', async () => {
+    if (!workspaceSlug) return
+    const path = workspaceFilePath.trim()
+    if (!path) {
+      toast.error('请填写工作区文件路径')
+      return
+    }
+    await startIngestJob([{
+      kind: 'workspace_file',
+      path,
+    }])
+  })
+
+  const handleIngestLocalFiles = () => runAction('ingest-local-files', async () => {
+    if (!workspaceSlug) return
+    const selection = await openFileDialog()
+    if (selection.files.length === 0) return
+    await startIngestJob(selection.files.map((file) => ({
+      kind: 'local_file',
+      path: file.sourcePath,
+    })))
+  })
+
+  const handleIngestLocalFolder = () => runAction('ingest-local-folder', async () => {
+    if (!workspaceSlug) return
+    const selection = await openFolderDialog()
+    if (!selection.path) return
+    await startIngestJob([{
+      kind: 'local_folder',
+      path: selection.path,
+    }])
+  })
+
   if (!workspaceSlug) {
     return (
       <EmptyPanel title="暂无工作区" desc="创建或选择一个工作区后即可管理记忆。" />
@@ -215,11 +347,24 @@ export function MemorySettings() {
           snapshot={snapshot}
           onCitationsMode={(mode) => void handleCitationsMode(mode)}
           onEmbeddingModel={(modelRef) => void handleEmbeddingModel(modelRef)}
+          onOrganizeEntries={() => void handleOrganizeEntries()}
           onOrganizeHistory={() => void handleOrganizeHistory()}
+          onIngestPastedText={() => void handleIngestPastedText()}
+          onIngestLocalFiles={() => void handleIngestLocalFiles()}
+          onIngestLocalFolder={() => void handleIngestLocalFolder()}
+          onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
           onRerankModel={(modelRef) => void handleRerankModel(modelRef)}
           onSemanticMode={(mode) => void handleSemanticMode(mode)}
           onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
+          externalText={externalText}
+          ingestJob={ingestJob}
+          ingestResult={ingestResult}
+          entryOrganizeResult={entryOrganizeResult}
           organizeResult={organizeResult}
+          workspaceSlug={workspaceSlug}
+          workspaceFilePath={workspaceFilePath}
+          onExternalTextChange={setExternalText}
+          onWorkspaceFilePathChange={setWorkspaceFilePath}
         />
       )}
 
@@ -256,29 +401,56 @@ function OverviewPanel({
   channels,
   runtimeConfig,
   snapshot,
+  externalText,
+  ingestJob,
+  ingestResult,
+  entryOrganizeResult,
   onCitationsMode,
   onEmbeddingModel,
+  onExternalTextChange,
+  onIngestPastedText,
+  onIngestLocalFiles,
+  onIngestLocalFolder,
+  onIngestWorkspaceFile,
+  onOrganizeEntries,
   onOrganizeHistory,
   onRerankModel,
   onSemanticMode,
   onToggle,
   organizeResult,
+  workspaceSlug,
+  workspaceFilePath,
+  onWorkspaceFilePathChange,
 }: {
   busyAction: string | null
   channels: Channel[]
   runtimeConfig: MemoryRuntimeConfig | null
   snapshot: MemorySettingsSnapshot | null
+  externalText: string
+  ingestJob: MemoryIngestSourcesJob | null
+  ingestResult: MemoryIngestSourcesResult | null
+  entryOrganizeResult: MemoryOrganizeEntriesResult | null
   onCitationsMode: (mode: MemoryCitationsMode) => void
   onEmbeddingModel: (modelRef: string) => void
+  onExternalTextChange: (value: string) => void
+  onIngestPastedText: () => void
+  onIngestLocalFiles: () => void
+  onIngestLocalFolder: () => void
+  onIngestWorkspaceFile: () => void
+  onOrganizeEntries: () => void
   onOrganizeHistory: () => void
   onRerankModel: (modelRef: string) => void
   onSemanticMode: (mode: MemoryRuntimeConfig['retrieval']['semantic']) => void
   onToggle: (groupId: MemoryToolPolicyGroupId, enabled: boolean) => void
   organizeResult: MemoryOrganizeHistoryResult | null
+  workspaceSlug: string | null
+  workspaceFilePath: string
+  onWorkspaceFilePathChange: (value: string) => void
 }) {
   const metrics = buildMemoryOverviewMetrics(snapshot)
   const embeddingOptions = React.useMemo(() => buildEmbeddingModelOptions(channels), [channels])
   const rerankOptions = React.useMemo(() => buildRerankModelOptions(channels), [channels])
+  const ingestRunning = ingestJob?.status === 'running'
   return (
     <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -419,12 +591,35 @@ function OverviewPanel({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
             <History size={15} />
-            整理已有对话
+            整理记忆
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+            {entryOrganizeResult
+              ? summarizeMemoryOrganizeEntriesResult(entryOrganizeResult)
+              : '使用 LLM 分析已经写入的工作区和全局记忆数据，归并相似重复项；模型不可用时只做保守本地去重。'}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busyAction !== null}
+          onClick={onOrganizeEntries}
+        >
+          <RefreshCw size={14} className={busyAction === 'organize-entries' ? 'animate-spin' : undefined} />
+          {busyAction === 'organize-entries' ? '整理中' : '整理记忆'}
+        </Button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
+            <Clock3 size={15} />
+            从历史对话生成记忆
           </div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
             {organizeResult
               ? summarizeMemoryOrganizeResult(organizeResult)
-              : '从当前工作区历史线程里提取稳定记忆，重复和冲突会自动归并。'}
+              : '从当前工作区历史线程里提取稳定记忆；这是生成新记忆，不是整理已有记忆数据。'}
           </p>
         </div>
         <Button
@@ -434,8 +629,94 @@ function OverviewPanel({
           onClick={onOrganizeHistory}
         >
           <RefreshCw size={14} className={busyAction === 'organize-history' ? 'animate-spin' : undefined} />
-          {busyAction === 'organize-history' ? '整理中' : '开始整理'}
+          {busyAction === 'organize-history' ? '生成中' : '生成记忆'}
         </Button>
+      </div>
+
+      <div className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
+              <FileText size={15} />
+              外部资料
+            </div>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+              {ingestJob
+                ? summarizeMemoryIngestSourcesJob(ingestJob)
+                : ingestResult
+                ? summarizeMemoryIngestSourcesResult(ingestResult)
+                : '从粘贴文本、工作区文件、本地文件或文件夹提取记忆。附件默认仍只是当前对话上下文。'}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <div className="space-y-2">
+            <textarea
+              className="min-h-[92px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
+              placeholder="粘贴需要整理成记忆的资料"
+              value={externalText}
+              disabled={busyAction !== null || ingestRunning}
+              onChange={(event) => onExternalTextChange(event.target.value)}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null || ingestRunning || externalText.trim().length === 0}
+              onClick={onIngestPastedText}
+            >
+              <RefreshCw size={14} className={busyAction === 'ingest-text' ? 'animate-spin' : undefined} />
+              {busyAction === 'ingest-text' ? '整理中' : '整理粘贴文本'}
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <div className="h-[176px] overflow-hidden rounded-[8px] border border-border bg-[var(--surface-1)]">
+              <WorkspaceFileBrowser
+                workspaceSlug={workspaceSlug ?? undefined}
+                selectedPath={workspaceFilePath}
+                onOpenFile={onWorkspaceFilePathChange}
+                showHeader={false}
+              />
+            </div>
+            <input
+              className="h-9 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
+              placeholder="工作区文件路径，例如 docs/project.md"
+              value={workspaceFilePath}
+              disabled={busyAction !== null || ingestRunning}
+              onChange={(event) => onWorkspaceFilePathChange(event.target.value)}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null || ingestRunning || workspaceFilePath.trim().length === 0}
+              onClick={onIngestWorkspaceFile}
+            >
+              <RefreshCw size={14} className={busyAction === 'ingest-workspace-file' ? 'animate-spin' : undefined} />
+              {busyAction === 'ingest-workspace-file' ? '整理中' : '整理工作区文件'}
+            </Button>
+            <div className="border-t border-border pt-2">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busyAction !== null || ingestRunning}
+                  onClick={onIngestLocalFiles}
+                >
+                  <RefreshCw size={14} className={busyAction === 'ingest-local-files' ? 'animate-spin' : undefined} />
+                  {busyAction === 'ingest-local-files' ? '整理中' : '选择本地文件'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busyAction !== null || ingestRunning}
+                  onClick={onIngestLocalFolder}
+                >
+                  <RefreshCw size={14} className={busyAction === 'ingest-local-folder' ? 'animate-spin' : undefined} />
+                  {busyAction === 'ingest-local-folder' ? '整理中' : '选择本地文件夹'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   )

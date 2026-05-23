@@ -2,6 +2,7 @@ import { searchMemoryV2 } from "./retrieval";
 import { createMemoryV2Store } from "./markdown-store";
 import { isProfileEntry, isProfileRecallItem, memoryEntryToRecallItem } from "./profile";
 import { isClaimMatchForQuery, planMemoryV2Query } from "./claim";
+import { selectMemoryV2PromptItems } from "./context-selection";
 import type { MemoryV2RecallItem } from "./types";
 
 const MEMORY_CONTEXT_RE = /^\s*<lume_memory_context>\n[\s\S]*?<\/lume_memory_context>\n\s*/;
@@ -32,17 +33,26 @@ export async function buildMemoryV2UserMessageContext(input: {
     includeStatuses: ["active"]
   }).filter(isProfileEntry).map((entry) => memoryEntryToRecallItem(entry));
   const directClaimItems = profileItems.filter((item) => isClaimMatchForQuery(item, queryPlan));
+  const profileSeed = directClaimItems.length > 0
+    ? directClaimItems
+    : queryPlan.querySubject ? profileItems : [];
+  const promptMaxItems = input.maxItems ?? 8;
   const items = await searchMemoryV2({
     workspaceSlug: input.workspaceSlug,
     query: input.userMessage,
-    maxResults: input.maxItems ?? 8,
+    maxResults: Math.max(promptMaxItems * 3, 16),
     ...(queryPlan.includeConversationHistory ? { includeRecentDaily: true } : {})
   });
-  const merged = mergeRecallItems([...(directClaimItems.length > 0 ? directClaimItems : profileItems), ...items]);
-  const prefix = buildMemoryUserMessagePrefix(merged);
+  const merged = mergeRecallItems([...profileSeed, ...items]);
+  const selected = selectMemoryV2PromptItems({
+    items: merged,
+    query: input.userMessage,
+    maxItems: promptMaxItems
+  });
+  const prefix = buildMemoryUserMessagePrefix(selected);
   return {
     prefix,
-    items: merged,
+    items: selected,
     userMessageForModel: prefix ? `${prefix}\n<user_message>\n${input.userMessage}\n</user_message>` : input.userMessage
   };
 }

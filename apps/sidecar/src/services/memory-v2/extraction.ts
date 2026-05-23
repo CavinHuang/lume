@@ -97,6 +97,71 @@ export async function extractMemoryCandidatesWithLlm(input: {
   }
 }
 
+export interface MemoryBatchExtractionSource {
+  sourceId: string;
+  text: string;
+}
+
+export interface MemoryBatchExtractionCandidate {
+  sourceId: string;
+  candidate: MemoryV2Candidate;
+}
+
+export async function extractMemoryBatchCandidatesWithLlm(input: {
+  sources: MemoryBatchExtractionSource[];
+  workspaceSlug?: string;
+  modelRef?: string;
+  createProvider?: MemoryExtractionProviderFactory;
+}): Promise<MemoryBatchExtractionCandidate[]> {
+  const sources = input.sources
+    .map((source) => ({
+      sourceId: source.sourceId,
+      text: stripMemoryUserMessagePrefix(source.text).trim()
+    }))
+    .filter((source) => source.sourceId && source.text && !DO_NOT_REMEMBER_RE.test(source.text));
+  if (sources.length === 0) return [];
+
+  const modelRef = input.modelRef ?? resolveMemoryExtractionModelRef(getEffectiveLumeConfig(input.workspaceSlug));
+  if (!modelRef) {
+    return extractExplicitBatchCandidates(sources, input.workspaceSlug);
+  }
+
+  try {
+    const binding = resolveChannelModelBinding(modelRef, "chat");
+    if (!binding && !input.createProvider) {
+      return extractExplicitBatchCandidates(sources, input.workspaceSlug);
+    }
+    const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
+      apiKey: options.apiKey,
+      baseURL: options.baseURL
+    }));
+    const provider = providerFactory({
+      apiType: binding ? resolveExtractionApiType(binding.channel.provider) : "openai-completions",
+      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
+      baseURL: binding?.channel.baseUrl
+    });
+    const response = await provider.createMessage({
+      model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef,
+      maxTokens: 1200,
+      system: buildBatchExtractionSystemPrompt(),
+      messages: [{
+        role: "user",
+        content: buildBatchExtractionUserPrompt(sources, input.workspaceSlug)
+      }]
+    });
+    const parsed = parseLlmBatchExtractionResponse(
+      response.content
+        .map((block) => block.type === "text" ? block.text : "")
+        .filter(Boolean)
+        .join("\n"),
+      sources
+    );
+    return parsed ?? extractExplicitBatchCandidates(sources, input.workspaceSlug);
+  } catch {
+    return extractExplicitBatchCandidates(sources, input.workspaceSlug);
+  }
+}
+
 export function resolveMemoryExtractionModelRef(config: Pick<LumeEffectiveConfig, "memory">): string | undefined {
   const memory = isRecord(config.memory) ? config.memory : {};
   const extraction = isRecord(memory.extraction) ? memory.extraction : {};
@@ -201,6 +266,56 @@ function buildExtractionUserPrompt(text: string, workspaceSlug?: string): string
   });
 }
 
+function buildBatchExtractionSystemPrompt(): string {
+  return [
+    "Gatekeeper task: decide whether a batch of external memory sources contains durable memory worth extracting.",
+    "Return only strict JSON with shape {\"shouldExtract\": boolean, \"candidates\": [...]}.",
+    "Each candidate must cite exactly one sourceId from the provided sources.",
+    "sourceText must be an exact substring of that source's text.",
+    "Reject candidates without a valid sourceId, without exact sourceText, or with sourceRole other than \"user\".",
+    "Do not merge multiple sources into one fact unless the cited source itself contains the full fact.",
+    "Reject greetings, temporary tasks, secrets, API keys, tokens, passwords, private keys, and anything the user says not to remember/save.",
+    "Prefer false negatives; never invent or infer beyond the cited source.",
+    "Use kind preference, fact, decision, lesson, or state.",
+    "Use targetScope global for cross-workspace user preferences; use workspace for project facts, decisions, lessons, and state.",
+    "Add claim when the memory can be represented as a stable fact edge: {subject, predicate, object}.",
+    "Candidate fields: sourceId, kind, targetScope, statement, confidence, sourceRole, sourceText, reason, tags, entities, claim."
+  ].join("\n");
+}
+
+function buildBatchExtractionUserPrompt(
+  sources: MemoryBatchExtractionSource[],
+  workspaceSlug?: string
+): string {
+  return JSON.stringify({
+    workspaceSlug: workspaceSlug ?? null,
+    sources: sources.map((source) => ({
+      sourceId: source.sourceId,
+      text: source.text
+    })),
+    output: {
+      shouldExtract: true,
+      candidates: [{
+        sourceId: "one sourceId from sources",
+        kind: "preference|fact|decision|lesson|state",
+        targetScope: "global|workspace",
+        statement: "short standalone claim",
+        confidence: "low|medium|high",
+        sourceRole: "user",
+        sourceText: "exact substring from that source text",
+        reason: "why this is durable",
+        tags: ["optional"],
+        entities: ["optional"],
+        claim: {
+          subject: "user/self|assistant/self|workspace/default|open string",
+          predicate: "preferred_name|identity|preference|open string",
+          object: "fact value"
+        }
+      }]
+    }
+  });
+}
+
 function parseLlmExtractionResponse(text: string, userMessage: string): MemoryV2Candidate[] | null {
   const parsed = safeJsonParse(extractJsonObject(text));
   if (!isRecord(parsed) || typeof parsed.shouldExtract !== "boolean" || !Array.isArray(parsed.candidates)) return null;
@@ -208,33 +323,78 @@ function parseLlmExtractionResponse(text: string, userMessage: string): MemoryV2
   const candidates: MemoryV2Candidate[] = [];
   for (const item of parsed.candidates) {
     if (!isRecord(item)) continue;
-    const kind = normalizeKind(item.kind);
-    const targetScope = item.targetScope === "global" || item.targetScope === "workspace"
-      ? item.targetScope
-      : undefined;
-    const statement = normalizeOptionalString(item.statement);
-    const sourceRole = item.sourceRole;
+    const candidate = parseCandidateItem(item, userMessage);
+    if (candidate) candidates.push(candidate);
+  }
+  return candidates;
+}
+
+function extractExplicitBatchCandidates(
+  sources: MemoryBatchExtractionSource[],
+  workspaceSlug?: string
+): MemoryBatchExtractionCandidate[] {
+  return sources.flatMap((source) =>
+    extractExplicitMemoryCandidates({
+      text: source.text,
+      workspaceSlug
+    }).map((candidate) => ({
+      sourceId: source.sourceId,
+      candidate
+    }))
+  );
+}
+
+function parseLlmBatchExtractionResponse(
+  text: string,
+  sources: MemoryBatchExtractionSource[]
+): MemoryBatchExtractionCandidate[] | null {
+  const parsed = safeJsonParse(extractJsonObject(text));
+  if (!isRecord(parsed) || typeof parsed.shouldExtract !== "boolean" || !Array.isArray(parsed.candidates)) return null;
+  if (!parsed.shouldExtract) return [];
+  const sourceById = new Map(sources.map((source) => [source.sourceId, source.text]));
+  const candidates: MemoryBatchExtractionCandidate[] = [];
+  for (const item of parsed.candidates) {
+    if (!isRecord(item)) continue;
+    const sourceId = normalizeOptionalString(item.sourceId);
     const sourceText = normalizeOptionalString(item.sourceText);
-    const confidence = item.confidence === "low" || item.confidence === "medium" || item.confidence === "high"
-      ? item.confidence
-      : "medium";
-    if (!kind || !targetScope || !statement || DO_NOT_REMEMBER_RE.test(statement)) continue;
-    if (sourceRole !== "user" || !sourceText || !userMessage.includes(sourceText)) continue;
-    const tags = normalizeStringList(item.tags);
+    const sourceBody = sourceId ? sourceById.get(sourceId) : undefined;
+    if (!sourceId || !sourceBody || !sourceText || !sourceBody.includes(sourceText)) continue;
+    const candidate = parseCandidateItem(item, sourceBody);
+    if (!candidate) continue;
     candidates.push({
-      kind,
-      targetScope,
-      statement,
-      confidence,
-      tags,
-      entities: normalizeStringList(item.entities),
-      claim: normalizeMemoryV2Claim(item.claim) ?? inferMemoryV2Claim({ statement, tags }),
-      evidence: {
-        quote: sourceText
-      }
+      sourceId,
+      candidate
     });
   }
   return candidates;
+}
+
+function parseCandidateItem(item: Record<string, unknown>, userMessage: string): MemoryV2Candidate | undefined {
+  const kind = normalizeKind(item.kind);
+  const targetScope = item.targetScope === "global" || item.targetScope === "workspace"
+    ? item.targetScope
+    : undefined;
+  const statement = normalizeOptionalString(item.statement);
+  const sourceRole = item.sourceRole;
+  const sourceText = normalizeOptionalString(item.sourceText);
+  const confidence = item.confidence === "low" || item.confidence === "medium" || item.confidence === "high"
+    ? item.confidence
+    : "medium";
+  if (!kind || !targetScope || !statement || DO_NOT_REMEMBER_RE.test(statement)) return undefined;
+  if (sourceRole !== "user" || !sourceText || !userMessage.includes(sourceText)) return undefined;
+  const tags = normalizeStringList(item.tags);
+  return {
+    kind,
+    targetScope,
+    statement,
+    confidence,
+    tags,
+    entities: normalizeStringList(item.entities),
+    claim: normalizeMemoryV2Claim(item.claim) ?? inferMemoryV2Claim({ statement, tags }),
+    evidence: {
+      quote: sourceText
+    }
+  };
 }
 
 function extractJsonObject(text: string): string {

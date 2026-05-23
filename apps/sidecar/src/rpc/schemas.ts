@@ -83,6 +83,44 @@ export const memoryOrganizeHistoryInputSchema = z.object({
   limit: z.number().int().min(1).max(1000).optional()
 });
 
+export const memoryOrganizeEntriesInputSchema = z.object({
+  workspaceSlug: idSchema
+});
+
+const memoryIngestTargetScopeSchema = z.enum(["global", "workspace"]);
+
+export const memoryIngestSourcesInputSchema = z.object({
+  workspaceSlug: idSchema,
+  batchMaxChars: z.number().int().min(500).max(50000).optional(),
+  sources: z.array(z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("pasted_text"),
+      title: z.string().trim().min(1).optional(),
+      content: z.string().min(1),
+      targetScope: memoryIngestTargetScopeSchema.optional()
+    }).strict(),
+    z.object({
+      kind: z.literal("workspace_file"),
+      path: z.string().trim().min(1),
+      targetScope: memoryIngestTargetScopeSchema.optional()
+    }).strict(),
+    z.object({
+      kind: z.literal("local_file"),
+      path: z.string().trim().min(1),
+      targetScope: memoryIngestTargetScopeSchema.optional()
+    }).strict(),
+    z.object({
+      kind: z.literal("local_folder"),
+      path: z.string().trim().min(1),
+      targetScope: memoryIngestTargetScopeSchema.optional()
+    }).strict()
+  ])).min(1).max(20)
+});
+
+export const memoryIngestSourcesJobInputSchema = z.object({
+  jobId: z.string().trim().min(1)
+});
+
 export const memoryOpenSourceInputSchema = z.object({
   workspaceSlug: idSchema,
   path: z.string().min(1)

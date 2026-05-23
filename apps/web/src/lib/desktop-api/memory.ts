@@ -1,6 +1,12 @@
 import type {
   MemoryReadToolInput,
   MemoryReadToolResult,
+  MemoryIngestSourcesInput,
+  MemoryIngestSourcesJob,
+  MemoryIngestSourcesJobInput,
+  MemoryStartIngestSourcesResult,
+  MemoryOrganizeEntriesInput,
+  MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryInput,
   MemoryOrganizeHistoryResult,
   MemoryRememberToolInput,
@@ -23,6 +29,15 @@ export const getMemorySettingsSnapshot = (workspaceSlug: string) =>
 
 export const organizeMemoryHistory = (input: MemoryOrganizeHistoryInput) =>
   sidecarCall<MemoryOrganizeHistoryResult>(MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY, input)
+
+export const organizeMemoryEntries = (input: MemoryOrganizeEntriesInput) =>
+  sidecarCall<MemoryOrganizeEntriesResult>(MEMORY_IPC_CHANNELS.ORGANIZE_ENTRIES, input)
+
+export const ingestMemorySources = (input: MemoryIngestSourcesInput) =>
+  sidecarCall<MemoryStartIngestSourcesResult>(MEMORY_IPC_CHANNELS.INGEST_SOURCES, input)
+
+export const getMemoryIngestJob = (input: MemoryIngestSourcesJobInput) =>
+  sidecarCall<MemoryIngestSourcesJob>(MEMORY_IPC_CHANNELS.GET_INGEST_JOB, input)
 
 export const openMemorySource = (input: { workspaceSlug: string; path: string }) =>
   sidecarCall<{ ok: true }>(MEMORY_IPC_CHANNELS.OPEN_SOURCE, input)

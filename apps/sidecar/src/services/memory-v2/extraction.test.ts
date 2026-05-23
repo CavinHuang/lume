@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   extractExplicitMemoryCandidates,
+  extractMemoryBatchCandidatesWithLlm,
   extractMemoryCandidatesWithLlm,
   resolveMemoryExtractionModelRef
 } from "./extraction";
@@ -146,6 +147,106 @@ describe("extractExplicitMemoryCandidates", () => {
         quote: "以后默认用中文回答"
       })
     })]);
+  });
+
+  test("uses LLM batch extraction with per-source citations", async () => {
+    const calls: Array<{ userContent: string }> = [];
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [
+        {
+          sourceId: "source-a#chunk-1",
+          text: "叫我 Mason"
+        },
+        {
+          sourceId: "source-b#chunk-1",
+          text: "就想叫你 Alice"
+        }
+      ],
+      workspaceSlug: "demo",
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage(params) {
+          calls.push({ userContent: String(params.messages[0]?.content ?? "") });
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [{
+                  sourceId: "source-b#chunk-1",
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户希望用 Alice 称呼助手",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "就想叫你 Alice",
+                  reason: "User gave the assistant a preferred name.",
+                  tags: ["profile"],
+                  claim: {
+                    subject: "assistant/self",
+                    predicate: "preferred_name",
+                    object: "Alice"
+                  }
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.userContent).toContain("source-a#chunk-1");
+    expect(calls[0]?.userContent).toContain("source-b#chunk-1");
+    expect(candidates).toEqual([{
+      sourceId: "source-b#chunk-1",
+      candidate: expect.objectContaining({
+        statement: "用户希望用 Alice 称呼助手",
+        evidence: expect.objectContaining({
+          quote: "就想叫你 Alice"
+        })
+      })
+    }]);
+  });
+
+  test("rejects batch candidates that cite the wrong source text", async () => {
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [{
+        sourceId: "source-a#chunk-1",
+        text: "叫我 Mason"
+      }],
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage() {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [{
+                  sourceId: "source-a#chunk-1",
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户希望用 Alice 称呼助手",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "就想叫你 Alice",
+                  reason: "Bad source."
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(candidates).toEqual([]);
   });
 
   test("trusts the LLM gate when it decides not to extract", async () => {

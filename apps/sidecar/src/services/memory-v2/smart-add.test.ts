@@ -45,6 +45,34 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
   });
 
+  test("skips near-duplicate durable memories instead of appending another entry", () => {
+    const first = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "decision",
+        targetScope: "workspace",
+        statement: "Lume memory uses Markdown as the source of truth.",
+        confidence: "high",
+        tags: ["memory"]
+      }
+    });
+
+    const second = smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "decision",
+        targetScope: "workspace",
+        statement: "Lume memory uses Markdown as source of truth",
+        confidence: "high",
+        tags: ["memory"]
+      }
+    });
+
+    expect(first.action).toBe("new");
+    expect(second.action).toBe("duplicate");
+    expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
+  });
+
   test("routes low-confidence candidates to pending", () => {
     const result = smartAddMemoryV2Candidate({
       workspaceSlug: "demo",

@@ -1,15 +1,10 @@
 import type {
-  MemoryOrganizeHistoryActionCounts,
   MemoryOrganizeHistoryInput,
-  MemoryOrganizeHistoryItem,
   MemoryOrganizeHistoryResult
 } from "@lume/shared";
 import { getAgentThreadMessages, listAgentThreads } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
-import { extractMemoryCandidatesWithLlm } from "./extraction";
-import { createMemoryV2Store } from "./markdown-store";
-import { smartAddMemoryV2Candidate } from "./smart-add";
-import type { MemoryV2Candidate } from "./types";
+import { ingestMemorySources } from "./ingestion";
 
 const DEFAULT_HISTORY_LIMIT = 200;
 const MAX_HISTORY_LIMIT = 1000;
@@ -34,46 +29,36 @@ export async function organizeMemoryHistory(
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-limit);
   const scannedSources = new Set(messages.map((message) => message.sourcePath)).size;
-  const store = createMemoryV2Store();
-  const actions = emptyActionCounts();
-  const items: MemoryOrganizeHistoryItem[] = [];
-  let candidateCount = 0;
-
-  for (const message of messages) {
-    const candidates = await extractMemoryCandidatesWithLlm({
-      text: message.text,
-      workspaceSlug: input.workspaceSlug
-    });
-    for (const candidate of candidates) {
-      candidateCount += 1;
-      const result = smartAddMemoryV2Candidate({
-        workspaceSlug: input.workspaceSlug,
-        candidate: candidateWithHistoryEvidence(candidate, message),
-        store
-      });
-      actions[result.action] += 1;
-      items.push({
-        sourcePath: message.sourcePath,
-        sourceMessageId: message.messageId,
-        statement: candidate.statement,
-        scope: candidate.targetScope,
-        kind: candidate.kind,
-        confidence: candidate.confidence,
-        action: result.action,
-        reason: result.reason,
-        ...(result.entry ? { entryId: result.entry.frontmatter.id } : {}),
-        ...(result.pending ? { pendingId: result.pending.frontmatter.id } : {})
-      });
-    }
-  }
+  const result = await ingestMemorySources({
+    workspaceSlug: input.workspaceSlug,
+    sources: messages.map((message) => ({
+      id: message.messageId,
+      kind: "history",
+      title: message.messageId,
+      content: message.text,
+      sourceRef: message.sourcePath,
+      updatedAt: message.createdAt
+    }))
+  });
 
   return {
     workspaceSlug: input.workspaceSlug,
     scannedSources,
     scannedMessages: messages.length,
-    candidateCount,
-    actions,
-    items
+    candidateCount: result.candidateCount,
+    actions: result.actions,
+    items: result.items.map((item) => ({
+      sourcePath: stripChunkSuffix(item.sourcePath),
+      sourceMessageId: item.sourceId,
+      statement: item.statement,
+      scope: item.scope ?? "workspace",
+      kind: item.kind ?? "fact",
+      confidence: item.confidence ?? "medium",
+      action: item.action,
+      reason: item.reason,
+      ...(item.entryId ? { entryId: item.entryId } : {}),
+      ...(item.pendingId ? { pendingId: item.pendingId } : {})
+    }))
   };
 }
 
@@ -96,50 +81,11 @@ function collectWorkspaceUserMessages(workspaceId: string): HistoryUserMessage[]
   return messages;
 }
 
-function candidateWithHistoryEvidence(
-  candidate: MemoryV2Candidate,
-  message: HistoryUserMessage
-): MemoryV2Candidate {
-  return {
-    ...candidate,
-    evidence: {
-      ...candidate.evidence,
-      recordIds: [
-        ...new Set([
-          ...(candidate.evidence?.recordIds ?? []),
-          message.messageId
-        ])
-      ],
-      sourceMessages: [
-        ...new Set([
-          ...(candidate.evidence?.sourceMessages ?? []),
-          message.text
-        ])
-      ],
-      sourcePaths: [
-        ...new Set([
-          ...(candidate.evidence?.sourcePaths ?? []),
-          message.sourcePath
-        ])
-      ]
-    }
-  };
-}
-
 function normalizeLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_HISTORY_LIMIT;
   return Math.max(1, Math.min(MAX_HISTORY_LIMIT, Math.trunc(value as number)));
 }
 
-function emptyActionCounts(): MemoryOrganizeHistoryActionCounts {
-  return {
-    duplicate: 0,
-    related: 0,
-    mergeable: 0,
-    conflict: 0,
-    suspected_stale: 0,
-    low_confidence: 0,
-    new: 0,
-    suppressed: 0
-  };
+function stripChunkSuffix(path: string): string {
+  return path.replace(/#chunk-\d+$/, "");
 }

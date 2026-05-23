@@ -149,6 +149,46 @@ describe("memory-v2 user message prefix", () => {
     expect(context.userMessageForModel.match(/用户希望被称呼为 Mason/g)).toHaveLength(1);
   });
 
+  test("dedupes and limits final memory items before injecting them into the user message", async () => {
+    const store = createMemoryV2Store();
+    store.writeEntry({
+      kind: "decision",
+      targetScope: "workspace",
+      statement: "Lume memory uses Markdown as the source of truth.",
+      confidence: "high",
+      tags: ["memory"],
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    store.writeEntry({
+      kind: "decision",
+      targetScope: "workspace",
+      statement: "Lume memory uses Markdown as source of truth",
+      confidence: "high",
+      tags: ["memory"],
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    for (let index = 0; index < 6; index += 1) {
+      store.writeEntry({
+        kind: "decision",
+        targetScope: "workspace",
+        statement: `Memory retrieval candidate ${index} should compete for prompt budget.`,
+        confidence: "high",
+        tags: ["memory"],
+        appliesWhen: { workspaceSlug: "demo" }
+      });
+    }
+
+    const context = await buildMemoryV2UserMessageContext({
+      workspaceSlug: "demo",
+      sessionType: "main",
+      userMessage: "memory source of truth retrieval design"
+    });
+
+    expect(context.items.length).toBeLessThanOrEqual(5);
+    expect(context.items.filter((item) => item.statement.includes("source of truth"))).toHaveLength(1);
+    expect(context.prefix.match(/source of truth/g)).toHaveLength(1);
+  });
+
   test("injects assistant name claim separately from conversation history", async () => {
     smartAddMemoryV2Candidate({
       workspaceSlug: "demo",

@@ -8,6 +8,9 @@ import {
   isMemoryToolGroupEnabled,
   pendingNotice,
   setMemoryToolGroupEnabled,
+  summarizeMemoryIngestSourcesJob,
+  summarizeMemoryIngestSourcesResult,
+  summarizeMemoryOrganizeEntriesResult,
   summarizeMemoryOrganizeResult,
   summarizeMemoryEntry,
 } from './memory-settings-state'
@@ -100,6 +103,51 @@ describe('memory settings state', () => {
       },
       items: [],
     })).toBe('扫描 20 条用户消息 · 抽取 4 条候选 · 写入 2 条 · 重复 1 条 · 待处理 1 条')
+  })
+
+  test('entry organize result summary keeps memory cleanup scannable', () => {
+    expect(summarizeMemoryOrganizeEntriesResult({
+      workspaceSlug: 'demo',
+      scannedEntries: 6,
+      keptEntries: 4,
+      supersededDuplicates: 2,
+      items: [],
+    })).toBe('扫描 6 条历史记忆 · 保留 4 条 · 归并重复 2 条')
+  })
+
+  test('ingest result summary keeps external source imports scannable', () => {
+    expect(summarizeMemoryIngestSourcesResult({
+      workspaceSlug: 'demo',
+      scannedSources: 2,
+      scannedChunks: 2,
+      scannedBatches: 1,
+      candidateCount: 3,
+      actions: {
+        duplicate: 1,
+        related: 0,
+        mergeable: 0,
+        conflict: 1,
+        suspected_stale: 0,
+        low_confidence: 0,
+        new: 1,
+        suppressed: 0,
+      },
+      items: [],
+    })).toBe('扫描 2 个来源 · 分析 1 批 · 处理 2 段 · 抽取 3 条候选 · 写入 1 条 · 重复 1 条 · 待处理 1 条')
+    expect(summarizeMemoryIngestSourcesJob({
+      jobId: 'job-1',
+      workspaceSlug: 'demo',
+      status: 'running',
+      startedAt: 100,
+    })).toBe('后台整理中')
+    expect(summarizeMemoryIngestSourcesJob({
+      jobId: 'job-2',
+      workspaceSlug: 'demo',
+      status: 'failed',
+      startedAt: 100,
+      completedAt: 200,
+      error: '本地文件不存在',
+    })).toBe('整理失败：本地文件不存在')
   })
 
   test('memory tool policy group helpers toggle allow entries', () => {

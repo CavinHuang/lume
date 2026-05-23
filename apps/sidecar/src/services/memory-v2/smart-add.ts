@@ -12,6 +12,7 @@ import {
   inferMemoryV2Claim,
   normalizeMemoryV2Claim
 } from "./claim";
+import { areMemoryStatementsSimilar, memoryTextFingerprint, memoryTextTokens } from "./dedupe";
 
 export function shouldSuppressDurableMemory(text: string): boolean {
   return /\bdo not remember\b|\bdon't remember\b|\bdo not save\b|不要记住|别记住|不要保存/i.test(text);
@@ -88,6 +89,15 @@ export function smartAddMemoryV2Candidate(input: {
         reason: "Candidate changes an active claim memory."
       }),
       reason: "Claim memory routed to conflict review."
+    };
+  }
+
+  const similarDuplicate = existing.find((entry) => isSimilarDuplicate(candidate, entry));
+  if (similarDuplicate) {
+    return {
+      action: "duplicate",
+      existingIds: [similarDuplicate.frontmatter.id],
+      reason: "Candidate is substantially similar to an active memory."
     };
   }
 
@@ -190,15 +200,21 @@ function hasDifferentClaimKey(candidate: MemoryV2Candidate, entry: MemoryV2Entry
 function findRelatedEntries(candidate: MemoryV2Candidate, entries: MemoryV2Entry[]): MemoryV2Entry[] {
   const candidateEntities = new Set((candidate.entities ?? []).map(normalizeToken));
   const candidateTags = new Set((candidate.tags ?? []).map(normalizeToken));
-  const candidateTokens = new Set(tokenize(candidate.statement));
+  const candidateTokens = new Set(memoryTextTokens(candidate.statement));
   return entries.filter((entry) => {
     if (hasDifferentClaimKey(candidate, entry)) return false;
     if (entry.frontmatter.kind !== candidate.kind) return false;
     const sharesEntity = entry.frontmatter.entities.some((entity) => candidateEntities.has(normalizeToken(entity)));
     const sharesTag = entry.frontmatter.tags.some((tag) => candidateTags.has(normalizeToken(tag)));
-    const overlap = tokenize(entry.statement).filter((token) => candidateTokens.has(token)).length;
+    const overlap = memoryTextTokens(entry.statement).filter((token) => candidateTokens.has(token)).length;
     return sharesEntity || sharesTag || overlap >= 3;
   });
+}
+
+function isSimilarDuplicate(candidate: MemoryV2Candidate, entry: MemoryV2Entry): boolean {
+  if (hasDifferentClaimKey(candidate, entry)) return false;
+  if (entry.frontmatter.kind !== candidate.kind) return false;
+  return areMemoryStatementsSimilar(candidate.statement, entry.statement);
 }
 
 function looksConflicting(candidate: string, existing: string): boolean {
@@ -228,16 +244,7 @@ function looksStaleChange(candidate: string, existing: string): boolean {
 }
 
 function normalizeStatement(value: string): string {
-  return tokenize(value).join(" ");
-}
-
-function tokenize(value: string): string[] {
-  return value
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 1);
+  return memoryTextFingerprint(value);
 }
 
 function normalizeToken(value: string): string {

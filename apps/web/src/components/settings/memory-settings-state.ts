@@ -1,6 +1,9 @@
 import type {
   Channel,
+  MemoryIngestSourcesJob,
+  MemoryIngestSourcesResult,
   MemoryKind,
+  MemoryOrganizeEntriesResult,
   MemoryPendingCounts,
   MemoryOrganizeHistoryResult,
   MemoryRuntimeConfig,
@@ -192,6 +195,34 @@ export function summarizeMemoryOrganizeResult(result: MemoryOrganizeHistoryResul
     `重复 ${result.actions.duplicate} 条`,
     `待处理 ${pending} 条`,
   ].join(' · ')
+}
+
+export function summarizeMemoryOrganizeEntriesResult(result: MemoryOrganizeEntriesResult): string {
+  return [
+    `扫描 ${result.scannedEntries} 条历史记忆`,
+    `保留 ${result.keptEntries} 条`,
+    `归并重复 ${result.supersededDuplicates} 条`,
+  ].join(' · ')
+}
+
+export function summarizeMemoryIngestSourcesResult(result: MemoryIngestSourcesResult): string {
+  const written = result.actions.new + result.actions.related
+  const pending = result.actions.conflict + result.actions.suspected_stale + result.actions.low_confidence
+  return [
+    `扫描 ${result.scannedSources} 个来源`,
+    `分析 ${result.scannedBatches} 批`,
+    `处理 ${result.scannedChunks} 段`,
+    `抽取 ${result.candidateCount} 条候选`,
+    `写入 ${written} 条`,
+    `重复 ${result.actions.duplicate} 条`,
+    `待处理 ${pending} 条`,
+  ].join(' · ')
+}
+
+export function summarizeMemoryIngestSourcesJob(job: MemoryIngestSourcesJob): string {
+  if (job.status === 'running') return '后台整理中'
+  if (job.status === 'failed') return `整理失败：${job.error ?? '未知错误'}`
+  return job.result ? summarizeMemoryIngestSourcesResult(job.result) : '整理完成'
 }
 
 export function summarizeMemoryEntry(entry: MemorySettingsEntrySummary): string {

@@ -211,6 +211,103 @@ export interface MemoryOrganizeHistoryResult {
   items: MemoryOrganizeHistoryItem[];
 }
 
+export interface MemoryOrganizeEntriesInput {
+  workspaceSlug: string;
+}
+
+export interface MemoryOrganizeEntriesItem {
+  keptId: string;
+  duplicateId: string;
+  scope: "global" | "workspace";
+  statement: string;
+  duplicateStatement: string;
+  action: "superseded_duplicate";
+  reason: string;
+}
+
+export interface MemoryOrganizeEntriesResult {
+  workspaceSlug: string;
+  scannedEntries: number;
+  keptEntries: number;
+  supersededDuplicates: number;
+  items: MemoryOrganizeEntriesItem[];
+}
+
+export type MemoryIngestSourceInput =
+  | {
+    kind: "pasted_text";
+    title?: string;
+    content: string;
+    targetScope?: "global" | "workspace";
+  }
+  | {
+    kind: "workspace_file";
+    path: string;
+    targetScope?: "global" | "workspace";
+  }
+  | {
+    kind: "local_file";
+    path: string;
+    targetScope?: "global" | "workspace";
+  }
+  | {
+    kind: "local_folder";
+    path: string;
+    targetScope?: "global" | "workspace";
+  };
+
+export interface MemoryIngestSourcesInput {
+  workspaceSlug: string;
+  sources: MemoryIngestSourceInput[];
+  batchMaxChars?: number;
+}
+
+export interface MemoryIngestSourcesItem {
+  sourcePath: string;
+  sourceId?: string;
+  statement: string;
+  scope?: "global" | "workspace";
+  kind?: "preference" | "fact" | "decision" | "lesson" | "state";
+  confidence?: "low" | "medium" | "high";
+  action: MemoryOrganizeHistoryAction;
+  reason: string;
+  entryId?: string;
+  pendingId?: string;
+}
+
+export interface MemoryIngestSourcesResult {
+  workspaceSlug: string;
+  scannedSources: number;
+  scannedChunks: number;
+  scannedBatches: number;
+  candidateCount: number;
+  actions: MemoryOrganizeHistoryActionCounts;
+  items: MemoryIngestSourcesItem[];
+}
+
+export type MemoryIngestSourcesJobStatus = "running" | "completed" | "failed";
+
+export interface MemoryStartIngestSourcesResult {
+  jobId: string;
+  workspaceSlug: string;
+  status: "running";
+  startedAt: number;
+}
+
+export interface MemoryIngestSourcesJobInput {
+  jobId: string;
+}
+
+export interface MemoryIngestSourcesJob {
+  jobId: string;
+  workspaceSlug: string;
+  status: MemoryIngestSourcesJobStatus;
+  startedAt: number;
+  completedAt?: number;
+  result?: MemoryIngestSourcesResult;
+  error?: string;
+}
+
 export type MemorySemanticMode = "auto" | "off";
 
 export interface MemoryRetrievalConfig {
@@ -300,6 +397,9 @@ export const MEMORY_IPC_CHANNELS = {
   REMEMBER: "memory:remember",
   SETTINGS_SNAPSHOT: "memory:settings-snapshot",
   ORGANIZE_HISTORY: "memory:organize-history",
+  ORGANIZE_ENTRIES: "memory:organize-entries",
+  INGEST_SOURCES: "memory:ingest-sources",
+  GET_INGEST_JOB: "memory:get-ingest-job",
   OPEN_SOURCE: "memory:open-source",
   GET_RUNTIME_CONFIG: "memory:get-runtime-config",
   UPDATE_RUNTIME_CONFIG: "memory:update-runtime-config"
