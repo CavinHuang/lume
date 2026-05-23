@@ -1,7 +1,7 @@
 # MCP 真实接入设计
 
 > 日期: 2026-05-23
-> 状态: 设计方向已确认，等待 spec review 与用户复核
+> 状态: spec review 已通过，等待用户复核
 > 范围: 工作区 MCP 配置、Alice-style MCP Manager、设置页诊断、运行时工具注入、资源读取、认证诊断
 
 ## 概述
@@ -50,6 +50,8 @@ Alice 的可参考设计：
 - 不引入全局 MCP 配置继承或自动读取 Claude/Cursor 全局配置。
 - 不重写整个 ToolRuntime，只补齐 MCP 作为工具源进入现有权限与事件管线。
 - 不让设置页成为任意工具执行控制台；工具调用诊断可以保留为内部/dev 能力。
+- 不在第一版实现 MCP resource subscription 的产品体验；已有订阅工具后续再接入 manager。
+- 不在第一版实现 secret 加密存储；先保证显示、日志、事件脱敏。
 
 ## 配置模型
 
@@ -86,7 +88,28 @@ interface McpServerEntry {
 }
 ```
 
-保存新配置时使用 canonical `transport`。读取旧配置时不强制迁移文件；用户下次保存时再写入 canonical 形态。
+保存新配置时只写 canonical `transport`。读取旧配置时接受 `type` 旧值但不强制迁移文件；用户下次保存时再写入 canonical 形态。这是单向兼容规则：read accepts legacy, write emits canonical。
+
+### 身份与命名规则
+
+MCP server 必须有稳定身份，避免重命名、导入和同名工具影响权限审计：
+
+- `serverId` 是稳定主键，来自 workspace MCP config 的 record key。
+- 标准 JSON 导入 `{ "mcpServers": { "id": { ... } } }` 时，外层 key 就是 `serverId`。
+- 若未来支持数组导入，数组项的 `id` 可作为 `serverId`；没有 `id` 时根据 `name` 生成一次性 slug。
+- `name` 只是展示名，可修改，不参与权限 key、resource key 或 tool wrapper 名称。
+- 手动新增时根据用户输入生成 `serverId`，保存后不随展示名变化。
+- 若导入的 `serverId` 与现有 server 冲突，UI 必须要求覆盖或重命名，不能静默合并。
+
+工具 wrapper 名称使用 canonical namespace：
+
+- server segment 使用 `serverId` 规范化结果，而不是 display name。
+- MCP 原始 tool name 保存在 `originalToolName`，wrapper segment 使用规范化后的 tool name。
+- 规范化只允许 ASCII 字母、数字、下划线和连字符；其他字符替换为 `_`，连续 `_` 合并，空值拒绝保存。
+- 若同一 server 内规范化后 tool name 冲突，后续项追加稳定短后缀，并在 `McpToolDetail` 中保留原名与 wrapper 名映射。
+- 稳定短后缀来自 `serverId + "\0" + originalToolName` 的短 hash，确保跨 session 不漂移。
+
+因此对模型暴露的工具名仍是 `mcp__server__tool` 形态，但其中的 `server` 是稳定 `serverId` namespace。
 
 ## 架构
 
@@ -102,7 +125,7 @@ interface McpServerEntry {
 - `dispose()`
 - `getStatus()`
 - `getTools(serverId?)`
-- `callTool(serverId, toolName, args, options)`
+- `callTool(serverId, originalToolName, args, options)`
 - `listResources(serverId?)`
 - `readResource(serverId, uri)`
 
@@ -115,14 +138,21 @@ interface McpServerRuntimeState {
   transport?: unknown
   tools: McpToolDetail[]
   connecting?: Promise<void>
-  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'auth_needed'
-  error?: McpConnectionError
+  status: 'idle' | 'connecting' | 'connected' | 'failed'
+  error?: McpClientError
   lastConnectedAt?: number
   lastCheckedAt?: number
 }
 ```
 
 SDK manager 只处理 MCP 协议、连接、重试、结果规范化和资源读取；它不直接理解 Lume workspace、设置页、权限审批或 runtime event。
+
+错误边界：
+
+- SDK manager 返回技术错误：`invalid_config`、`transport_error`、`protocol_error`、`timeout`、`auth_error`。
+- SDK manager 不做 workspace 日志、不生成用户可见文案、不决定审批策略。
+- Sidecar manager 把 SDK 技术错误映射为公开状态：`disconnected`、`connecting`、`connected`、`error`、`auth_needed`。
+- Sidecar manager 负责脱敏、用户可见错误摘要、RPC payload 和 runtime event 元数据。
 
 ### Sidecar Workspace MCP Manager
 
@@ -143,15 +173,32 @@ sidecar manager 是 Lume 的边界层：这里负责状态分类、日志脱敏�
 
 ### Agent Runtime 集成
 
-Agent run 启动时不再只把原始 `mcpServers` 配置塞给 SDK Agent options。新的流程是：
+Agent run 启动时不再把同一份 workspace MCP 配置同时交给旧的 per-run `mcpServers` 路径和新的 workspace manager。新的流程是：
 
 1. runtime 根据 `workspaceSlug` 请求 `WorkspaceMcpManager.ensureWorkspaceConnected(workspaceSlug)`。
 2. manager 返回 connected servers 的 `McpToolDetail[]`。
-3. runtime 把每个 MCP tool 包装成 Lume ToolDefinition，名称保持 `mcp__${serverName}__${toolName}`。
+3. runtime 把每个 MCP tool 包装成 Lume ToolDefinition，名称保持 `mcp__${serverIdNamespace}__${toolNameNamespace}`。
 4. 工具执行仍走现有 ToolRuntime/gateway/approval/event 管线。
-5. 真正调用时由 wrapper 转发到 `WorkspaceMcpManager.callTool(workspaceSlug, serverId, toolName, args, signal)`。
+5. 真正调用时由 wrapper 转发到 `WorkspaceMcpManager.callTool(workspaceSlug, serverId, originalToolName, args, signal)`。
 
 这样 MCP 工具和内置工具一样进入权限、日志、取消、超时与结果治理路径，同时保留 Alice-style 的持久连接和设置页诊断。
+
+过渡规则：
+
+- Phase 1 到 Phase 3 可以保留现有 per-run MCP 代码，但 runtime 仍只走旧路径。
+- Phase 4 切换 runtime 时，必须停用或删除 `buildMcpServers/mapWorkspaceMcpConfig` 对 workspace MCP 的注入，避免重复连接、重复工具和事件路径分裂。
+- 若为了回滚保留旧实现，只能放在互斥开关后；同一次 Agent run 中只能有一个 MCP 工具来源。
+- Runtime wrapper 必须保存 `serverId` 和 `originalToolName`，调用 manager 时不依赖展示名或规范化后的 wrapper 名反查。
+
+### Agent Resource 工具
+
+MCP resources 不作为每个 resource 的独立工具注入。第一版复用现有 resource tool 语义，但 handler 改为调用 workspace manager：
+
+- list 工具输入：可选 `serverId`，不传时聚合当前 workspace 已连接 servers。
+- read 工具输入：必填 `serverId` 与 `uri`。
+- 输出包含 `serverId`、`serverName`、`uri`、`mimeType` 与内容；大内容遵循同一截断策略。
+- 不再依赖 SDK 全局 `setMcpConnections` 作为 Lume sidecar runtime 的状态源。
+- subscribe/unsubscribe 保留为非目标，不进入第一版 UI 和 runtime 计划。
 
 ## 数据流
 
@@ -167,8 +214,9 @@ Agent run 启动时不再只把原始 `mcpServers` 配置塞给 SDK Agent option
 1. Web 提交配置。
 2. Sidecar normalize 并校验 transport、command/url、headers/env。
 3. `AgentWorkspaceManager` 保存 workspace 配置。
-4. `WorkspaceMcpManager.syncWorkspace(workspaceSlug)` 自动断开删除/禁用服务，并连接 enabled 服务。
-5. Web 刷新状态。
+4. `WorkspaceMcpManager.syncWorkspace(workspaceSlug)` 自动断开删除/禁用服务，并为 enabled 服务启动连接。
+5. 保存 RPC 不等待所有远端服务完成连接；它返回保存结果和初始 `connecting` 状态，避免单个慢服务卡住设置页。
+6. Web 刷新状态；用户点击测试时再等待单个 server 的连接结果。
 
 ### Agent 调用 MCP 工具
 
@@ -178,12 +226,14 @@ Agent run 启动时不再只把原始 `mcpServers` 配置塞给 SDK Agent option
 4. wrapper 调用 `WorkspaceMcpManager.callTool`。
 5. manager 确保连接存在；连接类错误重连一次后重试。
 6. 结果转换成 Lume tool result，并保留截断标记。
+7. 单个 MCP server 连接失败时，该 server 的工具本次不注入；其他已连接 server 不受影响。
 
 ### Resource 读取
 
 1. 设置页或 Agent resource tool 调用 `agent:list-mcp-resources`。
-2. Sidecar 聚合 connected servers 的 resources。
-3. 读取时必须带 server id 与 uri，避免跨 server uri 冲突。
+2. Sidecar 聚合 connected servers 的 resources；若指定 `serverId`，只访问该 server。
+3. 聚合读取允许部分失败，返回成功 resources 和按 server 分组的 errors。
+4. 读取具体 resource 时必须带 server id 与 uri，避免跨 server uri 冲突。
 
 ## 错误处理与认证诊断
 
@@ -195,7 +245,7 @@ Agent run 启动时不再只把原始 `mcpServers` 配置塞给 SDK Agent option
 - `error`: 配置错误、进程启动失败、网络错误、协议错误。
 - `auth_needed`: HTTP/SSE 返回 401/403，或错误消息明显指向 missing/invalid token、unauthorized、forbidden。
 
-错误分类建议：
+Sidecar/public 错误码由 SDK 技术错误映射而来，用于 UI、RPC 和 runtime event 展示：
 
 - stdio 缺少 command: `invalid_config`
 - command 不存在或 spawn 失败: `spawn_failed`
@@ -204,7 +254,16 @@ Agent run 启动时不再只把原始 `mcpServers` 配置塞给 SDK Agent option
 - 401/403/unauthorized/invalid token: `auth_needed`
 - MCP initialize/listTools/callTool 失败: `protocol_error`
 
-工具调用默认超时 30 秒。连接类错误只重连并重试一次，避免无限循环。超大结果沿用 Lume 的结果治理；若当前通道没有统一限制，MCP manager 先设置约 200k 字符的保护性上限，并追加截断元数据。
+默认超时：
+
+- connect: 15 秒。
+- initialize/listTools: 15 秒。
+- listResources/readResource: 15 秒。
+- callTool: 30 秒。
+
+设置页测试只等待单个 server 的测试超时。配置保存后的自动 sync 不阻塞所有连接完成。Agent 启动时按 server 独立连接；超时或失败的 server 标记为 error，本次 run 不注入它的工具，但不阻止其他 MCP server 或内置工具继续工作。
+
+连接类错误只重连并重试一次，避免无限循环。超大结果沿用 Lume 的结果治理；若当前通道没有统一限制，MCP manager 先设置约 200k 字符的保护性上限，并追加截断元数据。
 
 所有日志、runtime events、设置页错误都必须脱敏：
 
@@ -226,6 +285,7 @@ Agent run 启动时不再只把原始 `mcpServers` 配置塞给 SDK Agent option
 - 若导入项有 `url` 但没有 transport/type，默认使用 `streamable_http`。
 - 若导入项有 `command` 但没有 transport/type，默认使用 `stdio`。
 - auth_needed 状态展示“需要检查 headers 或 token”，但不回显 secret。
+- 测试按钮测试已保存 server；编辑中的 draft 先保存再连接测试。
 
 当前设置页中无法反映真实连接的占位状态与示例集成信息应删除或改成真实配置列表，避免误导。
 
@@ -235,20 +295,22 @@ Agent run 启动时不再只把原始 `mcpServers` 配置塞给 SDK Agent option
 
 ```ts
 interface McpToolDetail {
-  name: string
+  name: string // 兼容字段，值等同 originalName
+  originalName: string
+  wrapperName: string // 完整 ToolRuntime 名称，如 mcp__server__tool
   description?: string
   inputSchema?: unknown
   serverId: string
-  serverName: string
+  serverName: string // 展示名
 }
 
 interface McpServerStatus {
-  id: string
+  serverId: string
   name: string
   transport: McpTransport
   enabled: boolean
   status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'auth_needed'
-  tools: string[]
+  tools: string[] // wrapperName 列表
   toolDetails: McpToolDetail[]
   error?: {
     code: string
@@ -276,6 +338,75 @@ RPC 能力：
 - `agent:read-mcp-resource`
 - `agent:call-mcp-tool` 仅作为诊断/dev 能力；Agent 运行时不依赖 Web 直接调用这个 RPC。
 
+RPC payload 约定：
+
+```ts
+interface GetMcpStatusRequest {
+  workspaceSlug: string
+}
+
+interface GetMcpStatusResponse {
+  servers: McpServerStatus[]
+}
+
+interface TestMcpServerRequest {
+  workspaceSlug: string
+  serverId: string
+}
+
+interface TestMcpServerResponse {
+  status: McpServerStatus
+}
+
+interface ListMcpResourcesRequest {
+  workspaceSlug: string
+  serverId?: string
+}
+
+interface ListMcpResourcesResponse {
+  resources: McpResourceSummary[]
+  errors?: Record<string, { code: string; message: string }>
+}
+
+interface ReadMcpResourceRequest {
+  workspaceSlug: string
+  serverId: string
+  uri: string
+}
+
+interface ReadMcpResourceResponse {
+  contents: Array<{
+    uri: string
+    mimeType?: string
+    text?: string
+    blobBase64?: string
+  }>
+  truncated?: boolean
+}
+
+interface CallMcpToolDiagnosticRequest {
+  workspaceSlug: string
+  serverId: string
+  originalToolName: string
+  args: Record<string, unknown>
+  timeoutMs?: number
+}
+
+interface CallMcpToolDiagnosticResponse {
+  result?: {
+    text?: string
+    structuredContent?: unknown
+    truncated?: boolean
+  }
+  error?: {
+    code: string
+    message: string
+  }
+}
+```
+
+`agent:test-mcp-server` 第一版只测试已保存的 server。编辑表单可以做本地字段校验；连接测试要求先保存配置，这样不会引入未保存 draft 连接的生命周期问题。
+
 ## 权限与安全
 
 MCP 工具来自外部进程或远程服务，默认不能视为可信内置工具。第一版策略：
@@ -294,13 +425,16 @@ MCP 工具来自外部进程或远程服务，默认不能视为可信内置工�
 只补与本功能直接相关的测试：
 
 - 配置 normalize：`type: "http"` 兼容为 `transport: "streamable_http"`。
+- server identity：导入 key、展示名重命名、冲突处理和 canonical wrapper name 稳定。
 - JSON 导入：标准 `mcpServers` 与直接对象两种形态。
 - transport 选择：stdio、sse、streamable_http 分别选对 SDK transport。
 - 状态分类：invalid_config、connection_failed、auth_needed、protocol_error。
+- RPC payload：workspaceSlug/serverId 必填规则、resource 聚合部分失败、diagnostic call 错误响应。
 - manager 连接：同 server 并发 ensureConnected 只触发一次连接。
 - 工具列表：toolDetails 保留 inputSchema，并生成稳定 wrapper 名称。
 - 工具调用：连接错误重试一次，超大结果截断。
 - runtime 注入：只有 enabled 且 connected 的工具进入 ToolRuntime。
+- resource 工具：list 可选 serverId，read 必填 serverId+uri，并从 workspace manager 取数。
 - 权限路径：MCP tool 默认触发现有审批策略。
 - UI 状态：connected/error/auth_needed 渲染、工具详情弹层、secret 脱敏。
 
