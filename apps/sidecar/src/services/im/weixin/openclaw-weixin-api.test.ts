@@ -80,8 +80,35 @@ describe("openclaw-weixin-api", () => {
       updates: [{
         peerId: "room-1",
         peerKind: "group",
+        senderId: "user-1",
         text: "group hello",
         messageId: "456"
+      }]
+    });
+  });
+
+  test("getUpdates turns unsupported media-only messages into a notice", async () => {
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com/",
+      token: "token-1"
+    }, async () => Response.json({
+      msgs: [{
+        message_id: 789,
+        from_user_id: "user-1",
+        item_list: [{
+          type: 2,
+          image_item: {}
+        }]
+      }]
+    }));
+
+    await expect(api.getUpdates()).resolves.toMatchObject({
+      updates: [{
+        peerId: "user-1",
+        peerKind: "dm",
+        senderId: "user-1",
+        text: "收到一条暂不支持的微信消息（类型: 2）。当前仅支持文本消息。",
+        messageId: "789"
       }]
     });
   });

@@ -9,6 +9,7 @@ export interface OpenClawWeixinAccountAuth {
 export interface OpenClawWeixinInboundMessage {
   peerId: string;
   peerKind: ImPeerKind;
+  senderId?: string;
   text: string;
   peerName?: string;
   contextToken?: string;
@@ -128,23 +129,37 @@ function extractText(update: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+function extractUnsupportedNotice(update: Record<string, unknown>): string | undefined {
+  const itemList = Array.isArray(update.item_list) ? update.item_list : [];
+  const items = Array.isArray(update.items) ? update.items : [];
+  const types = [...itemList, ...items]
+    .map((item) => asRecord(item).type)
+    .map((type) => typeof type === "number" || typeof type === "string" ? String(type) : undefined)
+    .filter((type): type is string => Boolean(type));
+  if (types.length === 0) return undefined;
+  return `收到一条暂不支持的微信消息（类型: ${Array.from(new Set(types)).join(", ")}）。当前仅支持文本消息。`;
+}
+
 function parseInboundMessage(raw: unknown): OpenClawWeixinInboundMessage | null {
   const update = asRecord(raw);
+  const senderId =
+    asString(update.from_user_id)
+    ?? asString(update.from_user_name)
+    ?? asString(update.fromUserName);
   const peerId =
     asString(update.group_id)
     ?? asString(update.peer_id)
     ?? asString(update.peerId)
-    ?? asString(update.from_user_id)
-    ?? asString(update.from_user_name)
-    ?? asString(update.fromUserName)
+    ?? senderId
     ?? asString(update.user_name)
     ?? asString(update.to_user_name);
-  const text = extractText(update);
+  const text = extractText(update) ?? extractUnsupportedNotice(update);
   if (!peerId || !text) return null;
 
   return {
     peerId,
     peerKind: update.group_id ? "group" : normalizePeerKind(update.peer_kind ?? update.peerKind ?? update.chat_type),
+    senderId,
     text,
     peerName: asString(update.peer_name) ?? asString(update.peerName) ?? asString(update.nickname),
     contextToken: asString(update.context_token) ?? asString(update.contextToken),

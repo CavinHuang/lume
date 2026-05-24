@@ -112,6 +112,7 @@ describe("im-message-router", () => {
       accountId: "account-1",
       peerKind: "group",
       peerId: "room-1",
+      senderId: "user-1",
       text: "hello group"
     }, deps);
     await routeInboundImMessage({
@@ -124,8 +125,14 @@ describe("im-message-router", () => {
 
     expect(sent.map((item) => item.threadId)).toEqual(["thread-1", "thread-2"]);
     expect(sent[0]).toMatchObject({
+      userMessage: "user-1: hello group",
       chatType: "group",
-      threadType: "group"
+      threadType: "group",
+      messageMetadata: {
+        im: {
+          senderId: "user-1"
+        }
+      }
     });
   });
 });

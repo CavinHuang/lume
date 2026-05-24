@@ -13,6 +13,7 @@ export interface InboundImRouteMessage {
   peerKind: ImPeerKind;
   peerId: string;
   peerName?: string;
+  senderId?: string;
   text: string;
   contextToken?: string;
   messageId?: string;
@@ -25,6 +26,13 @@ export interface ImMessageRouterDeps {
 
 function titleForMessage(message: InboundImRouteMessage): string {
   return `微信: ${message.peerName?.trim() || message.peerId}`;
+}
+
+function userMessageForMessage(message: InboundImRouteMessage): string {
+  if (message.peerKind === "group" && message.senderId?.trim()) {
+    return `${message.senderId.trim()}: ${message.text}`;
+  }
+  return message.text;
 }
 
 async function defaultSendMessage(input: AgentSendInput): Promise<void> {
@@ -59,7 +67,7 @@ export async function routeInboundImMessage(
   const sendMessage = deps.sendMessage ?? defaultSendMessage;
   await sendMessage({
     threadId: binding.threadId,
-    userMessage: message.text,
+    userMessage: userMessageForMessage(message),
     chatType: message.peerKind === "group" ? "group" : "direct",
     threadType: message.peerKind === "group" ? "group" : "main",
     messageMetadata: {
@@ -70,6 +78,7 @@ export async function routeInboundImMessage(
         peerKind: message.peerKind,
         peerId: message.peerId,
         peerName: message.peerName,
+        senderId: message.senderId,
         contextToken: message.contextToken,
         messageId: message.messageId
       },
