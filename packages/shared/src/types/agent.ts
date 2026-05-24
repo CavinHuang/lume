@@ -8,7 +8,28 @@
 import type { SDKMessage } from "@lume/agent-sdk"
 import type { LumeRuntimeEvent } from "./runtime-event"
 import type { LumeConfigThinkingLevel } from "./lume-config"
+import type { McpTransportType } from "./mcp"
 export type { SDKMessage } from "@lume/agent-sdk"
+export type {
+  CallMcpToolDiagnosticRequest,
+  CallMcpToolDiagnosticResponse,
+  GetMcpStatusRequest,
+  GetMcpStatusResponse,
+  LegacyMcpTransportType,
+  ListMcpResourcesRequest,
+  ListMcpResourcesResponse,
+  McpPublicStatus,
+  McpResourceSummary,
+  McpServerEntry,
+  McpServerStatus,
+  McpToolDetail,
+  McpTransportType,
+  ReadMcpResourceRequest,
+  ReadMcpResourceResponse,
+  TestMcpServerRequest,
+  TestMcpServerResponse,
+  WorkspaceMcpConfig
+} from "./mcp"
 
 // ===== Agent 工作区 =====
 
@@ -156,33 +177,6 @@ export interface AgentGenerateTitleInput {
   channelId: string
   /** 模型 ID */
   modelId: string
-}
-
-// ===== MCP 服务器配置 =====
-
-/** MCP 传输类型 */
-export type McpTransportType = 'stdio' | 'http' | 'sse'
-
-/** MCP 服务器条目 */
-export interface McpServerEntry {
-  type: McpTransportType
-  /** stdio: 可执行命令 */
-  command?: string
-  /** stdio: 命令参数 */
-  args?: string[]
-  /** stdio: 环境变量 */
-  env?: Record<string, string>
-  /** http/sse: 服务端 URL */
-  url?: string
-  /** http/sse: 请求头 */
-  headers?: Record<string, string>
-  /** 是否启用 */
-  enabled: boolean
-}
-
-/** 工作区 MCP 配置文件 */
-export interface WorkspaceMcpConfig {
-  servers: Record<string, McpServerEntry>
 }
 
 // ===== Skill 元数据 =====
@@ -1062,6 +1056,16 @@ export const AGENT_IPC_CHANNELS = {
   GET_MCP_CONFIG: 'agent:get-mcp-config',
   /** 保存工作区 MCP 配置 */
   SAVE_MCP_CONFIG: 'agent:save-mcp-config',
+  /** 获取工作区 MCP 连接状态 */
+  GET_MCP_STATUS: 'agent:get-mcp-status',
+  /** 测试单个 MCP 服务连接 */
+  TEST_MCP_SERVER: 'agent:test-mcp-server',
+  /** 列出 MCP 资源 */
+  LIST_MCP_RESOURCES: 'agent:list-mcp-resources',
+  /** 读取 MCP 资源 */
+  READ_MCP_RESOURCE: 'agent:read-mcp-resource',
+  /** 诊断调用 MCP 工具 */
+  CALL_MCP_TOOL: 'agent:call-mcp-tool',
   /** 获取 Agent 网络代理配置 */
   GET_PROXY_SETTINGS: 'agent:get-proxy-settings',
   /** 保存 Agent 网络代理配置 */

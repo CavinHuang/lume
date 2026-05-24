@@ -159,6 +159,21 @@ export {
 
 export { connectMCPServer, closeAllConnections } from './mcp/client.js'
 export type { MCPConnection } from './mcp/client.js'
+export { McpClientManager } from './mcp/manager.js'
+export type {
+  McpCallResult,
+  McpClientErrorCode,
+  McpClientFactory,
+  McpClientLike,
+  McpClientServerStatus,
+  McpClientStatus,
+  McpListResourcesResult,
+  McpReadResourceResult,
+  McpToolDetail,
+  McpTransportFactory,
+  McpTransportKind,
+  NormalizedMcpServerConfig,
+} from './mcp/manager.js'
 
 // --------------------------------------------------------------------------
 // Slash Commands

@@ -18,6 +18,7 @@ import type {
   WorkspaceCapabilities,
   WorkspaceMcpConfig
 } from "@lume/shared";
+import { normalizeMcpTransport } from "@lume/shared";
 import {
   getAgentWorkspacePath,
   getAgentWorkspacesIndexPath,
@@ -37,7 +38,6 @@ interface AgentWorkspacesIndex {
 }
 
 const INDEX_VERSION = 1;
-const MCP_TRANSPORT_TYPES = new Set(["stdio", "http", "sse"]);
 
 function writeJsonAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -176,20 +176,29 @@ function normalizeStringList(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function parseMcpServerEntry(value: unknown): McpServerEntry | undefined {
   if (!isPlainObject(value)) {
     return undefined;
   }
   const enabled = value.enabled;
-  const type = value.type;
-  if (typeof enabled !== "boolean" || typeof type !== "string" || !MCP_TRANSPORT_TYPES.has(type)) {
+  const transport = normalizeMcpTransport(value);
+  if (typeof enabled !== "boolean" || !transport) {
     return undefined;
   }
-  const transportType = type as McpServerEntry["type"];
+  if (transport === "stdio" && !isNonEmptyString(value.command)) {
+    return undefined;
+  }
+  if ((transport === "streamable_http" || transport === "sse") && !isNonEmptyString(value.url)) {
+    return undefined;
+  }
 
   const entry: McpServerEntry = {
     enabled,
-    type: transportType
+    transport
   };
 
   if (typeof value.command === "string") {
@@ -241,6 +250,10 @@ function parseMcpConfigFromUnknown(value: unknown): WorkspaceMcpConfig {
     servers[name] = parsedEntry;
   }
   return { servers };
+}
+
+function toCanonicalWorkspaceMcpConfig(config: WorkspaceMcpConfig): WorkspaceMcpConfig {
+  return parseMcpConfigFromUnknown(config);
 }
 
 function getWorkspaceSkillOverrides(workspaceSlug: string): { enabled: Set<string>; disabled: Set<string> } {
@@ -424,7 +437,7 @@ export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig
 export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceMcpConfig): void {
   const mcpPath = getWorkspaceMcpPath(workspaceSlug);
   try {
-    writeJsonAtomic(mcpPath, JSON.stringify(config, null, 2));
+    writeJsonAtomic(mcpPath, JSON.stringify(toCanonicalWorkspaceMcpConfig(config), null, 2));
     console.log(`[Agent 工作区] 已保存 MCP 配置: ${workspaceSlug}`);
   } catch (error) {
     console.error("[Agent 工作区] 保存 MCP 配置失败:", error);
@@ -488,11 +501,17 @@ export function getWorkspaceCapabilities(workspaceSlug: string): WorkspaceCapabi
   const mcpConfig = getWorkspaceMcpConfig(workspaceSlug);
   const skills = getWorkspaceSkills(workspaceSlug);
 
-  const mcpServers = Object.entries(mcpConfig.servers).map(([name, entry]) => ({
-    name,
-    enabled: entry.enabled,
-    type: entry.type
-  }));
+  const mcpServers = Object.entries(mcpConfig.servers).flatMap(([name, entry]) => {
+    const transport = normalizeMcpTransport(entry);
+    if (!transport) {
+      return [];
+    }
+    return [{
+      name,
+      enabled: entry.enabled,
+      type: transport
+    }];
+  });
 
   return { mcpServers, skills };
 }

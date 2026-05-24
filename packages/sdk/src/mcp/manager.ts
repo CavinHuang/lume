@@ -1,0 +1,593 @@
+export type McpTransportKind = 'stdio' | 'sse' | 'streamable_http';
+export type McpClientStatus = 'idle' | 'connecting' | 'connected' | 'failed';
+export type McpClientErrorCode =
+  | 'invalid_config'
+  | 'transport_error'
+  | 'protocol_error'
+  | 'timeout'
+  | 'auth_error'
+  | 'aborted';
+
+export interface NormalizedMcpServerConfig {
+  name?: string;
+  enabled: boolean;
+  transport: McpTransportKind;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+export interface McpToolDetail {
+  name: string;
+  originalName: string;
+  wrapperName: string;
+  description?: string;
+  inputSchema?: unknown;
+  serverId: string;
+  serverName: string;
+}
+
+export interface McpClientServerStatus {
+  serverId: string;
+  name: string;
+  transport: McpTransportKind;
+  enabled: boolean;
+  status: McpClientStatus;
+  tools: string[];
+  toolDetails: McpToolDetail[];
+  error?: { code: McpClientErrorCode; message: string };
+  lastConnectedAt?: number;
+  lastCheckedAt?: number;
+}
+
+export interface McpCallResult {
+  text: string;
+  structuredContent?: unknown;
+  isError?: boolean;
+  truncated?: boolean;
+}
+
+export interface McpListResourcesResult {
+  resources: Array<Record<string, unknown>>;
+}
+
+export interface McpReadResourceResult {
+  contents: unknown[];
+}
+
+export interface McpClientLike {
+  connect(transport: unknown): Promise<void>;
+  listTools?(): Promise<{ tools?: Array<{ name: string; description?: string; inputSchema?: unknown }> }>;
+  callTool?(input: { name: string; arguments: Record<string, unknown> }): Promise<unknown>;
+  listResources?(): Promise<{ resources?: Array<Record<string, unknown>> }>;
+  readResource?(input: { uri: string }): Promise<{ contents?: unknown[] }>;
+  close?(): Promise<void>;
+}
+
+export type McpClientFactory = (
+  serverId: string,
+  config: NormalizedMcpServerConfig
+) => McpClientLike | Promise<McpClientLike>;
+
+export type McpTransportFactory = (
+  serverId: string,
+  config: NormalizedMcpServerConfig
+) => unknown | Promise<unknown>;
+
+export interface McpClientManagerOptions {
+  clientFactory?: McpClientFactory;
+  transportFactory?: McpTransportFactory;
+  defaultConnectTimeoutMs?: number;
+  defaultCallTimeoutMs?: number;
+}
+
+interface ServerState {
+  config: NormalizedMcpServerConfig;
+  status: McpClientStatus;
+  tools: McpToolDetail[];
+  error?: { code: McpClientErrorCode; message: string };
+  client?: McpClientLike;
+  connectingPromise?: Promise<void>;
+  lastConnectedAt?: number;
+  lastCheckedAt?: number;
+}
+
+class McpManagerError extends Error {
+  code: McpClientErrorCode;
+
+  constructor(code: McpClientErrorCode, message: string) {
+    super(message);
+    this.name = 'McpManagerError';
+    this.code = code;
+  }
+}
+
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
+const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+const MAX_TEXT_CHARS = 200_000;
+const TRUNCATED_SUFFIX = '\n[truncated]';
+
+function createMcpError(code: McpClientErrorCode, message: string): McpManagerError {
+  return new McpManagerError(code, message);
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function classifyError(error: unknown, fallback: McpClientErrorCode = 'protocol_error'): McpManagerError {
+  if (error instanceof McpManagerError) {
+    return error;
+  }
+
+  const message = getErrorMessage(error);
+  const code = (error as { code?: unknown } | undefined)?.code;
+  if (code === 'ABORT_ERR') {
+    return createMcpError('aborted', message || 'MCP operation aborted');
+  }
+  if (/401|403|unauthorized|forbidden|auth|api key|token/i.test(message)) {
+    return createMcpError('auth_error', message);
+  }
+  if (/timed out|timeout/i.test(message)) {
+    return createMcpError('timeout', message);
+  }
+  if (isConnectionError(error)) {
+    return createMcpError('transport_error', message);
+  }
+  return createMcpError(fallback, message);
+}
+
+function isConnectionError(error: unknown): boolean {
+  if (error instanceof McpManagerError) {
+    return error.code === 'transport_error';
+  }
+  const code = (error as { code?: unknown } | undefined)?.code;
+  if (typeof code === 'string' && /ECONN|EPIPE|ENOTFOUND|ETIMEDOUT/i.test(code)) {
+    return true;
+  }
+  return /connection|closed|disconnect|socket hang up|reset|econn|epipe/i.test(getErrorMessage(error));
+}
+
+function validateConfig(config: NormalizedMcpServerConfig): McpManagerError | undefined {
+  if (!config.enabled) {
+    return createMcpError('invalid_config', 'MCP server is disabled');
+  }
+  if (config.transport === 'stdio' && !config.command?.trim()) {
+    return createMcpError('invalid_config', 'stdio MCP server requires command');
+  }
+  if ((config.transport === 'sse' || config.transport === 'streamable_http') && !config.url?.trim()) {
+    return createMcpError('invalid_config', 'remote MCP server requires url');
+  }
+  return undefined;
+}
+
+function normalizeServerId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'server';
+}
+
+function normalizeToolName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'tool';
+}
+
+function shortHash(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).padStart(6, '0').slice(0, 6);
+}
+
+function buildWrapperName(serverId: string, originalToolName: string, takenNames: Set<string>): string {
+  const serverNamespace = normalizeServerId(serverId);
+  const toolNamespace = normalizeToolName(originalToolName);
+  const base = `mcp__${serverNamespace}__${toolNamespace}`;
+  if (!takenNames.has(base)) {
+    takenNames.add(base);
+    return base;
+  }
+
+  const suffix = shortHash(`${serverNamespace}\0${originalToolName}`);
+  let candidate = `${base}_${suffix}`;
+  let counter = 2;
+  while (takenNames.has(candidate)) {
+    candidate = `${base}_${suffix}_${counter}`;
+    counter += 1;
+  }
+  takenNames.add(candidate);
+  return candidate;
+}
+
+function buildToolDetails(
+  serverId: string,
+  config: NormalizedMcpServerConfig,
+  tools: Array<{ name: string; description?: string; inputSchema?: unknown }>
+): McpToolDetail[] {
+  const takenNames = new Set<string>();
+  return tools.map((tool) => {
+    const wrapperName = buildWrapperName(serverId, tool.name, takenNames);
+    return {
+      name: wrapperName,
+      originalName: tool.name,
+      wrapperName,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      serverId,
+      serverName: config.name ?? serverId
+    };
+  });
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<T> {
+  if (signal?.aborted) {
+    throw createMcpError('aborted', 'MCP operation aborted');
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const settle = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      fn();
+    };
+    const onAbort = () => {
+      settle(() => reject(createMcpError('aborted', 'MCP operation aborted')));
+    };
+
+    timer = setTimeout(() => {
+      settle(() => reject(createMcpError('timeout', `MCP operation timed out after ${timeoutMs}ms`)));
+    }, timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    promise.then(
+      (value) => settle(() => resolve(value)),
+      (error) => settle(() => reject(error))
+    );
+  });
+}
+
+function truncateText(text: string): { text: string; truncated: boolean } {
+  if (text.length <= MAX_TEXT_CHARS) {
+    return { text, truncated: false };
+  }
+  return {
+    text: `${text.slice(0, MAX_TEXT_CHARS)}${TRUNCATED_SUFFIX}`,
+    truncated: true
+  };
+}
+
+function normalizeCallResult(result: unknown): McpCallResult {
+  const resultObject = typeof result === 'object' && result !== null
+    ? result as Record<string, unknown>
+    : undefined;
+  const content = Array.isArray(resultObject?.content) ? resultObject.content : undefined;
+  const chunks: string[] = [];
+
+  if (content) {
+    for (const block of content) {
+      if (
+        typeof block === 'object'
+        && block !== null
+        && (block as { type?: unknown }).type === 'text'
+        && typeof (block as { text?: unknown }).text === 'string'
+      ) {
+        chunks.push((block as { text: string }).text);
+      } else {
+        chunks.push(JSON.stringify(block));
+      }
+    }
+  } else if (resultObject?.structuredContent !== undefined) {
+    chunks.push('');
+  } else {
+    chunks.push(typeof result === 'string' ? result : JSON.stringify(result));
+  }
+
+  const truncated = truncateText(chunks.join(''));
+  return {
+    text: truncated.text,
+    ...(resultObject?.structuredContent !== undefined ? { structuredContent: resultObject.structuredContent } : {}),
+    ...(resultObject?.isError !== undefined ? { isError: Boolean(resultObject.isError) } : {}),
+    ...(truncated.truncated ? { truncated: true } : {})
+  };
+}
+
+async function defaultClientFactory(serverId: string): Promise<McpClientLike> {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  return new Client(
+    { name: `lume-agent-sdk-${serverId}`, version: '1.0.0' },
+    {}
+  ) as McpClientLike;
+}
+
+async function defaultTransportFactory(
+  _serverId: string,
+  config: NormalizedMcpServerConfig
+): Promise<unknown> {
+  if (config.transport === 'stdio') {
+    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+    return new StdioClientTransport({
+      command: config.command ?? '',
+      args: config.args ?? [],
+      env: { ...process.env, ...config.env } as Record<string, string>
+    });
+  }
+
+  if (config.transport === 'sse') {
+    const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
+    return new SSEClientTransport(new URL(config.url ?? ''), {
+      requestInit: config.headers ? { headers: config.headers } : undefined
+    } as any);
+  }
+
+  const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+  return new StreamableHTTPClientTransport(new URL(config.url ?? ''), {
+    requestInit: config.headers ? { headers: config.headers } : undefined
+  } as any);
+}
+
+export class McpClientManager {
+  private readonly clientFactory: McpClientFactory;
+  private readonly transportFactory: McpTransportFactory;
+  private readonly defaultConnectTimeoutMs: number;
+  private readonly defaultCallTimeoutMs: number;
+  private readonly servers = new Map<string, ServerState>();
+
+  constructor(options: McpClientManagerOptions = {}) {
+    this.clientFactory = options.clientFactory ?? defaultClientFactory;
+    this.transportFactory = options.transportFactory ?? defaultTransportFactory;
+    this.defaultConnectTimeoutMs = options.defaultConnectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+    this.defaultCallTimeoutMs = options.defaultCallTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  }
+
+  register(serverId: string, config: NormalizedMcpServerConfig): void {
+    const existing = this.servers.get(serverId);
+    if (existing?.client) {
+      void this.closeState(existing);
+    }
+    this.servers.set(serverId, {
+      config,
+      status: 'idle',
+      tools: []
+    });
+  }
+
+  sync(configs: Record<string, NormalizedMcpServerConfig>): void {
+    const nextIds = new Set(Object.keys(configs));
+    for (const serverId of this.servers.keys()) {
+      if (!nextIds.has(serverId)) {
+        void this.disconnect(serverId);
+        this.servers.delete(serverId);
+      }
+    }
+    for (const [serverId, config] of Object.entries(configs)) {
+      this.register(serverId, config);
+    }
+  }
+
+  async connect(serverId: string): Promise<void> {
+    await this.ensureConnected(serverId);
+  }
+
+  async ensureConnected(serverId: string): Promise<void> {
+    const state = this.getStateOrThrow(serverId);
+    if (state.status === 'connected' && state.client) {
+      return;
+    }
+    if (state.connectingPromise) {
+      return state.connectingPromise;
+    }
+
+    const connectingPromise = this.openConnection(serverId, state);
+    state.connectingPromise = connectingPromise;
+    try {
+      await connectingPromise;
+    } finally {
+      if (state.connectingPromise === connectingPromise) {
+        state.connectingPromise = undefined;
+      }
+    }
+  }
+
+  async disconnect(serverId: string): Promise<void> {
+    const state = this.servers.get(serverId);
+    if (!state) {
+      return;
+    }
+    await this.closeState(state);
+    state.status = 'idle';
+    state.tools = [];
+    state.error = undefined;
+  }
+
+  async dispose(): Promise<void> {
+    await Promise.allSettled([...this.servers.keys()].map((serverId) => this.disconnect(serverId)));
+    this.servers.clear();
+  }
+
+  getStatus(): Record<string, McpClientServerStatus> {
+    const status: Record<string, McpClientServerStatus> = {};
+    for (const [serverId, state] of this.servers.entries()) {
+      status[serverId] = {
+        serverId,
+        name: state.config.name ?? serverId,
+        transport: state.config.transport,
+        enabled: state.config.enabled,
+        status: state.status,
+        tools: state.tools.map((tool) => tool.originalName),
+        toolDetails: state.tools,
+        ...(state.error ? { error: state.error } : {}),
+        ...(state.lastConnectedAt ? { lastConnectedAt: state.lastConnectedAt } : {}),
+        ...(state.lastCheckedAt ? { lastCheckedAt: state.lastCheckedAt } : {})
+      };
+    }
+    return status;
+  }
+
+  getTools(serverId?: string): McpToolDetail[] {
+    if (serverId) {
+      return [...(this.servers.get(serverId)?.tools ?? [])];
+    }
+    return [...this.servers.values()].flatMap((state) => state.tools);
+  }
+
+  async callTool(
+    serverId: string,
+    originalToolName: string,
+    args: Record<string, unknown>,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {}
+  ): Promise<McpCallResult> {
+    return this.callToolWithRetry(serverId, originalToolName, args, options, false);
+  }
+
+  async listResources(serverId?: string): Promise<McpListResourcesResult> {
+    if (serverId) {
+      const state = await this.getConnectedState(serverId);
+      const result = await withTimeout(
+        Promise.resolve(state.client?.listResources?.() ?? { resources: [] }),
+        this.defaultCallTimeoutMs
+      );
+      return { resources: result.resources ?? [] };
+    }
+
+    const resources: Array<Record<string, unknown>> = [];
+    for (const [id, state] of this.servers.entries()) {
+      if (!state.config.enabled) {
+        continue;
+      }
+      resources.push(...(await this.listResources(id)).resources);
+    }
+    return { resources };
+  }
+
+  async readResource(serverId: string, uri: string): Promise<McpReadResourceResult> {
+    const state = await this.getConnectedState(serverId);
+    const result = await withTimeout(
+      Promise.resolve(state.client?.readResource?.({ uri }) ?? { contents: [] }),
+      this.defaultCallTimeoutMs
+    );
+    return { contents: result.contents ?? [] };
+  }
+
+  private async callToolWithRetry(
+    serverId: string,
+    originalToolName: string,
+    args: Record<string, unknown>,
+    options: { signal?: AbortSignal; timeoutMs?: number },
+    didRetry: boolean
+  ): Promise<McpCallResult> {
+    const state = await this.getConnectedState(serverId);
+    try {
+      const result = await withTimeout(
+        Promise.resolve(state.client?.callTool?.({ name: originalToolName, arguments: args })),
+        options.timeoutMs ?? this.defaultCallTimeoutMs,
+        options.signal
+      );
+      return normalizeCallResult(result);
+    } catch (error) {
+      const classified = classifyError(error);
+      if (!didRetry && classified.code !== 'timeout' && classified.code !== 'aborted' && isConnectionError(error)) {
+        await this.disconnect(serverId);
+        return this.callToolWithRetry(serverId, originalToolName, args, options, true);
+      }
+      throw classified;
+    }
+  }
+
+  private async getConnectedState(serverId: string): Promise<ServerState> {
+    await this.ensureConnected(serverId);
+    const state = this.getStateOrThrow(serverId);
+    if (!state.client) {
+      throw createMcpError('protocol_error', `MCP server is not connected: ${serverId}`);
+    }
+    return state;
+  }
+
+  private getStateOrThrow(serverId: string): ServerState {
+    const state = this.servers.get(serverId);
+    if (!state) {
+      throw createMcpError('invalid_config', `Unknown MCP server: ${serverId}`);
+    }
+    return state;
+  }
+
+  private async openConnection(serverId: string, state: ServerState): Promise<void> {
+    state.status = 'connecting';
+    state.error = undefined;
+    state.lastCheckedAt = Date.now();
+
+    const invalid = validateConfig(state.config);
+    if (invalid) {
+      state.status = 'failed';
+      state.error = { code: invalid.code, message: invalid.message };
+      throw invalid;
+    }
+
+    try {
+      const client = await this.clientFactory(serverId, state.config);
+      const transport = await this.transportFactory(serverId, state.config);
+      await withTimeout(Promise.resolve(client.connect(transport)), this.defaultConnectTimeoutMs);
+      state.client = client;
+      const toolList = await withTimeout(
+        Promise.resolve(client.listTools?.() ?? { tools: [] }),
+        this.defaultConnectTimeoutMs
+      );
+
+      state.tools = buildToolDetails(serverId, state.config, toolList.tools ?? []);
+      state.status = 'connected';
+      state.error = undefined;
+      state.lastConnectedAt = Date.now();
+      state.lastCheckedAt = Date.now();
+    } catch (error) {
+      await this.closeState(state);
+      const classified = classifyError(error, 'transport_error');
+      state.status = 'failed';
+      state.error = { code: classified.code, message: classified.message };
+      state.lastCheckedAt = Date.now();
+      throw classified;
+    }
+  }
+
+  private async closeState(state: ServerState): Promise<void> {
+    const client = state.client;
+    state.client = undefined;
+    state.connectingPromise = undefined;
+    if (!client?.close) {
+      return;
+    }
+    try {
+      await client.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+}

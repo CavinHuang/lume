@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
+import type { ToolDefinition } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
 import {
   buildSidecarSubagentExecutionInput,
@@ -19,11 +20,16 @@ import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
+import {
+  setWorkspaceMcpManagerForTesting,
+  type WorkspaceMcpManager
+} from "../../mcp/workspace-mcp-manager";
 
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
 
   afterEach(() => {
+    setWorkspaceMcpManagerForTesting(null);
     if (prevConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -112,6 +118,109 @@ describe("runtime-core run", () => {
     expect(toolNames).not.toContain("web_fetch");
 
     result.session.dispose();
+  });
+
+  test("应通过 workspace MCP manager 注入 MCP 工具与资源工具", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-mcp-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-mcp-tools-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+    const mcpTool: ToolDefinition = {
+      name: "mcp__github__search_issues",
+      description: "Search GitHub issues",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+      async call() {
+        return { type: "tool_result", tool_use_id: "", content: "ok" };
+      }
+    };
+    const listResourcesTool: ToolDefinition = {
+      name: "ListMcpResourcesTool",
+      description: "List MCP resources",
+      inputSchema: { type: "object", properties: {} },
+      async call() {
+        return { type: "tool_result", tool_use_id: "", content: "[]" };
+      }
+    };
+    const readResourceTool: ToolDefinition = {
+      name: "ReadMcpResourceTool",
+      description: "Read MCP resource",
+      inputSchema: { type: "object", properties: {}, required: ["serverId", "uri"] },
+      async call() {
+        return { type: "tool_result", tool_use_id: "", content: "{}" };
+      }
+    };
+    let createRuntimeToolsCalls = 0;
+    setWorkspaceMcpManagerForTesting({
+      async createRuntimeTools(workspaceSlug: string) {
+        createRuntimeToolsCalls += 1;
+        expect(workspaceSlug).toBe("mcp-workspace");
+        return { tools: [mcpTool, listResourcesTool, readResourceTool], diagnostics: [] };
+      }
+    } as unknown as WorkspaceMcpManager);
+
+    try {
+      const result = await createRuntimeCoreSession({
+        lumeSessionId: "mcp-runtime-session",
+        cwd,
+        agentDir,
+        provider: "anthropic",
+        resolvedModelId: "claude-sonnet-4-5",
+        apiKey: "test-key",
+        workspaceSlug: "mcp-workspace",
+        permissionMode: "acceptEdits"
+      });
+
+      const toolNames = result.session.getActiveToolNames();
+      expect(createRuntimeToolsCalls).toBe(1);
+      expect(toolNames).toContain("mcp__github__search_issues");
+      expect(toolNames).toContain("ListMcpResourcesTool");
+      expect(toolNames).toContain("ReadMcpResourceTool");
+      expect((result.agent as unknown as { cfg?: { mcpServers?: unknown } }).cfg?.mcpServers).toBeUndefined();
+
+      result.session.dispose();
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("MCP diagnostics 不应阻塞内置工具", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-mcp-diagnostics-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-mcp-diagnostics-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+    let createRuntimeToolsCalls = 0;
+    setWorkspaceMcpManagerForTesting({
+      async createRuntimeTools() {
+        createRuntimeToolsCalls += 1;
+        return {
+          tools: [],
+          diagnostics: [{ pluginName: "MCP: broken", severity: "warning", reason: "connection failed" }]
+        };
+      }
+    } as unknown as WorkspaceMcpManager);
+
+    try {
+      const result = await createRuntimeCoreSession({
+        lumeSessionId: "mcp-diagnostics-session",
+        cwd,
+        agentDir,
+        provider: "anthropic",
+        resolvedModelId: "claude-sonnet-4-5",
+        apiKey: "test-key",
+        workspaceSlug: "mcp-workspace",
+        permissionMode: "acceptEdits"
+      });
+
+      expect(createRuntimeToolsCalls).toBe(1);
+      expect(result.session.getActiveToolNames()).toContain("Read");
+      expect(result.session.getActiveToolNames()).toContain("TaskReport");
+
+      result.session.dispose();
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 
   test("应把 Lume memory 工具 descriptor 保持为 memory source", async () => {

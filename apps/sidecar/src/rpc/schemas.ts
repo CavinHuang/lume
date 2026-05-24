@@ -1,3 +1,4 @@
+import { normalizeMcpTransport } from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 
 const relativeThreadPathSchema = z.string()
@@ -298,13 +299,40 @@ export const workspaceDeleteInputSchema = z.object({
 });
 
 const mcpServerEntrySchema = z.object({
-  type: z.enum(["stdio", "http", "sse"]),
+  transport: z.enum(["stdio", "streamable_http", "sse"]).optional(),
+  type: z.enum(["stdio", "http", "sse", "streamable_http"]).optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   url: z.string().optional(),
   headers: z.record(z.string(), z.string()).optional(),
   enabled: z.boolean()
+}).superRefine((entry, ctx) => {
+  const transport = normalizeMcpTransport(entry);
+  if (!transport) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["transport"],
+      message: "MCP server requires transport or legacy type"
+    });
+    return;
+  }
+
+  if (transport === "stdio" && !entry.command?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["command"],
+      message: "stdio MCP server requires command"
+    });
+  }
+
+  if ((transport === "streamable_http" || transport === "sse") && !entry.url?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["url"],
+      message: "remote MCP server requires url"
+    });
+  }
 });
 
 export const workspaceMcpConfigInputSchema = z.object({
@@ -312,6 +340,34 @@ export const workspaceMcpConfigInputSchema = z.object({
   config: z.object({
     servers: z.record(z.string(), mcpServerEntrySchema)
   }).default({ servers: {} })
+});
+
+export const mcpStatusInputSchema = z.object({
+  workspaceSlug: idSchema
+});
+
+export const mcpTestServerInputSchema = z.object({
+  workspaceSlug: idSchema,
+  serverId: idSchema
+});
+
+export const mcpListResourcesInputSchema = z.object({
+  workspaceSlug: idSchema,
+  serverId: idSchema.optional()
+});
+
+export const mcpReadResourceInputSchema = z.object({
+  workspaceSlug: idSchema,
+  serverId: idSchema,
+  uri: z.string().min(1)
+});
+
+export const mcpCallToolDiagnosticInputSchema = z.object({
+  workspaceSlug: idSchema,
+  serverId: idSchema,
+  originalToolName: z.string().min(1),
+  args: z.record(z.string(), z.unknown()),
+  timeoutMs: z.number().int().positive().optional()
 });
 
 export const deleteSkillInputSchema = z.object({

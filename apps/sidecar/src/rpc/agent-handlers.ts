@@ -78,6 +78,7 @@ import {
   saveWorkspaceMcpConfig,
   updateAgentWorkspace
 } from "../services/agent/agent-workspace-manager";
+import { getWorkspaceMcpManager } from "../services/mcp/workspace-mcp-manager";
 import {
   getGitHubSkillReview,
   installGitHubSkillToWorkspace
@@ -149,6 +150,11 @@ import {
   proxySettingsInputSchema,
   readBootstrapFileInputSchema,
   listRunStatesInputSchema,
+  mcpCallToolDiagnosticInputSchema,
+  mcpListResourcesInputSchema,
+  mcpReadResourceInputSchema,
+  mcpStatusInputSchema,
+  mcpTestServerInputSchema,
   renameAttachedFileInputSchema,
   renameFileInputSchema,
   resumeRunInputSchema,
@@ -693,8 +699,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.DELETE_WORKSPACE]: async (params) => {
       const input = validateInput(workspaceDeleteInputSchema, params, AGENT_IPC_CHANNELS.DELETE_WORKSPACE);
+      const workspace = getAgentWorkspace(input.id);
       log.info("[Agent 工作区] 删除", { id: input.id });
       deleteAgentWorkspace(input.id);
+      if (workspace) {
+        await getWorkspaceMcpManager().disposeWorkspace(workspace.slug);
+      }
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.GET_CAPABILITIES]: async (params) => {
@@ -708,7 +718,34 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.SAVE_MCP_CONFIG]: async (params) => {
       const input = validateInput(workspaceMcpConfigInputSchema, params, AGENT_IPC_CHANNELS.SAVE_MCP_CONFIG);
       saveWorkspaceMcpConfig(input.workspaceSlug, input.config as WorkspaceMcpConfig);
+      void getWorkspaceMcpManager().syncWorkspace(input.workspaceSlug).catch((error) => {
+        log.warn("[MCP] 保存配置后同步失败", {
+          workspaceSlug: input.workspaceSlug,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
       return { ok: true };
+    },
+    [AGENT_IPC_CHANNELS.GET_MCP_STATUS]: async (params) => {
+      const input = validateInput(mcpStatusInputSchema, params, AGENT_IPC_CHANNELS.GET_MCP_STATUS);
+      await getWorkspaceMcpManager().syncWorkspace(input.workspaceSlug);
+      return { servers: getWorkspaceMcpManager().getStatus(input.workspaceSlug) };
+    },
+    [AGENT_IPC_CHANNELS.TEST_MCP_SERVER]: async (params) => {
+      const input = validateInput(mcpTestServerInputSchema, params, AGENT_IPC_CHANNELS.TEST_MCP_SERVER);
+      return { server: await getWorkspaceMcpManager().testServer(input.workspaceSlug, input.serverId) };
+    },
+    [AGENT_IPC_CHANNELS.LIST_MCP_RESOURCES]: async (params) => {
+      const input = validateInput(mcpListResourcesInputSchema, params, AGENT_IPC_CHANNELS.LIST_MCP_RESOURCES);
+      return getWorkspaceMcpManager().listResources(input);
+    },
+    [AGENT_IPC_CHANNELS.READ_MCP_RESOURCE]: async (params) => {
+      const input = validateInput(mcpReadResourceInputSchema, params, AGENT_IPC_CHANNELS.READ_MCP_RESOURCE);
+      return getWorkspaceMcpManager().readResource(input);
+    },
+    [AGENT_IPC_CHANNELS.CALL_MCP_TOOL]: async (params) => {
+      const input = validateInput(mcpCallToolDiagnosticInputSchema, params, AGENT_IPC_CHANNELS.CALL_MCP_TOOL);
+      return getWorkspaceMcpManager().callToolDiagnostic(input);
     },
     [AGENT_IPC_CHANNELS.GET_PROXY_SETTINGS]: async () => getAgentProxyStatus(),
     [AGENT_IPC_CHANNELS.SAVE_PROXY_SETTINGS]: async (params) =>

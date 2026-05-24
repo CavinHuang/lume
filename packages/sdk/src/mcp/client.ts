@@ -54,7 +54,7 @@ export async function connectMCPServer(
       transport = new SSEClientTransport(new URL(sseConfig.url), {
         requestInit: sseConfig.headers ? { headers: sseConfig.headers } : undefined,
       } as any)
-    } else if (config.type === 'http') {
+    } else if (config.type === 'http' || config.type === 'streamable_http') {
       const httpConfig = config as { url: string; headers?: Record<string, string> }
       const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
       transport = new StreamableHTTPClientTransport(new URL(httpConfig.url), {

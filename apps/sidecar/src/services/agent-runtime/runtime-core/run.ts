@@ -18,7 +18,6 @@ import {
   type AgentOptions,
   type ApiType,
   type ContentBlockParam,
-  type McpServerConfig,
   type ToolContext,
   type ToolResult,
   SkillTool,
@@ -34,8 +33,7 @@ import {
 import type {
   AgentAskUserQuestionRequest,
   AgentSendInput,
-  AgentToolPermissionRequest,
-  WorkspaceMcpConfig
+  AgentToolPermissionRequest
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -43,9 +41,9 @@ import {
   buildBuiltinAgents,
   loadCustomAgents
 } from "../../agent/agent-prompt-builder";
-import { getWorkspaceMcpConfig } from "../../agent/agent-workspace-manager";
 import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
+import { getWorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
@@ -595,6 +593,8 @@ function buildRuntimeCoreTools(input: {
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   runId?: string;
   pluginDiagnostics?: ToolRuntimeDiagnostic[];
+  mcpTools?: ToolDefinition[];
+  mcpDiagnostics?: ToolRuntimeDiagnostic[];
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
@@ -763,11 +763,13 @@ function buildRuntimeCoreTools(input: {
     messageMetadata: input.messageMetadata,
     policyInput,
     pluginDiagnostics: input.pluginDiagnostics,
+    mcpDiagnostics: input.mcpDiagnostics,
     groups: [
       { source: "sdk", tools: baseTools },
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
       { source: "task", tools: [taskReportTool, sidecarAgentTool] },
-      { source: "lume", tools: lumeTools.customTools as ToolDefinition[] }
+      { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
+      ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : [])
     ]
   });
 }
@@ -781,38 +783,6 @@ function resolveSdkApiType(provider: string): ApiType {
     return "deepseek-chat-completions";
   }
   return "openai-completions";
-}
-
-function buildMcpServers(workspaceSlug?: string): Record<string, McpServerConfig> | undefined {
-  if (!workspaceSlug) {
-    return undefined;
-  }
-  const config = getWorkspaceMcpConfig(workspaceSlug);
-  return mapWorkspaceMcpConfig(config);
-}
-
-function mapWorkspaceMcpConfig(config: WorkspaceMcpConfig): Record<string, McpServerConfig> | undefined {
-  const servers: Record<string, McpServerConfig> = {};
-  for (const [name, entry] of Object.entries(config.servers ?? {})) {
-    if (!entry.enabled) continue;
-    if (entry.type === "stdio" && entry.command) {
-      servers[name] = {
-        type: "stdio",
-        command: entry.command,
-        ...(entry.args ? { args: entry.args } : {}),
-        ...(entry.env ? { env: entry.env } : {})
-      };
-      continue;
-    }
-    if ((entry.type === "http" || entry.type === "sse") && entry.url) {
-      servers[name] = {
-        type: entry.type,
-        url: entry.url,
-        ...(entry.headers ? { headers: entry.headers } : {})
-      };
-    }
-  }
-  return Object.keys(servers).length > 0 ? servers : undefined;
 }
 
 function isAutomationExecution(messageMetadata?: Record<string, unknown>): boolean {
@@ -847,6 +817,16 @@ export async function createRuntimeCoreSession(
     cwd: input.cwd,
     workspaceSlug: input.workspaceSlug
   });
+  const workspaceMcpRuntime = input.workspaceSlug
+    ? await getWorkspaceMcpManager().createRuntimeTools(input.workspaceSlug).catch((error) => ({
+      tools: [],
+      diagnostics: [{
+        pluginName: "MCP",
+        severity: "warning" as const,
+        reason: error instanceof Error ? error.message : String(error)
+      }]
+    }))
+    : { tools: [], diagnostics: [] };
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     sessionId: input.lumeSessionId,
@@ -864,7 +844,9 @@ export async function createRuntimeCoreSession(
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     runId: input.runId,
-    pluginDiagnostics: pluginResolution.diagnostics
+    pluginDiagnostics: pluginResolution.diagnostics,
+    mcpTools: workspaceMcpRuntime.tools,
+    mcpDiagnostics: workspaceMcpRuntime.diagnostics
   });
 
   const contextAssembly = await new ContextAssembler().assemble({
@@ -900,7 +882,6 @@ export async function createRuntimeCoreSession(
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
       ? { resume: input.lumeSessionId }
       : {}),
-    ...(buildMcpServers(input.workspaceSlug) ? { mcpServers: buildMcpServers(input.workspaceSlug) } : {}),
     plugins: pluginResolution.specs,
     agents,
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
