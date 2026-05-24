@@ -6,16 +6,15 @@
 
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
+import { toast } from 'sonner'
 import {
   ArrowLeft,
-  ArrowRight,
   Box,
   CheckCircle2,
   CircleAlert,
   Clock3,
   ExternalLink,
   FileCode2,
-  FileText,
   Folder,
   GitBranch,
   Globe2,
@@ -23,12 +22,19 @@ import {
   Loader2,
   NotepadText,
   Plug,
-  MessageSquare,
-  Sparkles,
+  Plus,
+  RefreshCw,
   Trash2,
+  Upload,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react'
-import { sidecarCall } from '@/lib/desktop-api'
+import {
+  getMcpConfig,
+  getMcpStatus,
+  saveMcpConfig,
+  testMcpServer,
+} from '@/lib/desktop-api'
 import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
@@ -39,68 +45,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
+import {
+  MCP_TRANSPORT_OPTIONS,
+  buildMcpConfigAfterSave,
+  buildMcpServerRows,
+  createMcpServerDraft,
+  formatMcpTransport,
+  parseMcpConfigImportText,
+  type McpServerDraft,
+  type McpServerRow,
+  type McpUiStatus,
+} from './mcp-settings-state'
 import type {
   McpServerEntry,
-  McpTransportType,
+  McpServerStatus,
   WorkspaceMcpConfig,
 } from '@lume/shared'
 
 type ViewMode = 'list' | 'create' | 'edit'
-type ServerStatus = 'connected' | 'warning' | 'disconnected'
 
 interface EditingServer {
   name: string
   entry: McpServerEntry
 }
 
-interface McpTableRow {
-  name: string
-  entry: McpServerEntry
-  status: ServerStatus
-  source: string
-  lastChecked: string
+type McpTableRow = McpServerRow & {
   Icon: LucideIcon
   iconClassName: string
-}
-
-const TRANSPORT_OPTIONS = [
-  { value: 'stdio', label: 'stdio（命令行）' },
-  { value: 'http', label: 'HTTP（Streamable HTTP）' },
-  { value: 'sse', label: 'SSE（Server-Sent Events）' },
-]
-
-const INTEGRATIONS: Array<{
-  name: string
-  workspace: string
-  connected: boolean
-  Icon: LucideIcon
-  color: string
-}> = [
-  { name: 'Slack', workspace: 'lume-core', connected: true, Icon: MessageSquare, color: 'text-[#24b47e]' },
-  { name: 'GitHub', workspace: 'lume-org', connected: true, Icon: GitBranch, color: 'text-[#111827]' },
-  { name: 'Notion', workspace: 'Lume Workspace', connected: true, Icon: NotepadText, color: 'text-[#111827]' },
-  { name: 'Figma', workspace: '设计团队', connected: true, Icon: Sparkles, color: 'text-[#ff6b5f]' },
-  { name: 'Jira', workspace: '-', connected: false, Icon: Box, color: 'text-[#2684ff]' },
-  { name: '飞书', workspace: '产品团队', connected: true, Icon: FileText, color: 'text-[#3370ff]' },
-]
-
-function parseKeyValueText(text: string, separator: '=' | ':'): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const idx = trimmed.indexOf(separator)
-    if (idx <= 0) continue
-    result[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim()
-  }
-  return result
-}
-
-function serializeKeyValueText(record: Record<string, string> | undefined, separator: '=' | ':'): string {
-  if (!record) return ''
-  return Object.entries(record)
-    .map(([k, v]) => `${k}${separator}${separator === ':' ? ' ' : ''}${v}`)
-    .join('\n')
 }
 
 export function McpSettings() {
@@ -110,21 +81,45 @@ export function McpSettings() {
   const workspaceSlug = workspace?.slug ?? null
 
   const [config, setConfig] = React.useState<WorkspaceMcpConfig>({ servers: {} })
+  const [statuses, setStatuses] = React.useState<McpServerStatus[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [statusLoading, setStatusLoading] = React.useState(false)
+  const [testingServerId, setTestingServerId] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<ViewMode>('list')
   const [editingServer, setEditingServer] = React.useState<EditingServer | null>(null)
+  const [importOpen, setImportOpen] = React.useState(false)
+  const [importText, setImportText] = React.useState('')
+
+  const refreshStatus = React.useCallback(async () => {
+    if (!workspaceSlug) return
+    setStatusLoading(true)
+    try {
+      const status = await getMcpStatus(workspaceSlug)
+      setStatuses(status.servers ?? [])
+    } catch (error) {
+      console.error('[MCP 设置] 刷新状态失败:', error)
+      toast.error('刷新 MCP 状态失败')
+    } finally {
+      setStatusLoading(false)
+    }
+  }, [workspaceSlug])
 
   const loadConfig = React.useCallback(async () => {
     if (!workspaceSlug) {
+      setConfig({ servers: {} })
+      setStatuses([])
       setLoading(false)
       return
     }
     setLoading(true)
     try {
-      const workspaceConfig = await sidecarCall<WorkspaceMcpConfig>('agent:get-mcp-config', { workspaceSlug })
+      const workspaceConfig = await getMcpConfig(workspaceSlug)
       setConfig(workspaceConfig ?? { servers: {} })
+      const status = await getMcpStatus(workspaceSlug)
+      setStatuses(status.servers ?? [])
     } catch (error) {
       console.error('[MCP 设置] 加载失败:', error)
+      toast.error('加载 MCP 配置失败')
     } finally {
       setLoading(false)
     }
@@ -143,10 +138,66 @@ export function McpSettings() {
           [name]: { ...entry, enabled: nextEnabled ?? !entry.enabled },
         },
       }
-      await sidecarCall('agent:save-mcp-config', { workspaceSlug, config: newConfig })
+      await saveMcpConfig(workspaceSlug, newConfig)
       setConfig(newConfig)
+      toast.success(newConfig.servers[name]?.enabled ? 'MCP 服务已启用' : 'MCP 服务已停用')
+      void refreshStatus()
     } catch (error) {
       console.error('[MCP 设置] 切换状态失败:', error)
+      toast.error('更新 MCP 服务失败')
+    }
+  }
+
+  const handleTestServer = async (name: string) => {
+    if (!workspaceSlug) return
+    setTestingServerId(name)
+    try {
+      const result = await testMcpServer(workspaceSlug, name)
+      setStatuses((prev) => {
+        const next = prev.filter((status) => status.serverId !== result.server.serverId)
+        return [...next, result.server]
+      })
+      if (result.server.status === 'connected') {
+        toast.success(`MCP 服务「${result.server.name}」已连接`)
+      } else {
+        toast.error(result.server.error?.message ?? `MCP 服务「${result.server.name}」未连接`)
+      }
+    } catch (error) {
+      console.error('[MCP 设置] 测试连接失败:', error)
+      toast.error('测试 MCP 服务失败')
+    } finally {
+      setTestingServerId(null)
+    }
+  }
+
+  const handleImport = async () => {
+    if (!workspaceSlug) return
+    const parsed = parseMcpConfigImportText(importText)
+    if (!parsed.ok) {
+      toast.error(parsed.error)
+      return
+    }
+    const importedCount = Object.keys(parsed.config.servers).length
+    if (importedCount === 0) {
+      toast.error('没有可导入的 MCP 服务')
+      return
+    }
+    const nextConfig = {
+      servers: {
+        ...(config.servers ?? {}),
+        ...parsed.config.servers,
+      },
+    }
+    try {
+      await saveMcpConfig(workspaceSlug, nextConfig)
+      setConfig(nextConfig)
+      setImportText('')
+      setImportOpen(false)
+      toast.success(`已导入 ${importedCount} 个 MCP 服务`)
+      void refreshStatus()
+    } catch (error) {
+      console.error('[MCP 设置] 导入失败:', error)
+      toast.error('导入 MCP 服务失败')
     }
   }
 
@@ -180,11 +231,11 @@ export function McpSettings() {
     )
   }
 
-  const serverRows = buildServerRows(config.servers ?? {})
+  const serverRows = attachServerIcons(buildMcpServerRows(config.servers ?? {}, statuses))
   const connectedCount = serverRows.filter((row) => row.status === 'connected').length
   const warningCount = serverRows.filter((row) => row.status === 'warning').length
   const discoveredCount = serverRows.length
-  const lastScan = '配置文件'
+  const lastScan = statusLoading ? '刷新中' : '实时状态'
 
   return (
     <div className="space-y-3">
@@ -201,6 +252,15 @@ export function McpSettings() {
           marker="A"
           action={(
             <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setImportOpen((open) => !open)}
+                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
+              >
+                <Upload size={14} />
+                导入 JSON
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -240,11 +300,68 @@ export function McpSettings() {
 
           <div className="mt-4 flex items-center gap-2 text-[12px] leading-5 text-[var(--text-3)]">
             <Info size={14} className="text-[var(--text-3)]" />
-            不再读取 Claude 全局 MCP 配置；请在当前工作区配置中维护服务。
+            支持 stdio、SSE 与 Streamable HTTP；导入会接受标准 mcpServers JSON。
           </div>
+
+          {importOpen && (
+            <div className="mt-4 rounded-[8px] border border-[var(--border)] bg-[var(--background)] p-3">
+              <Textarea
+                value={importText}
+                onChange={(event) => setImportText(event.target.value)}
+                placeholder={'{"mcpServers":{"github":{"type":"http","url":"https://example.com/mcp"}}}'}
+                rows={5}
+                className="resize-y text-[12px] font-mono"
+              />
+              <div className="mt-3 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setImportText(''); setImportOpen(false) }}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleImport()}
+                  disabled={!importText.trim()}
+                  className="gap-2"
+                >
+                  <Upload size={14} />
+                  导入
+                </Button>
+              </div>
+            </div>
+          )}
         </SettingsCard>
 
-        <SettingsCard title="已发现的 MCP 服务" marker="B">
+        <SettingsCard
+          title="已发现的 MCP 服务"
+          marker="B"
+          action={(
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void refreshStatus()}
+                disabled={statusLoading}
+                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
+              >
+                {statusLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                刷新
+              </Button>
+              <Button
+                type="button"
+                onClick={() => { setEditingServer(null); setViewMode('create') }}
+                className="h-8 gap-2 rounded-[8px] px-3 text-[12px]"
+              >
+                <Plus size={14} />
+                添加服务
+              </Button>
+            </div>
+          )}
+        >
           {loading ? (
             <div className="flex h-[180px] items-center justify-center text-[13px] text-[var(--text-3)]">
               <Loader2 size={14} className="mr-2 animate-spin" />
@@ -254,41 +371,14 @@ export function McpSettings() {
             <div className="mt-4 overflow-hidden">
               <McpServiceTable
                 rows={serverRows}
+                testingServerId={testingServerId}
                 onEdit={(name, entry) => { setEditingServer({ name, entry }); setViewMode('edit') }}
-                onReconnect={(name) => void handleToggle(name, true)}
+                onToggle={(name, nextEnabled) => void handleToggle(name, nextEnabled)}
+                onTest={(name) => void handleTestServer(name)}
               />
               <div className="mt-3 text-[12px] text-[var(--text-3)]">共 {serverRows.length} 个服务</div>
             </div>
           )}
-        </SettingsCard>
-
-        <SettingsCard
-          title="集成概览"
-          marker="C"
-          action={(
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--brand)]"
-            >
-              管理集成
-              <ArrowRight size={14} />
-            </button>
-          )}
-        >
-          <div className="relative mt-4 min-w-0 overflow-hidden pr-8">
-            <div className="grid min-w-0 grid-cols-6 gap-3">
-              {INTEGRATIONS.map((item) => (
-                <IntegrationCard key={item.name} {...item} />
-              ))}
-            </div>
-            <button
-              type="button"
-              className="absolute right-0 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--brand)]"
-              aria-label="查看更多集成"
-            >
-              <ArrowRight size={18} strokeWidth={1.9} />
-            </button>
-          </div>
         </SettingsCard>
       </div>
     </div>
@@ -353,20 +443,25 @@ function DiscoveryItem({
 
 function McpServiceTable({
   rows,
+  testingServerId,
   onEdit,
-  onReconnect,
+  onToggle,
+  onTest,
 }: {
   rows: McpTableRow[]
+  testingServerId: string | null
   onEdit: (name: string, entry: McpServerEntry) => void
-  onReconnect: (name: string) => void
+  onToggle: (name: string, nextEnabled: boolean) => void
+  onTest: (name: string) => void
 }) {
   return (
     <div className="w-full">
-      <div className="grid h-8 grid-cols-[176px_112px_114px_112px_128px_1fr] items-center border-b border-[var(--border)] text-[12px] font-semibold text-[var(--text-3)]">
+      <div className="grid h-8 grid-cols-[176px_104px_96px_96px_72px_104px_1fr] items-center border-b border-[var(--border)] text-[12px] font-semibold text-[var(--text-3)]">
         <div>服务名称</div>
         <div>状态</div>
         <div>来源</div>
         <div>传输方式</div>
+        <div>工具</div>
         <div>最后检查</div>
         <div className="text-right">操作</div>
       </div>
@@ -375,39 +470,48 @@ function McpServiceTable({
         <div className="flex h-[182px] flex-col items-center justify-center rounded-[8px] border border-dashed border-[var(--border)] bg-[var(--background)] text-center">
           <Plug size={24} className="mb-2 text-[var(--text-3)]" />
           <div className="text-[13px] font-semibold text-[var(--text-2)]">暂无 MCP 服务</div>
-          <div className="mt-1 text-[12px] text-[var(--text-3)]">打开配置文件后添加服务，重新扫描后会显示在这里</div>
+          <div className="mt-1 text-[12px] text-[var(--text-3)]">添加服务或导入 mcpServers JSON 后会显示在这里</div>
         </div>
       ) : rows.map((row) => (
         <div
           key={row.name}
-          className="grid h-10 grid-cols-[176px_112px_114px_112px_128px_1fr] items-center border-b border-[var(--border)] text-[13px] last:border-b-0"
+          className="grid min-h-11 grid-cols-[176px_104px_96px_96px_72px_104px_1fr] items-center border-b border-[var(--border)] py-1 text-[13px] last:border-b-0"
         >
           <div className="flex min-w-0 items-center gap-3">
             <row.Icon size={18} className={cn('shrink-0', row.iconClassName)} />
-            <span className="truncate font-medium text-[var(--text-1)]">{row.name}</span>
+            <span className="truncate font-medium text-[var(--text-1)]" title={row.displayName}>{row.displayName}</span>
           </div>
-          <StatusPill status={row.status} />
+          <StatusPill status={row.status} label={row.statusLabel} errorMessage={row.errorMessage} />
           <div className="text-[var(--text-3)]">{row.source}</div>
-          <div className="text-[var(--text-3)]">{row.entry.type}</div>
+          <div className="text-[var(--text-3)]">{formatMcpTransport(row.transport)}</div>
+          <div className="text-[var(--text-3)]">{row.toolCount}</div>
           <div className="text-[var(--text-3)]">{row.lastChecked}</div>
-          <div className="flex items-center justify-end">
-            {row.status === 'connected' ? (
-              <button
-                type="button"
-                onClick={() => onEdit(row.name, row.entry)}
-                className="text-[12px] font-semibold text-[var(--brand)] hover:text-[var(--brand)]"
-              >
-                查看详情
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onReconnect(row.name)}
-                className="text-[12px] font-semibold text-[var(--brand)] hover:text-[var(--brand)]"
-              >
-                重连
-              </button>
-            )}
+          <div className="flex items-center justify-end gap-2">
+            <Switch
+              checked={row.enabled}
+              onCheckedChange={(checked) => onToggle(row.name, checked)}
+              aria-label={`${row.displayName} 启用状态`}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => onTest(row.name)}
+              disabled={testingServerId === row.name || !row.enabled}
+              className="h-7 gap-1.5 px-2 text-[12px]"
+            >
+              {testingServerId === row.name ? <Loader2 size={13} className="animate-spin" /> : <Wrench size={13} />}
+              测试
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => onEdit(row.name, row.entry)}
+              className="h-7 px-2 text-[12px]"
+            >
+              编辑
+            </Button>
           </div>
         </div>
       ))}
@@ -415,48 +519,26 @@ function McpServiceTable({
   )
 }
 
-function StatusPill({ status }: { status: ServerStatus }) {
+function StatusPill({
+  status,
+  label,
+  errorMessage,
+}: {
+  status: McpUiStatus
+  label: string
+  errorMessage?: string
+}) {
   const meta = {
-    connected: { label: '已连接', color: 'bg-[#20c872]', text: 'text-[var(--text-3)]' },
-    warning: { label: '异常', color: 'bg-[#ff9d2e]', text: 'text-[var(--text-3)]' },
-    disconnected: { label: '未连接', color: 'bg-[#a3aabc]', text: 'text-[var(--text-3)]' },
+    connected: { color: 'bg-[#20c872]', text: 'text-[var(--text-3)]' },
+    connecting: { color: 'bg-[#4f7df3]', text: 'text-[var(--text-3)]' },
+    warning: { color: 'bg-[#ff9d2e]', text: 'text-[var(--text-3)]' },
+    disconnected: { color: 'bg-[#a3aabc]', text: 'text-[var(--text-3)]' },
   }[status]
 
   return (
-    <div className={cn('flex items-center gap-2 text-[12px] font-medium', meta.text)}>
+    <div className={cn('flex items-center gap-2 text-[12px] font-medium', meta.text)} title={errorMessage}>
       <span className={cn('size-1.5 rounded-full', meta.color)} />
-      {meta.label}
-    </div>
-  )
-}
-
-function IntegrationCard({
-  name,
-  workspace,
-  connected,
-  Icon,
-  color,
-}: {
-  name: string
-  workspace: string
-  connected: boolean
-  Icon: LucideIcon
-  color: string
-}) {
-  return (
-    <div className="flex h-[134px] min-w-0 flex-col rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-3 shadow-[0_1px_1px_rgba(20,24,40,0.01)]">
-      <div className="flex h-7 items-center gap-2">
-        <Icon size={24} strokeWidth={2.15} className={cn('shrink-0', color)} />
-        <div className="min-w-0 truncate text-[12px] font-semibold leading-4 text-[var(--text-1)]">{name}</div>
-      </div>
-      <div className="mt-[18px] flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[var(--text-2)]">
-        <span className={cn('size-1.5 shrink-0 rounded-full', connected ? 'bg-[#20c872]' : 'bg-[#ff9d2e]')} />
-        {connected ? '已连接' : '未连接'}
-      </div>
-      <div className="mt-2 truncate text-[11px] leading-4 text-[var(--text-3)]">{workspace}</div>
-      <button type="button" className="mt-auto self-start text-[12px] font-semibold leading-4 text-[var(--brand)] hover:text-[var(--brand)]">
-        管理
-      </button>
+      {label}
     </div>
   )
 }
@@ -520,29 +602,13 @@ function McpOverviewStats({
   )
 }
 
-function buildServerRows(servers: WorkspaceMcpConfig['servers']): McpTableRow[] {
-  const rows = new Map<string, { entry: McpServerEntry; source: string }>()
-
-  for (const [name, entry] of Object.entries(servers ?? {})) {
-    rows.set(name, {
-      entry,
-      source: '工作区配置',
-    })
-  }
-
-  return Array.from(rows.entries()).map(([name, item], index) => {
-    const lowerName = name.toLowerCase()
+function attachServerIcons(rows: McpServerRow[]): McpTableRow[] {
+  return rows.map((row) => {
+    const lowerName = row.name.toLowerCase()
     const Icon = getServerIcon(lowerName)
     const iconClassName = getServerIconClass(lowerName)
-    const invalidConfig = item.entry.type === 'stdio'
-      ? !item.entry.command?.trim()
-      : !item.entry.url?.trim()
     return {
-      name,
-      entry: item.entry,
-      status: invalidConfig ? 'warning' : item.entry.enabled ? 'connected' : 'disconnected',
-      source: item.source,
-      lastChecked: item.entry.enabled ? `${Math.max(1, index * 2 + 1)} 分钟前` : '—',
+      ...row,
       Icon,
       iconClassName,
     }
@@ -582,36 +648,16 @@ function McpServerForm({
 }) {
   const isEdit = server !== null
 
-  const [name, setName] = React.useState(server?.name ?? '')
-  const [transportType, setTransportType] = React.useState<McpTransportType>(server?.entry.type ?? 'stdio')
-  const [enabled, setEnabled] = React.useState(server?.entry.enabled ?? false)
-  const [command, setCommand] = React.useState(server?.entry.command ?? '')
-  const [argsText, setArgsText] = React.useState(server?.entry.args?.join(', ') ?? '')
-  const [envText, setEnvText] = React.useState(serializeKeyValueText(server?.entry.env, '='))
-  const [url, setUrl] = React.useState(server?.entry.url ?? '')
-  const [headersText, setHeadersText] = React.useState(serializeKeyValueText(server?.entry.headers, ':'))
+  const [draft, setDraft] = React.useState<McpServerDraft>(() => createMcpServerDraft(server))
   const [saving, setSaving] = React.useState(false)
 
-  const buildEntry = (): McpServerEntry => {
-    const base: McpServerEntry = { type: transportType, enabled }
-    if (transportType === 'stdio') {
-      base.command = command.trim()
-      const args = argsText.split(',').map((s) => s.trim()).filter(Boolean)
-      if (args.length > 0) base.args = args
-      const env = parseKeyValueText(envText, '=')
-      if (Object.keys(env).length > 0) base.env = env
-    } else {
-      base.url = url.trim()
-      const headers = parseKeyValueText(headersText, ':')
-      if (Object.keys(headers).length > 0) base.headers = headers
-    }
-    return base
-  }
+  const updateDraft = (patch: Partial<McpServerDraft>) =>
+    setDraft((current) => ({ ...current, ...patch }))
 
   const canSubmit = () => {
-    if (!name.trim()) return false
-    if (transportType === 'stdio' && !command.trim()) return false
-    if (transportType !== 'stdio' && !url.trim()) return false
+    if (!draft.name.trim()) return false
+    if (draft.transport === 'stdio' && !draft.command.trim()) return false
+    if (draft.transport !== 'stdio' && !draft.url.trim()) return false
     return true
   }
 
@@ -621,13 +667,13 @@ function McpServerForm({
 
     setSaving(true)
     try {
-      const newConfig: WorkspaceMcpConfig = {
-        servers: { ...(existingConfig.servers ?? {}), [name.trim()]: buildEntry() },
-      }
-      await sidecarCall('agent:save-mcp-config', { workspaceSlug, config: newConfig })
+      const newConfig = buildMcpConfigAfterSave(existingConfig, server?.name ?? null, draft)
+      await saveMcpConfig(workspaceSlug, newConfig)
+      toast.success(isEdit ? 'MCP 服务已保存' : 'MCP 服务已创建')
       onSaved()
     } catch (error) {
       console.error('[MCP 表单] 保存失败:', error)
+      toast.error('保存 MCP 服务失败')
     } finally {
       setSaving(false)
     }
@@ -651,39 +697,45 @@ function McpServerForm({
 
       <div className="mt-5 space-y-4">
         <FormField label="服务器名称">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如: github-mcp" disabled={isEdit} className="h-8 text-[13px]" />
+          <Input
+            value={draft.name}
+            onChange={(e) => updateDraft({ name: e.target.value })}
+            placeholder="例如: github-mcp"
+            disabled={isEdit}
+            className="h-8 text-[13px]"
+          />
         </FormField>
 
         <FormField label="传输类型">
-          <Select value={transportType} onValueChange={(v) => setTransportType(v as McpTransportType)}>
+          <Select value={draft.transport} onValueChange={(value) => updateDraft({ transport: value as McpServerDraft['transport'] })}>
             <SelectTrigger className="h-8 text-[13px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {TRANSPORT_OPTIONS.map((opt) => (
+              {MCP_TRANSPORT_OPTIONS.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </FormField>
 
-        {transportType === 'stdio' ? (
+        {draft.transport === 'stdio' ? (
           <>
             <FormField label="命令">
-              <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="例如: npx" className="h-8 text-[13px]" />
+              <Input value={draft.command} onChange={(e) => updateDraft({ command: e.target.value })} placeholder="例如: npx" className="h-8 text-[13px]" />
             </FormField>
             <FormField label="参数" desc="多个参数用逗号分隔">
-              <Input value={argsText} onChange={(e) => setArgsText(e.target.value)} placeholder="-y, @modelcontextprotocol/server-github" className="h-8 text-[13px]" />
+              <Input value={draft.argsText} onChange={(e) => updateDraft({ argsText: e.target.value })} placeholder="-y, @modelcontextprotocol/server-github" className="h-8 text-[13px]" />
             </FormField>
             <FormField label="环境变量" desc="每行一个，格式: KEY=VALUE">
-              <Textarea value={envText} onChange={(e) => setEnvText(e.target.value)} placeholder={"GITHUB_TOKEN=ghp_xxx\nDEBUG=true"} rows={3} className="resize-y text-[13px] font-mono" />
+              <Textarea value={draft.envText} onChange={(e) => updateDraft({ envText: e.target.value })} placeholder={"GITHUB_TOKEN=ghp_xxx\nDEBUG=true"} rows={3} className="resize-y text-[13px] font-mono" />
             </FormField>
           </>
         ) : (
           <>
             <FormField label="URL">
-              <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://localhost:3000/mcp" className="h-8 text-[13px]" />
+              <Input value={draft.url} onChange={(e) => updateDraft({ url: e.target.value })} placeholder="http://localhost:3000/mcp" className="h-8 text-[13px]" />
             </FormField>
             <FormField label="请求头" desc="每行一个，格式: Key: Value">
-              <Textarea value={headersText} onChange={(e) => setHeadersText(e.target.value)} placeholder={"Authorization: Bearer xxx"} rows={3} className="resize-y text-[13px] font-mono" />
+              <Textarea value={draft.headersText} onChange={(e) => updateDraft({ headersText: e.target.value })} placeholder={"Authorization: Bearer xxx"} rows={3} className="resize-y text-[13px] font-mono" />
             </FormField>
           </>
         )}
@@ -695,14 +747,14 @@ function McpServerForm({
             <Label className="text-[13px]">启用此服务器</Label>
             <p className="mt-0.5 text-[11px] text-muted-foreground">开启后在 Agent 会话中加载</p>
           </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
+          <Switch checked={draft.enabled} onCheckedChange={(enabled) => updateDraft({ enabled })} />
         </div>
 
         {isEdit && (
           <Button
             type="button"
             variant="outline"
-            onClick={() => void handleDeleteFromForm(workspaceSlug, existingConfig, name, onSaved)}
+            onClick={() => void handleDeleteFromForm(workspaceSlug, existingConfig, draft.name, onSaved)}
             className="h-9 gap-2 border-[#ff9fa8] text-[#ff4d57] hover:bg-[#fff5f6] hover:text-[#ff4d57]"
           >
             <Trash2 size={14} />
@@ -723,10 +775,8 @@ async function handleDeleteFromForm(
   if (!confirm(`确定删除 MCP 服务器「${name}」？`)) return
   const nextServers = { ...(existingConfig.servers ?? {}) }
   delete nextServers[name]
-  await sidecarCall('agent:save-mcp-config', {
-    workspaceSlug,
-    config: { servers: nextServers },
-  })
+  await saveMcpConfig(workspaceSlug, { servers: nextServers })
+  toast.success('MCP 服务已删除')
   onSaved()
 }
 

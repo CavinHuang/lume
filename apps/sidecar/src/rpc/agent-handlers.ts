@@ -728,11 +728,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.GET_MCP_STATUS]: async (params) => {
       const input = validateInput(mcpStatusInputSchema, params, AGENT_IPC_CHANNELS.GET_MCP_STATUS);
+      await getWorkspaceMcpManager().syncWorkspace(input.workspaceSlug);
       return { servers: getWorkspaceMcpManager().getStatus(input.workspaceSlug) };
     },
     [AGENT_IPC_CHANNELS.TEST_MCP_SERVER]: async (params) => {
       const input = validateInput(mcpTestServerInputSchema, params, AGENT_IPC_CHANNELS.TEST_MCP_SERVER);
-      return getWorkspaceMcpManager().testServer(input.workspaceSlug, input.serverId);
+      return { server: await getWorkspaceMcpManager().testServer(input.workspaceSlug, input.serverId) };
     },
     [AGENT_IPC_CHANNELS.LIST_MCP_RESOURCES]: async (params) => {
       const input = validateInput(mcpListResourcesInputSchema, params, AGENT_IPC_CHANNELS.LIST_MCP_RESOURCES);

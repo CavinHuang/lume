@@ -161,10 +161,12 @@ describe("agent-handlers MCP RPC", () => {
 
   test("get-mcp-status validates workspaceSlug and returns servers", async () => {
     const handlers = await createHandlers();
+    syncWorkspaceMock.mockClear();
 
     expect(await handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({ workspaceSlug: "demo" })).toEqual({
       servers: getStatusMock("demo")
     });
+    expect(syncWorkspaceMock).toHaveBeenCalledWith("demo");
     await expect(handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({})).rejects.toThrow();
   });
 
@@ -172,7 +174,7 @@ describe("agent-handlers MCP RPC", () => {
     const handlers = await createHandlers();
 
     expect(await handlers[AGENT_IPC_CHANNELS.TEST_MCP_SERVER]!({ workspaceSlug: "demo", serverId: "remote" }))
-      .toMatchObject({ serverId: "remote", status: "connected" });
+      .toMatchObject({ server: { serverId: "remote", status: "connected" } });
     await expect(handlers[AGENT_IPC_CHANNELS.TEST_MCP_SERVER]!({ workspaceSlug: "demo" })).rejects.toThrow();
   });
 
