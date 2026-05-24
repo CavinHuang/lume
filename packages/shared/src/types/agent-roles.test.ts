@@ -7,8 +7,11 @@ import {
 } from "./agent-roles";
 
 describe("agent roles registry", () => {
-  test("exposes Alice-inspired built-in roles in stable order", () => {
+  test("exposes Lume built-in subagents and professional roles in stable order", () => {
     expect(BUILTIN_AGENT_ROLES.map((role) => role.id)).toEqual([
+      "explorer",
+      "planner",
+      "code-reviewer",
       "researcher",
       "translator",
       "writer",
@@ -23,6 +26,7 @@ describe("agent roles registry", () => {
     ]);
 
     expect(new Set(BUILTIN_AGENT_ROLES.map((role) => role.id)).size).toBe(BUILTIN_AGENT_ROLES.length);
+    expect(getAgentRole("planner")?.displayName).toBe("沈策");
     expect(getAgentRole("designer")?.displayName).toBe("林澄");
     expect(getAgentRole("developer")?.defaultSkillName).toBe("agent-developer");
   });

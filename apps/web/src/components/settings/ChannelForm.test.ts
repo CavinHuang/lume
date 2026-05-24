@@ -3,6 +3,7 @@ import type { ChannelModel } from '@lume/shared'
 import {
   filterChannelModels,
   invertChannelModelsEnabled,
+  isChannelApiKeyRequired,
   setChannelModelsEnabled,
 } from './ChannelForm'
 
@@ -37,5 +38,11 @@ describe('ChannelForm model list helpers', () => {
       ['BAAI/bge-m3', true],
       ['deepseek-chat', false],
     ])
+  })
+
+  test('local OpenAI-compatible providers do not require an API key', () => {
+    expect(isChannelApiKeyRequired('ollama')).toBe(false)
+    expect(isChannelApiKeyRequired('lmstudio')).toBe(false)
+    expect(isChannelApiKeyRequired('openai')).toBe(true)
   })
 })

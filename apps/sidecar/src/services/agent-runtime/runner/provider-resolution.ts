@@ -22,6 +22,8 @@ const PROVIDER_ALIAS: Record<string, KnownProvider | null> = {
   doubao: "openai",
   qwen: "openai",
   "qwen-portal": "openai",
+  ollama: "openai",
+  lmstudio: "openai",
   custom: "openai",
   kimi: "kimi-coding",
   "kimi-code": "kimi-coding",

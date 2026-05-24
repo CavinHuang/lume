@@ -60,7 +60,17 @@ describe("runtime-core run", () => {
       "explorer",
       "planner",
       "researcher",
-      "code-reviewer"
+      "code-reviewer",
+      "translator",
+      "writer",
+      "voice",
+      "designer",
+      "artist",
+      "analyst",
+      "quant",
+      "novelist",
+      "docsmith",
+      "developer"
     ]);
 
     result.session.dispose();

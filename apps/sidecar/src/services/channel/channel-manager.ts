@@ -295,6 +295,11 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
 }
 
+function authorizationHeaders(apiKey: string): Record<string, string> {
+  const trimmed = apiKey.trim();
+  return trimmed ? { Authorization: `Bearer ${trimmed}` } : {};
+}
+
 function resolveProviderApiFamily(provider: Channel["provider"], baseUrl: string): ProviderApiFamily {
   const normalizedBaseUrl = baseUrl.trim().toLowerCase();
   const byProvider = PROVIDER_API_FAMILIES[provider];
@@ -329,7 +334,7 @@ async function testOpenAICompatible(baseUrl: string, apiKey: string): Promise<Ch
   const url = normalizeBaseUrl(baseUrl);
   const response = await fetchWithProxy(`${url}/models`, {
     method: "GET",
-    headers: { Authorization: `Bearer ${apiKey}` }
+    headers: authorizationHeaders(apiKey)
   });
   if (response.ok) return { success: true, message: "连接成功" };
   if (response.status === 401) return { success: false, message: "API Key 无效" };
@@ -432,7 +437,7 @@ async function fetchOpenAICompatibleModels(
   apiKey: string
 ): Promise<FetchModelsResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetchWithProxy(`${url}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  const response = await fetchWithProxy(`${url}/models`, { headers: authorizationHeaders(apiKey) });
   if (!response.ok) {
     const suggested = getSuggestedProviderModels(provider);
     if (provider === "jina" && suggested.length > 0) {

@@ -9,14 +9,15 @@ import {
 describe('agents settings state', () => {
   test('metrics summarize built-in role capabilities', () => {
     expect(buildAgentRoleMetrics().map((item) => [item.label, item.value])).toEqual([
-      ['内置角色', '11'],
-      ['只读角色', '3'],
-      ['后台运行', '3'],
+      ['内置角色', '14'],
+      ['只读角色', '6'],
+      ['后台运行', '6'],
       ['可写角色', '8'],
     ])
   })
 
   test('filters by Chinese display name, role id and skill name', () => {
+    expect(filterAgentRoles('沈策').map((role) => role.id)).toEqual(['planner'])
     expect(filterAgentRoles('林澄').map((role) => role.id)).toEqual(['designer'])
     expect(filterAgentRoles('developer').map((role) => role.id)).toEqual(['developer'])
     expect(filterAgentRoles('agent-docsmith').map((role) => role.id)).toEqual(['docsmith'])
@@ -43,10 +44,13 @@ describe('agents settings state', () => {
     expect(Object.keys(AGENT_ROLE_ASSETS.roles).sort()).toEqual([
       'analyst',
       'artist',
+      'code-reviewer',
       'designer',
       'developer',
       'docsmith',
+      'explorer',
       'novelist',
+      'planner',
       'quant',
       'researcher',
       'translator',

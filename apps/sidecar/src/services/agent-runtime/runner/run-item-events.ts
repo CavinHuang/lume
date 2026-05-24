@@ -360,10 +360,18 @@ function normalizeMemoryContextUsedItems(value: unknown): MemoryContextUsedItem[
         scope: record.scope,
         status: record.status,
         citation: record.citation,
-        reason: record.reason
+        reason: record.reason,
+        ...(isMemoryClaim(record.claim) ? { claim: record.claim } : {})
       };
     })
     .filter((item): item is MemoryContextUsedItem => item !== null);
+}
+
+function isMemoryClaim(value: unknown): value is MemoryContextUsedItem["claim"] {
+  const record = asRecord(value);
+  return typeof record.subject === "string"
+    && typeof record.predicate === "string"
+    && typeof record.object === "string";
 }
 
 function isMemoryKind(value: unknown): value is MemoryContextUsedItem["kind"] {

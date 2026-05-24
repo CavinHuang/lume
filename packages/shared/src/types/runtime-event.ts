@@ -1,4 +1,5 @@
 import type { AgentMessageAttachmentInput } from "./agent";
+import type { MemoryClaim } from "./memory";
 
 export type RuntimeEventType =
   | "run.started"
@@ -227,6 +228,7 @@ export interface MemoryContextUsedRuntimeEvent extends RuntimeEventBase {
     status: "active" | "suspected_stale";
     citation: string;
     reason: string;
+    claim?: MemoryClaim;
   }>;
   hidden?: boolean;
 }

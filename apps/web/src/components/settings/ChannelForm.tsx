@@ -21,6 +21,11 @@ interface Props {
 }
 
 const PROVIDERS = Object.entries(PROVIDER_LABELS) as [ProviderType, string][]
+const LOCAL_API_KEY_OPTIONAL_PROVIDERS = new Set<ProviderType>(['ollama', 'lmstudio'])
+
+export function isChannelApiKeyRequired(provider: ProviderType): boolean {
+  return !LOCAL_API_KEY_OPTIONAL_PROVIDERS.has(provider)
+}
 
 function normalizeModelSearch(value: string): string {
   return value.trim().toLowerCase()
@@ -131,6 +136,7 @@ export function ChannelForm({
 
   const visibleModels = filterChannelModels(models, modelSearch)
   const visibleModelIds = visibleModels.map((model) => model.id)
+  const apiKeyRequired = isChannelApiKeyRequired(provider)
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5 max-w-lg">
@@ -173,7 +179,7 @@ export function ChannelForm({
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder="sk-..."
+          placeholder={apiKeyRequired ? 'sk-...' : '本地服务通常可留空'}
           className="font-mono text-[12px]"
           disabled={disabled}
         />
@@ -182,7 +188,7 @@ export function ChannelForm({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <Label>模型</Label>
-          <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || !apiKey}>
+          <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || (apiKeyRequired && !apiKey)}>
             {fetching && <Loader2 size={11} className="animate-spin mr-1" />}
             拉取模型列表
           </Button>
@@ -245,7 +251,7 @@ export function ChannelForm({
       </div>
 
       <div className="flex items-center gap-2 pt-2">
-        <Button type="submit" disabled={disabled || saving || (mode === 'create' && !apiKey)}>
+        <Button type="submit" disabled={disabled || saving || (mode === 'create' && apiKeyRequired && !apiKey)}>
           {saving && <Loader2 size={13} className="animate-spin mr-1" />}
           {mode === 'edit' ? '保存修改' : '保存'}
         </Button>

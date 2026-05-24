@@ -94,6 +94,8 @@ function coerceKnownProvider(provider: string): ProviderType {
     "qwen",
     "qwen-portal",
     "kimi-coding",
+    "ollama",
+    "lmstudio",
     "opencode",
     "custom"
   ] as const).includes(provider as ProviderType)

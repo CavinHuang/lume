@@ -89,8 +89,25 @@ describe("agent-prompt-builder", () => {
   test("buildBuiltinAgents 应返回预注册的 explorer / planner / researcher / code-reviewer", () => {
     const agents = buildBuiltinAgents();
 
-    expect(Object.keys(agents)).toEqual(["explorer", "planner", "researcher", "code-reviewer"]);
+    expect(Object.keys(agents)).toEqual([
+      "explorer",
+      "planner",
+      "researcher",
+      "code-reviewer",
+      "translator",
+      "writer",
+      "voice",
+      "designer",
+      "artist",
+      "analyst",
+      "quant",
+      "novelist",
+      "docsmith",
+      "developer"
+    ]);
     expect(agents.explorer?.model).toBe("inherit");
+    expect(agents.explorer?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
+    expect(agents.explorer?.prompt).toContain("高效的代码库探索员");
     expect(agents.planner?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
     expect(agents.planner?.disallowedTools).toEqual(["Agent", "Write", "Edit", "TaskContractWrite", "TaskReport"]);
     expect(agents.planner?.prompt).toContain("software architect and planning specialist");
@@ -100,8 +117,8 @@ describe("agent-prompt-builder", () => {
     expect(agents.planner?.prompt).toContain("The main thread owns TaskContractWrite");
     expect(agents.researcher?.tools).toContain("WebSearch");
     expect(agents.researcher?.tools).toContain("WebFetch");
-    expect(agents["code-reviewer"]?.tools).toContain("Read");
-    expect(agents["code-reviewer"]?.tools).toContain("Bash");
+    expect(agents["code-reviewer"]?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
+    expect(agents["code-reviewer"]?.prompt).toContain("专注于代码质量的审查员");
   });
 
   test("buildSystemPromptAppend 应说明子 Agent 默认模型可继承当前对话模型", () => {

@@ -8,6 +8,7 @@ import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
 import { createMemoryV2Store } from "../../memory-v2/markdown-store";
+import { getMemoryV2ScopePaths } from "../../memory-v2/paths";
 
 function createTestParams(threadId: string): AgentRuntimeRunParams {
   return {
@@ -180,6 +181,37 @@ describe("LumeRunner", () => {
       expect(entries).toEqual([expect.objectContaining({
         statement: "默认用中文回答"
       })]);
+    } finally {
+      delete process.env.LUME_CONFIG_DIR;
+    }
+  });
+
+  test("complete writes compact daily and run memory history", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-history-"));
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-history-config-"));
+    dirs.push(agentDir, configDir);
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      const params = createTestParams("thread-1");
+      params.input.userMessage = `帮我分析记忆召回问题 ${"很长的上下文".repeat(80)} TAIL_SHOULD_BE_CROPPED`;
+      const runner = await LumeRunner.create({
+        params,
+        prepared: {
+          ...createPrepared(agentDir),
+          workspaceSlug: "demo"
+        },
+        emit: createEmitter([])
+      });
+
+      await runner.complete();
+
+      const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
+      const daily = readdirSync(paths.dailyDir).map((file) => readFileSync(join(paths.dailyDir, file), "utf-8")).join("\n");
+      const runs = readdirSync(paths.runsDir!).map((file) => readFileSync(join(paths.runsDir!, file), "utf-8")).join("\n");
+      expect(daily).toContain("User asked:");
+      expect(runs).toContain("User asked:");
+      expect(daily).not.toContain("TAIL_SHOULD_BE_CROPPED");
+      expect(runs).not.toContain("TAIL_SHOULD_BE_CROPPED");
     } finally {
       delete process.env.LUME_CONFIG_DIR;
     }

@@ -273,11 +273,12 @@ export class LumeRunner {
     const workspaceSlug = this.observer.getWorkspaceSlug();
     if (workspaceSlug) {
       try {
+        const historySummary = summarizeMessageForMemoryHistory(this.observer.getUserMessage());
         appendDaily({
           scope: "workspace",
           workspaceSlug,
           heading: `Run ${this.observer.getRunId()} completed`,
-          body: this.observer.getUserMessage()
+          body: historySummary
         });
         appendRunArchive({
           workspaceSlug,
@@ -285,14 +286,15 @@ export class LumeRunner {
           record: {
             type: "run.completed",
             threadId: this.observer.getThreadId(),
-            userMessage: this.observer.getUserMessage()
+            userMessage: compactMemoryHistoryText(this.observer.getUserMessage()),
+            summary: historySummary
           }
         });
         for (const candidate of await extractMemoryCandidatesWithLlm({
           text: this.observer.getUserMessage(),
           workspaceSlug
         })) {
-          smartAddMemoryV2Candidate({
+          await smartAddMemoryV2Candidate({
             workspaceSlug,
             candidate: {
               ...candidate,
@@ -333,7 +335,8 @@ export class LumeRunner {
         scope: item.scope,
         status: item.status,
         citation: item.citation,
-        reason: item.reason
+        reason: item.reason,
+        ...(item.claim ? { claim: item.claim } : {})
       })),
       hidden: true
     } as const;
@@ -363,4 +366,14 @@ export class LumeRunner {
     });
     return this.finalizeResult({ status: "errored", errorMessage });
   }
+}
+
+function summarizeMessageForMemoryHistory(message: string): string {
+  return `User asked: ${compactMemoryHistoryText(message)}`;
+}
+
+function compactMemoryHistoryText(value: string, maxLength = 220): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, maxLength - 3)}...`;
 }

@@ -27,6 +27,8 @@ export type ProviderType =
   | 'qwen'
   | 'qwen-portal'
   | 'kimi-coding'
+  | 'ollama'
+  | 'lmstudio'
   | 'opencode'
   | 'custom'
 
@@ -59,6 +61,8 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   'qwen-portal': 'https://portal.qwen.ai/v1',
   'kimi-coding': 'https://api.moonshot.cn/v1',
+  ollama: 'http://127.0.0.1:11434/v1',
+  lmstudio: 'http://127.0.0.1:1234/v1',
   opencode: '',
   custom: '',
 }
@@ -84,6 +88,8 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   qwen: '通义千问',
   'qwen-portal': '通义千问 Portal',
   'kimi-coding': 'Kimi Coding',
+  ollama: 'Ollama',
+  lmstudio: 'LM Studio',
   opencode: 'OpenCode',
   custom: 'OpenAI 兼容格式',
 }
@@ -107,6 +113,8 @@ export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   qwen: 'openai',
   'qwen-portal': 'openai',
   'kimi-coding': 'openai',
+  ollama: 'openai',
+  lmstudio: 'openai',
   opencode: 'openai',
   custom: 'openai',
 }

@@ -193,6 +193,10 @@ export function getMemoryConfigPath(): string {
   return join(getMemoryConfigDir(), "config.json");
 }
 
+export function getMemoryLocalModelsDir(): string {
+  return ensureDir(join(getMemoryConfigDir(), "models"), "记忆本地模型目录");
+}
+
 export function getAgentConfigDir(): string {
   return ensureDir(join(getConfigDir(), "agent"), "Agent 配置目录");
 }

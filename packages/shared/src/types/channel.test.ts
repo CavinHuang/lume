@@ -94,6 +94,15 @@ describe("channel model capabilities", () => {
     expect(models.every((model) => model.enabled && model.capabilities?.embedding === true)).toBe(true);
   });
 
+  test("本地 OpenAI 兼容渠道应有默认地址且不要求特殊能力推断", () => {
+    expect(PROVIDER_API_FAMILIES.ollama).toBe("openai");
+    expect(PROVIDER_API_FAMILIES.lmstudio).toBe("openai");
+    expect(PROVIDER_DEFAULT_URLS.ollama).toBe("http://127.0.0.1:11434/v1");
+    expect(PROVIDER_DEFAULT_URLS.lmstudio).toBe("http://127.0.0.1:1234/v1");
+    expect(PROVIDER_LABELS.ollama).toBe("Ollama");
+    expect(PROVIDER_LABELS.lmstudio).toBe("LM Studio");
+  });
+
   test("normalizeChannelModel 应补齐能力并清理空白", () => {
     expect(normalizeChannelModel({
       provider: "openai",

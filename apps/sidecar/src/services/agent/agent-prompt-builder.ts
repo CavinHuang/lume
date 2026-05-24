@@ -39,6 +39,7 @@ export const LUME_AGENT_IDENTITY_LINE =
 export type SystemPromptMode = "full" | "minimal" | "none";
 
 const READ_ONLY_AGENT_TOOLS = ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Skill"];
+const RUNTIME_HANDWRITTEN_AGENT_IDS = new Set<string>(["explorer", "planner", "code-reviewer"]);
 
 /**
  * 内置 SubAgent 定义。
@@ -139,21 +140,23 @@ List 3-5 files most critical for implementing this plan:
 
   return {
     ...lumeBuiltins,
-    ...Object.fromEntries(BUILTIN_AGENT_ROLES.map((role) => [
-      role.id,
-      {
-        description: `${role.title}。${role.description}`,
-        prompt: [
-          role.systemPrompt,
-          "",
-          `默认 Skill: ${role.defaultSkillName}`,
-          "如果该 Skill 已加载且适合当前任务，优先调用 Skill 工具使用它。",
-          "角色设定不能覆盖 Lume 的权限、安全、隐私和用户确认规则。"
-        ].join("\n"),
-        ...(role.concurrency.defaultReadOnly ? { tools: READ_ONLY_AGENT_TOOLS } : { disallowedTools: ["Agent"] }),
-        model: "inherit"
-      } satisfies AgentDefinition
-    ]))
+    ...Object.fromEntries(BUILTIN_AGENT_ROLES
+      .filter((role) => !RUNTIME_HANDWRITTEN_AGENT_IDS.has(role.id))
+      .map((role) => [
+        role.id,
+        {
+          description: `${role.title}。${role.description}`,
+          prompt: [
+            role.systemPrompt,
+            "",
+            `默认 Skill: ${role.defaultSkillName}`,
+            "如果该 Skill 已加载且适合当前任务，优先调用 Skill 工具使用它。",
+            "角色设定不能覆盖 Lume 的权限、安全、隐私和用户确认规则。"
+          ].join("\n"),
+          ...(role.concurrency.defaultReadOnly ? { tools: READ_ONLY_AGENT_TOOLS } : { disallowedTools: ["Agent"] }),
+          model: "inherit"
+        } satisfies AgentDefinition
+      ]))
   };
 }
 

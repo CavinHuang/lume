@@ -7,10 +7,13 @@ import {
 import agentsTeamImage from '@/assets/agents/agents-team.jpg'
 import analystImage from '@/assets/agents/analyst.jpg'
 import artistImage from '@/assets/agents/artist.jpg'
+import codeReviewerImage from '@/assets/agents/code-reviewer.jpg'
 import designerImage from '@/assets/agents/designer.jpg'
 import developerImage from '@/assets/agents/developer.jpg'
 import docsmithImage from '@/assets/agents/docsmith.jpg'
+import explorerImage from '@/assets/agents/explorer.jpg'
 import novelistImage from '@/assets/agents/novelist.jpg'
+import plannerImage from '@/assets/agents/planner.jpg'
 import quantImage from '@/assets/agents/quant.jpg'
 import researcherImage from '@/assets/agents/researcher.jpg'
 import translatorImage from '@/assets/agents/translator.jpg'
@@ -23,6 +26,9 @@ export const AGENT_ROLE_ASSETS: {
 } = {
   team: agentsTeamImage,
   roles: {
+    explorer: explorerImage,
+    planner: plannerImage,
+    'code-reviewer': codeReviewerImage,
     researcher: researcherImage,
     translator: translatorImage,
     writer: writerImage,
