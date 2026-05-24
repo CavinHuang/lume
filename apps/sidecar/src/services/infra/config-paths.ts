@@ -45,6 +45,14 @@ export function getChannelsPath(): string {
   return join(getConfigDir(), "channels.json");
 }
 
+export function getImConfigPath(): string {
+  return join(getConfigDir(), "im.json");
+}
+
+export function getImThreadBindingsPath(): string {
+  return join(getConfigDir(), "im-thread-bindings.json");
+}
+
 export function getSettingsPath(): string {
   return join(getConfigDir(), "settings.json");
 }

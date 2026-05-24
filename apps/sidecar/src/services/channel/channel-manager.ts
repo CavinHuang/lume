@@ -1,8 +1,9 @@
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { getChannelsPath } from "../infra/config-paths";
 import { fetchWithProxy } from "../infra/proxy-fetch";
+import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
 import { getSuggestedProviderModels, normalizeChannelModel, PROVIDER_API_FAMILIES } from "@lume/shared";
 import { parseModelRef } from "./model-selection";
 import type {
@@ -18,30 +19,6 @@ import type {
 } from "@lume/shared";
 
 const CONFIG_VERSION = 3;
-const AES_ALGO = "aes-256-gcm";
-
-function getEncryptionKey(): Buffer {
-  const seed = process.env.LUME_SECRET_SEED ?? `${process.env.USERNAME ?? "user"}::${process.env.HOME ?? "home"}::lume`;
-  return createHash("sha256").update(seed).digest();
-}
-
-function encryptApiKey(plainKey: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(AES_ALGO, getEncryptionKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(plainKey, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, tag, encrypted]).toString("base64");
-}
-
-function decryptKey(encryptedKey: string): string {
-  const data = Buffer.from(encryptedKey, "base64");
-  const iv = data.subarray(0, 12);
-  const tag = data.subarray(12, 28);
-  const encrypted = data.subarray(28);
-  const decipher = createDecipheriv(AES_ALGO, getEncryptionKey(), iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
-}
 
 function readConfig(): ChannelsConfig {
   const configPath = getChannelsPath();
@@ -149,7 +126,7 @@ export function createChannel(input: ChannelCreateInput): Channel {
     name: input.name,
     provider: normalizedProvider,
     baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
-    apiKey: encryptApiKey(input.apiKey),
+    apiKey: encryptSecret(input.apiKey),
     models: input.models.map((model) => normalizeChannelModel({ ...model, provider: normalizedProvider })),
     defaultModelId: normalizedDefaultModelId,
     fallbackModelIds: normalizedFallbackModelIds,
@@ -172,7 +149,7 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
     ...input,
     ...(input.provider ? { provider: normalizeProviderForStorage(input.provider) } : {}),
     baseUrl: input.baseUrl ? input.baseUrl.trim().replace(/\/+$/, "") : existing.baseUrl,
-    apiKey: input.apiKey ? encryptApiKey(input.apiKey) : existing.apiKey,
+    apiKey: input.apiKey ? encryptSecret(input.apiKey) : existing.apiKey,
     ...(input.models
       ? {
           models: input.models.map((model) => normalizeChannelModel({
@@ -209,7 +186,7 @@ export function deleteChannel(id: string): void {
 export function decryptApiKey(channelId: string): string {
   const channel = getChannelById(channelId);
   if (!channel) throw new Error(`渠道不存在: ${channelId}`);
-  return decryptKey(channel.apiKey);
+  return decryptSecret(channel.apiKey);
 }
 
 export function resolveChannelEmbeddingBinding(modelRef: string): {
@@ -241,7 +218,7 @@ export function resolveChannelEmbeddingBinding(modelRef: string): {
   return {
     channel,
     modelId: parsed.model,
-    apiKey: decryptKey(channel.apiKey),
+    apiKey: decryptSecret(channel.apiKey),
     family: resolveProviderApiFamily(channel.provider, channel.baseUrl)
   };
 }
@@ -400,7 +377,7 @@ async function testGoogle(baseUrl: string, apiKey: string): Promise<ChannelTestR
 export async function testChannel(channelId: string): Promise<ChannelTestResult> {
   const channel = getChannelById(channelId);
   if (!channel) return { success: false, message: "渠道不存在" };
-  const apiKey = decryptKey(channel.apiKey);
+  const apiKey = decryptSecret(channel.apiKey);
   if (channel.provider === "jina") return testJina(channel.baseUrl, apiKey);
   const family = resolveProviderApiFamily(channel.provider, channel.baseUrl);
   if (family === "anthropic") return testAnthropic(channel.baseUrl, apiKey);
