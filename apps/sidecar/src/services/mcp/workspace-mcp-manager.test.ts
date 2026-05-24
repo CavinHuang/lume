@@ -258,4 +258,77 @@ describe("WorkspaceMcpManager", () => {
     expect(fake.disposeCalls).toBe(1);
     expect(manager.getStatus("demo")[0]?.status).toBe("disconnected");
   });
+
+  test("createRuntimeTools returns connected MCP tools and resource tools", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      github: {
+        serverId: "github",
+        name: "GitHub",
+        transport: "stdio",
+        enabled: true,
+        status: "connected",
+        tools: ["search/issues"],
+        toolDetails: [{
+          name: "mcp__github__search_issues",
+          originalName: "search/issues",
+          wrapperName: "mcp__github__search_issues",
+          description: "Search issues",
+          inputSchema: { type: "object", properties: { q: { type: "string" } } },
+          serverId: "github",
+          serverName: "GitHub"
+        }]
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        github: { enabled: true, transport: "stdio", command: "node" }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+    const names = result.tools.map((tool) => tool.name);
+
+    expect(fake.syncCalls).toHaveLength(1);
+    expect(fake.connectCalls).toEqual(["github"]);
+    expect(names).toEqual(["mcp__github__search_issues", "ListMcpResourcesTool", "ReadMcpResourceTool"]);
+    await result.tools[0]!.call({ q: "lume" }, { cwd: "/tmp", toolUseId: "mcp-1" });
+    expect(fake.callToolCalls[0]).toMatchObject({
+      serverId: "github",
+      originalToolName: "search/issues",
+      args: { q: "lume" }
+    });
+  });
+
+  test("createRuntimeTools returns diagnostics for failed servers without throwing", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      broken: {
+        serverId: "broken",
+        name: "broken",
+        transport: "streamable_http",
+        enabled: true,
+        status: "failed",
+        tools: [],
+        toolDetails: [],
+        error: { code: "transport_error", message: "connection failed" }
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        broken: { enabled: true, transport: "streamable_http", url: "https://example.com/mcp" }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+
+    expect(result.tools.map((tool) => tool.name)).toEqual(["ListMcpResourcesTool", "ReadMcpResourceTool"]);
+    expect(result.diagnostics).toEqual([expect.objectContaining({
+      pluginName: "MCP: broken",
+      severity: "warning",
+      reason: expect.stringContaining("connection failed")
+    })]);
+  });
 });

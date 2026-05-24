@@ -1,5 +1,6 @@
 import {
   McpClientManager,
+  type ToolDefinition,
   type McpCallResult,
   type McpClientServerStatus,
   type McpListResourcesResult,
@@ -18,6 +19,11 @@ import {
   type ReadMcpResourceResponse,
   type WorkspaceMcpConfig
 } from "@lume/shared";
+import {
+  createWorkspaceMcpResourceTools,
+  createWorkspaceMcpToolDefinitions
+} from "../agent-runtime/tools/mcp/create-mcp-tools";
+import type { ToolRuntimeDiagnostic } from "../agent-runtime/tools/tool-runtime";
 import { getWorkspaceMcpConfig } from "../agent/agent-workspace-manager";
 import { createLogger, type Logger } from "../infra/logger";
 
@@ -45,6 +51,11 @@ export interface WorkspaceMcpManagerOptions {
   logger?: Pick<Logger, "warn" | "error" | "info">;
 }
 
+export interface WorkspaceMcpRuntimeTools {
+  tools: ToolDefinition[];
+  diagnostics: ToolRuntimeDiagnostic[];
+}
+
 interface WorkspaceState {
   sdk: WorkspaceSdkMcpManager;
   knownServerIds: Set<string>;
@@ -68,6 +79,10 @@ export function getWorkspaceMcpManager(): WorkspaceMcpManager {
     singleton = new WorkspaceMcpManager();
   }
   return singleton;
+}
+
+export function setWorkspaceMcpManagerForTesting(manager: WorkspaceMcpManager | null): void {
+  singleton = manager;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -374,6 +389,40 @@ export class WorkspaceMcpManager {
     }
   }
 
+  async createRuntimeTools(workspaceSlug: string): Promise<WorkspaceMcpRuntimeTools> {
+    await this.syncWorkspace(workspaceSlug);
+    const statuses = this.getStatus(workspaceSlug);
+    const connectedTools = statuses
+      .filter((status) => status.enabled && status.status === "connected")
+      .flatMap((status) => status.toolDetails);
+    const diagnostics: ToolRuntimeDiagnostic[] = statuses
+      .filter((status) => status.enabled && status.status !== "connected" && status.error)
+      .map((status) => ({
+        pluginName: `MCP: ${status.serverId}`,
+        severity: "warning",
+        reason: status.error?.message ?? `MCP server ${status.serverId} is not connected.`
+      }));
+
+    return {
+      tools: [
+        ...createWorkspaceMcpToolDefinitions({
+          workspaceSlug,
+          tools: connectedTools,
+          callTool: (targetWorkspaceSlug, serverId, originalToolName, args, options) =>
+            this.callRuntimeTool(targetWorkspaceSlug, serverId, originalToolName, args, options)
+        }),
+        ...createWorkspaceMcpResourceTools({
+          workspaceSlug,
+          listResources: (targetWorkspaceSlug, serverId) =>
+            this.listResources({ workspaceSlug: targetWorkspaceSlug, serverId }),
+          readResource: (targetWorkspaceSlug, serverId, uri) =>
+            this.readResource({ workspaceSlug: targetWorkspaceSlug, serverId, uri })
+        })
+      ],
+      diagnostics
+    };
+  }
+
   async disposeWorkspace(workspaceSlug: string): Promise<void> {
     const state = this.workspaces.get(workspaceSlug);
     if (!state) {
@@ -385,6 +434,18 @@ export class WorkspaceMcpManager {
 
   async disposeAll(): Promise<void> {
     await Promise.all([...this.workspaces.keys()].map((workspaceSlug) => this.disposeWorkspace(workspaceSlug)));
+  }
+
+  private async callRuntimeTool(
+    workspaceSlug: string,
+    serverId: string,
+    originalToolName: string,
+    args: Record<string, unknown>,
+    options?: { signal?: AbortSignal }
+  ): Promise<McpCallResult> {
+    await this.syncWorkspace(workspaceSlug);
+    const state = this.ensureWorkspaceState(workspaceSlug);
+    return state.sdk.callTool(serverId, originalToolName, args, options);
   }
 
   private ensureWorkspaceState(workspaceSlug: string): WorkspaceState {
