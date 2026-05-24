@@ -759,7 +759,7 @@ export interface McpSseConfig {
 }
 
 export interface McpHttpConfig {
-  type: 'http'
+  type: 'http' | 'streamable_http'
   url: string
   headers?: Record<string, string>
   onElicitation?: McpElicitationHandler

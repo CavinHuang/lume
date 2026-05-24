@@ -1,0 +1,278 @@
+import { describe, expect, test } from "bun:test";
+import {
+  McpClientManager,
+  type McpClientFactory,
+  type McpTransportFactory,
+  type NormalizedMcpServerConfig
+} from "./manager.js";
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createFakeMcpFactory(options: {
+  tools?: Array<{ name: string; description?: string; inputSchema?: unknown }>;
+  resources?: Array<{ uri: string; name?: string }>;
+  toolResultText?: string;
+  failFirstCallWithConnectionError?: boolean;
+  connectDelayMs?: number;
+  listToolsDelayMs?: number;
+  callDelayMs?: number;
+} = {}) {
+  const state = {
+    connectCalls: 0,
+    callToolCalls: 0,
+    transportKinds: [] as string[]
+  };
+
+  const clientFactory: McpClientFactory = () => ({
+    async connect() {
+      state.connectCalls += 1;
+      if (options.connectDelayMs) await delay(options.connectDelayMs);
+    },
+    async listTools() {
+      if (options.listToolsDelayMs) await delay(options.listToolsDelayMs);
+      return {
+        tools: options.tools ?? [{ name: "search", inputSchema: { type: "object" } }]
+      };
+    },
+    async callTool() {
+      state.callToolCalls += 1;
+      if (options.callDelayMs) await delay(options.callDelayMs);
+      if (options.failFirstCallWithConnectionError && state.callToolCalls === 1) {
+        throw new Error("Connection closed");
+      }
+      return {
+        content: [{ type: "text", text: options.toolResultText ?? "ok" }]
+      };
+    },
+    async listResources() {
+      return { resources: options.resources ?? [] };
+    },
+    async readResource() {
+      return { contents: [{ uri: "file://a", text: "hello" }] };
+    },
+    async close() {}
+  });
+
+  const transportFactory: McpTransportFactory = (_serverId, config) => {
+    state.transportKinds.push(config.transport);
+    return { kind: config.transport };
+  };
+
+  return {
+    ...state,
+    get connectCalls() {
+      return state.connectCalls;
+    },
+    get callToolCalls() {
+      return state.callToolCalls;
+    },
+    transportKinds: state.transportKinds,
+    clientFactory,
+    transportFactory
+  };
+}
+
+const fakeClientFactory: McpClientFactory = () => ({
+  async connect() {},
+  async listTools() {
+    return { tools: [] };
+  },
+  async callTool() {
+    return { content: [{ type: "text", text: "ok" }] };
+  },
+  async close() {}
+});
+
+const fakeTransportFactory: McpTransportFactory = () => ({});
+
+const authFailingClientFactory: McpClientFactory = () => ({
+  async connect() {
+    throw new Error("401 Unauthorized");
+  },
+  async listTools() {
+    return { tools: [] };
+  },
+  async callTool() {
+    return { content: [] };
+  },
+  async close() {}
+});
+
+describe("McpClientManager", () => {
+  test("ensureConnected reuses the same connecting promise", async () => {
+    const factory = createFakeMcpFactory({
+      connectDelayMs: 5,
+      tools: [{ name: "search", inputSchema: { type: "object" } }]
+    });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({ github: { enabled: true, transport: "stdio", command: "node" } });
+    await Promise.all([manager.ensureConnected("github"), manager.ensureConnected("github")]);
+
+    expect(factory.connectCalls).toBe(1);
+  });
+
+  test("register updates one server and connect explicitly opens it", async () => {
+    const factory = createFakeMcpFactory({
+      tools: [{ name: "search/issues", inputSchema: { type: "object", properties: { q: { type: "string" } } } }]
+    });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.register("github", { enabled: true, transport: "stdio", command: "node" });
+    await manager.connect("github");
+    const tool = manager.getTools("github")[0];
+
+    expect(manager.getStatus().github?.status).toBe("connected");
+    expect(tool?.originalName).toBe("search/issues");
+    expect(tool?.wrapperName).toBe("mcp__github__search_issues");
+    expect(tool?.inputSchema).toEqual({ type: "object", properties: { q: { type: "string" } } });
+  });
+
+  test("creates deterministic wrapper suffixes for colliding tool names", async () => {
+    const factory = createFakeMcpFactory({ tools: [{ name: "search/issues" }, { name: "search issues" }] });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.register("github", { enabled: true, transport: "stdio", command: "node" });
+    await manager.connect("github");
+    const names = manager.getTools("github").map((tool) => tool.wrapperName);
+
+    expect(names[0]).toBe("mcp__github__search_issues");
+    expect(names[1]).toMatch(/^mcp__github__search_issues_[a-z0-9]{6}$/);
+  });
+
+  test("callTool retries once after connection failure", async () => {
+    const factory = createFakeMcpFactory({ failFirstCallWithConnectionError: true });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({ github: { enabled: true, transport: "stdio", command: "node" } });
+    const result = await manager.callTool("github", "search", { q: "lume" });
+
+    expect(result.text).toContain("ok");
+    expect(factory.connectCalls).toBe(2);
+  });
+
+  test("classifies auth errors", async () => {
+    const manager = new McpClientManager({
+      clientFactory: authFailingClientFactory,
+      transportFactory: fakeTransportFactory
+    });
+
+    manager.sync({ remote: { enabled: true, transport: "streamable_http", url: "http://x/mcp" } });
+    await manager.ensureConnected("remote").catch(() => undefined);
+
+    expect(manager.getStatus().remote?.error?.code).toBe("auth_error");
+  });
+
+  test("truncates large tool results", async () => {
+    const factory = createFakeMcpFactory({ toolResultText: "x".repeat(210_000) });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    const result = await manager.callTool("local", "large", {});
+
+    expect(result.truncated).toBe(true);
+    expect(result.text.length).toBeLessThanOrEqual(200_100);
+  });
+
+  test("selects stdio, sse, and streamable_http transports", async () => {
+    const factory = createFakeMcpFactory();
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({
+      local: { enabled: true, transport: "stdio", command: "node" },
+      events: { enabled: true, transport: "sse", url: "http://x/sse" },
+      remote: { enabled: true, transport: "streamable_http", url: "http://x/mcp" }
+    });
+    await manager.ensureConnected("local");
+    await manager.ensureConnected("events");
+    await manager.ensureConnected("remote");
+
+    expect(factory.transportKinds).toEqual(["stdio", "sse", "streamable_http"]);
+  });
+
+  test("lists and reads resources per server", async () => {
+    const factory = createFakeMcpFactory({ resources: [{ uri: "file://a", name: "A" }] });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+
+    expect((await manager.listResources("local")).resources[0]?.uri).toBe("file://a");
+    expect((await manager.readResource("local", "file://a")).contents).toHaveLength(1);
+  });
+
+  test("times out or aborts slow tool calls", async () => {
+    const factory = createFakeMcpFactory({ callDelayMs: 20 });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    await expect(manager.callTool("local", "slow", {}, { timeoutMs: 1 })).rejects.toMatchObject({ code: "timeout" });
+
+    const controller = new AbortController();
+    const aborted = manager.callTool("local", "slow", {}, { signal: controller.signal });
+    controller.abort();
+    await expect(aborted).rejects.toMatchObject({ code: "aborted" });
+  });
+
+  test("classifies invalid config before transport construction", async () => {
+    const manager = new McpClientManager({
+      clientFactory: fakeClientFactory,
+      transportFactory: fakeTransportFactory
+    });
+
+    manager.sync({ broken: { enabled: true, transport: "stdio", command: "" } as NormalizedMcpServerConfig });
+
+    await expect(manager.ensureConnected("broken")).rejects.toMatchObject({ code: "invalid_config" });
+  });
+
+  test("times out slow client.connect operations", async () => {
+    const factory = createFakeMcpFactory({ connectDelayMs: 20 });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory,
+      defaultConnectTimeoutMs: 1
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+
+    await expect(manager.ensureConnected("local")).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  test("times out slow listTools operations", async () => {
+    const factory = createFakeMcpFactory({ listToolsDelayMs: 20 });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory,
+      defaultConnectTimeoutMs: 1
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+
+    await expect(manager.ensureConnected("local")).rejects.toMatchObject({ code: "timeout" });
+  });
+});
