@@ -166,6 +166,42 @@ function validateConfig(config: NormalizedMcpServerConfig): McpManagerError | un
   return undefined;
 }
 
+function stringArraysEqual(left?: string[], right?: string[]): boolean {
+  if (!left || !right) {
+    return !left && !right;
+  }
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function stringRecordsEqual(left?: Record<string, string>, right?: Record<string, string>): boolean {
+  if (!left || !right) {
+    return !left && !right;
+  }
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return stringArraysEqual(leftKeys, rightKeys) && leftKeys.every((key) => left[key] === right[key]);
+}
+
+function configsEqual(left: NormalizedMcpServerConfig, right: NormalizedMcpServerConfig): boolean {
+  return left.name === right.name
+    && left.enabled === right.enabled
+    && left.transport === right.transport
+    && left.command === right.command
+    && left.url === right.url
+    && stringArraysEqual(left.args, right.args)
+    && stringRecordsEqual(left.env, right.env)
+    && stringRecordsEqual(left.headers, right.headers);
+}
+
+function cloneConfig(config: NormalizedMcpServerConfig): NormalizedMcpServerConfig {
+  return {
+    ...config,
+    ...(config.args ? { args: [...config.args] } : {}),
+    ...(config.env ? { env: { ...config.env } } : {}),
+    ...(config.headers ? { headers: { ...config.headers } } : {})
+  };
+}
+
 function normalizeServerId(value: string): string {
   return value
     .trim()
@@ -371,11 +407,14 @@ export class McpClientManager {
 
   register(serverId: string, config: NormalizedMcpServerConfig): void {
     const existing = this.servers.get(serverId);
+    if (existing && configsEqual(existing.config, config)) {
+      return;
+    }
     if (existing?.client) {
       void this.closeState(existing);
     }
     this.servers.set(serverId, {
-      config,
+      config: cloneConfig(config),
       status: 'idle',
       tools: []
     });

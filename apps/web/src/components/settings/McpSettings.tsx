@@ -57,6 +57,7 @@ import {
   formatMcpTransport,
   formatMcpToolPreview,
   parseMcpConfigImportText,
+  shouldPollMcpStatus,
   type McpServerDraft,
   type McpServerRow,
   type McpToolDisplayItem,
@@ -96,17 +97,26 @@ export function McpSettings() {
   const [importOpen, setImportOpen] = React.useState(false)
   const [importText, setImportText] = React.useState('')
 
-  const refreshStatus = React.useCallback(async () => {
+  const refreshStatus = React.useCallback(async (options: {
+    waitForConnections?: boolean
+    showLoading?: boolean
+    showErrorToast?: boolean
+  } = {}) => {
     if (!workspaceSlug) return
-    setStatusLoading(true)
+    const {
+      waitForConnections = true,
+      showLoading = true,
+      showErrorToast = true,
+    } = options
+    if (showLoading) setStatusLoading(true)
     try {
-      const status = await getMcpStatus(workspaceSlug)
+      const status = await getMcpStatus(workspaceSlug, { waitForConnections })
       setStatuses(status.servers ?? [])
     } catch (error) {
       console.error('[MCP 设置] 刷新状态失败:', error)
-      toast.error('刷新 MCP 状态失败')
+      if (showErrorToast) toast.error('刷新 MCP 状态失败')
     } finally {
-      setStatusLoading(false)
+      if (showLoading) setStatusLoading(false)
     }
   }, [workspaceSlug])
 
@@ -121,7 +131,7 @@ export function McpSettings() {
     try {
       const workspaceConfig = await getMcpConfig(workspaceSlug)
       setConfig(workspaceConfig ?? { servers: {} })
-      const status = await getMcpStatus(workspaceSlug)
+      const status = await getMcpStatus(workspaceSlug, { waitForConnections: true })
       setStatuses(status.servers ?? [])
     } catch (error) {
       console.error('[MCP 设置] 加载失败:', error)
@@ -132,6 +142,24 @@ export function McpSettings() {
   }, [workspaceSlug])
 
   React.useEffect(() => { loadConfig() }, [loadConfig])
+
+  const serverRows = React.useMemo(
+    () => attachServerIcons(buildMcpServerRows(config.servers ?? {}, statuses)),
+    [config.servers, statuses]
+  )
+  const isPollingStatus = shouldPollMcpStatus(serverRows)
+
+  React.useEffect(() => {
+    if (!workspaceSlug || viewMode !== 'list' || loading || !isPollingStatus) return
+    const intervalId = window.setInterval(() => {
+      void refreshStatus({
+        waitForConnections: false,
+        showLoading: false,
+        showErrorToast: false,
+      })
+    }, 2_000)
+    return () => window.clearInterval(intervalId)
+  }, [workspaceSlug, viewMode, loading, isPollingStatus, refreshStatus])
 
   const handleToggle = async (name: string, nextEnabled?: boolean) => {
     if (!workspaceSlug) return
@@ -147,7 +175,7 @@ export function McpSettings() {
       await saveMcpConfig(workspaceSlug, newConfig)
       setConfig(newConfig)
       toast.success(newConfig.servers[name]?.enabled ? 'MCP 服务已启用' : 'MCP 服务已停用')
-      void refreshStatus()
+      void refreshStatus({ waitForConnections: true })
     } catch (error) {
       console.error('[MCP 设置] 切换状态失败:', error)
       toast.error('更新 MCP 服务失败')
@@ -176,6 +204,41 @@ export function McpSettings() {
     }
   }
 
+  const handleToggleTool = async (serverName: string, originalToolName: string, nextEnabled: boolean) => {
+    if (!workspaceSlug) return
+    const entry = config.servers[serverName]
+    if (!entry) return
+
+    const disabledTools = new Set(entry.disabledTools ?? [])
+    if (nextEnabled) {
+      disabledTools.delete(originalToolName)
+    } else {
+      disabledTools.add(originalToolName)
+    }
+    const nextDisabledTools = Array.from(disabledTools).sort()
+    const nextEntry: McpServerEntry = { ...entry }
+    if (nextDisabledTools.length > 0) {
+      nextEntry.disabledTools = nextDisabledTools
+    } else {
+      delete nextEntry.disabledTools
+    }
+    const newConfig: WorkspaceMcpConfig = {
+      servers: {
+        ...config.servers,
+        [serverName]: nextEntry,
+      },
+    }
+
+    try {
+      await saveMcpConfig(workspaceSlug, newConfig)
+      setConfig(newConfig)
+      toast.success(nextEnabled ? 'MCP 工具已启用' : 'MCP 工具已停用')
+    } catch (error) {
+      console.error('[MCP 设置] 更新工具状态失败:', error)
+      toast.error('更新 MCP 工具失败')
+    }
+  }
+
   const handleImport = async () => {
     if (!workspaceSlug) return
     const parsed = parseMcpConfigImportText(importText)
@@ -200,7 +263,7 @@ export function McpSettings() {
       setImportText('')
       setImportOpen(false)
       toast.success(`已导入 ${importedCount} 个 MCP 服务`)
-      void refreshStatus()
+      void refreshStatus({ waitForConnections: true })
     } catch (error) {
       console.error('[MCP 设置] 导入失败:', error)
       toast.error('导入 MCP 服务失败')
@@ -237,11 +300,10 @@ export function McpSettings() {
     )
   }
 
-  const serverRows = attachServerIcons(buildMcpServerRows(config.servers ?? {}, statuses))
   const connectedCount = serverRows.filter((row) => row.status === 'connected').length
   const warningCount = serverRows.filter((row) => row.status === 'warning').length
   const discoveredCount = serverRows.length
-  const lastScan = statusLoading ? '刷新中' : '实时状态'
+  const lastScan = statusLoading ? '刷新中' : isPollingStatus ? '连接中' : '实时状态'
 
   return (
     <div className="space-y-3">
@@ -350,7 +412,7 @@ export function McpSettings() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => void refreshStatus()}
+                onClick={() => void refreshStatus({ waitForConnections: true })}
                 disabled={statusLoading}
                 className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
               >
@@ -381,6 +443,8 @@ export function McpSettings() {
                 onEdit={(name, entry) => { setEditingServer({ name, entry }); setViewMode('edit') }}
                 onToggle={(name, nextEnabled) => void handleToggle(name, nextEnabled)}
                 onTest={(name) => void handleTestServer(name)}
+                onToggleTool={(serverName, originalToolName, nextEnabled) =>
+                  void handleToggleTool(serverName, originalToolName, nextEnabled)}
               />
               <div className="mt-3 text-[12px] text-[var(--text-3)]">共 {serverRows.length} 个服务</div>
             </div>
@@ -453,12 +517,14 @@ function McpServiceTable({
   onEdit,
   onToggle,
   onTest,
+  onToggleTool,
 }: {
   rows: McpTableRow[]
   testingServerId: string | null
   onEdit: (name: string, entry: McpServerEntry) => void
   onToggle: (name: string, nextEnabled: boolean) => void
   onTest: (name: string) => void
+  onToggleTool: (serverName: string, originalToolName: string, nextEnabled: boolean) => void
 }) {
   const [expandedServerName, setExpandedServerName] = React.useState<string | null>(null)
 
@@ -516,8 +582,10 @@ function McpServiceTable({
                   disabled={testingServerId === row.name || !row.enabled}
                   className="h-7 gap-1 px-2 text-[12px]"
                 >
-                  {testingServerId === row.name ? <Loader2 size={13} className="animate-spin" /> : <Wrench size={13} />}
-                  测试
+                  {testingServerId === row.name
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : row.status === 'warning' ? <RefreshCw size={13} /> : <Wrench size={13} />}
+                  {row.status === 'warning' ? '重试' : '测试'}
                 </Button>
                 <Button
                   type="button"
@@ -528,7 +596,7 @@ function McpServiceTable({
                   className="h-7 gap-1 px-2 text-[12px]"
                 >
                   <ListChecks size={13} />
-                  工具列表
+                  {row.errorMessage ? '详情' : '工具列表'}
                   {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                 </Button>
                 <Button
@@ -546,6 +614,11 @@ function McpServiceTable({
               <McpToolListPanel
                 serviceName={row.displayName}
                 items={toolItems}
+                errorMessage={row.errorMessage}
+                retrying={testingServerId === row.name}
+                onRetry={() => onTest(row.name)}
+                onToggleTool={(originalToolName, nextEnabled) =>
+                  onToggleTool(row.name, originalToolName, nextEnabled)}
               />
             )}
           </React.Fragment>
@@ -558,9 +631,17 @@ function McpServiceTable({
 function McpToolListPanel({
   serviceName,
   items,
+  errorMessage,
+  retrying,
+  onRetry,
+  onToggleTool,
 }: {
   serviceName: string
   items: McpToolDisplayItem[]
+  errorMessage?: string
+  retrying: boolean
+  onRetry: () => void
+  onToggleTool: (originalToolName: string, nextEnabled: boolean) => void
 }) {
   return (
     <div className="border-b border-[var(--border)] bg-[var(--background)] px-4 py-3">
@@ -572,6 +653,29 @@ function McpToolListPanel({
         <div className="shrink-0 text-[11px] text-[var(--text-3)]">{items.length} 个已加载</div>
       </div>
 
+      {errorMessage && (
+        <div className="mt-3 flex items-start justify-between gap-3 rounded-[8px] border border-[#ffd6a3] bg-[#fff8ef] px-3 py-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[12px] font-semibold text-[#a35b00]">
+              <CircleAlert size={13} />
+              连接错误
+            </div>
+            <div className="mt-1 break-words text-[12px] leading-5 text-[#7c4a03]">{errorMessage}</div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onRetry}
+            disabled={retrying}
+            className="h-7 shrink-0 gap-1 px-2 text-[12px] text-[#7c4a03] hover:bg-[#ffe8c7]"
+          >
+            {retrying ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            重试
+          </Button>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <div className="mt-3 h-10 rounded-[8px] border border-dashed border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-[12px] text-[var(--text-3)]">
           暂无已加载工具
@@ -579,9 +683,12 @@ function McpToolListPanel({
       ) : (
         <div className="mt-2 divide-y divide-[var(--border)]">
           {items.map((item, index) => (
-            <div key={`${item.wrapperName}-${index}`} className="grid min-h-12 grid-cols-[minmax(180px,1fr)_minmax(220px,1.2fr)] items-center gap-4 py-2">
+            <div key={`${item.wrapperName}-${index}`} className="grid min-h-12 grid-cols-[minmax(180px,1fr)_minmax(220px,1.2fr)_90px] items-center gap-4 py-2">
               <div className="min-w-0">
-                <div className="truncate text-[13px] font-medium text-[var(--text-1)]" title={item.label}>
+                <div className={cn(
+                  'truncate text-[13px] font-medium',
+                  item.enabled ? 'text-[var(--text-1)]' : 'text-[var(--text-3)]'
+                )} title={item.label}>
                   {item.label}
                 </div>
                 {item.description && (
@@ -593,6 +700,14 @@ function McpToolListPanel({
               <code className="truncate rounded-[6px] bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-3)]" title={item.wrapperName}>
                 {item.wrapperName}
               </code>
+              <div className="flex items-center justify-end gap-2 text-[11px] text-[var(--text-3)]">
+                <span>{item.enabled ? '启用' : '停用'}</span>
+                <Switch
+                  checked={item.enabled}
+                  onCheckedChange={(checked) => onToggleTool(item.originalName, checked)}
+                  aria-label={`${item.label} 启用状态`}
+                />
+              </div>
             </div>
           ))}
         </div>

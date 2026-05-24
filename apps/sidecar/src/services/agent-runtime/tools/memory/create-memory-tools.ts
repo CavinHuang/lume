@@ -75,7 +75,7 @@ export function createSdkMemoryTools(params: {
     tools.push(createSdkJsonResultTool({
       name: "memory.search",
       description:
-        "Search Memory V2 only when loaded context is insufficient for prior work, decisions, dates, preferences, or todos. Integrate results naturally; do not treat every history-related question as a mandatory recall ritual.",
+        "Search Memory V2 when the answer may depend on prior work, shared work state, what we are doing now, progress, next steps, decisions, dates, preferences, or todos. For current-state questions, a compact search is usually better than guessing. Integrate results naturally; do not treat every history-related question as a mandatory recall ritual.",
       inputSchema: {
         type: "object",
         properties: {

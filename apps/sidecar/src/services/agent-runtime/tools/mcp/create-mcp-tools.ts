@@ -1,6 +1,7 @@
 import type { McpCallResult, ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import type {
   ListMcpResourcesResponse,
+  McpServerStatus,
   McpToolDetail,
   ReadMcpResourceResponse
 } from "@lume/shared";
@@ -39,6 +40,7 @@ export function createWorkspaceMcpToolDefinitions(input: {
     args: Record<string, unknown>,
     options?: { signal?: AbortSignal }
   ) => Promise<McpCallResult>;
+  isToolEnabled?: (workspaceSlug: string, tool: McpToolDetail) => boolean;
 }): ToolDefinition[] {
   return input.tools.map((tool) => ({
     name: tool.wrapperName,
@@ -46,7 +48,7 @@ export function createWorkspaceMcpToolDefinitions(input: {
     inputSchema: (tool.inputSchema as ToolDefinition["inputSchema"] | undefined) ?? { type: "object", properties: {} },
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
-    isEnabled: () => true,
+    isEnabled: () => input.isToolEnabled?.(input.workspaceSlug, tool) ?? true,
     async call(args: Record<string, unknown>, context) {
       try {
         const result = await input.callTool(
@@ -66,6 +68,77 @@ export function createWorkspaceMcpToolDefinitions(input: {
       }
     }
   }));
+}
+
+function listToolDetails(status: McpServerStatus): Array<{
+  originalName: string;
+  wrapperName: string;
+  description?: string;
+}> {
+  if (status.toolDetails.length > 0) {
+    return status.toolDetails.map((tool) => ({
+      originalName: tool.originalName,
+      wrapperName: tool.wrapperName,
+      ...(tool.description ? { description: tool.description } : {})
+    }));
+  }
+  return status.tools.map((toolName) => ({
+    originalName: toolName,
+    wrapperName: toolName
+  }));
+}
+
+export function createWorkspaceMcpConfigTool(input: {
+  workspaceSlug: string;
+  getStatus: (workspaceSlug: string) => McpServerStatus[] | Promise<McpServerStatus[]>;
+}): ToolDefinition {
+  return {
+    name: "McpConfigTool",
+    description: "List MCP servers and loaded MCP tools for the current workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        serverId: { type: "string" }
+      }
+    },
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
+    runtimeMetadata: {
+      title: "MCP Config",
+      category: "read",
+      capability: "mcp",
+      riskLevel: "low",
+      sideEffects: "none",
+      allowedInPlanMode: true,
+      isReadOnly: true,
+      isConcurrencySafe: true,
+      requiresApprovalByDefault: false
+    },
+    async call(args: { serverId?: string }, context) {
+      try {
+        const statuses = await input.getStatus(input.workspaceSlug);
+        const serverId = args.serverId?.trim();
+        const servers = statuses
+          .filter((status) => !serverId || status.serverId === serverId)
+          .map((status) => ({
+            serverId: status.serverId,
+            name: status.name,
+            transport: status.transport,
+            enabled: status.enabled,
+            status: status.status,
+            tools: listToolDetails(status),
+            ...(status.error ? { error: status.error } : {})
+          }));
+        return toolResult(stringify({ workspaceSlug: input.workspaceSlug, servers }), context.toolUseId);
+      } catch (error) {
+        return toolResult(
+          `MCP config error: ${error instanceof Error ? error.message : String(error)}`,
+          context.toolUseId,
+          true
+        );
+      }
+    }
+  };
 }
 
 export function createWorkspaceMcpResourceTools(input: {

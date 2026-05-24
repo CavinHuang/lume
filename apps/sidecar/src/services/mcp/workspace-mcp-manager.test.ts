@@ -16,6 +16,7 @@ function createFakeSdkManager(): WorkspaceSdkMcpManager & {
   readResourceFailures: Set<string>;
   callToolFailure?: Error;
   status: ReturnType<WorkspaceSdkMcpManager["getStatus"]>;
+  ensureConnected(serverId: string): Promise<void>;
 } {
   const fake = {
     syncCalls: [] as Array<Record<string, unknown>>,
@@ -292,13 +293,112 @@ describe("WorkspaceMcpManager", () => {
 
     expect(fake.syncCalls).toHaveLength(1);
     expect(fake.connectCalls).toEqual(["github"]);
-    expect(names).toEqual(["mcp__github__search_issues", "ListMcpResourcesTool", "ReadMcpResourceTool"]);
+    expect(names).toEqual(["mcp__github__search_issues", "McpConfigTool", "ListMcpResourcesTool", "ReadMcpResourceTool"]);
     await result.tools[0]!.call({ q: "lume" }, { cwd: "/tmp", toolUseId: "mcp-1" });
     expect(fake.callToolCalls[0]).toMatchObject({
       serverId: "github",
       originalToolName: "search/issues",
       args: { q: "lume" }
     });
+  });
+
+  test("createRuntimeTools waits for enabled MCP servers before collecting tools", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      "lume-test-http": {
+        serverId: "lume-test-http",
+        name: "lume-test-http",
+        transport: "streamable_http",
+        enabled: true,
+        status: "connecting",
+        tools: [],
+        toolDetails: []
+      }
+    };
+    fake.ensureConnected = async (serverId: string) => {
+      fake.connectCalls.push(serverId);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      fake.status = {
+        "lume-test-http": {
+          serverId: "lume-test-http",
+          name: "lume-test-http",
+          transport: "streamable_http",
+          enabled: true,
+          status: "connected",
+          tools: ["echo", "get_server_info"],
+          toolDetails: [{
+            name: "mcp__lume-test-http__echo",
+            originalName: "echo",
+            wrapperName: "mcp__lume-test-http__echo",
+            description: "Echo input",
+            inputSchema: { type: "object", properties: { message: { type: "string" } } },
+            serverId: "lume-test-http",
+            serverName: "lume-test-http"
+          }]
+        }
+      };
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        "lume-test-http": {
+          enabled: true,
+          transport: "streamable_http",
+          url: "http://127.0.0.1:8787/mcp"
+        }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+
+    expect(fake.connectCalls).toEqual(["lume-test-http"]);
+    expect(result.tools.map((tool) => tool.name)).toContain("mcp__lume-test-http__echo");
+  });
+
+  test("createRuntimeTools filters disabled MCP tools from workspace config", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      github: {
+        serverId: "github",
+        name: "GitHub",
+        transport: "stdio",
+        enabled: true,
+        status: "connected",
+        tools: ["search/issues", "create_issue"],
+        toolDetails: [
+          {
+            name: "mcp__github__search_issues",
+            originalName: "search/issues",
+            wrapperName: "mcp__github__search_issues",
+            serverId: "github",
+            serverName: "GitHub"
+          },
+          {
+            name: "mcp__github__create_issue",
+            originalName: "create_issue",
+            wrapperName: "mcp__github__create_issue",
+            serverId: "github",
+            serverName: "GitHub"
+          }
+        ]
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        github: {
+          enabled: true,
+          transport: "stdio",
+          command: "node",
+          disabledTools: ["create_issue"]
+        }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+
+    expect(result.tools.map((tool) => tool.name)).toContain("mcp__github__search_issues");
+    expect(result.tools.map((tool) => tool.name)).not.toContain("mcp__github__create_issue");
   });
 
   test("createRuntimeTools returns diagnostics for failed servers without throwing", async () => {
@@ -324,7 +424,7 @@ describe("WorkspaceMcpManager", () => {
 
     const result = await manager.createRuntimeTools("demo");
 
-    expect(result.tools.map((tool) => tool.name)).toEqual(["ListMcpResourcesTool", "ReadMcpResourceTool"]);
+    expect(result.tools.map((tool) => tool.name)).toEqual(["McpConfigTool", "ListMcpResourcesTool", "ReadMcpResourceTool"]);
     expect(result.diagnostics).toEqual([expect.objectContaining({
       pluginName: "MCP: broken",
       severity: "warning",

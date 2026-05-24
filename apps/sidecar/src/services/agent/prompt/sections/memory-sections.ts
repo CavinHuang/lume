@@ -24,7 +24,8 @@ export function buildMemorySections(ctx: {
     if (hasMemorySearch || hasMemoryRead) {
       lines.push(
         "",
-        "Recall: use loaded memory first. Search memory only when the user asks about previous work, the answer depends on history not present below, exact dates/source lines matter, or confidence is low."
+        "Recall: use loaded memory first. Search memory when the user asks about previous work, current shared work state, what we are doing now, progress, next steps, decisions, dates/source lines, preferences, todos, or when the answer depends on history not present below.",
+        "Continuity: for current-state questions like what we are doing now, where we stopped, or continuing from last time, make one compact memory.search call before answering when loaded memory is not enough. Answer with what we were doing, the current decision/state, and the next practical step. If recall is empty, do not claim it is a fresh thread; say you do not have enough saved context and ask for a small cue."
       );
       if (ctx.citationsMode === "off") {
         lines.push("Citations are disabled: do not mention file paths or line numbers unless the user explicitly asks.");

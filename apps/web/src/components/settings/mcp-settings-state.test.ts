@@ -9,6 +9,7 @@ import {
   formatMcpLastChecked,
   formatMcpToolPreview,
   parseMcpConfigImportText,
+  shouldPollMcpStatus,
 } from './mcp-settings-state'
 
 describe('mcp settings state', () => {
@@ -135,13 +136,50 @@ describe('mcp settings state', () => {
         originalName: 'search/issues',
         wrapperName: 'mcp__github__search_issues',
         description: 'Search GitHub issues',
+        enabled: true,
       },
       {
         label: 'create_issue',
         originalName: 'create_issue',
         wrapperName: 'mcp__github__create_issue',
+        enabled: true,
       },
     ])
+  })
+
+  test('marks disabled MCP tools from server config', () => {
+    const rows = buildMcpServerRows({
+      demo: {
+        enabled: true,
+        transport: 'stdio',
+        command: 'bun',
+        disabledTools: ['write_file'],
+      },
+    }, [{
+      serverId: 'demo',
+      name: 'Demo',
+      enabled: true,
+      transport: 'stdio',
+      status: 'connected',
+      tools: ['read_file', 'write_file'],
+      toolDetails: [],
+    }])
+
+    expect(buildMcpToolDisplayItems(rows[0]!)).toEqual([
+      {
+        label: 'read_file',
+        originalName: 'read_file',
+        wrapperName: 'read_file',
+        enabled: true,
+      },
+      {
+        label: 'write_file',
+        originalName: 'write_file',
+        wrapperName: 'write_file',
+        enabled: false,
+      },
+    ])
+    expect(formatMcpToolPreview(rows[0]!, 2)).toBe('read_file')
   })
 
   test('formats a compact preview for loaded MCP tools', () => {
@@ -253,5 +291,16 @@ describe('mcp settings state', () => {
   test('last checked formatter keeps table compact', () => {
     expect(formatMcpLastChecked(undefined, 1_700_000_000_000)).toBe('—')
     expect(formatMcpLastChecked(1_699_996_400_000, 1_700_000_000_000)).toBe('1 小时前')
+  })
+
+  test('polls status only while a server is connecting', () => {
+    expect(shouldPollMcpStatus([
+      { status: 'connected' },
+      { status: 'warning' },
+    ])).toBe(false)
+    expect(shouldPollMcpStatus([
+      { status: 'connected' },
+      { status: 'connecting' },
+    ])).toBe(true)
   })
 })

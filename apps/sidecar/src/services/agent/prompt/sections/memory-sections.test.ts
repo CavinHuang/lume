@@ -14,7 +14,12 @@ describe("memory-sections", () => {
     const prompt = sections.join("\n\n");
 
     expect(prompt).toContain("## Memory");
-    expect(prompt).toContain("Search memory only when");
+    expect(prompt).toContain("Search memory when");
+    expect(prompt).toContain("current shared work state");
+    expect(prompt).toContain("what we are doing now");
+    expect(prompt).toContain("make one compact memory.search call before answering");
+    expect(prompt).toContain("what we were doing");
+    expect(prompt).toContain("do not claim it is a fresh thread");
     expect(prompt).toContain("我们之前聊过这个话题");
     expect(prompt).toContain("Do not say \"从记忆中可以看出\"");
     expect(prompt).toContain("do not sound like a profile system");

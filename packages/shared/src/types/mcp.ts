@@ -12,6 +12,7 @@ export interface McpServerEntry {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  disabledTools?: string[];
 }
 
 export interface WorkspaceMcpConfig {
@@ -52,6 +53,7 @@ export interface McpResourceSummary {
 
 export interface GetMcpStatusRequest {
   workspaceSlug: string;
+  waitForConnections?: boolean;
 }
 
 export interface GetMcpStatusResponse {
@@ -221,6 +223,7 @@ export function parseMcpImportPayload(value: unknown): WorkspaceMcpConfig {
     const args = stringList(rawEntry.args);
     const env = stringRecord(rawEntry.env);
     const headers = stringRecord(rawEntry.headers);
+    const disabledTools = stringList(rawEntry.disabledTools);
 
     servers[serverId] = {
       ...(typeof rawEntry.name === "string" ? { name: rawEntry.name } : {}),
@@ -230,7 +233,8 @@ export function parseMcpImportPayload(value: unknown): WorkspaceMcpConfig {
       ...(args ? { args } : {}),
       ...(env ? { env } : {}),
       ...(url ? { url } : {}),
-      ...(headers ? { headers } : {})
+      ...(headers ? { headers } : {}),
+      ...(disabledTools ? { disabledTools } : {})
     };
   }
 

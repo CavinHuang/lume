@@ -2,6 +2,7 @@ import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import type {
   CallMcpToolDiagnosticRequest,
   CallMcpToolDiagnosticResponse,
+  GetMcpStatusRequest,
   GetMcpStatusResponse,
   ListMcpResourcesRequest,
   ListMcpResourcesResponse,
@@ -18,8 +19,8 @@ export const getMcpConfig = (workspaceSlug: string) =>
 export const saveMcpConfig = (workspaceSlug: string, config: WorkspaceMcpConfig) =>
   sidecarCall<{ ok: true }>(AGENT_IPC_CHANNELS.SAVE_MCP_CONFIG, { workspaceSlug, config })
 
-export const getMcpStatus = (workspaceSlug: string) =>
-  sidecarCall<GetMcpStatusResponse>(AGENT_IPC_CHANNELS.GET_MCP_STATUS, { workspaceSlug })
+export const getMcpStatus = (workspaceSlug: string, options: Pick<GetMcpStatusRequest, 'waitForConnections'> = {}) =>
+  sidecarCall<GetMcpStatusResponse>(AGENT_IPC_CHANNELS.GET_MCP_STATUS, { workspaceSlug, ...options })
 
 export const testMcpServer = (workspaceSlug: string, serverId: string) =>
   sidecarCall<TestMcpServerResponse>(AGENT_IPC_CHANNELS.TEST_MCP_SERVER, { workspaceSlug, serverId })

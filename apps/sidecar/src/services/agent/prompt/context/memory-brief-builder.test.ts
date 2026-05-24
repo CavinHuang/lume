@@ -13,6 +13,8 @@ describe("memory-brief-builder", () => {
     });
 
     expect(brief).toContain("Memory is shared experience, not a dossier.");
+    expect(brief).toContain("current shared work state");
+    expect(brief).toContain("Do not treat a new thread as a new relationship");
     expect(brief).toContain("Durable:");
     expect(brief).toContain("- User prefers concrete, direct implementation.");
     expect(brief).toContain("- Avoid ornate prompt systems.");

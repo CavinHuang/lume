@@ -144,7 +144,8 @@ describe("agent-workspace-manager lume.yaml integration", () => {
           transport: "streamable_http",
           type: "http",
           url: "https://example.com/mcp",
-          enabled: true
+          enabled: true,
+          disabledTools: ["echo"]
         }
       }
     });
@@ -152,6 +153,7 @@ describe("agent-workspace-manager lume.yaml integration", () => {
     const saved = JSON.parse(readFileSync(getWorkspaceMcpPath(workspaceSlug), "utf-8"));
     expect(saved.servers.remote.transport).toBe("streamable_http");
     expect(saved.servers.remote.type).toBeUndefined();
+    expect(saved.servers.remote.disabledTools).toEqual(["echo"]);
   });
 
   test("getWorkspaceSkills 应按 lume.yaml skills 配置过滤", () => {

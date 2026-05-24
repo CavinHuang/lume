@@ -208,6 +208,10 @@ function parseMcpServerEntry(value: unknown): McpServerEntry | undefined {
   if (args.length > 0) {
     entry.args = args;
   }
+  const disabledTools = normalizeStringList(value.disabledTools);
+  if (disabledTools.length > 0) {
+    entry.disabledTools = disabledTools;
+  }
   if (isPlainObject(value.env)) {
     const env: Record<string, string> = {};
     for (const [key, envValue] of Object.entries(value.env)) {

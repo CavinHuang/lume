@@ -35,7 +35,8 @@ export function buildMemoryBrief(input: MemoryBriefInput): string {
 
   const lines = [
     "Memory is shared experience, not a dossier.",
-    "Use loaded memory naturally. Search only when deeper detail is needed."
+    "Use loaded memory naturally. If current shared work state, progress, prior decisions, or next steps are unclear, use memory search when available.",
+    "Do not treat a new thread as a new relationship; continuity can come from memory."
   ];
 
   if (durable.length > 0) {

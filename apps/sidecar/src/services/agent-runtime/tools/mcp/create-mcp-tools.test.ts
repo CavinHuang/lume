@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createWorkspaceMcpConfigTool,
   createWorkspaceMcpResourceTools,
   createWorkspaceMcpToolDefinitions
 } from "./create-mcp-tools";
 import type { McpCallResult, ToolDefinition } from "@lume/agent-sdk";
-import type { McpToolDetail } from "@lume/shared";
+import type { McpServerStatus, McpToolDetail } from "@lume/shared";
 
 const toolDetail: McpToolDetail = {
   name: "mcp__github__search_issues",
@@ -93,6 +94,18 @@ describe("createWorkspaceMcpToolDefinitions", () => {
     expect(String(result.content)).toContain("partial");
     expect(String(result.content)).toContain("truncated");
   });
+
+  test("uses isToolEnabled for runtime enabled checks", () => {
+    const tools = createWorkspaceMcpToolDefinitions({
+      workspaceSlug: "demo",
+      tools: [toolDetail],
+      callTool: async () => ({ text: "ok" }),
+      isToolEnabled: (workspaceSlug, tool) =>
+        workspaceSlug === "demo" && tool.originalName !== "search/issues"
+    });
+
+    expect(tools[0]?.isEnabled?.()).toBe(false);
+  });
 });
 
 describe("createWorkspaceMcpResourceTools", () => {
@@ -142,5 +155,68 @@ describe("createWorkspaceMcpResourceTools", () => {
 
     expect(result.is_error).toBe(true);
     expect(String(result.content)).toContain("uri");
+  });
+});
+
+describe("createWorkspaceMcpConfigTool", () => {
+  test("lists loaded MCP tools with original and wrapper names", async () => {
+    const statuses: McpServerStatus[] = [{
+      serverId: "github",
+      name: "GitHub",
+      transport: "stdio",
+      enabled: true,
+      status: "connected",
+      tools: ["search/issues"],
+      toolDetails: [toolDetail]
+    }];
+    const tool = createWorkspaceMcpConfigTool({
+      workspaceSlug: "demo",
+      getStatus: async () => statuses
+    });
+
+    const result = await tool.call({}, { cwd: "/tmp", toolUseId: "mcp-config-1" });
+    const payload = JSON.parse(String(result.content));
+
+    expect(tool.name).toBe("McpConfigTool");
+    expect(tool.isReadOnly?.()).toBe(true);
+    expect(tool.isConcurrencySafe?.()).toBe(true);
+    expect(payload.servers[0].tools).toEqual([{
+      originalName: "search/issues",
+      wrapperName: "mcp__github__search_issues",
+      description: "Search GitHub issues"
+    }]);
+  });
+
+  test("can filter MCP status by serverId", async () => {
+    const tool = createWorkspaceMcpConfigTool({
+      workspaceSlug: "demo",
+      getStatus: async () => [
+        {
+          serverId: "github",
+          name: "GitHub",
+          transport: "stdio",
+          enabled: true,
+          status: "connected",
+          tools: [],
+          toolDetails: []
+        },
+        {
+          serverId: "linear",
+          name: "Linear",
+          transport: "streamable_http",
+          enabled: true,
+          status: "error",
+          tools: [],
+          toolDetails: [],
+          error: { code: "connection_failed", message: "connection failed" }
+        }
+      ]
+    });
+
+    const result = await tool.call({ serverId: "linear" }, { cwd: "/tmp", toolUseId: "mcp-config-1" });
+    const payload = JSON.parse(String(result.content));
+
+    expect(payload.servers.map((server: { serverId: string }) => server.serverId)).toEqual(["linear"]);
+    expect(payload.servers[0].error).toEqual({ code: "connection_failed", message: "connection failed" });
   });
 });

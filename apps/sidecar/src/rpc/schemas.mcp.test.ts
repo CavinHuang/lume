@@ -26,6 +26,24 @@ describe("MCP RPC schemas", () => {
     expect(parsed.config.servers.remote?.transport).toBe("streamable_http");
   });
 
+  test("workspaceMcpConfigInputSchema accepts disabled MCP tool names", () => {
+    const parsed = workspaceMcpConfigInputSchema.parse({
+      workspaceSlug: "demo",
+      config: {
+        servers: {
+          remote: {
+            transport: "streamable_http",
+            url: "https://example.com/mcp",
+            enabled: true,
+            disabledTools: ["echo"]
+          }
+        }
+      }
+    });
+
+    expect(parsed.config.servers.remote?.disabledTools).toEqual(["echo"]);
+  });
+
   test("workspaceMcpConfigInputSchema accepts legacy http type", () => {
     const parsed = workspaceMcpConfigInputSchema.parse({
       workspaceSlug: "demo",
@@ -97,6 +115,7 @@ describe("MCP RPC schemas", () => {
 
   test("mcpStatusInputSchema requires workspaceSlug", () => {
     expect(mcpStatusInputSchema.parse({ workspaceSlug: "demo" }).workspaceSlug).toBe("demo");
+    expect(mcpStatusInputSchema.parse({ workspaceSlug: "demo", waitForConnections: false }).waitForConnections).toBe(false);
     expect(() => mcpStatusInputSchema.parse({})).toThrow();
   });
 

@@ -136,6 +136,47 @@ describe("McpClientManager", () => {
     expect(tool?.inputSchema).toEqual({ type: "object", properties: { q: { type: "string" } } });
   });
 
+  test("sync preserves an existing connection when server config is unchanged", async () => {
+    const factory = createFakeMcpFactory({
+      tools: [{ name: "echo", inputSchema: { type: "object" } }]
+    });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+    const config = { enabled: true, transport: "streamable_http", url: "http://127.0.0.1:8787/mcp" } as const;
+
+    manager.sync({ "lume-test-http": config });
+    await manager.ensureConnected("lume-test-http");
+    manager.sync({ "lume-test-http": { ...config } });
+    await manager.ensureConnected("lume-test-http");
+
+    expect(factory.connectCalls).toBe(1);
+    expect(manager.getStatus()["lume-test-http"]?.status).toBe("connected");
+    expect(manager.getTools("lume-test-http").map((tool) => tool.originalName)).toEqual(["echo"]);
+  });
+
+  test("sync reconnects when a reused config object is changed", async () => {
+    const factory = createFakeMcpFactory();
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+    const config: NormalizedMcpServerConfig = {
+      enabled: true,
+      transport: "streamable_http",
+      url: "http://127.0.0.1:8787/mcp"
+    };
+
+    manager.sync({ remote: config });
+    await manager.ensureConnected("remote");
+    config.url = "http://127.0.0.1:8788/mcp";
+    manager.sync({ remote: config });
+    await manager.ensureConnected("remote");
+
+    expect(factory.connectCalls).toBe(2);
+  });
+
   test("creates deterministic wrapper suffixes for colliding tool names", async () => {
     const factory = createFakeMcpFactory({ tools: [{ name: "search/issues" }, { name: "search issues" }] });
     const manager = new McpClientManager({

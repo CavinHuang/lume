@@ -162,7 +162,23 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
     "偏好",
     "历史",
     "记忆",
-    "以前"
+    "以前",
+    "上次",
+    "刚才",
+    "接着上次",
+    "我们现在",
+    "现在干嘛",
+    "现在在干嘛",
+    "在做什么",
+    "做到哪",
+    "当前进展",
+    "当前状态",
+    "还差什么",
+    "接下来",
+    "what we are doing",
+    "where we are",
+    "current progress",
+    "shared work state"
   ]);
   if (memoryIntent && laneSet.has("memory")) {
     return {

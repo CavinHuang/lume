@@ -728,7 +728,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.GET_MCP_STATUS]: async (params) => {
       const input = validateInput(mcpStatusInputSchema, params, AGENT_IPC_CHANNELS.GET_MCP_STATUS);
-      await getWorkspaceMcpManager().syncWorkspace(input.workspaceSlug);
+      await getWorkspaceMcpManager().syncWorkspace(input.workspaceSlug, {
+        waitForConnections: input.waitForConnections !== false
+      });
       return { servers: getWorkspaceMcpManager().getStatus(input.workspaceSlug) };
     },
     [AGENT_IPC_CHANNELS.TEST_MCP_SERVER]: async (params) => {

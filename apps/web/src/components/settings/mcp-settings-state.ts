@@ -26,6 +26,7 @@ export interface McpServerDraft {
   envText: string
   url: string
   headersText: string
+  disabledTools: string[]
 }
 
 export interface McpServerRow {
@@ -49,6 +50,7 @@ export interface McpToolDisplayItem {
   originalName: string
   wrapperName: string
   description?: string
+  enabled: boolean
 }
 
 export type McpImportResult =
@@ -103,6 +105,7 @@ export function createMcpServerDraft(server?: { name: string; entry: McpServerEn
     envText: serializeKeyValueText(entry?.env, '='),
     url: entry?.url ?? '',
     headersText: serializeKeyValueText(entry?.headers, ':'),
+    disabledTools: entry?.disabledTools ?? [],
   }
 }
 
@@ -123,6 +126,8 @@ export function buildMcpServerEntryFromDraft(draft: McpServerDraft): McpServerEn
     const headers = parseKeyValueText(draft.headersText, ':')
     if (Object.keys(headers).length > 0) entry.headers = headers
   }
+  const disabledTools = draft.disabledTools ?? []
+  if (disabledTools.length > 0) entry.disabledTools = [...disabledTools]
 
   return entry
 }
@@ -171,7 +176,7 @@ export function buildMcpServerRows(
       statusLabel: formatMcpRowStatus(rowStatus, entry.enabled),
       source: '工作区配置',
       lastChecked: formatMcpLastChecked(live?.lastCheckedAt, now),
-      toolCount: live?.tools.length ?? 0,
+      toolCount: countEnabledMcpTools(entry, live),
       tools: live?.tools ?? [],
       toolDetails: live?.toolDetails ?? [],
       ...(live?.error?.message ? { errorMessage: live.error.message } : {}),
@@ -179,13 +184,17 @@ export function buildMcpServerRows(
   })
 }
 
-export function buildMcpToolDisplayItems(row: Pick<McpServerRow, 'tools' | 'toolDetails'>): McpToolDisplayItem[] {
+export function buildMcpToolDisplayItems(row: Pick<McpServerRow, 'tools' | 'toolDetails'> & {
+  entry?: Pick<McpServerEntry, 'disabledTools'>
+}): McpToolDisplayItem[] {
+  const disabledTools = new Set(row.entry?.disabledTools ?? [])
   if (row.toolDetails.length > 0) {
     return row.toolDetails.map((tool) => ({
       label: tool.originalName || tool.name,
       originalName: tool.originalName || tool.name,
       wrapperName: tool.wrapperName || tool.name,
       ...(tool.description ? { description: tool.description } : {}),
+      enabled: !isMcpToolDisabled(disabledTools, tool.originalName, tool.wrapperName, tool.name),
     }))
   }
 
@@ -193,16 +202,23 @@ export function buildMcpToolDisplayItems(row: Pick<McpServerRow, 'tools' | 'tool
     label: name,
     originalName: name,
     wrapperName: name,
+    enabled: !isMcpToolDisabled(disabledTools, name),
   }))
 }
 
 export function formatMcpToolPreview(row: Pick<McpServerRow, 'tools' | 'toolDetails'>, max = 2): string {
-  const items = buildMcpToolDisplayItems(row)
-  if (items.length === 0) return '暂无工具'
+  const items = buildMcpToolDisplayItems(row).filter((item) => item.enabled)
+  if (items.length === 0) {
+    return buildMcpToolDisplayItems(row).length > 0 ? '暂无启用工具' : '暂无工具'
+  }
   const visibleCount = Math.max(1, max)
   const preview = items.slice(0, visibleCount).map((item) => item.label).join(', ')
   const remainingCount = items.length - visibleCount
   return remainingCount > 0 ? `${preview} +${remainingCount}` : preview
+}
+
+export function shouldPollMcpStatus(rows: Array<Pick<McpServerRow, 'status'>>): boolean {
+  return rows.some((row) => row.status === 'connecting')
 }
 
 function resolveRowStatus(entry: McpServerEntry, live?: McpServerStatus): McpUiStatus {
@@ -210,6 +226,19 @@ function resolveRowStatus(entry: McpServerEntry, live?: McpServerStatus): McpUiS
   if (!hasRequiredConnectionFields(entry)) return 'warning'
   if (!live) return 'disconnected'
   return mapPublicStatus(live.status)
+}
+
+function countEnabledMcpTools(entry: McpServerEntry, live?: McpServerStatus): number {
+  if (!live) return 0
+  return buildMcpToolDisplayItems({
+    entry,
+    tools: live.tools,
+    toolDetails: live.toolDetails,
+  }).filter((item) => item.enabled).length
+}
+
+function isMcpToolDisabled(disabledTools: ReadonlySet<string>, ...names: Array<string | undefined>): boolean {
+  return names.some((name) => Boolean(name && disabledTools.has(name)))
 }
 
 function mapPublicStatus(status: McpPublicStatus): McpUiStatus {

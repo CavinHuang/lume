@@ -12,7 +12,7 @@ describe("create-runtime-memory-tools", () => {
     expect(names).toEqual(["memory.search", "memory.read"]);
   });
 
-  test("memory search 描述应保持按需召回而非强制查档", () => {
+  test("memory search 描述应鼓励主 agent 主动判断连续性召回", () => {
     const tools = createSdkMemoryTools({
       workspaceSlug: "demo",
       enabledTools: new Set(["memory.search"]),
@@ -20,7 +20,9 @@ describe("create-runtime-memory-tools", () => {
     });
     const descriptions = tools.map((tool) => tool.description).join("\n");
 
-    expect(descriptions).toContain("loaded context is insufficient");
+    expect(descriptions).toContain("shared work state");
+    expect(descriptions).toContain("what we are doing now");
+    expect(descriptions).toContain("current-state questions");
     expect(descriptions).toContain("Integrate results naturally");
     expect(descriptions).not.toContain("Mandatory recall step");
   });

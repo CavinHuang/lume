@@ -166,8 +166,17 @@ describe("agent-handlers MCP RPC", () => {
     expect(await handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({ workspaceSlug: "demo" })).toEqual({
       servers: getStatusMock("demo")
     });
-    expect(syncWorkspaceMock).toHaveBeenCalledWith("demo");
+    expect(syncWorkspaceMock).toHaveBeenCalledWith("demo", { waitForConnections: true });
     await expect(handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({})).rejects.toThrow();
+  });
+
+  test("get-mcp-status can read current status without waiting for connections", async () => {
+    const handlers = await createHandlers();
+    syncWorkspaceMock.mockClear();
+
+    await handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({ workspaceSlug: "demo", waitForConnections: false });
+
+    expect(syncWorkspaceMock).toHaveBeenCalledWith("demo", { waitForConnections: false });
   });
 
   test("test-mcp-server validates workspaceSlug and serverId", async () => {

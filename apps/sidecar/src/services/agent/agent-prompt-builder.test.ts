@@ -41,7 +41,8 @@ describe("agent-prompt-builder", () => {
       memoryCitationsMode: "auto"
     });
     expect(prompt).toContain("## Memory");
-    expect(prompt).toContain("Search memory only when");
+    expect(prompt).toContain("Search memory when");
+    expect(prompt).toContain("current shared work state");
     expect(prompt).not.toContain("Use only legacy memory tools");
     expect(prompt).not.toContain("Before answering anything about prior work");
     expect(prompt).toContain("Citations:");

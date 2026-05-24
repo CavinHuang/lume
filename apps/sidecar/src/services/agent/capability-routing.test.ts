@@ -54,6 +54,24 @@ describe("capability-routing", () => {
     expect(decision.preferredLane).toBe("memory");
   });
 
+  test("当前协作状态请求应优先 memory 让主 agent 自行判断是否召回", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "你能知道我们现在干嘛吗？",
+      availableTools: ["memory.search", "memory.read", "read"]
+    });
+    expect(decision.preferredLane).toBe("memory");
+    expect(decision.reason).toContain("continuity");
+  });
+
+  test("接着上次继续这类隐式连续性请求应优先 memory", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "我们接着上次继续优化",
+      availableTools: ["memory.search", "memory.read", "read"]
+    });
+    expect(decision.preferredLane).toBe("memory");
+    expect(decision.reason).toContain("continuity");
+  });
+
   test("公共检索请求应优先 web", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "搜索一下这个产品的最新消息",

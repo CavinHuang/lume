@@ -20,6 +20,7 @@ import {
   type WorkspaceMcpConfig
 } from "@lume/shared";
 import {
+  createWorkspaceMcpConfigTool,
   createWorkspaceMcpResourceTools,
   createWorkspaceMcpToolDefinitions
 } from "../agent-runtime/tools/mcp/create-mcp-tools";
@@ -59,6 +60,10 @@ export interface WorkspaceMcpRuntimeTools {
 interface WorkspaceState {
   sdk: WorkspaceSdkMcpManager;
   knownServerIds: Set<string>;
+}
+
+interface SyncWorkspaceOptions {
+  waitForConnections?: boolean;
 }
 
 class PublicMcpError extends Error {
@@ -234,6 +239,13 @@ function mapResource(serverId: string, entry: McpServerEntry, resource: Record<s
   };
 }
 
+function isMcpToolEnabled(tool: { name: string; originalName: string; wrapperName: string }, entry?: McpServerEntry): boolean {
+  const disabledTools = new Set(entry?.disabledTools ?? []);
+  return !disabledTools.has(tool.originalName)
+    && !disabledTools.has(tool.wrapperName)
+    && !disabledTools.has(tool.name);
+}
+
 export class WorkspaceMcpManager {
   private readonly readConfig: (workspaceSlug: string) => WorkspaceMcpConfig;
   private readonly sdkManagerFactory: () => WorkspaceSdkMcpManager;
@@ -246,7 +258,7 @@ export class WorkspaceMcpManager {
     this.logger = options.logger ?? singletonLogger;
   }
 
-  async syncWorkspace(workspaceSlug: string): Promise<void> {
+  async syncWorkspace(workspaceSlug: string, options: SyncWorkspaceOptions = {}): Promise<void> {
     const config = this.readConfig(workspaceSlug);
     const normalized = toNormalizedConfigs(config);
     const state = this.ensureWorkspaceState(workspaceSlug);
@@ -264,18 +276,28 @@ export class WorkspaceMcpManager {
     state.sdk.sync(normalized);
     state.knownServerIds = currentIds;
 
+    const connectionAttempts: Array<Promise<void>> = [];
     for (const serverId of currentEnabledIds) {
       const connect = state.sdk.ensureConnected ?? state.sdk.connect;
       if (!connect) {
         continue;
       }
-      void connect.call(state.sdk, serverId).catch((error: unknown) => {
+      const attempt = connect.call(state.sdk, serverId).catch((error: unknown) => {
         this.logger.warn("MCP server connection failed", {
           workspaceSlug,
           serverId,
           error: mapPublicError(error, config.servers[serverId]).message
         });
       });
+      if (options.waitForConnections) {
+        connectionAttempts.push(attempt);
+      } else {
+        void attempt;
+      }
+    }
+
+    if (connectionAttempts.length > 0) {
+      await Promise.all(connectionAttempts);
     }
   }
 
@@ -390,11 +412,13 @@ export class WorkspaceMcpManager {
   }
 
   async createRuntimeTools(workspaceSlug: string): Promise<WorkspaceMcpRuntimeTools> {
-    await this.syncWorkspace(workspaceSlug);
+    await this.syncWorkspace(workspaceSlug, { waitForConnections: true });
+    const config = this.readConfig(workspaceSlug);
     const statuses = this.getStatus(workspaceSlug);
     const connectedTools = statuses
       .filter((status) => status.enabled && status.status === "connected")
-      .flatMap((status) => status.toolDetails);
+      .flatMap((status) => status.toolDetails
+        .filter((tool) => isMcpToolEnabled(tool, config.servers[status.serverId])));
     const diagnostics: ToolRuntimeDiagnostic[] = statuses
       .filter((status) => status.enabled && status.status !== "connected" && status.error)
       .map((status) => ({
@@ -409,7 +433,13 @@ export class WorkspaceMcpManager {
           workspaceSlug,
           tools: connectedTools,
           callTool: (targetWorkspaceSlug, serverId, originalToolName, args, options) =>
-            this.callRuntimeTool(targetWorkspaceSlug, serverId, originalToolName, args, options)
+            this.callRuntimeTool(targetWorkspaceSlug, serverId, originalToolName, args, options),
+          isToolEnabled: (targetWorkspaceSlug, tool) =>
+            isMcpToolEnabled(tool, this.readConfig(targetWorkspaceSlug).servers[tool.serverId])
+        }),
+        createWorkspaceMcpConfigTool({
+          workspaceSlug,
+          getStatus: (targetWorkspaceSlug) => this.getStatus(targetWorkspaceSlug)
         }),
         ...createWorkspaceMcpResourceTools({
           workspaceSlug,

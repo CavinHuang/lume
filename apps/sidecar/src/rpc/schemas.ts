@@ -306,6 +306,7 @@ const mcpServerEntrySchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
   url: z.string().optional(),
   headers: z.record(z.string(), z.string()).optional(),
+  disabledTools: z.array(z.string()).optional(),
   enabled: z.boolean()
 }).superRefine((entry, ctx) => {
   const transport = normalizeMcpTransport(entry);
@@ -343,7 +344,8 @@ export const workspaceMcpConfigInputSchema = z.object({
 });
 
 export const mcpStatusInputSchema = z.object({
-  workspaceSlug: idSchema
+  workspaceSlug: idSchema,
+  waitForConnections: z.boolean().optional()
 });
 
 export const mcpTestServerInputSchema = z.object({
