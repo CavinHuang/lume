@@ -4,8 +4,10 @@ import {
   MCP_TRANSPORT_OPTIONS,
   buildMcpConfigAfterSave,
   buildMcpServerRows,
+  buildMcpToolDisplayItems,
   createMcpServerDraft,
   formatMcpLastChecked,
+  formatMcpToolPreview,
   parseMcpConfigImportText,
 } from './mcp-settings-state'
 
@@ -92,6 +94,75 @@ describe('mcp settings state', () => {
       errorMessage: 'command not found',
       lastChecked: '刚刚',
     })
+  })
+
+  test('builds display items from loaded MCP tool details', () => {
+    const rows = buildMcpServerRows({
+      github: {
+        enabled: true,
+        transport: 'streamable_http',
+        url: 'http://127.0.0.1:8787/mcp',
+      },
+    }, [{
+      serverId: 'github',
+      name: 'GitHub',
+      enabled: true,
+      transport: 'streamable_http',
+      status: 'connected',
+      tools: ['mcp__github__search_issues', 'mcp__github__create_issue'],
+      toolDetails: [
+        {
+          name: 'mcp__github__search_issues',
+          originalName: 'search/issues',
+          wrapperName: 'mcp__github__search_issues',
+          description: 'Search GitHub issues',
+          serverId: 'github',
+          serverName: 'GitHub',
+        },
+        {
+          name: 'mcp__github__create_issue',
+          originalName: 'create_issue',
+          wrapperName: 'mcp__github__create_issue',
+          serverId: 'github',
+          serverName: 'GitHub',
+        },
+      ],
+    }])
+
+    expect(buildMcpToolDisplayItems(rows[0]!)).toEqual([
+      {
+        label: 'search/issues',
+        originalName: 'search/issues',
+        wrapperName: 'mcp__github__search_issues',
+        description: 'Search GitHub issues',
+      },
+      {
+        label: 'create_issue',
+        originalName: 'create_issue',
+        wrapperName: 'mcp__github__create_issue',
+      },
+    ])
+  })
+
+  test('formats a compact preview for loaded MCP tools', () => {
+    const rows = buildMcpServerRows({
+      demo: {
+        enabled: true,
+        transport: 'stdio',
+        command: 'bun',
+      },
+    }, [{
+      serverId: 'demo',
+      name: 'Demo',
+      enabled: true,
+      transport: 'stdio',
+      status: 'connected',
+      tools: ['read_file', 'write_file', 'list_dir'],
+      toolDetails: [],
+    }])
+
+    expect(formatMcpToolPreview(rows[0]!, 2)).toBe('read_file, write_file +1')
+    expect(formatMcpToolPreview({ ...rows[0]!, tools: [], toolDetails: [] })).toBe('暂无工具')
   })
 
   test('draft save writes canonical transport and trims connection fields', () => {

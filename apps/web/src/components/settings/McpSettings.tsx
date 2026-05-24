@@ -11,6 +11,8 @@ import {
   ArrowLeft,
   Box,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
   Clock3,
   ExternalLink,
@@ -19,6 +21,7 @@ import {
   GitBranch,
   Globe2,
   Info,
+  ListChecks,
   Loader2,
   NotepadText,
   Plug,
@@ -49,11 +52,14 @@ import {
   MCP_TRANSPORT_OPTIONS,
   buildMcpConfigAfterSave,
   buildMcpServerRows,
+  buildMcpToolDisplayItems,
   createMcpServerDraft,
   formatMcpTransport,
+  formatMcpToolPreview,
   parseMcpConfigImportText,
   type McpServerDraft,
   type McpServerRow,
+  type McpToolDisplayItem,
   type McpUiStatus,
 } from './mcp-settings-state'
 import type {
@@ -368,7 +374,7 @@ export function McpSettings() {
               加载 MCP 服务...
             </div>
           ) : (
-            <div className="mt-4 overflow-hidden">
+            <div className="mt-4 overflow-x-auto">
               <McpServiceTable
                 rows={serverRows}
                 testingServerId={testingServerId}
@@ -454,9 +460,11 @@ function McpServiceTable({
   onToggle: (name: string, nextEnabled: boolean) => void
   onTest: (name: string) => void
 }) {
+  const [expandedServerName, setExpandedServerName] = React.useState<string | null>(null)
+
   return (
-    <div className="w-full">
-      <div className="grid h-8 grid-cols-[176px_104px_96px_96px_72px_104px_1fr] items-center border-b border-[var(--border)] text-[12px] font-semibold text-[var(--text-3)]">
+    <div className="min-w-[1000px]">
+      <div className="grid h-8 grid-cols-[176px_96px_88px_88px_minmax(180px,1fr)_96px_280px] items-center border-b border-[var(--border)] text-[12px] font-semibold text-[var(--text-3)]">
         <div>服务名称</div>
         <div>状态</div>
         <div>来源</div>
@@ -472,49 +480,123 @@ function McpServiceTable({
           <div className="text-[13px] font-semibold text-[var(--text-2)]">暂无 MCP 服务</div>
           <div className="mt-1 text-[12px] text-[var(--text-3)]">添加服务或导入 mcpServers JSON 后会显示在这里</div>
         </div>
-      ) : rows.map((row) => (
-        <div
-          key={row.name}
-          className="grid min-h-11 grid-cols-[176px_104px_96px_96px_72px_104px_1fr] items-center border-b border-[var(--border)] py-1 text-[13px] last:border-b-0"
-        >
-          <div className="flex min-w-0 items-center gap-3">
-            <row.Icon size={18} className={cn('shrink-0', row.iconClassName)} />
-            <span className="truncate font-medium text-[var(--text-1)]" title={row.displayName}>{row.displayName}</span>
-          </div>
-          <StatusPill status={row.status} label={row.statusLabel} errorMessage={row.errorMessage} />
-          <div className="text-[var(--text-3)]">{row.source}</div>
-          <div className="text-[var(--text-3)]">{formatMcpTransport(row.transport)}</div>
-          <div className="text-[var(--text-3)]">{row.toolCount}</div>
-          <div className="text-[var(--text-3)]">{row.lastChecked}</div>
-          <div className="flex items-center justify-end gap-2">
-            <Switch
-              checked={row.enabled}
-              onCheckedChange={(checked) => onToggle(row.name, checked)}
-              aria-label={`${row.displayName} 启用状态`}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => onTest(row.name)}
-              disabled={testingServerId === row.name || !row.enabled}
-              className="h-7 gap-1.5 px-2 text-[12px]"
-            >
-              {testingServerId === row.name ? <Loader2 size={13} className="animate-spin" /> : <Wrench size={13} />}
-              测试
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => onEdit(row.name, row.entry)}
-              className="h-7 px-2 text-[12px]"
-            >
-              编辑
-            </Button>
-          </div>
+      ) : rows.map((row) => {
+        const toolItems = buildMcpToolDisplayItems(row)
+        const isExpanded = expandedServerName === row.name
+        const toolListTitle = toolItems.map((item) => item.label).join(', ') || '暂无工具'
+
+        return (
+          <React.Fragment key={row.name}>
+            <div className="grid min-h-11 grid-cols-[176px_96px_88px_88px_minmax(180px,1fr)_96px_280px] items-center border-b border-[var(--border)] py-1 text-[13px]">
+              <div className="flex min-w-0 items-center gap-3">
+                <row.Icon size={18} className={cn('shrink-0', row.iconClassName)} />
+                <span className="truncate font-medium text-[var(--text-1)]" title={row.displayName}>{row.displayName}</span>
+              </div>
+              <StatusPill status={row.status} label={row.statusLabel} errorMessage={row.errorMessage} />
+              <div className="truncate text-[var(--text-3)]" title={row.source}>{row.source}</div>
+              <div className="text-[var(--text-3)]">{formatMcpTransport(row.transport)}</div>
+              <div className="min-w-0 pr-3 text-[var(--text-3)]">
+                <div className="truncate" title={toolListTitle}>{formatMcpToolPreview(row)}</div>
+                {toolItems.length > 0 && (
+                  <div className="text-[11px] leading-4 text-[var(--text-3)]">{toolItems.length} 个已加载</div>
+                )}
+              </div>
+              <div className="text-[var(--text-3)]">{row.lastChecked}</div>
+              <div className="flex items-center justify-end gap-1.5">
+                <Switch
+                  checked={row.enabled}
+                  onCheckedChange={(checked) => onToggle(row.name, checked)}
+                  aria-label={`${row.displayName} 启用状态`}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onTest(row.name)}
+                  disabled={testingServerId === row.name || !row.enabled}
+                  className="h-7 gap-1 px-2 text-[12px]"
+                >
+                  {testingServerId === row.name ? <Loader2 size={13} className="animate-spin" /> : <Wrench size={13} />}
+                  测试
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={isExpanded}
+                  onClick={() => setExpandedServerName(isExpanded ? null : row.name)}
+                  className="h-7 gap-1 px-2 text-[12px]"
+                >
+                  <ListChecks size={13} />
+                  工具列表
+                  {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onEdit(row.name, row.entry)}
+                  className="h-7 px-2 text-[12px]"
+                >
+                  编辑
+                </Button>
+              </div>
+            </div>
+            {isExpanded && (
+              <McpToolListPanel
+                serviceName={row.displayName}
+                items={toolItems}
+              />
+            )}
+          </React.Fragment>
+        )
+      })}
+    </div>
+  )
+}
+
+function McpToolListPanel({
+  serviceName,
+  items,
+}: {
+  serviceName: string
+  items: McpToolDisplayItem[]
+}) {
+  return (
+    <div className="border-b border-[var(--border)] bg-[var(--background)] px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-[var(--text-2)]">
+          <ListChecks size={14} className="shrink-0 text-[var(--text-3)]" />
+          <span className="truncate" title={serviceName}>{serviceName} 工具列表</span>
         </div>
-      ))}
+        <div className="shrink-0 text-[11px] text-[var(--text-3)]">{items.length} 个已加载</div>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="mt-3 h-10 rounded-[8px] border border-dashed border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-[12px] text-[var(--text-3)]">
+          暂无已加载工具
+        </div>
+      ) : (
+        <div className="mt-2 divide-y divide-[var(--border)]">
+          {items.map((item, index) => (
+            <div key={`${item.wrapperName}-${index}`} className="grid min-h-12 grid-cols-[minmax(180px,1fr)_minmax(220px,1.2fr)] items-center gap-4 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-[13px] font-medium text-[var(--text-1)]" title={item.label}>
+                  {item.label}
+                </div>
+                {item.description && (
+                  <div className="truncate text-[11px] leading-4 text-[var(--text-3)]" title={item.description}>
+                    {item.description}
+                  </div>
+                )}
+              </div>
+              <code className="truncate rounded-[6px] bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-3)]" title={item.wrapperName}>
+                {item.wrapperName}
+              </code>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

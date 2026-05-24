@@ -44,6 +44,13 @@ export interface McpServerRow {
   errorMessage?: string
 }
 
+export interface McpToolDisplayItem {
+  label: string
+  originalName: string
+  wrapperName: string
+  description?: string
+}
+
 export type McpImportResult =
   | { ok: true; config: WorkspaceMcpConfig }
   | { ok: false; error: string }
@@ -170,6 +177,32 @@ export function buildMcpServerRows(
       ...(live?.error?.message ? { errorMessage: live.error.message } : {}),
     }
   })
+}
+
+export function buildMcpToolDisplayItems(row: Pick<McpServerRow, 'tools' | 'toolDetails'>): McpToolDisplayItem[] {
+  if (row.toolDetails.length > 0) {
+    return row.toolDetails.map((tool) => ({
+      label: tool.originalName || tool.name,
+      originalName: tool.originalName || tool.name,
+      wrapperName: tool.wrapperName || tool.name,
+      ...(tool.description ? { description: tool.description } : {}),
+    }))
+  }
+
+  return row.tools.map((name) => ({
+    label: name,
+    originalName: name,
+    wrapperName: name,
+  }))
+}
+
+export function formatMcpToolPreview(row: Pick<McpServerRow, 'tools' | 'toolDetails'>, max = 2): string {
+  const items = buildMcpToolDisplayItems(row)
+  if (items.length === 0) return '暂无工具'
+  const visibleCount = Math.max(1, max)
+  const preview = items.slice(0, visibleCount).map((item) => item.label).join(', ')
+  const remainingCount = items.length - visibleCount
+  return remainingCount > 0 ? `${preview} +${remainingCount}` : preview
 }
 
 function resolveRowStatus(entry: McpServerEntry, live?: McpServerStatus): McpUiStatus {
