@@ -3,6 +3,7 @@ import type {
   ImAccount,
   ImWeixinLoginPollInput,
   ImWeixinLoginPollResult,
+  ImWeixinLoginStartInput,
   ImWeixinLoginStartResult,
   ImWeixinLoginStatus
 } from "@lume/shared";
@@ -19,10 +20,11 @@ interface ActiveLogin {
   qrcodeUrl: string;
   startedAt: number;
   currentBaseUrl: string;
+  workspaceId?: string;
 }
 
 export interface WeixinLoginManager {
-  startLogin(input?: { force?: boolean }): Promise<ImWeixinLoginStartResult>;
+  startLogin(input?: ImWeixinLoginStartInput): Promise<ImWeixinLoginStartResult>;
   pollLogin(input: ImWeixinLoginPollInput): Promise<ImWeixinLoginPollResult>;
 }
 
@@ -33,6 +35,7 @@ export interface CreateOpenClawWeixinLoginManagerInput {
     accountKey: string;
     token: string;
     userId?: string;
+    workspaceId?: string;
     baseUrl?: string;
   }) => ImAccount;
 }
@@ -92,6 +95,7 @@ export function createOpenClawWeixinLoginManager(
     label: payload.userId ? `Weixin ${payload.userId}` : `Weixin ${payload.accountKey}`,
     token: payload.token,
     uin: payload.userId,
+    workspaceId: payload.workspaceId,
     baseUrl: payload.baseUrl,
     enabled: true
   }));
@@ -107,9 +111,10 @@ export function createOpenClawWeixinLoginManager(
   }
 
   return {
-    async startLogin() {
+    async startLogin(input = {}) {
       purgeExpired();
       const sessionKey = randomUUID();
+      const workspaceId = asString(input.workspaceId);
       const url = `${FIXED_BASE_URL}/ilink/bot/get_bot_qrcode?bot_type=${BOT_TYPE}`;
       const payload = await readJson(await fetchImpl(url, {
         method: "POST",
@@ -128,7 +133,8 @@ export function createOpenClawWeixinLoginManager(
         qrcode,
         qrcodeUrl,
         startedAt: Date.now(),
-        currentBaseUrl: FIXED_BASE_URL
+        currentBaseUrl: FIXED_BASE_URL,
+        workspaceId
       });
       return {
         sessionKey,
@@ -204,6 +210,7 @@ export function createOpenClawWeixinLoginManager(
           accountKey,
           token,
           userId: asString(payload.ilink_user_id),
+          workspaceId: login.workspaceId,
           baseUrl: asString(payload.baseurl) ?? login.currentBaseUrl
         });
         return {

@@ -40,6 +40,7 @@ describe("im-config-manager", () => {
       token: "token-one",
       uin: "10001",
       baseUrl: "https://ilinkai.weixin.qq.com/",
+      workspaceId: "workspace-1",
       enabled: true
     });
     const second = createImAccount({
@@ -56,6 +57,7 @@ describe("im-config-manager", () => {
       label: "工作微信",
       uin: "10001",
       baseUrl: "https://ilinkai.weixin.qq.com",
+      workspaceId: "workspace-1",
       enabled: true,
       hasToken: true
     });
@@ -85,6 +87,7 @@ describe("im-config-manager", () => {
       token: "token-one-updated",
       cursor: "cursor-1",
       contextToken: "ctx-1",
+      workspaceId: "workspace-main",
       status: "running"
     });
 
@@ -95,6 +98,7 @@ describe("im-config-manager", () => {
       hasToken: true,
       cursor: "cursor-1",
       contextToken: "ctx-1",
+      workspaceId: "workspace-main",
       status: "running"
     });
     expect(getImAccountSecret(first.id)).toBe("token-one-updated");

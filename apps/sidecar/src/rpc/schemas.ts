@@ -44,6 +44,7 @@ export const imAccountCreateInputSchema = z.object({
   label: z.string().optional(),
   token: z.string().trim().min(1),
   uin: z.string().optional(),
+  workspaceId: z.string().optional(),
   baseUrl: z.string().optional(),
   enabled: z.boolean().optional()
 });
@@ -55,6 +56,7 @@ export const imAccountUpdateInputSchema = z.object({
     label: z.string().optional(),
     token: z.string().optional(),
     uin: z.string().optional(),
+    workspaceId: z.string().optional(),
     baseUrl: z.string().optional(),
     enabled: z.boolean().optional(),
     status: z.enum(["stopped", "starting", "running", "error", "auth_required"]).optional(),
@@ -71,7 +73,8 @@ export const imAccountIdInputSchema = z.object({
 });
 
 export const imWeixinLoginStartInputSchema = z.object({
-  force: z.boolean().optional()
+  force: z.boolean().optional(),
+  workspaceId: z.string().optional()
 }).optional();
 
 export const imWeixinLoginPollInputSchema = z.object({

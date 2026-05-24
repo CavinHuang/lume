@@ -1,5 +1,5 @@
-import type { AgentSendInput, ImPeerKind, ImProvider } from "@lume/shared";
-import { createAgentThread } from "../agent/agent-thread-manager";
+import type { AgentSendInput, AgentThreadMeta, AgentThreadSource, ImPeerKind, ImProvider } from "@lume/shared";
+import { createAgentThread, updateAgentThreadMeta } from "../agent/agent-thread-manager";
 import { appendAgentMessage } from "../agent/agent-service";
 import {
   getImThreadBindingByPeer,
@@ -10,6 +10,7 @@ export interface InboundImRouteMessage {
   provider: ImProvider;
   accountId: string;
   accountLabel?: string;
+  workspaceId?: string;
   peerKind: ImPeerKind;
   peerId: string;
   peerName?: string;
@@ -20,7 +21,8 @@ export interface InboundImRouteMessage {
 }
 
 export interface ImMessageRouterDeps {
-  createThread?: (title: string) => { id: string } | Promise<{ id: string }>;
+  createThread?: (title: string, workspaceId?: string) => { id: string } | Promise<{ id: string }>;
+  updateThreadMeta?: (threadId: string, patch: Pick<AgentThreadMeta, "source">) => void | Promise<void>;
   sendMessage?: (input: AgentSendInput) => void | Promise<void>;
 }
 
@@ -33,6 +35,18 @@ function userMessageForMessage(message: InboundImRouteMessage): string {
     return `${message.senderId.trim()}: ${message.text}`;
   }
   return message.text;
+}
+
+function sourceForMessage(message: InboundImRouteMessage): AgentThreadSource {
+  return {
+    type: "im",
+    provider: message.provider,
+    accountId: message.accountId,
+    ...(message.accountLabel ? { accountLabel: message.accountLabel } : {}),
+    peerKind: message.peerKind,
+    peerId: message.peerId,
+    ...(message.peerName ? { peerName: message.peerName } : {})
+  };
 }
 
 async function defaultSendMessage(input: AgentSendInput): Promise<void> {
@@ -52,7 +66,10 @@ export async function routeInboundImMessage(
   const existing = getImThreadBindingByPeer(message);
   const thread = existing
     ? { id: existing.threadId }
-    : await (deps.createThread ?? ((title: string) => createAgentThread(title)))(titleForMessage(message));
+    : await (deps.createThread ?? ((title: string, workspaceId?: string) => createAgentThread(title, undefined, workspaceId)))(
+      titleForMessage(message),
+      message.workspaceId
+    );
 
   const binding = upsertImThreadBinding({
     provider: message.provider,
@@ -64,10 +81,24 @@ export async function routeInboundImMessage(
     contextToken: message.contextToken
   });
 
+  const updateThreadMeta = deps.updateThreadMeta ?? (
+    deps.createThread
+      ? undefined
+      : (threadId: string, patch: Pick<AgentThreadMeta, "source">) => {
+          updateAgentThreadMeta(threadId, patch);
+        }
+  );
+  if (updateThreadMeta) {
+    await updateThreadMeta(binding.threadId, {
+      source: sourceForMessage(message)
+    });
+  }
+
   const sendMessage = deps.sendMessage ?? defaultSendMessage;
   await sendMessage({
     threadId: binding.threadId,
     userMessage: userMessageForMessage(message),
+    workspaceId: message.workspaceId,
     chatType: message.peerKind === "group" ? "group" : "direct",
     threadType: message.peerKind === "group" ? "group" : "main",
     messageMetadata: {
@@ -75,6 +106,7 @@ export async function routeInboundImMessage(
         provider: message.provider,
         accountId: message.accountId,
         accountLabel: message.accountLabel,
+        workspaceId: message.workspaceId,
         peerKind: message.peerKind,
         peerId: message.peerId,
         peerName: message.peerName,

@@ -4,6 +4,13 @@ export type LumeSidebarTopActionId = 'new-chat' | 'search' | 'skills' | 'automat
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
 const UNASSIGNED_THREADS_WORKSPACE_NAME = '未分配'
+const IM_PROVIDER_LABELS: Record<string, string> = {
+  weixin: '微信',
+  feishu: '飞书',
+  telegram: 'Telegram',
+  email: '邮件',
+}
+const IM_PROVIDER_ORDER = ['weixin', 'feishu', 'telegram', 'email']
 
 export interface BuildLumeSidebarViewModelInput {
   workspaces: AgentWorkspace[]
@@ -135,19 +142,7 @@ export function buildLumeSidebarViewModel({
     const workspaceThreads = sortThreadsByUpdatedAt(
       threads.filter((thread) => getThreadWorkspaceId(thread) === workspace.id),
     )
-    const threadGroups = groupThreadsByDate(workspaceThreads).map<LumeSidebarThreadGroup>((group) => ({
-      type: 'thread-group',
-      id: `${workspace.id}:${group.label}`,
-      label: group.label,
-      items: group.items.map((thread) => ({
-        id: thread.id,
-        title: thread.title,
-        active: activeTabId === thread.id,
-        pinned: !!thread.pinned,
-        isStreaming: streamingStates[thread.id] === 'streaming',
-        updatedAt: thread.updatedAt,
-      })),
-    }))
+    const threadGroups = buildThreadGroupRows(workspace.id, workspaceThreads, activeTabId, streamingStates)
 
     const rows: LumeSidebarWorkspaceRow[] = [
       buildWelcomeRow(workspace.id, workspace.id === selectedWorkspaceId && activeTabId === '__welcome__'),
@@ -176,19 +171,12 @@ export function buildLumeSidebarViewModel({
       isCurrent: false,
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
       pinned: false,
-      rows: groupThreadsByDate(unassignedThreads).map<LumeSidebarThreadGroup>((group) => ({
-        type: 'thread-group',
-        id: `${UNASSIGNED_THREADS_WORKSPACE_ID}:${group.label}`,
-        label: group.label,
-        items: group.items.map((thread) => ({
-          id: thread.id,
-          title: thread.title,
-          active: activeTabId === thread.id,
-          pinned: !!thread.pinned,
-          isStreaming: streamingStates[thread.id] === 'streaming',
-          updatedAt: thread.updatedAt,
-        })),
-      })),
+      rows: buildThreadGroupRows(
+        UNASSIGNED_THREADS_WORKSPACE_ID,
+        unassignedThreads,
+        activeTabId,
+        streamingStates,
+      ),
     })
   }
 
@@ -236,6 +224,78 @@ function getThreadWorkspaceId(thread: AgentThreadMeta): string | null {
 
 function sortThreadsByUpdatedAt(threads: AgentThreadMeta[]): AgentThreadMeta[] {
   return [...threads].sort((left, right) => right.updatedAt - left.updatedAt)
+}
+
+function buildThreadGroupRows(
+  scopeId: string,
+  threads: AgentThreadMeta[],
+  activeTabId: string | null,
+  streamingStates: Record<string, AgentRuntimePhase | undefined>,
+): LumeSidebarThreadGroup[] {
+  const imGroups = groupThreadsByImProvider(threads).map<LumeSidebarThreadGroup>((group) => ({
+    type: 'thread-group',
+    id: `${scopeId}:im:${group.provider}`,
+    label: group.label,
+    items: group.items.map((thread) => buildThreadItem(thread, activeTabId, streamingStates)),
+  }))
+  const regularThreads = threads.filter((thread) => !getThreadImProvider(thread))
+  const dateGroups = groupThreadsByDate(regularThreads).map<LumeSidebarThreadGroup>((group) => ({
+    type: 'thread-group',
+    id: `${scopeId}:${group.label}`,
+    label: group.label,
+    items: group.items.map((thread) => buildThreadItem(thread, activeTabId, streamingStates)),
+  }))
+
+  return [...imGroups, ...dateGroups]
+}
+
+function buildThreadItem(
+  thread: AgentThreadMeta,
+  activeTabId: string | null,
+  streamingStates: Record<string, AgentRuntimePhase | undefined>,
+): LumeSidebarThreadItem {
+  return {
+    id: thread.id,
+    title: thread.title,
+    active: activeTabId === thread.id,
+    pinned: !!thread.pinned,
+    isStreaming: streamingStates[thread.id] === 'streaming',
+    updatedAt: thread.updatedAt,
+  }
+}
+
+function getThreadImProvider(thread: AgentThreadMeta): string | null {
+  const source = thread.source
+  return source?.type === 'im' && typeof source.provider === 'string' && source.provider.trim()
+    ? source.provider.trim()
+    : null
+}
+
+function groupThreadsByImProvider(threads: AgentThreadMeta[]): Array<ThreadGroup & { provider: string }> {
+  const byProvider = new Map<string, AgentThreadMeta[]>()
+  for (const thread of threads) {
+    const provider = getThreadImProvider(thread)
+    if (!provider) continue
+    byProvider.set(provider, [...(byProvider.get(provider) ?? []), thread])
+  }
+
+  return [...byProvider.entries()]
+    .sort(([left], [right]) => compareImProviders(left, right))
+    .map(([provider, items]) => ({
+      provider,
+      label: IM_PROVIDER_LABELS[provider] ?? provider,
+      items: sortThreadsByUpdatedAt(items),
+    }))
+}
+
+function compareImProviders(left: string, right: string): number {
+  const leftIndex = IM_PROVIDER_ORDER.indexOf(left)
+  const rightIndex = IM_PROVIDER_ORDER.indexOf(right)
+  if (leftIndex !== -1 || rightIndex !== -1) {
+    return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex)
+      - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex)
+  }
+  return left.localeCompare(right)
 }
 
 function groupThreadsByDate(threads: AgentThreadMeta[]): ThreadGroup[] {

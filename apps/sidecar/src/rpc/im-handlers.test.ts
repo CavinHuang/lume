@@ -82,6 +82,7 @@ describe("im-handlers", () => {
 
   test("starts and polls Weixin QR login", async () => {
     const calls: string[] = [];
+    const loginInputs: unknown[] = [];
     const handlers = createImHandlers({
       runtimeManager: {
         startEnabledAccounts: async () => undefined,
@@ -91,12 +92,15 @@ describe("im-handlers", () => {
         getRunningAccountIds: () => []
       },
       loginManager: {
-        startLogin: async () => ({
-          sessionKey: "login-1",
-          qrcodeUrl: "https://qr.example.com/qr",
-          message: "scan",
-          expiresAt: 123
-        }),
+        startLogin: async (input) => {
+          loginInputs.push(input);
+          return {
+            sessionKey: "login-1",
+            qrcodeUrl: "https://qr.example.com/qr",
+            message: "scan",
+            expiresAt: 123
+          };
+        },
         pollLogin: async () => ({
           connected: true,
           status: "confirmed",
@@ -116,7 +120,9 @@ describe("im-handlers", () => {
       }
     });
 
-    await expect(handlers[IM_IPC_CHANNELS.START_WEIXIN_LOGIN]?.({})).resolves.toMatchObject({
+    await expect(handlers[IM_IPC_CHANNELS.START_WEIXIN_LOGIN]?.({
+      workspaceId: "workspace-1"
+    })).resolves.toMatchObject({
       sessionKey: "login-1",
       qrcodeUrl: "https://qr.example.com/qr"
     });
@@ -126,6 +132,7 @@ describe("im-handlers", () => {
       connected: true,
       status: "confirmed"
     });
+    expect(loginInputs).toEqual([{ workspaceId: "workspace-1" }]);
     expect(calls).toEqual(["start:account-1"]);
   });
 });

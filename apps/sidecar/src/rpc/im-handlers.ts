@@ -1,5 +1,5 @@
 import { IM_IPC_CHANNELS } from "@lume/shared";
-import type { ImAccountCreateInput, ImAccountUpdateInput } from "@lume/shared";
+import type { ImAccountCreateInput, ImAccountUpdateInput, ImWeixinLoginStartInput } from "@lume/shared";
 import {
   createImAccount,
   deleteImAccount,
@@ -82,7 +82,7 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
         imWeixinLoginStartInputSchema,
         params ?? {},
         IM_IPC_CHANNELS.START_WEIXIN_LOGIN
-      ) as { force?: boolean } | undefined),
+      ) as ImWeixinLoginStartInput | undefined),
     [IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN]: async (params) => {
       const result = await loginManager.pollLogin(validateInput(
         imWeixinLoginPollInputSchema,

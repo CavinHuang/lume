@@ -48,7 +48,7 @@ describe("openclaw-weixin-login", () => {
       }
     });
 
-    const started = await manager.startLogin();
+    const started = await manager.startLogin({ workspaceId: "workspace-1" });
     const polled = await manager.pollLogin({ sessionKey: started.sessionKey });
     const qrCall = calls[0];
     const pollCall = calls[1];
@@ -69,6 +69,7 @@ describe("openclaw-weixin-login", () => {
       account: {
         accountKey: "bot-1",
         uin: "user-1",
+        workspaceId: "workspace-1",
         baseUrl: "https://ilink-redirect.example.com",
         hasToken: true
       }

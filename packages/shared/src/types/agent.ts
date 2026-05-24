@@ -72,6 +72,16 @@ export interface AgentRuntimeStatus {
 
 export type AgentModelSelectionSource = 'inherited' | 'thread-override'
 
+export interface AgentThreadSource {
+  type: 'im'
+  provider: string
+  accountId?: string
+  accountLabel?: string
+  peerKind?: string
+  peerId?: string
+  peerName?: string
+}
+
 // ===== Agent 线程管理 =====
 
 /**
@@ -99,6 +109,8 @@ export interface AgentThreadMeta {
   runtimeThreadId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /** 外部来源，用于按 IM 渠道等入口分组展示 */
+  source?: AgentThreadSource
   /** 父线程 ID（子任务线程归属） */
   parentThreadId?: string
   /** 是否置顶 */

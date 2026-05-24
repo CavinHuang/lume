@@ -84,6 +84,7 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
         provider: "weixin",
         accountId: input.account.id,
         accountLabel: input.account.label,
+        workspaceId: input.account.workspaceId,
         peerKind: update.peerKind,
         peerId: update.peerId,
         peerName: update.peerName,

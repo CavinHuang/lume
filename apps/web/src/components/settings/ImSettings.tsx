@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import {
   Loader2,
@@ -11,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { ImAccount } from '@lume/shared'
+import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   createImAccount,
   deleteImAccount,
@@ -25,6 +27,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import {
@@ -45,9 +48,19 @@ const toneClassName: Record<ImStatusTone, string> = {
   danger: 'border-red-200 bg-red-50 text-red-700',
 }
 
+const NO_WORKSPACE_VALUE = '__none__'
+
 export function ImSettings() {
+  const workspaces = useAtomValue(agentWorkspacesAtom)
+  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const defaultWorkspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
+  const defaultWorkspaceId = defaultWorkspace?.id ?? ''
+  const workspaceNames = React.useMemo(() => (
+    new Map(workspaces.map((workspace) => [workspace.id, workspace.name]))
+  ), [workspaces])
+
   const [accounts, setAccounts] = React.useState<ImAccount[]>([])
-  const [draft, setDraft] = React.useState<ImAccountDraft>(() => createImAccountDraft())
+  const [draft, setDraft] = React.useState<ImAccountDraft>(() => createImAccountDraft(defaultWorkspaceId))
   const [loading, setLoading] = React.useState(true)
   const [busyId, setBusyId] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
@@ -74,12 +87,27 @@ export function ImSettings() {
 
   React.useEffect(() => { void refresh() }, [refresh])
 
+  React.useEffect(() => {
+    if (!defaultWorkspaceId) return
+    setDraft((current) => current.workspaceId ? current : { ...current, workspaceId: defaultWorkspaceId })
+  }, [defaultWorkspaceId])
+
   const updateDraft = (patch: Partial<ImAccountDraft>) => {
     setDraft((current) => ({ ...current, ...patch }))
   }
 
+  const selectedWorkspaceId = draft.workspaceId || defaultWorkspaceId || NO_WORKSPACE_VALUE
+
+  const workspaceNameForAccount = (account: ImAccount): string | undefined => {
+    return account.workspaceId ? workspaceNames.get(account.workspaceId) ?? account.workspaceId : undefined
+  }
+
+  const handleWorkspaceChange = (value: string | null) => {
+    updateDraft({ workspaceId: value === NO_WORKSPACE_VALUE ? '' : value ?? '' })
+  }
+
   const handleCreate = async () => {
-    const input = normalizeImAccountDraft(draft)
+    const input = normalizeImAccountDraft(draft, defaultWorkspaceId)
     if (!input.token) {
       toast.error('OpenClaw Token 不能为空')
       return
@@ -87,7 +115,7 @@ export function ImSettings() {
     setSaving(true)
     try {
       await createImAccount(input)
-      setDraft(createImAccountDraft())
+      setDraft(createImAccountDraft(defaultWorkspaceId))
       toast.success('微信账号已链接')
       await refresh()
     } catch (error) {
@@ -101,7 +129,8 @@ export function ImSettings() {
   const handleStartLogin = async () => {
     setSaving(true)
     try {
-      const started = await startWeixinLogin()
+      const workspaceId = draft.workspaceId.trim() || defaultWorkspaceId
+      const started = await startWeixinLogin(workspaceId ? { workspaceId } : {})
       setLoginSession({
         sessionKey: started.sessionKey,
         qrcodeUrl: started.qrcodeUrl,
@@ -243,6 +272,7 @@ export function ImSettings() {
             <AccountRow
               key={account.id}
               account={account}
+              workspaceName={workspaceNameForAccount(account)}
               busy={busyId === account.id}
               onToggleEnabled={handleToggleEnabled}
               onStart={handleStart}
@@ -294,6 +324,26 @@ export function ImSettings() {
           </div>
 
           <div className="grid gap-2">
+            <Label htmlFor="im-workspace">工作区</Label>
+            <Select
+              value={selectedWorkspaceId}
+              disabled={workspaces.length === 0}
+              onValueChange={handleWorkspaceChange}
+            >
+              <SelectTrigger id="im-workspace" className="h-8 w-full bg-[var(--surface-1)] text-[13px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {workspaces.length === 0 ? (
+                  <SelectItem value={NO_WORKSPACE_VALUE}>未指定</SelectItem>
+                ) : workspaces.map((workspace) => (
+                  <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid gap-2">
             <Label htmlFor="im-label">名称</Label>
             <Input id="im-label" value={draft.label} onChange={(event) => updateDraft({ label: event.target.value })} placeholder="工作微信" />
           </div>
@@ -325,6 +375,7 @@ export function ImSettings() {
 
 function AccountRow({
   account,
+  workspaceName,
   busy,
   onToggleEnabled,
   onStart,
@@ -332,6 +383,7 @@ function AccountRow({
   onDelete,
 }: {
   account: ImAccount
+  workspaceName?: string
   busy: boolean
   onToggleEnabled: (account: ImAccount, enabled: boolean) => void
   onStart: (account: ImAccount) => void
@@ -339,6 +391,7 @@ function AccountRow({
   onDelete: (account: ImAccount) => void
 }) {
   const badge = formatImStatusBadge(account.status)
+  const accountMeta = [account.uin || account.id, workspaceName].filter(Boolean).join(' · ')
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5">
       <div className="min-w-[160px] flex-1">
@@ -346,7 +399,7 @@ function AccountRow({
           <span className="text-[13px] font-medium text-[var(--text-1)]">{account.label}</span>
           <Badge variant="outline" className={cn('rounded-[6px]', toneClassName[badge.tone])}>{badge.label}</Badge>
         </div>
-        <p className="mt-1 text-[12px] text-[var(--text-3)]">{account.uin || account.id}</p>
+        <p className="mt-1 text-[12px] text-[var(--text-3)]">{accountMeta}</p>
       </div>
       <Switch checked={account.enabled} onCheckedChange={(enabled) => onToggleEnabled(account, enabled)} disabled={busy} />
       <div className="flex items-center gap-1">

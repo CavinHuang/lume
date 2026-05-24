@@ -372,7 +372,7 @@ export function updateAgentThreadMeta(
   updates: Partial<
     Pick<
       AgentThreadMeta,
-      "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "pinned" | "parentThreadId" | "modelSelectionSource"
+      "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource"
     >
   > & {
     modelRef?: string | null;

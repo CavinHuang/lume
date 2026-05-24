@@ -10,6 +10,7 @@ export interface ImAccount {
   accountKey?: string;
   label: string;
   uin?: string;
+  workspaceId?: string;
   baseUrl: string;
   enabled: boolean;
   status: ImAccountStatus;
@@ -29,6 +30,7 @@ export interface ImAccountCreateInput {
   label?: string;
   token: string;
   uin?: string;
+  workspaceId?: string;
   baseUrl?: string;
   enabled?: boolean;
 }
@@ -38,6 +40,7 @@ export interface ImAccountUpdateInput {
   label?: string;
   token?: string;
   uin?: string;
+  workspaceId?: string;
   baseUrl?: string;
   enabled?: boolean;
   status?: ImAccountStatus;
@@ -80,6 +83,7 @@ export type ImWeixinLoginStatus =
 
 export interface ImWeixinLoginStartInput {
   force?: boolean;
+  workspaceId?: string;
 }
 
 export interface ImWeixinLoginStartResult {

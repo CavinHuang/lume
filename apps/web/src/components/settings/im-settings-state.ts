@@ -12,27 +12,31 @@ export interface ImAccountDraft {
   label: string
   token: string
   uin: string
+  workspaceId: string
   baseUrl: string
   enabled: boolean
 }
 
-export function createImAccountDraft(): ImAccountDraft {
+export function createImAccountDraft(workspaceId = ''): ImAccountDraft {
   return {
     provider: 'weixin',
     label: '',
     token: '',
     uin: '',
+    workspaceId,
     baseUrl: 'https://ilinkai.weixin.qq.com',
     enabled: true,
   }
 }
 
-export function normalizeImAccountDraft(draft: ImAccountDraft): ImAccountCreateInput {
+export function normalizeImAccountDraft(draft: ImAccountDraft, fallbackWorkspaceId = ''): ImAccountCreateInput {
+  const workspaceId = draft.workspaceId.trim() || fallbackWorkspaceId.trim()
   return {
     provider: 'weixin',
     label: draft.label.trim(),
     token: draft.token.trim(),
     uin: draft.uin.trim(),
+    ...(workspaceId ? { workspaceId } : {}),
     baseUrl: draft.baseUrl.trim().replace(/\/+$/, ''),
     enabled: draft.enabled,
   }

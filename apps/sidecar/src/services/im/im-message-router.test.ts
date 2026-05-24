@@ -30,24 +30,29 @@ describe("im-message-router", () => {
   test("creates and reuses one thread per account and peer", async () => {
     const createdThreads: string[] = [];
     const sent: AgentSendInput[] = [];
+    const updatedThreads: unknown[] = [];
 
     await routeInboundImMessage({
       provider: "weixin",
       accountId: "account-1",
       accountLabel: "工作微信",
+      workspaceId: "workspace-1",
       peerKind: "dm",
       peerId: "user-1",
       peerName: "Alice",
       text: "hello",
       contextToken: "ctx-1"
     }, {
-      createThread(title) {
+      createThread(title, workspaceId) {
         const id = `thread-${createdThreads.length + 1}`;
-        createdThreads.push(title);
+        createdThreads.push(`${title}:${workspaceId}`);
         return { id };
       },
       sendMessage(input) {
         sent.push(input);
+      },
+      updateThreadMeta(threadId, patch) {
+        updatedThreads.push({ threadId, patch });
       }
     });
 
@@ -71,10 +76,25 @@ describe("im-message-router", () => {
       }
     });
 
-    expect(createdThreads).toEqual(["微信: Alice"]);
+    expect(createdThreads).toEqual(["微信: Alice:workspace-1"]);
     expect(sent.map((item) => item.threadId)).toEqual(["thread-1", "thread-1"]);
+    expect(updatedThreads).toEqual([{
+      threadId: "thread-1",
+      patch: {
+        source: {
+          type: "im",
+          provider: "weixin",
+          accountId: "account-1",
+          accountLabel: "工作微信",
+          peerKind: "dm",
+          peerId: "user-1",
+          peerName: "Alice"
+        }
+      }
+    }]);
     expect(sent[0]).toMatchObject({
       userMessage: "hello",
+      workspaceId: "workspace-1",
       chatType: "direct",
       threadType: "main",
       messageMetadata: {
@@ -82,6 +102,7 @@ describe("im-message-router", () => {
           provider: "weixin",
           accountId: "account-1",
           accountLabel: "工作微信",
+          workspaceId: "workspace-1",
           peerKind: "dm",
           peerId: "user-1",
           peerName: "Alice",

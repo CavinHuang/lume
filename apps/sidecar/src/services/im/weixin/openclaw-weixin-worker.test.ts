@@ -10,6 +10,7 @@ describe("openclaw-weixin-worker", () => {
         id: "account-1",
         provider: "weixin",
         label: "工作微信",
+        workspaceId: "workspace-1",
         token: "token-1",
         baseUrl: "https://ilink.example.com",
         enabled: true,
@@ -48,6 +49,7 @@ describe("openclaw-weixin-worker", () => {
       provider: "weixin",
       accountId: "account-1",
       accountLabel: "工作微信",
+      workspaceId: "workspace-1",
       peerId: "user-1",
       text: "hello",
       contextToken: "ctx-1"

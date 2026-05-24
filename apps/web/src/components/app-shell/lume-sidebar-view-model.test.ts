@@ -171,6 +171,61 @@ describe('buildLumeSidebarViewModel', () => {
     })
   })
 
+  test('groups IM-origin threads by provider before regular date groups', () => {
+    const startOfToday = new Date().setHours(0, 0, 0, 0)
+    const model = buildLumeSidebarViewModel({
+      workspaces: [createWorkspace()],
+      threads: [
+        createThread({
+          id: 'weixin-thread',
+          title: '微信: Alice',
+          updatedAt: startOfToday + 120_000,
+          source: {
+            type: 'im',
+            provider: 'weixin',
+            accountId: 'account-1',
+            accountLabel: '工作微信',
+            peerKind: 'dm',
+            peerId: 'user-1',
+            peerName: 'Alice',
+          },
+        }),
+        createThread({
+          id: 'feishu-thread',
+          title: '飞书: 项目群',
+          updatedAt: startOfToday + 60_000,
+          source: {
+            type: 'im',
+            provider: 'feishu',
+            accountId: 'app-1',
+            accountLabel: '飞书应用',
+            peerKind: 'group',
+            peerId: 'chat-1',
+            peerName: '项目群',
+          },
+        }),
+        createThread({
+          id: 'regular-thread',
+          title: '普通会话',
+          updatedAt: startOfToday + 30_000,
+        }),
+      ],
+      currentWorkspaceId: 'workspace-1',
+      activeTabId: null,
+      streamingStates: {},
+      expandedWorkspaceIds: ['workspace-1'],
+    })
+
+    const groups = model.workspaces[0].rows.filter((row) => row.type === 'thread-group')
+
+    expect(groups.map((group) => group.label)).toEqual(['微信', '飞书', '今天'])
+    expect(groups.map((group) => group.items.map((item) => item.id))).toEqual([
+      ['weixin-thread'],
+      ['feishu-thread'],
+      ['regular-thread'],
+    ])
+  })
+
   test('keeps labels in collapsed item data for tooltips and icon-only navigation', () => {
     const model = buildLumeSidebarViewModel({
       workspaces: [createWorkspace()],

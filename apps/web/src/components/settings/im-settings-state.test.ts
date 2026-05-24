@@ -21,7 +21,7 @@ describe('im settings state', () => {
 
   test('normalizes draft fields before create or update', () => {
     expect(normalizeImAccountDraft({
-      ...createImAccountDraft(),
+      ...createImAccountDraft('workspace-1'),
       label: ' 工作微信 ',
       token: ' token-1 ',
       uin: ' 10001 ',
@@ -33,7 +33,17 @@ describe('im settings state', () => {
       token: 'token-1',
       uin: '10001',
       baseUrl: 'https://ilink.example.com',
+      workspaceId: 'workspace-1',
       enabled: true,
+    })
+  })
+
+  test('falls back to the selected workspace when the draft has none', () => {
+    expect(normalizeImAccountDraft({
+      ...createImAccountDraft(),
+      token: 'token-1',
+    }, 'workspace-fallback')).toMatchObject({
+      workspaceId: 'workspace-fallback',
     })
   })
 
