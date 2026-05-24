@@ -33,6 +33,7 @@ import {
   formatImStatusBadge,
   formatWeixinLoginStatus,
   normalizeImAccountDraft,
+  shouldKeepPollingWeixinLogin,
   type ImAccountDraft,
   type ImStatusTone,
 } from './im-settings-state'
@@ -56,6 +57,7 @@ export function ImSettings() {
     statusText: string
     verifyCode: string
     polling: boolean
+    autoPolling: boolean
   } | null>(null)
 
   const refresh = React.useCallback(async () => {
@@ -106,6 +108,7 @@ export function ImSettings() {
         statusText: started.message,
         verifyCode: '',
         polling: false,
+        autoPolling: true,
       })
       toast.success('微信二维码已生成')
     } catch (error) {
@@ -116,7 +119,7 @@ export function ImSettings() {
     }
   }
 
-  const pollLoginOnce = async (session = loginSession) => {
+  const pollLoginOnce = React.useCallback(async (session = loginSession) => {
     if (!session) return
     setLoginSession((current) => current ? { ...current, polling: true } : current)
     try {
@@ -128,6 +131,7 @@ export function ImSettings() {
       setLoginSession((current) => current ? {
         ...current,
         polling: false,
+        autoPolling: shouldKeepPollingWeixinLogin(result),
         statusText,
         verifyCode: result.needsVerifyCode ? current.verifyCode : '',
       } : current)
@@ -141,7 +145,15 @@ export function ImSettings() {
       toast.error('检查微信登录状态失败')
       setLoginSession((current) => current ? { ...current, polling: false } : current)
     }
-  }
+  }, [loginSession, refresh])
+
+  React.useEffect(() => {
+    if (!loginSession?.autoPolling || loginSession.polling) return
+    const timer = window.setTimeout(() => {
+      void pollLoginOnce(loginSession)
+    }, 2500)
+    return () => window.clearTimeout(timer)
+  }, [loginSession, pollLoginOnce])
 
   const handleToggleEnabled = async (account: ImAccount, enabled: boolean) => {
     setBusyId(account.id)

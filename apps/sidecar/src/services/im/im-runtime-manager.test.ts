@@ -82,4 +82,43 @@ describe("im-runtime-manager", () => {
       })
     });
   });
+
+  test("replaces a stale stopped worker when starting the same account again", async () => {
+    const started: string[] = [];
+    let workerIndex = 0;
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: () => undefined,
+      createWorker: () => {
+        workerIndex += 1;
+        const workerId = workerIndex;
+        let running = true;
+        return {
+          start() {
+            started.push(`worker-${workerId}`);
+            running = false;
+          },
+          stop() {},
+          processOnce: async () => undefined,
+          isRunning: () => running
+        };
+      }
+    });
+
+    await manager.startAccount("account-1");
+    await manager.startAccount("account-1");
+
+    expect(started).toEqual(["worker-1", "worker-2"]);
+  });
 });

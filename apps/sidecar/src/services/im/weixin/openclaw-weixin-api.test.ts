@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createOpenClawWeixinApi } from "./openclaw-weixin-api";
+import {
+  createOpenClawWeixinApi,
+  isOpenClawWeixinAuthError
+} from "./openclaw-weixin-api";
 
 describe("openclaw-weixin-api", () => {
   test("getUpdates posts cursor and base info with iLink auth headers", async () => {
@@ -150,6 +153,26 @@ describe("openclaw-weixin-api", () => {
 
     await expect(api.getUpdates({ cursor: "cursor-1" })).resolves.toEqual({
       updates: []
+    });
+  });
+
+  test("marks 401 and session timeout responses as auth errors", async () => {
+    const forbiddenApi = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com",
+      token: "token-1"
+    }, async () => Response.json({ errcode: 401 }, { status: 401 }));
+
+    await forbiddenApi.getUpdates().catch((error) => {
+      expect(isOpenClawWeixinAuthError(error)).toBe(true);
+    });
+
+    const timeoutApi = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com",
+      token: "token-1"
+    }, async () => Response.json({ errcode: -14, errmsg: "session timeout" }));
+
+    await timeoutApi.getUpdates().catch((error) => {
+      expect(isOpenClawWeixinAuthError(error)).toBe(true);
     });
   });
 });

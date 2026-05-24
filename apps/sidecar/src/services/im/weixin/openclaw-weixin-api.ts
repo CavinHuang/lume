@@ -34,6 +34,19 @@ export interface OpenClawWeixinApi {
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+export class OpenClawWeixinAuthError extends Error {
+  readonly authRequired = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenClawWeixinAuthError";
+  }
+}
+
+export function isOpenClawWeixinAuthError(error: unknown): boolean {
+  return error instanceof OpenClawWeixinAuthError || asRecord(error).authRequired === true;
+}
+
 const DEFAULT_CHANNEL_VERSION = "lume-im-weixin/0.1";
 const DEFAULT_BOT_AGENT = "lume";
 const DEFAULT_ILINK_APP_ID = "lume";
@@ -50,6 +63,28 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+async function readPayload(response: Response): Promise<Record<string, unknown>> {
+  try {
+    return asRecord(await response.json());
+  } catch {
+    return {};
+  }
+}
+
+function isAuthLikePayload(status: number, payload: Record<string, unknown>): boolean {
+  const code = asNumber(payload.errcode) ?? asNumber(payload.ret) ?? asNumber(payload.code);
+  return status === 401 || status === 403 || code === -14 || code === 401 || code === 403;
 }
 
 function normalizePeerKind(value: unknown): ImPeerKind {
@@ -143,10 +178,19 @@ export function createOpenClawWeixinApi(
       body: JSON.stringify(body),
       signal
     });
+    const payload = await readPayload(response);
     if (!response.ok) {
+      if (isAuthLikePayload(response.status, payload)) {
+        throw new OpenClawWeixinAuthError(`OpenClaw Weixin auth required (${response.status})`);
+      }
       throw new Error(`OpenClaw Weixin request failed (${response.status})`);
     }
-    return asRecord(await response.json());
+    if (isAuthLikePayload(response.status, payload)) {
+      throw new OpenClawWeixinAuthError(
+        asString(payload.errmsg) ?? asString(payload.message) ?? "OpenClaw Weixin auth required"
+      );
+    }
+    return payload;
   }
 
   function baseInfo(): Record<string, unknown> {

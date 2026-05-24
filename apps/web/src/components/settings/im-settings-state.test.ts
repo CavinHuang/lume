@@ -5,6 +5,7 @@ import {
   formatWeixinLoginStatus,
   formatImStatusBadge,
   normalizeImAccountDraft,
+  shouldKeepPollingWeixinLogin,
 } from './im-settings-state'
 
 describe('im settings state', () => {
@@ -48,5 +49,29 @@ describe('im settings state', () => {
       status: 'confirmed',
       message: 'ok',
     })).toEqual('微信已连接')
+  })
+
+  test('keeps QR polling only for active login statuses', () => {
+    expect(shouldKeepPollingWeixinLogin({
+      connected: false,
+      status: 'wait',
+      message: 'wait',
+    })).toBe(true)
+    expect(shouldKeepPollingWeixinLogin({
+      connected: false,
+      status: 'scaned',
+      message: 'scaned',
+    })).toBe(true)
+    expect(shouldKeepPollingWeixinLogin({
+      connected: false,
+      status: 'need_verifycode',
+      message: 'code',
+      needsVerifyCode: true,
+    })).toBe(false)
+    expect(shouldKeepPollingWeixinLogin({
+      connected: true,
+      status: 'confirmed',
+      message: 'ok',
+    })).toBe(false)
   })
 })

@@ -83,11 +83,20 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
         params ?? {},
         IM_IPC_CHANNELS.START_WEIXIN_LOGIN
       ) as { force?: boolean } | undefined),
-    [IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN]: async (params) =>
-      loginManager.pollLogin(validateInput(
+    [IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN]: async (params) => {
+      const result = await loginManager.pollLogin(validateInput(
         imWeixinLoginPollInputSchema,
         params,
         IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN
-      ) as { sessionKey: string; verifyCode?: string })
+      ) as { sessionKey: string; verifyCode?: string });
+      if (result.connected && result.account?.id) {
+        await runtimeManager.startAccount(result.account.id);
+        return {
+          ...result,
+          account: getImAccount(result.account.id) ?? result.account
+        };
+      }
+      return result;
+    }
   };
 }

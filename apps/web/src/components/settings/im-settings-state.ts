@@ -60,3 +60,11 @@ export function formatWeixinLoginStatus(result: ImWeixinLoginPollResult): string
   if (result.status === 'verify_code_blocked') return '验证码输入过多，请稍后重试'
   return result.message
 }
+
+export function shouldKeepPollingWeixinLogin(result: ImWeixinLoginPollResult): boolean {
+  return !result.connected
+    && !result.alreadyConnected
+    && result.status !== 'expired'
+    && result.status !== 'need_verifycode'
+    && result.status !== 'verify_code_blocked'
+}

@@ -81,7 +81,15 @@ describe("im-handlers", () => {
   });
 
   test("starts and polls Weixin QR login", async () => {
+    const calls: string[] = [];
     const handlers = createImHandlers({
+      runtimeManager: {
+        startEnabledAccounts: async () => undefined,
+        startAccount: async (accountId) => { calls.push(`start:${accountId}`) },
+        stopAccount: (accountId) => { calls.push(`stop:${accountId}`) },
+        stopAll: () => undefined,
+        getRunningAccountIds: () => []
+      },
       loginManager: {
         startLogin: async () => ({
           sessionKey: "login-1",
@@ -92,7 +100,18 @@ describe("im-handlers", () => {
         pollLogin: async () => ({
           connected: true,
           status: "confirmed",
-          message: "ok"
+          message: "ok",
+          account: {
+            id: "account-1",
+            provider: "weixin",
+            label: "工作微信",
+            baseUrl: "https://ilink.example.com",
+            enabled: true,
+            status: "stopped",
+            hasToken: true,
+            createdAt: 1,
+            updatedAt: 1
+          }
         })
       }
     });
@@ -107,5 +126,6 @@ describe("im-handlers", () => {
       connected: true,
       status: "confirmed"
     });
+    expect(calls).toEqual(["start:account-1"]);
   });
 });

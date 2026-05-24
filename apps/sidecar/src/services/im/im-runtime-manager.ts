@@ -49,7 +49,11 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     async startAccount(accountId: string) {
-      if (workers.has(accountId)) return;
+      const existingWorker = workers.get(accountId);
+      if (existingWorker?.isRunning()) return;
+      if (existingWorker) {
+        workers.delete(accountId);
+      }
       await updateAccountFn(accountId, {
         status: "starting",
         lastStartedAt: Date.now(),

@@ -4,7 +4,10 @@ import type {
   OpenClawWeixinApi,
   OpenClawWeixinInboundMessage
 } from "./openclaw-weixin-api";
-import { createOpenClawWeixinApi } from "./openclaw-weixin-api";
+import {
+  createOpenClawWeixinApi,
+  isOpenClawWeixinAuthError
+} from "./openclaw-weixin-api";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
 
@@ -36,6 +39,8 @@ function lastContextToken(messages: OpenClawWeixinInboundMessage[]): string | un
   return undefined;
 }
 
+const MAX_SEEN_MESSAGE_IDS = 1000;
+
 export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInput): OpenClawWeixinWorker {
   const api = input.api ?? createOpenClawWeixinApi({
     baseUrl: input.account.baseUrl,
@@ -48,6 +53,25 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
   let running = false;
   let abortController: AbortController | null = null;
   let cursor = input.account.cursor;
+  const seenMessageIds = new Set<string>();
+  const seenMessageOrder: string[] = [];
+
+  function hasSeenMessage(messageId: string | undefined): boolean {
+    if (!messageId) return false;
+    return seenMessageIds.has(`${input.account.id}:${messageId}`);
+  }
+
+  function rememberMessage(messageId: string | undefined): void {
+    if (!messageId) return;
+    const key = `${input.account.id}:${messageId}`;
+    if (seenMessageIds.has(key)) return;
+    seenMessageIds.add(key);
+    seenMessageOrder.push(key);
+    while (seenMessageOrder.length > MAX_SEEN_MESSAGE_IDS) {
+      const staleKey = seenMessageOrder.shift();
+      if (staleKey) seenMessageIds.delete(staleKey);
+    }
+  }
 
   async function processOnce(): Promise<void> {
     const batch = await api.getUpdates({
@@ -55,6 +79,7 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
       signal: abortController?.signal
     });
     for (const update of batch.updates) {
+      if (hasSeenMessage(update.messageId)) continue;
       await routeMessage({
         provider: "weixin",
         accountId: input.account.id,
@@ -66,6 +91,7 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
         contextToken: update.contextToken,
         messageId: update.messageId
       });
+      rememberMessage(update.messageId);
     }
     cursor = batch.cursor ?? cursor;
     await updateAccount(input.account.id, {
@@ -82,6 +108,14 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
         await processOnce();
       } catch (error) {
         if (!isAbortError(error)) {
+          if (isOpenClawWeixinAuthError(error)) {
+            running = false;
+            await updateAccount(input.account.id, {
+              status: "auth_required",
+              lastError: error instanceof Error ? error.message : String(error)
+            });
+            continue;
+          }
           await updateAccount(input.account.id, {
             status: "error",
             lastError: error instanceof Error ? error.message : String(error)
