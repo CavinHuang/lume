@@ -383,6 +383,14 @@ export interface MemorySettingsRetrievalStatus {
     fallbackModelRef?: string;
     status: "disabled" | "not_configured" | "available" | "stale" | "failed";
     message: string;
+    localOnnx?: {
+      modelRef: string;
+      label: string;
+      status: "not_cached" | "cached" | "downloading" | "initializing" | "ready" | "failed";
+      cacheDir: string;
+      message: string;
+      error?: string;
+    };
   };
   rerank: {
     modelRef?: string;

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -73,9 +73,28 @@ describe("memory-v2 settings snapshot", () => {
     expect(snapshot.retrieval.semantic).toMatchObject({
       mode: "auto",
       status: "stale",
-      fallbackModelRef: "local-onnx/Xenova/bge-small-zh-v1.5"
+      fallbackModelRef: "local-onnx/Xenova/bge-small-zh-v1.5",
+      localOnnx: {
+        modelRef: "local-onnx/Xenova/bge-small-zh-v1.5",
+        status: "not_cached"
+      }
     });
+    expect(snapshot.retrieval.semantic.localOnnx?.message).toContain("首次使用");
     expect(snapshot.retrieval.rerank.source).toBe("disabled");
+  });
+
+  test("reports cached local ONNX model files in the memory settings snapshot", () => {
+    const modelDir = join(root, "memory", "models", "Xenova", "bge-small-zh-v1.5", "onnx");
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, "model_quantized.onnx"), "cached", "utf-8");
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+
+    expect(snapshot.retrieval.semantic.localOnnx).toMatchObject({
+      status: "cached",
+      cacheDir: join(root, "memory", "models")
+    });
+    expect(snapshot.retrieval.semantic.localOnnx?.message).toContain("已缓存");
   });
 
   test("reports semantic recall as disabled when configured off", () => {

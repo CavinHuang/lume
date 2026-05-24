@@ -1,10 +1,18 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { getMemoryLocalModelsDir } from "../infra/config-paths";
 import type { MemoryV2EmbedTexts } from "./embedding";
 
-const LOCAL_ONNX_MODEL_ID = "Xenova/bge-small-zh-v1.5";
+export const LOCAL_ONNX_MODEL_ID = "Xenova/bge-small-zh-v1.5";
 const INIT_TIMEOUT_MS = 15_000;
 const EMBED_TIMEOUT_MS = 8_000;
+
+export type LocalOnnxMemoryEmbeddingStatus = {
+  status: "not_cached" | "cached" | "downloading" | "initializing" | "ready" | "failed";
+  modelId: string;
+  cacheDir: string;
+  error?: string;
+};
 
 type WorkerMessage =
   | { type: "ready" }
@@ -17,6 +25,8 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
+
+let runtimeStatus: LocalOnnxMemoryEmbeddingStatus | undefined;
 
 class LocalOnnxEmbeddingWorker {
   private worker?: Worker;
@@ -40,7 +50,9 @@ class LocalOnnxEmbeddingWorker {
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
+      setLocalOnnxStatus(hasLocalOnnxModelCache() ? "initializing" : "downloading");
       const initTimer = setTimeout(() => {
+        setLocalOnnxStatus("failed", "Local ONNX embedding model initialization timed out.");
         this.dispose();
         reject(new Error("Local ONNX embedding model initialization timed out."));
       }, INIT_TIMEOUT_MS);
@@ -53,12 +65,14 @@ class LocalOnnxEmbeddingWorker {
       this.worker.on("message", (message: WorkerMessage) => {
         if (message.type === "ready") {
           clearTimeout(initTimer);
+          setLocalOnnxStatus("ready");
           this.resolveReady?.();
           return;
         }
         if (message.type === "init_error") {
           clearTimeout(initTimer);
           const error = new Error(message.error ?? "Local ONNX embedding model failed to initialize.");
+          setLocalOnnxStatus("failed", error.message);
           this.dispose();
           this.rejectReady?.(error);
           return;
@@ -67,12 +81,15 @@ class LocalOnnxEmbeddingWorker {
       });
       this.worker.on("error", (error) => {
         clearTimeout(initTimer);
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        setLocalOnnxStatus("failed", normalized.message);
         this.dispose();
-        this.rejectReady?.(error instanceof Error ? error : new Error(String(error)));
+        this.rejectReady?.(normalized);
       });
       this.worker.on("exit", (code) => {
         if (code === 0) return;
         const error = new Error(`Local ONNX embedding worker exited (${code}).`);
+        setLocalOnnxStatus("failed", error.message);
         this.rejectAll(error);
         this.ready = undefined;
       });
@@ -134,4 +151,67 @@ let singleton: LocalOnnxEmbeddingWorker | undefined;
 export function createLocalOnnxMemoryEmbeddingProvider(): MemoryV2EmbedTexts {
   singleton ??= new LocalOnnxEmbeddingWorker();
   return (texts) => singleton!.embedTexts(texts);
+}
+
+export function getLocalOnnxMemoryEmbeddingStatus(): LocalOnnxMemoryEmbeddingStatus {
+  if (runtimeStatus) return runtimeStatus;
+  return buildLocalOnnxStatus(hasLocalOnnxModelCache() ? "cached" : "not_cached");
+}
+
+function setLocalOnnxStatus(
+  status: LocalOnnxMemoryEmbeddingStatus["status"],
+  error?: string
+): void {
+  runtimeStatus = buildLocalOnnxStatus(status, error);
+}
+
+function buildLocalOnnxStatus(
+  status: LocalOnnxMemoryEmbeddingStatus["status"],
+  error?: string
+): LocalOnnxMemoryEmbeddingStatus {
+  return {
+    status,
+    modelId: LOCAL_ONNX_MODEL_ID,
+    cacheDir: getMemoryLocalModelsDir(),
+    ...(error ? { error } : {})
+  };
+}
+
+function hasLocalOnnxModelCache(): boolean {
+  const cacheDir = getMemoryLocalModelsDir();
+  if (!existsSync(cacheDir)) return false;
+  const modelName = LOCAL_ONNX_MODEL_ID.split("/").at(-1) ?? LOCAL_ONNX_MODEL_ID;
+  const needles = [
+    LOCAL_ONNX_MODEL_ID,
+    LOCAL_ONNX_MODEL_ID.replace("/", "--"),
+    modelName
+  ];
+  return containsModelFile(cacheDir, needles);
+}
+
+function containsModelFile(path: string, needles: string[]): boolean {
+  let entries: string[];
+  try {
+    entries = readdirSync(path);
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    const child = `${path}/${entry}`;
+    let stat;
+    try {
+      stat = statSync(child);
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) {
+      if (containsModelFile(child, needles)) return true;
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    if (needles.some((needle) => child.includes(needle))) {
+      return true;
+    }
+  }
+  return false;
 }

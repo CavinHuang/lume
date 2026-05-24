@@ -6,6 +6,7 @@ import {
   buildRerankModelOptions,
   buildMemoryDetailRows,
   buildMemoryOverviewMetrics,
+  localOnnxStatusTone,
   isMemoryToolGroupEnabled,
   pendingNotice,
   setMemoryToolGroupEnabled,
@@ -14,6 +15,7 @@ import {
   summarizeMemoryOrganizeEntriesResult,
   summarizeMemoryOrganizeResult,
   summarizeMemoryEntry,
+  summarizeLocalOnnxStatus,
 } from './memory-settings-state'
 
 describe('memory settings state', () => {
@@ -246,6 +248,19 @@ describe('memory settings state', () => {
       modelRef: 'siliconflow/Qwen/Qwen3-Embedding-0.6B',
       label: 'Qwen3 0.6B · SiliconFlow',
     }])
+  })
+
+  test('local ONNX status helpers keep download awareness visible', () => {
+    const status = {
+      modelRef: 'local-onnx/Xenova/bge-small-zh-v1.5',
+      label: '本地 ONNX bge-small-zh',
+      status: 'downloading' as const,
+      cacheDir: '/tmp/lume/memory/models',
+      message: '正在下载并初始化本地 ONNX 模型，首次使用可能需要一点时间。',
+    }
+
+    expect(summarizeLocalOnnxStatus(status)).toBe(status.message)
+    expect(localOnnxStatusTone(status.status)).toBe('warn')
   })
 
   test('rerank options include enabled chat models but skip embedding-only models', () => {

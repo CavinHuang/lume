@@ -8,9 +8,14 @@ import type {
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot
 } from "@lume/shared";
+import {
+  MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL,
+  MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF
+} from "@lume/shared";
 import { getMemoryV2ScopePaths } from "./paths";
 import { createMemoryV2Store } from "./markdown-store";
 import { resolveMemoryEmbeddingModelRef, resolveMemoryEmbeddingStatusModelRef } from "./embedding";
+import { getLocalOnnxMemoryEmbeddingStatus } from "./local-embedding";
 import { resolveMemoryRerankModelRef } from "./rerank";
 import { getSemanticIndexStatus } from "./semantic-index";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
@@ -38,6 +43,7 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
   const lumeConfig = getEffectiveLumeConfig(workspaceSlug);
   const embeddingModelRef = resolveMemoryEmbeddingModelRef(lumeConfig);
   const semanticModelRef = resolveMemoryEmbeddingStatusModelRef(lumeConfig);
+  const localOnnx = getLocalOnnxMemoryEmbeddingStatus();
   const semanticStatus = getSemanticIndexStatus({
     workspaceSlug,
     semantic: runtimeConfig.retrieval.semantic,
@@ -80,7 +86,15 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
         status: semanticStatus.status,
         message: embeddingModelRef
           ? semanticStatus.message
-          : `${semanticStatus.message}；未配置远程 embedding 时会使用本地 ONNX`
+          : `${semanticStatus.message}；未配置远程 embedding 时会使用本地 ONNX`,
+        localOnnx: {
+          modelRef: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
+          label: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL,
+          status: localOnnx.status,
+          cacheDir: localOnnx.cacheDir,
+          message: localOnnxStatusMessage(localOnnx.status),
+          ...(localOnnx.error ? { error: localOnnx.error } : {})
+        }
       },
       rerank: {
         ...(rerank.modelRef ? { modelRef: rerank.modelRef } : {}),
@@ -88,6 +102,15 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
       }
     }
   };
+}
+
+function localOnnxStatusMessage(status: ReturnType<typeof getLocalOnnxMemoryEmbeddingStatus>["status"]): string {
+  if (status === "ready") return "本地 ONNX 模型已加载，语义召回可直接使用。";
+  if (status === "cached") return "本地 ONNX 模型已缓存，首次召回时会快速初始化。";
+  if (status === "downloading") return "正在下载并初始化本地 ONNX 模型，首次使用可能需要一点时间。";
+  if (status === "initializing") return "正在初始化本地 ONNX 模型。";
+  if (status === "failed") return "本地 ONNX 模型初始化失败，当前会继续使用基础召回。";
+  return "本地 ONNX 模型尚未缓存，首次使用语义召回时会自动下载。";
 }
 
 function memoryFileSummary(path: string, label: string, scope: "global" | "workspace"): MemorySettingsFileSummary {

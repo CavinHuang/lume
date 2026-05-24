@@ -2,6 +2,7 @@ import * as React from 'react'
 import {
   AlertTriangle,
   Clock3,
+  Download,
   FileText,
   Globe2,
   History,
@@ -60,8 +61,11 @@ import {
   buildMemoryOverviewMetrics,
   buildRerankModelOptions,
   isMemoryToolGroupEnabled,
+  localOnnxStatusLabel,
+  localOnnxStatusTone,
   pendingNotice,
   setMemoryToolGroupEnabled,
+  summarizeLocalOnnxStatus,
   summarizeMemoryIngestSourcesJob,
   summarizeMemoryOrganizeEntriesResult,
   summarizeMemoryOrganizeResult,
@@ -111,6 +115,13 @@ export function MemorySettings() {
   React.useEffect(() => {
     void refresh()
   }, [refresh])
+
+  React.useEffect(() => {
+    const status = snapshot?.retrieval.semantic.localOnnx?.status
+    if (status !== 'downloading' && status !== 'initializing') return undefined
+    const timer = window.setTimeout(() => void refresh(), 1500)
+    return () => window.clearTimeout(timer)
+  }, [refresh, snapshot?.retrieval.semantic.localOnnx?.status])
 
   React.useEffect(() => {
     if (!ingestJob || ingestJob.status !== 'running') return undefined
@@ -605,6 +616,30 @@ function OverviewPanel({
             </select>
           </label>
         </div>
+        {snapshot?.retrieval.semantic.localOnnx ? (
+          <div className="mt-3 border-t border-border pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-[var(--text-1)]">
+                <Download size={14} />
+                本地 ONNX
+              </div>
+              <span className={cn(
+                'rounded-[6px] px-2 py-0.5 text-[11px] font-medium',
+                localOnnxStatusTone(snapshot.retrieval.semantic.localOnnx.status) === 'good'
+                  && 'bg-emerald-500/10 text-emerald-600',
+                localOnnxStatusTone(snapshot.retrieval.semantic.localOnnx.status) === 'warn'
+                  && 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+                localOnnxStatusTone(snapshot.retrieval.semantic.localOnnx.status) === 'neutral'
+                  && 'bg-[var(--surface-2)] text-[var(--text-3)]',
+              )}>
+                {localOnnxStatusLabel(snapshot.retrieval.semantic.localOnnx.status)}
+              </span>
+            </div>
+            <p className="mt-2 text-[12px] leading-5 text-[var(--text-3)]">
+              {summarizeLocalOnnxStatus(snapshot.retrieval.semantic.localOnnx)}
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">

@@ -1,7 +1,7 @@
 import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
-import { resolveMemoryExtractionModelRef } from "./extraction";
+import { resolveMemoryExtractionModelRef, resolveMemoryExtractionModelRefs } from "./extraction";
 import type { MemoryV2RecallItem } from "./types";
 
 export type MemoryV2RerankItems = (
@@ -27,29 +27,66 @@ export function resolveMemoryRerankModelRef(input: {
     : { source: "disabled" };
 }
 
+export function resolveMemoryRerankModelRefs(input: {
+  workspaceSlug?: string;
+  explicitModelRef?: string;
+  fallbackModelRefs?: string[];
+}): string[] {
+  const resolved = resolveMemoryRerankModelRef({
+    workspaceSlug: input.workspaceSlug,
+    explicitModelRef: input.explicitModelRef
+  });
+  if (!resolved.modelRef) return [];
+  return resolveMemoryExtractionModelRefs(getEffectiveLumeConfig(input.workspaceSlug), {
+    modelRef: resolved.modelRef,
+    fallbackModelRefs: input.fallbackModelRefs
+  });
+}
+
 export function createMemoryV2Reranker(input: {
   workspaceSlug?: string;
   modelRef?: string;
+  fallbackModelRefs?: string[];
   createProvider?: RerankProviderFactory;
 }): MemoryV2RerankItems | undefined {
-  const resolved = resolveMemoryRerankModelRef({
+  const modelRefs = resolveMemoryRerankModelRefs({
     workspaceSlug: input.workspaceSlug,
-    explicitModelRef: input.modelRef
+    explicitModelRef: input.modelRef,
+    fallbackModelRefs: input.fallbackModelRefs
   });
-  if (!resolved.modelRef) return undefined;
-  const binding = resolveChannelModelBinding(resolved.modelRef, "chat");
-  if (!binding && !input.createProvider) return undefined;
-  const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
+  if (modelRefs.length === 0) return undefined;
+  return async (items, query) => {
+    for (const modelRef of modelRefs) {
+      try {
+        const attempt = createRerankAttempt(modelRef, input.createProvider);
+        if (!attempt) continue;
+        return await rerankWithLlm({ ...attempt, items, query });
+      } catch {
+        continue;
+      }
+    }
+    return items;
+  };
+}
+
+function createRerankAttempt(
+  modelRef: string,
+  createProviderInput?: RerankProviderFactory
+): { provider: LLMProvider; model: string } | undefined {
+  const binding = resolveChannelModelBinding(modelRef, "chat");
+  if (!binding && !createProviderInput) return undefined;
+  const providerFactory = createProviderInput ?? ((options) => createProvider(options.apiType, {
     apiKey: options.apiKey,
     baseURL: options.baseURL
   }));
-  const provider = providerFactory({
-    apiType: binding ? resolveRerankApiType(binding.channel.provider) : "openai-completions",
-    apiKey: binding ? decryptApiKey(binding.channel.id) : "",
-    baseURL: binding?.channel.baseUrl
-  });
-  const model = binding?.modelId ?? resolved.modelRef.split("/").at(-1) ?? resolved.modelRef;
-  return async (items, query) => rerankWithLlm({ provider, model, items, query });
+  return {
+    provider: providerFactory({
+      apiType: binding ? resolveRerankApiType(binding.channel.provider) : "openai-completions",
+      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
+      baseURL: binding?.channel.baseUrl
+    }),
+    model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
+  };
 }
 
 async function rerankWithLlm(input: {

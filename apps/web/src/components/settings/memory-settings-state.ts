@@ -106,6 +106,8 @@ export interface MemoryEmbeddingModelOption {
   label: string
 }
 
+type LocalOnnxStatus = NonNullable<MemorySettingsSnapshot['retrieval']['semantic']['localOnnx']>['status']
+
 function buildChannelModelRef(channel: Channel, modelId: string): string {
   return modelId.startsWith(`${channel.provider}/`) ? modelId : `${channel.provider}/${modelId}`
 }
@@ -134,6 +136,28 @@ export function buildRerankModelOptions(channels: Channel[]): MemoryEmbeddingMod
         modelRef: buildChannelModelRef(channel, model.id),
         label: `${model.name} · ${channel.name}`,
       })))
+}
+
+export function localOnnxStatusTone(status: LocalOnnxStatus): 'neutral' | 'good' | 'warn' {
+  if (status === 'ready' || status === 'cached') return 'good'
+  if (status === 'downloading' || status === 'initializing' || status === 'failed') return 'warn'
+  return 'neutral'
+}
+
+export function localOnnxStatusLabel(status: LocalOnnxStatus): string {
+  if (status === 'ready') return '已就绪'
+  if (status === 'cached') return '已缓存'
+  if (status === 'downloading') return '下载中'
+  if (status === 'initializing') return '初始化中'
+  if (status === 'failed') return '失败'
+  return '未下载'
+}
+
+export function summarizeLocalOnnxStatus(
+  status: MemorySettingsSnapshot['retrieval']['semantic']['localOnnx'],
+): string {
+  if (!status) return '本地 ONNX 未启用'
+  return status.message
 }
 
 export function isMemoryToolGroupEnabled(policy: MemoryToolPolicy | undefined, groupId: MemoryToolPolicyGroupId): boolean {

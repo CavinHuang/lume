@@ -42,4 +42,43 @@ describe("createMemoryV2QueryPlanner", () => {
       includeConversationHistory: false
     });
   });
+
+  test("tries fallback planner models when the primary model fails", async () => {
+    const models: string[] = [];
+    const planner = createMemoryV2QueryPlanner({
+      workspaceSlug: "demo",
+      modelRef: "openai/broken-small",
+      fallbackModelRefs: ["ollama/qwen2.5:7b"],
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage(params) {
+          models.push(params.model);
+          if (params.model === "broken-small") {
+            throw new Error("remote unavailable");
+          }
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                querySubject: "assistant/self",
+                desiredPredicates: ["preferred_name"],
+                includeConversationHistory: false
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    const plan = await planner?.("你叫什么名字？");
+
+    expect(models).toEqual(["broken-small", "qwen2.5:7b"]);
+    expect(plan).toEqual({
+      querySubject: "assistant/self",
+      desiredPredicates: ["preferred_name"],
+      includeConversationHistory: false
+    });
+  });
 });

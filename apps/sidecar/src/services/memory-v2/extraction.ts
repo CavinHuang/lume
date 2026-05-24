@@ -52,49 +52,34 @@ export async function extractMemoryCandidatesWithLlm(input: {
   text: string;
   workspaceSlug?: string;
   modelRef?: string;
+  fallbackModelRefs?: string[];
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryV2Candidate[]> {
   const text = stripMemoryUserMessagePrefix(input.text).trim();
   if (!text || DO_NOT_REMEMBER_RE.test(text)) return [];
-  const modelRef = input.modelRef ?? resolveMemoryExtractionModelRef(getEffectiveLumeConfig(input.workspaceSlug));
-  if (!modelRef) {
+  const config = getEffectiveLumeConfig(input.workspaceSlug);
+  const modelRefs = resolveMemoryExtractionModelRefs(config, {
+    modelRef: input.modelRef,
+    fallbackModelRefs: input.fallbackModelRefs
+  });
+  if (modelRefs.length === 0) {
     return extractExplicitMemoryCandidates(input);
   }
 
-  try {
-    const binding = resolveChannelModelBinding(modelRef, "chat");
-    if (!binding && !input.createProvider) {
-      return extractExplicitMemoryCandidates(input);
+  for (const modelRef of modelRefs) {
+    try {
+      const parsed = await extractMemoryCandidatesWithModel({
+        text,
+        workspaceSlug: input.workspaceSlug,
+        modelRef,
+        createProvider: input.createProvider
+      });
+      if (parsed) return parsed;
+    } catch {
+      continue;
     }
-    const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
-      apiKey: options.apiKey,
-      baseURL: options.baseURL
-    }));
-    const provider = providerFactory({
-      apiType: binding ? resolveExtractionApiType(binding.channel.provider) : "openai-completions",
-      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
-      baseURL: binding?.channel.baseUrl
-    });
-    const response = await provider.createMessage({
-      model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef,
-      maxTokens: 700,
-      system: buildExtractionSystemPrompt(),
-      messages: [{
-        role: "user",
-        content: buildExtractionUserPrompt(text, input.workspaceSlug)
-      }]
-    });
-    const parsed = parseLlmExtractionResponse(
-      response.content
-        .map((block) => block.type === "text" ? block.text : "")
-        .filter(Boolean)
-        .join("\n"),
-      text
-    );
-    return parsed ?? extractExplicitMemoryCandidates(input);
-  } catch {
-    return extractExplicitMemoryCandidates(input);
   }
+  return extractExplicitMemoryCandidates(input);
 }
 
 export interface MemoryBatchExtractionSource {
@@ -111,6 +96,7 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
   sources: MemoryBatchExtractionSource[];
   workspaceSlug?: string;
   modelRef?: string;
+  fallbackModelRefs?: string[];
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryBatchExtractionCandidate[]> {
   const sources = input.sources
@@ -121,45 +107,29 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
     .filter((source) => source.sourceId && source.text && !DO_NOT_REMEMBER_RE.test(source.text));
   if (sources.length === 0) return [];
 
-  const modelRef = input.modelRef ?? resolveMemoryExtractionModelRef(getEffectiveLumeConfig(input.workspaceSlug));
-  if (!modelRef) {
+  const config = getEffectiveLumeConfig(input.workspaceSlug);
+  const modelRefs = resolveMemoryExtractionModelRefs(config, {
+    modelRef: input.modelRef,
+    fallbackModelRefs: input.fallbackModelRefs
+  });
+  if (modelRefs.length === 0) {
     return extractExplicitBatchCandidates(sources, input.workspaceSlug);
   }
 
-  try {
-    const binding = resolveChannelModelBinding(modelRef, "chat");
-    if (!binding && !input.createProvider) {
-      return extractExplicitBatchCandidates(sources, input.workspaceSlug);
+  for (const modelRef of modelRefs) {
+    try {
+      const parsed = await extractMemoryBatchCandidatesWithModel({
+        sources,
+        workspaceSlug: input.workspaceSlug,
+        modelRef,
+        createProvider: input.createProvider
+      });
+      if (parsed) return parsed;
+    } catch {
+      continue;
     }
-    const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
-      apiKey: options.apiKey,
-      baseURL: options.baseURL
-    }));
-    const provider = providerFactory({
-      apiType: binding ? resolveExtractionApiType(binding.channel.provider) : "openai-completions",
-      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
-      baseURL: binding?.channel.baseUrl
-    });
-    const response = await provider.createMessage({
-      model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef,
-      maxTokens: 1200,
-      system: buildBatchExtractionSystemPrompt(),
-      messages: [{
-        role: "user",
-        content: buildBatchExtractionUserPrompt(sources, input.workspaceSlug)
-      }]
-    });
-    const parsed = parseLlmBatchExtractionResponse(
-      response.content
-        .map((block) => block.type === "text" ? block.text : "")
-        .filter(Boolean)
-        .join("\n"),
-      sources
-    );
-    return parsed ?? extractExplicitBatchCandidates(sources, input.workspaceSlug);
-  } catch {
-    return extractExplicitBatchCandidates(sources, input.workspaceSlug);
   }
+  return extractExplicitBatchCandidates(sources, input.workspaceSlug);
 }
 
 export function resolveMemoryExtractionModelRef(config: Pick<LumeEffectiveConfig, "memory">): string | undefined {
@@ -167,6 +137,106 @@ export function resolveMemoryExtractionModelRef(config: Pick<LumeEffectiveConfig
   const extraction = isRecord(memory.extraction) ? memory.extraction : {};
   return normalizeOptionalString(extraction.modelRef)
     ?? normalizeOptionalString(memory.extractionModelRef);
+}
+
+export function resolveMemoryExtractionModelRefs(
+  config: Pick<LumeEffectiveConfig, "memory" | "models">,
+  input: { modelRef?: string; fallbackModelRefs?: string[] } = {}
+): string[] {
+  return uniqueModelRefs([
+    input.modelRef,
+    input.modelRef ? undefined : resolveMemoryExtractionModelRef(config),
+    ...(input.fallbackModelRefs ?? []),
+    ...(config.models?.agent?.fallbackModelRefs ?? [])
+  ]);
+}
+
+async function extractMemoryCandidatesWithModel(input: {
+  text: string;
+  workspaceSlug?: string;
+  modelRef: string;
+  createProvider?: MemoryExtractionProviderFactory;
+}): Promise<MemoryV2Candidate[] | undefined> {
+  const binding = resolveChannelModelBinding(input.modelRef, "chat");
+  if (!binding && !input.createProvider) return undefined;
+  const provider = createMemoryExtractionProvider({
+    modelRef: input.modelRef,
+    binding,
+    createProvider: input.createProvider
+  });
+  const response = await provider.createMessage({
+    model: binding?.modelId ?? input.modelRef.split("/").at(-1) ?? input.modelRef,
+    maxTokens: 700,
+    system: buildExtractionSystemPrompt(),
+    messages: [{
+      role: "user",
+      content: buildExtractionUserPrompt(input.text, input.workspaceSlug)
+    }]
+  });
+  return parseLlmExtractionResponse(
+    response.content
+      .map((block) => block.type === "text" ? block.text : "")
+      .filter(Boolean)
+      .join("\n"),
+    input.text
+  ) ?? undefined;
+}
+
+async function extractMemoryBatchCandidatesWithModel(input: {
+  sources: Array<{ sourceId: string; text: string }>;
+  workspaceSlug?: string;
+  modelRef: string;
+  createProvider?: MemoryExtractionProviderFactory;
+}): Promise<MemoryBatchExtractionCandidate[] | undefined> {
+  const binding = resolveChannelModelBinding(input.modelRef, "chat");
+  if (!binding && !input.createProvider) return undefined;
+  const provider = createMemoryExtractionProvider({
+    modelRef: input.modelRef,
+    binding,
+    createProvider: input.createProvider
+  });
+  const response = await provider.createMessage({
+    model: binding?.modelId ?? input.modelRef.split("/").at(-1) ?? input.modelRef,
+    maxTokens: 1200,
+    system: buildBatchExtractionSystemPrompt(),
+    messages: [{
+      role: "user",
+      content: buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug)
+    }]
+  });
+  return parseLlmBatchExtractionResponse(
+    response.content
+      .map((block) => block.type === "text" ? block.text : "")
+      .filter(Boolean)
+      .join("\n"),
+    input.sources
+  ) ?? undefined;
+}
+
+function createMemoryExtractionProvider(input: {
+  modelRef: string;
+  binding: ReturnType<typeof resolveChannelModelBinding>;
+  createProvider?: MemoryExtractionProviderFactory;
+}): LLMProvider {
+  const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
+    apiKey: options.apiKey,
+    baseURL: options.baseURL
+  }));
+  return providerFactory({
+    apiType: input.binding ? resolveExtractionApiType(input.binding.channel.provider) : "openai-completions",
+    apiKey: input.binding ? decryptApiKey(input.binding.channel.id) : "",
+    baseURL: input.binding?.channel.baseUrl
+  });
+}
+
+function uniqueModelRefs(values: Array<string | undefined>): string[] {
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed || result.includes(trimmed)) continue;
+    result.push(trimmed);
+  }
+  return result;
 }
 
 function extractStatement(text: string): string | undefined {

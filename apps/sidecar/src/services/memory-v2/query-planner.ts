@@ -10,7 +10,7 @@ import {
   MEMORY_CLAIM_SUBJECT_WORKSPACE,
   type MemoryV2QueryPlan
 } from "./claim";
-import { resolveMemoryRerankModelRef } from "./rerank";
+import { resolveMemoryRerankModelRefs } from "./rerank";
 
 export type MemoryV2PlanQuery = (query: string) => Promise<MemoryV2QueryPlan | undefined>;
 
@@ -23,26 +23,48 @@ type QueryPlannerProviderFactory = (input: {
 export function createMemoryV2QueryPlanner(input: {
   workspaceSlug?: string;
   modelRef?: string;
+  fallbackModelRefs?: string[];
   createProvider?: QueryPlannerProviderFactory;
 }): MemoryV2PlanQuery | undefined {
-  const resolved = resolveMemoryRerankModelRef({
+  const modelRefs = resolveMemoryRerankModelRefs({
     workspaceSlug: input.workspaceSlug,
-    explicitModelRef: input.modelRef
+    explicitModelRef: input.modelRef,
+    fallbackModelRefs: input.fallbackModelRefs
   });
-  if (!resolved.modelRef) return undefined;
-  const binding = resolveChannelModelBinding(resolved.modelRef, "chat");
-  if (!binding && !input.createProvider) return undefined;
-  const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
+  if (modelRefs.length === 0) return undefined;
+  return async (query) => {
+    for (const modelRef of modelRefs) {
+      try {
+        const attempt = createQueryPlannerAttempt(modelRef, input.createProvider);
+        if (!attempt) continue;
+        const plan = await planQueryWithLlm({ ...attempt, query });
+        if (plan) return plan;
+      } catch {
+        continue;
+      }
+    }
+    return undefined;
+  };
+}
+
+function createQueryPlannerAttempt(
+  modelRef: string,
+  createProviderInput?: QueryPlannerProviderFactory
+): { provider: LLMProvider; model: string } | undefined {
+  const binding = resolveChannelModelBinding(modelRef, "chat");
+  if (!binding && !createProviderInput) return undefined;
+  const providerFactory = createProviderInput ?? ((options) => createProvider(options.apiType, {
     apiKey: options.apiKey,
     baseURL: options.baseURL
   }));
-  const provider = providerFactory({
-    apiType: binding ? resolveQueryPlannerApiType(binding.channel.provider) : "openai-completions",
-    apiKey: binding ? decryptApiKey(binding.channel.id) : "",
-    baseURL: binding?.channel.baseUrl
-  });
-  const model = binding?.modelId ?? resolved.modelRef.split("/").at(-1) ?? resolved.modelRef;
-  return (query) => planQueryWithLlm({ provider, model, query });
+  return {
+    provider: providerFactory({
+      apiType: binding ? resolveQueryPlannerApiType(binding.channel.provider) : "openai-completions",
+      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
+      baseURL: binding?.channel.baseUrl
+    }),
+    model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
+  };
 }
 
 async function planQueryWithLlm(input: {
