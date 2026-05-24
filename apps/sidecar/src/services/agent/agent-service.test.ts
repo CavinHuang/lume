@@ -3,6 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentMessageAppendedEvent, SDKMessage } from "@lume/shared";
+import {
+  isMockRuntimeModelFallbackRetryable,
+  resolveMockRuntimeModelAttemptParams
+} from "../agent-runtime/runtime-core/attempt-test-helpers";
 
 const heldRunResolvers = new Map<string, () => void>();
 const runAgentRuntimeCalls: unknown[] = [];
@@ -243,6 +247,8 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
     emitSuccessfulRun(emit);
     return { status: "completed" as const };
   },
+  isRuntimeModelFallbackRetryable: isMockRuntimeModelFallbackRetryable,
+  resolveRuntimeModelAttemptParams: resolveMockRuntimeModelAttemptParams,
   stopAgentRuntime: () => undefined
 }));
 

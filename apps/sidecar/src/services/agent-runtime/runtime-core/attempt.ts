@@ -1,6 +1,8 @@
 import { type CanUseToolFn } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import { buildRuntimeAttemptLogData } from "../../agent/agent-log-summary";
+import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { resolveMockAttempt } from "./mock-attempt";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "../runner/types";
 import { resolveSubagentInteractiveLabel } from "./subagent-interactive-display";
@@ -445,22 +447,49 @@ const activePiSessions = new Map<string, { abort: () => Promise<void> }>();
 const DEFAULT_MAX_ATTEMPTS = 1;
 const RETRY_DELAY_MS = 700;
 
+export function resolveRuntimeModelAttemptParams(params: AgentRuntimeRunParams): AgentRuntimeRunParams[] {
+  const workspaceSlug = params.runtime.workspaceId
+    ? getAgentWorkspace(params.runtime.workspaceId)?.slug
+    : undefined;
+  const fallbackRefs = getEffectiveLumeConfig(workspaceSlug).models?.agent?.fallbackModelRefs ?? [];
+  const refs = uniqueModelRefs([params.runtime.modelRef, ...fallbackRefs]);
+  const attempts: AgentRuntimeRunParams[] = [{ ...params, runtime: { ...params.runtime } }];
+  for (const modelRef of refs) {
+    if (modelRef === params.runtime.modelRef) continue;
+    const binding = resolveChannelModelBinding(modelRef, "chat");
+    if (!binding) continue;
+    attempts.push({
+      ...params,
+      runtime: {
+        ...params.runtime,
+        modelRef,
+        channelId: binding.channel.id,
+        resolvedModelId: binding.modelId
+      }
+    });
+  }
+  return attempts;
+}
+
 export async function runAgentRuntime(
   params: AgentRuntimeRunParams,
   emit: AgentRuntimeEmitter
 ): Promise<AgentRuntimeRunResult> {
-  const maxAttempts = resolveMaxAttempts();
+  const modelAttempts = resolveRuntimeModelAttemptParams(params);
+  const maxAttempts = Math.max(resolveMaxAttempts(), modelAttempts.length);
   let attempt = 0;
   let lastResult: AgentRuntimeRunResult = { status: "errored", errorMessage: "Agent Runtime 未执行" };
 
   while (attempt < maxAttempts) {
     attempt += 1;
+    const attemptParams = modelAttempts[Math.min(attempt - 1, modelAttempts.length - 1)] ?? params;
     log.info("[Agent 编排] 开始执行 attempt", {
-      threadId: params.runtime.sessionId.slice(0, 8),
+      threadId: attemptParams.runtime.sessionId.slice(0, 8),
       attempt,
-      maxAttempts
+      maxAttempts,
+      modelRef: attemptParams.runtime.modelRef
     });
-    const result = await runRuntimeCoreAttempt(params, emit, {
+    const result = await runRuntimeCoreAttempt(attemptParams, emit, {
       registerAbort: (sessionId, abort) => {
         activePiSessions.set(sessionId, { abort });
       },
@@ -470,7 +499,7 @@ export async function runAgentRuntime(
     });
     lastResult = result;
     log.info("[Agent 编排] attempt 结束", {
-      threadId: params.runtime.sessionId.slice(0, 8),
+      threadId: attemptParams.runtime.sessionId.slice(0, 8),
       attempt,
       status: result.status,
       errorMessage: result.status === "errored" ? result.errorMessage : undefined
@@ -478,7 +507,7 @@ export async function runAgentRuntime(
     if (result.status !== "errored") {
       return result;
     }
-    const retryable = shouldRetryError(result.errorMessage);
+    const retryable = isRuntimeModelFallbackRetryable(result.errorMessage);
     if (!retryable || attempt >= maxAttempts) {
       const message = result.errorMessage ?? "未知错误";
       emit.onError(`Agent Runtime 执行失败: ${message}`);
@@ -486,9 +515,10 @@ export async function runAgentRuntime(
     }
 
     log.warn("Agent Runtime attempt 失败，准备重试", {
-      threadId: params.runtime.sessionId.slice(0, 8),
+      threadId: attemptParams.runtime.sessionId.slice(0, 8),
       attempt,
       maxAttempts,
+      modelRef: attemptParams.runtime.modelRef,
       errorMessage: result.errorMessage
     });
     await sleep(RETRY_DELAY_MS);
@@ -497,6 +527,16 @@ export async function runAgentRuntime(
   const fallbackMessage = lastResult.errorMessage ?? "未知错误";
   emit.onError(`Agent Runtime 执行失败: ${fallbackMessage}`);
   return lastResult;
+}
+
+function uniqueModelRefs(values: Array<string | undefined>): string[] {
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed || result.includes(trimmed)) continue;
+    result.push(trimmed);
+  }
+  return result;
 }
 
 function resolveMaxAttempts(): number {
@@ -508,7 +548,7 @@ function resolveMaxAttempts(): number {
   return Math.max(1, Math.min(3, Math.floor(parsed)));
 }
 
-function shouldRetryError(errorMessage?: string): boolean {
+export function isRuntimeModelFallbackRetryable(errorMessage?: string): boolean {
   if (!errorMessage) return false;
   const value = errorMessage.toLowerCase();
   return (
@@ -517,9 +557,19 @@ function shouldRetryError(errorMessage?: string): boolean {
     || value.includes("rate limit")
     || value.includes("429")
     || value.includes("temporar")
+    || value.includes("500")
+    || value.includes("502")
+    || value.includes("503")
+    || value.includes("504")
     || value.includes("econnreset")
+    || value.includes("econnrefused")
+    || value.includes("etimedout")
     || value.includes("enotfound")
     || value.includes("network")
+    || value.includes("unavailable")
+    || value.includes("fetch failed")
+    || value.includes("connection refused")
+    || value.includes("socket hang up")
   );
 }
 
