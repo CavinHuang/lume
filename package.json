@@ -17,6 +17,10 @@
     "test:web": "bun run --filter @lume/web test",
     "smoke:web": "bun run --filter @lume/web test:smoke",
     "smoke:core": "bun scripts/smoke-core.mjs",
+    "mcp:test:config": "bun packages/sdk/examples/local-test-mcp-server.ts config",
+    "mcp:test:stdio": "bun packages/sdk/examples/local-test-mcp-server.ts stdio",
+    "mcp:test:sse": "bun packages/sdk/examples/local-test-mcp-server.ts sse",
+    "mcp:test:http": "bun packages/sdk/examples/local-test-mcp-server.ts streamable_http",
     "cleanup:legacy-workspaces": "node scripts/cleanup-legacy-workspaces.mjs",
     "clean:package-input": "bun scripts/clean-package-input.mjs",
     "as": "asar extract /Applications/Alma.app/Contents/Resources/app.asar ./output_folder"
