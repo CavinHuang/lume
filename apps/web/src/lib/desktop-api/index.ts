@@ -7,6 +7,7 @@ export * from './skills-market'
 export * from './automation'
 export * from './memory'
 export * from './mcp'
+export * from './im'
 export type {
   GeneralSettings,
   ThemeMode,

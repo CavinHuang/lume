@@ -38,6 +38,36 @@ export const agentSendInputSchema = z.object({
 
 export const agentAppendInputSchema = agentSendInputSchema;
 
+export const imAccountCreateInputSchema = z.object({
+  provider: z.literal("weixin"),
+  label: z.string().optional(),
+  token: z.string().trim().min(1),
+  uin: z.string().optional(),
+  baseUrl: z.string().optional(),
+  enabled: z.boolean().optional()
+});
+
+export const imAccountUpdateInputSchema = z.object({
+  id: idSchema,
+  input: z.object({
+    label: z.string().optional(),
+    token: z.string().optional(),
+    uin: z.string().optional(),
+    baseUrl: z.string().optional(),
+    enabled: z.boolean().optional(),
+    status: z.enum(["stopped", "starting", "running", "error", "auth_required"]).optional(),
+    cursor: z.string().optional(),
+    contextToken: z.string().optional(),
+    lastError: z.string().nullable().optional(),
+    lastStartedAt: z.number().optional(),
+    lastStoppedAt: z.number().optional()
+  }).strict()
+});
+
+export const imAccountIdInputSchema = z.object({
+  id: idSchema
+});
+
 const memoryScopeSchema = z.enum(["global", "workspace", "agent", "session"]);
 const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);
 const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual"]);

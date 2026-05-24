@@ -4,6 +4,7 @@ import {
   AUTOMATION_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
   GITHUB_RELEASE_IPC_CHANNELS,
+  IM_IPC_CHANNELS,
   MEMORY_IPC_CHANNELS
 } from "@lume/shared";
 import { createRpcHandlers } from "./create-rpc-handlers";
@@ -33,6 +34,7 @@ describe("createRpcHandlers", () => {
       MEMORY_IPC_CHANNELS.OPEN_SOURCE,
       MEMORY_IPC_CHANNELS.GET_RUNTIME_CONFIG,
       AUTOMATION_IPC_CHANNELS.LIST_JOBS,
+      IM_IPC_CHANNELS.LIST_ACCOUNTS,
       GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE
     ]));
   });

@@ -8,6 +8,7 @@ import {
   stopAutomationRunner
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
+import { imRuntimeManager } from "./services/im/im-runtime-manager";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -110,6 +111,11 @@ async function boot(): Promise<void> {
   if (envAutostartEnabled("LUME_DEFAULT_SKILLS_AUTOSTART", false)) {
     seedDefaultSkills();
   }
+  if (envAutostartEnabled("LUME_IM_AUTOSTART", true)) {
+    void imRuntimeManager.startEnabledAccounts().catch((error) => {
+      console.error(`[IM Runtime] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_COMPLETED, event);
@@ -119,6 +125,7 @@ async function boot(): Promise<void> {
     stopWorkspaceWatcher();
     void getWorkspaceMcpManager().disposeAll().catch(() => {});
     void stopAutomationRunner().catch(() => {});
+    imRuntimeManager.stopAll();
   };
   process.once("exit", stopWatcher);
   process.once("SIGINT", () => {

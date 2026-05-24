@@ -9,6 +9,7 @@ import { GeneralSettings } from './GeneralSettings'
 import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { McpSettings } from './McpSettings'
+import { ImSettings } from './ImSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
 import { AutomationSettings } from '../automation/AutomationSettings'
@@ -74,7 +75,12 @@ export function SettingsView() {
           {tab === 'memory' && <MemorySettings />}
           {tab === 'files' && <SettingsContentShell><SkillsSettings /></SettingsContentShell>}
           {tab === 'shortcuts' && <SettingsContentShell><AutomationSettings /></SettingsContentShell>}
-          {tab === 'integrations' && <McpSettings />}
+          {tab === 'integrations' && (
+            <div className="space-y-4">
+              <ImSettings />
+              <McpSettings />
+            </div>
+          )}
           {tab === 'updates' && <VersionUpdateSettings />}
         </main>
       </ScrollArea>
