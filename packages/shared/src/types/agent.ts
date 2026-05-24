@@ -8,7 +8,28 @@
 import type { SDKMessage } from "@lume/agent-sdk"
 import type { LumeRuntimeEvent } from "./runtime-event"
 import type { LumeConfigThinkingLevel } from "./lume-config"
+import type { McpTransportType } from "./mcp"
 export type { SDKMessage } from "@lume/agent-sdk"
+export type {
+  CallMcpToolDiagnosticRequest,
+  CallMcpToolDiagnosticResponse,
+  GetMcpStatusRequest,
+  GetMcpStatusResponse,
+  LegacyMcpTransportType,
+  ListMcpResourcesRequest,
+  ListMcpResourcesResponse,
+  McpPublicStatus,
+  McpResourceSummary,
+  McpServerEntry,
+  McpServerStatus,
+  McpToolDetail,
+  McpTransportType,
+  ReadMcpResourceRequest,
+  ReadMcpResourceResponse,
+  TestMcpServerRequest,
+  TestMcpServerResponse,
+  WorkspaceMcpConfig
+} from "./mcp"
 
 // ===== Agent 工作区 =====
 
@@ -156,33 +177,6 @@ export interface AgentGenerateTitleInput {
   channelId: string
   /** 模型 ID */
   modelId: string
-}
-
-// ===== MCP 服务器配置 =====
-
-/** MCP 传输类型 */
-export type McpTransportType = 'stdio' | 'http' | 'sse'
-
-/** MCP 服务器条目 */
-export interface McpServerEntry {
-  type: McpTransportType
-  /** stdio: 可执行命令 */
-  command?: string
-  /** stdio: 命令参数 */
-  args?: string[]
-  /** stdio: 环境变量 */
-  env?: Record<string, string>
-  /** http/sse: 服务端 URL */
-  url?: string
-  /** http/sse: 请求头 */
-  headers?: Record<string, string>
-  /** 是否启用 */
-  enabled: boolean
-}
-
-/** 工作区 MCP 配置文件 */
-export interface WorkspaceMcpConfig {
-  servers: Record<string, McpServerEntry>
 }
 
 // ===== Skill 元数据 =====

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
   getAgentWorkspaceBySlug,
   listAgentWorkspaces,
   getWorkspaceMcpConfig,
+  saveWorkspaceMcpConfig,
   getWorkspaceSkills
 } from "./agent-workspace-manager";
 
@@ -98,7 +99,59 @@ describe("agent-workspace-manager lume.yaml integration", () => {
     expect(Object.keys(result.servers).sort()).toEqual(["local", "workspace-server"]);
     expect(result.servers.local?.enabled).toBe(false);
     expect(result.servers.local?.command).toBe("override");
-    expect(result.servers["workspace-server"]?.type).toBe("http");
+    expect(result.servers["workspace-server"]?.transport).toBe("streamable_http");
+    expect(result.servers["workspace-server"]?.type).toBeUndefined();
+  });
+
+  test("getWorkspaceMcpConfig 应跳过缺少必要字段的 MCP 条目", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+
+    writeFileSync(
+      getWorkspaceMcpPath(workspaceSlug),
+      JSON.stringify({
+        servers: {
+          valid: {
+            type: "stdio",
+            command: "node",
+            enabled: true
+          },
+          missingCommand: {
+            type: "stdio",
+            enabled: true
+          },
+          missingUrl: {
+            transport: "streamable_http",
+            enabled: true
+          }
+        }
+      }),
+      "utf-8"
+    );
+
+    const result = getWorkspaceMcpConfig(workspaceSlug);
+    expect(Object.keys(result.servers)).toEqual(["valid"]);
+    expect(result.servers.valid?.transport).toBe("stdio");
+  });
+
+  test("saveWorkspaceMcpConfig 应写入 canonical transport 并省略 legacy type", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+
+    saveWorkspaceMcpConfig(workspaceSlug, {
+      servers: {
+        remote: {
+          transport: "streamable_http",
+          type: "http",
+          url: "https://example.com/mcp",
+          enabled: true
+        }
+      }
+    });
+
+    const saved = JSON.parse(readFileSync(getWorkspaceMcpPath(workspaceSlug), "utf-8"));
+    expect(saved.servers.remote.transport).toBe("streamable_http");
+    expect(saved.servers.remote.type).toBeUndefined();
   });
 
   test("getWorkspaceSkills 应按 lume.yaml skills 配置过滤", () => {
