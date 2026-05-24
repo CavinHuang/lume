@@ -34,7 +34,7 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
   const listAccountsFn = input.listAccounts ?? listImAccounts;
   const getRuntimeAccountFn = input.getRuntimeAccount ?? getImRuntimeAccount;
   const updateAccountFn = input.updateAccount ?? updateImAccount;
-  const createWorkerFn = input.createWorker ?? createOpenClawWeixinWorker;
+  const createWorkerFn = input.createWorker ?? ((account: ImRuntimeAccount) => createOpenClawWeixinWorker({ account }));
 
   return {
     async startEnabledAccounts() {

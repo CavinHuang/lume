@@ -23,15 +23,17 @@ describe("openclaw-weixin-api", () => {
     });
 
     const batch = await api.getUpdates({ cursor: "cursor-1" });
+    const call = calls[0];
+    if (!call) throw new Error("getUpdates request missing");
 
-    expect(calls[0].url).toBe("https://ilink.example.com/ilink/bot/getupdates");
-    expect(calls[0].init.method).toBe("POST");
-    expect(calls[0].init.headers).toMatchObject({
+    expect(call.url).toBe("https://ilink.example.com/ilink/bot/getupdates");
+    expect(call.init.method).toBe("POST");
+    expect(call.init.headers).toMatchObject({
       AuthorizationType: "ilink_bot_token",
       Authorization: "Bearer token-1",
       "X-WECHAT-UIN": "10001"
     });
-    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
+    expect(JSON.parse(String(call.init.body))).toMatchObject({
       get_updates_buf: "cursor-1",
       base_info: {
         uin: "10001"
@@ -66,9 +68,11 @@ describe("openclaw-weixin-api", () => {
       text: "reply",
       contextToken: "ctx-1"
     });
+    const call = calls[0];
+    if (!call) throw new Error("sendText request missing");
 
-    expect(calls[0].url).toBe("https://ilink.example.com/ilink/bot/sendmessage");
-    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
+    expect(call.url).toBe("https://ilink.example.com/ilink/bot/sendmessage");
+    expect(JSON.parse(String(call.init.body))).toMatchObject({
       to_user_name: "room-1",
       peer_kind: "group",
       message_type: 2,

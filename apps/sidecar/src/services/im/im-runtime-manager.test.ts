@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import type { ImAccountUpdateInput } from "@lume/shared";
 import { createImRuntimeManager } from "./im-runtime-manager";
 
 describe("im-runtime-manager", () => {
   test("starts one worker per enabled account and isolates account failures", async () => {
     const started: string[] = [];
-    const updated: Array<{ id: string; input: Record<string, unknown> }> = [];
+    const updated: Array<{ id: string; input: ImAccountUpdateInput }> = [];
     const manager = createImRuntimeManager({
       listAccounts: () => [
         {

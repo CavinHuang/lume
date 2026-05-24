@@ -33,6 +33,7 @@ describe("create-im-tools", () => {
       threadId: "thread-unbound",
       sendTextMessage: async () => ({ ok: true })
     });
+    if (!tool) throw new Error("send_im_message tool missing");
 
     const result = await tool.call({ text: "hello" }, { cwd: "/tmp" } as never);
 
@@ -60,6 +61,7 @@ describe("create-im-tools", () => {
         return { ok: true };
       }
     });
+    if (!tool) throw new Error("send_im_message tool missing");
 
     const result = await tool.call({
       text: "reply",
