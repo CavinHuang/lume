@@ -4,6 +4,7 @@ import {
   MEMORY_TOOL_POLICY_GROUPS,
   buildEmbeddingModelOptions,
   buildRerankModelOptions,
+  buildMemoryDetailRows,
   buildMemoryOverviewMetrics,
   isMemoryToolGroupEnabled,
   pendingNotice,
@@ -83,6 +84,31 @@ describe('memory settings state', () => {
       pinned: false,
       tags: [],
     })).toBe('工作区 · 决策 · 可能过期')
+  })
+
+  test('memory detail rows expose readable metadata for selected entries', () => {
+    expect(buildMemoryDetailRows({
+      id: 'mem-1',
+      path: '/tmp/memory/entries/mem-1.md',
+      text: 'User wants Lume memory details to show full content.',
+      metadata: {
+        scope: 'workspace',
+        kind: 'decision',
+        tags: ['memory-ui'],
+        claim: {
+          subject: 'workspace/default',
+          predicate: 'preference',
+          object: 'show full memory content',
+        },
+      },
+      citation: '/tmp/memory/entries/mem-1.md',
+    })).toEqual([
+      { label: '范围', value: '工作区' },
+      { label: '类型', value: '决策' },
+      { label: 'Claim', value: 'workspace/default.preference = show full memory content' },
+      { label: '标签', value: 'memory-ui' },
+      { label: '路径', value: '/tmp/memory/entries/mem-1.md' },
+    ])
   })
 
   test('organize result summary keeps the history action scannable', () => {
@@ -211,6 +237,9 @@ describe('memory settings state', () => {
         { id: 'jina-embeddings-v3', name: 'Jina v3', enabled: true, capabilities: { embedding: true } },
       ],
     }])).toEqual([{
+      modelRef: 'local-onnx/Xenova/bge-small-zh-v1.5',
+      label: '本地 ONNX bge-small-zh',
+    }, {
       modelRef: 'openai/text-embedding-3-small',
       label: 'Embed small · OpenAI',
     }, {

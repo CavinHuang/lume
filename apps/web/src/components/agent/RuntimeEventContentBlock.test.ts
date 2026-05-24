@@ -87,10 +87,23 @@ describe('normalizeMemoryCitationPath', () => {
 })
 
 describe('memory citation grouping', () => {
-  test('groups memory citations in thread, workspace, global order and hides empty groups', () => {
+  test('groups memory citations by injected memory role and hides empty groups', () => {
     const groups = groupMemoryCitationItems([
       {
-        id: 'global-1',
+        id: 'claim-1',
+        kind: 'preference',
+        scope: 'global',
+        status: 'active',
+        citation: 'global:memory:/Users/me/.lume/memory/entries/name.md',
+        reason: 'matched memory entry',
+        claim: {
+          subject: 'user/self',
+          predicate: 'preferred_name',
+          object: 'Mason',
+        },
+      },
+      {
+        id: 'global-pref-1',
         kind: 'preference',
         scope: 'global',
         status: 'active',
@@ -106,17 +119,37 @@ describe('memory citation grouping', () => {
         reason: 'recent daily memory',
       },
       {
-        id: 'thread-1',
+        id: 'workspace-core-1',
         kind: 'state',
-        scope: 'thread',
+        scope: 'workspace',
         status: 'active',
-        citation: 'thread:daily:/Users/me/.lume/agent-workspaces/default/thread/memory.md',
-        reason: 'thread memory',
+        citation: 'workspace:memory:/Users/me/.lume/agent-workspaces/default/memory/MEMORY.md',
+        reason: 'workspace memory brief',
+      },
+      {
+        id: 'stale-1',
+        kind: 'state',
+        scope: 'workspace',
+        status: 'suspected_stale',
+        citation: 'workspace:memory:/Users/me/.lume/agent-workspaces/default/memory/entries/old.md',
+        reason: 'matched memory entry',
       },
     ] as any)
 
-    expect(groups.map((group) => group.key)).toEqual(['thread', 'workspace', 'global'])
-    expect(groups.map((group) => group.items[0]?.id)).toEqual(['thread-1', 'workspace-1', 'global-1'])
+    expect(groups.map((group) => group.key)).toEqual([
+      'claims',
+      'workspace_core',
+      'global_preferences',
+      'conversation_history',
+      'maybe_stale',
+    ])
+    expect(groups.map((group) => group.items[0]?.id)).toEqual([
+      'claim-1',
+      'workspace-core-1',
+      'global-pref-1',
+      'workspace-1',
+      'stale-1',
+    ])
   })
 
   test('compacts memory citation labels to file names', () => {

@@ -34,6 +34,12 @@ export interface MemoryV2Store {
     status: MemoryV2Status;
     supersededBy?: string | null;
   }): MemoryV2Entry;
+  updateEntryRelations(input: {
+    scope: MemoryV2Scope;
+    workspaceSlug?: string;
+    id: string;
+    related: string[];
+  }): MemoryV2Entry;
   writePending(input: {
     type: MemoryV2PendingType;
     candidate: MemoryV2Candidate;
@@ -70,6 +76,7 @@ export function createMemoryV2Store(): MemoryV2Store {
     ensureMemoryFile,
     writeEntry,
     updateEntryStatus,
+    updateEntryRelations,
     writePending,
     listEntries,
     listPending,
@@ -148,6 +155,29 @@ export function updateEntryStatus(input: {
       superseded_by: input.supersededBy === undefined
         ? entry.frontmatter.superseded_by
         : input.supersededBy,
+      updated: new Date().toISOString()
+    }
+  };
+  writeMarkdownDocument(next.path, next.frontmatter, next.statement);
+  return next;
+}
+
+export function updateEntryRelations(input: {
+  scope: MemoryV2Scope;
+  workspaceSlug?: string;
+  id: string;
+  related: string[];
+}): MemoryV2Entry {
+  const entry = findEntryById(input);
+  if (!entry) {
+    throw new Error(`Memory entry not found: ${input.id}`);
+  }
+  const nextRelated = cleanList([...entry.frontmatter.related, ...input.related]);
+  const next: MemoryV2Entry = {
+    ...entry,
+    frontmatter: {
+      ...entry.frontmatter,
+      related: nextRelated,
       updated: new Date().toISOString()
     }
   };

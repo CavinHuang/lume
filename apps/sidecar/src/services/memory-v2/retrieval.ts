@@ -2,7 +2,13 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getMemoryV2ScopePaths } from "./paths";
 import { createMemoryV2Store, type MemoryV2Store } from "./markdown-store";
-import { createMemoryV2EmbeddingProvider, resolveMemoryEmbeddingModelRef, type MemoryV2EmbedTexts } from "./embedding";
+import {
+  createMemoryV2EmbeddingAttempts,
+  resolveMemoryEmbeddingModelRef,
+  type MemoryV2EmbeddingAttempt,
+  type MemoryV2EmbedTexts
+} from "./embedding";
+import { createMemoryV2QueryPlanner, type MemoryV2PlanQuery } from "./query-planner";
 import { createMemoryV2Reranker, type MemoryV2RerankItems } from "./rerank";
 import { searchSemanticRecall } from "./semantic-index";
 import { getMemoryRuntimeConfig } from "./policy";
@@ -31,7 +37,10 @@ export interface MemoryV2SearchInput {
   store?: MemoryV2Store;
   semantic?: "auto" | "off";
   embedTexts?: MemoryV2EmbedTexts;
+  embeddingAttempts?: MemoryV2EmbeddingAttempt[];
   rerankItems?: MemoryV2RerankItems;
+  queryPlan?: MemoryV2QueryPlan;
+  queryPlanner?: MemoryV2PlanQuery;
 }
 
 export type MemoryV2SearchIntent =
@@ -47,9 +56,13 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
   const store = input.store ?? createMemoryV2Store();
   const query = input.query.trim();
   if (!query) return [];
-  const intent = input.intent ?? inferSearchIntent(query);
-  const queryPlan = planMemoryV2Query(query);
   const runtimeConfig = getMemoryRuntimeConfig();
+  const intent = input.intent ?? inferSearchIntent(query);
+  const queryPlanner = input.queryPlanner ?? createMemoryV2QueryPlanner({
+    workspaceSlug: input.workspaceSlug,
+    modelRef: runtimeConfig.retrieval.rerankModelRef
+  });
+  const queryPlan = input.queryPlan ?? await resolveMemoryV2QueryPlan(query, queryPlanner);
   const scopes = input.scopes ?? (input.workspaceSlug ? ["global", "workspace"] : ["global"]);
   const entryCandidates = entryRecallCandidates(store.listEntries({
     workspaceSlug: input.workspaceSlug,
@@ -76,7 +89,8 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
     query,
     candidates: semanticCandidates,
     semantic: input.semantic ?? runtimeConfig.retrieval.semantic,
-    maxResults: input.maxResults ?? 8
+    maxResults: input.maxResults ?? 8,
+    hasBaseRecall: scored.length > 0
   });
   const merged = mergeRecallItems([...scored, ...semantic])
     .sort((a, b) => b.score - a.score)
@@ -96,6 +110,43 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
 function shouldKeepCandidateForQueryPlan(item: MemoryV2RecallItem, queryPlan: MemoryV2QueryPlan): boolean {
   if (!item.claim || !queryPlan.querySubject || queryPlan.desiredPredicates.length === 0) return true;
   return isClaimMatchForQuery(item, queryPlan);
+}
+
+async function resolveMemoryV2QueryPlan(
+  query: string,
+  planner?: MemoryV2PlanQuery
+): Promise<MemoryV2QueryPlan> {
+  const fallback = planMemoryV2Query(query);
+  if (!planner) return fallback;
+  try {
+    return mergeMemoryV2QueryPlans(fallback, await planner(query));
+  } catch {
+    return fallback;
+  }
+}
+
+function mergeMemoryV2QueryPlans(
+  fallback: MemoryV2QueryPlan,
+  planned?: MemoryV2QueryPlan
+): MemoryV2QueryPlan {
+  if (!planned) return fallback;
+  return {
+    querySubject: planned.querySubject ?? fallback.querySubject,
+    desiredPredicates: mergePredicates(fallback.desiredPredicates, planned.desiredPredicates),
+    includeConversationHistory: fallback.includeConversationHistory || planned.includeConversationHistory
+  };
+}
+
+function mergePredicates(left: string[], right: string[]): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const predicate of [...left, ...right]) {
+    const normalized = predicate.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    merged.push(predicate);
+  }
+  return merged;
 }
 
 export function inferSearchIntent(query: string): MemoryV2SearchIntent {
@@ -221,13 +272,21 @@ function scoreRecallItem(
   const itemTokens = tokenize(`${item.statement} ${item.path}`);
   const lexical = itemTokens.reduce((score, token) => score + (queryTokens.has(token) ? 1 : 0), 0);
   const semanticScore = semanticIntentBoost(item, intent);
-  if (claimScore === 0 && lexical === 0 && semanticScore === 0 && !item.pinned) return 0;
+  const historyScore = queryPlan.includeConversationHistory && isConversationHistoryRecallItem(item) ? 3 : 0;
+  if (claimScore === 0 && lexical === 0 && semanticScore === 0 && historyScore === 0 && !item.pinned) return 0;
   const pathScore = [...queryTokens].some((token) => item.path.toLowerCase().includes(token)) ? 1.5 : 0;
   const pinnedScore = item.pinned ? 2 : 0;
   const scopeScore = item.scope === "workspace" ? 1 : 0.5;
   const kindScore = kindIntentBoost(item.kind, intent);
   const stalePenalty = item.status === "suspected_stale" ? -3 : 0;
-  return claimScore + lexical + semanticScore + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
+  return claimScore + lexical + semanticScore + historyScore + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
+}
+
+function isConversationHistoryRecallItem(item: MemoryV2RecallItem): boolean {
+  return item.reason === "recent daily memory"
+    || item.reason === "recent run memory"
+    || item.id.includes(":daily:")
+    || item.id.includes(":run:");
 }
 
 function kindIntentBoost(kind: MemoryV2Kind, intent: MemoryV2SearchIntent): number {
@@ -292,24 +351,32 @@ async function maybeSemanticRecall(input: {
   candidates: MemoryV2RecallItem[];
   semantic: "auto" | "off";
   maxResults: number;
+  hasBaseRecall: boolean;
 }): Promise<MemoryV2RecallItem[]> {
   if (input.semantic === "off") return [];
-  const embedTexts = input.input.embedTexts ?? createMemoryV2EmbeddingProvider(input.input.workspaceSlug);
-  if (!embedTexts) return [];
-  try {
-    return await searchSemanticRecall({
-      workspaceSlug: input.input.workspaceSlug,
-      query: input.query,
-      candidates: input.candidates,
-      embedTexts,
-      modelKey: input.input.embedTexts
-        ? "test-embedding"
-        : resolveMemoryEmbeddingModelRef(getEffectiveLumeConfig(input.input.workspaceSlug)) ?? "configured-embedding",
-      maxResults: input.maxResults
-    });
-  } catch {
-    return [];
+  const hasExplicitEmbedding = Boolean(input.input.embedTexts || input.input.embeddingAttempts);
+  const configuredModelRef = resolveMemoryEmbeddingModelRef(getEffectiveLumeConfig(input.input.workspaceSlug));
+  if (!hasExplicitEmbedding && !configuredModelRef && input.hasBaseRecall) return [];
+  const attempts = input.input.embeddingAttempts ?? (
+    input.input.embedTexts
+      ? [{ modelKey: "test-embedding", embedTexts: input.input.embedTexts }]
+      : createMemoryV2EmbeddingAttempts(input.input.workspaceSlug)
+  );
+  for (const attempt of attempts) {
+    try {
+      return await searchSemanticRecall({
+        workspaceSlug: input.input.workspaceSlug,
+        query: input.query,
+        candidates: input.candidates,
+        embedTexts: attempt.embedTexts,
+        modelKey: attempt.modelKey,
+        maxResults: input.maxResults
+      });
+    } catch {
+      continue;
+    }
   }
+  return [];
 }
 
 function mergeRecallItems(items: MemoryV2RecallItem[]): MemoryV2RecallItem[] {

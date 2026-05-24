@@ -87,7 +87,7 @@ describe("memory-v2 user message prefix", () => {
   });
 
   test("injects preferred-name memory for Chinese name questions", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -113,7 +113,7 @@ describe("memory-v2 user message prefix", () => {
   });
 
   test("injects profile memories before noisy daily recall without duplicates", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -123,7 +123,7 @@ describe("memory-v2 user message prefix", () => {
         tags: ["profile", "identity", "preferred-name"]
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "state",
@@ -190,7 +190,7 @@ describe("memory-v2 user message prefix", () => {
   });
 
   test("injects assistant name claim separately from conversation history", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -204,7 +204,7 @@ describe("memory-v2 user message prefix", () => {
         }
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -245,7 +245,7 @@ describe("memory-v2 user message prefix", () => {
   });
 
   test("keeps weak history when identity question explicitly asks prior context", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -306,8 +306,30 @@ describe("memory-v2 user message prefix", () => {
     expect(context.userMessageForModel).not.toContain("modelId");
   });
 
+  test("uses compact run summaries instead of raw archived payloads", async () => {
+    createMemoryV2Store().appendRunArchive({
+      workspaceSlug: "demo",
+      runId: "summary-history",
+      record: {
+        summary: "User asked: compact memory recall summary.",
+        userMessage: "TAIL_SHOULD_NOT_APPEAR raw archived message",
+        threadId: "thread-secret"
+      }
+    });
+
+    const context = await buildMemoryV2UserMessageContext({
+      workspaceSlug: "demo",
+      sessionType: "main",
+      userMessage: "之前我们聊过什么？"
+    });
+
+    expect(context.userMessageForModel).toContain("compact memory recall summary");
+    expect(context.userMessageForModel).not.toContain("TAIL_SHOULD_NOT_APPEAR");
+    expect(context.userMessageForModel).not.toContain("thread-secret");
+  });
+
   test("injects user preference claims without relying on previous run history", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",

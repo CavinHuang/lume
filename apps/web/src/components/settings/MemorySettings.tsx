@@ -19,6 +19,7 @@ import type {
   MemoryIngestSourcesResult,
   MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryResult,
+  MemoryReadToolResult,
   MemoryRuntimeConfig,
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
@@ -40,6 +41,7 @@ import {
   openMemorySource,
   organizeMemoryEntries,
   organizeMemoryHistory,
+  readMemory,
   updateEmbeddingModelRef,
   updateMemoryRuntimeConfig,
 } from '@/lib/desktop-api'
@@ -54,6 +56,7 @@ import {
   MEMORY_STATUS_LABELS,
   MEMORY_TOOL_POLICY_GROUPS,
   buildEmbeddingModelOptions,
+  buildMemoryDetailRows,
   buildMemoryOverviewMetrics,
   buildRerankModelOptions,
   isMemoryToolGroupEnabled,
@@ -85,6 +88,8 @@ export function MemorySettings() {
   const [organizeResult, setOrganizeResult] = React.useState<MemoryOrganizeHistoryResult | null>(null)
   const [ingestJob, setIngestJob] = React.useState<MemoryIngestSourcesJob | null>(null)
   const [ingestResult, setIngestResult] = React.useState<MemoryIngestSourcesResult | null>(null)
+  const [memoryDetail, setMemoryDetail] = React.useState<MemoryReadToolResult | null>(null)
+  const [selectedMemoryId, setSelectedMemoryId] = React.useState<string | null>(null)
   const [externalText, setExternalText] = React.useState('')
   const [workspaceFilePath, setWorkspaceFilePath] = React.useState('')
 
@@ -166,6 +171,13 @@ export function MemorySettings() {
   const handleOpenMemoryFile = (path: string) => runAction(`open-${path}`, async () => {
     if (!workspaceSlug) return
     await openMemorySource({ workspaceSlug, path })
+  })
+
+  const handleInspectMemoryEntry = (entry: MemorySettingsEntrySummary) => runAction(`inspect-${entry.id}`, async () => {
+    if (!workspaceSlug) return
+    setSelectedMemoryId(entry.id)
+    const detail = await readMemory({ workspaceSlug, id: entry.id })
+    setMemoryDetail(detail)
   })
 
   const handleTogglePolicyGroup = (
@@ -372,7 +384,11 @@ export function MemorySettings() {
         <MemoryCollectionPanel
           entries={snapshot?.workspaceEntries ?? []}
           files={(snapshot?.files ?? []).filter((file) => file.scope === 'workspace')}
+          busyAction={busyAction}
+          detail={memoryDetail}
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
+          onInspectEntry={(entry) => void handleInspectMemoryEntry(entry)}
+          selectedEntryId={selectedMemoryId}
           title="工作区"
         />
       )}
@@ -381,7 +397,11 @@ export function MemorySettings() {
         <MemoryCollectionPanel
           entries={snapshot?.globalEntries ?? []}
           files={(snapshot?.files ?? []).filter((file) => file.scope === 'global')}
+          busyAction={busyAction}
+          detail={memoryDetail}
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
+          onInspectEntry={(entry) => void handleInspectMemoryEntry(entry)}
+          selectedEntryId={selectedMemoryId}
           title="全局"
         />
       )}
@@ -723,14 +743,22 @@ function OverviewPanel({
 }
 
 function MemoryCollectionPanel({
+  busyAction,
+  detail,
   entries,
   files,
   onOpenFile,
+  onInspectEntry,
+  selectedEntryId,
   title,
 }: {
+  busyAction: string | null
+  detail: MemoryReadToolResult | null
   entries: MemorySettingsEntrySummary[]
   files: MemorySettingsFileSummary[]
   onOpenFile: (path: string) => void
+  onInspectEntry: (entry: MemorySettingsEntrySummary) => void
+  selectedEntryId: string | null
   title: string
 }) {
   return (
@@ -739,7 +767,7 @@ function MemoryCollectionPanel({
         {title === '全局' ? <Globe2 size={16} /> : <FileText size={16} />}
         {title}
       </div>
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_minmax(0,1.1fr)]">
         <div className="space-y-2">
           {files.map((file) => (
             <FileRow key={file.path} file={file} onOpenFile={onOpenFile} />
@@ -748,10 +776,17 @@ function MemoryCollectionPanel({
         </div>
         <div className="space-y-2">
           {entries.map((entry) => (
-            <EntryRow key={entry.id} entry={entry} onOpenFile={onOpenFile} />
+            <EntryRow
+              key={entry.id}
+              busy={busyAction === `inspect-${entry.id}`}
+              entry={entry}
+              selected={selectedEntryId === entry.id}
+              onInspectEntry={onInspectEntry}
+            />
           ))}
           {entries.length === 0 && <EmptyInline text="暂无语义记忆" />}
         </div>
+        <MemoryDetailPanel detail={detail} onOpenFile={onOpenFile} />
       </div>
     </section>
   )
@@ -817,22 +852,30 @@ function FileRow({
 }
 
 function EntryRow({
+  busy,
   entry,
-  onOpenFile,
+  onInspectEntry,
+  selected,
 }: {
+  busy: boolean
   entry: MemorySettingsEntrySummary
-  onOpenFile: (path: string) => void
+  onInspectEntry: (entry: MemorySettingsEntrySummary) => void
+  selected: boolean
 }) {
   return (
     <button
       type="button"
-      onClick={() => onOpenFile(entry.path)}
-      className="block w-full rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]"
+      onClick={() => onInspectEntry(entry)}
+      className={cn(
+        'block w-full rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]',
+        selected && 'border-[var(--brand)] bg-[var(--surface-3)]',
+      )}
     >
       <div className="flex flex-wrap items-center gap-2 text-[12px] font-medium text-[var(--text-3)]">
         <span>{summarizeMemoryEntry(entry)}</span>
         {entry.pinned && <StatusBadge tone="good">置顶</StatusBadge>}
         {entry.status === 'suspected_stale' && <StatusBadge tone="warn">{MEMORY_STATUS_LABELS.suspected_stale}</StatusBadge>}
+        {busy && <StatusBadge tone="neutral">读取中</StatusBadge>}
       </div>
       <p className="mt-1 line-clamp-3 text-[13px] leading-5 text-[var(--text-1)]">{entry.statement}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-3)]">
@@ -841,6 +884,50 @@ function EntryRow({
         <span>{formatDate(entry.updated)}</span>
       </div>
     </button>
+  )
+}
+
+function MemoryDetailPanel({
+  detail,
+  onOpenFile,
+}: {
+  detail: MemoryReadToolResult | null
+  onOpenFile: (path: string) => void
+}) {
+  const rows = buildMemoryDetailRows(detail)
+  if (!detail) {
+    return <EmptyInline text="选择一条记忆查看完整内容" />
+  }
+  const path = detail.path ?? detail.citation
+  return (
+    <div className="min-w-0 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[13px] font-semibold text-[var(--text-1)]">记忆详情</div>
+        {path && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenFile(path)}
+          >
+            <FileText size={14} />
+            打开文件
+          </Button>
+        )}
+      </div>
+      {rows.length > 0 && (
+        <dl className="mt-3 grid gap-2 text-[12px]">
+          {rows.map((row) => (
+            <div key={row.label} className="grid gap-1 sm:grid-cols-[72px_minmax(0,1fr)]">
+              <dt className="text-[var(--text-3)]">{row.label}</dt>
+              <dd className="min-w-0 break-words font-mono text-[var(--text-1)]">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <pre className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-border bg-[var(--surface-1)] p-3 text-[12px] leading-5 text-[var(--text-1)]">
+        {detail.text}
+      </pre>
+    </div>
   )
 }
 

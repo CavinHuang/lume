@@ -86,7 +86,7 @@ export async function rememberMemoryTool(input: MemoryRememberToolInput): Promis
   const scope = toMemoryV2Scope(input.scope);
   const kind = toMemoryV2Kind(input.kind);
   const candidate = normalizeRememberCandidate(input, scope, kind);
-  const result = smartAddMemoryV2Candidate({
+  const result = await smartAddMemoryV2Candidate({
     workspaceSlug: input.workspaceSlug,
     candidate
   });

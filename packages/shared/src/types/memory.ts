@@ -373,10 +373,14 @@ export interface MemorySettingsSnapshot {
   retrieval: MemorySettingsRetrievalStatus;
 }
 
+export const MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF = "local-onnx/Xenova/bge-small-zh-v1.5";
+export const MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL = "本地 ONNX bge-small-zh";
+
 export interface MemorySettingsRetrievalStatus {
   semantic: {
     mode: MemorySemanticMode;
     embeddingModelRef?: string;
+    fallbackModelRef?: string;
     status: "disabled" | "not_configured" | "available" | "stale" | "failed";
     message: string;
   };

@@ -10,7 +10,7 @@ import type {
 } from "@lume/shared";
 import { getMemoryV2ScopePaths } from "./paths";
 import { createMemoryV2Store } from "./markdown-store";
-import { resolveMemoryEmbeddingModelRef } from "./embedding";
+import { resolveMemoryEmbeddingModelRef, resolveMemoryEmbeddingStatusModelRef } from "./embedding";
 import { resolveMemoryRerankModelRef } from "./rerank";
 import { getSemanticIndexStatus } from "./semantic-index";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
@@ -37,10 +37,11 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
   const runtimeConfig = getMemoryRuntimeConfig();
   const lumeConfig = getEffectiveLumeConfig(workspaceSlug);
   const embeddingModelRef = resolveMemoryEmbeddingModelRef(lumeConfig);
+  const semanticModelRef = resolveMemoryEmbeddingStatusModelRef(lumeConfig);
   const semanticStatus = getSemanticIndexStatus({
     workspaceSlug,
     semantic: runtimeConfig.retrieval.semantic,
-    embeddingModelRef
+    embeddingModelRef: semanticModelRef
   });
   const rerank = resolveMemoryRerankModelRef({
     workspaceSlug,
@@ -75,8 +76,11 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
       semantic: {
         mode: runtimeConfig.retrieval.semantic,
         ...(embeddingModelRef ? { embeddingModelRef } : {}),
+        ...(semanticModelRef && !embeddingModelRef ? { fallbackModelRef: semanticModelRef } : {}),
         status: semanticStatus.status,
-        message: semanticStatus.message
+        message: embeddingModelRef
+          ? semanticStatus.message
+          : `${semanticStatus.message}；未配置远程 embedding 时会使用本地 ONNX`
       },
       rerank: {
         ...(rerank.modelRef ? { modelRef: rerank.modelRef } : {}),

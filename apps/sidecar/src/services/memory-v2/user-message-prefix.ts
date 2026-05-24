@@ -147,11 +147,13 @@ function summarizeConversationHistory(value: string): string {
     .filter((record): record is Record<string, unknown> => Boolean(record));
   if (records.length > 0) {
     return records.map((record) => {
+      const summary = typeof record.summary === "string" ? record.summary : undefined;
+      if (summary) return compactHistoryLine(summary);
       const userMessage = typeof record.userMessage === "string" ? record.userMessage : undefined;
       const assistantMessage = typeof record.assistantMessage === "string" ? record.assistantMessage : undefined;
       return [
-        userMessage ? `User asked: ${userMessage}` : undefined,
-        assistantMessage ? `Assistant replied: ${assistantMessage}` : undefined
+        userMessage ? `User asked: ${compactHistoryLine(userMessage)}` : undefined,
+        assistantMessage ? `Assistant replied: ${compactHistoryLine(assistantMessage)}` : undefined
       ].filter(Boolean).join("; ");
     }).filter(Boolean).join(" | ");
   }
@@ -159,6 +161,12 @@ function summarizeConversationHistory(value: string): string {
     .replace(/^#+\s+/gm, "")
     .replace(/\b(?:threadId|modelId|model|runId)\s*[:=]\s*[^\s，。！？,!.]+/gi, "")
     .trim();
+}
+
+function compactHistoryLine(value: string, maxLength = 180): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, maxLength - 3)}...`;
 }
 
 function safeJsonParse(value: string): Record<string, unknown> | undefined {

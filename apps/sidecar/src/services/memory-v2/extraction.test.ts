@@ -322,6 +322,49 @@ describe("extractExplicitMemoryCandidates", () => {
     })]);
   });
 
+  test("tries fallback memory models when the primary LLM extraction model fails", async () => {
+    const models: string[] = [];
+    const candidates = await extractMemoryCandidatesWithLlm({
+      text: "以后默认用中文回答",
+      workspaceSlug: "demo",
+      modelRef: "openai/broken-small",
+      fallbackModelRefs: ["ollama/qwen2.5:7b"],
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage(params) {
+          models.push(params.model);
+          if (params.model === "broken-small") {
+            throw new Error("remote unavailable");
+          }
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [{
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户偏好默认用中文回答",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "以后默认用中文回答",
+                  reason: "User stated a durable language preference."
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(models).toEqual(["broken-small", "qwen2.5:7b"]);
+    expect(candidates[0]).toMatchObject({
+      statement: "用户偏好默认用中文回答"
+    });
+  });
+
   test("resolves memory extraction model ref from memory config", () => {
     expect(resolveMemoryExtractionModelRef({
       memory: {

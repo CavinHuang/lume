@@ -20,7 +20,7 @@ afterEach(() => {
 
 describe("searchMemoryV2", () => {
   test("boosts decision memories for architecture queries", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -30,7 +30,7 @@ describe("searchMemoryV2", () => {
         tags: ["architecture"]
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -53,7 +53,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("recalls preferred-name memories for Chinese name questions", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -77,8 +77,45 @@ describe("searchMemoryV2", () => {
     });
   });
 
+  test("uses query planning to recall structured preference claims beyond keyword rules", async () => {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "User wants final reports to mention changed files and remaining risks.",
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preference",
+          object: "Final reports include changed files and remaining risks."
+        }
+      }
+    });
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "收尾报告应该怎么写？",
+      maxResults: 3,
+      semantic: "off",
+      queryPlanner: async () => ({
+        querySubject: "user/self",
+        desiredPredicates: ["preference"],
+        includeConversationHistory: false
+      })
+    });
+
+    expect(results[0]).toMatchObject({
+      statement: "User wants final reports to mention changed files and remaining risks.",
+      claim: {
+        subject: "user/self",
+        predicate: "preference"
+      }
+    });
+  });
+
   test("recalls assistant preferred-name claim for assistant identity questions before history", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -92,7 +129,7 @@ describe("searchMemoryV2", () => {
         }
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -138,7 +175,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("does not let semantic recall reintroduce claims for the wrong subject", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -152,7 +189,7 @@ describe("searchMemoryV2", () => {
         }
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -183,8 +220,46 @@ describe("searchMemoryV2", () => {
     expect(results.some((item) => item.claim?.subject === "user/self")).toBe(false);
   });
 
+  test("tries local ONNX semantic recall when the remote embedding attempt fails", async () => {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "fact",
+        targetScope: "workspace",
+        statement: "这两天一起写的文章主题是飞鸟与鱼。",
+        confidence: "high"
+      }
+    });
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "最近写了什么文章？",
+      maxResults: 3,
+      semantic: "auto",
+      embeddingAttempts: [
+        {
+          modelKey: "remote/broken",
+          embedTexts: async () => {
+            throw new Error("remote embedding down");
+          }
+        },
+        {
+          modelKey: "local-onnx/test",
+          embedTexts: async (texts) => texts.map((text) => (
+            text.includes("文章") ? [1, 0] : [0, 1]
+          ))
+        }
+      ]
+    });
+
+    expect(results[0]).toMatchObject({
+      statement: "这两天一起写的文章主题是飞鸟与鱼。"
+    });
+    expect(results[0]?.reason).toContain("semantic match");
+  });
+
   test("recalls user preferred-name claim for user identity questions", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -217,7 +292,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("recalls user preference claim for preference questions without mixing assistant claims", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -231,7 +306,7 @@ describe("searchMemoryV2", () => {
         }
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -276,7 +351,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("recalls workspace preference claim for workspace-scoped preference questions", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -290,7 +365,7 @@ describe("searchMemoryV2", () => {
         }
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -324,7 +399,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("recalls workspace source-of-truth claims before noisy run history", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "fact",
@@ -368,7 +443,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("uses semantic recall when embeddings are available", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -396,7 +471,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("falls back to lexical recall when semantic recall fails", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -423,7 +498,7 @@ describe("searchMemoryV2", () => {
   });
 
   test("reranks candidate order when a reranker is available", async () => {
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -433,7 +508,7 @@ describe("searchMemoryV2", () => {
         tags: ["architecture"]
       }
     });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",

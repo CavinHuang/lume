@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { smartAddMemoryV2Candidate } from "./smart-add";
+import { createMemoryV2Store } from "./markdown-store";
 
 let root: string;
 
@@ -17,8 +18,8 @@ afterEach(() => {
 });
 
 describe("smartAddMemoryV2Candidate", () => {
-  test("stores a new active memory and skips exact duplicates", () => {
-    const first = smartAddMemoryV2Candidate({
+  test("stores a new active memory and skips exact duplicates", async () => {
+    const first = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -31,7 +32,7 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(first.action).toBe("new");
     expect(first.entry?.frontmatter.status).toBe("active");
 
-    const second = smartAddMemoryV2Candidate({
+    const second = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -45,8 +46,8 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
   });
 
-  test("skips near-duplicate durable memories instead of appending another entry", () => {
-    const first = smartAddMemoryV2Candidate({
+  test("skips near-duplicate durable memories instead of appending another entry", async () => {
+    const first = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -57,7 +58,7 @@ describe("smartAddMemoryV2Candidate", () => {
       }
     });
 
-    const second = smartAddMemoryV2Candidate({
+    const second = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "decision",
@@ -73,8 +74,68 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
   });
 
-  test("routes low-confidence candidates to pending", () => {
-    const result = smartAddMemoryV2Candidate({
+  test("uses embeddings to skip semantic near-duplicates when lexical overlap is weak", async () => {
+    const first = await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "Final reports must list changed files and remaining risks.",
+        confidence: "high",
+        tags: ["reporting"]
+      },
+      embedTexts: async (texts) => texts.map(() => [1, 0])
+    });
+
+    const second = await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "Closing summaries should include touched files and leftover risk.",
+        confidence: "high",
+        tags: ["reporting"]
+      },
+      embedTexts: async (texts) => texts.map(() => [1, 0])
+    });
+
+    expect(first.action).toBe("new");
+    expect(second.action).toBe("duplicate");
+    expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
+  });
+
+  test("updates related entries when storing a new related memory", async () => {
+    const first = await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "fact",
+        targetScope: "workspace",
+        statement: "Lume memory stores Markdown entries as the source of truth.",
+        confidence: "high",
+        entities: ["memory-system"]
+      }
+    });
+    const second = await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "fact",
+        targetScope: "workspace",
+        statement: "Lume memory rebuilds vector indexes from Markdown entries.",
+        confidence: "high",
+        entities: ["memory-system"]
+      }
+    });
+
+    expect(second.action).toBe("related");
+    expect(second.entry?.frontmatter.related).toEqual([first.entry!.frontmatter.id]);
+    const refreshedFirst = createMemoryV2Store()
+      .listEntries({ workspaceSlug: "demo", scopes: ["workspace"], includeStatuses: ["active"] })
+      .find((entry) => entry.frontmatter.id === first.entry!.frontmatter.id);
+    expect(refreshedFirst?.frontmatter.related).toEqual([second.entry!.frontmatter.id]);
+  });
+
+  test("routes low-confidence candidates to pending", async () => {
+    const result = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "fact",
@@ -87,8 +148,8 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(result.pending?.frontmatter.type).toBe("low-confidence");
   });
 
-  test("marks related commute memory suspected stale when location changes", () => {
-    const first = smartAddMemoryV2Candidate({
+  test("marks related commute memory suspected stale when location changes", async () => {
+    const first = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "fact",
@@ -98,7 +159,7 @@ describe("smartAddMemoryV2Candidate", () => {
         entities: ["commute"]
       }
     });
-    const second = smartAddMemoryV2Candidate({
+    const second = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "fact",
@@ -113,8 +174,8 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.pending?.frontmatter.type).toBe("stale");
   });
 
-  test("does not append duplicate preferred-name profile memories", () => {
-    const first = smartAddMemoryV2Candidate({
+  test("does not append duplicate preferred-name profile memories", async () => {
+    const first = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -124,7 +185,7 @@ describe("smartAddMemoryV2Candidate", () => {
         tags: ["profile", "identity", "preferred-name"]
       }
     });
-    const second = smartAddMemoryV2Candidate({
+    const second = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -140,8 +201,8 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
   });
 
-  test("uses claim key to skip duplicate preferred-name memories", () => {
-    const first = smartAddMemoryV2Candidate({
+  test("uses claim key to skip duplicate preferred-name memories", async () => {
+    const first = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -155,7 +216,7 @@ describe("smartAddMemoryV2Candidate", () => {
         }
       }
     });
-    const second = smartAddMemoryV2Candidate({
+    const second = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -175,8 +236,8 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.existingIds).toEqual([first.entry!.frontmatter.id]);
   });
 
-  test("routes preferred-name changes to conflict review", () => {
-    const first = smartAddMemoryV2Candidate({
+  test("routes preferred-name changes to conflict review", async () => {
+    const first = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -186,7 +247,7 @@ describe("smartAddMemoryV2Candidate", () => {
         tags: ["profile", "identity", "preferred-name"]
       }
     });
-    const second = smartAddMemoryV2Candidate({
+    const second = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -202,8 +263,8 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.pending?.frontmatter.type).toBe("conflict");
   });
 
-  test("routes same claim key with different object to conflict review", () => {
-    const first = smartAddMemoryV2Candidate({
+  test("routes same claim key with different object to conflict review", async () => {
+    const first = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -217,7 +278,7 @@ describe("smartAddMemoryV2Candidate", () => {
         }
       }
     });
-    const second = smartAddMemoryV2Candidate({
+    const second = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -238,8 +299,8 @@ describe("smartAddMemoryV2Candidate", () => {
     expect(second.pending?.frontmatter.type).toBe("conflict");
   });
 
-  test("does not conflict assistant preferred name with user preferred name", () => {
-    const userName = smartAddMemoryV2Candidate({
+  test("does not conflict assistant preferred name with user preferred name", async () => {
+    const userName = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",
@@ -254,7 +315,7 @@ describe("smartAddMemoryV2Candidate", () => {
         }
       }
     });
-    const assistantName = smartAddMemoryV2Candidate({
+    const assistantName = await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "preference",

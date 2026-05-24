@@ -1,3 +1,7 @@
+import {
+  MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL,
+  MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
+} from '@lume/shared'
 import type {
   Channel,
   MemoryIngestSourcesJob,
@@ -6,6 +10,7 @@ import type {
   MemoryOrganizeEntriesResult,
   MemoryPendingCounts,
   MemoryOrganizeHistoryResult,
+  MemoryReadToolResult,
   MemoryRuntimeConfig,
   MemorySettingsEntrySummary,
   MemorySettingsPendingSummary,
@@ -19,6 +24,11 @@ export interface MemoryOverviewMetric {
   label: string
   value: string
   tone: 'neutral' | 'good' | 'warn'
+}
+
+export interface MemoryDetailRow {
+  label: string
+  value: string
 }
 
 export const MEMORY_SETTINGS_VIEWS: Array<{
@@ -101,14 +111,17 @@ function buildChannelModelRef(channel: Channel, modelId: string): string {
 }
 
 export function buildEmbeddingModelOptions(channels: Channel[]): MemoryEmbeddingModelOption[] {
-  return channels
+  return [{
+    modelRef: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
+    label: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL,
+  }, ...channels
     .filter((channel) => channel.enabled)
     .flatMap((channel) => channel.models
       .filter((model) => model.enabled && model.capabilities?.embedding === true)
       .map((model) => ({
         modelRef: buildChannelModelRef(channel, model.id),
         label: `${model.name} · ${channel.name}`,
-      })))
+      })))]
 }
 
 export function buildRerankModelOptions(channels: Channel[]): MemoryEmbeddingModelOption[] {
@@ -228,4 +241,26 @@ export function summarizeMemoryIngestSourcesJob(job: MemoryIngestSourcesJob): st
 export function summarizeMemoryEntry(entry: MemorySettingsEntrySummary): string {
   const scope = entry.scope === 'global' ? '全局' : '工作区'
   return `${scope} · ${MEMORY_KIND_LABELS[entry.kind]} · ${MEMORY_STATUS_LABELS[entry.status]}`
+}
+
+export function buildMemoryDetailRows(detail: MemoryReadToolResult | null): MemoryDetailRow[] {
+  if (!detail) return []
+  const scope = detail.metadata?.scope === 'global'
+    ? '全局'
+    : detail.metadata?.scope === 'workspace'
+    ? '工作区'
+    : undefined
+  const kind = detail.metadata?.kind ? MEMORY_KIND_LABELS[detail.metadata.kind] : undefined
+  const claim = detail.metadata?.claim
+    ? `${detail.metadata.claim.subject}.${detail.metadata.claim.predicate} = ${detail.metadata.claim.object}`
+    : undefined
+  const tags = detail.metadata?.tags?.length ? detail.metadata.tags.join(', ') : undefined
+  const path = detail.path ?? detail.citation
+  return [
+    scope ? { label: '范围', value: scope } : undefined,
+    kind ? { label: '类型', value: kind } : undefined,
+    claim ? { label: 'Claim', value: claim } : undefined,
+    tags ? { label: '标签', value: tags } : undefined,
+    path ? { label: '路径', value: path } : undefined,
+  ].filter((row): row is MemoryDetailRow => Boolean(row))
 }

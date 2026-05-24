@@ -1,4 +1,5 @@
 import { createMemoryV2Store, type MemoryV2Store } from "./markdown-store";
+import { createMemoryV2EmbeddingProvider, type MemoryV2EmbedTexts } from "./embedding";
 import type {
   MemoryV2Candidate,
   MemoryV2Entry,
@@ -18,11 +19,12 @@ export function shouldSuppressDurableMemory(text: string): boolean {
   return /\bdo not remember\b|\bdon't remember\b|\bdo not save\b|不要记住|别记住|不要保存/i.test(text);
 }
 
-export function smartAddMemoryV2Candidate(input: {
+export async function smartAddMemoryV2Candidate(input: {
   workspaceSlug?: string;
   candidate: MemoryV2Candidate;
   store?: MemoryV2Store;
-}): MemoryV2SmartAddResult {
+  embedTexts?: MemoryV2EmbedTexts;
+}): Promise<MemoryV2SmartAddResult> {
   const store = input.store ?? createMemoryV2Store();
   const statement = input.candidate.statement.trim();
   if (!statement) {
@@ -100,6 +102,20 @@ export function smartAddMemoryV2Candidate(input: {
       reason: "Candidate is substantially similar to an active memory."
     };
   }
+  const semanticDuplicate = await findSemanticDuplicate({
+    candidate,
+    entries: existing,
+    embedTexts: input.embedTexts ?? createMemoryV2EmbeddingProvider(input.workspaceSlug, {
+      includeImplicitLocal: false
+    })
+  });
+  if (semanticDuplicate) {
+    return {
+      action: "duplicate",
+      existingIds: [semanticDuplicate.frontmatter.id],
+      reason: "Candidate is semantically similar to an active memory."
+    };
+  }
 
   const lowConfidence = candidate.confidence === "low";
   if (lowConfidence) {
@@ -174,12 +190,51 @@ export function smartAddMemoryV2Candidate(input: {
   const entry = store.writeEntry(candidate, {
     related: related.map((item) => item.frontmatter.id)
   });
+  for (const relatedEntry of related) {
+    store.updateEntryRelations({
+      scope: relatedEntry.frontmatter.scope,
+      workspaceSlug: relatedEntry.frontmatter.scope === "workspace" ? input.workspaceSlug : undefined,
+      id: relatedEntry.frontmatter.id,
+      related: [entry.frontmatter.id]
+    });
+  }
   return {
     action: related.length > 0 ? "related" : "new",
     entry,
     existingIds: related.map((item) => item.frontmatter.id),
     reason: related.length > 0 ? "Candidate stored with related memory links." : "Candidate stored as active memory."
   };
+}
+
+async function findSemanticDuplicate(input: {
+  candidate: MemoryV2Candidate;
+  entries: MemoryV2Entry[];
+  embedTexts?: MemoryV2EmbedTexts;
+}): Promise<MemoryV2Entry | undefined> {
+  if (!input.embedTexts) return undefined;
+  const comparable = input.entries.filter((entry) =>
+    !hasDifferentClaimKey(input.candidate, entry)
+    && entry.frontmatter.kind === input.candidate.kind
+  );
+  if (comparable.length === 0) return undefined;
+  try {
+    const vectors = await input.embedTexts([
+      input.candidate.statement,
+      ...comparable.map((entry) => entry.statement)
+    ]);
+    const candidateVector = vectors[0];
+    if (!candidateVector || candidateVector.length === 0) return undefined;
+    let best: { entry: MemoryV2Entry; score: number } | undefined;
+    for (let index = 0; index < comparable.length; index += 1) {
+      const entryVector = vectors[index + 1];
+      if (!entryVector || entryVector.length === 0) continue;
+      const score = cosineSimilarity(candidateVector, entryVector);
+      if (!best || score > best.score) best = { entry: comparable[index]!, score };
+    }
+    return best && best.score >= 0.92 ? best.entry : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function hasDifferentClaimKey(candidate: MemoryV2Candidate, entry: MemoryV2Entry): boolean {
@@ -249,4 +304,21 @@ function normalizeStatement(value: string): string {
 
 function normalizeToken(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const length = Math.min(a.length, b.length);
+  if (length === 0) return 0;
+  let dot = 0;
+  let aNorm = 0;
+  let bNorm = 0;
+  for (let index = 0; index < length; index += 1) {
+    const av = a[index] ?? 0;
+    const bv = b[index] ?? 0;
+    dot += av * bv;
+    aNorm += av * av;
+    bNorm += bv * bv;
+  }
+  if (aNorm === 0 || bNorm === 0) return 0;
+  return dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm));
 }

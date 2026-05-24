@@ -139,7 +139,7 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
       const chunk = chunkById.get(item.sourceId);
       if (!chunk) continue;
       candidateCount += 1;
-      const result = smartAddMemoryV2Candidate({
+      const result = await smartAddMemoryV2Candidate({
         workspaceSlug: input.workspaceSlug,
         candidate: candidateWithSourceEvidence(item.candidate, chunk),
         store

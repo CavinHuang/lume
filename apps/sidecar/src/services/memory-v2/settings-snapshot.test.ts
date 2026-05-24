@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("memory-v2 settings snapshot", () => {
-  test("summarizes files, entries, and pending review counts from Memory V2 markdown", () => {
+  test("summarizes files, entries, and pending review counts from Memory V2 markdown", async () => {
     const store = createMemoryV2Store();
     store.ensureMemoryFile("workspace", "demo");
     store.ensureMemoryFile("global");
@@ -30,7 +30,7 @@ describe("memory-v2 settings snapshot", () => {
       statement: "User prefers concise engineering updates.",
       confidence: "high"
     }, { pinned: true });
-    smartAddMemoryV2Candidate({
+    await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
         kind: "fact",
@@ -72,7 +72,8 @@ describe("memory-v2 settings snapshot", () => {
     expect(snapshot.files.map((file) => file.kind)).toEqual(expect.arrayContaining(["memory", "daily", "run"]));
     expect(snapshot.retrieval.semantic).toMatchObject({
       mode: "auto",
-      status: "not_configured"
+      status: "stale",
+      fallbackModelRef: "local-onnx/Xenova/bge-small-zh-v1.5"
     });
     expect(snapshot.retrieval.rerank.source).toBe("disabled");
   });
