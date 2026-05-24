@@ -10,7 +10,7 @@ Add a first-party IM integration layer to Lume. The first supported channel is W
 
 The goal is to let messages from Weixin enter a Lume agent thread and let the agent reply through the same Weixin conversation without embedding the OpenClaw runtime as a dependency. Lume should reuse OpenClaw Weixin's mature protocol shape, but keep ownership of runtime orchestration, thread mapping, safety policy, settings, and UI.
 
-Phase 1 focuses on text messages and multi-account isolation. Media upload, Feishu, Telegram, and richer directory features are designed as follow-on adapters behind the same IM service boundary.
+Phase 1 focuses on text messages and Alice-style multi-Weixin account linking. A single Lume install must be able to link, list, enable, disable, and run several Weixin accounts at the same time, with each account isolated by runtime worker and thread binding. Media upload, Feishu, Telegram, and richer directory features are designed as follow-on adapters behind the same IM service boundary.
 
 ## References
 
@@ -25,6 +25,7 @@ Phase 1 focuses on text messages and multi-account isolation. Media upload, Feis
 
 - Support Weixin inbound text messages through the Tencent OpenClaw Weixin backend protocol.
 - Support Weixin text replies from Lume agent threads.
+- Support linking multiple Weixin accounts in one Lume install, similar to Alice's multiple bot bindings.
 - Keep IM accounts, model-provider channels, and MCP servers as separate concepts.
 - Reuse existing agent thread, runtime tool, RPC, settings, and workspace patterns.
 - Store IM credentials locally with the same encryption posture used for provider API keys.
@@ -130,6 +131,8 @@ interface ImAccount {
 }
 ```
 
+Each `ImAccount` represents one linked Weixin login. `id` is Lume's stable local account id; `accountKey` is the remote identity returned by the Weixin link/login flow when available. Two accounts from the same provider must never share worker state, cursor state, status, token, or thread bindings.
+
 Store thread bindings separately:
 
 ```ts
@@ -197,7 +200,9 @@ Required account fields:
 - `enabled`
 - user-facing label
 
-If QR login is implemented in the first chunk, Lume should mirror OpenClaw's flow:
+The setup surface must be account-list based, not singleton based. Users should be able to add another Weixin account without replacing the existing one, and each account should expose independent start, stop, reconnect, disable, and delete actions.
+
+If QR login is implemented in the first chunk, Lume should mirror OpenClaw's flow for each account:
 
 1. Start login.
 2. Return QR code data to the web UI.
@@ -210,7 +215,7 @@ If QR login details are not fully stable at implementation time, ship manual tok
 ## Inbound Flow
 
 1. On sidecar boot, `im-runtime-manager` loads enabled accounts.
-2. Each account starts one `openclaw-weixin-worker`.
+2. Each enabled Weixin account starts one independent `openclaw-weixin-worker`.
 3. The worker long-polls `getupdates` with the stored cursor.
 4. Each message is normalized into a Lume IM envelope.
 5. Deduplication drops already-seen message IDs.
@@ -223,6 +228,8 @@ If QR login details are not fully stable at implementation time, ship manual tok
    - a restricted tool policy for IM-originated runs
 
 The user-facing message body should include speaker attribution for group messages and minimal channel context for direct messages.
+
+Worker failures are account-local. If one linked Weixin account expires or fails, other linked accounts keep running.
 
 ## Outbound Flow
 
@@ -274,13 +281,15 @@ Add an `IM` or `Integrations` tab under Settings.
 Phase 1 fields:
 
 - Provider: Weixin
+- Accounts list with one row per linked Weixin account
+- Add Weixin account action
 - Account label
-- Base URL
-- Token or QR login action
+- Base URL per account
+- Token import or QR login action per account
 - Bot agent string
 - Enabled toggle
-- Status: stopped, running, auth needed, error
-- Start/stop/reconnect actions
+- Status per account: stopped, running, auth needed, error
+- Start/stop/reconnect/delete actions per account
 
 The UI should not present this as a model channel. It is an external messaging account.
 
@@ -297,6 +306,7 @@ Use focused tests only for the touched logic:
   - isolates by provider/account/peer
   - updates `contextToken`
   - reuses existing thread binding
+  - creates distinct threads for the same peer id across different linked accounts
 - `im-message-router.test.ts`
   - maps direct/group Weixin messages to `AgentSendInput`
   - applies IM tool policy
@@ -316,11 +326,12 @@ Do not run full repository lint or full test suites for this feature unless the 
 Phase 1:
 
 - Weixin config storage.
+- Multiple linked Weixin accounts in one config.
 - Manual token import or QR login if endpoint details are confirmed.
-- Worker long-poll text receive.
-- Thread binding.
+- Independent worker long-poll text receive per enabled account.
+- Thread binding isolated by account and peer.
 - `send_im_message` text reply tool.
-- Settings status surface.
+- Settings account list and per-account status surface.
 
 Phase 2:
 
