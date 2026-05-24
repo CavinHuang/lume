@@ -7,6 +7,7 @@ import {
   startAutomationRunner,
   stopAutomationRunner
 } from "./services/automation/automation-runner-service";
+import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -116,6 +117,7 @@ async function boot(): Promise<void> {
   const stopWatcher = (): void => {
     unsubscribeSubagentAnnounce();
     stopWorkspaceWatcher();
+    void getWorkspaceMcpManager().disposeAll().catch(() => {});
     void stopAutomationRunner().catch(() => {});
   };
   process.once("exit", stopWatcher);

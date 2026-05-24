@@ -1056,6 +1056,16 @@ export const AGENT_IPC_CHANNELS = {
   GET_MCP_CONFIG: 'agent:get-mcp-config',
   /** 保存工作区 MCP 配置 */
   SAVE_MCP_CONFIG: 'agent:save-mcp-config',
+  /** 获取工作区 MCP 连接状态 */
+  GET_MCP_STATUS: 'agent:get-mcp-status',
+  /** 测试单个 MCP 服务连接 */
+  TEST_MCP_SERVER: 'agent:test-mcp-server',
+  /** 列出 MCP 资源 */
+  LIST_MCP_RESOURCES: 'agent:list-mcp-resources',
+  /** 读取 MCP 资源 */
+  READ_MCP_RESOURCE: 'agent:read-mcp-resource',
+  /** 诊断调用 MCP 工具 */
+  CALL_MCP_TOOL: 'agent:call-mcp-tool',
   /** 获取 Agent 网络代理配置 */
   GET_PROXY_SETTINGS: 'agent:get-proxy-settings',
   /** 保存 Agent 网络代理配置 */
