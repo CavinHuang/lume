@@ -5,6 +5,7 @@ import {
   MessageCircle,
   Play,
   Plus,
+  QrCode,
   RefreshCw,
   Square,
   Trash2,
@@ -14,6 +15,8 @@ import {
   createImAccount,
   deleteImAccount,
   listImAccounts,
+  pollWeixinLogin,
+  startWeixinLogin,
   startImAccount,
   stopImAccount,
   updateImAccount,
@@ -28,6 +31,7 @@ import {
   createImAccountDraft,
   formatImAccountsEmptyCopy,
   formatImStatusBadge,
+  formatWeixinLoginStatus,
   normalizeImAccountDraft,
   type ImAccountDraft,
   type ImStatusTone,
@@ -46,6 +50,13 @@ export function ImSettings() {
   const [loading, setLoading] = React.useState(true)
   const [busyId, setBusyId] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
+  const [loginSession, setLoginSession] = React.useState<{
+    sessionKey: string
+    qrcodeUrl?: string
+    statusText: string
+    verifyCode: string
+    polling: boolean
+  } | null>(null)
 
   const refresh = React.useCallback(async () => {
     setLoading(true)
@@ -82,6 +93,53 @@ export function ImSettings() {
       toast.error('链接微信账号失败')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleStartLogin = async () => {
+    setSaving(true)
+    try {
+      const started = await startWeixinLogin()
+      setLoginSession({
+        sessionKey: started.sessionKey,
+        qrcodeUrl: started.qrcodeUrl,
+        statusText: started.message,
+        verifyCode: '',
+        polling: false,
+      })
+      toast.success('微信二维码已生成')
+    } catch (error) {
+      console.error('[IM 设置] 生成二维码失败:', error)
+      toast.error('生成微信二维码失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const pollLoginOnce = async (session = loginSession) => {
+    if (!session) return
+    setLoginSession((current) => current ? { ...current, polling: true } : current)
+    try {
+      const result = await pollWeixinLogin({
+        sessionKey: session.sessionKey,
+        verifyCode: session.verifyCode || undefined,
+      })
+      const statusText = formatWeixinLoginStatus(result)
+      setLoginSession((current) => current ? {
+        ...current,
+        polling: false,
+        statusText,
+        verifyCode: result.needsVerifyCode ? current.verifyCode : '',
+      } : current)
+      if (result.connected || result.alreadyConnected) {
+        toast.success(statusText)
+        setLoginSession(null)
+        await refresh()
+      }
+    } catch (error) {
+      console.error('[IM 设置] 轮询二维码失败:', error)
+      toast.error('检查微信登录状态失败')
+      setLoginSession((current) => current ? { ...current, polling: false } : current)
     }
   }
 
@@ -183,6 +241,46 @@ export function ImSettings() {
         </div>
 
         <div className="space-y-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+          <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-[var(--text-1)]">扫码链接</p>
+                <p className="mt-0.5 text-[12px] text-[var(--text-3)]">官方 OpenClaw 登录流</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => void handleStartLogin()} disabled={saving}>
+                {saving ? <Loader2 className="animate-spin" /> : <QrCode />}
+                生成
+              </Button>
+            </div>
+            {loginSession && (
+              <div className="mt-3 space-y-2">
+                {loginSession.qrcodeUrl && (
+                  <a
+                    href={loginSession.qrcodeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block truncate rounded-[6px] border border-dashed border-[var(--border)] px-2 py-1.5 text-[12px] text-[var(--brand)] hover:bg-[var(--surface-2)]"
+                  >
+                    {loginSession.qrcodeUrl}
+                  </a>
+                )}
+                <p className="text-[12px] leading-5 text-[var(--text-2)]">{loginSession.statusText}</p>
+                <div className="flex gap-2">
+                  <Input
+                    value={loginSession.verifyCode}
+                    onChange={(event) => setLoginSession((current) => current ? { ...current, verifyCode: event.target.value } : current)}
+                    placeholder="验证码"
+                    className="h-8"
+                  />
+                  <Button variant="outline" size="sm" onClick={() => void pollLoginOnce()} disabled={loginSession.polling}>
+                    {loginSession.polling ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                    检查
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="im-label">名称</Label>
             <Input id="im-label" value={draft.label} onChange={(event) => updateDraft({ label: event.target.value })} placeholder="工作微信" />

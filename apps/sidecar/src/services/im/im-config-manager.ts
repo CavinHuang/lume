@@ -60,6 +60,7 @@ function toPublicAccount(account: StoredImAccount): ImAccount {
   return {
     id: account.id,
     provider: account.provider,
+    accountKey: account.accountKey,
     label: account.label,
     uin: account.uin,
     baseUrl: account.baseUrl,
@@ -93,6 +94,12 @@ export function getImAccount(id: string): ImAccount | null {
   return account ? toPublicAccount(account) : null;
 }
 
+export function listImAccountSecrets(): string[] {
+  return readConfig().accounts
+    .map((account) => account.encryptedToken ? decryptSecret(account.encryptedToken) : undefined)
+    .filter((token): token is string => Boolean(token));
+}
+
 export function getImRuntimeAccount(id: string): ImRuntimeAccount {
   const config = readConfig();
   const account = findStoredAccount(config, id);
@@ -115,6 +122,7 @@ export function createImAccount(input: ImAccountCreateInput): ImAccount {
   const account: StoredImAccount = {
     id: randomUUID(),
     provider: input.provider,
+    accountKey: normalizeOptional(input.accountKey),
     label: normalizeImAccountLabel(input),
     uin: normalizeOptional(input.uin),
     baseUrl: normalizeBaseUrl(input.baseUrl),
@@ -129,6 +137,29 @@ export function createImAccount(input: ImAccountCreateInput): ImAccount {
   return toPublicAccount(account);
 }
 
+export function upsertImAccountFromLogin(input: ImAccountCreateInput): ImAccount {
+  const accountKey = normalizeOptional(input.accountKey);
+  if (!accountKey) {
+    return createImAccount(input);
+  }
+  const existing = readConfig().accounts.find((account) =>
+    account.provider === input.provider && account.accountKey === accountKey
+  );
+  if (!existing) {
+    return createImAccount(input);
+  }
+  return updateImAccount(existing.id, {
+    accountKey,
+    label: input.label,
+    token: input.token,
+    uin: input.uin,
+    baseUrl: input.baseUrl,
+    enabled: input.enabled ?? existing.enabled,
+    status: "stopped",
+    lastError: null
+  });
+}
+
 export function updateImAccount(id: string, input: ImAccountUpdateInput): ImAccount {
   const config = readConfig();
   const index = config.accounts.findIndex((item) => item.id === id);
@@ -139,6 +170,7 @@ export function updateImAccount(id: string, input: ImAccountUpdateInput): ImAcco
   const nextUin = input.uin !== undefined ? normalizeOptional(input.uin) : existing.uin;
   const updated: StoredImAccount = {
     ...existing,
+    ...(input.accountKey !== undefined ? { accountKey: normalizeOptional(input.accountKey) } : {}),
     ...(input.label !== undefined ? { label: normalizeImAccountLabel({ provider: existing.provider, label: input.label, uin: nextUin }) } : {}),
     ...(input.uin !== undefined ? { uin: nextUin } : {}),
     ...(input.baseUrl !== undefined ? { baseUrl: normalizeBaseUrl(input.baseUrl) } : {}),

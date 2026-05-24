@@ -1,5 +1,13 @@
 import { IM_IPC_CHANNELS } from '@lume/shared'
-import type { ImAccount, ImAccountCreateInput, ImAccountUpdateInput } from '@lume/shared'
+import type {
+  ImAccount,
+  ImAccountCreateInput,
+  ImAccountUpdateInput,
+  ImWeixinLoginPollInput,
+  ImWeixinLoginPollResult,
+  ImWeixinLoginStartInput,
+  ImWeixinLoginStartResult,
+} from '@lume/shared'
 import { sidecarCall } from './system'
 
 export const listImAccounts = () =>
@@ -19,3 +27,9 @@ export const startImAccount = (id: string) =>
 
 export const stopImAccount = (id: string) =>
   sidecarCall<ImAccount | { ok: true }>(IM_IPC_CHANNELS.STOP_ACCOUNT, { id })
+
+export const startWeixinLogin = (input: ImWeixinLoginStartInput = {}) =>
+  sidecarCall<ImWeixinLoginStartResult>(IM_IPC_CHANNELS.START_WEIXIN_LOGIN, input)
+
+export const pollWeixinLogin = (input: ImWeixinLoginPollInput) =>
+  sidecarCall<ImWeixinLoginPollResult>(IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN, input)

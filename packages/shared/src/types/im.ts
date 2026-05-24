@@ -7,6 +7,7 @@ export type ImPeerKind = "dm" | "group";
 export interface ImAccount {
   id: string;
   provider: ImProvider;
+  accountKey?: string;
   label: string;
   uin?: string;
   baseUrl: string;
@@ -24,6 +25,7 @@ export interface ImAccount {
 
 export interface ImAccountCreateInput {
   provider: ImProvider;
+  accountKey?: string;
   label?: string;
   token: string;
   uin?: string;
@@ -32,6 +34,7 @@ export interface ImAccountCreateInput {
 }
 
 export interface ImAccountUpdateInput {
+  accountKey?: string;
   label?: string;
   token?: string;
   uin?: string;
@@ -65,13 +68,50 @@ export interface ImPeerRef {
   peerId: string;
 }
 
+export type ImWeixinLoginStatus =
+  | "wait"
+  | "scaned"
+  | "confirmed"
+  | "expired"
+  | "scaned_but_redirect"
+  | "need_verifycode"
+  | "verify_code_blocked"
+  | "binded_redirect";
+
+export interface ImWeixinLoginStartInput {
+  force?: boolean;
+}
+
+export interface ImWeixinLoginStartResult {
+  sessionKey: string;
+  qrcodeUrl?: string;
+  message: string;
+  expiresAt: number;
+}
+
+export interface ImWeixinLoginPollInput {
+  sessionKey: string;
+  verifyCode?: string;
+}
+
+export interface ImWeixinLoginPollResult {
+  connected: boolean;
+  alreadyConnected?: boolean;
+  status?: ImWeixinLoginStatus;
+  needsVerifyCode?: boolean;
+  message: string;
+  account?: ImAccount;
+}
+
 export const IM_IPC_CHANNELS = {
   LIST_ACCOUNTS: "im:list-accounts",
   CREATE_ACCOUNT: "im:create-account",
   UPDATE_ACCOUNT: "im:update-account",
   DELETE_ACCOUNT: "im:delete-account",
   START_ACCOUNT: "im:start-account",
-  STOP_ACCOUNT: "im:stop-account"
+  STOP_ACCOUNT: "im:stop-account",
+  START_WEIXIN_LOGIN: "im:start-weixin-login",
+  POLL_WEIXIN_LOGIN: "im:poll-weixin-login"
 } as const;
 
 export const IM_PROVIDER_LABELS: Record<ImProvider, string> = {

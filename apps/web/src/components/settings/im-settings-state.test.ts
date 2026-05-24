@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   createImAccountDraft,
   formatImAccountsEmptyCopy,
+  formatWeixinLoginStatus,
   formatImStatusBadge,
   normalizeImAccountDraft,
 } from './im-settings-state'
@@ -33,5 +34,19 @@ describe('im settings state', () => {
       baseUrl: 'https://ilink.example.com',
       enabled: true,
     })
+  })
+
+  test('formats QR login status for the settings panel', () => {
+    expect(formatWeixinLoginStatus({
+      connected: false,
+      status: 'need_verifycode',
+      message: 'need code',
+      needsVerifyCode: true,
+    })).toEqual('需要输入手机微信显示的数字')
+    expect(formatWeixinLoginStatus({
+      connected: true,
+      status: 'confirmed',
+      message: 'ok',
+    })).toEqual('微信已连接')
   })
 })

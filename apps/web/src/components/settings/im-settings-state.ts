@@ -1,4 +1,9 @@
-import type { ImAccount, ImAccountCreateInput, ImAccountStatus } from '@lume/shared'
+import type {
+  ImAccount,
+  ImAccountCreateInput,
+  ImAccountStatus,
+  ImWeixinLoginPollResult,
+} from '@lume/shared'
 
 export type ImStatusTone = 'neutral' | 'success' | 'warning' | 'danger'
 
@@ -43,4 +48,15 @@ export function formatImStatusBadge(status: ImAccountStatus): { label: string; t
   if (status === 'auth_required') return { label: '需重新认证', tone: 'warning' }
   if (status === 'error') return { label: '异常', tone: 'danger' }
   return { label: '已停止', tone: 'neutral' }
+}
+
+export function formatWeixinLoginStatus(result: ImWeixinLoginPollResult): string {
+  if (result.connected) return '微信已连接'
+  if (result.needsVerifyCode || result.status === 'need_verifycode') return '需要输入手机微信显示的数字'
+  if (result.alreadyConnected) return '此微信已连接过'
+  if (result.status === 'scaned') return '已扫码，请在手机微信确认'
+  if (result.status === 'scaned_but_redirect') return '已扫码，正在切换登录节点'
+  if (result.status === 'expired') return '二维码已过期'
+  if (result.status === 'verify_code_blocked') return '验证码输入过多，请稍后重试'
+  return result.message
 }

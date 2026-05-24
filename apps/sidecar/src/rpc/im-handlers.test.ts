@@ -79,4 +79,33 @@ describe("im-handlers", () => {
     await handlers[IM_IPC_CHANNELS.DELETE_ACCOUNT]?.({ id });
     expect(await handlers[IM_IPC_CHANNELS.LIST_ACCOUNTS]?.({})).toEqual([]);
   });
+
+  test("starts and polls Weixin QR login", async () => {
+    const handlers = createImHandlers({
+      loginManager: {
+        startLogin: async () => ({
+          sessionKey: "login-1",
+          qrcodeUrl: "https://qr.example.com/qr",
+          message: "scan",
+          expiresAt: 123
+        }),
+        pollLogin: async () => ({
+          connected: true,
+          status: "confirmed",
+          message: "ok"
+        })
+      }
+    });
+
+    await expect(handlers[IM_IPC_CHANNELS.START_WEIXIN_LOGIN]?.({})).resolves.toMatchObject({
+      sessionKey: "login-1",
+      qrcodeUrl: "https://qr.example.com/qr"
+    });
+    await expect(handlers[IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN]?.({
+      sessionKey: "login-1"
+    })).resolves.toMatchObject({
+      connected: true,
+      status: "confirmed"
+    });
+  });
 });

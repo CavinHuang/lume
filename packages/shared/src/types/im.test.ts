@@ -9,6 +9,8 @@ describe("im shared types", () => {
     expect(IM_IPC_CHANNELS.DELETE_ACCOUNT).toBe("im:delete-account");
     expect(IM_IPC_CHANNELS.START_ACCOUNT).toBe("im:start-account");
     expect(IM_IPC_CHANNELS.STOP_ACCOUNT).toBe("im:stop-account");
+    expect(IM_IPC_CHANNELS.START_WEIXIN_LOGIN).toBe("im:start-weixin-login");
+    expect(IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN).toBe("im:poll-weixin-login");
   });
 
   test("normalizeImAccountLabel falls back to provider label", () => {

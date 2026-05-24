@@ -99,12 +99,18 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
       if (running) return;
       running = true;
       abortController = new AbortController();
+      void api.notifyStart().catch((error) => {
+        console.warn("[IM] 微信 start 通知失败:", error);
+      });
       void loop();
     },
     stop() {
       running = false;
       abortController?.abort();
       abortController = null;
+      void api.notifyStop().catch((error) => {
+        console.warn("[IM] 微信 stop 通知失败:", error);
+      });
     },
     processOnce,
     isRunning() {

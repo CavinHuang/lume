@@ -12,11 +12,15 @@ describe("openclaw-weixin-api", () => {
       calls.push({ url: String(url), init: init ?? {} });
       return Response.json({
         get_updates_buf: "cursor-2",
-        updates: [{
-          peer_id: "user-1",
-          peer_kind: "dm",
-          peer_name: "Alice",
-          text: "hello",
+        msgs: [{
+          message_id: 123,
+          from_user_id: "user-1",
+          item_list: [{
+            type: 1,
+            text_item: {
+              text: "hello"
+            }
+          }],
           context_token: "ctx-1"
         }]
       });
@@ -44,9 +48,37 @@ describe("openclaw-weixin-api", () => {
       updates: [{
         peerId: "user-1",
         peerKind: "dm",
-        peerName: "Alice",
         text: "hello",
-        contextToken: "ctx-1"
+        contextToken: "ctx-1",
+        messageId: "123"
+      }]
+    });
+  });
+
+  test("getUpdates maps official group messages by group_id", async () => {
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com/",
+      token: "token-1"
+    }, async () => Response.json({
+      msgs: [{
+        message_id: 456,
+        from_user_id: "user-1",
+        group_id: "room-1",
+        item_list: [{
+          type: 1,
+          text_item: {
+            text: "group hello"
+          }
+        }]
+      }]
+    }));
+
+    await expect(api.getUpdates()).resolves.toMatchObject({
+      updates: [{
+        peerId: "room-1",
+        peerKind: "group",
+        text: "group hello",
+        messageId: "456"
       }]
     });
   });
@@ -73,16 +105,39 @@ describe("openclaw-weixin-api", () => {
 
     expect(call.url).toBe("https://ilink.example.com/ilink/bot/sendmessage");
     expect(JSON.parse(String(call.init.body))).toMatchObject({
-      to_user_name: "room-1",
-      peer_kind: "group",
-      message_type: 2,
-      message_state: 2,
-      context_token: "ctx-1",
-      items: [{
-        type: 1,
-        text: "reply"
-      }]
+      msg: {
+        from_user_id: "",
+        to_user_id: "room-1",
+        message_type: 2,
+        message_state: 2,
+        context_token: "ctx-1",
+        item_list: [{
+          type: 1,
+          text_item: {
+            text: "reply"
+          }
+        }]
+      }
     });
+  });
+
+  test("notifyStart and notifyStop use official lifecycle endpoints", async () => {
+    const calls: string[] = [];
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com",
+      token: "token-1"
+    }, async (url) => {
+      calls.push(String(url));
+      return Response.json({ ret: 0 });
+    });
+
+    await api.notifyStart();
+    await api.notifyStop();
+
+    expect(calls).toEqual([
+      "https://ilink.example.com/ilink/bot/msg/notifystart",
+      "https://ilink.example.com/ilink/bot/msg/notifystop"
+    ]);
   });
 
   test("AbortError during long poll returns an empty update batch", async () => {

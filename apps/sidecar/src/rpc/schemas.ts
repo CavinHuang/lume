@@ -40,6 +40,7 @@ export const agentAppendInputSchema = agentSendInputSchema;
 
 export const imAccountCreateInputSchema = z.object({
   provider: z.literal("weixin"),
+  accountKey: z.string().optional(),
   label: z.string().optional(),
   token: z.string().trim().min(1),
   uin: z.string().optional(),
@@ -50,6 +51,7 @@ export const imAccountCreateInputSchema = z.object({
 export const imAccountUpdateInputSchema = z.object({
   id: idSchema,
   input: z.object({
+    accountKey: z.string().optional(),
     label: z.string().optional(),
     token: z.string().optional(),
     uin: z.string().optional(),
@@ -66,6 +68,15 @@ export const imAccountUpdateInputSchema = z.object({
 
 export const imAccountIdInputSchema = z.object({
   id: idSchema
+});
+
+export const imWeixinLoginStartInputSchema = z.object({
+  force: z.boolean().optional()
+}).optional();
+
+export const imWeixinLoginPollInputSchema = z.object({
+  sessionKey: idSchema,
+  verifyCode: z.string().optional()
 });
 
 const memoryScopeSchema = z.enum(["global", "workspace", "agent", "session"]);
