@@ -302,6 +302,15 @@ registerToolMetadata({
   allowedInPlanMode: true
 });
 
+// IM 工具
+registerToolMetadata({
+  name: "send_im_message",
+  category: "execute",
+  riskLevel: "medium",
+  description: "向当前线程绑定的 IM 会话发送消息",
+  allowedInPlanMode: false
+});
+
 // TodoWrite 工具
 registerToolMetadata({
   name: "TodoWrite",

@@ -4,6 +4,7 @@ import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
 import { createSdkCronTools } from "./cron/create-cron-tools";
+import { createSdkImTools } from "./im/create-im-tools";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
@@ -48,7 +49,10 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     workspaceId: input.workspaceId,
     sessionId: input.threadId
   });
-  const customTools = [...memoryTools, ...cronTools];
+  const imTools = createSdkImTools({
+    threadId: input.threadId
+  });
+  const customTools = [...memoryTools, ...cronTools, ...imTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {
