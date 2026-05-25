@@ -192,4 +192,41 @@ describe("Agent session persistence", () => {
     )).toBe(true)
     await agent.close()
   })
+
+  test("persists user message before provider request starts", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-preflight-persist-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `preflight-persist-${crypto.randomUUID()}`
+    let sawUserMessageBeforeProviderResponse = false
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        const messages = await getSessionMessages(sessionId, { dir: tempDir })
+        sawUserMessageBeforeProviderResponse = messages.some((message) =>
+          message.role === "user" && JSON.stringify(message.content).includes("crash durable task")
+        )
+        return {
+          content: [{ type: "text", text: "ok" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }
+      },
+    }
+    const agent = createAgent({
+      sessionId,
+      persistSession: true,
+      tools: [],
+      cwd: tempDir,
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("crash durable task")) {
+      // drain query
+    }
+
+    expect(sawUserMessageBeforeProviderResponse).toBe(true)
+    await agent.close()
+  })
 })

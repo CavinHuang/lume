@@ -103,6 +103,30 @@ describe("subagent-run-registry", () => {
     expect(typeof restored?.endedAt).toBe("number");
   });
 
+  test("重建 registry 后应把未完成的持久化 run 标记为异常退出", () => {
+    const runId = randomUUID();
+    {
+      const registry = getSubagentRunRegistry();
+      registry.create({
+        runId,
+        parentThreadId: "session-main",
+        childThreadId: "session-child",
+        task: "interrupted child task",
+        cleanup: "keep",
+        status: "running"
+      });
+    }
+
+    resetSubagentRunRegistryForTest();
+
+    const restored = getSubagentRunRegistry().get(runId);
+    expect(restored).not.toBeNull();
+    expect(restored?.status).toBe("errored");
+    expect(restored?.outcome?.errorCode).toBe("process_restarted");
+    expect(restored?.outcome?.error).toContain("Sidecar 进程重启");
+    expect(typeof restored?.endedAt).toBe("number");
+  });
+
   test("应支持按控制会话聚合 runs 并统计状态", () => {
     const registry = getSubagentRunRegistry();
     const owner = "session-owner";
@@ -148,4 +172,3 @@ describe("subagent-run-registry", () => {
     expect(summary.errored).toBe(0);
   });
 });
-

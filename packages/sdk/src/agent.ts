@@ -729,7 +729,7 @@ export class Agent {
     cwd: string,
     opts: AgentOptions,
   ): Promise<SDKMessage | null> {
-    if (opts.persistSession === false || this.history.length === 0) {
+    if (opts.persistSession === false || (this.history.length === 0 && this.sessionMessages.length === 0)) {
       return null
     }
 
@@ -819,6 +819,7 @@ export class Agent {
         uuid: userMessage.uuid,
         timestamp: userMessage.timestamp,
       })
+      await this.persistCurrentSession(cwd, opts)
     }
 
     const engine = new QueryEngine({

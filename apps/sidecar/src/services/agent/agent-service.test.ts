@@ -516,6 +516,126 @@ describe("agent-service", () => {
       .toContain("用户发送的继续指令：继续");
   });
 
+  test("sendAgentMessage 在进程重启后应把裸继续扩展为未完成 run 的恢复指令", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const thread = createAgentThread("stale running continue", "channel-test");
+    const sessionDir = getRuntimeCoreSessionDir(thread.id);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId: "run-stale-running",
+      threadId: thread.id,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "running",
+      currentStep: {
+        id: "step-model",
+        type: "model_call",
+        status: "running",
+        startedAt: "2026-05-24T12:01:58.000Z"
+      },
+      input: {
+        userMessage: "分析 Alice.app 世界观和主动动作",
+        permissionMode: "bypassPermissions"
+      },
+      generatedItems: [{
+        type: "assistant_message",
+        id: "assistant-progress",
+        content: [{ type: "text", text: "已读取目录结构，准备分析核心文件。" }],
+        createdAt: "2026-05-24T12:02:10.000Z"
+      }, {
+        type: "tool_call",
+        id: "call-count-js",
+        toolName: "Bash",
+        input: {
+          command: "find /Applications/Alice.app/Contents/Resources/app/out -type f -name \"*.js\" | wc -l"
+        },
+        parentAgentId: "runtime-core",
+        status: "completed",
+        createdAt: "2026-05-24T12:02:11.000Z"
+      }, {
+        type: "tool_result",
+        id: "result-count-js",
+        toolCallId: "call-count-js",
+        toolName: "Bash",
+        output: "130\n",
+        createdAt: "2026-05-24T12:02:12.000Z"
+      }],
+      pendingInterruptions: [],
+      approvals: {
+        alwaysAllowedTools: []
+      },
+      traceId: "trace-stale-running",
+      model: {
+        provider: "provider",
+        modelId: "model-test"
+      },
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0
+      },
+      createdAt: "2026-05-24T12:01:58.000Z",
+      updatedAt: "2026-05-24T12:03:43.000Z"
+    });
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "继续",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const modelMessage = (runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    expect(modelMessage).toContain("上一轮运行在进程退出前未正常完成");
+    expect(modelMessage).toContain("分析 Alice.app 世界观和主动动作");
+    expect(modelMessage).toContain("已读取目录结构");
+    expect(modelMessage).toContain("Bash");
+    expect(modelMessage).toContain("130");
+  });
+
+  test("sendAgentMessage 在仅有可见历史时应把裸继续扩展为历史续跑指令", async () => {
+    const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
+    const { createUserMessageVersion } = await import("./agent-message-versioning-service");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("visible history continue", "channel-test");
+    getAgentThreadMessages(thread.id);
+    createUserMessageVersion({
+      sessionId: thread.id,
+      content: "深入分析 Alice.app 的世界观和主动动作设计",
+      createdAt: Date.now(),
+      sdkMessages: []
+    });
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "继续",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const modelMessage = (runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    expect(modelMessage).toContain("当前 runtime transcript 不完整");
+    expect(modelMessage).toContain("深入分析 Alice.app 的世界观和主动动作设计");
+    expect(modelMessage).toContain("用户发送的继续指令：继续");
+  });
+
   test("sendAgentMessage 应继承线程工作区传给 runtime", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { createAgentWorkspace } = await import("./agent-workspace-manager");

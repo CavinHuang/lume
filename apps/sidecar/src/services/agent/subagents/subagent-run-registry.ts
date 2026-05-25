@@ -47,6 +47,7 @@ export function subagentLogFields(
 
 const log = createLogger("subagent-run-registry");
 const MAX_PERSISTED_RUNS = 500;
+const STALE_SUBAGENT_ERROR = "Sidecar 进程重启，之前的进程内 subagent 已退出。";
 
 function cloneRun(run: SubagentRun): SubagentRun {
   return {
@@ -79,10 +80,34 @@ class SubagentRunRegistry {
   private ensureLoaded(): void {
     if (this.loadDone) return;
     const store = readSubagentRunStore();
+    let finalizedStaleRuns = 0;
+    const now = Date.now();
     for (const run of store.runs) {
-      this.runs.set(run.runId, run);
+      const restoredRun = this.terminalStatuses.has(run.status)
+        ? run
+        : {
+            ...run,
+            status: "errored" as const,
+            updatedAt: now,
+            endedAt: run.endedAt ?? now,
+            outcome: {
+              ...run.outcome,
+              error: run.outcome?.error ?? STALE_SUBAGENT_ERROR,
+              errorCode: run.outcome?.errorCode ?? "process_restarted"
+            }
+          };
+      if (restoredRun !== run) {
+        finalizedStaleRuns += 1;
+      }
+      this.runs.set(restoredRun.runId, restoredRun);
     }
     this.loadDone = true;
+    if (finalizedStaleRuns > 0) {
+      this.persist();
+      log.warn("subagent stale runs marked errored after registry load", {
+        count: finalizedStaleRuns
+      });
+    }
   }
 
   private persist(): void {
@@ -416,4 +441,3 @@ function writeSubagentRunStore(schema: SubagentRunStoreSchema): void {
   const payload = JSON.stringify(schema, null, 2);
   writeAtomic(path, payload);
 }
-

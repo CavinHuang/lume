@@ -50,8 +50,10 @@ import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
 import { AgentRuntimeKernel } from "../agent-runtime/kernel/agent-runtime-kernel";
-import { getRuntimeCoreSessionDir } from "../agent-runtime/runtime-core/session-store";
+import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
+import type { LumeRunItem } from "../agent-runtime/runner/run-items";
+import type { LumeRunState } from "../agent-runtime/runner/run-state";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -83,11 +85,17 @@ const ROUTING_HEURISTIC_TOOLS = [
 ];
 
 const TURN_LIMIT_CONTINUATION_PREFIX = "请继续完成上一轮未完成的原始任务。不要把这看作新任务；基于当前线程历史、已有工具结果和最后一个 assistant 状态继续。";
+const STALE_RUN_CONTINUATION_PREFIX = "上一轮运行在进程退出前未正常完成。请继续完成上一轮未完成的原始任务，不要把这看作新任务；基于下面的运行记录摘要衔接执行。";
+const VISIBLE_HISTORY_CONTINUATION_PREFIX = "当前 runtime transcript 不完整。请继续完成上一轮未完成的原始任务，不要把这看作新任务；基于下面可见聊天历史衔接执行。";
 const CONTINUE_ONLY_MESSAGES = new Set([
   "继续",
   "请继续",
   "continue"
 ]);
+const STALE_RUN_STATUSES = new Set<LumeRunState["status"]>(["created", "running"]);
+const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
+const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
+const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   execute: async (dispatch) => {
@@ -149,14 +157,139 @@ async function shouldExpandTurnLimitedContinuation(threadId: string, userMessage
   return Boolean(latestCompletedRun?.generatedItems.some(hasTurnLimitedMarker));
 }
 
+async function findStaleRunningRun(threadId: string, userMessage: string): Promise<LumeRunState | null> {
+  if (!isContinueOnlyMessage(userMessage)) return null;
+  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
+  const runs = await store.listByThread(threadId);
+  const latestRun = runs.at(-1);
+  return latestRun && STALE_RUN_STATUSES.has(latestRun.status) && latestRun.input.userMessage.trim().length > 0
+    ? latestRun
+    : null;
+}
+
 async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
-  if (!await shouldExpandTurnLimitedContinuation(threadId, userMessage)) {
-    return userMessage;
+  const staleRun = await findStaleRunningRun(threadId, userMessage);
+  if (staleRun) {
+    return buildStaleRunContinuationMessage(staleRun, userMessage);
   }
+  if (await shouldExpandTurnLimitedContinuation(threadId, userMessage)) {
+    return [
+      TURN_LIMIT_CONTINUATION_PREFIX,
+      `用户发送的继续指令：${userMessage.trim()}`
+    ].join("\n\n");
+  }
+  const visibleHistoryContinuation = buildVisibleHistoryContinuationMessage(threadId, userMessage);
+  if (visibleHistoryContinuation) {
+    return visibleHistoryContinuation;
+  }
+  return userMessage;
+}
+
+function buildStaleRunContinuationMessage(run: LumeRunState, userMessage: string): string {
   return [
-    TURN_LIMIT_CONTINUATION_PREFIX,
+    STALE_RUN_CONTINUATION_PREFIX,
+    `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
+    `上次运行状态：${run.status}${run.currentStep?.type ? ` / ${run.currentStep.type}` : ""}`,
+    "上次运行已完成的关键记录：",
+    summarizeStaleRunProgress(run.generatedItems),
+    `用户发送的继续指令：${userMessage.trim()}`
+  ].filter((part) => part.trim().length > 0).join("\n\n");
+}
+
+function summarizeStaleRunProgress(items: LumeRunItem[]): string {
+  const lines = items
+    .map(formatStaleRunItem)
+    .filter((line): line is string => Boolean(line));
+  if (lines.length === 0) {
+    return "- 没有可用的运行记录摘要。";
+  }
+  if (lines.length <= STALE_RUN_PROGRESS_HEAD_COUNT + STALE_RUN_PROGRESS_TAIL_COUNT) {
+    return lines.map((line) => `- ${line}`).join("\n");
+  }
+  const head = lines.slice(0, STALE_RUN_PROGRESS_HEAD_COUNT);
+  const tail = lines.slice(-STALE_RUN_PROGRESS_TAIL_COUNT);
+  return [
+    ...head.map((line) => `- ${line}`),
+    `- ... 已省略 ${lines.length - head.length - tail.length} 条中间运行记录 ...`,
+    ...tail.map((line) => `- ${line}`)
+  ].join("\n");
+}
+
+function buildVisibleHistoryContinuationMessage(threadId: string, userMessage: string): string | null {
+  if (!isContinueOnlyMessage(userMessage)) return null;
+  if (hasRuntimeCoreSessionTranscript(threadId)) return null;
+  const messages = getAgentThreadMessages(threadId)
+    .filter((message) => message.content.trim().length > 0);
+  while (messages.length > 0) {
+    const latest = messages[messages.length - 1];
+    if (latest?.role !== "user" || !isContinueOnlyMessage(latest.content)) break;
+    messages.pop();
+  }
+  if (messages.length === 0) return null;
+  const historyLines = messages
+    .slice(-VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT)
+    .map((message) => `- ${message.role}: ${compactRuntimeText(message.content, 360)}`)
+    .join("\n");
+  return [
+    VISIBLE_HISTORY_CONTINUATION_PREFIX,
+    "可见聊天历史：",
+    historyLines,
     `用户发送的继续指令：${userMessage.trim()}`
   ].join("\n\n");
+}
+
+function formatStaleRunItem(item: LumeRunItem): string | null {
+  if (item.type === "assistant_message") {
+    const text = extractAssistantRunText(item.content);
+    return text ? `assistant: ${compactRuntimeText(text, 240)}` : null;
+  }
+  if (item.type === "tool_call") {
+    return `tool ${item.toolName} called with ${compactRuntimeText(previewRuntimeValue(item.input), 240)}`;
+  }
+  if (item.type === "tool_result") {
+    return `tool ${item.toolName ?? item.toolCallId} result: ${compactRuntimeText(previewRuntimeValue(item.output), 240)}`;
+  }
+  if (item.type === "subagent") {
+    const output = item.output?.trim() ? `: ${compactRuntimeText(item.output, 240)}` : "";
+    return `subagent ${item.status} ${item.task}${output}`;
+  }
+  if (item.type === "plan_preview") {
+    return `plan preview: ${compactRuntimeText(item.title || item.summary, 240)}`;
+  }
+  return null;
+}
+
+function extractAssistantRunText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => {
+      if (!block || typeof block !== "object") return "";
+      const record = block as Record<string, unknown>;
+      return typeof record.text === "string"
+        ? record.text
+        : typeof record.thinking === "string"
+          ? record.thinking
+          : "";
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function previewRuntimeValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function compactRuntimeText(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, maxLength - 3)}...`;
 }
 
 function handleRuntimeThreadStateMessage(
