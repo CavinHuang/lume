@@ -115,7 +115,7 @@ function buildQueryPlannerSystemPrompt(): string {
     `Use ${MEMORY_CLAIM_SUBJECT_ASSISTANT} for questions about the assistant's user-given name or identity preference.`,
     `Use ${MEMORY_CLAIM_SUBJECT_WORKSPACE} for workspace/project facts, decisions, source of truth, or current project state.`,
     `Prefer predicates ${MEMORY_CLAIM_PREFERRED_NAME}, ${MEMORY_CLAIM_IDENTITY}, ${MEMORY_CLAIM_PREFERENCE}, and ${MEMORY_CLAIM_SOURCE_OF_TRUTH}; use a short open predicate only when needed.`,
-    "Set includeConversationHistory true only when the user asks what happened before, previous chats, prior work, or conversation continuity."
+    "Set includeConversationHistory true when the user asks what happened before, recent/current work, previous chats, prior work, progress, status, or conversation continuity."
   ].join("\n");
 }
 

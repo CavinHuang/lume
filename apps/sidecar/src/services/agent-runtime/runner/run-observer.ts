@@ -280,6 +280,11 @@ export class LumeRunObserver {
     return this.state.input.userMessage;
   }
 
+  async getRunState(): Promise<LumeRunState | null> {
+    await this.flush();
+    return this.stateStore.get(this.state.runId);
+  }
+
   async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string): Promise<void> {
     await this.flush();
     const completedAt = new Date().toISOString();

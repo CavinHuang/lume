@@ -3,11 +3,13 @@ import { join } from "node:path";
 import { getMemoryV2ScopePaths } from "./paths";
 import { createMemoryV2Store, type MemoryV2Store } from "./markdown-store";
 import {
+  LOCAL_ONNX_MEMORY_EMBEDDING_MODEL_REF,
   createMemoryV2EmbeddingAttempts,
   resolveMemoryEmbeddingModelRef,
   type MemoryV2EmbeddingAttempt,
   type MemoryV2EmbedTexts
 } from "./embedding";
+import { getLocalOnnxMemoryEmbeddingStatus } from "./local-embedding";
 import { createMemoryV2QueryPlanner, type MemoryV2PlanQuery } from "./query-planner";
 import { createMemoryV2Reranker, type MemoryV2RerankItems } from "./rerank";
 import { searchSemanticRecall } from "./semantic-index";
@@ -152,7 +154,7 @@ function mergePredicates(left: string[], right: string[]): string[] {
 export function inferSearchIntent(query: string): MemoryV2SearchIntent {
   const text = query.toLowerCase();
   if (/architecture|design|boundary|架构|设计|边界/.test(text)) return "architecture";
-  if (/continue|next|todo|state|继续|下一步|进度|状态/.test(text)) return "continue_task";
+  if (/continue|next|todo|state|recent|current|now|继续|下一步|进度|状态|最近|当前|现在|刚才|干嘛|做什么|做到哪|进展/.test(text)) return "continue_task";
   if (/who am i|who are you|what'?s my name|what is my name|what'?s your name|what is your name|call me|my name|your name|我是谁|你是谁|我叫什么|你叫什么|我的名字|你的名字|叫我什么|怎么称呼|称呼我|称呼你|名字/.test(text)) return "identity";
   if (/prefer|preference|rule|habit|偏好|习惯|规则/.test(text)) return "preference";
   if (/debug|error|fail|bug|报错|失败|修复/.test(text)) return "debug";
@@ -273,11 +275,11 @@ function scoreRecallItem(
   const lexical = itemTokens.reduce((score, token) => score + (queryTokens.has(token) ? 1 : 0), 0);
   const semanticScore = semanticIntentBoost(item, intent);
   const historyScore = queryPlan.includeConversationHistory && isConversationHistoryRecallItem(item) ? 3 : 0;
-  if (claimScore === 0 && lexical === 0 && semanticScore === 0 && historyScore === 0 && !item.pinned) return 0;
+  const kindScore = kindIntentBoost(item.kind, intent);
+  if (claimScore === 0 && lexical === 0 && semanticScore === 0 && historyScore === 0 && kindScore === 0 && !item.pinned) return 0;
   const pathScore = [...queryTokens].some((token) => item.path.toLowerCase().includes(token)) ? 1.5 : 0;
   const pinnedScore = item.pinned ? 2 : 0;
   const scopeScore = item.scope === "workspace" ? 1 : 0.5;
-  const kindScore = kindIntentBoost(item.kind, intent);
   const stalePenalty = item.status === "suspected_stale" ? -3 : 0;
   return claimScore + lexical + semanticScore + historyScore + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
 }
@@ -356,6 +358,13 @@ async function maybeSemanticRecall(input: {
   if (input.semantic === "off") return [];
   const hasExplicitEmbedding = Boolean(input.input.embedTexts || input.input.embeddingAttempts);
   const configuredModelRef = resolveMemoryEmbeddingModelRef(getEffectiveLumeConfig(input.input.workspaceSlug));
+  if (!hasExplicitEmbedding
+    && input.hasBaseRecall
+    && configuredModelRef === LOCAL_ONNX_MEMORY_EMBEDDING_MODEL_REF
+    && !isLocalOnnxReadyForInlineSemantic()
+  ) {
+    return [];
+  }
   if (!hasExplicitEmbedding && !configuredModelRef && input.hasBaseRecall) return [];
   const attempts = input.input.embeddingAttempts ?? (
     input.input.embedTexts
@@ -377,6 +386,11 @@ async function maybeSemanticRecall(input: {
     }
   }
   return [];
+}
+
+function isLocalOnnxReadyForInlineSemantic(): boolean {
+  const status = getLocalOnnxMemoryEmbeddingStatus().status;
+  return status === "ready" || status === "cached";
 }
 
 function mergeRecallItems(items: MemoryV2RecallItem[]): MemoryV2RecallItem[] {

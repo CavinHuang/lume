@@ -23,6 +23,13 @@ import { appendDaily, appendRunArchive } from "../../memory-v2/markdown-store";
 import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import { extractMemoryCandidatesWithLlm } from "../../memory-v2/extraction";
 import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
+import {
+  compactMemorySummaryText,
+  createMemoryConversationSummarizer,
+  summarizeMemoryConversationFallback,
+  type MemoryConversationSummarizer
+} from "../../memory-v2/conversation-summary";
+import type { LumeRunState } from "./run-state";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -64,7 +71,8 @@ export class LumeRunner {
 
   private constructor(
     private readonly observer: LumeRunObserver,
-    emit: AgentRuntimeEmitter
+    emit: AgentRuntimeEmitter,
+    private readonly summarizeMemoryConversation?: MemoryConversationSummarizer
   ) {
     this.emit = createObservedRuntimeEmitter(emit, observer);
   }
@@ -73,6 +81,7 @@ export class LumeRunner {
     params: AgentRuntimeRunParams;
     prepared: PreparedRuntimeCoreAttempt;
     emit: AgentRuntimeEmitter;
+    summarizeMemoryConversation?: MemoryConversationSummarizer;
   }): Promise<LumeRunner> {
     const { params, prepared } = input;
     const observer = await LumeRunObserver.create({
@@ -93,7 +102,13 @@ export class LumeRunner {
         contextWindow: prepared.modelResolution.model.contextWindow
       }
     });
-    return new LumeRunner(observer, input.emit);
+    return new LumeRunner(
+      observer,
+      input.emit,
+      input.summarizeMemoryConversation ?? createMemoryConversationSummarizer({
+        workspaceSlug: prepared.workspaceSlug
+      })
+    );
   }
 
   getRunId(): string {
@@ -273,7 +288,11 @@ export class LumeRunner {
     const workspaceSlug = this.observer.getWorkspaceSlug();
     if (workspaceSlug) {
       try {
-        const historySummary = summarizeMessageForMemoryHistory(this.observer.getUserMessage());
+        const runState = await this.observer.getRunState();
+        const historySummary = summarizeMemoryConversationFallback({
+          userMessage: this.observer.getUserMessage(),
+          runState
+        });
         appendDaily({
           scope: "workspace",
           workspaceSlug,
@@ -290,6 +309,7 @@ export class LumeRunner {
             summary: historySummary
           }
         });
+        this.scheduleConversationSummary(workspaceSlug, runState, historySummary);
         for (const candidate of await extractMemoryCandidatesWithLlm({
           text: this.observer.getUserMessage(),
           workspaceSlug
@@ -318,6 +338,50 @@ export class LumeRunner {
     });
     this.emit.onComplete();
     return this.finalizeResult({ status: "completed" });
+  }
+
+  private scheduleConversationSummary(
+    workspaceSlug: string,
+    runState: LumeRunState | null,
+    fallbackSummary: string
+  ): void {
+    if (!this.summarizeMemoryConversation || !runState) return;
+    void this.writeConversationSummary(workspaceSlug, runState, fallbackSummary);
+  }
+
+  private async writeConversationSummary(
+    workspaceSlug: string,
+    runState: LumeRunState,
+    fallbackSummary: string
+  ): Promise<void> {
+    try {
+      const generated = await this.summarizeMemoryConversation?.({
+        workspaceSlug,
+        runId: this.observer.getRunId(),
+        threadId: this.observer.getThreadId(),
+        userMessage: this.observer.getUserMessage(),
+        runState,
+        fallbackSummary
+      });
+      const summary = compactMemorySummaryText(generated ?? "", 700);
+      if (!summary || summary === compactMemorySummaryText(fallbackSummary, 700)) return;
+      appendDaily({
+        scope: "workspace",
+        workspaceSlug,
+        heading: `Run ${this.observer.getRunId()} summarized`,
+        body: summary
+      });
+      appendRunArchive({
+        workspaceSlug,
+        runId: this.observer.getRunId(),
+        record: {
+          type: "run.summary.generated",
+          summary
+        }
+      });
+    } catch {
+      // Background memory summaries are best-effort.
+    }
   }
 
   private emitMemoryContextUsed(items: CreateRuntimeCoreSessionResult["memoryContextUsedItems"]): void {
@@ -366,10 +430,6 @@ export class LumeRunner {
     });
     return this.finalizeResult({ status: "errored", errorMessage });
   }
-}
-
-function summarizeMessageForMemoryHistory(message: string): string {
-  return `User asked: ${compactMemoryHistoryText(message)}`;
 }
 
 function compactMemoryHistoryText(value: string, maxLength = 220): string {

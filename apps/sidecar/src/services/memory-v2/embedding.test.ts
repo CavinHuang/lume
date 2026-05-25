@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  createMemoryV2EmbeddingAttempts,
   createMemoryV2EmbeddingProviderFromAttempts,
   LOCAL_ONNX_MEMORY_EMBEDDING_MODEL_REF,
   resolveMemoryEmbeddingAttempts
@@ -51,5 +55,25 @@ describe("memory-v2 embedding providers", () => {
     expect(attempts.map((attempt) => attempt.modelKey)).toEqual([
       LOCAL_ONNX_MEMORY_EMBEDDING_MODEL_REF
     ]);
+  });
+
+  test("does not start implicit local ONNX when callers disable local attempts", () => {
+    const prevConfigDir = process.env.LUME_CONFIG_DIR;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-memory-embedding-test-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      const attempts = createMemoryV2EmbeddingAttempts("demo", {
+        includeImplicitLocal: false
+      });
+
+      expect(attempts).toEqual([]);
+    } finally {
+      if (prevConfigDir === undefined) {
+        delete process.env.LUME_CONFIG_DIR;
+      } else {
+        process.env.LUME_CONFIG_DIR = prevConfigDir;
+      }
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 });

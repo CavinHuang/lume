@@ -203,15 +203,77 @@ describe("LumeRunner", () => {
         emit: createEmitter([])
       });
 
+      await runner.runQueryStream(stream([{
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "已经定位到记忆召回的问题，下一步会默认启用 ONNX 语义搜索。" }]
+        }
+      } as SDKMessage]));
       await runner.complete();
 
       const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
       const daily = readdirSync(paths.dailyDir).map((file) => readFileSync(join(paths.dailyDir, file), "utf-8")).join("\n");
       const runs = readdirSync(paths.runsDir!).map((file) => readFileSync(join(paths.runsDir!, file), "utf-8")).join("\n");
       expect(daily).toContain("User asked:");
+      expect(daily).toContain("Assistant outcome:");
+      expect(daily).toContain("记忆召回");
       expect(runs).toContain("User asked:");
+      expect(runs).toContain("Assistant outcome:");
       expect(daily).not.toContain("TAIL_SHOULD_BE_CROPPED");
       expect(runs).not.toContain("TAIL_SHOULD_BE_CROPPED");
+    } finally {
+      delete process.env.LUME_CONFIG_DIR;
+    }
+  });
+
+  test("complete schedules small-model conversation summary in background", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-summary-"));
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-summary-config-"));
+    dirs.push(agentDir, configDir);
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      const params = createTestParams("thread-1");
+      params.input.userMessage = "继续优化记忆跨对话连续性";
+      let started = false;
+      let resolveSummary: (summary: string) => void = () => {};
+      const summaryPromise = new Promise<string>((resolve) => {
+        resolveSummary = resolve;
+      });
+      const runner = await LumeRunner.create({
+        params,
+        prepared: {
+          ...createPrepared(agentDir),
+          workspaceSlug: "demo"
+        },
+        emit: createEmitter([]),
+        summarizeMemoryConversation: async () => {
+          started = true;
+          return summaryPromise;
+        }
+      });
+
+      await runner.runQueryStream(stream([{
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "我会把最近做过的事整理成更容易召回的摘要。" }]
+        }
+      } as SDKMessage]));
+      const result = await runner.complete();
+
+      expect(result).toEqual({ status: "completed" });
+      expect(started).toBe(true);
+      const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
+      let daily = readdirSync(paths.dailyDir).map((file) => readFileSync(join(paths.dailyDir, file), "utf-8")).join("\n");
+      expect(daily).not.toContain("小模型总结");
+
+      resolveSummary("小模型总结：正在修复 Lume 的记忆连续性；下一步默认使用 ONNX 语义召回。");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      daily = readdirSync(paths.dailyDir).map((file) => readFileSync(join(paths.dailyDir, file), "utf-8")).join("\n");
+      expect(daily).toContain("小模型总结");
     } finally {
       delete process.env.LUME_CONFIG_DIR;
     }

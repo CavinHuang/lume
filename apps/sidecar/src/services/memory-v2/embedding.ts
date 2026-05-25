@@ -31,12 +31,13 @@ export function createMemoryV2EmbeddingAttempts(
   options?: { includeImplicitLocal?: boolean }
 ): MemoryV2EmbeddingAttempt[] {
   const configuredModelRef = resolveMemoryEmbeddingModelRef(getEffectiveLumeConfig(workspaceSlug));
+  const includeLocal = options?.includeImplicitLocal !== false;
   return resolveMemoryEmbeddingAttempts({
     configuredModelRef,
     remote: configuredModelRef && !isLocalOnnxMemoryEmbeddingModelRef(configuredModelRef)
       ? createRemoteMemoryV2EmbeddingProvider(configuredModelRef)
       : undefined,
-    local: configuredModelRef || options?.includeImplicitLocal !== false
+    local: includeLocal
       ? createLocalOnnxMemoryEmbeddingProvider()
       : undefined
   });

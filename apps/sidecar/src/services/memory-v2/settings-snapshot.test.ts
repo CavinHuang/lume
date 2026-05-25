@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF } from "@lume/shared";
 import { appendDaily, appendRunArchive, createMemoryV2Store } from "./markdown-store";
 import { getMemoryV2SettingsSnapshot } from "./settings-snapshot";
 import { smartAddMemoryV2Candidate } from "./smart-add";
@@ -73,12 +74,13 @@ describe("memory-v2 settings snapshot", () => {
     expect(snapshot.retrieval.semantic).toMatchObject({
       mode: "auto",
       status: "stale",
-      fallbackModelRef: "local-onnx/Xenova/bge-small-zh-v1.5",
+      embeddingModelRef: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
       localOnnx: {
-        modelRef: "local-onnx/Xenova/bge-small-zh-v1.5",
+        modelRef: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
         status: "not_cached"
       }
     });
+    expect(snapshot.retrieval.semantic.fallbackModelRef).toBeUndefined();
     expect(snapshot.retrieval.semantic.localOnnx?.message).toContain("首次使用");
     expect(snapshot.retrieval.rerank.source).toBe("disabled");
   });

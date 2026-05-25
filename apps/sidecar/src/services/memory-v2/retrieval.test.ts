@@ -258,6 +258,28 @@ describe("searchMemoryV2", () => {
     expect(results[0]?.reason).toContain("semantic match");
   });
 
+  test("recalls recent work history for current-state questions without semantic search", async () => {
+    const store = createMemoryV2Store();
+    store.appendDaily({
+      scope: "workspace",
+      workspaceSlug: "demo",
+      heading: "Run completed",
+      body: "Current activity: 正在优化 Lume 记忆跨对话连续性。\nAssistant outcome: 已分析召回为空的原因，下一步默认开启 ONNX 语义搜索。"
+    });
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "你知道我们最近在干嘛吗？当前工作状态是什么？",
+      maxResults: 3,
+      semantic: "off"
+    });
+
+    expect(results[0]).toMatchObject({
+      reason: "recent daily memory",
+      statement: expect.stringContaining("记忆跨对话连续性")
+    });
+  });
+
   test("recalls user preferred-name claim for user identity questions", async () => {
     await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
@@ -523,6 +545,7 @@ describe("searchMemoryV2", () => {
       workspaceSlug: "demo",
       query: "memory architecture",
       maxResults: 2,
+      semantic: "off",
       rerankItems: async (items) => [...items].sort((a, b) => (
         a.statement.includes("semantic") ? -1 : b.statement.includes("semantic") ? 1 : 0
       ))

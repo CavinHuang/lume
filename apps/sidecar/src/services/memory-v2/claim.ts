@@ -110,7 +110,7 @@ export function claimObjectEquals(left: MemoryV2Claim, right: MemoryV2Claim): bo
 
 export function planMemoryV2Query(query: string): MemoryV2QueryPlan {
   const text = query.trim().toLowerCase();
-  const includeConversationHistory = /之前|上次|历史|聊过|问过|做过|history|previous|before/i.test(text);
+  const includeConversationHistory = /之前|上次|历史|聊过|问过|做过|最近|当前|现在|刚才|干嘛|做什么|做到哪|继续|进展|状态|history|previous|before|recent|current|now|continue|status/i.test(text);
   const workspaceScoped = /工作区|项目|记忆系统|事实源|真实数据源|source of truth|workspace|project/.test(text);
   if (/你是谁|你叫什么|你叫啥|怎么称呼你|你的名字|who are you|what(?:'s| is) your name/.test(text)) {
     return {

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LumeConfigFile } from "@lume/shared";
+import {
+  MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
+  type LumeConfigFile
+} from "@lume/shared";
 import YAML from "yaml";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
 import { getEffectiveLumeConfig, updateLumeConfigSection } from "./lume-config-service";
@@ -45,6 +48,7 @@ describe("lume-config-service", () => {
     expect(file.permissions?.rules).toEqual([]);
     expect(file.permissions?.classifier?.enabled).toBe(false);
     expect(file.permissions?.privateWriteRoots).toEqual([]);
+    expect(file.models?.embedding?.defaultModelRef).toBe(MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF);
     expect(file.workspaces).toEqual({});
   });
 
@@ -96,6 +100,21 @@ describe("lume-config-service", () => {
 
     expect(defaultEffective.models?.agent?.defaultModelRef).toBe("anthropic/claude-sonnet-4");
     expect(anotherEffective.models?.agent?.defaultModelRef).toBe("openai/gpt-5.4");
+  });
+
+  test("默认使用本地 ONNX embedding，但允许 workspace 覆盖", () => {
+    updateLumeConfigSection({
+      source: "agent",
+      workspaceSlug: "default",
+      path: "models.embedding.defaultModelRef",
+      value: "siliconflow/BAAI/bge-m3"
+    });
+
+    const defaultEffective = getEffectiveLumeConfig("default");
+    const anotherEffective = getEffectiveLumeConfig("another");
+
+    expect(defaultEffective.models?.embedding?.defaultModelRef).toBe("siliconflow/BAAI/bge-m3");
+    expect(anotherEffective.models?.embedding?.defaultModelRef).toBe(MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF);
   });
 
   test("应支持子 Agent 默认模型配置并允许 workspace 覆盖", () => {

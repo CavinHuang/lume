@@ -1,13 +1,14 @@
 import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import YAML from "yaml";
-import type {
-  LumeConfigAuditEntry,
-  LumeConfigAuditSource,
-  LumeConfigFile,
-  LumeConfigPermissionRule,
-  LumeConfigSectionSet,
-  LumeEffectiveConfig
+import {
+  MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
+  type LumeConfigAuditEntry,
+  type LumeConfigAuditSource,
+  type LumeConfigFile,
+  type LumeConfigPermissionRule,
+  type LumeConfigSectionSet,
+  type LumeEffectiveConfig
 } from "@lume/shared";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
 
@@ -26,6 +27,11 @@ function createDefaultLumeConfig(): LumeConfigFile {
     version: CONFIG_VERSION,
     agent: {},
     providers: {},
+    models: {
+      embedding: {
+        defaultModelRef: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF
+      }
+    },
     mcp: {},
     skills: {
       enabled: [],
