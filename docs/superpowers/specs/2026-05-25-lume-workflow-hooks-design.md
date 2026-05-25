@@ -1,7 +1,7 @@
 # Lume 工作流 Hook 设计
 
 > 日期: 2026-05-25
-> 状态: 设计已确认，等待 spec review 与用户复核
+> 状态: spec review 已通过，等待用户复核
 > 范围: sidecar 原生 workflow hook bus、runtime 生命周期接入、记忆/上下文与权限/安全最小闭环、未来插件 hook 扩展边界
 
 ## 概述
@@ -9,6 +9,8 @@
 Lume 需要一套工作流 hook 机制，方便后续在 Agent runtime、记忆、权限、安全、观测、MCP、Skills、IM 与 cron 等能力之间建立稳定扩展点。第一版采用 Lume 原生的 typed hook bus：由 sidecar 内部固定注册 handler，按代码顺序执行，不开放用户 shell command、不开放第三方动态 hook 执行。
 
 设计借鉴 Codex 风格的 `event -> selector -> contribution -> handler` 模型，但不照搬 command hook 执行方式。Lume 第一版的 handler 是内部 TypeScript typed handler，返回受控 effect，由统一 reducer 落地。这样既能把当前散落在 runner 中的记忆、上下文、权限调用整理成清晰生命周期点，也为后续 `.lume-plugin` 插件贡献 hook 留出兼容形状。
+
+本文中的 MVP 即第一版 implementation-ready 边界；后续阶段只作为保留契约和迁移方向。
 
 ## 背景
 
@@ -26,9 +28,9 @@ Lume 需要一套工作流 hook 机制，方便后续在 Agent runtime、记忆�
 ## 目标
 
 1. 新增 Lume 原生 `LumeWorkflowHookBus`，作为 sidecar 内部工作流扩展点。
-2. 第一版接入 Agent runtime 的最小生命周期：run、prompt、context、permission、tool、memory。
-3. 第一版实际落地记忆/上下文与权限/安全两个主场景，并预留观测、MCP、Skills、IM、cron 的事件命名。
-4. 支持两类 hook：可返回受控 effect 的 decision hook，以及只做 side effect 的 observe hook。
+2. MVP 只接入 implementation-ready 的最小生命周期：run、context、permission。
+3. MVP 实际落地记忆/上下文与权限/安全两个主场景，并预留 prompt、tool、memory、MCP、Skills、IM、cron 的事件命名。
+4. 支持两类 hook：可返回流程决策 effect 的 decision hook，以及只返回 observe-safe effect 的 observe hook。
 5. 注册顺序由代码固定，配置只控制内部 hook 总开关和模块开关。
 6. 借鉴 Codex 插件心智，内部 handler 也使用 contribution 结构，为未来插件 hook 声明保持兼容。
 7. 保留现有 SDK `HookRegistry`，不破坏 SDK/plugin 兼容路径。
@@ -40,6 +42,7 @@ Lume 需要一套工作流 hook 机制，方便后续在 Agent runtime、记忆�
 - 第一版不支持用户自定义 hook 顺序或 priority。
 - 第一版不重写整个 SDK hook 系统。
 - 第一版不把所有 runner 逻辑一次性迁移到 hook bus。
+- MVP 不接入独立的 `prompt.*`、`tool.*`、`memory.*` hook；这些事件作为后续阶段的保留契约。
 - 第一版不改变 memory-v2 的召回、摘要、提取策略本身。
 - 第一版不让 hook 绕过现有权限系统；hook 只能作为前置或补充 decision。
 
@@ -55,11 +58,13 @@ SDK `HookRegistry` 继续用于 SDK 内部与插件兼容。Lume workflow hook b
 
 ### 受控 effect，而不是任意改状态
 
-handler 返回 `LumeWorkflowHookEffect[]`，统一由 `applyWorkflowHookEffects` 落地。handler 不直接修改 runner、context assembler、permission session 或 observer 状态。
+handler 返回 `LumeWorkflowHookHandlerResult`，其中包含 `effects: LumeWorkflowHookEffect[]`。所有副作用统一由 `applyWorkflowHookEffects` 落地。handler 不直接修改 runner、context assembler、permission session 或 observer 状态。
 
 ### 决策确定性
 
-decision hook 串行执行。遇到 `deny` 或 `block` 后短路后续 decision handler。observe hook 第一版也保持串行，后续可按事件类别后台化。
+decision hook 串行执行。MVP 遇到 `deny` 后短路后续 decision handler；未来接入 `tool.beforeCall` 时再加入 `block` 短路。observe hook 第一版也保持串行，后续可按事件类别后台化。
+
+observe hook 的含义是“不改变主流程决策”，不是“handler 可以直接做任意 side effect”。observe handler 仍只能返回 observe-safe effect，例如 `emitRuntimeEvent`、`recordTrace`、`enqueueMemoryCandidate`。
 
 ### 插件形状前置，插件执行后置
 
@@ -86,7 +91,7 @@ apps/sidecar/src/services/workflow-hooks/
 - `hook-effects.ts`: 定义 effect 类型、decision 合并规则、effect reducer。
 - `contributions.ts`: 定义 contribution 结构和 Lume core 固定注册表。
 - `hook-bus.ts`: 执行 selector 匹配、handler 调用、decision 短路和 effect source 标记。
-- `core-memory-hooks.ts`: 记忆召回上下文、完成后提取/摘要等 handler。
+- `core-memory-hooks.ts`: 记忆召回上下文、完成后记忆候选入队等 handler。
 - `core-security-hooks.ts`: 权限和工具调用安全 decision handler。
 - `core-observability-hooks.ts`: trace、runtime event、诊断信息等 observe handler。
 
@@ -109,12 +114,156 @@ interface LumeWorkflowHookContribution {
 }
 ```
 
+selector、capability 和 handler registry 的 MVP 形状：
+
+```ts
+interface LumeWorkflowHookSelector {
+  toolName?: string | string[]
+  permissionMode?: string | string[]
+  threadType?: string | string[]
+  chatType?: string | string[]
+}
+
+type LumeWorkflowHookCapability =
+  | "context.append"
+  | "permission.decide"
+  | "memory.enqueue"
+  | "runtime.emit"
+  | "trace.write"
+
+interface LumeWorkflowHookHandlerResult {
+  effects: LumeWorkflowHookEffect[]
+}
+
+interface LumeWorkflowHookHandlerContext {
+  services: {
+    memory: LumeWorkflowHookMemoryService
+    security: LumeWorkflowHookSecurityService
+    runtimeEvents: LumeWorkflowHookRuntimeEventService
+    trace: LumeWorkflowHookTraceService
+    clock: { now(): Date }
+  }
+  signal?: AbortSignal
+}
+
+type LumeWorkflowHookHandler = (
+  event: LumeWorkflowHookEvent,
+  context: LumeWorkflowHookHandlerContext
+) => Promise<LumeWorkflowHookHandlerResult>
+
+type LumeWorkflowHookHandlerRegistry = Record<string, LumeWorkflowHookHandler>
+```
+
+service dependency 边界：
+
+- handler 只能通过 `LumeWorkflowHookHandlerContext.services` 访问 memory、security、runtime event 和 trace facade。
+- handler 不接收 runner、agent、session manager 或 observer 实例。
+- service facade 返回的数据必须是最小、脱敏、可测试的 DTO。
+- 写操作仍返回 effect，由 reducer 统一执行；service facade 不在 handler 内直接写入主流程状态。
+
+MVP service facade 的最小方法：
+
+```ts
+interface LumeWorkflowHookMemoryService {
+  recallContext(input: {
+    threadId: string
+    workspaceSlug?: string
+    userMessage: string
+    tokenBudget: number
+  }): Promise<{
+    items: Array<{
+      id: string
+      content: string
+      citation?: string
+      reason?: string
+    }>
+  }>
+
+  extractCandidates(input: {
+    runId: string
+    threadId: string
+    workspaceSlug?: string
+    userMessage: string
+    runSummary?: string
+  }): Promise<LumeWorkflowMemoryCandidate[]>
+}
+
+interface LumeWorkflowHookSecurityService {
+  evaluatePermissionDecision(input: {
+    toolName: string
+    toolInputSummary: string
+    permissionMode?: string
+    gatewayDecision: "allow" | "ask"
+    risk?: string
+    reasonCode?: string
+  }): Promise<{
+    decision?: "allow" | "ask" | "deny"
+    reason?: string
+  }>
+}
+
+interface LumeWorkflowHookRuntimeEventService {
+  buildDiagnosticEvent(input: {
+    runId: string
+    threadId: string
+    contributionId: string
+    message: string
+    level: "debug" | "info" | "warning" | "error"
+  }): LumeWorkflowRuntimeEventDraft
+}
+
+interface LumeWorkflowHookTraceService {
+  buildHookTrace(input: {
+    contributionId: string
+    event: LumeWorkflowHookEventName
+    status: "success" | "error" | "skipped"
+    elapsedMs?: number
+    effectTypes?: string[]
+    errorMessage?: string
+  }): LumeWorkflowTraceRecord
+}
+```
+
+DTO 形状：
+
+```ts
+interface LumeWorkflowMemoryCandidate {
+  kind: "preference" | "project_fact" | "event" | "lesson"
+  text: string
+  confidence?: number
+  evidence: {
+    runId: string
+    threadId: string
+    source: string
+  }
+}
+
+interface LumeWorkflowRuntimeEventDraft {
+  type: "workflow_hook.diagnostic"
+  runId: string
+  threadId: string
+  contributionId: string
+  message: string
+  level: "debug" | "info" | "warning" | "error"
+}
+
+interface LumeWorkflowTraceRecord {
+  type: "workflow_hook"
+  contributionId: string
+  event: LumeWorkflowHookEventName
+  status: "success" | "error" | "skipped"
+  elapsedMs?: number
+  effectTypes?: string[]
+  errorMessage?: string
+}
+```
+
 第一版规则：
 
 - Lume 内置 contribution 使用 `pluginId: "lume-core"`。
 - `priority` 只作为声明字段和排序校验，实际顺序由代码固定注册表决定。
 - `handlerRef` 指向 Lume 内部 handler registry 中的函数 id，不指向文件路径。
-- `capabilities` 用于自审和未来插件权限，例如 `context.append`、`permission.decide`、`memory.write`、`runtime.emit`、`trace.write`。
+- `capabilities` 用于自审和未来插件权限，例如 `context.append`、`permission.decide`、`memory.enqueue`、`runtime.emit`、`trace.write`。
 - selector 第一版只支持简单匹配：事件名、toolName、permissionMode、threadType、chatType。复杂条件留给 handler 内部判断。
 
 固定注册顺序：
@@ -122,33 +271,34 @@ interface LumeWorkflowHookContribution {
 1. core memory hooks
 2. core security hooks
 3. core observability hooks
-4. workflow bridge hooks
+
+workflow bridge hooks 是后续 IM/cron/notification 阶段的保留模块，不进入 MVP 固定注册表。
 
 ## 事件模型
 
-第一版接入事件：
+MVP 接入事件：
 
 ```ts
 type LumeWorkflowHookEventName =
   | "run.beforeStart"
   | "run.afterComplete"
   | "run.afterFailure"
-  | "prompt.beforeSubmit"
   | "context.beforeAssemble"
   | "context.afterAssemble"
   | "permission.beforeDecision"
+```
+
+后续阶段保留事件名：
+
+```ts
+type ReservedLumeWorkflowHookEventName =
+  | "prompt.beforeSubmit"
   | "tool.beforeCall"
   | "tool.afterCall"
   | "tool.afterFailure"
   | "memory.beforeRecall"
   | "memory.afterRecall"
   | "memory.afterExtract"
-```
-
-预留事件名：
-
-```ts
-type ReservedLumeWorkflowHookEventName =
   | "workspace.afterOpen"
   | "config.afterChange"
   | "mcp.afterSync"
@@ -184,26 +334,33 @@ interface LumeWorkflowHookBaseEvent {
 - `context.beforeAssemble`: user message 摘要、available tool names、token budget、attachments metadata。
 - `context.afterAssemble`: context token usage、memory citations summary、available tool names。
 - `permission.beforeDecision`: tool name、tool input summary、file/command/path 摘要、当前 permission mode。
-- `tool.beforeCall`: tool name、tool input summary、tool use id。
-- `tool.afterCall`: tool name、tool output summary、elapsed time、isError。
 - `run.afterComplete`: run state summary、usage summary、memory context used summary。
 - `run.afterFailure`: error code/message、completed step summary。
 
 完整 transcript、完整文件内容、API key、headers、env secrets 不进入默认 payload。需要重数据的 handler 通过显式 service dependency 读取。
 
+### MVP 事件矩阵
+
+| Event | Phase | Trigger location | Allowed effects | Fallback behavior | Required tests |
+| --- | --- | --- | --- | --- | --- |
+| `run.beforeStart` | observe | `LumeRunner.create` 完成 observer/trace 后 | `recordTrace`, `emitRuntimeEvent` | handler 失败只记录诊断，run 继续 | 触发顺序、disabled 不触发 |
+| `context.beforeAssemble` | decision | `ContextAssembler.assemble` 前 | `appendContext`, `recordTrace`, `emitRuntimeEvent` | memory/context handler 失败则跳过额外 context | appendContext 来源标记、disabled 不注入 |
+| `context.afterAssemble` | observe | `ContextAssembler.assemble` 后 | `recordTrace`, `emitRuntimeEvent` | handler 失败只记录诊断 | token/tool summary 进入 trace |
+| `permission.beforeDecision` | decision | descriptor 和 `toolExecutionGateway.authorize` 通过后、交互审批前 | `setPermissionDecision`, `recordTrace`, `emitRuntimeEvent` | security handler 失败返回 `ask`，继续现有审批 | deny 短路、allow 跳过审批、ask 继续审批 |
+| `run.afterComplete` | observe | `LumeRunner.complete` 成功结果落地前 | `enqueueMemoryCandidate`, `recordTrace`, `emitRuntimeEvent` | handler 失败不影响完成 | completion hook 触发、memory enqueue 可观测 |
+| `run.afterFailure` | observe | `LumeRunner.fail` / `finalizeError` | `recordTrace`, `emitRuntimeEvent` | handler 失败不覆盖原始错误 | 原始错误保留、trace 记录 |
+
 ## Effect 模型
 
-第一版允许的 effect：
+MVP 允许的 effect：
 
 ```ts
 type LumeWorkflowHookEffect =
   | AppendContextEffect
   | SetPermissionDecisionEffect
-  | BlockToolCallEffect
   | EmitRuntimeEventEffect
   | RecordTraceEffect
   | EnqueueMemoryCandidateEffect
-  | NotifyEffect
 ```
 
 ### appendContext
@@ -241,33 +398,46 @@ interface SetPermissionDecisionEffect {
 
 ### blockToolCall
 
-仅允许在 `tool.beforeCall` 返回。用于阻断工具调用并生成模型可见说明。
+`blockToolCall` 不进入 MVP effect union。后续接入 `tool.beforeCall` 时再增加，用于阻断工具调用并生成模型可见说明。
 
-```ts
-interface BlockToolCallEffect {
-  type: "blockToolCall"
-  message: string
-  reason: string
-}
-```
-
-`tool.afterCall` 不能撤销已发生副作用，只能补充观测、记忆候选或模型反馈。
+后续规则预留：`tool.afterCall` 不能撤销已发生副作用，只能补充观测、记忆候选或模型反馈。
 
 ### emitRuntimeEvent
 
 用于把内部 hook 行为映射到现有 runtime event 管线。第一版只发诊断和状态类事件，不制造新的用户交互需求。
 
+```ts
+interface EmitRuntimeEventEffect {
+  type: "emitRuntimeEvent"
+  event: LumeWorkflowRuntimeEventDraft
+}
+```
+
 ### recordTrace
 
 用于记录 hook 执行、decision、effect 和错误，进入现有 trace recorder。
+
+```ts
+interface RecordTraceEffect {
+  type: "recordTrace"
+  record: LumeWorkflowTraceRecord
+}
+```
 
 ### enqueueMemoryCandidate
 
 用于把完成后的用户偏好、项目事实、重要事件送入 memory-v2 后台处理。第一版保持当前 memory-v2 策略，只改变调用入口。
 
+```ts
+interface EnqueueMemoryCandidateEffect {
+  type: "enqueueMemoryCandidate"
+  candidates: LumeWorkflowMemoryCandidate[]
+}
+```
+
 ### notify
 
-预留给后续 IM/系统通知桥接。第一版不主动使用。
+`NotifyEffect` 不进入 MVP effect union。它只作为后续 IM/系统通知桥接的保留方向，等 channel trust、去重和用户可见通知策略确定后再设计。
 
 所有 effect 在执行前补充：
 
@@ -319,15 +489,17 @@ hooks:
 
 ### Permission decision
 
-1. `LumeRunner.runRuntimeSession` 包装 `createCanUseTool` 生成的 `canUseTool`。
-2. wrapper 在现有权限判断前触发 `permission.beforeDecision`。
-3. 如果 hook 返回 `deny`，直接返回 deny。
-4. 如果 hook 返回 `allow`，仍不得绕过硬性安全边界；它只可跳过普通 ask 流程。
-5. 如果 hook 无 decision，继续走现有 permission/session approval 逻辑。
+1. `createCanUseToolHandler` 继续先做 descriptor 查询和 `toolExecutionGateway.authorize`。
+2. descriptor 缺失、gateway `deny`、AskUserQuestion 输入无效等硬性失败在 hook 前返回 deny。
+3. gateway 返回 `allow` 或 `ask` 后，wrapper 触发 `permission.beforeDecision`。
+4. 如果 hook 返回 `deny`，直接返回 deny，并记录 reason。
+5. 如果 hook 返回 `allow`，在 gateway 未 deny 的前提下跳过普通交互审批并返回 allow。
+6. 如果 hook 返回 `ask` 或无 decision，继续走现有 approval/automation pause 流程。
+7. 如果 security handler 抛错，确定性降级为 `ask`，继续现有审批；不静默 allow。
 
 ### Tool lifecycle
 
-SDK 层已有 `PreToolUse/PostToolUse/PostToolUseFailure`。第一版通过 adapter 把这些事件映射为：
+SDK 层已有 `PreToolUse/PostToolUse/PostToolUseFailure`。MVP 不接入 tool lifecycle adapter。后续阶段再把 SDK 事件映射为：
 
 - `tool.beforeCall`
 - `tool.afterCall`
@@ -337,16 +509,17 @@ adapter 的目标不是模拟 SDK shell hook，而是把工具生命周期纳入
 
 ### Run completion
 
-1. `LumeRunner.complete` 在现有 memory side effect 前后触发 `run.afterComplete`。
-2. memory handler 把摘要、候选提取、run archive 等当前行为逐步迁移到 hook contribution。
-3. `LumeRunner.fail` 和 `finalizeError` 触发 `run.afterFailure`，用于 trace 与诊断。
+1. `LumeRunner.complete` 在完成结果落地前触发 `run.afterComplete` observe hook。
+2. MVP 的 memory handler 只返回 `enqueueMemoryCandidate`、`recordTrace` 或 `emitRuntimeEvent`。
+3. appendDaily、appendRunArchive、conversation summary 迁移到 hook contribution 属于后续阶段。
+4. `LumeRunner.fail` 和 `finalizeError` 触发 `run.afterFailure`，用于 trace 与诊断。
 
 ## 与 memory-v2 的关系
 
-第一版优先 hook 化两个位置：
+MVP 优先 hook 化两个位置：
 
 - `context.beforeAssemble`: 记忆召回上下文以 `appendContext` 进入 prompt。
-- `run.afterComplete`: 完成后摘要、候选提取、run archive 进入 observe handler。
+- `run.afterComplete`: 完成后记忆候选以 `enqueueMemoryCandidate` 进入 memory-v2 后台处理。
 
 现有 memory-v2 逻辑保持等价：
 
@@ -354,10 +527,11 @@ adapter 的目标不是模拟 SDK shell hook，而是把工具生命周期纳入
 - 不改变 citations mode。
 - 不改变 memory tool policy。
 - 不改变 LLM 提取策略和 fallback summary 策略。
+- 不在 MVP 中迁移 appendDaily、appendRunArchive 或 conversation summary 写入。
 
 ## 与权限/安全的关系
 
-第一版 hook 化 `permission.beforeDecision`，用于统一未来的安全能力：
+MVP hook 化 `permission.beforeDecision`，用于统一未来的安全能力：
 
 - 私有目录写入保护。
 - 命令风险分类。
@@ -368,6 +542,7 @@ adapter 的目标不是模拟 SDK shell hook，而是把工具生命周期纳入
 
 - hook 的 `allow` 不能绕过不可被绕过的硬安全规则。
 - hook 的 `deny` 可以提前结束审批并返回清晰 reason。
+- security handler 错误固定降级为 `ask`，即继续现有审批；不会因为错误自动 allow。
 - hook decision 需要写入 trace，方便审计。
 - `tool.afterCall` 不用于撤销工具副作用。
 
@@ -410,9 +585,10 @@ plugin/
 
 ## 错误处理
 
-- handler 抛错不应直接导致 run 失败，除非该 handler 是明确的 required security decision 且无法安全降级。
+- handler 抛错不应直接导致 run 失败。
 - observe hook 错误记录 trace 后继续执行。
-- decision hook 错误默认按保守策略处理：security 模块错误倾向 `ask` 或 `deny`，memory 模块错误倾向跳过。
+- `permission.beforeDecision` 的 security handler 错误固定降级为 `ask`，继续现有审批。
+- `context.beforeAssemble` 的 memory/context handler 错误固定跳过对应 `appendContext`。
 - effect reducer 遇到非法 event/effect 组合时忽略该 effect 并记录诊断。
 - hook bus 需要避免把 secret 或完整 tool input 写入错误日志。
 
@@ -441,7 +617,7 @@ runtime event 第一版可只发聚合诊断，避免 UI 噪音。trace 中保�
 - 固定注册顺序。
 - selector 按 event/toolName 匹配。
 - decision hook 串行执行。
-- `deny/block` 短路。
+- `deny` 短路。
 - effect envelope 添加 sourceContributionId。
 - handler 错误隔离。
 
@@ -468,19 +644,30 @@ runtime event 第一版可只发聚合诊断，避免 UI 噪音。trace 中保�
 
 - `run.beforeStart`、`context.beforeAssemble`、`permission.beforeDecision`、`run.afterComplete` 在预期时机触发。
 - hooks disabled 时 runtime 仍走现有路径。
-- memory side effect 迁移后行为等价。
+- memory candidate enqueue 可观测，原有 summary/archive 写入保持不变。
 
 ## 迁移计划
 
-第一阶段只新增 hook bus 基础设施和配置 normalize，不改变现有 runtime 行为。
+MVP 边界：
 
-第二阶段接入 context hook，将 memory recall context 通过 `appendContext` 注入，但保持原有召回结果等价。
+- 新增 hook bus 基础设施和配置 normalize。
+- 接入 `run.beforeStart`、`context.beforeAssemble`、`context.afterAssemble`、`permission.beforeDecision`、`run.afterComplete`、`run.afterFailure`。
+- 不接入独立 `prompt.*`、`tool.*`、`memory.*` adapter。
+- 不迁移 appendDaily、appendRunArchive、conversation summary 写入。
 
-第三阶段接入 permission hook，将现有安全策略映射为 `permission.beforeDecision` contribution。
+### MVP implementation stages
 
-第四阶段接入 run completion hook，将完成后的 memory summary/extract/archive 逐步迁移为 observe handler。
+1. 新增 hook bus 基础设施和配置 normalize，不改变现有 runtime 行为。
+2. 接入 context hook，将 memory recall context 通过 `appendContext` 注入，但保持原有召回结果等价。
+3. 接入 permission hook，将现有安全策略映射为 `permission.beforeDecision` contribution。
+4. 接入 run completion/failure hook，将完成后的 memory candidate enqueue 和失败 trace 纳入 observe handler。
 
-第五阶段增加 SDK hook adapter，把 tool lifecycle 纳入 Lume workflow hook 观测。
+### Post-MVP migration direction
+
+- 增加 SDK hook adapter，把 tool lifecycle 纳入 Lume workflow hook 观测。
+- 接入独立的 `prompt.*`、`tool.*`、`memory.*` 事件。
+- 评估 appendDaily、appendRunArchive、conversation summary 是否迁移为 hook contribution。
+- 设计 `NotifyEffect` 和 workflow bridge hooks，用于 IM/cron/notification。
 
 每阶段都保持小 diff，可单独回滚。
 
