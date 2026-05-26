@@ -50,6 +50,17 @@ export interface LumeConfigPermissionsSection {
   privateWriteRoots?: string[]
 }
 
+export interface LumeConfigHooksInternalSection {
+  enabled?: boolean
+  memory?: boolean
+  security?: boolean
+  observability?: boolean
+}
+
+export interface LumeConfigHooksSection {
+  internal?: LumeConfigHooksInternalSection
+}
+
 export type LumeConfigPermissionRuleAction = "allow" | "ask" | "deny"
 
 export type LumeConfigPermissionRuleScope = "session" | "workspace" | "global"
@@ -72,6 +83,7 @@ export interface LumeConfigSectionSet {
   skills?: LumeConfigSkillsSection
   plugins?: LumeConfigPluginsSection
   permissions?: LumeConfigPermissionsSection
+  hooks?: LumeConfigHooksSection
 }
 
 export interface LumeConfigFile extends LumeConfigSectionSet {

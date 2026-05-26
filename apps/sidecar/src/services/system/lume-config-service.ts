@@ -21,6 +21,12 @@ interface UpdateLumeConfigSectionInput {
 }
 
 const CONFIG_VERSION = 1;
+const DEFAULT_INTERNAL_HOOKS = {
+  enabled: true,
+  memory: true,
+  security: true,
+  observability: true
+} as const;
 
 function createDefaultLumeConfig(): LumeConfigFile {
   return {
@@ -51,6 +57,9 @@ function createDefaultLumeConfig(): LumeConfigFile {
         enabled: false
       },
       privateWriteRoots: []
+    },
+    hooks: {
+      internal: { ...DEFAULT_INTERNAL_HOOKS }
     },
     workspaces: {}
   };
@@ -122,6 +131,19 @@ function normalizePermissionRules(value: unknown): LumeConfigPermissionRule[] {
     });
   }
   return rules;
+}
+
+function normalizeHooksSection(value: unknown): NonNullable<LumeConfigSectionSet["hooks"]> {
+  if (!isPlainObject(value)) return {};
+  const internal = isPlainObject(value.internal) ? value.internal : {};
+  return {
+    internal: {
+      ...(typeof internal.enabled === "boolean" ? { enabled: internal.enabled } : {}),
+      ...(typeof internal.memory === "boolean" ? { memory: internal.memory } : {}),
+      ...(typeof internal.security === "boolean" ? { security: internal.security } : {}),
+      ...(typeof internal.observability === "boolean" ? { observability: internal.observability } : {})
+    }
+  };
 }
 
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
@@ -233,6 +255,10 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     next.permissions = normalizedPermissions;
   }
 
+  if (isPlainObject(value.hooks)) {
+    next.hooks = normalizeHooksSection(value.hooks);
+  }
+
   return next;
 }
 
@@ -295,6 +321,12 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
         ...(base.permissions?.classifier ?? {})
       },
       privateWriteRoots: base.permissions?.privateWriteRoots ?? fallback.permissions?.privateWriteRoots ?? []
+    },
+    hooks: {
+      internal: {
+        ...DEFAULT_INTERNAL_HOOKS,
+        ...(base.hooks?.internal ?? {})
+      }
     },
     workspaces
   };
@@ -465,6 +497,13 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
         ...(file.permissions?.privateWriteRoots ?? []),
         ...(overlay?.permissions?.privateWriteRoots ?? [])
       ]
+    },
+    hooks: {
+      internal: {
+        ...DEFAULT_INTERNAL_HOOKS,
+        ...(file.hooks?.internal ?? {}),
+        ...(overlay?.hooks?.internal ?? {})
+      }
     }
   };
 }

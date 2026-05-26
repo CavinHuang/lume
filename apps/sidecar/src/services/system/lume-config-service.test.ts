@@ -52,6 +52,56 @@ describe("lume-config-service", () => {
     expect(file.workspaces).toEqual({});
   });
 
+  test("应默认启用内部 workflow hooks", () => {
+    const effective = getEffectiveLumeConfig("default");
+
+    expect(effective.hooks?.internal).toEqual({
+      enabled: true,
+      memory: true,
+      security: true,
+      observability: true
+    });
+  });
+
+  test("应支持 hooks.internal 的 workspace 覆盖", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "hooks.internal",
+      value: {
+        enabled: true,
+        memory: true,
+        security: true,
+        observability: false
+      }
+    });
+
+    updateLumeConfigSection({
+      source: "agent",
+      workspaceSlug: "default",
+      path: "hooks.internal",
+      value: {
+        memory: false,
+        security: false
+      }
+    });
+
+    const defaultEffective = getEffectiveLumeConfig("default");
+    const anotherEffective = getEffectiveLumeConfig("another");
+
+    expect(defaultEffective.hooks?.internal).toEqual({
+      enabled: true,
+      memory: false,
+      security: false,
+      observability: false
+    });
+    expect(anotherEffective.hooks?.internal).toEqual({
+      enabled: true,
+      memory: true,
+      security: true,
+      observability: false
+    });
+  });
+
   test("应支持权限规则、分类器和私有写入根的 workspace 覆盖", () => {
     updateLumeConfigSection({
       source: "system",
