@@ -26,10 +26,9 @@ describe("openclaw-weixin-login", () => {
     }
   });
 
-  test("starts QR login with local token list and completes into an IM account", async () => {
+  test("starts QR login like Alice and completes into an IM account", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const manager = createOpenClawWeixinLoginManager({
-      localTokenProvider: () => ["old-token"],
       fetchImpl: async (url, init) => {
         calls.push({ url: String(url), init: init ?? {} });
         if (String(url).includes("get_bot_qrcode")) {
@@ -55,14 +54,17 @@ describe("openclaw-weixin-login", () => {
     if (!qrCall || !pollCall) throw new Error("login requests missing");
 
     expect(qrCall.url).toBe("https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3");
-    expect(JSON.parse(String(qrCall.init.body))).toEqual({
-      local_token_list: ["old-token"]
-    });
+    expect(qrCall.init.method).toBe("GET");
+    expect(qrCall.init.body).toBeUndefined();
+    expect(qrCall.init.headers).toBeUndefined();
     expect(pollCall.url).toBe("https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=qr-token");
-    expect(started).toMatchObject({
-      qrcodeUrl: "https://qr.example.com/qr-token",
-      message: expect.stringContaining("扫描")
-    });
+    expect(pollCall.init.method).toBe("GET");
+    expect(pollCall.init.headers).toBeUndefined();
+    expect(started.qrcodeUrl).toBe("https://qr.example.com/qr-token");
+    expect(started.message).toContain("扫描");
+    const qrcodeImageSrc = started.qrcodeImageSrc ?? "";
+    expect(qrcodeImageSrc).toStartWith("data:image/svg+xml;base64,");
+    expect(atob(qrcodeImageSrc.replace("data:image/svg+xml;base64,", ""))).toContain("<svg");
     expect(polled).toMatchObject({
       connected: true,
       status: "confirmed",
@@ -107,5 +109,19 @@ describe("openclaw-weixin-login", () => {
       "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=qr-token",
       "https://ilink-2.example.com/ilink/bot/get_qrcode_status?qrcode=qr-token"
     ]);
+  });
+
+  test("falls back to the raw qrcode payload when image content is omitted", async () => {
+    const manager = createOpenClawWeixinLoginManager({
+      fetchImpl: async () => Response.json({
+        qrcode: "raw-qr-token"
+      })
+    });
+
+    const started = await manager.startLogin();
+
+    expect(started).toMatchObject({
+      qrcodeUrl: "raw-qr-token"
+    });
   });
 });

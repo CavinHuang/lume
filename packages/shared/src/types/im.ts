@@ -89,6 +89,7 @@ export interface ImWeixinLoginStartInput {
 export interface ImWeixinLoginStartResult {
   sessionKey: string;
   qrcodeUrl?: string;
+  qrcodeImageSrc?: string;
   message: string;
   expiresAt: number;
 }

@@ -5,6 +5,7 @@ import {
   Database,
   Bot,
   Keyboard,
+  MessageCircle,
   Palette,
   Puzzle,
   RefreshCw,
@@ -22,6 +23,7 @@ export type SettingsViewTab =
   | 'files'
   | 'shortcuts'
   | 'integrations'
+  | 'im-integrations'
   | 'updates'
 
 export const SETTINGS_NAV_ITEMS: Array<{
@@ -37,7 +39,8 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'memory', label: '记忆', icon: Database },
   { id: 'files', label: '文件与同步', icon: Cloud },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
-  { id: 'integrations', label: 'MCP 与集成', icon: Puzzle },
+  { id: 'integrations', label: 'MCP', icon: Puzzle },
+  { id: 'im-integrations', label: 'IM 集成', icon: MessageCircle },
   { id: 'updates', label: '版本与更新', icon: RefreshCw },
 ]
 
@@ -50,7 +53,8 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   memory: '记忆',
   files: '文件与同步',
   shortcuts: '快捷键',
-  integrations: 'MCP 与集成',
+  integrations: 'MCP',
+  'im-integrations': 'IM 集成',
   updates: '版本与更新',
 }
 
@@ -63,6 +67,7 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   memory: '查看、搜索、蒸馏和确认工作区与全局记忆',
   files: '管理文件接入、同步状态与资料上下文',
   shortcuts: '管理键盘快捷键与常用自动化操作',
-  integrations: '管理 MCP 服务发现、连接状态与集成能力',
+  integrations: '管理 MCP 服务发现与连接状态',
+  'im-integrations': '管理微信、飞书等 IM 平台链接',
   updates: '管理 Lume 的版本检查、下载与安装体验',
 }

@@ -25,15 +25,25 @@ import {
 } from '@/lib/desktop-api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import {
   createImAccountDraft,
   formatImAccountsEmptyCopy,
+  formatSelectedWorkspaceName,
   formatImStatusBadge,
+  formatWeixinQrImageSrc,
   formatWeixinLoginStatus,
   normalizeImAccountDraft,
   shouldKeepPollingWeixinLogin,
@@ -64,9 +74,11 @@ export function ImSettings() {
   const [loading, setLoading] = React.useState(true)
   const [busyId, setBusyId] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
+  const [addDialogOpen, setAddDialogOpen] = React.useState(false)
   const [loginSession, setLoginSession] = React.useState<{
     sessionKey: string
     qrcodeUrl?: string
+    qrcodeImageSrc?: string
     statusText: string
     verifyCode: string
     polling: boolean
@@ -97,6 +109,15 @@ export function ImSettings() {
   }
 
   const selectedWorkspaceId = draft.workspaceId || defaultWorkspaceId || NO_WORKSPACE_VALUE
+  const selectedWorkspaceName = formatSelectedWorkspaceName(workspaces, selectedWorkspaceId)
+  const qrImageSrc = loginSession?.qrcodeImageSrc ?? formatWeixinQrImageSrc(loginSession?.qrcodeUrl)
+  const qrFallbackUrl = loginSession?.qrcodeUrl?.trim() || qrImageSrc
+
+  const resetAddDialog = React.useCallback(() => {
+    setDraft(createImAccountDraft(defaultWorkspaceId))
+    setLoginSession(null)
+    setSaving(false)
+  }, [defaultWorkspaceId])
 
   const workspaceNameForAccount = (account: ImAccount): string | undefined => {
     return account.workspaceId ? workspaceNames.get(account.workspaceId) ?? account.workspaceId : undefined
@@ -104,6 +125,11 @@ export function ImSettings() {
 
   const handleWorkspaceChange = (value: string | null) => {
     updateDraft({ workspaceId: value === NO_WORKSPACE_VALUE ? '' : value ?? '' })
+  }
+
+  const handleAddDialogOpenChange = (open: boolean) => {
+    setAddDialogOpen(open)
+    if (!open) resetAddDialog()
   }
 
   const handleCreate = async () => {
@@ -115,8 +141,9 @@ export function ImSettings() {
     setSaving(true)
     try {
       await createImAccount(input)
-      setDraft(createImAccountDraft(defaultWorkspaceId))
       toast.success('微信账号已链接')
+      setAddDialogOpen(false)
+      resetAddDialog()
       await refresh()
     } catch (error) {
       console.error('[IM 设置] 创建失败:', error)
@@ -134,6 +161,7 @@ export function ImSettings() {
       setLoginSession({
         sessionKey: started.sessionKey,
         qrcodeUrl: started.qrcodeUrl,
+        qrcodeImageSrc: started.qrcodeImageSrc,
         statusText: started.message,
         verifyCode: '',
         polling: false,
@@ -166,7 +194,8 @@ export function ImSettings() {
       } : current)
       if (result.connected || result.alreadyConnected) {
         toast.success(statusText)
-        setLoginSession(null)
+        setAddDialogOpen(false)
+        resetAddDialog()
         await refresh()
       }
     } catch (error) {
@@ -251,13 +280,19 @@ export function ImSettings() {
             <p className="text-[12px] text-[var(--text-3)]">{accounts.length} 个账号</p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
-          {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => handleAddDialogOpenChange(true)}>
+            <Plus />
+            链接微信
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            刷新
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="p-4">
         <div className="space-y-2">
           {loading ? (
             <div className="flex h-28 items-center justify-center text-[13px] text-[var(--text-3)]">
@@ -281,94 +316,128 @@ export function ImSettings() {
             />
           ))}
         </div>
-
-        <div className="space-y-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] p-3">
-          <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-[var(--text-1)]">扫码链接</p>
-                <p className="mt-0.5 text-[12px] text-[var(--text-3)]">官方 OpenClaw 登录流</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => void handleStartLogin()} disabled={saving}>
-                {saving ? <Loader2 className="animate-spin" /> : <QrCode />}
-                生成
-              </Button>
-            </div>
-            {loginSession && (
-              <div className="mt-3 space-y-2">
-                {loginSession.qrcodeUrl && (
-                  <a
-                    href={loginSession.qrcodeUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block truncate rounded-[6px] border border-dashed border-[var(--border)] px-2 py-1.5 text-[12px] text-[var(--brand)] hover:bg-[var(--surface-2)]"
-                  >
-                    {loginSession.qrcodeUrl}
-                  </a>
-                )}
-                <p className="text-[12px] leading-5 text-[var(--text-2)]">{loginSession.statusText}</p>
-                <div className="flex gap-2">
-                  <Input
-                    value={loginSession.verifyCode}
-                    onChange={(event) => setLoginSession((current) => current ? { ...current, verifyCode: event.target.value } : current)}
-                    placeholder="验证码"
-                    className="h-8"
-                  />
-                  <Button variant="outline" size="sm" onClick={() => void pollLoginOnce()} disabled={loginSession.polling}>
-                    {loginSession.polling ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                    检查
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="im-workspace">工作区</Label>
-            <Select
-              value={selectedWorkspaceId}
-              disabled={workspaces.length === 0}
-              onValueChange={handleWorkspaceChange}
-            >
-              <SelectTrigger id="im-workspace" className="h-8 w-full bg-[var(--surface-1)] text-[13px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {workspaces.length === 0 ? (
-                  <SelectItem value={NO_WORKSPACE_VALUE}>未指定</SelectItem>
-                ) : workspaces.map((workspace) => (
-                  <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="im-label">名称</Label>
-            <Input id="im-label" value={draft.label} onChange={(event) => updateDraft({ label: event.target.value })} placeholder="工作微信" />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="im-token">OpenClaw Token</Label>
-            <Input id="im-token" type="password" value={draft.token} onChange={(event) => updateDraft({ token: event.target.value })} />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="im-uin">UIN</Label>
-            <Input id="im-uin" value={draft.uin} onChange={(event) => updateDraft({ uin: event.target.value })} />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="im-base-url">Base URL</Label>
-            <Input id="im-base-url" value={draft.baseUrl} onChange={(event) => updateDraft({ baseUrl: event.target.value })} />
-          </div>
-          <div className="flex items-center justify-between rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2">
-            <span className="text-[13px] text-[var(--text-2)]">启用</span>
-            <Switch checked={draft.enabled} onCheckedChange={(enabled) => updateDraft({ enabled })} />
-          </div>
-          <Button className="w-full" onClick={() => void handleCreate()} disabled={saving}>
-            {saving ? <Loader2 className="animate-spin" /> : <Plus />}
-            链接微信
-          </Button>
-        </div>
       </div>
+
+      <Dialog open={addDialogOpen} onOpenChange={handleAddDialogOpenChange}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>链接微信</DialogTitle>
+            <DialogDescription>
+              使用微信扫码授权，确认后会自动保存账号。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium text-[var(--text-1)]">扫码链接</p>
+                  <p className="mt-0.5 text-[12px] text-[var(--text-3)]">链接到你的微信</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => void handleStartLogin()} disabled={saving}>
+                  {saving ? <Loader2 className="animate-spin" /> : <QrCode />}
+                  生成
+                </Button>
+              </div>
+              {loginSession && (
+                <div className="mt-3 space-y-2">
+                  {qrImageSrc && (
+                    <a
+                      href={qrFallbackUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mx-auto flex size-[176px] items-center justify-center rounded-[8px] border border-[var(--border)] bg-white p-2 hover:bg-white"
+                    >
+                      <img
+                        src={qrImageSrc}
+                        alt="微信登录二维码"
+                        className="size-full object-contain"
+                      />
+                    </a>
+                  )}
+                  {!qrImageSrc && qrFallbackUrl && (
+                    <a
+                      href={qrFallbackUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate rounded-[6px] border border-dashed border-[var(--border)] px-2 py-1.5 text-[12px] text-[var(--brand)] hover:bg-[var(--surface-2)]"
+                    >
+                      打开二维码链接
+                    </a>
+                  )}
+                  <p className="text-[12px] leading-5 text-[var(--text-2)]">{loginSession.statusText}</p>
+                  <div className="flex gap-2">
+                    <Input
+                      value={loginSession.verifyCode}
+                      onChange={(event) => setLoginSession((current) => current ? { ...current, verifyCode: event.target.value } : current)}
+                      placeholder="验证码"
+                      className="h-8"
+                    />
+                    <Button variant="outline" size="sm" onClick={() => void pollLoginOnce()} disabled={loginSession.polling}>
+                      {loginSession.polling ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                      检查
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="im-workspace">工作区</Label>
+              <Select
+                value={selectedWorkspaceId}
+                disabled={workspaces.length === 0}
+                onValueChange={handleWorkspaceChange}
+              >
+                <SelectTrigger id="im-workspace" className="h-8 w-full bg-[var(--surface-1)] text-[13px]">
+                  <span className="truncate text-left">{selectedWorkspaceName}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {workspaces.length === 0 ? (
+                    <SelectItem value={NO_WORKSPACE_VALUE}>未指定</SelectItem>
+                  ) : workspaces.map((workspace) => (
+                    <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <details className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-3">
+              <summary className="cursor-pointer text-[13px] font-medium text-[var(--text-2)]">
+                手动链接
+              </summary>
+              <div className="mt-3 grid gap-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="im-label">名称</Label>
+                  <Input id="im-label" value={draft.label} onChange={(event) => updateDraft({ label: event.target.value })} placeholder="工作微信" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="im-token">OpenClaw Token</Label>
+                  <Input id="im-token" type="password" value={draft.token} onChange={(event) => updateDraft({ token: event.target.value })} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="im-base-url">Base URL</Label>
+                  <Input id="im-base-url" value={draft.baseUrl} onChange={(event) => updateDraft({ baseUrl: event.target.value })} />
+                </div>
+                <div className="flex items-center justify-between rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2">
+                  <span className="text-[13px] text-[var(--text-2)]">启用</span>
+                  <Switch checked={draft.enabled} onCheckedChange={(enabled) => updateDraft({ enabled })} />
+                </div>
+                <Button onClick={() => void handleCreate()} disabled={saving}>
+                  {saving ? <Loader2 className="animate-spin" /> : <Plus />}
+                  手动链接
+                </Button>
+              </div>
+            </details>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleAddDialogOpenChange(false)} disabled={saving}>
+              取消
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }

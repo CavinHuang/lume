@@ -97,6 +97,7 @@ describe("im-handlers", () => {
           return {
             sessionKey: "login-1",
             qrcodeUrl: "https://qr.example.com/qr",
+            qrcodeImageSrc: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
             message: "scan",
             expiresAt: 123
           };
@@ -124,7 +125,8 @@ describe("im-handlers", () => {
       workspaceId: "workspace-1"
     })).resolves.toMatchObject({
       sessionKey: "login-1",
-      qrcodeUrl: "https://qr.example.com/qr"
+      qrcodeUrl: "https://qr.example.com/qr",
+      qrcodeImageSrc: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
     });
     await expect(handlers[IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN]?.({
       sessionKey: "login-1"

@@ -48,9 +48,7 @@ export function isOpenClawWeixinAuthError(error: unknown): boolean {
   return error instanceof OpenClawWeixinAuthError || asRecord(error).authRequired === true;
 }
 
-const DEFAULT_CHANNEL_VERSION = "lume-im-weixin/0.1";
-const DEFAULT_BOT_AGENT = "lume";
-const DEFAULT_ILINK_APP_ID = "lume";
+const DEFAULT_CHANNEL_VERSION = "1.0.2";
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
@@ -173,10 +171,7 @@ function buildHeaders(account: OpenClawWeixinAccountAuth): Record<string, string
   return {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
-    Authorization: `Bearer ${account.token}`,
-    ...(account.uin ? { "X-WECHAT-UIN": account.uin } : {}),
-    "iLink-App-Id": DEFAULT_ILINK_APP_ID,
-    "iLink-App-ClientVersion": DEFAULT_CHANNEL_VERSION
+    Authorization: `Bearer ${account.token}`
   };
 }
 
@@ -210,9 +205,7 @@ export function createOpenClawWeixinApi(
 
   function baseInfo(): Record<string, unknown> {
     return {
-      ...(account.uin ? { uin: account.uin } : {}),
-      channel_version: DEFAULT_CHANNEL_VERSION,
-      bot_agent: DEFAULT_BOT_AGENT
+      channel_version: DEFAULT_CHANNEL_VERSION
     };
   }
 

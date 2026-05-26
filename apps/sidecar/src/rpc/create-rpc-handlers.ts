@@ -1,4 +1,5 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { setAgentNotificationWriter } from "../services/agent/agent-notification-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { createAgentHandlers } from "./agent-handlers";
@@ -14,6 +15,7 @@ export interface CreateRpcHandlersContext {
 }
 
 export function createRpcHandlers(context: CreateRpcHandlersContext): Record<string, RpcHandler> {
+  setAgentNotificationWriter(context.writeNotification);
   const planModePhaseTracker = new PlanModePhaseTracker();
   const runtimeStatusManager = getAgentRuntimeStatusManager();
   const notifyPlanModePhaseChange = (

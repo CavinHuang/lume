@@ -10,4 +10,11 @@ describe('settings view state', () => {
       'agents',
     ])
   })
+
+  test('keeps MCP and IM integration settings as separate navigation items', () => {
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
+    expect(ids).toContain('integrations')
+    expect(ids).toContain('im-integrations')
+    expect(ids.indexOf('im-integrations')).toBe(ids.indexOf('integrations') + 1)
+  })
 })

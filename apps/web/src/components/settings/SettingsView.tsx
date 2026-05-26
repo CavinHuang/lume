@@ -75,12 +75,8 @@ export function SettingsView() {
           {tab === 'memory' && <MemorySettings />}
           {tab === 'files' && <SettingsContentShell><SkillsSettings /></SettingsContentShell>}
           {tab === 'shortcuts' && <SettingsContentShell><AutomationSettings /></SettingsContentShell>}
-          {tab === 'integrations' && (
-            <div className="space-y-4">
-              <ImSettings />
-              <McpSettings />
-            </div>
-          )}
+          {tab === 'integrations' && <McpSettings />}
+          {tab === 'im-integrations' && <ImSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
         </main>
       </ScrollArea>

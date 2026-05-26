@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import QRCode from "qrcode";
 import type {
   ImAccount,
   ImWeixinLoginPollInput,
@@ -7,10 +8,7 @@ import type {
   ImWeixinLoginStartResult,
   ImWeixinLoginStatus
 } from "@lume/shared";
-import {
-  listImAccountSecrets,
-  upsertImAccountFromLogin
-} from "../im-config-manager";
+import { upsertImAccountFromLogin } from "../im-config-manager";
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -18,6 +16,7 @@ interface ActiveLogin {
   sessionKey: string;
   qrcode: string;
   qrcodeUrl: string;
+  qrcodeImageSrc: string;
   startedAt: number;
   currentBaseUrl: string;
   workspaceId?: string;
@@ -30,7 +29,6 @@ export interface WeixinLoginManager {
 
 export interface CreateOpenClawWeixinLoginManagerInput {
   fetchImpl?: FetchLike;
-  localTokenProvider?: () => string[];
   upsertAccount?: (input: {
     accountKey: string;
     token: string;
@@ -46,14 +44,6 @@ const BOT_TYPE = "3";
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
-}
-
-function loginHeaders(): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    "iLink-App-Id": "lume",
-    "iLink-App-ClientVersion": "lume-im-weixin/0.1"
-  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -73,6 +63,16 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   return asRecord(await response.json());
 }
 
+async function createQrImageSrc(value: string): Promise<string> {
+  const svg = await QRCode.toString(value, {
+    type: "svg",
+    width: 280,
+    margin: 2,
+    errorCorrectionLevel: "M"
+  });
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
 function statusMessage(status: ImWeixinLoginStatus): string {
   if (status === "scaned") return "已扫码，请在手机微信确认。";
   if (status === "need_verifycode") return "需要输入手机微信显示的数字。";
@@ -88,7 +88,6 @@ export function createOpenClawWeixinLoginManager(
   input: CreateOpenClawWeixinLoginManagerInput = {}
 ): WeixinLoginManager {
   const fetchImpl = input.fetchImpl ?? fetch;
-  const localTokenProvider = input.localTokenProvider ?? listImAccountSecrets;
   const upsertAccount = input.upsertAccount ?? ((payload) => upsertImAccountFromLogin({
     provider: "weixin",
     accountKey: payload.accountKey,
@@ -117,21 +116,19 @@ export function createOpenClawWeixinLoginManager(
       const workspaceId = asString(input.workspaceId);
       const url = `${FIXED_BASE_URL}/ilink/bot/get_bot_qrcode?bot_type=${BOT_TYPE}`;
       const payload = await readJson(await fetchImpl(url, {
-        method: "POST",
-        headers: loginHeaders(),
-        body: JSON.stringify({
-          local_token_list: localTokenProvider().slice(-10)
-        })
+        method: "GET"
       }));
       const qrcode = asString(payload.qrcode);
-      const qrcodeUrl = asString(payload.qrcode_img_content);
+      const qrcodeUrl = asString(payload.qrcode_img_content) ?? qrcode;
       if (!qrcode || !qrcodeUrl) {
         throw new Error("微信登录二维码响应缺少 qrcode");
       }
+      const qrcodeImageSrc = await createQrImageSrc(qrcodeUrl);
       activeLogins.set(sessionKey, {
         sessionKey,
         qrcode,
         qrcodeUrl,
+        qrcodeImageSrc,
         startedAt: Date.now(),
         currentBaseUrl: FIXED_BASE_URL,
         workspaceId
@@ -139,6 +136,7 @@ export function createOpenClawWeixinLoginManager(
       return {
         sessionKey,
         qrcodeUrl,
+        qrcodeImageSrc,
         message: "请用手机微信扫描二维码。",
         expiresAt: Date.now() + LOGIN_TTL_MS
       };
@@ -167,8 +165,7 @@ export function createOpenClawWeixinLoginManager(
         url.searchParams.set("verify_code", input.verifyCode.trim());
       }
       const payload = await readJson(await fetchImpl(url.toString(), {
-        method: "GET",
-        headers: loginHeaders()
+        method: "GET"
       }));
       const status = (asString(payload.status) ?? "wait") as ImWeixinLoginStatus;
 

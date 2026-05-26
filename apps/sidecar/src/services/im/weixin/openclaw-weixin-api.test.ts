@@ -5,7 +5,7 @@ import {
 } from "./openclaw-weixin-api";
 
 describe("openclaw-weixin-api", () => {
-  test("getUpdates posts cursor and base info with iLink auth headers", async () => {
+  test("getUpdates posts cursor and base info with Alice-compatible auth headers", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const api = createOpenClawWeixinApi({
       baseUrl: "https://ilink.example.com/",
@@ -37,13 +37,15 @@ describe("openclaw-weixin-api", () => {
     expect(call.init.method).toBe("POST");
     expect(call.init.headers).toMatchObject({
       AuthorizationType: "ilink_bot_token",
-      Authorization: "Bearer token-1",
-      "X-WECHAT-UIN": "10001"
+      Authorization: "Bearer token-1"
     });
+    expect(call.init.headers).not.toHaveProperty("X-WECHAT-UIN");
+    expect(call.init.headers).not.toHaveProperty("iLink-App-Id");
+    expect(call.init.headers).not.toHaveProperty("iLink-App-ClientVersion");
     expect(JSON.parse(String(call.init.body))).toMatchObject({
       get_updates_buf: "cursor-1",
       base_info: {
-        uin: "10001"
+        channel_version: "1.0.2"
       }
     });
     expect(batch).toMatchObject({

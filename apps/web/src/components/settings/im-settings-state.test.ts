@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import {
   createImAccountDraft,
   formatImAccountsEmptyCopy,
+  formatSelectedWorkspaceName,
+  formatWeixinQrImageSrc,
   formatWeixinLoginStatus,
   formatImStatusBadge,
   normalizeImAccountDraft,
@@ -47,6 +49,16 @@ describe('im settings state', () => {
     })
   })
 
+  test('formats selected workspace name for the account dialog', () => {
+    const workspaces = [
+      { id: 'workspace-1', name: '产品工作区' },
+      { id: 'workspace-2', name: '客服工作区' },
+    ]
+    expect(formatSelectedWorkspaceName(workspaces, 'workspace-2')).toBe('客服工作区')
+    expect(formatSelectedWorkspaceName(workspaces, 'workspace-missing')).toBe('workspace-missing')
+    expect(formatSelectedWorkspaceName([], '__none__')).toBe('未指定')
+  })
+
   test('formats QR login status for the settings panel', () => {
     expect(formatWeixinLoginStatus({
       connected: false,
@@ -59,6 +71,13 @@ describe('im settings state', () => {
       status: 'confirmed',
       message: 'ok',
     })).toEqual('微信已连接')
+  })
+
+  test('formats existing QR image content for direct rendering', () => {
+    expect(formatWeixinQrImageSrc('data:image/png;base64,abc')).toBe('data:image/png;base64,abc')
+    expect(formatWeixinQrImageSrc('iVBORw0KGgo=')).toBe('data:image/png;base64,iVBORw0KGgo=')
+    expect(formatWeixinQrImageSrc('https://liteapp.weixin.qq.com/q/token')).toBeUndefined()
+    expect(formatWeixinQrImageSrc()).toBeUndefined()
   })
 
   test('keeps QR polling only for active login statuses', () => {
