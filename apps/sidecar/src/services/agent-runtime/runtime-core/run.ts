@@ -71,6 +71,12 @@ import {
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
 import type { LumeToolDescriptor } from "../tools/tool-types";
 import type { TaskContractRecord } from "../plan/task-contract-record-types";
+import {
+  collectAppendContextEffects,
+  type LumeWorkflowHookExecutionResult
+} from "../../workflow-hooks/hook-effects";
+import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
+import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 
 const log = createLogger("runtime-core-prompt");
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -108,6 +114,8 @@ export interface CreateRuntimeCoreSessionInput {
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
   runId?: string;
+  workflowHooks?: LumeWorkflowHookRuntimeLike;
+  applyWorkflowHookEffects?: (result: LumeWorkflowHookExecutionResult) => Promise<void> | void;
   trace?: ContextAssemblyInput["trace"];
 }
 
@@ -807,6 +815,30 @@ function estimateToolSchemaTokens(tools: ToolDefinition[]): number {
   0);
 }
 
+async function executeWorkflowHookSafely(
+  workflowHooks: LumeWorkflowHookRuntimeLike | undefined,
+  event: LumeWorkflowHookEvent
+): Promise<LumeWorkflowHookExecutionResult | null> {
+  if (!workflowHooks) return null;
+  try {
+    return await workflowHooks.execute(event);
+  } catch {
+    return null;
+  }
+}
+
+async function applyWorkflowHookEffectsSafely(
+  applyWorkflowHookEffects: CreateRuntimeCoreSessionInput["applyWorkflowHookEffects"],
+  result: LumeWorkflowHookExecutionResult | null
+): Promise<void> {
+  if (!applyWorkflowHookEffects || !result) return;
+  try {
+    await applyWorkflowHookEffects(result);
+  } catch {
+    // Hook observe effects must not block runtime session creation.
+  }
+}
+
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
@@ -848,10 +880,30 @@ export async function createRuntimeCoreSession(
     mcpTools: workspaceMcpRuntime.tools,
     mcpDiagnostics: workspaceMcpRuntime.diagnostics
   });
+  const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
+  const runId = input.runId ?? input.lumeSessionId;
+  const beforeContextResult = await executeWorkflowHookSafely(input.workflowHooks, {
+    event: "context.beforeAssemble",
+    runId,
+    threadId: input.lumeSessionId,
+    workspaceId: input.workspaceId,
+    workspaceSlug: input.workspaceSlug,
+    cwd: input.cwd,
+    permissionMode: input.permissionMode,
+    threadType: input.threadType,
+    chatType: input.chatType,
+    messageMetadata: input.messageMetadata,
+    userMessage: input.userMessage ?? "",
+    availableTools: toolset.availableToolNames,
+    tokenBudget: contextTokenBudget
+  });
+  const workflowContext = beforeContextResult
+    ? { appendContext: collectAppendContextEffects(beforeContextResult.effects) }
+    : undefined;
 
   const contextAssembly = await new ContextAssembler().assemble({
     threadId: input.lumeSessionId,
-    runId: input.lumeSessionId,
+    runId,
     cwd: input.cwd,
     modelRef: input.modelRef,
     resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
@@ -864,9 +916,27 @@ export async function createRuntimeCoreSession(
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
     availableTools: toolset.availableToolNames,
-    tokenBudget: input.resolvedModel?.contextWindow ?? 32_000,
+    tokenBudget: contextTokenBudget,
+    workflowContext,
     trace: input.trace
   });
+  const afterContextResult = await executeWorkflowHookSafely(input.workflowHooks, {
+    event: "context.afterAssemble",
+    runId,
+    threadId: input.lumeSessionId,
+    workspaceId: input.workspaceId,
+    workspaceSlug: input.workspaceSlug,
+    cwd: input.cwd,
+    permissionMode: input.permissionMode,
+    threadType: input.threadType,
+    chatType: input.chatType,
+    messageMetadata: input.messageMetadata,
+    availableTools: toolset.availableToolNames,
+    tokenBudget: contextTokenBudget,
+    memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
+    userMessageForModelLength: contextAssembly.userMessageForModel.length
+  });
+  await applyWorkflowHookEffectsSafely(input.applyWorkflowHookEffects, afterContextResult);
   const systemPrompt = contextAssembly.systemPrompt;
   const context = sessionManager.buildSessionContext();
 

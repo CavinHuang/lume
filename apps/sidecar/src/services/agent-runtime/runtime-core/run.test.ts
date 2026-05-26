@@ -10,7 +10,8 @@ import {
   buildSidecarSubagentRunContext,
   createRuntimeCoreSession,
   runForegroundSubagentWithTimeout,
-  resolveSubagentModelOverride
+  resolveSubagentModelOverride,
+  type CreateRuntimeCoreSessionInput
 } from "./run";
 import { runRuntimeCoreAttempt } from "./attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
@@ -27,6 +28,25 @@ import {
 
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
+
+  function createHookRuntimeSessionInput(
+    overrides: Partial<CreateRuntimeCoreSessionInput> = {}
+  ): CreateRuntimeCoreSessionInput {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-hooks-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+    return {
+      lumeSessionId: "test-session-hooks",
+      cwd,
+      agentDir,
+      userMessage: "hello",
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      ...overrides
+    };
+  }
 
   afterEach(() => {
     setWorkspaceMcpManagerForTesting(null);
@@ -80,6 +100,118 @@ describe("runtime-core run", () => {
     ]);
 
     result.session.dispose();
+  });
+
+  test("executes context hooks around context assembly", async () => {
+    const seen: string[] = [];
+    const applied: string[] = [];
+    const result = await createRuntimeCoreSession({
+      ...createHookRuntimeSessionInput({
+        runId: "run-hooks"
+      }),
+      workflowHooks: {
+        execute: async (event) => {
+          seen.push(event.event);
+          if (event.event === "context.beforeAssemble") {
+            return {
+              effects: [{
+                effect: {
+                  type: "appendContext",
+                  source: "hook:core-memory-recall",
+                  content: "<lume_memory_context>\nremembered\n</lume_memory_context>",
+                  hidden: true,
+                  usedMemoryItems: [],
+                  userMessageForModel: "<lume_memory_context>\nremembered\n</lume_memory_context>\n<user_message>\nhello\n</user_message>"
+                },
+                sourceContributionId: "core.memory.context",
+                createdAt: "2026-05-26T00:00:00.000Z"
+              }],
+              errors: []
+            };
+          }
+          expect(event).toMatchObject({
+            event: "context.afterAssemble",
+            availableTools: expect.any(Array),
+            tokenBudget: expect.any(Number),
+            userMessageForModelLength: expect.any(Number)
+          });
+          return {
+            effects: [{
+              effect: {
+                type: "recordTrace",
+                record: {
+                  type: "workflow_hook",
+                  contributionId: "core.observability.trace",
+                  event: "context.afterAssemble",
+                  status: "success"
+                }
+              },
+              sourceContributionId: "core.observability.trace",
+              createdAt: "2026-05-26T00:00:00.000Z"
+            }],
+            errors: []
+          };
+        }
+      },
+      applyWorkflowHookEffects: async (hookResult) => {
+        applied.push(...hookResult.effects.map((item) => item.effect.type));
+      }
+    });
+
+    expect(seen).toEqual(["context.beforeAssemble", "context.afterAssemble"]);
+    expect(applied).toEqual(["recordTrace"]);
+    expect(String(result.userMessageForModel)).toContain("remembered");
+
+    await result.session.dispose();
+  });
+
+  test("continues context assembly when context hook throws", async () => {
+    const result = await createRuntimeCoreSession({
+      ...createHookRuntimeSessionInput(),
+      workflowHooks: {
+        execute: async () => {
+          throw new Error("hook failed");
+        }
+      }
+    });
+
+    expect(result.userMessageForModel).toBeTruthy();
+
+    await result.session.dispose();
+  });
+
+  test("continues context assembly when after hook reports errors and effect application throws", async () => {
+    const result = await createRuntimeCoreSession({
+      ...createHookRuntimeSessionInput(),
+      workflowHooks: {
+        execute: async (event) => event.event === "context.afterAssemble"
+          ? {
+              effects: [{
+                effect: {
+                  type: "recordTrace",
+                  record: {
+                    type: "workflow_hook",
+                    contributionId: "core.observability.trace",
+                    event: "context.afterAssemble",
+                    status: "error",
+                    errorMessage: "diagnostic failure"
+                  }
+                },
+                sourceContributionId: "core.observability.trace",
+                createdAt: "2026-05-26T00:00:00.000Z"
+              }],
+              errors: [{ contributionId: "core.observability.trace", message: "diagnostic failure" }]
+            }
+          : { effects: [], errors: [] }
+      },
+      applyWorkflowHookEffects: async () => {
+        throw new Error("effect failed");
+      }
+    });
+
+    expect(result.userMessageForModel).toBeTruthy();
+
+    await result.session.dispose();
   });
 
   test("应优先暴露 SDK 原生基础工具名，而不是小写包装名", async () => {
