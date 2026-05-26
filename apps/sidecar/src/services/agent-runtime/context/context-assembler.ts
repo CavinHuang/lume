@@ -14,6 +14,7 @@ import {
   type MemoryV2UserMessageContext
 } from "../../memory-v2/user-message-prefix";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
+import type { CollectedAppendContextEffect } from "../../workflow-hooks/hook-effects";
 import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
@@ -35,6 +36,9 @@ export interface ContextAssemblyInput {
   messageAttachments?: AgentMessageAttachmentInput[];
   availableTools: string[];
   tokenBudget: number;
+  workflowContext?: {
+    appendContext: CollectedAppendContextEffect[];
+  };
   trace?: {
     recorder: TraceRecorder;
     traceId: string;
@@ -142,7 +146,16 @@ export class ContextAssembler {
       items: [],
       userMessageForModel: input.userMessage
     };
-    if (input.workspaceSlug && input.userMessage.trim()) {
+    const workflowAppendContext = input.workflowContext?.appendContext ?? [];
+    if (workflowAppendContext.length > 0) {
+      const prefix = workflowAppendContext.map((block) => block.content).join("\n\n");
+      memoryContext = {
+        prefix,
+        items: workflowAppendContext.flatMap((block) => block.usedMemoryItems),
+        userMessageForModel: workflowAppendContext.find((block) => block.userMessageForModel)?.userMessageForModel
+          ?? `${prefix}\n<user_message>\n${input.userMessage}\n</user_message>`
+      };
+    } else if (input.workspaceSlug && input.userMessage.trim()) {
       try {
         const memoryInput = {
           workspaceSlug: input.workspaceSlug,

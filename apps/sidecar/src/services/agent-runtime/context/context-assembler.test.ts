@@ -27,6 +27,49 @@ describe("ContextAssembler", () => {
     expect(result.trace.tokenUsageEstimate).toBeGreaterThan(0);
   });
 
+  test("uses prepared workflow context as model-facing memory context", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-context-hooks-"));
+    try {
+      process.env.LUME_CONFIG_DIR = dir;
+      const result = await new ContextAssembler().assemble({
+        threadId: "thread-hooks",
+        runId: "run-hooks",
+        userMessage: "remember me",
+        workspaceSlug: "demo",
+        resolvedModelId: "gpt-5.4-mini",
+        availableTools: ["Read"],
+        tokenBudget: 1000,
+        workflowContext: {
+          appendContext: [{
+            sourceContributionId: "core.memory.context",
+            source: "hook:core-memory-recall",
+            content: "<lume_memory_context>\nremembered\n</lume_memory_context>",
+            hidden: true,
+            usedMemoryItems: [{
+              id: "mem-1",
+              kind: "preference",
+              scope: "global",
+              status: "active",
+              statement: "remembered",
+              path: "memory.md",
+              citation: "memory.md",
+              reason: "test",
+              score: 1
+            }],
+            userMessageForModel: "<lume_memory_context>\nremembered\n</lume_memory_context>\n<user_message>\nremember me\n</user_message>"
+          }]
+        }
+      });
+
+      expect(result.memoryContext).toContain("remembered");
+      expect(result.userMessageForModel).toContain("<user_message>");
+      expect(result.memoryContextUsedItems.map((item) => item.id)).toEqual(["mem-1"]);
+    } finally {
+      process.env.LUME_CONFIG_DIR = originalConfigDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("adds message attachment brief to model-facing user message", async () => {
     const result = await new ContextAssembler().assemble({
       threadId: "thread-attachments",
