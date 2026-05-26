@@ -15,6 +15,7 @@ import {
 import type { LumeRunState, LumeRunStatus } from "./run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "./run-state-store";
 import { stripMemoryUserMessagePrefix } from "../../memory-v2/user-message-prefix";
+import type { LumeWorkflowTraceRecord } from "../../workflow-hooks/hook-effects";
 
 export interface CreateLumeRunObserverInput {
   sessionDir: string;
@@ -283,6 +284,30 @@ export class LumeRunObserver {
   async getRunState(): Promise<LumeRunState | null> {
     await this.flush();
     return this.stateStore.get(this.state.runId);
+  }
+
+  async recordWorkflowHookTrace(input: {
+    sourceContributionId: string;
+    createdAt: string;
+    record: LumeWorkflowTraceRecord;
+  }): Promise<void> {
+    await this.traceRecorder.withSpan({
+      traceId: this.state.traceId,
+      parentId: this.runSpan?.id,
+      type: "guardrail",
+      name: `workflow hook: ${input.record.event}`,
+      input: input.record,
+      metadata: {
+        contributionId: input.record.contributionId,
+        event: input.record.event,
+        status: input.record.status,
+        elapsedMs: input.record.elapsedMs,
+        effectTypes: input.record.effectTypes,
+        errorMessage: input.record.errorMessage,
+        sourceContributionId: input.sourceContributionId,
+        hookCreatedAt: input.createdAt
+      }
+    }, async () => ({ status: input.record.status }));
   }
 
   async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string): Promise<void> {

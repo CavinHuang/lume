@@ -23,6 +23,9 @@ import { appendDaily, appendRunArchive } from "../../memory-v2/markdown-store";
 import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import { extractMemoryCandidatesWithLlm } from "../../memory-v2/extraction";
 import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
+import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
+import type { LumeWorkflowHookExecutionResult } from "../../workflow-hooks/hook-effects";
+import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 import {
   compactMemorySummaryText,
   createMemoryConversationSummarizer,
@@ -68,11 +71,16 @@ export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]
 
 export class LumeRunner {
   readonly emit: AgentRuntimeEmitter;
+  private latestMemoryContextUsedItems: CreateRuntimeCoreSessionResult["memoryContextUsedItems"] = [];
 
   private constructor(
     private readonly observer: LumeRunObserver,
     emit: AgentRuntimeEmitter,
-    private readonly summarizeMemoryConversation?: MemoryConversationSummarizer
+    private readonly params: AgentRuntimeRunParams,
+    private readonly prepared: PreparedRuntimeCoreAttempt,
+    private readonly summarizeMemoryConversation: MemoryConversationSummarizer | undefined,
+    private readonly workflowHooks: LumeWorkflowHookRuntimeLike | undefined,
+    private readonly addMemoryCandidate: typeof smartAddMemoryV2Candidate
   ) {
     this.emit = createObservedRuntimeEmitter(emit, observer);
   }
@@ -82,6 +90,8 @@ export class LumeRunner {
     prepared: PreparedRuntimeCoreAttempt;
     emit: AgentRuntimeEmitter;
     summarizeMemoryConversation?: MemoryConversationSummarizer;
+    workflowHooks?: LumeWorkflowHookRuntimeLike | null;
+    addMemoryCandidate?: typeof smartAddMemoryV2Candidate;
   }): Promise<LumeRunner> {
     const { params, prepared } = input;
     const observer = await LumeRunObserver.create({
@@ -102,13 +112,19 @@ export class LumeRunner {
         contextWindow: prepared.modelResolution.model.contextWindow
       }
     });
-    return new LumeRunner(
+    const runner = new LumeRunner(
       observer,
       input.emit,
+      params,
+      prepared,
       input.summarizeMemoryConversation ?? createMemoryConversationSummarizer({
         workspaceSlug: prepared.workspaceSlug
-      })
+      }),
+      input.workflowHooks ?? undefined,
+      input.addMemoryCandidate ?? smartAddMemoryV2Candidate
     );
+    await runner.fireRunBeforeStart();
+    return runner;
   }
 
   getRunId(): string {
@@ -122,6 +138,7 @@ export class LumeRunner {
   }
 
   async finalizeError(error: unknown): Promise<void> {
+    await this.fireRunAfterFailure(error instanceof Error ? error.message : String(error));
     await this.observer.finalize("failed", error instanceof Error ? error : String(error));
   }
 
@@ -273,6 +290,7 @@ export class LumeRunner {
       runId: this.observer.getRunId(),
       trace: this.observer.getContextAssemblyTrace()
     });
+    this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];
 
     return this.runRuntimeSession({
       params,
@@ -286,9 +304,9 @@ export class LumeRunner {
   async complete(): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
     const workspaceSlug = this.observer.getWorkspaceSlug();
+    const runState = await this.observer.getRunState();
     if (workspaceSlug) {
       try {
-        const runState = await this.observer.getRunState();
         const historySummary = summarizeMemoryConversationFallback({
           userMessage: this.observer.getUserMessage(),
           runState
@@ -310,25 +328,28 @@ export class LumeRunner {
           }
         });
         this.scheduleConversationSummary(workspaceSlug, runState, historySummary);
-        for (const candidate of await extractMemoryCandidatesWithLlm({
-          text: this.observer.getUserMessage(),
-          workspaceSlug
-        })) {
-          await smartAddMemoryV2Candidate({
-            workspaceSlug,
-            candidate: {
-              ...candidate,
-              evidence: {
-                ...candidate.evidence,
-                runId: this.observer.getRunId()
+        if (!this.workflowHooks) {
+          for (const candidate of await extractMemoryCandidatesWithLlm({
+            text: this.observer.getUserMessage(),
+            workspaceSlug
+          })) {
+            await smartAddMemoryV2Candidate({
+              workspaceSlug,
+              candidate: {
+                ...candidate,
+                evidence: {
+                  ...candidate.evidence,
+                  runId: this.observer.getRunId()
+                }
               }
-            }
-          });
+            });
+          }
         }
       } catch {
         // Memory capture must not block completion.
       }
     }
+    await this.fireRunAfterComplete(runState);
     this.emit.onRuntimeEvent?.({
       id: `${this.observer.getRunId()}:run.completed`,
       type: "run.completed",
@@ -415,6 +436,7 @@ export class LumeRunner {
   }
 
   async fail(errorMessage: string): Promise<AgentRuntimeRunResult> {
+    await this.fireRunAfterFailure(errorMessage);
     await this.observer.flush();
     this.emit.onError(errorMessage);
     this.emit.onRuntimeEvent?.({
@@ -429,6 +451,99 @@ export class LumeRunner {
       }
     });
     return this.finalizeResult({ status: "errored", errorMessage });
+  }
+
+  private async fireRunBeforeStart(): Promise<void> {
+    await this.executeWorkflowHook({
+      ...this.buildHookEventBase(),
+      event: "run.beforeStart",
+      userMessage: this.observer.getUserMessage()
+    });
+  }
+
+  private async fireRunAfterComplete(runState: LumeRunState | null): Promise<void> {
+    await this.executeWorkflowHook({
+      ...this.buildHookEventBase(),
+      event: "run.afterComplete",
+      userMessage: this.observer.getUserMessage(),
+      runStateSummary: {
+        status: runState?.status ?? "completed",
+        generatedItemCount: runState?.generatedItems.length ?? 0,
+        pendingInterruptionCount: runState?.pendingInterruptions.length ?? 0
+      },
+      usage: runState?.usage,
+      memoryContextUsedItems: this.latestMemoryContextUsedItems
+    });
+  }
+
+  private async fireRunAfterFailure(errorMessage: string): Promise<void> {
+    await this.executeWorkflowHook({
+      ...this.buildHookEventBase(),
+      event: "run.afterFailure",
+      userMessage: this.observer.getUserMessage(),
+      errorMessage
+    });
+  }
+
+  private buildHookEventBase(): Omit<LumeWorkflowHookEvent, "event"> {
+    return {
+      runId: this.observer.getRunId(),
+      threadId: this.observer.getThreadId(),
+      workspaceId: this.params.runtime.workspaceId,
+      workspaceSlug: this.prepared.workspaceSlug,
+      cwd: this.prepared.agentCwd,
+      permissionMode: this.params.input.permissionMode,
+      threadType: this.params.runtime.threadType,
+      chatType: this.params.input.chatType,
+      messageMetadata: this.params.input.messageMetadata
+    } as Omit<LumeWorkflowHookEvent, "event">;
+  }
+
+  private async executeWorkflowHook(event: LumeWorkflowHookEvent): Promise<void> {
+    if (!this.workflowHooks) return;
+    try {
+      const result = await this.workflowHooks.execute(event);
+      await this.applyWorkflowHookEffects(result);
+    } catch {
+      // Workflow hooks are observe-only at the runner boundary.
+    }
+  }
+
+  private async applyWorkflowHookEffects(result: LumeWorkflowHookExecutionResult): Promise<void> {
+    for (const envelope of result.effects) {
+      if (envelope.effect.type === "emitRuntimeEvent") {
+        this.emit.onRuntimeEvent?.({
+          id: `${this.observer.getRunId()}:${envelope.sourceContributionId}:${envelope.effect.event.type}`,
+          createdAt: envelope.createdAt,
+          ...envelope.effect.event,
+          runId: this.observer.getRunId(),
+          threadId: this.observer.getThreadId()
+        } as any);
+      }
+      if (envelope.effect.type === "recordTrace") {
+        await this.observer.recordWorkflowHookTrace({
+          sourceContributionId: envelope.sourceContributionId,
+          createdAt: envelope.createdAt,
+          record: envelope.effect.record
+        });
+      }
+      if (envelope.effect.type === "enqueueMemoryCandidate") {
+        const workspaceSlug = this.observer.getWorkspaceSlug();
+        if (!workspaceSlug) continue;
+        for (const candidate of envelope.effect.candidates) {
+          await this.addMemoryCandidate({
+            workspaceSlug,
+            candidate: {
+              ...candidate,
+              evidence: {
+                ...(candidate.evidence ?? {}),
+                runId: candidate.evidence?.runId ?? this.observer.getRunId()
+              }
+            }
+          });
+        }
+      }
+    }
   }
 }
 
