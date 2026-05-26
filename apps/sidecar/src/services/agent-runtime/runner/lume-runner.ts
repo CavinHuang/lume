@@ -1,5 +1,5 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
-import type { SDKMessage } from "@lume/shared";
+import type { LumeConfigHooksInternalSection, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
 import { resolveAgentThinkingLevel } from "./model-capabilities";
@@ -25,7 +25,16 @@ import { extractMemoryCandidatesWithLlm } from "../../memory-v2/extraction";
 import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
 import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 import type { LumeWorkflowHookExecutionResult } from "../../workflow-hooks/hook-effects";
-import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
+import {
+  createLumeWorkflowHookRuntime,
+  type LumeWorkflowHookRuntimeLike
+} from "../../workflow-hooks/hook-runtime";
+import {
+  createMemoryWorkflowHookService,
+  createRuntimeEventWorkflowHookService,
+  createSecurityWorkflowHookService,
+  createTraceWorkflowHookService
+} from "../../workflow-hooks/hook-services";
 import {
   compactMemorySummaryText,
   createMemoryConversationSummarizer,
@@ -33,6 +42,7 @@ import {
   type MemoryConversationSummarizer
 } from "../../memory-v2/conversation-summary";
 import type { LumeRunState } from "./run-state";
+import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -53,14 +63,20 @@ interface RuntimeSessionRunInput {
   prepared: PreparedRuntimeCoreAttempt;
   runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">;
   options: RunRuntimeCoreAttemptOptions;
-  createCanUseTool: (askUserSignal: AbortSignal) => CanUseToolFn;
+  createCanUseTool: (
+    askUserSignal: AbortSignal,
+    workflowHooks?: LumeWorkflowHookRuntimeLike
+  ) => CanUseToolFn;
 }
 
 interface PreparedRuntimeCoreRunInput {
   params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
   options: RunRuntimeCoreAttemptOptions;
-  createCanUseTool: (askUserSignal: AbortSignal) => CanUseToolFn;
+  createCanUseTool: (
+    askUserSignal: AbortSignal,
+    workflowHooks?: LumeWorkflowHookRuntimeLike
+  ) => CanUseToolFn;
   createRuntimeSession?: (input: CreateRuntimeCoreSessionInput) => Promise<CreateRuntimeCoreSessionResult>;
 }
 
@@ -91,6 +107,8 @@ export class LumeRunner {
     emit: AgentRuntimeEmitter;
     summarizeMemoryConversation?: MemoryConversationSummarizer;
     workflowHooks?: LumeWorkflowHookRuntimeLike | null;
+    createWorkflowHooks?: (config: LumeConfigHooksInternalSection) => LumeWorkflowHookRuntimeLike;
+    hooksConfig?: LumeConfigHooksInternalSection;
     addMemoryCandidate?: typeof smartAddMemoryV2Candidate;
   }): Promise<LumeRunner> {
     const { params, prepared } = input;
@@ -112,6 +130,11 @@ export class LumeRunner {
         contextWindow: prepared.modelResolution.model.contextWindow
       }
     });
+    const workflowHooks = resolveWorkflowHooks({
+      explicit: input.workflowHooks,
+      hooksConfig: input.hooksConfig ?? getEffectiveLumeConfig(prepared.workspaceSlug).hooks?.internal,
+      createWorkflowHooks: input.createWorkflowHooks
+    });
     const runner = new LumeRunner(
       observer,
       input.emit,
@@ -120,7 +143,7 @@ export class LumeRunner {
       input.summarizeMemoryConversation ?? createMemoryConversationSummarizer({
         workspaceSlug: prepared.workspaceSlug
       }),
-      input.workflowHooks ?? undefined,
+      workflowHooks,
       input.addMemoryCandidate ?? smartAddMemoryV2Candidate
     );
     await runner.fireRunBeforeStart();
@@ -217,7 +240,7 @@ export class LumeRunner {
       const maxTurns = resolveRuntimeCoreMaxTurns(input);
 
       const query = agent.query(runtimeSession.userMessageForModel || input.userMessage, {
-        canUseTool: createCanUseTool(askUserAbortController.signal),
+        canUseTool: createCanUseTool(askUserAbortController.signal, this.workflowHooks),
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
         ...(maxTurns === undefined ? {} : { maxTurns })
@@ -288,6 +311,8 @@ export class LumeRunner {
       emitToolPermissionRequest: this.emit.onToolPermissionRequest,
       emitTaskContractUpdated: this.emit.onTaskContractUpdated,
       runId: this.observer.getRunId(),
+      workflowHooks: this.workflowHooks,
+      applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
       trace: this.observer.getContextAssemblyTrace()
     });
     this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];
@@ -551,4 +576,30 @@ function compactMemoryHistoryText(value: string, maxLength = 220): string {
   const compact = value.replace(/\s+/g, " ").trim();
   if (compact.length <= maxLength) return compact;
   return `${compact.slice(0, maxLength - 3)}...`;
+}
+
+function resolveWorkflowHooks(input: {
+  explicit?: LumeWorkflowHookRuntimeLike | null;
+  hooksConfig?: LumeConfigHooksInternalSection;
+  createWorkflowHooks?: (config: LumeConfigHooksInternalSection) => LumeWorkflowHookRuntimeLike;
+}): LumeWorkflowHookRuntimeLike | undefined {
+  if (input.explicit !== undefined) return input.explicit ?? undefined;
+  const config = input.hooksConfig ?? {
+    enabled: true,
+    memory: true,
+    security: true,
+    observability: true
+  };
+  if (config.enabled === false) return undefined;
+  if (input.createWorkflowHooks) return input.createWorkflowHooks(config);
+  return createLumeWorkflowHookRuntime({
+    config,
+    services: {
+      memory: createMemoryWorkflowHookService(),
+      security: createSecurityWorkflowHookService(),
+      runtimeEvents: createRuntimeEventWorkflowHookService(),
+      trace: createTraceWorkflowHookService(),
+      clock: { now: () => new Date() }
+    }
+  });
 }

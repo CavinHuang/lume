@@ -516,6 +516,82 @@ describe("LumeRunner", () => {
     expect(seen).toEqual(["run.beforeStart", "run.afterFailure"]);
   });
 
+  test("does not fire production lifecycle hooks when hooks are disabled", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-hooks-disabled-"));
+    dirs.push(agentDir);
+    const seen: string[] = [];
+    const runner = await LumeRunner.create({
+      params: createTestParams("thread-disabled"),
+      prepared: createPrepared(agentDir),
+      emit: createRuntimeEventEmitter([]),
+      createWorkflowHooks: () => ({
+        execute: async (event) => {
+          seen.push(event.event);
+          return { effects: [], errors: [] };
+        }
+      } as any),
+      hooksConfig: { enabled: false, memory: true, security: true, observability: true }
+    });
+
+    await runner.complete();
+
+    expect(seen).toEqual([]);
+  });
+
+  test("passes the same production hook runtime to context and permission", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-hooks-production-"));
+    dirs.push(agentDir);
+    const seen: string[] = [];
+    const workflowHooks = {
+      execute: async (event) => {
+        seen.push(event.event);
+        return { effects: [], errors: [] };
+      }
+    } as any;
+    const runner = await LumeRunner.create({
+      params: createTestParams("thread-production"),
+      prepared: createPrepared(agentDir),
+      emit: createRuntimeEventEmitter([]),
+      createWorkflowHooks: () => workflowHooks,
+      hooksConfig: { enabled: true, memory: true, security: true, observability: true }
+    });
+
+    await runner.runPreparedRuntimeCoreAttempt({
+      params: createTestParams("thread-production"),
+      prepared: createPrepared(agentDir),
+      options: {
+        registerAbort: () => {},
+        unregisterAbort: () => {}
+      },
+      createRuntimeSession: async (input) => {
+        expect(input.workflowHooks).toBe(workflowHooks);
+        expect(input.applyWorkflowHookEffects).toEqual(expect.any(Function));
+        return {
+          agent: {
+            setModel: async () => {},
+            setMaxThinkingTokens: async () => {},
+            interrupt: async () => {},
+            query: () => stream([])
+          },
+          session: {
+            sessionId: "sdk-session-1",
+            threadId: "sdk-thread-1",
+            dispose: async () => {}
+          },
+          tools: [],
+          userMessageForModel: "hello",
+          memoryContextUsedItems: []
+        } as any;
+      },
+      createCanUseTool: (_askUserSignal, workflowHooksInput) => {
+        expect(workflowHooksInput).toBe(workflowHooks);
+        return async () => ({ behavior: "allow" });
+      }
+    });
+
+    expect(seen).toContain("run.beforeStart");
+  });
+
   test("runQueryStream finalizes non-completed stream results", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-stream-"));
     dirs.push(agentDir);

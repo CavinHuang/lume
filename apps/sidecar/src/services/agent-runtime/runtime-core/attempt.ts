@@ -507,8 +507,8 @@ export async function runRuntimeCoreAttempt(
     params,
     prepared,
     options,
-    createCanUseTool: (askUserSignal) =>
-      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId())
+    createCanUseTool: (askUserSignal, workflowHooks) =>
+      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId(), workflowHooks)
   });
 }
 
