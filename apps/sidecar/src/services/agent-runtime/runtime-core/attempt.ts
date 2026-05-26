@@ -30,6 +30,12 @@ import {
   resolveConfiguredPermissionRules,
   resolveConfiguredPrivateWriteRoots
 } from "../permissions/permission-config";
+import type { LumeWorkflowPermissionBeforeDecisionEvent } from "../../workflow-hooks/hook-events";
+import {
+  resolvePermissionDecision,
+  type LumeWorkflowHookExecutionResult
+} from "../../workflow-hooks/hook-effects";
+import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -94,12 +100,37 @@ function parseAskUserQuestions(input: Record<string, unknown>): AgentAskUserQues
   return result;
 }
 
+export async function resolveWorkflowPermissionHookResult(input: {
+  workflowHooks?: LumeWorkflowHookRuntimeLike;
+  event: LumeWorkflowPermissionBeforeDecisionEvent;
+  disabled?: boolean;
+}): Promise<{ behavior: "allow" | "deny"; message?: string } | null> {
+  if (input.disabled || !input.workflowHooks) return null;
+  let result: LumeWorkflowHookExecutionResult;
+  try {
+    result = await input.workflowHooks.execute(input.event);
+  } catch {
+    return null;
+  }
+  if (result.errors.length > 0) return null;
+  const decision = resolvePermissionDecision(result.effects);
+  if (!decision) return null;
+  if (decision.decision === "deny") {
+    return { behavior: "deny", message: decision.reason };
+  }
+  if (decision.decision === "allow") {
+    return { behavior: "allow" };
+  }
+  return null;
+}
+
 function createCanUseToolHandler(
   params: AgentRuntimeRunParams,
   prepared: PreparedRuntimeCoreAttempt,
   emit: AgentRuntimeEmitter,
   askUserSignal: AbortSignal,
-  runId?: string
+  runId?: string,
+  workflowHooks?: LumeWorkflowHookRuntimeLike
 ): CanUseToolFn {
   const config = getEffectiveLumeConfig(prepared.workspaceSlug);
   const permissionRules = resolveConfiguredPermissionRules(config.permissions);
@@ -252,6 +283,46 @@ function createCanUseToolHandler(
         ok: true
       });
       return result;
+    }
+
+    const hookDecision = await resolveWorkflowPermissionHookResult({
+      workflowHooks,
+      event: {
+        event: "permission.beforeDecision",
+        runId: requestRunId ?? params.runtime.sessionId,
+        threadId: params.runtime.sessionId,
+        ...(params.runtime.workspaceId ? { workspaceId: params.runtime.workspaceId } : {}),
+        workspaceSlug: prepared.workspaceSlug,
+        cwd: prepared.agentCwd,
+        permissionMode: params.input.permissionMode,
+        threadType: params.runtime.threadType,
+        chatType: params.input.chatType,
+        messageMetadata: params.input.messageMetadata,
+        toolName,
+        toolInputSummary: JSON.stringify(sanitizeToolInput(input)),
+        gatewayDecision: authorization.status,
+        risk: authorization.risk,
+        reasonCode: authorization.reasonCode
+      }
+    });
+    if (hookDecision) {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: hookDecision.behavior === "allow",
+        reason: hookDecision.behavior === "deny" ? "workflow_hook_denied" : undefined
+      });
+      if (hookDecision.behavior === "deny") {
+        recordPermissionDenial({
+          threadId: params.runtime.sessionId,
+          descriptor,
+          toolName,
+          rawInput: input,
+          reasonCode: "workflow_hook_denied"
+        });
+      }
+      return hookDecision;
     }
 
     if (authorization.status === "allow") {
