@@ -485,10 +485,32 @@ export class QueryEngine {
     } as SDKMessage
   }
 
-  private async runCompaction(
+  private async getCompactionStartMetadata(
     trigger: AgentContextCompactionTrigger,
-  ): Promise<{ started: SDKMessage; boundary: SDKMessage }> {
+    preTokens: number,
+  ): Promise<AgentContextCompactionMetadata | undefined> {
+    const controller = this.config.contextController
+    if (!controller?.getCompactionMetadata) return undefined
+    try {
+      return await controller.getCompactionMetadata({
+        messages: this.messages,
+        model: this.config.model,
+        state: this.compactState,
+        trigger,
+        preTokens,
+      })
+    } catch {
+      return undefined
+    }
+  }
+
+  private async *runCompaction(
+    trigger: AgentContextCompactionTrigger,
+  ): AsyncGenerator<SDKMessage> {
     const preTokens = estimateMessagesTokens(this.messages)
+    const startMetadata = await this.getCompactionStartMetadata(trigger, preTokens)
+    yield this.createCompactionStartedEvent(trigger, preTokens, startMetadata)
+
     const result = await this.compactMessages(trigger, preTokens)
     this.messages = result.compactedMessages
     this.compactState = result.state
@@ -500,10 +522,7 @@ export class QueryEngine {
       metadata: result.metadata,
     }
     await this.config.contextController?.onCompactionBoundary?.(boundary)
-    return {
-      started: this.createCompactionStartedEvent(trigger, preTokens, result.metadata),
-      boundary: this.createCompactBoundaryEvent(boundary),
-    }
+    yield this.createCompactBoundaryEvent(boundary)
   }
 
   private async microCompactForProvider(messages: NormalizedMessageParam[]): Promise<NormalizedMessageParam[]> {
@@ -591,9 +610,9 @@ export class QueryEngine {
     }
 
     if (this.isManualCompactPrompt(prompt)) {
-      const { started, boundary } = await this.runCompaction('manual')
-      yield started
-      yield boundary
+      for await (const event of this.runCompaction('manual')) {
+        yield event
+      }
       yield {
         type: 'result',
         subtype: 'success',
@@ -677,10 +696,10 @@ export class QueryEngine {
       if (await this.shouldCompactAutomatically()) {
         await this.executeHooks('PreCompact')
         try {
-          const { started, boundary } = await this.runCompaction('auto')
+          for await (const event of this.runCompaction('auto')) {
+            yield event
+          }
           await this.executeHooks('PostCompact')
-          yield started
-          yield boundary
         } catch {
           // Continue with uncompacted messages
         }
@@ -805,9 +824,9 @@ export class QueryEngine {
         // Handle prompt-too-long by compacting
         if (isPromptTooLongError(err) && !this.compactState.compacted) {
           try {
-            const { started, boundary } = await this.runCompaction('prompt_too_long')
-            yield started
-            yield boundary
+            for await (const event of this.runCompaction('prompt_too_long')) {
+              yield event
+            }
             turnsRemaining++ // Retry this turn
             this.turnCount--
             continue

@@ -51,10 +51,11 @@ const KERNEL_CONTEXT_POLICY = "kernel-v1";
 const KERNEL_CONTEXT_SOURCE = "agent-runtime-kernel";
 
 export function createContextBudgetSnapshot(input: ContextBudgetSnapshotInput): ContextBudgetSnapshot {
+  const sessionMessages = input.sessionMessages ?? [];
   const sections = {
     system: estimateTokens(input.systemPrompt ?? ""),
     memory: estimateTokens(input.memoryContext ?? ""),
-    session: estimateTokens(JSON.stringify(input.sessionMessages ?? [])),
+    session: sessionMessages.length > 0 ? estimateTokens(JSON.stringify(sessionMessages)) : 0,
     toolSchemas: input.toolSchemaTokens ?? 0,
     reservedOutput: input.reservedOutputTokens ?? Math.floor(input.total * 0.05)
   };
@@ -132,26 +133,63 @@ export function createKernelContextController(input: KernelContextControllerInpu
     sessionMessages: input.sessionMessages,
     toolSchemaTokens: input.toolSchemaTokens
   });
+  const metadata = createKernelCompactionMetadata(input.contextWindow, sourceMessageIds, preservedSegment, budget);
   return {
     shouldAutoCompact: ({ messages, model, state, estimatedTokens }) =>
-      shouldAutoCompact(messages, model, state) || estimatedTokens >= Math.floor(input.contextWindow * 0.85),
+      shouldKernelAutoCompact({
+        messages,
+        model,
+        state,
+        estimatedTokens,
+        contextWindow: input.contextWindow,
+        budget
+      }),
     microCompactMessages: ({ messages }) =>
       microCompactKernelMessages(sanitizeKernelContextMessages(messages)),
+    getCompactionMetadata: () => metadata,
     compactConversation: async ({ provider, model, messages, state }) => {
       const sanitized = microCompactKernelMessages(sanitizeKernelContextMessages(messages));
       const result = await compactConversation(provider, model, sanitized, state);
       return {
         ...result,
-        metadata: {
-          policy: KERNEL_CONTEXT_POLICY,
-          source: KERNEL_CONTEXT_SOURCE,
-          contextWindow: input.contextWindow,
-          ...(sourceMessageIds.length > 0 ? { sourceMessageIds } : {}),
-          ...(preservedSegment ? { preservedSegment } : {}),
-          budget
-        }
+        metadata
       };
     }
+  };
+}
+
+function shouldKernelAutoCompact(input: {
+  messages: KernelMessage[];
+  model: string;
+  state: Parameters<typeof shouldAutoCompact>[2];
+  estimatedTokens: number;
+  contextWindow: number;
+  budget: ContextBudgetSnapshot;
+}): boolean {
+  if (input.state.consecutiveFailures >= 3) return false;
+  const sdkHistoryTriggers = shouldAutoCompact(input.messages, input.model, input.state);
+  if (sdkHistoryTriggers) return true;
+
+  const threshold = Math.floor(input.contextWindow * 0.85);
+  const nonSessionBudgetTokens = Math.max(0, input.budget.usedTokens - input.budget.sections.session);
+  const estimatedFullRequestTokens =
+    nonSessionBudgetTokens + Math.max(input.budget.sections.session, input.estimatedTokens);
+  return input.budget.sections.session > 0 && estimatedFullRequestTokens >= threshold;
+}
+
+function createKernelCompactionMetadata(
+  contextWindow: number,
+  sourceMessageIds: string[],
+  preservedSegment: AgentContextCompactionMetadata["preservedSegment"] | undefined,
+  budget: ContextBudgetSnapshot
+): AgentContextCompactionMetadata {
+  return {
+    policy: KERNEL_CONTEXT_POLICY,
+    source: KERNEL_CONTEXT_SOURCE,
+    contextWindow,
+    ...(sourceMessageIds.length > 0 ? { sourceMessageIds } : {}),
+    ...(preservedSegment ? { preservedSegment } : {}),
+    budget
   };
 }
 

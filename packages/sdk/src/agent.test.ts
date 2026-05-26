@@ -122,6 +122,69 @@ describe("Agent compact command", () => {
 })
 
 describe("Agent session persistence", () => {
+  test("resumes from compacted summary instead of pre-compaction transcript", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-compact-resume-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `compact-resume-${crypto.randomUUID()}`
+
+    await saveSession(sessionId, [{ role: "user", content: "old long context" }], {
+      cwd: tempDir,
+      model: "test-model",
+      sessionMessages: [{
+        uuid: "old-user-1",
+        role: "user",
+        timestamp: new Date().toISOString(),
+        content: "old long context",
+      }],
+      checkpoints: {},
+    })
+
+    const compactingAgent = createAgent({
+      resume: sessionId,
+      persistSession: true,
+      tools: [],
+      cwd: tempDir,
+      contextController: {
+        shouldAutoCompact: () => false,
+        async compactConversation() {
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\ndurable compact summary" },
+              { role: "assistant", content: "I will continue." },
+            ],
+            summary: "durable compact summary",
+          }
+        },
+      },
+    })
+    await compactingAgent.getInitializationResult()
+
+    for await (const _event of compactingAgent.query("/compact")) {
+      // drain query
+    }
+    await compactingAgent.close()
+
+    const resumedAgent = createAgent({
+      resume: sessionId,
+      persistSession: false,
+      tools: [],
+      cwd: tempDir,
+    })
+    await resumedAgent.getInitializationResult()
+    const provider = new CapturingProvider()
+    ;(resumedAgent as any).provider = provider
+
+    for await (const _event of resumedAgent.query("next turn")) {
+      // drain query
+    }
+
+    const requestPayload = JSON.stringify(provider.requests[0]?.messages)
+    expect(requestPayload).toContain("durable compact summary")
+    expect(requestPayload).not.toContain("old long context")
+    await resumedAgent.close()
+  })
+
   test("restores nested assistant SDK messages as assistant content blocks", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-nested-assistant-"))
     tempDirs.push(tempDir)

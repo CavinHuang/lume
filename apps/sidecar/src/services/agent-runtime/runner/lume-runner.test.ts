@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "./types";
+import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
@@ -355,7 +356,7 @@ describe("LumeRunner", () => {
       },
       emit: createRuntimeEventEmitter(events),
       workflowHooks: {
-        execute: async (event) => {
+        execute: async (event: LumeWorkflowHookEvent) => {
           seen.push(event.event);
           if (event.event !== "run.afterComplete") return { effects: [], errors: [] };
           return {
@@ -452,7 +453,7 @@ describe("LumeRunner", () => {
       prepared: createPrepared(agentDir),
       emit: createRuntimeEventEmitter([]),
       workflowHooks: {
-        execute: async (event) => {
+        execute: async (event: LumeWorkflowHookEvent) => {
           seen.push(event.event);
           if (event.event === "run.afterFailure") {
             expect(event.errorMessage).toBe("model failed");
@@ -478,7 +479,7 @@ describe("LumeRunner", () => {
         prepared: createPrepared(agentDir),
         emit: createRuntimeEventEmitter([]),
         workflowHooks: {
-          execute: async (event) => {
+          execute: async (event: LumeWorkflowHookEvent) => {
             if (event.event !== "run.afterFailure") return { effects: [], errors: [] };
             if (mode === "throw") throw new Error("hook failed");
             return { effects: [], errors: [{ contributionId: "failure", message: "hook failed" }] };
@@ -501,7 +502,7 @@ describe("LumeRunner", () => {
       prepared: createPrepared(agentDir),
       emit: createRuntimeEventEmitter([]),
       workflowHooks: {
-        execute: async (event) => {
+        execute: async (event: LumeWorkflowHookEvent) => {
           seen.push(event.event);
           if (event.event === "run.afterFailure") {
             expect(event.errorMessage).toBe("model failed");
@@ -525,7 +526,7 @@ describe("LumeRunner", () => {
       prepared: createPrepared(agentDir),
       emit: createRuntimeEventEmitter([]),
       createWorkflowHooks: () => ({
-        execute: async (event) => {
+        execute: async (event: LumeWorkflowHookEvent) => {
           seen.push(event.event);
           return { effects: [], errors: [] };
         }
@@ -543,7 +544,7 @@ describe("LumeRunner", () => {
     dirs.push(agentDir);
     const seen: string[] = [];
     const workflowHooks = {
-      execute: async (event) => {
+      execute: async (event: LumeWorkflowHookEvent) => {
         seen.push(event.event);
         return { effects: [], errors: [] };
       }

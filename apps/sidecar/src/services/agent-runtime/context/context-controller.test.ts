@@ -58,6 +58,40 @@ describe("Kernel context controller", () => {
     expect(JSON.stringify(compacted[1]?.content)).toContain("...(truncated by Lume context controller)...");
   });
 
+  test("triggers auto-compaction from reducible kernel session budget even when SDK message history alone is small", async () => {
+    const controller = createKernelContextController({
+      threadId: "thread-1",
+      model: "gpt-test",
+      contextWindow: 100,
+      systemPrompt: "system",
+      sessionMessages: [{ role: "user", content: "x".repeat(360) }]
+    });
+
+    await expect(Promise.resolve(controller.shouldAutoCompact?.({
+      messages: [{ role: "user", content: "small" }],
+      model: "gpt-test",
+      state: { compacted: false, turnCounter: 0, consecutiveFailures: 0 },
+      estimatedTokens: 2
+    }))).resolves.toBe(true);
+  });
+
+  test("does not auto-compact when only fixed kernel overhead exceeds the threshold", async () => {
+    const controller = createKernelContextController({
+      threadId: "thread-1",
+      model: "gpt-test",
+      contextWindow: 100,
+      systemPrompt: "s".repeat(360),
+      sessionMessages: []
+    });
+
+    await expect(Promise.resolve(controller.shouldAutoCompact?.({
+      messages: [{ role: "user", content: "small" }],
+      model: "gpt-test",
+      state: { compacted: false, turnCounter: 0, consecutiveFailures: 0 },
+      estimatedTokens: 2
+    }))).resolves.toBe(false);
+  });
+
   test("emits source message ids and preserved segment metadata for compaction evidence", async () => {
     const controller = createKernelContextController({
       threadId: "thread-1",

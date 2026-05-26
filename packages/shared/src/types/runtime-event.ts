@@ -1,4 +1,5 @@
 import type { AgentMessageAttachmentInput } from "./agent";
+import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
 
 export type RuntimeEventType =
@@ -17,6 +18,7 @@ export type RuntimeEventType =
   | "tool.permission_timeout"
   | "plan.preview"
   | "task.progress"
+  | "im.delivery"
   | "permission.requested"
   | "ask_user.requested"
   | "memory.context.used"
@@ -182,6 +184,20 @@ export interface TaskProgressRuntimeEvent extends RuntimeEventBase {
   message?: string;
 }
 
+export interface ImDeliveryRuntimeEvent extends RuntimeEventBase {
+  type: "im.delivery";
+  messageId?: string;
+  provider: ImProvider;
+  accountId: string;
+  peerKind: ImPeerKind;
+  peerId: string;
+  status: "pending" | "sent" | "failed";
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 export interface RunCompletedRuntimeEvent extends RuntimeEventBase {
   type: "run.completed";
   finalOutput?: string;
@@ -276,6 +292,7 @@ export type LumeRuntimeEvent =
   | ToolPermissionTimeoutRuntimeEvent
   | PlanPreviewRuntimeEvent
   | TaskProgressRuntimeEvent
+  | ImDeliveryRuntimeEvent
   | RunCompletedRuntimeEvent
   | RunTurnLimitedRuntimeEvent
   | RunFailedRuntimeEvent

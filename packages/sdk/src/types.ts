@@ -255,6 +255,13 @@ export interface AgentContextController {
     messages: import('./providers/types.js').NormalizedMessageParam[]
     model: string
   }) => import('./providers/types.js').NormalizedMessageParam[] | Promise<import('./providers/types.js').NormalizedMessageParam[]>
+  getCompactionMetadata?: (input: {
+    messages: import('./providers/types.js').NormalizedMessageParam[]
+    model: string
+    state: import('./utils/compact.js').AutoCompactState
+    trigger: AgentContextCompactionTrigger
+    preTokens: number
+  }) => AgentContextCompactionMetadata | undefined | Promise<AgentContextCompactionMetadata | undefined>
   compactConversation?: (input: {
     provider: import('./providers/types.js').LLMProvider
     model: string

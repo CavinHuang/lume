@@ -300,7 +300,7 @@ function createCanUseToolHandler(
         messageMetadata: params.input.messageMetadata,
         toolName,
         toolInputSummary: JSON.stringify(sanitizeToolInput(input)),
-        gatewayDecision: authorization.status,
+        gatewayDecision: authorization.status === "approval_required" ? "ask" : authorization.status,
         risk: authorization.risk,
         reasonCode: authorization.reasonCode
       }

@@ -322,10 +322,26 @@ describe("agent-service", () => {
     expect(appended[0]?.message.sdkMessages?.[0]?.type).toBe("user");
     expect(appended[1]?.message.role).toBe("assistant");
     expect(appended[1]?.message.sdkMessages?.map((message) => message.type)).toEqual(["assistant", "result"]);
+    expect(appended[1]?.message.metadata?.tokenUsage).toEqual({
+      source: "provider",
+      scope: "assistant_turn",
+      inputTokens: 10,
+      outputTokens: 5,
+      cachedTokens: 0,
+      totalTokens: 15
+    });
 
     expect(visibleMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(visibleMessages[0]?.sdkMessages?.[0]?.type).toBe("user");
     expect(visibleMessages[1]?.content).toBe("mock assistant output");
+    expect(visibleMessages[1]?.metadata?.tokenUsage).toEqual({
+      source: "provider",
+      scope: "assistant_turn",
+      inputTokens: 10,
+      outputTokens: 5,
+      cachedTokens: 0,
+      totalTokens: 15
+    });
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
   });
 

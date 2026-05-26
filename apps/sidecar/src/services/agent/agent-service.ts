@@ -473,6 +473,52 @@ function resolveAssistantCreatedAtFromSdkMessages(messages: SDKMessage[]): numbe
   return Date.now();
 }
 
+function extractAssistantTurnTokenUsage(messages: SDKMessage[]): Record<string, unknown> | undefined {
+  const result = [...messages].reverse().find((message) => (
+    message.type === "result" && (message.usage || message.usageRecords)
+  ));
+  if (!result || result.type !== "result") {
+    return undefined;
+  }
+
+  if (result.usage) {
+    const inputTokens = numberValue(result.usage.input_tokens);
+    const outputTokens = numberValue(result.usage.output_tokens);
+    const cachedTokens = numberValue(result.usage.cache_read_input_tokens)
+      + numberValue(result.usage.cache_creation_input_tokens);
+    return {
+      source: "provider",
+      scope: "assistant_turn",
+      inputTokens,
+      outputTokens,
+      cachedTokens,
+      totalTokens: inputTokens + outputTokens + cachedTokens
+    };
+  }
+
+  const usageRecords = Array.isArray(result.usageRecords) ? result.usageRecords : [];
+  if (usageRecords.length === 0) {
+    return undefined;
+  }
+  const inputTokens = usageRecords.reduce((sum, record) => sum + numberValue(record.inputTokens), 0);
+  const outputTokens = usageRecords.reduce((sum, record) => sum + numberValue(record.outputTokens), 0);
+  const cachedTokens = usageRecords.reduce((sum, record) => (
+    sum + numberValue(record.cacheReadInputTokens) + numberValue(record.cacheCreationInputTokens)
+  ), 0);
+  return {
+    source: "provider",
+    scope: "assistant_turn",
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+    totalTokens: inputTokens + outputTokens + cachedTokens
+  };
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 function projectAssistantMessageFromSdkMessages(input: {
   threadId: string;
   sdkMessages: SDKMessage[];
@@ -484,6 +530,7 @@ function projectAssistantMessageFromSdkMessages(input: {
   reasoning?: string;
   createdAt: number;
   model: string;
+  metadata?: Record<string, unknown>;
   sdkMessages: SDKMessage[];
 } | null {
   const assistantMessages = input.sdkMessages.filter((message) => (
@@ -492,6 +539,7 @@ function projectAssistantMessageFromSdkMessages(input: {
   if (assistantMessages.length === 0) {
     return null;
   }
+  const tokenUsage = extractAssistantTurnTokenUsage(input.sdkMessages);
 
   return {
     id: `sdk-turn:${input.threadId}:${resolveAssistantCreatedAtFromSdkMessages(input.sdkMessages)}`,
@@ -500,6 +548,7 @@ function projectAssistantMessageFromSdkMessages(input: {
     reasoning: extractAssistantReasoningFromSdkMessages(input.sdkMessages),
     createdAt: resolveAssistantCreatedAtFromSdkMessages(input.sdkMessages),
     model: input.modelId,
+    ...(tokenUsage ? { metadata: { tokenUsage } } : {}),
     sdkMessages: input.sdkMessages
   };
 }

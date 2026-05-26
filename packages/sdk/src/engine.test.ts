@@ -36,6 +36,18 @@ async function collectEvents(engine: QueryEngine, prompt = "run") {
   return events
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
+}
+
+function wait(ms: number): Promise<null> {
+  return new Promise((resolve) => setTimeout(() => resolve(null), ms))
+}
+
 describe("QueryEngine turn limits", () => {
   test("treats a natural completion on the final allowed turn as success", async () => {
     const engine = new QueryEngine({
@@ -63,6 +75,76 @@ describe("QueryEngine turn limits", () => {
 })
 
 describe("QueryEngine context controller", () => {
+  test("emits compaction started before awaiting compaction completion", async () => {
+    const releaseCompaction = deferred<void>();
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => true,
+        async compactConversation() {
+          await releaseCompaction.promise;
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\ndelayed summary" },
+              { role: "assistant", content: "I will continue." }
+            ],
+            summary: "delayed summary",
+            metadata: {
+              policy: "kernel-v1",
+              source: "agent-runtime-kernel"
+            }
+          };
+        }
+      }
+    });
+
+    const iterator = engine.submitMessage("run");
+    expect((await iterator.next()).value).toMatchObject({
+      type: "system",
+      subtype: "session_state_changed"
+    });
+    expect((await iterator.next()).value).toMatchObject({
+      type: "system",
+      subtype: "init"
+    });
+
+    const started = await Promise.race([iterator.next(), wait(30)]);
+    if (started === null) {
+      releaseCompaction.resolve();
+    }
+
+    expect(started).not.toBeNull();
+    expect(started && "value" in started ? started.value : undefined).toMatchObject({
+      type: "system",
+      subtype: "context_compaction_started",
+      compact_metadata: expect.objectContaining({
+        trigger: "auto"
+      })
+    });
+
+    releaseCompaction.resolve();
+    expect((await iterator.next()).value).toMatchObject({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: expect.objectContaining({
+        summary: "delayed summary"
+      })
+    });
+  });
+
   test("lets a host controller own auto-compaction decisions and metadata", async () => {
     const observedMessages: CreateMessageParams["messages"][] = [];
     const provider = new StaticProvider([{
@@ -89,6 +171,11 @@ describe("QueryEngine context controller", () => {
       canUseTool: async () => ({ behavior: "allow" }),
       contextController: {
         shouldAutoCompact: ({ messages }) => messages.length > 0,
+        getCompactionMetadata: () => ({
+          policy: "kernel-v1",
+          source: "agent-runtime-kernel",
+          sourceMessageIds: ["user-1"]
+        }),
         async compactConversation() {
           return {
             compactedMessages: [
@@ -217,6 +304,10 @@ describe("QueryEngine context controller", () => {
       canUseTool: async () => ({ behavior: "allow" }),
       contextController: {
         shouldAutoCompact: () => false,
+        getCompactionMetadata: () => ({
+          policy: "kernel-v1",
+          source: "agent-runtime-kernel"
+        }),
         async compactConversation({ trigger }) {
           expect(trigger).toBe("prompt_too_long");
           return {

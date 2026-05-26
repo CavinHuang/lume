@@ -169,6 +169,12 @@ function normalizeSessionMessageContent(
   return message.content as NormalizedMessageParam['content']
 }
 
+function sessionMessagesFromHistory(
+  messages: NormalizedMessageParam[],
+): SessionMessage[] {
+  return messages.map((message) => toSessionMessage(message.role, message.content))
+}
+
 export class Agent {
   private baseOptions: AgentOptions
   private cfg: AgentOptions
@@ -891,6 +897,7 @@ export class Agent {
     }
 
     let persistedSessionEvent: SDKMessage | null = null
+    let compactionBoundarySeen = false
     try {
       for await (const event of engine.submitMessage(normalizedPrompt)) {
         if (event.type === 'assistant') {
@@ -904,6 +911,9 @@ export class Agent {
           })
         } else if (event.type === 'system') {
           this.sessionMessages.push(toSessionMessage('system', event))
+          if (event.subtype === 'compact_boundary') {
+            compactionBoundarySeen = true
+          }
         }
 
         yield event
@@ -915,6 +925,9 @@ export class Agent {
       this.history = engine.getMessages()
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
+      if (compactionBoundarySeen) {
+        this.sessionMessages = sessionMessagesFromHistory(this.history)
+      }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
 
