@@ -145,6 +145,135 @@ describe('runtime-state projections', () => {
     })
   })
 
+  test('estimates opened thread context from loaded history messages when runtime usage is absent', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'run-started',
+        type: 'run.started',
+        model: {
+          provider: 'openai',
+          modelId: 'gpt-test',
+          contextWindow: 100,
+        },
+      },
+      {
+        ...base,
+        id: 'run-completed',
+        type: 'run.completed',
+        finalOutput: 'done',
+      },
+    ] satisfies LumeRuntimeEvent[], {
+      messages: [
+        { role: 'user', content: '12345678' },
+        { role: 'assistant', content: 'abcdefghijkl' },
+      ],
+    })).toMatchObject({
+      usedTokens: 5,
+      contextWindow: 100,
+      remainingTokens: 95,
+      percent: 5,
+      tone: 'active',
+      sections: [
+        { id: 'input', label: '输入', tokens: 2, percent: 2 },
+        { id: 'output', label: '输出', tokens: 3, percent: 3 },
+      ],
+    })
+  })
+
+  test('estimates live context progress while the assistant is streaming before runtime usage arrives', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'run-started',
+        type: 'run.started',
+        model: {
+          provider: 'openai',
+          modelId: 'gpt-test',
+          contextWindow: 100,
+        },
+      },
+      {
+        ...base,
+        id: 'user-submitted',
+        type: 'message.user.submitted',
+        text: '12345678',
+      },
+      {
+        ...base,
+        id: 'assistant-delta',
+        type: 'assistant.delta',
+        delta: 'abcdefghijkl',
+      },
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      usedTokens: 5,
+      contextWindow: 100,
+      remainingTokens: 95,
+      percent: 5,
+      tone: 'active',
+      detail: '5 / 100 tokens',
+      sections: [
+        { id: 'input', label: '输入', tokens: 2, percent: 2 },
+        { id: 'output', label: '输出', tokens: 3, percent: 3 },
+      ],
+    })
+  })
+
+  test('starts a new live estimate from zero even when run model context is temporarily missing', () => {
+    const base = {
+      threadId: 'thread-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'previous-usage',
+        runId: 'run-1',
+        type: 'usage.updated',
+        inputTokens: 70,
+        outputTokens: 10,
+        totalTokens: 80,
+        contextWindow: 100,
+      },
+      {
+        ...base,
+        id: 'run-started',
+        runId: 'run-2',
+        type: 'run.started',
+        model: {
+          provider: 'openai',
+          modelId: 'gpt-test',
+        },
+      },
+      {
+        ...base,
+        id: 'user-submitted',
+        runId: 'run-2',
+        type: 'message.user.submitted',
+        text: '1234',
+      },
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      usedTokens: 1,
+      contextWindow: 100,
+      remainingTokens: 99,
+      percent: 1,
+      detail: '1 / 100 tokens',
+    })
+  })
+
   test('keeps a default context window when model selection data temporarily disappears', () => {
     expect(buildContextWindowProgress([])).toMatchObject({
       usedTokens: 0,

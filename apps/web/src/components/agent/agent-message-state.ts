@@ -49,8 +49,10 @@ export function reconcileUserMessageVersions(
   visibleThreadMessages: AgentMessage[],
 ): RuntimeMessageView[] {
   const visibleUsers = visibleThreadMessages.filter((message) => message.role === 'user')
-  if (visibleUsers.length === 0) return messages
+  const visibleAssistants = visibleThreadMessages.filter((message) => message.role === 'assistant')
+  if (visibleUsers.length === 0 && visibleAssistants.length === 0) return messages
   const usedVisibleIds = new Set<string>()
+  const usedVisibleAssistantIds = new Set<string>()
 
   return messages.map((message) => {
     if (message.type === 'user') {
@@ -77,6 +79,22 @@ export function reconcileUserMessageVersions(
         }, visible)
       }
       return message
+    }
+
+    if (message.type === 'assistant') {
+      if (message.tokenCountSource === 'provider') return message
+      const visible = visibleAssistants.find((item) => (
+        !usedVisibleAssistantIds.has(item.id)
+        && item.content === message.text
+        && readPersistedAssistantOutputTokens(item.metadata) !== undefined
+      ))
+      if (!visible) return message
+      usedVisibleAssistantIds.add(visible.id)
+      return {
+        ...message,
+        tokenCount: readPersistedAssistantOutputTokens(visible.metadata),
+        tokenCountSource: 'provider',
+      }
     }
 
     return message
@@ -121,4 +139,13 @@ function readPersistedMessageAttachments(metadata: Record<string, unknown> | und
     && typeof (item as AgentMessageAttachmentInput).size === 'number'
     && typeof (item as AgentMessageAttachmentInput).threadPath === 'string'
   ))
+}
+
+function readPersistedAssistantOutputTokens(metadata: Record<string, unknown> | undefined): number | undefined {
+  const raw = metadata?.tokenUsage
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const tokenUsage = raw as Record<string, unknown>
+  if (tokenUsage.source !== 'provider') return undefined
+  const outputTokens = tokenUsage.outputTokens
+  return typeof outputTokens === 'number' && Number.isFinite(outputTokens) ? outputTokens : undefined
 }

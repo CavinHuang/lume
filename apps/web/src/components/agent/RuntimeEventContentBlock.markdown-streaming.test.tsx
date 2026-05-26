@@ -86,4 +86,97 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
     expect(markup).toContain('data-enable-animation="true"')
     expect(markup).toContain('data-tail="true"')
   })
+
+  test('renders assistant token usage as a hover-only footer', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-1',
+      type: 'assistant',
+      text: 'hello',
+      thinking: '',
+      status: 'completed',
+      tokenCount: 42,
+      toolCalls: [],
+      blocks: [
+        {
+          type: 'text',
+          id: 'text-1',
+          text: 'hello',
+        },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        threadId="thread-1"
+      />,
+    )
+
+    expect(markup).toContain('本条约 42 tokens')
+    expect(markup).toContain('group-hover/agent-message:opacity-100')
+  })
+
+  test('labels provider token usage as assistant turn output', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-1',
+      type: 'assistant',
+      text: 'hello',
+      thinking: '',
+      status: 'completed',
+      tokenCount: 42,
+      tokenCountSource: 'provider',
+      toolCalls: [],
+      blocks: [
+        {
+          type: 'text',
+          id: 'text-1',
+          text: 'hello',
+        },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        threadId="thread-1"
+      />,
+    )
+
+    expect(markup).toContain('42 tokens')
+    expect(markup).not.toContain('本轮输出')
+    expect(markup).not.toContain('本条约 42 tokens')
+  })
+
+  test('renders weak IM delivery status for assistant messages', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-1',
+      type: 'assistant',
+      text: 'hello',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      imDelivery: {
+        status: 'sent',
+        provider: 'weixin',
+        peerKind: 'dm',
+        peerId: 'user-1',
+      },
+      blocks: [
+        {
+          type: 'text',
+          id: 'text-1',
+          text: 'hello',
+        },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        threadId="thread-1"
+      />,
+    )
+
+    expect(markup).toContain('已发送到微信')
+  })
 })

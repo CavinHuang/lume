@@ -110,6 +110,7 @@ function runtimeEventOrder(event: LumeRuntimeEvent): number {
   if (event.type === 'tool.failed') return 5
   if (event.type === 'tool.permission_timeout') return 5
   if (event.type === 'plan.preview') return 6
+  if (event.type === 'im.delivery') return 7
   if (event.type === 'memory.context.used') return 8
   if (event.type === 'task.progress') return 9
   if (event.type.startsWith('context.compaction.')) return 10

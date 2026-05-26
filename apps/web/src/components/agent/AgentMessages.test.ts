@@ -165,4 +165,35 @@ describe('reconcileUserMessageVersions', () => {
       }],
     })
   })
+
+  test('restores provider assistant token usage from visible metadata', () => {
+    const messages: RuntimeMessageView[] = [{
+      id: 'assistant:1',
+      type: 'assistant',
+      text: '真实输出',
+      thinking: '',
+      toolCalls: [],
+      blocks: [{ type: 'text', id: 'text:1', text: '真实输出' }],
+      status: 'completed',
+      tokenCount: 3,
+    }]
+    const visibleThreadMessages = [{
+      id: 'message-1',
+      role: 'assistant',
+      content: '真实输出',
+      createdAt: Date.parse('2026-05-01T00:00:00.000Z'),
+      metadata: {
+        tokenUsage: {
+          source: 'provider',
+          scope: 'assistant_turn',
+          outputTokens: 17,
+        },
+      },
+    }] as AgentMessage[]
+
+    expect(reconcileUserMessageVersions(messages, visibleThreadMessages)[0]).toMatchObject({
+      tokenCount: 17,
+      tokenCountSource: 'provider',
+    })
+  })
 })

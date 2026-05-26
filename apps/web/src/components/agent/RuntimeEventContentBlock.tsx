@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, Edit3, FileText, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Coins, Copy, Edit3, FileText, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -63,6 +63,10 @@ export function RuntimeEventContentBlock({
     return <UserMessageBlock message={message} threadId={threadId} className={cls} onOpenThreadFile={onOpenThreadFile} />
   }
 
+  if (message.type === 'system') {
+    return <SystemMessageBlock message={message} className={cls} />
+  }
+
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
   const contentBlocks = message.blocks.filter((block) => block.type !== 'task_progress')
   const activitySignature = contentBlocks
@@ -80,7 +84,7 @@ export function RuntimeEventContentBlock({
   )
 
   return (
-    <div className={cn('flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
+    <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
       <div className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[#ded6ff] bg-white text-[#675cff] shadow-[0_2px_8px_rgba(103,92,255,0.07)]">
         <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
       </div>
@@ -109,8 +113,79 @@ export function RuntimeEventContentBlock({
             {message.error}
           </p>
         )}
-        <MessageFeedbackActions text={message.text} isStreaming={message.status === 'streaming'} />
+        <AssistantMessageFooter
+          text={message.text}
+          isStreaming={message.status === 'streaming'}
+          tokenCount={message.tokenCount}
+          tokenCountSource={message.tokenCountSource}
+        />
+        {message.imDelivery && <ImDeliveryStatusLine delivery={message.imDelivery} />}
       </div>
+    </div>
+  )
+}
+
+function ImDeliveryStatusLine({
+  delivery,
+}: {
+  delivery: NonNullable<Extract<RuntimeMessageView, { type: 'assistant' }>['imDelivery']>
+}) {
+  const failed = delivery.status === 'failed'
+  const pending = delivery.status === 'pending'
+  const text = pending
+    ? '正在发送到微信'
+    : failed
+      ? '发送微信失败'
+      : '已发送到微信'
+  return (
+    <div
+      className={cn(
+        'flex min-h-5 items-center gap-1.5 text-[12px] leading-5 text-[#9aa1b3]',
+        failed && 'text-destructive/75',
+      )}
+      title={delivery.error}
+    >
+      {pending
+        ? <Loader2 size={13} className="animate-spin" strokeWidth={2} />
+        : failed
+          ? <X size={13} strokeWidth={2} />
+          : <Check size={13} strokeWidth={2} />}
+      <span>{text}</span>
+    </div>
+  )
+}
+
+function SystemMessageBlock({
+  message,
+  className,
+}: {
+  message: Extract<RuntimeMessageView, { type: 'system' }>
+  className?: string
+}) {
+  if (message.variant === 'context_compaction') {
+    return <ContextCompactionDivider message={message} className={className} />
+  }
+  return null
+}
+
+function ContextCompactionDivider({
+  message,
+  className,
+}: {
+  message: Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }>
+  className?: string
+}) {
+  const active = message.status === 'active'
+  return (
+    <div className={cn('flex w-full items-center gap-4 px-6 py-1 text-[15px] font-semibold leading-6 text-[#7d8494]', className)}>
+      <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
+      <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
+        {active
+          ? <Loader2 size={17} className="animate-spin text-[#8b91a0]" strokeWidth={2} />
+          : <History size={17} className="text-[#7d8494]" strokeWidth={2} />}
+        {message.text}
+      </span>
+      <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
     </div>
   )
 }
@@ -175,7 +250,7 @@ function UserMessageBlock({
   }
 
   return (
-    <div className={cn('group ml-auto flex w-full max-w-[920px] justify-end gap-2', className)}>
+    <div className={cn('group/user-message ml-auto flex w-full max-w-[920px] justify-end gap-2', className)}>
       <div className="flex max-w-[560px] flex-col items-end gap-1.5">
         <div className="rounded-[12px] rounded-tr-[10px] bg-[#e4ddff] px-3 py-2 text-[15px] font-medium leading-[22px] text-[#34384c] shadow-[0_1px_0_rgba(101,91,255,0.08)]">
           {editing ? (
@@ -206,7 +281,7 @@ function UserMessageBlock({
             ))}
           </div>
         )}
-        <div className="flex items-center gap-1 text-[#8b8fa3] opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <div className="pointer-events-none flex -translate-y-1 items-center gap-1 text-[#8b8fa3] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:translate-y-0 group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:translate-y-0 group-focus-within/user-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
           {canShowVersions && (
             <button
               type="button"
@@ -985,17 +1060,44 @@ export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): 
   return null
 }
 
-function MessageFeedbackActions({ text, isStreaming }: { text: string; isStreaming: boolean }) {
-  if (!text.trim() || isStreaming) return null
+function AssistantMessageFooter({
+  text,
+  isStreaming,
+  tokenCount,
+  tokenCountSource,
+}: {
+  text: string
+  isStreaming: boolean
+  tokenCount?: number
+  tokenCountSource?: 'provider'
+}) {
+  const canCopy = text.trim().length > 0 && !isStreaming
+  const showTokens = typeof tokenCount === 'number' && tokenCount > 0
+  const tokenLabel = tokenCountSource === 'provider'
+    ? `${tokenCount?.toLocaleString()} tokens`
+    : `本条约 ${tokenCount?.toLocaleString()} tokens`
+  if (!canCopy && !showTokens) return null
 
   return (
-    <div className="flex items-center pt-2 text-[#9aa1b3]">
-      <CopyMessageButton
-        text={text}
-        className="rounded-md p-0.5 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff] data-[state=copied]:text-emerald-600"
-        iconSize={15}
-        strokeWidth={1.8}
-      />
+    <div className="pointer-events-none flex min-h-5 -translate-y-1 items-center justify-start gap-1 pt-2 text-[#9aa1b3] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+      {canCopy && (
+        <CopyMessageButton
+          text={text}
+          className="rounded-md p-0.5 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff] data-[state=copied]:text-emerald-600"
+          iconSize={15}
+          strokeWidth={1.8}
+        />
+      )}
+      {showTokens && (
+        <span
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1 py-0.5 text-[11px] leading-4 text-[#9aa1b3] transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff]"
+          title={tokenLabel}
+          aria-label={tokenLabel}
+        >
+          <Coins size={14} strokeWidth={1.8} />
+          <span>{tokenLabel}</span>
+        </span>
+      )}
     </div>
   )
 }

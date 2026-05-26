@@ -3,6 +3,7 @@ import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
   RuntimeMessageView,
+  RuntimeSystemMessageView,
   RuntimeToolCallView,
 } from './runtime-message-view'
 
@@ -62,6 +63,26 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         id: `memory:${event.runId}:${event.createdAt}`,
         event,
       })
+      return
+    }
+
+    if (event.type === 'context.compaction.started' || event.type === 'context.compaction.completed') {
+      if (currentAssistant && assistantHasContent(currentAssistant)) {
+        flushAssistant(messages, currentAssistant)
+      }
+      currentAssistant = null
+      upsertContextCompactionNotice(messages, event)
+      terminalClosed = false
+      return
+    }
+
+    if (event.type === 'usage.updated') {
+      applyAssistantProviderTokenCount(messages, currentAssistant, event.outputTokens)
+      return
+    }
+
+    if (event.type === 'im.delivery') {
+      applyAssistantImDelivery(messages, currentAssistant, event)
       return
     }
 
@@ -205,6 +226,64 @@ function isToolPermissionTimeoutMessage(message: string): boolean {
   return message.includes('工具权限确认超时')
 }
 
+function applyAssistantImDelivery(
+  messages: RuntimeMessageView[],
+  currentAssistant: MutableAssistantMessage | null,
+  event: Extract<LumeRuntimeEvent, { type: 'im.delivery' }>,
+): void {
+  const delivery = {
+    status: event.status,
+    provider: event.provider,
+    peerKind: event.peerKind,
+    peerId: event.peerId,
+    ...(event.error?.message ? { error: event.error.message } : {}),
+  }
+  if (currentAssistant) {
+    currentAssistant.imDelivery = delivery
+    return
+  }
+  const assistantMessages = [...messages]
+    .reverse()
+    .filter((message): message is Extract<RuntimeMessageView, { type: 'assistant' }> => message.type === 'assistant')
+  const lastAssistant = assistantMessages.find((message) => (
+    event.messageId
+      ? message.id === event.messageId || message.id === `assistant:${event.runId}`
+      : false
+  )) ?? assistantMessages[0]
+  if (lastAssistant) {
+    lastAssistant.imDelivery = delivery
+  }
+}
+
+function upsertContextCompactionNotice(
+  messages: RuntimeMessageView[],
+  event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.completed' }>,
+): void {
+  const notice: RuntimeSystemMessageView = {
+    id: event.id,
+    type: 'system',
+    variant: 'context_compaction',
+    status: event.type === 'context.compaction.started' ? 'active' : 'completed',
+    text: formatContextCompactionNoticeText(event),
+    createdAt: event.createdAt,
+  }
+  const last = messages.at(-1)
+  if (last?.type === 'system' && last.variant === 'context_compaction') {
+    messages[messages.length - 1] = notice
+    return
+  }
+  messages.push(notice)
+}
+
+function formatContextCompactionNoticeText(
+  event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.completed' }>,
+): string {
+  const mode = event.trigger === 'manual' ? '手动' : '自动'
+  return event.type === 'context.compaction.started'
+    ? `正在${mode}压缩上下文`
+    : `上下文已${mode}压缩`
+}
+
 function getSubagentOwner(event: LumeRuntimeEvent): { parentToolUseId: string; subagentRunId?: string } | null {
   if (!event.parentToolUseId) return null
   return {
@@ -277,6 +356,8 @@ interface MutableAssistantMessage {
   thinking: string
   status: RuntimeAssistantMessageView['status']
   error?: string
+  providerTokenCount?: number
+  imDelivery?: RuntimeAssistantMessageView['imDelivery']
   toolCalls: Map<string, RuntimeToolCallView>
   toolBlockIds: Map<string, number>
   blocks: RuntimeAssistantBlock[]
@@ -378,16 +459,22 @@ function recomputeAssistantContent(assistant: MutableAssistantMessage): void {
     .join('')
 }
 
+function assistantHasContent(assistant: MutableAssistantMessage): boolean {
+  return Boolean(
+    assistant.text.trim()
+    || assistant.thinking.trim()
+    || assistant.toolCalls.size > 0
+    || assistant.blocks.some((block) => block.type === 'memory_context_used')
+    || assistant.error
+  )
+}
+
 function flushAssistant(
   messages: RuntimeMessageView[],
   assistant: MutableAssistantMessage | null,
 ): void {
   if (!assistant) return
-  const hasContent = assistant.text.trim()
-    || assistant.thinking.trim()
-    || assistant.toolCalls.size > 0
-    || assistant.blocks.some((block) => block.type === 'memory_context_used')
-    || assistant.error
+  const hasContent = assistantHasContent(assistant)
   const shouldRenderPlaceholder = assistant.status === 'streaming'
   if (!hasContent && !shouldRenderPlaceholder) return
   messages.push({
@@ -398,6 +485,56 @@ function flushAssistant(
     blocks: assistant.blocks,
     status: assistant.status,
     ...(assistant.error ? { error: assistant.error } : {}),
+    ...(assistant.imDelivery ? { imDelivery: assistant.imDelivery } : {}),
+    tokenCount: assistant.providerTokenCount ?? estimateAssistantTokenCount(assistant),
+    ...(assistant.providerTokenCount !== undefined ? { tokenCountSource: 'provider' as const } : {}),
     toolCalls: [...assistant.toolCalls.values()],
   })
+}
+
+function applyAssistantProviderTokenCount(
+  messages: RuntimeMessageView[],
+  assistant: MutableAssistantMessage | null,
+  outputTokens: number,
+): void {
+  if (!Number.isFinite(outputTokens)) return
+  if (assistant) {
+    assistant.providerTokenCount = outputTokens
+    return
+  }
+  const lastMessage = messages.at(-1)
+  if (lastMessage?.type === 'assistant') {
+    lastMessage.tokenCount = outputTokens
+    lastMessage.tokenCountSource = 'provider'
+  }
+}
+
+function estimateAssistantTokenCount(assistant: MutableAssistantMessage): number {
+  const blockTokens = assistant.blocks.reduce((sum, block) => sum + estimateAssistantBlockTokens(block), 0)
+  return blockTokens + estimateTextTokens(assistant.error ?? '')
+}
+
+function estimateAssistantBlockTokens(block: RuntimeAssistantBlock): number {
+  if (block.type === 'text' || block.type === 'thinking') return estimateTextTokens(block.text)
+  if (block.type === 'plan_preview') return estimateTextTokens(block.preview.markdown)
+  if (block.type === 'task_progress') return estimateTextTokens(block.event.message ?? '')
+  if (block.type === 'tool_call') {
+    return estimateValueTokens(block.toolCall.input) + estimateValueTokens(block.toolCall.output)
+  }
+  return 0
+}
+
+function estimateValueTokens(value: unknown): number {
+  if (typeof value === 'string') return estimateTextTokens(value)
+  if (value === undefined || value === null) return 0
+  try {
+    return estimateTextTokens(JSON.stringify(value))
+  } catch {
+    return estimateTextTokens(String(value))
+  }
+}
+
+function estimateTextTokens(value: string): number {
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? Math.ceil(trimmed.length / 4) : 0
 }

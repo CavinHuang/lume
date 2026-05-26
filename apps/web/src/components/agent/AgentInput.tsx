@@ -6,12 +6,12 @@ import { Bot, Send, Square, Paperclip, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { agentSend } from '@/lib/desktop-api'
-import { openFileDialog, sidecarCall } from '@/lib/desktop-api'
+import { agentSend, getThreadMessages, openFileDialog, sidecarCall } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
 import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
+  type AgentMessage,
   type AgentMessageAttachmentInput,
   type AgentSavedFile,
   type Channel,
@@ -225,6 +225,7 @@ export function AgentInput({
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
   const [localSending, setLocalSending] = useState(false)
+  const [historyMessages, setHistoryMessages] = useState<AgentMessage[]>([])
   const mentionSuggestionOpenRef = useRef(false)
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
@@ -275,6 +276,21 @@ export function AgentInput({
   useEffect(() => {
     if (!streaming) setLocalSending(false)
   }, [streaming, threadId])
+
+  useEffect(() => {
+    let cancelled = false
+    setHistoryMessages([])
+    getThreadMessages(threadId)
+      .then((messages) => {
+        if (!cancelled) setHistoryMessages(messages)
+      })
+      .catch((error) => {
+        if (!cancelled) console.error('[AgentInput] 加载线程上下文估算消息失败:', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [threadId])
 
   const getWorkspaceSlug = () => workspaceSlugRef.current
   const setMentionSuggestionOpen = useCallback((open: boolean) => {
@@ -338,6 +354,7 @@ export function AgentInput({
   }), [channels, channelsLoaded, thread, defaultStrategy])
   const contextWindowProgress = buildContextWindowProgress(runtimeEvents, {
     contextWindow: selectedModelSummary.meta?.contextWindow,
+    messages: historyMessages,
   })
   const roleRecommendations = useMemo(
     () => streaming || localSending ? [] : buildAgentInputRoleRecommendations(editorText),

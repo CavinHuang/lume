@@ -67,6 +67,7 @@ describe('runtime-event-message-projection', () => {
           { type: 'text', id: 'text:3', text: 'world' },
         ],
         status: 'completed',
+        tokenCount: 13,
         toolCalls: [{
           id: 'tool-1',
           toolName: 'Bash',
@@ -132,8 +133,100 @@ describe('runtime-event-message-projection', () => {
       blocks: [{ type: 'text', id: 'text:0', text: 'before failure' }],
       status: 'failed',
       error: 'boom',
+      tokenCount: 5,
       toolCalls: [],
     }])
+  })
+
+  test('adds estimated token usage to assistant messages', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'assistant.thinking_delta', delta: '1234' }),
+      event({ type: 'assistant.delta', delta: '12345678' }),
+      event({ type: 'run.completed' }),
+    ])
+
+    expect(messages[0]).toMatchObject({
+      type: 'assistant',
+      tokenCount: 3,
+    })
+  })
+
+  test('uses provider output token usage when usage.updated is available', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'assistant.thinking_delta', delta: '1234' }),
+      event({ type: 'assistant.delta', delta: '12345678' }),
+      event({
+        type: 'usage.updated',
+        inputTokens: 40,
+        outputTokens: 9,
+        cachedTokens: 2,
+        totalTokens: 51,
+      }),
+      event({ type: 'run.completed' }),
+    ])
+
+    expect(messages[0]).toMatchObject({
+      type: 'assistant',
+      tokenCount: 9,
+      tokenCountSource: 'provider',
+    })
+  })
+
+  test('applies provider token usage after the assistant message is closed', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'assistant.delta', delta: '12345678' }),
+      event({ type: 'run.completed' }),
+      event({
+        type: 'usage.updated',
+        inputTokens: 40,
+        outputTokens: 9,
+        totalTokens: 49,
+      }),
+    ])
+
+    expect(messages[0]).toMatchObject({
+      type: 'assistant',
+      tokenCount: 9,
+      tokenCountSource: 'provider',
+    })
+  })
+
+  test('attaches IM delivery status to the assistant message', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: '你好', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: '你好，我在。', messageId: 'assistant-1' }),
+      event({ type: 'run.completed' }),
+      event({
+        type: 'im.delivery' as any,
+        runId: 'message:assistant-1',
+        messageId: 'assistant-1',
+        status: 'pending',
+        provider: 'weixin',
+        accountId: 'account-1',
+        peerKind: 'dm',
+        peerId: 'user-1',
+      } as any),
+      event({
+        type: 'im.delivery' as any,
+        runId: 'message:assistant-1',
+        messageId: 'assistant-1',
+        status: 'sent',
+        provider: 'weixin',
+        accountId: 'account-1',
+        peerKind: 'dm',
+        peerId: 'user-1',
+      } as any),
+    ])
+
+    expect(messages[1]).toMatchObject({
+      type: 'assistant',
+      imDelivery: {
+        status: 'sent',
+        provider: 'weixin',
+        peerKind: 'dm',
+        peerId: 'user-1',
+      },
+    })
   })
 
   test('shows a visible assistant notice when a run hits the turn limit without text', () => {
@@ -159,7 +252,47 @@ describe('runtime-event-message-projection', () => {
           text: '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。',
         }],
         status: 'completed',
+        tokenCount: 8,
         toolCalls: [],
+      },
+    ])
+  })
+
+  test('projects context compaction events as a visible status divider', () => {
+    expect(projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: '继续', messageId: 'user-1' }),
+      event({
+        type: 'context.compaction.started',
+        id: 'compact-start',
+        trigger: 'auto',
+        preTokens: 900,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+      }),
+      event({
+        type: 'context.compaction.completed',
+        id: 'compact-complete',
+        trigger: 'auto',
+        preTokens: 900,
+        postTokens: 280,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+      }),
+    ])).toEqual([
+      {
+        id: 'user-1',
+        type: 'user',
+        text: '继续',
+        createdAt: '2026-05-11T00:00:00.000Z',
+        messageId: 'user-1',
+      },
+      {
+        id: 'compact-complete',
+        type: 'system',
+        variant: 'context_compaction',
+        status: 'completed',
+        text: '上下文已自动压缩',
+        createdAt: '2026-05-11T00:00:00.000Z',
       },
     ])
   })

@@ -15,9 +15,12 @@ import {
 } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
+  type AgentMessageAppendedEvent,
   type AgentPendingInteractiveState,
   type AgentRuntimeEventNotification,
   type AgentRuntimeStatusChangedEvent,
+  type AgentThreadRuntimeEventsResult,
+  type AgentThreadMeta,
   type AgentAskUserQuestionRequest,
   type AgentToolPermissionRequest,
   type AgentSubagentCompletionEvent,
@@ -31,7 +34,7 @@ import {
   upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from './pending-interactive-state'
-import { appendRuntimeEvent } from './runtime-event-state'
+import { appendRuntimeEvent, hydrateRuntimeEvents } from './runtime-event-state'
 
 export function useGlobalAgentListeners() {
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
@@ -116,6 +119,24 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED: {
           const { status } = params as AgentRuntimeStatusChangedEvent
           setRuntimeStatus((prev) => ({ ...prev, [status.threadId]: status }))
+          break
+        }
+        case AGENT_IPC_CHANNELS.MESSAGE_APPENDED: {
+          const event = params as AgentMessageAppendedEvent
+          void sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS)
+            .then((result) => {
+              setThreads(Array.isArray(result) ? result : [])
+            })
+            .catch((error) => {
+              console.error(`[useGlobalAgentListeners] 刷新线程列表失败: ${event.threadId}`, error)
+            })
+          void sidecarCall<AgentThreadRuntimeEventsResult>(AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS, { threadId: event.threadId })
+            .then((result) => {
+              setRuntimeEvents((prev) => hydrateRuntimeEvents(prev, result))
+            })
+            .catch((error) => {
+              console.error(`[useGlobalAgentListeners] 刷新运行事件失败: ${event.threadId}`, error)
+            })
           break
         }
         case AGENT_IPC_CHANNELS.ASK_USER_QUESTION: {

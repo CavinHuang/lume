@@ -1,4 +1,4 @@
-import type { AgentMessageAttachmentInput, LumeRuntimeEvent } from '@lume/shared'
+import type { AgentMessageAttachmentInput, ImPeerKind, ImProvider, LumeRuntimeEvent } from '@lume/shared'
 
 export interface RuntimeToolCallView {
   id: string
@@ -14,6 +14,7 @@ export interface RuntimeToolCallView {
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
 export type MemoryContextUsedViewEvent = Extract<LumeRuntimeEvent, { type: 'memory.context.used' }>
+export type ContextCompactionViewEvent = Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.completed' }>
 export type PlanPreviewView = Pick<
   Extract<LumeRuntimeEvent, { type: 'plan.preview' }>,
   'contractId' | 'title' | 'summary' | 'markdown' | 'planFilePath' | 'planVerified' | 'stepCount'
@@ -35,6 +36,15 @@ export interface RuntimeAssistantMessageView {
   blocks: RuntimeAssistantBlock[]
   status: 'streaming' | 'completed' | 'failed'
   error?: string
+  tokenCount?: number
+  tokenCountSource?: 'provider'
+  imDelivery?: {
+    status: 'pending' | 'sent' | 'failed'
+    provider: ImProvider
+    peerKind: ImPeerKind
+    peerId: string
+    error?: string
+  }
   toolCalls: RuntimeToolCallView[]
 }
 
@@ -50,4 +60,13 @@ export interface RuntimeUserMessageView {
   versionCount?: number
 }
 
-export type RuntimeMessageView = RuntimeUserMessageView | RuntimeAssistantMessageView
+export interface RuntimeSystemMessageView {
+  id: string
+  type: 'system'
+  variant: 'context_compaction'
+  status: 'active' | 'completed'
+  text: string
+  createdAt: string
+}
+
+export type RuntimeMessageView = RuntimeUserMessageView | RuntimeAssistantMessageView | RuntimeSystemMessageView

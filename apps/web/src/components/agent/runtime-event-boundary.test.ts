@@ -31,6 +31,14 @@ describe('RuntimeEvent UI boundary', () => {
     expect(content).not.toContain('AGENT_IPC_CHANNELS.RUN_EVENT')
   })
 
+  test('global listener refreshes thread list after sidecar appends a message', () => {
+    const content = source('apps/web/src/hooks/useGlobalAgentListeners.ts')
+
+    expect(content).toContain('case AGENT_IPC_CHANNELS.MESSAGE_APPENDED')
+    expect(content).toContain('AGENT_IPC_CHANNELS.LIST_THREADS')
+    expect(content).toContain('AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS')
+  })
+
   test('agent message projection has no legacy run-event projector', () => {
     expect(existsSync(join(repoRoot, 'apps/web/src/components/agent/run-event-message-projection.ts'))).toBeFalse()
     expect(existsSync(join(repoRoot, 'apps/web/src/components/agent/run-event-message-projection.test.ts'))).toBeFalse()

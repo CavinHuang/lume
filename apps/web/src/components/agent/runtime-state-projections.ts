@@ -1,4 +1,5 @@
 import type {
+  AgentMessage,
   AgentRunStateSummary,
   AgentRunTrace,
   AgentRunTraceSpan,
@@ -70,6 +71,13 @@ export interface ContextWindowUsageRecord {
 }
 
 const DEFAULT_CONTEXT_WINDOW = 200_000
+type ContextWindowSectionSource = 'none' | 'live' | 'usage' | 'budget'
+type ContextWindowHistoryMessage = Pick<AgentMessage, 'role' | 'content' | 'reasoning'>
+
+interface ContextWindowProgressFallback {
+  contextWindow?: number
+  messages?: ContextWindowHistoryMessage[]
+}
 
 export function buildLiveRuntimeEventRows(events: LumeRuntimeEvent[]): LiveRuntimeEventRow[] {
   return events.slice(-8).map((event, index) => ({
@@ -80,7 +88,7 @@ export function buildLiveRuntimeEventRows(events: LumeRuntimeEvent[]): LiveRunti
 
 export function buildContextWindowProgress(
   events: LumeRuntimeEvent[],
-  fallback: { contextWindow?: number } = {},
+  fallback: ContextWindowProgressFallback = {},
 ): ContextWindowProgress {
   const fallbackWindow = typeof fallback.contextWindow === 'number' && fallback.contextWindow > 0
     ? fallback.contextWindow
@@ -89,11 +97,42 @@ export function buildContextWindowProgress(
   let usedTokens = 0
   let sections: ContextWindowProgressSection[] = []
   let usage: ContextWindowUsageSummary | undefined
+  let sectionSource: ContextWindowSectionSource = 'none'
+  let liveInputTokens = 0
+  let liveOutputTokens = 0
+  let hasRuntimeContextSignal = false
 
   for (const event of events) {
-    if (event.type === 'run.started' && isPositiveTokenCount(event.model?.contextWindow)) {
-      contextWindow = event.model.contextWindow
+    if (event.type === 'run.started') {
+      if (isPositiveTokenCount(event.model?.contextWindow)) {
+        contextWindow = event.model.contextWindow
+      }
+      usedTokens = 0
       sections = []
+      usage = undefined
+      sectionSource = 'none'
+      liveInputTokens = 0
+      liveOutputTokens = 0
+    }
+    if (event.type === 'message.user.submitted') {
+      const tokens = estimateLiveTokens(event.text)
+      usedTokens += tokens
+      liveInputTokens += tokens
+      hasRuntimeContextSignal ||= tokens > 0
+      if (sectionSource !== 'budget') {
+        sections = buildUsageSections(liveInputTokens, liveOutputTokens, 0, contextWindow)
+        sectionSource = 'live'
+      }
+    }
+    if (event.type === 'assistant.delta' || event.type === 'assistant.thinking_delta') {
+      const tokens = estimateLiveTokens(event.delta)
+      usedTokens += tokens
+      liveOutputTokens += tokens
+      hasRuntimeContextSignal ||= tokens > 0
+      if (sectionSource !== 'budget') {
+        sections = buildUsageSections(liveInputTokens, liveOutputTokens, 0, contextWindow)
+        sectionSource = 'live'
+      }
     }
     if (event.type === 'context.compaction.started') {
       if (isPositiveTokenCount(event.contextWindow)) {
@@ -101,6 +140,10 @@ export function buildContextWindowProgress(
       }
       usedTokens = event.preTokens
       sections = buildBudgetSections(event.budget, contextWindow)
+      sectionSource = sections.length > 0 ? 'budget' : 'none'
+      liveInputTokens = 0
+      liveOutputTokens = 0
+      hasRuntimeContextSignal = true
     }
     if (event.type === 'context.compaction.completed') {
       if (isPositiveTokenCount(event.contextWindow)) {
@@ -108,12 +151,19 @@ export function buildContextWindowProgress(
       }
       usedTokens = event.postTokens ?? event.preTokens
       sections = buildBudgetSections(event.budget, contextWindow)
+      sectionSource = sections.length > 0 ? 'budget' : 'none'
+      liveInputTokens = 0
+      liveOutputTokens = 0
+      hasRuntimeContextSignal = true
     }
     if (event.type === 'usage.updated') {
       if (isPositiveTokenCount(event.contextWindow)) {
         contextWindow = event.contextWindow
       }
       usedTokens = event.totalTokens
+      liveInputTokens = 0
+      liveOutputTokens = 0
+      hasRuntimeContextSignal ||= event.totalTokens > 0
       usage = {
         inputTokens: event.inputTokens,
         outputTokens: event.outputTokens,
@@ -121,9 +171,18 @@ export function buildContextWindowProgress(
         ...(typeof event.costUSD === 'number' ? { costUSD: event.costUSD } : {}),
         ...buildUsageRecords(event.usageRecords),
       }
-      sections = sections.length > 0
-        ? sections
-        : buildUsageSections(event.inputTokens, event.outputTokens, event.cachedTokens ?? 0, contextWindow)
+      if (sectionSource !== 'budget') {
+        sections = buildUsageSections(event.inputTokens, event.outputTokens, event.cachedTokens ?? 0, contextWindow)
+        sectionSource = 'usage'
+      }
+    }
+  }
+
+  if (!hasRuntimeContextSignal && fallback.messages?.length) {
+    const historyUsage = estimateHistoryMessageUsage(fallback.messages)
+    if (historyUsage.totalTokens > 0) {
+      usedTokens = historyUsage.totalTokens
+      sections = buildUsageSections(historyUsage.inputTokens, historyUsage.outputTokens, 0, contextWindow)
     }
   }
 
@@ -338,6 +397,50 @@ function formatTokenCount(value: number): string {
 
 function isPositiveTokenCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+function estimateLiveTokens(value: string): number {
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? Math.ceil(trimmed.length / 4) : 0
+}
+
+function estimateHistoryMessageUsage(messages: ContextWindowHistoryMessage[]): {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+} {
+  let inputTokens = 0
+  let outputTokens = 0
+  for (const message of messages) {
+    const tokens = estimateHistoryValueTokens(message.content) + estimateHistoryValueTokens(message.reasoning)
+    if (tokens <= 0) continue
+    if (message.role === 'assistant') {
+      outputTokens += tokens
+    } else {
+      inputTokens += tokens
+    }
+  }
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+  }
+}
+
+function estimateHistoryValueTokens(value: unknown): number {
+  if (typeof value === 'string') return estimateLiveTokens(value)
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + estimateHistoryValueTokens(item), 0)
+  }
+  if (!value || typeof value !== 'object') return 0
+  const record = value as Record<string, unknown>
+  if (typeof record.text === 'string') return estimateLiveTokens(record.text)
+  if ('content' in record) return estimateHistoryValueTokens(record.content)
+  try {
+    return estimateLiveTokens(JSON.stringify(value))
+  } catch {
+    return 0
+  }
 }
 
 function buildUsageSections(
