@@ -530,6 +530,8 @@ export interface AgentToolPermissionRequest {
   matchedRuleId?: string
   classification?: AgentToolPermissionClassification
   grantSuggestion?: AgentToolPermissionGrantSuggestion
+  /** 当前审批策略是否允许授予“始终允许”。 */
+  canAllowAlways?: boolean
   input: Record<string, unknown>
   /** 持久化 interruption 类型；自动化运行高风险工具时使用 automation_approval。 */
   interruptionType?: 'tool_approval' | 'automation_approval'
@@ -543,6 +545,8 @@ export interface AgentToolPermissionResponseInput {
   threadId: string
   requestId: string
   decision: AgentToolPermissionDecision
+  /** 将当前审批会话切到对应权限模式；目前仅支持本线程全部允许。 */
+  threadPermissionMode?: 'bypassPermissions'
 }
 
 export interface AgentPendingInteractiveState {

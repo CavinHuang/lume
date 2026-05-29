@@ -20,6 +20,7 @@ export type RuntimeEventType =
   | "task.progress"
   | "im.delivery"
   | "permission.requested"
+  | "permission.resolved"
   | "ask_user.requested"
   | "memory.context.used"
   | "context.compaction.started"
@@ -130,6 +131,15 @@ export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
   requestId: string;
   toolName: string;
   message: string;
+}
+
+export interface ToolPermissionResolvedRuntimeEvent extends RuntimeEventBase {
+  type: "permission.resolved";
+  toolCallId?: string;
+  requestId: string;
+  toolName?: string;
+  decision: "allow_once" | "allow_always" | "deny";
+  source: "ui" | "im";
 }
 
 export interface PlanPreviewRuntimeEvent extends RuntimeEventBase {
@@ -261,23 +271,68 @@ export interface ContextCompactionCompletedRuntimeEvent extends RuntimeEventBase
   summary?: string;
 }
 
-export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
-  type: "usage.updated";
+export interface RuntimeNormalizedUsage {
   inputTokens: number;
   outputTokens: number;
-  cachedTokens?: number;
-  usageRecords?: Array<{
-    callerLabel: string;
-    model?: string;
-    turn?: number;
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens?: number;
-    costUSD?: number;
-  }>;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  cachedTokens: number;
   totalTokens: number;
-  contextWindow?: number;
+}
+
+export interface RuntimeUsageContextSnapshot extends RuntimeNormalizedUsage {
+  source: "provider" | "estimated";
+  estimatedTailTokens: number;
+  sections?: {
+    systemTokens?: number;
+    memoryTokens?: number;
+    toolSchemaTokens?: number;
+    messageTokens?: number;
+  };
+  contextWindow: number;
+  contextWindowSource: "model" | "provider" | "fallback";
+}
+
+export interface RuntimeUsageIdentity {
+  threadId: string;
+  runId?: string;
+  parentThreadId?: string;
+  parentRunId?: string;
+  subagentRunId?: string;
+  responseId?: string;
+  turn?: number;
+  callerKind: "conversation" | "compaction" | "subagent" | "title" | "memory" | "classifier" | "side_query" | string;
+  callerLabel?: string;
+}
+
+export interface RuntimeBillingUsageRecord extends RuntimeNormalizedUsage {
+  callerLabel: string;
+  callerKind: RuntimeUsageIdentity["callerKind"];
+  usageIdentity?: RuntimeUsageIdentity;
+  model?: string;
+  turn?: number;
+  threadId?: string;
+  runId?: string;
+  parentThreadId?: string;
+  parentRunId?: string;
+  subagentRunId?: string;
+  responseId?: string;
   costUSD?: number;
+}
+
+export interface RuntimeBillingUsageSummary {
+  cumulative: RuntimeNormalizedUsage;
+  latestRecord?: RuntimeBillingUsageRecord;
+  records: RuntimeBillingUsageRecord[];
+  totalCostUSD: number;
+}
+
+export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
+  type: "usage.updated";
+  scope: "main" | "subagent" | "background";
+  context: RuntimeUsageContextSnapshot;
+  billing: RuntimeBillingUsageSummary;
+  progress?: RuntimeNormalizedUsage;
 }
 
 export type LumeRuntimeEvent =
@@ -290,6 +345,7 @@ export type LumeRuntimeEvent =
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
   | ToolPermissionTimeoutRuntimeEvent
+  | ToolPermissionResolvedRuntimeEvent
   | PlanPreviewRuntimeEvent
   | TaskProgressRuntimeEvent
   | ImDeliveryRuntimeEvent

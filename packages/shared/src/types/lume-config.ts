@@ -48,6 +48,59 @@ export interface LumeConfigPermissionsSection {
     enabled?: boolean
   }
   privateWriteRoots?: string[]
+  approvals?: LumeConfigPermissionApprovalRoutes
+}
+
+export type LumeConfigSubagentApprovalMode = "inherit" | "ask-parent" | "deny-high-risk"
+
+export type LumeConfigApprovalAllowAlwaysPolicy = "disabled" | "desktop-only" | "dm-only" | "parent-only"
+
+export type LumeConfigImGroupApprovalPolicy = "disabled" | "desktop-only"
+
+export interface LumeConfigSubagentApprovalPolicy {
+  mode?: LumeConfigSubagentApprovalMode
+  allowAlways?: Exclude<LumeConfigApprovalAllowAlwaysPolicy, "dm-only">
+}
+
+export interface LumeConfigImAccountApprovalPolicy {
+  enabled?: boolean
+  allowTextApprove?: boolean
+  allowAlways?: Exclude<LumeConfigApprovalAllowAlwaysPolicy, "parent-only">
+  groupApproval?: LumeConfigImGroupApprovalPolicy
+  approverPeerIds?: string[]
+}
+
+export interface LumeConfigImApprovalPolicy {
+  enabled?: boolean
+  allowTextApprove?: boolean
+  allowAlways?: Exclude<LumeConfigApprovalAllowAlwaysPolicy, "parent-only">
+  groupApproval?: LumeConfigImGroupApprovalPolicy
+  accounts?: Record<string, LumeConfigImAccountApprovalPolicy>
+}
+
+export interface LumeConfigPermissionApprovalRoutes {
+  desktop?: {
+    enabled?: boolean
+  }
+  subagent?: LumeConfigSubagentApprovalPolicy
+  im?: LumeConfigImApprovalPolicy
+}
+
+export const DEFAULT_LUME_PERMISSION_APPROVALS: LumeConfigPermissionApprovalRoutes = {
+  desktop: {
+    enabled: true
+  },
+  subagent: {
+    mode: "ask-parent",
+    allowAlways: "desktop-only"
+  },
+  im: {
+    enabled: true,
+    allowTextApprove: true,
+    allowAlways: "desktop-only",
+    groupApproval: "desktop-only",
+    accounts: {}
+  }
 }
 
 export interface LumeConfigHooksInternalSection {

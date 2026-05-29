@@ -24,6 +24,47 @@ export interface UpdateGeneralSettingsInput {
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
 }
 
+export type LogViewerLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
+
+export interface LogFileSummary {
+  name: string
+  sizeBytes: number
+  modifiedAt: string
+}
+
+export interface LogFileListResult {
+  directory: string
+  files: LogFileSummary[]
+  totalFiles: number
+  totalBytes: number
+}
+
+export interface LogLineEntry {
+  lineNumber: number
+  level: LogViewerLevel
+  text: string
+}
+
+export interface ReadLogFileInput {
+  fileName: string
+  levels?: LogViewerLevel[]
+  query?: string
+  maxLines?: number
+}
+
+export interface ReadLogFileResult {
+  fileName: string
+  totalLines: number
+  matchedLines: number
+  lines: LogLineEntry[]
+}
+
+export interface ExportLogsResult {
+  path: string
+  fileName: string
+  sizeBytes: number
+}
+
 export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
   windowBehavior: {
@@ -42,5 +83,8 @@ export const GENERAL_SETTINGS_IPC_CHANNELS = {
   GET: "general-settings:get",
   UPDATE: "general-settings:update",
   OPEN_LOGS_DIR: "general-settings:open-logs-dir",
-  CLEAR_CACHE: "general-settings:clear-cache"
+  CLEAR_CACHE: "general-settings:clear-cache",
+  LIST_LOG_FILES: "general-settings:list-log-files",
+  READ_LOG_FILE: "general-settings:read-log-file",
+  EXPORT_LOGS: "general-settings:export-logs"
 } as const
