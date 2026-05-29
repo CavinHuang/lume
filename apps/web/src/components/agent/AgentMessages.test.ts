@@ -5,6 +5,7 @@ import {
   collectNewRuntimeMessageIds,
   getPreservedScrollTopAfterResize,
   isNearScrollBottom,
+  projectVisibleThreadMessages,
   reconcileUserMessageVersions,
   shouldAutoScrollAfterUserScroll,
 } from './agent-message-state'
@@ -166,6 +167,43 @@ describe('reconcileUserMessageVersions', () => {
     })
   })
 
+  test('uses visible user content when runtime event contains model-facing continuation text', () => {
+    const messages: RuntimeMessageView[] = [{
+      id: 'message-continue',
+      type: 'user',
+      text: [
+        '上一轮运行在进程退出前未正常完成。',
+        '请继续完成上一轮未完成的原始任务。',
+        '用户发送的继续指令：继续',
+      ].join('\n\n'),
+      createdAt: '2026-05-01T00:00:00.000Z',
+      messageId: 'message-continue',
+      versionGroupId: 'group-old',
+      versionIndex: 1,
+      versionCount: 1,
+    }]
+    const visibleThreadMessages = [{
+      id: 'message-continue',
+      role: 'user',
+      content: '继续',
+      createdAt: Date.parse('2026-05-01T00:00:00.000Z'),
+      versionGroupId: 'group-visible',
+      versionIndex: 2,
+      versionCount: 3,
+    }] as AgentMessage[]
+
+    expect(reconcileUserMessageVersions(messages, visibleThreadMessages)[0]).toEqual({
+      id: 'message-continue',
+      type: 'user',
+      text: '继续',
+      createdAt: '2026-05-01T00:00:00.000Z',
+      messageId: 'message-continue',
+      versionGroupId: 'group-visible',
+      versionIndex: 2,
+      versionCount: 3,
+    })
+  })
+
   test('restores provider assistant token usage from visible metadata', () => {
     const messages: RuntimeMessageView[] = [{
       id: 'assistant:1',
@@ -186,7 +224,18 @@ describe('reconcileUserMessageVersions', () => {
         tokenUsage: {
           source: 'provider',
           scope: 'assistant_turn',
-          outputTokens: 17,
+          providerOutputTokens: 17,
+          contextUsage: {
+            totalTokens: 120,
+            contextWindow: 1000,
+          },
+          billingUsage: {
+            inputTokens: 100,
+            outputTokens: 17,
+            cacheReadInputTokens: 12,
+            cacheCreationInputTokens: 3,
+            cachedTokens: 15,
+          },
         },
       },
     }] as AgentMessage[]
@@ -194,6 +243,108 @@ describe('reconcileUserMessageVersions', () => {
     expect(reconcileUserMessageVersions(messages, visibleThreadMessages)[0]).toMatchObject({
       tokenCount: 17,
       tokenCountSource: 'provider',
+      tokenUsage: {
+        inputTokens: 100,
+        outputTokens: 17,
+        cacheReadInputTokens: 12,
+        cacheCreationInputTokens: 3,
+        cachedTokens: 15,
+        contextPercent: 12,
+      },
     })
+  })
+
+  test('restores persisted assistant message id and completion time', () => {
+    const messages: RuntimeMessageView[] = [{
+      id: 'assistant:1',
+      type: 'assistant',
+      text: '可分支输出',
+      thinking: '',
+      toolCalls: [],
+      blocks: [{ type: 'text', id: 'text:1', text: '可分支输出' }],
+      status: 'completed',
+      tokenCount: 3,
+    }]
+    const visibleThreadMessages = [{
+      id: 'assistant-message-1',
+      role: 'assistant',
+      content: '可分支输出',
+      createdAt: Date.parse('2026-05-01T07:23:00.000Z'),
+    }] as AgentMessage[]
+
+    expect(reconcileUserMessageVersions(messages, visibleThreadMessages)[0]).toMatchObject({
+      messageId: 'assistant-message-1',
+      completedAt: '2026-05-01T07:23:00.000Z',
+    })
+  })
+})
+
+describe('projectVisibleThreadMessages', () => {
+  test('projects forked transcript messages when runtime events are empty', () => {
+    const visibleThreadMessages = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: '之前的问题',
+        createdAt: Date.parse('2026-05-01T07:22:00.000Z'),
+      },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '之前的回答',
+        createdAt: Date.parse('2026-05-01T07:23:00.000Z'),
+        metadata: {
+          tokenUsage: {
+            source: 'provider',
+            scope: 'assistant_turn',
+            providerOutputTokens: 42,
+            contextUsage: {
+              totalTokens: 420,
+              contextWindow: 1000,
+            },
+            billingUsage: {
+              inputTokens: 300,
+              outputTokens: 42,
+              cacheReadInputTokens: 20,
+              cacheCreationInputTokens: 5,
+              cachedTokens: 25,
+            },
+          },
+        },
+      },
+    ] as AgentMessage[]
+
+    expect(projectVisibleThreadMessages(visibleThreadMessages)).toEqual([
+      {
+        id: 'user-1',
+        type: 'user',
+        text: '之前的问题',
+        createdAt: '2026-05-01T07:22:00.000Z',
+        messageId: 'user-1',
+      },
+      {
+        id: 'assistant-1',
+        type: 'assistant',
+        text: '之前的回答',
+        thinking: '',
+        messageId: 'assistant-1',
+        completedAt: '2026-05-01T07:23:00.000Z',
+        blocks: [{ type: 'text', id: 'text:assistant-1', text: '之前的回答' }],
+        status: 'completed',
+        tokenCount: 42,
+        tokenCountSource: 'provider',
+        tokenUsage: {
+          inputTokens: 300,
+          outputTokens: 42,
+          cacheReadInputTokens: 20,
+          cacheCreationInputTokens: 5,
+          cachedTokens: 25,
+          contextTokens: 420,
+          contextWindow: 1000,
+          contextPercent: 42,
+        },
+        toolCalls: [],
+      },
+    ])
   })
 })

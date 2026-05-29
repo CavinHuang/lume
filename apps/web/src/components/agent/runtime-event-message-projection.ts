@@ -2,6 +2,7 @@ import type { LumeRuntimeEvent } from '@lume/shared'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
+  RuntimeAssistantTokenUsageView,
   RuntimeMessageView,
   RuntimeSystemMessageView,
   RuntimeToolCallView,
@@ -77,7 +78,17 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
     }
 
     if (event.type === 'usage.updated') {
-      applyAssistantProviderTokenCount(messages, currentAssistant, event.outputTokens)
+      if (event.scope !== 'main') return
+      applyAssistantProviderTokenUsage(messages, currentAssistant, {
+        inputTokens: firstFiniteNumber(event.billing.latestRecord?.inputTokens, event.billing.cumulative.inputTokens),
+        outputTokens: firstFiniteNumber(event.billing.latestRecord?.outputTokens, event.billing.cumulative.outputTokens),
+        cacheReadInputTokens: firstFiniteNumber(event.billing.latestRecord?.cacheReadInputTokens, event.billing.cumulative.cacheReadInputTokens),
+        cacheCreationInputTokens: firstFiniteNumber(event.billing.latestRecord?.cacheCreationInputTokens, event.billing.cumulative.cacheCreationInputTokens),
+        cachedTokens: firstFiniteNumber(event.billing.latestRecord?.cachedTokens, event.billing.cumulative.cachedTokens),
+        contextTokens: event.context.totalTokens,
+        contextWindow: event.context.contextWindow,
+        contextPercent: calculateContextPercent(event.context.totalTokens, event.context.contextWindow),
+      })
       return
     }
 
@@ -200,6 +211,10 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
       if (event.type === 'run.turn_limited') {
         appendAssistantTextBlock(currentAssistant, TURN_LIMIT_NOTICE)
         recomputeAssistantContent(currentAssistant)
+      }
+      if (event.type === 'run.completed') {
+        currentAssistant.messageId = event.finalMessageId
+        currentAssistant.completedAt = event.createdAt
       }
       currentAssistant.status = 'completed'
       flushAssistant(messages, currentAssistant)
@@ -354,9 +369,12 @@ interface MutableAssistantMessage {
   id: string
   text: string
   thinking: string
+  messageId?: string
+  completedAt?: string
   status: RuntimeAssistantMessageView['status']
   error?: string
   providerTokenCount?: number
+  providerTokenUsage?: RuntimeAssistantTokenUsageView
   imDelivery?: RuntimeAssistantMessageView['imDelivery']
   toolCalls: Map<string, RuntimeToolCallView>
   toolBlockIds: Map<string, number>
@@ -482,31 +500,79 @@ function flushAssistant(
     type: 'assistant',
     text: assistant.text,
     thinking: assistant.thinking,
+    ...(assistant.messageId ? { messageId: assistant.messageId } : {}),
+    ...(assistant.completedAt ? { completedAt: assistant.completedAt } : {}),
     blocks: assistant.blocks,
     status: assistant.status,
     ...(assistant.error ? { error: assistant.error } : {}),
     ...(assistant.imDelivery ? { imDelivery: assistant.imDelivery } : {}),
     tokenCount: assistant.providerTokenCount ?? estimateAssistantTokenCount(assistant),
     ...(assistant.providerTokenCount !== undefined ? { tokenCountSource: 'provider' as const } : {}),
+    ...(assistant.providerTokenUsage ? { tokenUsage: assistant.providerTokenUsage } : {}),
     toolCalls: [...assistant.toolCalls.values()],
   })
 }
 
-function applyAssistantProviderTokenCount(
+function applyAssistantProviderTokenUsage(
   messages: RuntimeMessageView[],
   assistant: MutableAssistantMessage | null,
-  outputTokens: number,
+  usage: RuntimeAssistantTokenUsageView,
 ): void {
-  if (!Number.isFinite(outputTokens)) return
+  const normalizedUsage = normalizeAssistantTokenUsage(usage)
+  if (!normalizedUsage) return
+  const outputTokens = normalizedUsage.outputTokens
   if (assistant) {
-    assistant.providerTokenCount = outputTokens
+    if (outputTokens !== undefined) {
+      assistant.providerTokenCount = outputTokens
+    }
+    assistant.providerTokenUsage = normalizedUsage
     return
   }
   const lastMessage = messages.at(-1)
   if (lastMessage?.type === 'assistant') {
-    lastMessage.tokenCount = outputTokens
-    lastMessage.tokenCountSource = 'provider'
+    if (outputTokens !== undefined) {
+      lastMessage.tokenCount = outputTokens
+      lastMessage.tokenCountSource = 'provider'
+    }
+    lastMessage.tokenUsage = normalizedUsage
   }
+}
+
+function normalizeAssistantTokenUsage(usage: RuntimeAssistantTokenUsageView): RuntimeAssistantTokenUsageView | null {
+  const normalized: RuntimeAssistantTokenUsageView = {}
+  assignFiniteUsageNumber(normalized, 'inputTokens', usage.inputTokens)
+  assignFiniteUsageNumber(normalized, 'outputTokens', usage.outputTokens)
+  assignFiniteUsageNumber(normalized, 'cacheReadInputTokens', usage.cacheReadInputTokens)
+  assignFiniteUsageNumber(normalized, 'cacheCreationInputTokens', usage.cacheCreationInputTokens)
+  assignFiniteUsageNumber(normalized, 'cachedTokens', usage.cachedTokens)
+  assignFiniteUsageNumber(normalized, 'contextTokens', usage.contextTokens)
+  assignFiniteUsageNumber(normalized, 'contextWindow', usage.contextWindow)
+  assignFiniteUsageNumber(normalized, 'contextPercent', usage.contextPercent)
+  if (normalized.cachedTokens === undefined) {
+    const cachedTokens = (normalized.cacheReadInputTokens ?? 0) + (normalized.cacheCreationInputTokens ?? 0)
+    if (cachedTokens > 0) normalized.cachedTokens = cachedTokens
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null
+}
+
+function assignFiniteUsageNumber<K extends keyof RuntimeAssistantTokenUsageView>(
+  usage: RuntimeAssistantTokenUsageView,
+  key: K,
+  value: RuntimeAssistantTokenUsageView[K],
+): void {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    usage[key] = Math.max(0, Math.round(value)) as RuntimeAssistantTokenUsageView[K]
+  }
+}
+
+function calculateContextPercent(totalTokens: number | undefined, contextWindow: number | undefined): number | undefined {
+  if (typeof totalTokens !== 'number' || typeof contextWindow !== 'number') return undefined
+  if (!Number.isFinite(totalTokens) || !Number.isFinite(contextWindow) || contextWindow <= 0) return undefined
+  return Math.min(100, Math.max(0, Math.round((totalTokens / contextWindow) * 100)))
+}
+
+function firstFiniteNumber(...values: Array<number | undefined>): number | undefined {
+  return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value))
 }
 
 function estimateAssistantTokenCount(assistant: MutableAssistantMessage): number {

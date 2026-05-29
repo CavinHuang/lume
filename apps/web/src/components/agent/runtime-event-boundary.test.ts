@@ -39,6 +39,13 @@ describe('RuntimeEvent UI boundary', () => {
     expect(content).toContain('AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS')
   })
 
+  test('global listener clears pending tool permission after external permission resolution', () => {
+    const content = source('apps/web/src/hooks/useGlobalAgentListeners.ts')
+
+    expect(content).toContain("event.type === 'permission.resolved'")
+    expect(content).toContain('removePendingToolPermissionEverywhere(prev, event.requestId)')
+  })
+
   test('agent message projection has no legacy run-event projector', () => {
     expect(existsSync(join(repoRoot, 'apps/web/src/components/agent/run-event-message-projection.ts'))).toBeFalse()
     expect(existsSync(join(repoRoot, 'apps/web/src/components/agent/run-event-message-projection.test.ts'))).toBeFalse()

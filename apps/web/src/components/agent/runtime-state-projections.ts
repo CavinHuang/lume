@@ -98,8 +98,9 @@ export function buildContextWindowProgress(
   let sections: ContextWindowProgressSection[] = []
   let usage: ContextWindowUsageSummary | undefined
   let sectionSource: ContextWindowSectionSource = 'none'
-  let liveInputTokens = 0
-  let liveOutputTokens = 0
+  let contextInputTokens = 0
+  let contextOutputTokens = 0
+  let contextCachedTokens = 0
   let hasRuntimeContextSignal = false
 
   for (const event of events) {
@@ -107,30 +108,35 @@ export function buildContextWindowProgress(
       if (isPositiveTokenCount(event.model?.contextWindow)) {
         contextWindow = event.model.contextWindow
       }
-      usedTokens = 0
-      sections = []
-      usage = undefined
-      sectionSource = 'none'
-      liveInputTokens = 0
-      liveOutputTokens = 0
+      if (!hasRuntimeContextSignal) {
+        usedTokens = 0
+        sections = []
+        usage = undefined
+        sectionSource = 'none'
+        contextInputTokens = 0
+        contextOutputTokens = 0
+        contextCachedTokens = 0
+      } else if (sectionSource !== 'budget') {
+        sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
+      }
     }
     if (event.type === 'message.user.submitted') {
       const tokens = estimateLiveTokens(event.text)
       usedTokens += tokens
-      liveInputTokens += tokens
+      contextInputTokens += tokens
       hasRuntimeContextSignal ||= tokens > 0
       if (sectionSource !== 'budget') {
-        sections = buildUsageSections(liveInputTokens, liveOutputTokens, 0, contextWindow)
+        sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
         sectionSource = 'live'
       }
     }
     if (event.type === 'assistant.delta' || event.type === 'assistant.thinking_delta') {
       const tokens = estimateLiveTokens(event.delta)
       usedTokens += tokens
-      liveOutputTokens += tokens
+      contextOutputTokens += tokens
       hasRuntimeContextSignal ||= tokens > 0
       if (sectionSource !== 'budget') {
-        sections = buildUsageSections(liveInputTokens, liveOutputTokens, 0, contextWindow)
+        sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
         sectionSource = 'live'
       }
     }
@@ -141,8 +147,9 @@ export function buildContextWindowProgress(
       usedTokens = event.preTokens
       sections = buildBudgetSections(event.budget, contextWindow)
       sectionSource = sections.length > 0 ? 'budget' : 'none'
-      liveInputTokens = 0
-      liveOutputTokens = 0
+      contextInputTokens = event.preTokens
+      contextOutputTokens = 0
+      contextCachedTokens = 0
       hasRuntimeContextSignal = true
     }
     if (event.type === 'context.compaction.completed') {
@@ -152,27 +159,30 @@ export function buildContextWindowProgress(
       usedTokens = event.postTokens ?? event.preTokens
       sections = buildBudgetSections(event.budget, contextWindow)
       sectionSource = sections.length > 0 ? 'budget' : 'none'
-      liveInputTokens = 0
-      liveOutputTokens = 0
+      contextInputTokens = usedTokens
+      contextOutputTokens = 0
+      contextCachedTokens = 0
       hasRuntimeContextSignal = true
     }
     if (event.type === 'usage.updated') {
-      if (isPositiveTokenCount(event.contextWindow)) {
-        contextWindow = event.contextWindow
+      if (event.scope !== 'main') continue
+      if (isPositiveTokenCount(event.context.contextWindow)) {
+        contextWindow = event.context.contextWindow
       }
-      usedTokens = event.totalTokens
-      liveInputTokens = 0
-      liveOutputTokens = 0
-      hasRuntimeContextSignal ||= event.totalTokens > 0
+      usedTokens = event.context.totalTokens
+      contextInputTokens = event.context.inputTokens
+      contextOutputTokens = event.context.outputTokens
+      contextCachedTokens = event.context.cachedTokens
+      hasRuntimeContextSignal ||= event.context.totalTokens > 0
       usage = {
-        inputTokens: event.inputTokens,
-        outputTokens: event.outputTokens,
-        cachedTokens: event.cachedTokens ?? 0,
-        ...(typeof event.costUSD === 'number' ? { costUSD: event.costUSD } : {}),
-        ...buildUsageRecords(event.usageRecords),
+        inputTokens: event.billing.cumulative.inputTokens,
+        outputTokens: event.billing.cumulative.outputTokens,
+        cachedTokens: event.billing.cumulative.cachedTokens,
+        ...(typeof event.billing.totalCostUSD === 'number' ? { costUSD: event.billing.totalCostUSD } : {}),
+        ...buildUsageRecords(event.billing.records),
       }
       if (sectionSource !== 'budget') {
-        sections = buildUsageSections(event.inputTokens, event.outputTokens, event.cachedTokens ?? 0, contextWindow)
+        sections = buildUsageSections(event.context.inputTokens, event.context.outputTokens, event.context.cachedTokens, contextWindow)
         sectionSource = 'usage'
       }
     }
@@ -269,9 +279,9 @@ function formatRuntimeEvent(event: LumeRuntimeEvent): Omit<LiveRuntimeEventRow, 
   if (event.type === 'usage.updated') {
     return {
       label: 'Usage updated',
-      detail: typeof event.contextWindow === 'number'
-        ? `${formatTokenCount(event.totalTokens)} / ${formatTokenCount(event.contextWindow)} tokens`
-        : `${event.totalTokens} tokens`,
+      detail: isPositiveTokenCount(event.context.contextWindow)
+        ? `${formatTokenCount(event.context.totalTokens)} / ${formatTokenCount(event.context.contextWindow)} tokens`
+        : `${event.context.totalTokens} tokens`,
       tone: 'neutral',
     }
   }
@@ -457,7 +467,7 @@ function buildUsageSections(
 }
 
 function buildUsageRecords(
-  records: Extract<LumeRuntimeEvent, { type: 'usage.updated' }>['usageRecords'],
+  records: Extract<LumeRuntimeEvent, { type: 'usage.updated' }>['billing']['records'],
 ): Pick<ContextWindowUsageSummary, 'records'> | {} {
   if (!records?.length) return {}
   return {

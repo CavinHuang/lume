@@ -90,6 +90,9 @@ export function useGlobalAgentListeners() {
             const requestId = event.type === 'tool.permission_timeout' ? event.requestId : event.toolCallId
             setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, requestId))
           }
+          if (event.type === 'permission.resolved') {
+            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))
+          }
           if (
             event.type === 'assistant.delta' ||
             event.type === 'assistant.thinking_delta' ||

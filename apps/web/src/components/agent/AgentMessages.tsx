@@ -17,6 +17,7 @@ import {
   collectRuntimeMessageIds,
   getPreservedScrollTopAfterResize,
   isNearScrollBottom,
+  projectVisibleThreadMessages,
   reconcileUserMessageVersions,
   shouldAutoScrollAfterUserScroll,
 } from './agent-message-state'
@@ -47,8 +48,8 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
   const projectedMessages = useMemo(() => (
     runtimeEvents.length > 0
       ? projectRuntimeEventMessages(runtimeEvents)
-      : []
-  ), [runtimeEvents])
+      : projectVisibleThreadMessages(visibleThreadMessages)
+  ), [runtimeEvents, visibleThreadMessages])
   const liveMessages = useMemo(
     () => reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
     [projectedMessages, visibleThreadMessages],

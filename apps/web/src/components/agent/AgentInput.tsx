@@ -4,11 +4,11 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
 import { Bot, Send, Square, Paperclip, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { agentSend, getThreadMessages, openFileDialog, sidecarCall } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
   type AgentMessage,
@@ -214,9 +214,11 @@ export function AgentInput({
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
+  const [threadPermissionModes, setThreadPermissionModes] = useAtom(agentThreadPermissionModesAtom)
   const workspaceIdRef = useRef<string | null>(null)
   const workspaceSlugRef = useRef<string | null>(null)
   const defaultPermissionModeRef = useRef<PermissionModeValue>('default')
+  const threadPermissionModesRef = useRef(threadPermissionModes)
   const autoSelectedPlanModeRef = useRef(false)
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
@@ -234,6 +236,15 @@ export function AgentInput({
   )
 
   useEffect(() => {
+    threadPermissionModesRef.current = threadPermissionModes
+  }, [threadPermissionModes])
+
+  useEffect(() => {
+    autoSelectedPlanModeRef.current = false
+    setPermissionMode(threadPermissionModes[threadId] ?? defaultPermissionModeRef.current)
+  }, [threadId, threadPermissionModes])
+
+  useEffect(() => {
     listChannels()
       .then((items) => setChannels(items))
       .catch(console.error)
@@ -246,7 +257,7 @@ export function AgentInput({
         }
         if (config.agent?.permissionMode) {
           defaultPermissionModeRef.current = config.agent.permissionMode
-          setPermissionMode(config.agent.permissionMode)
+          setPermissionMode(threadPermissionModesRef.current[threadId] ?? config.agent.permissionMode)
         }
         setDefaultStrategy(config.models?.agent ?? {})
       })
@@ -475,6 +486,7 @@ export function AgentInput({
   const handlePermissionModeChange = (value: PermissionModeValue) => {
     autoSelectedPlanModeRef.current = false
     setPermissionMode(value)
+    setThreadPermissionModes((prev) => ({ ...prev, [threadId]: value }))
   }
 
   const handleAttach = async () => {

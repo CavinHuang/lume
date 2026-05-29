@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, PlanModePhaseChangedEvent } from '@lume/shared'
+import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, PlanModePhaseChangedEvent, AgentSendInput } from '@lume/shared'
 import type { RuntimeEventState } from '@/hooks/runtime-event-state'
 
 export const agentThreadsAtom = atom<AgentThreadMeta[]>([])
@@ -15,6 +15,9 @@ export const agentSubagentRunsAtom = atom<Record<string, SubagentRunRecord[]>>({
 
 export const agentPlanModePhaseAtom = atom<Record<string, PlanModePhaseChangedEvent>>({})
 export const agentErrorMessagesAtom = atom<Record<string, string>>({})
+
+export type AgentThreadPermissionMode = NonNullable<AgentSendInput['permissionMode']>
+export const agentThreadPermissionModesAtom = atom<Record<string, AgentThreadPermissionMode>>({})
 
 export type SidePanelView = 'files' | 'task-progress' | 'trace' | null
 export const agentSidePanelViewAtom = atomWithStorage<Record<string, SidePanelView>>(

@@ -10,7 +10,7 @@ mock.module('@/lib/desktop-api', () => ({
   submitTaskApproval: async () => ({ ok: true }),
 }))
 
-const { PermissionBanner } = await import('./PermissionBanner')
+const { PermissionBanner, buildToolPermissionSubmission } = await import('./PermissionBanner')
 
 const request: AgentToolPermissionRequest = {
   threadId: 'thread-1',
@@ -49,8 +49,34 @@ describe('PermissionBanner', () => {
     expect(markup).toContain('允许一次')
     expect(markup).toContain('始终允许 Bash:git status')
     expect(markup).toContain('拒绝')
+    expect(markup).toContain('本线程全部允许')
     expect(markup).toContain('忽略')
     expect(markup).toContain('ESC')
     expect(markup).toContain('提交')
+  })
+
+  test('hides allow-always when request policy disables it', () => {
+    const markup = renderToStaticMarkup(
+      <PermissionBanner threadId="thread-1" request={{ ...request, canAllowAlways: false }} />,
+    )
+
+    expect(markup).toContain('允许一次')
+    expect(markup).not.toContain('始终允许 Bash:git status')
+    expect(markup).not.toContain('本线程全部允许')
+    expect(markup).toContain('拒绝')
+  })
+
+  test('builds thread allow-all submissions as bypass permission mode', () => {
+    expect(buildToolPermissionSubmission({
+      threadId: 'thread-1',
+      requestId: 'tool-1',
+      decision: 'allow_once',
+      allowAllInThread: true,
+    })).toEqual({
+      threadId: 'thread-1',
+      requestId: 'tool-1',
+      decision: 'allow_once',
+      threadPermissionMode: 'bypassPermissions',
+    })
   })
 })

@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
-import { Check, ChevronDown, ChevronRight, Coins, Copy, Edit3, FileText, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
-import type { PlanPreviewView, RuntimeAssistantBlock, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import { useSetAtom } from 'jotai'
+import { activeTabIdAtom, agentThreadsAtom, tabsAtom } from '@/atoms'
+import type { PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
-import { agentSend, getThreadMessageVersions } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, sidecarCall } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
-import { getAgentRole, type AgentMessage, type AgentRoleDefinition } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, type AgentMessage, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
+import { toast } from 'sonner'
 
 interface RuntimeEventContentBlockProps {
   message: RuntimeMessageView
@@ -114,10 +117,14 @@ export function RuntimeEventContentBlock({
           </p>
         )}
         <AssistantMessageFooter
+          threadId={threadId}
+          messageId={message.messageId}
           text={message.text}
           isStreaming={message.status === 'streaming'}
           tokenCount={message.tokenCount}
           tokenCountSource={message.tokenCountSource}
+          tokenUsage={message.tokenUsage}
+          completedAt={message.completedAt}
         />
         {message.imDelivery && <ImDeliveryStatusLine delivery={message.imDelivery} />}
       </div>
@@ -1061,45 +1068,314 @@ export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): 
 }
 
 function AssistantMessageFooter({
+  threadId,
+  messageId,
   text,
   isStreaming,
   tokenCount,
   tokenCountSource,
+  tokenUsage,
+  completedAt,
 }: {
+  threadId: string
+  messageId?: string
   text: string
   isStreaming: boolean
   tokenCount?: number
   tokenCountSource?: 'provider'
+  tokenUsage?: RuntimeAssistantTokenUsageView
+  completedAt?: string
 }) {
+  const setThreads = useSetAtom(agentThreadsAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const [forking, setForking] = useState(false)
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
+  const downloadMenuRef = useRef<HTMLDivElement>(null)
+  const downloadTriggerRef = useRef<HTMLButtonElement>(null)
   const canCopy = text.trim().length > 0 && !isStreaming
-  const showTokens = typeof tokenCount === 'number' && tokenCount > 0
-  const tokenLabel = tokenCountSource === 'provider'
-    ? `${tokenCount?.toLocaleString()} tokens`
-    : `本条约 ${tokenCount?.toLocaleString()} tokens`
-  if (!canCopy && !showTokens) return null
+  const canFork = Boolean(messageId) && !isStreaming
+  const canDownload = text.trim().length > 0 && !isStreaming
+  const footerTokenUsage = getFooterTokenUsage(tokenUsage, tokenCount, tokenCountSource)
+  const showTokens = footerTokenUsage !== null
+  const completedTimeLabel = formatAssistantCompletionTime(completedAt)
+
+  useEffect(() => {
+    if (!downloadMenuOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && (downloadMenuRef.current?.contains(target) || downloadTriggerRef.current?.contains(target))) return
+      setDownloadMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [downloadMenuOpen])
+
+  if (!canCopy && !canFork && !canDownload && !showTokens && !completedTimeLabel) return null
+
+  const handleFork = async () => {
+    if (!messageId || forking) return
+    setForking(true)
+    try {
+      const result = await sidecarCall<{ newThreadId: string }>(AGENT_IPC_CHANNELS.FORK_THREAD, {
+        threadId,
+        upToMessageId: messageId,
+      })
+      const threads = await sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS)
+      const nextThreads = Array.isArray(threads) ? threads : []
+      const forkedThread = nextThreads.find((thread) => thread.id === result.newThreadId)
+
+      setThreads(nextThreads)
+      setTabs((prev) => (
+        prev.some((tab) => tab.id === result.newThreadId)
+          ? prev
+          : [
+              ...prev,
+              {
+                id: result.newThreadId,
+                type: 'agent' as const,
+                title: forkedThread?.title ?? '分叉线程',
+                threadId: result.newThreadId,
+                workspaceId: forkedThread?.workspaceId,
+              },
+            ]
+      ))
+      setActiveTabId(result.newThreadId)
+      toast.success('已创建分支会话')
+    } catch (error) {
+      console.error('[RuntimeEventContentBlock] 创建分支会话失败:', error)
+      toast.error('创建分支失败')
+    } finally {
+      setForking(false)
+    }
+  }
+
+  const handleDownload = (format: AssistantDownloadFormat) => {
+    downloadAssistantMessage(text, messageId, format)
+    setDownloadMenuOpen(false)
+  }
 
   return (
-    <div className="pointer-events-none flex min-h-5 -translate-y-1 items-center justify-start gap-1 pt-2 text-[#9aa1b3] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
-      {canCopy && (
-        <CopyMessageButton
-          text={text}
-          className="rounded-md p-0.5 transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff] data-[state=copied]:text-emerald-600"
-          iconSize={15}
-          strokeWidth={1.8}
-        />
-      )}
+    <div className="pointer-events-none flex min-h-6 w-full -translate-y-1 items-center justify-between gap-3 pt-2 text-[#6f717a] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+      <div className="flex min-w-0 items-center gap-4">
+        {canCopy && (
+          <CopyMessageButton
+            text={text}
+            label="复制"
+            copiedLabel="已复制"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[#6770ff] data-[state=copied]:text-emerald-600"
+            iconSize={15}
+            strokeWidth={1.8}
+          />
+        )}
+        {canFork && (
+          <button
+            type="button"
+            disabled={forking}
+            onClick={() => void handleFork()}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[#6770ff] disabled:cursor-not-allowed disabled:opacity-50"
+            title="创建分支"
+            aria-label="创建分支"
+          >
+            {forking
+              ? <Loader2 size={15} className="animate-spin" strokeWidth={1.8} />
+              : <GitFork size={15} strokeWidth={1.8} />}
+            <span>创建分支</span>
+          </button>
+        )}
+        {canDownload && (
+          <div className="relative shrink-0" ref={downloadMenuRef}>
+            <button
+              ref={downloadTriggerRef}
+              type="button"
+              onClick={() => setDownloadMenuOpen((current) => !current)}
+              className="inline-flex items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[#6770ff]"
+              title="下载"
+              aria-label="下载"
+              aria-haspopup="menu"
+              aria-expanded={downloadMenuOpen}
+            >
+              <Download size={15} strokeWidth={1.8} />
+              <span>下载</span>
+            </button>
+            <div
+              role="menu"
+              aria-label="选择下载格式"
+              hidden={!downloadMenuOpen}
+              className="absolute left-0 top-full z-30 mt-1 min-w-[112px] rounded-lg border border-[#e3e5ee] bg-white p-1 shadow-[0_16px_40px_-24px_rgba(30,34,60,0.45)]"
+            >
+              <DownloadFormatMenuItem onClick={() => handleDownload('html')}>下载 HTML</DownloadFormatMenuItem>
+              <DownloadFormatMenuItem onClick={() => handleDownload('txt')}>下载 TXT</DownloadFormatMenuItem>
+            </div>
+          </div>
+        )}
+        {completedTimeLabel && (
+          <span className="inline-flex shrink-0 items-center rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[#9aa1b3]">
+            {completedTimeLabel}
+          </span>
+        )}
+      </div>
       {showTokens && (
-        <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1 py-0.5 text-[11px] leading-4 text-[#9aa1b3] transition-colors hover:bg-[#f4f5fa] hover:text-[#6770ff]"
-          title={tokenLabel}
-          aria-label={tokenLabel}
-        >
-          <Coins size={14} strokeWidth={1.8} />
-          <span>{tokenLabel}</span>
+        <AssistantTokenUsageMetrics usage={footerTokenUsage} />
+      )}
+    </div>
+  )
+}
+
+function DownloadFormatMenuItem({
+  children,
+  onClick,
+}: {
+  children: ReactNode
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12px] font-medium leading-5 text-[#4c5162] transition-colors hover:bg-[#f5f6fb] hover:text-[#6770ff]"
+    >
+      {children}
+    </button>
+  )
+}
+
+function AssistantTokenUsageMetrics({ usage }: { usage: FooterTokenUsage }) {
+  return (
+    <div
+      className="ml-auto flex shrink-0 items-center gap-3 text-[12px] font-medium leading-5 text-[#6f717a] tabular-nums"
+      title={usage.title}
+      aria-label={usage.title}
+    >
+      {usage.inputTokens !== undefined && (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          <span className="text-[15px] leading-none">↑</span>
+          <span>{usage.inputTokens.toLocaleString()}</span>
+        </span>
+      )}
+      {usage.outputTokens !== undefined && (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          <span className="text-[15px] leading-none">↓</span>
+          <span>{usage.outputTokens.toLocaleString()}</span>
+        </span>
+      )}
+      {usage.cachedTokens !== undefined && (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          <span className="text-[15px] leading-none">↺</span>
+          <span>{usage.cachedTokens.toLocaleString()}</span>
+        </span>
+      )}
+      {usage.contextPercent !== undefined && (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          <Copy size={13} strokeWidth={1.8} />
+          <span>{usage.contextPercent}%</span>
         </span>
       )}
     </div>
   )
+}
+
+interface FooterTokenUsage {
+  inputTokens?: number
+  outputTokens?: number
+  cachedTokens?: number
+  contextPercent?: number
+  title: string
+}
+
+function getFooterTokenUsage(
+  usage: RuntimeAssistantTokenUsageView | undefined,
+  tokenCount: number | undefined,
+  tokenCountSource: 'provider' | undefined,
+): FooterTokenUsage | null {
+  const inputTokens = positiveInteger(usage?.inputTokens)
+  const outputTokens = positiveInteger(usage?.outputTokens ?? tokenCount)
+  const cachedTokens = positiveInteger(usage?.cachedTokens ?? ((usage?.cacheReadInputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0)))
+  const contextPercent = percentInteger(usage?.contextPercent)
+  if (inputTokens === undefined && outputTokens === undefined && cachedTokens === undefined && contextPercent === undefined) return null
+
+  const titleParts: string[] = []
+  if (inputTokens !== undefined) titleParts.push(`输入 ${inputTokens.toLocaleString()} tokens`)
+  if (outputTokens !== undefined) {
+    titleParts.push(`${tokenCountSource === 'provider' ? '输出' : '估算输出'} ${outputTokens.toLocaleString()} tokens`)
+  }
+  if (cachedTokens !== undefined) titleParts.push(`缓存 ${cachedTokens.toLocaleString()} tokens`)
+  if (positiveInteger(usage?.cacheReadInputTokens) !== undefined) titleParts.push(`缓存命中 ${positiveInteger(usage?.cacheReadInputTokens)?.toLocaleString()} tokens`)
+  if (positiveInteger(usage?.cacheCreationInputTokens) !== undefined) titleParts.push(`缓存写入 ${positiveInteger(usage?.cacheCreationInputTokens)?.toLocaleString()} tokens`)
+  if (contextPercent !== undefined) titleParts.push(`上下文 ${contextPercent}%`)
+
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cachedTokens !== undefined ? { cachedTokens } : {}),
+    ...(contextPercent !== undefined ? { contextPercent } : {}),
+    title: titleParts.join(' · '),
+  }
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : undefined
+}
+
+function percentInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.min(100, Math.max(0, Math.round(value)))
+}
+
+type AssistantDownloadFormat = 'html' | 'txt'
+
+function downloadAssistantMessage(text: string, messageId: string | undefined, format: AssistantDownloadFormat): void {
+  const filenameBase = messageId ?? `assistant-${Date.now()}`
+  const payload = format === 'html' ? buildAssistantMessageHtml(text) : text
+  const mediaType = format === 'html' ? 'text/html;charset=utf-8' : 'text/plain;charset=utf-8'
+  const blob = new Blob([payload], { type: mediaType })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `${filenameBase}.${format}`
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
+function buildAssistantMessageHtml(text: string): string {
+  const escapedText = escapeHtml(text)
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lume Assistant Message</title>
+  <style>
+    body { margin: 0; padding: 32px; color: #303445; background: #ffffff; font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 860px; margin: 0 auto; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
+  </style>
+</head>
+<body>
+  <main>
+    <pre>${escapedText}</pre>
+  </main>
+</body>
+</html>`
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function formatAssistantCompletionTime(completedAt?: string): string | null {
+  if (!completedAt) return null
+  const date = new Date(completedAt)
+  if (Number.isNaN(date.getTime())) return null
+  return `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 function CopyMessageButton({
@@ -1107,14 +1383,19 @@ function CopyMessageButton({
   className,
   iconSize,
   strokeWidth,
+  label,
+  copiedLabel,
 }: {
   text: string
   className: string
   iconSize: number
   strokeWidth?: number
+  label?: string
+  copiedLabel?: string
 }) {
   const [copied, setCopied] = useState(false)
   const feedbackStateRef = useRef<CopyFeedbackState>({ resetTimeoutId: null })
+  const displayLabel = copied ? (copiedLabel ?? label) : label
 
   useEffect(() => () => {
     if (feedbackStateRef.current.resetTimeoutId !== null) {
@@ -1151,6 +1432,7 @@ function CopyMessageButton({
       {copied
         ? <Check size={iconSize} strokeWidth={strokeWidth} />
         : <Copy size={iconSize} strokeWidth={strokeWidth} />}
+      {displayLabel && <span>{displayLabel}</span>}
     </button>
   )
 }

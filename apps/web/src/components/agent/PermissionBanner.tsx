@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { Check } from 'lucide-react'
+import { Check, ShieldOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentPendingInteractiveAtom } from '@/atoms'
+import { agentPendingInteractiveAtom, agentThreadPermissionModesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentToolPermissionDecision, type AgentToolPermissionRequest } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentToolPermissionDecision, type AgentToolPermissionRequest, type AgentToolPermissionResponseInput } from '@lume/shared'
 import { removePendingToolPermissionEverywhere } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame } from './InteractiveOverlayFrame'
@@ -14,17 +14,35 @@ interface PermissionBannerProps {
   request: AgentToolPermissionRequest
 }
 
+export function buildToolPermissionSubmission(input: {
+  threadId: string
+  requestId: string
+  decision: AgentToolPermissionDecision
+  allowAllInThread: boolean
+}): AgentToolPermissionResponseInput {
+  return {
+    threadId: input.threadId,
+    requestId: input.requestId,
+    decision: input.decision,
+    ...(input.allowAllInThread && input.decision !== 'deny' ? { threadPermissionMode: 'bypassPermissions' as const } : {}),
+  }
+}
+
 export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
+  const setThreadPermissionModes = useSetAtom(agentThreadPermissionModesAtom)
   const [choice, setChoice] = useState<AgentToolPermissionDecision>('allow_once')
+  const [allowAllInThread, setAllowAllInThread] = useState(false)
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
   const classification = request.classification
   const grantLabel = request.grantSuggestion?.label
   const alwaysAllowLabel = grantLabel ? `始终允许 ${grantLabel}` : '始终允许'
+  const canAllowAlways = request.canAllowAlways !== false
 
   useEffect(() => {
     setChoice('allow_once')
+    setAllowAllInThread(false)
     setHidden(false)
     setBusy(false)
   }, [threadId, request.requestId])
@@ -38,14 +56,28 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [hidden])
 
+  useEffect(() => {
+    if (!canAllowAlways && choice === 'allow_always') {
+      setChoice('allow_once')
+    }
+    if (!canAllowAlways && allowAllInThread) {
+      setAllowAllInThread(false)
+    }
+  }, [allowAllInThread, canAllowAlways, choice])
+
   const respond = async () => {
     setBusy(true)
     try {
-      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION, {
+      const payload = buildToolPermissionSubmission({
         threadId,
         requestId: request.requestId,
         decision: choice,
+        allowAllInThread,
       })
+      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION, payload)
+      if (payload.threadPermissionMode === 'bypassPermissions') {
+        setThreadPermissionModes((prev) => ({ ...prev, [threadId]: 'bypassPermissions' }))
+      }
       setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId))
     } finally {
       setBusy(false)
@@ -93,19 +125,46 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
           selected={choice === 'allow_once'}
           onClick={() => setChoice('allow_once')}
         />
+        {canAllowAlways && (
+          <PermissionChoice
+            index={2}
+            label={alwaysAllowLabel}
+            selected={choice === 'allow_always'}
+            onClick={() => setChoice('allow_always')}
+          />
+        )}
         <PermissionChoice
-          index={2}
-          label={alwaysAllowLabel}
-          selected={choice === 'allow_always'}
-          onClick={() => setChoice('allow_always')}
-        />
-        <PermissionChoice
-          index={3}
+          index={canAllowAlways ? 3 : 2}
           label="拒绝"
           selected={choice === 'deny'}
-          onClick={() => setChoice('deny')}
+          onClick={() => {
+            setAllowAllInThread(false)
+            setChoice('deny')
+          }}
           danger
         />
+        {canAllowAlways && (
+          <button
+            type="button"
+            onClick={() => {
+              const next = !allowAllInThread
+              setAllowAllInThread(next)
+              if (next) setChoice('allow_once')
+            }}
+            className={cn(
+              'mt-1 flex min-h-9 w-full items-center rounded-[12px] border px-2.5 text-left text-[13px] transition-colors',
+              allowAllInThread
+                ? 'border-[#5f9cff]/35 bg-[#eef5ff] text-[#1f232b]'
+                : 'border-transparent text-[#8a8f98] hover:bg-[#f6f6f7]',
+            )}
+          >
+            <span className="mr-2 flex size-6 shrink-0 items-center justify-center rounded-full bg-white/70 text-[#5f9cff]">
+              <ShieldOff size={14} />
+            </span>
+            <span className="min-w-0 flex-1 font-semibold">本线程全部允许</span>
+            {allowAllInThread && <Check size={15} className="text-[#5f9cff]" />}
+          </button>
+        )}
       </div>
     </InteractiveOverlayFrame>
   )

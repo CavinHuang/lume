@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentMessageAttachmentInput } from '@lume/shared'
-import type { RuntimeMessageView } from './runtime-message-view'
+import type { RuntimeAssistantTokenUsageView, RuntimeMessageView } from './runtime-message-view'
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 80
 
@@ -58,7 +58,7 @@ export function reconcileUserMessageVersions(
     if (message.type === 'user') {
       if (message.messageId) {
         const visible = visibleUsers.find((item) => item.id === message.messageId)
-        return visible ? withPersistedUserAttachments(message, visible) : message
+        return visible ? withPersistedUserMessage(message, visible) : message
       }
 
       const visible = visibleUsers.find((item) => (
@@ -69,36 +69,77 @@ export function reconcileUserMessageVersions(
 
       if (visible) {
         usedVisibleIds.add(visible.id)
-        return withPersistedUserAttachments({
-          ...message,
-          id: visible.id,
-          messageId: visible.id,
-          versionGroupId: visible.versionGroupId,
-          versionIndex: visible.versionIndex,
-          versionCount: visible.versionCount,
-        }, visible)
+        return withPersistedUserMessage(message, visible)
       }
       return message
     }
 
     if (message.type === 'assistant') {
-      if (message.tokenCountSource === 'provider') return message
       const visible = visibleAssistants.find((item) => (
         !usedVisibleAssistantIds.has(item.id)
         && item.content === message.text
-        && readPersistedAssistantOutputTokens(item.metadata) !== undefined
       ))
       if (!visible) return message
       usedVisibleAssistantIds.add(visible.id)
+      const providerTokenUsage = readPersistedAssistantTokenUsage(visible.metadata)
+      const providerOutputTokens = providerTokenUsage?.outputTokens
       return {
         ...message,
-        tokenCount: readPersistedAssistantOutputTokens(visible.metadata),
-        tokenCountSource: 'provider',
+        messageId: visible.id,
+        completedAt: new Date(visible.createdAt).toISOString(),
+        ...(message.tokenCountSource === 'provider' || providerOutputTokens === undefined
+          ? {}
+          : {
+              tokenCount: providerOutputTokens,
+              tokenCountSource: 'provider' as const,
+            }),
+        ...(message.tokenUsage || providerTokenUsage === undefined ? {} : { tokenUsage: providerTokenUsage }),
       }
     }
 
     return message
   })
+}
+
+export function projectVisibleThreadMessages(visibleThreadMessages: AgentMessage[]): RuntimeMessageView[] {
+  return visibleThreadMessages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message): RuntimeMessageView => {
+      const createdAt = new Date(message.createdAt).toISOString()
+      if (message.role === 'user') {
+        return withPersistedUserAttachments({
+          id: message.id,
+          type: 'user',
+          text: message.content,
+          createdAt,
+          messageId: message.id,
+          versionGroupId: message.versionGroupId,
+          versionIndex: message.versionIndex,
+          versionCount: message.versionCount,
+        }, message)
+      }
+
+      const tokenUsage = readPersistedAssistantTokenUsage(message.metadata)
+      const tokenCount = tokenUsage?.outputTokens
+      return {
+        id: message.id,
+        type: 'assistant',
+        text: message.content,
+        thinking: message.reasoning ?? '',
+        messageId: message.id,
+        completedAt: createdAt,
+        blocks: projectVisibleAssistantBlocks(message),
+        status: 'completed',
+        ...(tokenCount !== undefined
+          ? {
+              tokenCount,
+              tokenCountSource: 'provider' as const,
+            }
+          : {}),
+        ...(tokenUsage ? { tokenUsage } : {}),
+        toolCalls: [],
+      }
+    })
 }
 
 export function collectNewRuntimeMessageIds(
@@ -127,6 +168,21 @@ function withPersistedUserAttachments(
   return attachments.length > 0 ? { ...message, attachments } : message
 }
 
+function withPersistedUserMessage(
+  message: Extract<RuntimeMessageView, { type: 'user' }>,
+  visible: AgentMessage,
+): Extract<RuntimeMessageView, { type: 'user' }> {
+  return withPersistedUserAttachments({
+    ...message,
+    id: visible.id,
+    text: visible.content,
+    messageId: visible.id,
+    versionGroupId: visible.versionGroupId,
+    versionIndex: visible.versionIndex,
+    versionCount: visible.versionCount,
+  }, visible)
+}
+
 function readPersistedMessageAttachments(metadata: Record<string, unknown> | undefined): AgentMessageAttachmentInput[] {
   const raw = metadata?.messageAttachments
   if (!Array.isArray(raw)) return []
@@ -141,11 +197,60 @@ function readPersistedMessageAttachments(metadata: Record<string, unknown> | und
   ))
 }
 
-function readPersistedAssistantOutputTokens(metadata: Record<string, unknown> | undefined): number | undefined {
+function readPersistedAssistantTokenUsage(metadata: Record<string, unknown> | undefined): RuntimeAssistantTokenUsageView | undefined {
   const raw = metadata?.tokenUsage
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const tokenUsage = raw as Record<string, unknown>
   if (tokenUsage.source !== 'provider') return undefined
-  const outputTokens = tokenUsage.outputTokens
-  return typeof outputTokens === 'number' && Number.isFinite(outputTokens) ? outputTokens : undefined
+  const billingUsage = asRecord(tokenUsage.billingUsage)
+  const contextUsage = asRecord(tokenUsage.contextUsage)
+  const usage: RuntimeAssistantTokenUsageView = {}
+  assignFiniteUsageNumber(usage, 'inputTokens', billingUsage?.inputTokens)
+  assignFiniteUsageNumber(usage, 'outputTokens', tokenUsage.providerOutputTokens ?? billingUsage?.outputTokens)
+  assignFiniteUsageNumber(usage, 'cacheReadInputTokens', billingUsage?.cacheReadInputTokens)
+  assignFiniteUsageNumber(usage, 'cacheCreationInputTokens', billingUsage?.cacheCreationInputTokens)
+  assignFiniteUsageNumber(usage, 'cachedTokens', billingUsage?.cachedTokens)
+  assignFiniteUsageNumber(usage, 'contextTokens', contextUsage?.totalTokens)
+  assignFiniteUsageNumber(usage, 'contextWindow', contextUsage?.contextWindow)
+  if (usage.cachedTokens === undefined) {
+    const cachedTokens = (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0)
+    if (cachedTokens > 0) usage.cachedTokens = cachedTokens
+  }
+  if (usage.contextTokens !== undefined && usage.contextWindow !== undefined && usage.contextWindow > 0) {
+    usage.contextPercent = Math.min(100, Math.round((usage.contextTokens / usage.contextWindow) * 100))
+  }
+  return Object.keys(usage).length > 0 ? usage : undefined
+}
+
+function assignFiniteUsageNumber<K extends keyof RuntimeAssistantTokenUsageView>(
+  usage: RuntimeAssistantTokenUsageView,
+  key: K,
+  value: unknown,
+): void {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    usage[key] = Math.max(0, Math.round(value)) as RuntimeAssistantTokenUsageView[K]
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function projectVisibleAssistantBlocks(message: AgentMessage): Extract<RuntimeMessageView, { type: 'assistant' }>['blocks'] {
+  const blocks: Extract<RuntimeMessageView, { type: 'assistant' }>['blocks'] = []
+  if (message.reasoning?.trim()) {
+    blocks.push({
+      type: 'thinking',
+      id: `thinking:${message.id}`,
+      text: message.reasoning,
+    })
+  }
+  if (message.content.trim()) {
+    blocks.push({
+      type: 'text',
+      id: `text:${message.id}`,
+      text: message.content,
+    })
+  }
+  return blocks
 }

@@ -13,6 +13,47 @@ function event(input: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 'type'>
   } as LumeRuntimeEvent
 }
 
+function usageEvent(outputTokens: number, scope: 'main' | 'subagent' | 'background' = 'main'): LumeRuntimeEvent {
+  return event({
+    type: 'usage.updated',
+    scope,
+    context: {
+      source: 'provider',
+      inputTokens: 40,
+      outputTokens,
+      cacheReadInputTokens: 2,
+      cacheCreationInputTokens: 1,
+      cachedTokens: 3,
+      totalTokens: 40 + outputTokens + 3,
+      estimatedTailTokens: 0,
+      contextWindow: 1000,
+      contextWindowSource: 'model',
+    },
+    billing: {
+      cumulative: {
+        inputTokens: 40,
+        outputTokens,
+        cacheReadInputTokens: 2,
+        cacheCreationInputTokens: 1,
+        cachedTokens: 3,
+        totalTokens: 40 + outputTokens + 3,
+      },
+      latestRecord: {
+        callerLabel: 'Turn 1',
+        callerKind: 'conversation',
+        inputTokens: 40,
+        outputTokens,
+        cacheReadInputTokens: 2,
+        cacheCreationInputTokens: 1,
+        cachedTokens: 3,
+        totalTokens: 40 + outputTokens + 3,
+      },
+      records: [],
+      totalCostUSD: 0,
+    },
+  })
+}
+
 describe('runtime-event-message-projection', () => {
   test('projects RuntimeEvents into user, assistant, thinking, and tool blocks', () => {
     const messages = projectRuntimeEventMessages([
@@ -67,6 +108,7 @@ describe('runtime-event-message-projection', () => {
           { type: 'text', id: 'text:3', text: 'world' },
         ],
         status: 'completed',
+        completedAt: '2026-05-11T00:00:00.000Z',
         tokenCount: 13,
         toolCalls: [{
           id: 'tool-1',
@@ -155,13 +197,7 @@ describe('runtime-event-message-projection', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'assistant.thinking_delta', delta: '1234' }),
       event({ type: 'assistant.delta', delta: '12345678' }),
-      event({
-        type: 'usage.updated',
-        inputTokens: 40,
-        outputTokens: 9,
-        cachedTokens: 2,
-        totalTokens: 51,
-      }),
+      usageEvent(9),
       event({ type: 'run.completed' }),
     ])
 
@@ -169,6 +205,31 @@ describe('runtime-event-message-projection', () => {
       type: 'assistant',
       tokenCount: 9,
       tokenCountSource: 'provider',
+      tokenUsage: {
+        inputTokens: 40,
+        outputTokens: 9,
+        cacheReadInputTokens: 2,
+        cacheCreationInputTokens: 1,
+        cachedTokens: 3,
+        contextPercent: 5,
+      },
+    })
+  })
+
+  test('keeps assistant final message id and completion time for footer actions', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'assistant.delta', delta: 'hello' }),
+      event({
+        type: 'run.completed',
+        finalMessageId: 'assistant-message-1',
+        createdAt: '2026-05-11T07:23:00.000Z',
+      }),
+    ])
+
+    expect(messages[0]).toMatchObject({
+      type: 'assistant',
+      messageId: 'assistant-message-1',
+      completedAt: '2026-05-11T07:23:00.000Z',
     })
   })
 
@@ -176,17 +237,36 @@ describe('runtime-event-message-projection', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'assistant.delta', delta: '12345678' }),
       event({ type: 'run.completed' }),
-      event({
-        type: 'usage.updated',
-        inputTokens: 40,
-        outputTokens: 9,
-        totalTokens: 49,
-      }),
+      usageEvent(9),
     ])
 
     expect(messages[0]).toMatchObject({
       type: 'assistant',
       tokenCount: 9,
+      tokenCountSource: 'provider',
+      tokenUsage: {
+        inputTokens: 40,
+        outputTokens: 9,
+        cacheReadInputTokens: 2,
+        cacheCreationInputTokens: 1,
+        cachedTokens: 3,
+        contextPercent: 5,
+      },
+    })
+  })
+
+  test('ignores subagent usage for the main assistant footer', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'assistant.delta', delta: '12345678' }),
+      usageEvent(99, 'subagent'),
+      event({ type: 'run.completed' }),
+    ])
+
+    expect(messages[0]).toMatchObject({
+      type: 'assistant',
+      tokenCount: 2,
+    })
+    expect(messages[0]).not.toMatchObject({
       tokenCountSource: 'provider',
     })
   })

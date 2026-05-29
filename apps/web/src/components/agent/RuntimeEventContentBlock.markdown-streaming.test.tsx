@@ -33,6 +33,7 @@ mock.module('@ant-design/x-markdown', () => ({
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
+  sidecarCall: async () => undefined,
 }))
 
 mock.module('./tool-result-renderers', () => ({
@@ -112,11 +113,12 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
       />,
     )
 
-    expect(markup).toContain('本条约 42 tokens')
+    expect(markup).toContain('估算输出 42 tokens')
+    expect(markup).toContain('↓')
     expect(markup).toContain('group-hover/agent-message:opacity-100')
   })
 
-  test('labels provider token usage as assistant turn output', () => {
+  test('renders provider token usage with input output and context percent metrics', () => {
     const message: RuntimeMessageView = {
       id: 'assistant-1',
       type: 'assistant',
@@ -125,6 +127,14 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
       status: 'completed',
       tokenCount: 42,
       tokenCountSource: 'provider',
+      tokenUsage: {
+        inputTokens: 37680,
+        outputTokens: 233,
+        cacheReadInputTokens: 1200,
+        cacheCreationInputTokens: 300,
+        cachedTokens: 1500,
+        contextPercent: 0,
+      },
       toolCalls: [],
       blocks: [
         {
@@ -142,9 +152,49 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
       />,
     )
 
-    expect(markup).toContain('42 tokens')
+    expect(markup).toContain('输入 37,680 tokens')
+    expect(markup).toContain('输出 233 tokens')
+    expect(markup).toContain('缓存 1,500 tokens')
+    expect(markup).toContain('上下文 0%')
+    expect(markup).toContain('↑')
+    expect(markup).toContain('↓')
+    expect(markup).toContain('↺')
     expect(markup).not.toContain('本轮输出')
     expect(markup).not.toContain('本条约 42 tokens')
+  })
+
+  test('renders assistant fork action, download formats, and completion time in the footer', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-1',
+      type: 'assistant',
+      text: 'hello',
+      thinking: '',
+      status: 'completed',
+      messageId: 'assistant-message-1',
+      completedAt: '2026-05-11T07:23:00',
+      toolCalls: [],
+      blocks: [
+        {
+          type: 'text',
+          id: 'text-1',
+          text: 'hello',
+        },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        threadId="thread-1"
+      />,
+    )
+
+    expect(markup).toContain('创建分支')
+    expect(markup).toContain('下载')
+    expect(markup).toContain('下载 HTML')
+    expect(markup).toContain('下载 TXT')
+    expect(markup).not.toContain('下载 PDF')
+    expect(markup).toContain('7:23')
   })
 
   test('renders weak IM delivery status for assistant messages', () => {

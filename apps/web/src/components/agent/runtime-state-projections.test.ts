@@ -8,6 +8,72 @@ import {
 } from './runtime-state-projections'
 import type { AgentRunTrace, AgentRunStateSummary, LumeRuntimeEvent } from '@lume/shared'
 
+function usageUpdatedEvent(input: {
+  id: string
+  threadId?: string
+  runId?: string
+  createdAt?: string
+  inputTokens: number
+  outputTokens: number
+  cachedTokens?: number
+  totalTokens?: number
+  contextWindow: number
+  costUSD?: number
+  scope?: 'main' | 'subagent' | 'background'
+  records?: Array<{
+    callerLabel: string
+    model?: string
+    turn?: number
+    inputTokens: number
+    outputTokens: number
+    cachedTokens?: number
+    costUSD?: number
+  }>
+}): Extract<LumeRuntimeEvent, { type: 'usage.updated' }> {
+  const cachedTokens = input.cachedTokens ?? 0
+  const totalTokens = input.totalTokens ?? input.inputTokens + input.outputTokens + cachedTokens
+  const records = input.records?.map((record) => ({
+    callerLabel: record.callerLabel,
+    callerKind: 'conversation',
+    ...(record.model ? { model: record.model } : {}),
+    ...(typeof record.turn === 'number' ? { turn: record.turn } : {}),
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cachedTokens: record.cachedTokens ?? 0,
+    totalTokens: record.inputTokens + record.outputTokens + (record.cachedTokens ?? 0),
+    ...(typeof record.costUSD === 'number' ? { costUSD: record.costUSD } : {}),
+  })) ?? []
+  return {
+    id: input.id,
+    type: 'usage.updated',
+    threadId: input.threadId ?? 'thread-1',
+    runId: input.runId ?? 'run-1',
+    createdAt: input.createdAt ?? '2026-05-11T00:00:00.000Z',
+    scope: input.scope ?? 'main',
+    context: {
+      source: 'provider',
+      inputTokens: input.inputTokens,
+      outputTokens: input.outputTokens,
+      cachedTokens,
+      totalTokens,
+      estimatedTailTokens: 0,
+      contextWindow: input.contextWindow,
+      contextWindowSource: 'model',
+    },
+    billing: {
+      cumulative: {
+        inputTokens: input.inputTokens,
+        outputTokens: input.outputTokens,
+        cachedTokens,
+        totalTokens,
+      },
+      ...(records[0] ? { latestRecord: records[0] } : {}),
+      records,
+      totalCostUSD: input.costUSD ?? 0,
+    },
+  }
+}
+
 describe('runtime-state projections', () => {
   test('maps live runtime events into readable rows', () => {
     const base = {
@@ -38,16 +104,7 @@ describe('runtime-state projections', () => {
         source: 'agent-runtime-kernel',
         summary: 'kept the important decisions',
       },
-      {
-        ...base,
-        id: 'event-usage',
-        type: 'usage.updated',
-        inputTokens: 10,
-        outputTokens: 5,
-        totalTokens: 15,
-        contextWindow: 100,
-        costUSD: 0.01,
-      },
+      usageUpdatedEvent({ ...base, id: 'event-usage', inputTokens: 10, outputTokens: 5, totalTokens: 15, contextWindow: 100, costUSD: 0.01 }),
       { ...base, id: 'event-3', type: 'run.failed', error: { code: 'failed', message: 'boom' } },
     ] satisfies LumeRuntimeEvent[])).toEqual([
       { id: 'event-1:0', label: 'Tool started', detail: 'Bash', tone: 'active' },
@@ -76,17 +133,16 @@ describe('runtime-state projections', () => {
           contextWindow: 1000,
         },
       },
-      {
+      usageUpdatedEvent({
         ...base,
         id: 'usage',
-        type: 'usage.updated',
         inputTokens: 720,
         outputTokens: 80,
         cachedTokens: 40,
         totalTokens: 800,
         contextWindow: 1000,
         costUSD: 0.0123,
-        usageRecords: [
+        records: [
           {
             callerLabel: 'gpt-test',
             model: 'gpt-4o-mini',
@@ -97,7 +153,7 @@ describe('runtime-state projections', () => {
             costUSD: 0.0123,
           },
         ],
-      },
+      }),
     ] satisfies LumeRuntimeEvent[])).toEqual({
       usedTokens: 800,
       contextWindow: 1000,
@@ -231,23 +287,14 @@ describe('runtime-state projections', () => {
     })
   })
 
-  test('starts a new live estimate from zero even when run model context is temporarily missing', () => {
+  test('continues live estimate from latest provider context when a new run starts', () => {
     const base = {
       threadId: 'thread-1',
       createdAt: '2026-05-11T00:00:00.000Z',
     }
 
     expect(buildContextWindowProgress([
-      {
-        ...base,
-        id: 'previous-usage',
-        runId: 'run-1',
-        type: 'usage.updated',
-        inputTokens: 70,
-        outputTokens: 10,
-        totalTokens: 80,
-        contextWindow: 100,
-      },
+      usageUpdatedEvent({ ...base, id: 'previous-usage', runId: 'run-1', inputTokens: 70, outputTokens: 10, totalTokens: 80, contextWindow: 100 }),
       {
         ...base,
         id: 'run-started',
@@ -265,12 +312,23 @@ describe('runtime-state projections', () => {
         type: 'message.user.submitted',
         text: '1234',
       },
+      {
+        ...base,
+        id: 'assistant-delta',
+        runId: 'run-2',
+        type: 'assistant.delta',
+        delta: '12345678',
+      },
     ] satisfies LumeRuntimeEvent[])).toMatchObject({
-      usedTokens: 1,
+      usedTokens: 83,
       contextWindow: 100,
-      remainingTokens: 99,
-      percent: 1,
-      detail: '1 / 100 tokens',
+      remainingTokens: 17,
+      percent: 83,
+      detail: '83 / 100 tokens',
+      sections: [
+        { id: 'input', label: '输入', tokens: 71, percent: 71 },
+        { id: 'output', label: '输出', tokens: 12, percent: 12 },
+      ],
     })
   })
 
@@ -301,20 +359,29 @@ describe('runtime-state projections', () => {
           contextWindow: 0,
         },
       },
-      {
-        ...base,
-        id: 'usage',
-        type: 'usage.updated',
-        inputTokens: 120,
-        outputTokens: 30,
-        totalTokens: 150,
-        contextWindow: 0,
-      },
+      usageUpdatedEvent({ ...base, id: 'usage', inputTokens: 120, outputTokens: 30, totalTokens: 150, contextWindow: 0 }),
     ] satisfies LumeRuntimeEvent[])).toMatchObject({
       usedTokens: 150,
       contextWindow: 200_000,
       percent: 0,
       detail: '150 / 200K tokens',
+    })
+  })
+
+  test('ignores subagent usage for the main context window', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      usageUpdatedEvent({ ...base, id: 'main-usage', inputTokens: 70, outputTokens: 10, totalTokens: 80, contextWindow: 1000 }),
+      usageUpdatedEvent({ ...base, id: 'subagent-usage', scope: 'subagent', inputTokens: 900, outputTokens: 50, totalTokens: 950, contextWindow: 1000 }),
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      usedTokens: 80,
+      contextWindow: 1000,
+      detail: '80 / 1K tokens',
     })
   })
 

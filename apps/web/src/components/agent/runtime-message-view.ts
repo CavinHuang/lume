@@ -28,16 +28,30 @@ export type RuntimeAssistantBlock =
   | { type: 'memory_context_used'; id: string; event: MemoryContextUsedViewEvent }
   | { type: 'plan_preview'; id: string; preview: PlanPreviewView }
 
+export interface RuntimeAssistantTokenUsageView {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
+  cachedTokens?: number
+  contextTokens?: number
+  contextWindow?: number
+  contextPercent?: number
+}
+
 export interface RuntimeAssistantMessageView {
   id: string
   type: 'assistant'
   text: string
   thinking: string
+  messageId?: string
+  completedAt?: string
   blocks: RuntimeAssistantBlock[]
   status: 'streaming' | 'completed' | 'failed'
   error?: string
   tokenCount?: number
   tokenCountSource?: 'provider'
+  tokenUsage?: RuntimeAssistantTokenUsageView
   imDelivery?: {
     status: 'pending' | 'sent' | 'failed'
     provider: ImProvider
