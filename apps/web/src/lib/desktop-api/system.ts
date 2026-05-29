@@ -6,8 +6,12 @@ import {
   GITHUB_RELEASE_IPC_CHANNELS,
   type AgentProxySettings,
   type AgentProxyStatus,
+  type ExportLogsResult,
   type GeneralSettings,
   type GitHubRelease,
+  type LogFileListResult,
+  type ReadLogFileInput,
+  type ReadLogFileResult,
   type UpdateGeneralSettingsInput,
 } from '@lume/shared'
 
@@ -87,6 +91,15 @@ export const getLatestGitHubRelease = () =>
 
 export const openLogsDir = () =>
   sidecarCall<{ ok: boolean }>(GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR, {})
+
+export const listLogFiles = () =>
+  sidecarCall<LogFileListResult>(GENERAL_SETTINGS_IPC_CHANNELS.LIST_LOG_FILES, {})
+
+export const readLogFile = (input: ReadLogFileInput) =>
+  sidecarCall<ReadLogFileResult>(GENERAL_SETTINGS_IPC_CHANNELS.READ_LOG_FILE, input)
+
+export const exportLogs = () =>
+  sidecarCall<ExportLogsResult>(GENERAL_SETTINGS_IPC_CHANNELS.EXPORT_LOGS, {})
 
 export const clearCache = async (input: ClearCacheInput): Promise<ClearCacheResult> => {
   const browserResult = await clearBrowserCaches(input)

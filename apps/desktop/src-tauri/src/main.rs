@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use log::{error, info, warn};
 use serde::Deserialize;
@@ -14,12 +14,18 @@ use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_log::{Target, TargetKind};
 
-type PendingResponseMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
 const SIDECAR_RESPONSE_TIMEOUT_SECS: u64 = 45;
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "main-tray";
 const TRAY_MENU_SHOW_ID: &str = "tray-show-main-window";
 const TRAY_MENU_QUIT_ID: &str = "tray-quit-app";
+
+struct PendingSidecarRequest {
+    method: String,
+    tx: mpsc::Sender<Result<serde_json::Value, String>>,
+}
+
+type PendingResponseMap = Arc<Mutex<HashMap<u64, PendingSidecarRequest>>>;
 
 struct SidecarProcess {
     child: Mutex<Option<Child>>,
@@ -134,6 +140,64 @@ fn current_settings_path() -> PathBuf {
     }
 
     resolve_settings_path(None, dirs::home_dir().as_deref())
+}
+
+fn resolve_logs_dir(config_dir: Option<&Path>, home_dir: Option<&Path>) -> PathBuf {
+    if let Some(config_dir) = config_dir {
+        return config_dir.join("logs");
+    }
+
+    if let Some(home_dir) = home_dir {
+        return home_dir.join(".lume").join("logs");
+    }
+
+    PathBuf::from(".lume").join("logs")
+}
+
+fn current_config_dir_from_env() -> Option<PathBuf> {
+    let config_dir = std::env::var("LUME_CONFIG_DIR").ok()?;
+    let trimmed = config_dir.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    })
+}
+
+fn civil_date_from_unix_days(days_since_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (year, month as u32, day as u32)
+}
+
+fn current_utc_date_str() -> String {
+    let days_since_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86_400;
+    let (year, month, day) = civil_date_from_unix_days(days_since_epoch as i64);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn current_log_file_name(date: &str) -> String {
+    format!("lume-{date}.log")
 }
 
 fn parse_window_behavior_from_settings_str(raw: &str) -> WindowBehavior {
@@ -500,6 +564,66 @@ fn read_text_file(path: String) -> Result<serde_json::Value, String> {
     }))
 }
 
+fn describe_sidecar_method(method: &str) -> &'static str {
+    match method {
+        "general-settings:list-log-files" => "读取本地日志文件列表",
+        "general-settings:read-log-file" => "读取当前选中的日志文件内容",
+        "general-settings:export-logs" => "导出全部本地日志",
+        "general-settings:open-logs-dir" => "打开本地日志目录",
+        "general-settings:get" => "读取通用设置",
+        "general-settings:update" => "保存通用设置",
+        "agent:get-proxy-settings" => "读取 sidecar 网络代理配置",
+        "agent:save-proxy-settings" => "保存 sidecar 网络代理配置",
+        "healthcheck" => "检查 sidecar 进程健康状态",
+        _ => "执行前端与 sidecar 后端之间的数据请求",
+    }
+}
+
+fn summarize_sidecar_result(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(value) => format!("bool({value})"),
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::String(value) => format!("string(len={})", value.chars().count()),
+        serde_json::Value::Array(items) => format!("array(len={})", items.len()),
+        serde_json::Value::Object(object) => {
+            if object.is_empty() {
+                return "object(empty)".to_string();
+            }
+            let mut keys = object.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            keys.truncate(6);
+            format!("object(keys={})", keys.join(","))
+        }
+    }
+}
+
+fn format_sidecar_call_started(request_id: u64, method: &str) -> String {
+    format!(
+        "[desktop] 调用 sidecar 接口: id={request_id} method={method} 用途={}",
+        describe_sidecar_method(method)
+    )
+}
+
+fn format_sidecar_request_sent(request_id: u64, method: &str) -> String {
+    format!("[desktop] sidecar 请求已发送: id={request_id} method={method} 状态=等待响应")
+}
+
+fn format_sidecar_call_succeeded(
+    request_id: u64,
+    method: &str,
+    result: &serde_json::Value,
+) -> String {
+    format!(
+        "[desktop] sidecar 调用成功: id={request_id} method={method} 结果={}",
+        summarize_sidecar_result(result)
+    )
+}
+
+fn format_sidecar_call_failed(request_id: u64, method: &str, error: &str) -> String {
+    format!("[desktop] sidecar 调用失败: id={request_id} method={method} 错误={error}")
+}
+
 async fn sidecar_call_internal(
     state: &tauri::State<'_, SidecarProcess>,
     method: &str,
@@ -507,8 +631,8 @@ async fn sidecar_call_internal(
     app: &tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
     ensure_sidecar_running(state, app)?;
-    info!("[desktop] sidecar_call: {method}");
     let request_id = NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed);
+    info!("{}", format_sidecar_call_started(request_id, method));
 
     let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
     {
@@ -516,7 +640,13 @@ async fn sidecar_call_internal(
             .pending
             .lock()
             .map_err(|_| "sidecar pending map lock poisoned".to_string())?;
-        pending.insert(request_id, tx);
+        pending.insert(
+            request_id,
+            PendingSidecarRequest {
+                method: method.to_string(),
+                tx,
+            },
+        );
     }
 
     let request = serde_json::json!({
@@ -546,6 +676,14 @@ async fn sidecar_call_internal(
                     *slot = None;
                 }
             }
+            warn!(
+                "{}",
+                format_sidecar_call_failed(
+                    request_id,
+                    method,
+                    &format!("写入请求失败: {error}")
+                )
+            );
             return Err(format!("write sidecar request failed: {error}"));
         }
 
@@ -556,10 +694,18 @@ async fn sidecar_call_internal(
                     *slot = None;
                 }
             }
+            warn!(
+                "{}",
+                format_sidecar_call_failed(
+                    request_id,
+                    method,
+                    &format!("刷新请求失败: {error}")
+                )
+            );
             return Err(format!("flush sidecar request failed: {error}"));
         }
     }
-    info!("[desktop] sidecar_write_ok: id={request_id} method={method}");
+    info!("{}", format_sidecar_request_sent(request_id, method));
 
     let recv_result = tauri::async_runtime::spawn_blocking(move || {
         rx.recv_timeout(Duration::from_secs(SIDECAR_RESPONSE_TIMEOUT_SECS))
@@ -571,11 +717,17 @@ async fn sidecar_call_internal(
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             remove_pending_request(state, request_id);
-            warn!("[desktop] sidecar response timeout: id={request_id} method={method}");
+            warn!(
+                "{}",
+                format_sidecar_call_failed(request_id, method, "等待 sidecar 响应超时")
+            );
             Err(format!("sidecar response timeout for method: {method}"))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            warn!("[desktop] sidecar response disconnected: id={request_id} method={method}");
+            warn!(
+                "{}",
+                format_sidecar_call_failed(request_id, method, "sidecar 响应通道已断开")
+            );
             Err("sidecar response channel disconnected".to_string())
         }
     }
@@ -624,25 +776,36 @@ fn spawn_sidecar_stdout_reader(
             };
 
             if let Some(response_id) = parsed.get("id").and_then(serde_json::Value::as_u64) {
-                info!("[desktop] sidecar_response: id={response_id}");
-                let sender = pending
+                let pending_request = pending
                     .lock()
                     .ok()
                     .and_then(|mut waiters| waiters.remove(&response_id));
-                if let Some(tx) = sender {
+                if let Some(request) = pending_request {
                     if let Some(error) = parsed.get("error") {
                         let message = error
                             .get("message")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("unknown sidecar error");
-                        let _ = tx.send(Err(message.to_string()));
+                        warn!(
+                            "{}",
+                            format_sidecar_call_failed(response_id, &request.method, message)
+                        );
+                        let _ = request.tx.send(Err(message.to_string()));
                     } else {
                         let result = parsed
                             .get("result")
                             .cloned()
                             .unwrap_or(serde_json::Value::Null);
-                        let _ = tx.send(Ok(result));
+                        info!(
+                            "{}",
+                            format_sidecar_call_succeeded(response_id, &request.method, &result)
+                        );
+                        let _ = request.tx.send(Ok(result));
                     }
+                } else {
+                    warn!(
+                        "[desktop] sidecar 响应已收到但没有匹配请求: id={response_id} method=unknown"
+                    );
                 }
                 continue;
             }
@@ -658,8 +821,12 @@ fn spawn_sidecar_stdout_reader(
         }
 
         if let Ok(mut waiters) = pending.lock() {
-            for (_, tx) in waiters.drain() {
-                let _ = tx.send(Err(close_reason.clone()));
+            for (request_id, request) in waiters.drain() {
+                warn!(
+                    "{}",
+                    format_sidecar_call_failed(request_id, &request.method, &close_reason)
+                );
+                let _ = request.tx.send(Err(close_reason.clone()));
             }
         }
         warn!("[desktop] sidecar stdout reader stopped: {close_reason}");
@@ -714,6 +881,7 @@ fn spawn_sidecar_from_env() -> Option<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    apply_sidecar_logging_env(&mut process);
 
     #[cfg(target_os = "windows")]
     {
@@ -830,6 +998,11 @@ fn apply_default_skills_env(
     (archive, directory)
 }
 
+fn apply_sidecar_logging_env(process: &mut Command) {
+    process.env("LUME_LOG_FILE", "false");
+    process.env("LUME_LOG_CONSOLE", "true");
+}
+
 fn spawn_bundled_sidecar(app: &tauri::AppHandle) -> Option<Child> {
     let sidecar_path = resolve_bundled_sidecar_path(app)?;
     let mut process = Command::new(&sidecar_path);
@@ -837,6 +1010,7 @@ fn spawn_bundled_sidecar(app: &tauri::AppHandle) -> Option<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    apply_sidecar_logging_env(&mut process);
 
     #[cfg(target_os = "windows")]
     {
@@ -950,6 +1124,7 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            apply_sidecar_logging_env(&mut process);
             let (skills_archive, default_skills_dir) =
                 apply_default_skills_env(&mut process, app, &sidecar_dir);
 
@@ -985,6 +1160,7 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    apply_sidecar_logging_env(&mut process);
     let (skills_archive, default_skills_dir) =
         apply_default_skills_env(&mut process, app, &sidecar_dir);
 
@@ -1010,11 +1186,14 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_mac_sidecar_bridge_args, next_window_action, parse_window_behavior_from_settings_str,
-        resolve_runtime_window_action, resolve_settings_path, WindowAction, WindowBehavior,
-        WindowBehaviorEvent,
+        apply_sidecar_logging_env, build_mac_sidecar_bridge_args, current_log_file_name,
+        format_sidecar_call_failed, format_sidecar_call_started, format_sidecar_call_succeeded,
+        format_sidecar_request_sent, next_window_action,
+        parse_window_behavior_from_settings_str, resolve_runtime_window_action,
+        resolve_settings_path, WindowAction, WindowBehavior, WindowBehaviorEvent,
     };
     use std::path::PathBuf;
+    use std::process::Command;
 
     #[test]
     fn build_mac_sidecar_bridge_args_should_match_node_bridge_contract() {
@@ -1037,6 +1216,54 @@ mod tests {
                 "/repo/apps/sidecar/src/index.ts",
             ]
         );
+    }
+
+    #[test]
+    fn sidecar_rpc_log_messages_are_human_readable() {
+        assert_eq!(
+            format_sidecar_call_started(12, "general-settings:list-log-files"),
+            "[desktop] 调用 sidecar 接口: id=12 method=general-settings:list-log-files 用途=读取本地日志文件列表"
+        );
+        assert_eq!(
+            format_sidecar_request_sent(12, "general-settings:list-log-files"),
+            "[desktop] sidecar 请求已发送: id=12 method=general-settings:list-log-files 状态=等待响应"
+        );
+        assert_eq!(
+            format_sidecar_call_succeeded(
+                12,
+                "general-settings:list-log-files",
+                &serde_json::json!({
+                    "files": [],
+                    "totalFiles": 0,
+                    "totalBytes": 0
+                })
+            ),
+            "[desktop] sidecar 调用成功: id=12 method=general-settings:list-log-files 结果=object(keys=files,totalBytes,totalFiles)"
+        );
+        assert_eq!(
+            format_sidecar_call_failed(12, "general-settings:list-log-files", "boom"),
+            "[desktop] sidecar 调用失败: id=12 method=general-settings:list-log-files 错误=boom"
+        );
+    }
+
+    #[test]
+    fn desktop_and_sidecar_share_single_daily_log_file() {
+        assert_eq!(current_log_file_name("2026-05-29"), "lume-2026-05-29.log");
+
+        let mut command = Command::new("sidecar");
+        apply_sidecar_logging_env(&mut command);
+        let envs = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.map(|item| item.to_string_lossy().to_string()),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(envs.get("LUME_LOG_FILE"), Some(&Some("false".to_string())));
+        assert_eq!(envs.get("LUME_LOG_CONSOLE"), Some(&Some("true".to_string())));
     }
 
     #[test]
@@ -1151,20 +1378,18 @@ mod tests {
 }
 
 fn get_logs_dir() -> PathBuf {
-    // 统一使用 ~/.lume/logs 目录
-    if let Some(home) = dirs::home_dir() {
-        let logs_dir = home.join(".lume").join("logs");
-        if !logs_dir.exists() {
-            let _ = std::fs::create_dir_all(&logs_dir);
-        }
-        return logs_dir;
+    let env_config_dir = current_config_dir_from_env();
+    let logs_dir = resolve_logs_dir(env_config_dir.as_deref(), dirs::home_dir().as_deref());
+    if !logs_dir.exists() {
+        let _ = std::fs::create_dir_all(&logs_dir);
     }
-    PathBuf::from(".")
+    logs_dir
 }
 
 fn main() {
     // 获取日志目录
     let logs_dir = get_logs_dir();
+    let log_file_name = current_log_file_name(&current_utc_date_str());
     let updater_pubkey = option_env!("LUME_UPDATER_PUBLIC_KEY")
         .unwrap_or("__LUME_UPDATER_PUBLIC_KEY__")
         .to_string();
@@ -1176,7 +1401,7 @@ fn main() {
             tauri_plugin_log::Builder::new()
                 .targets([
                     Target::new(TargetKind::Stderr),  // 控制台输出
-                    Target::new(TargetKind::Folder { path: logs_dir.clone(), file_name: Some("desktop.log".into()) }),  // 文件输出
+                    Target::new(TargetKind::Folder { path: logs_dir.clone(), file_name: Some(log_file_name.into()) }),  // 文件输出
                 ])
                 .level(log::LevelFilter::Info)
                 .build(),

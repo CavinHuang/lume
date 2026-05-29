@@ -1,5 +1,8 @@
 import type {
   LumeConfigAgentDefaultStrategy,
+  LumeConfigPermissionApprovalRoutes,
+  LumeConfigPermissionMode,
+  LumeConfigPermissionsSection,
   LumeConfigThinkingLevel,
   LumeConfigSubagentModelStrategy,
   LumeEffectiveConfig,
@@ -49,4 +52,31 @@ export const updateAgentThinkingLevel = (value: LumeConfigThinkingLevel, workspa
     path: 'agent.thinkingLevel',
     value,
     summary: 'update agent thinking level',
+  })
+
+export const updateAgentPermissionMode = (value: LumeConfigPermissionMode, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'agent.permissionMode',
+    value,
+    summary: 'update agent permission mode',
+  })
+
+export const updatePermissionsSection = (value: LumeConfigPermissionsSection, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'permissions',
+    value,
+    summary: 'update permission settings',
+  })
+
+export const updatePermissionApprovals = (value: LumeConfigPermissionApprovalRoutes, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'permissions.approvals',
+    value,
+    summary: 'update permission approval routes',
   })

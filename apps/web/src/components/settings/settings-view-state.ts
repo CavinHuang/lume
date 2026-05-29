@@ -9,6 +9,8 @@ import {
   Palette,
   Puzzle,
   RefreshCw,
+  ShieldCheck,
+  ScrollText,
   Users,
   type LucideIcon,
 } from 'lucide-react'
@@ -20,11 +22,13 @@ export type SettingsViewTab =
   | 'agents'
   | 'workspaces'
   | 'memory'
+  | 'permissions'
   | 'files'
   | 'shortcuts'
   | 'integrations'
   | 'im-integrations'
   | 'updates'
+  | 'logs'
 
 export const SETTINGS_NAV_ITEMS: Array<{
   id: SettingsViewTab
@@ -37,11 +41,13 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'workspaces', label: '工作区', icon: Users },
   { id: 'memory', label: '记忆', icon: Database },
+  { id: 'permissions', label: '权限管理', icon: ShieldCheck },
   { id: 'files', label: '文件与同步', icon: Cloud },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'integrations', label: 'MCP', icon: Puzzle },
   { id: 'im-integrations', label: 'IM 集成', icon: MessageCircle },
   { id: 'updates', label: '版本与更新', icon: RefreshCw },
+  { id: 'logs', label: '应用日志', icon: ScrollText },
 ]
 
 export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
@@ -51,11 +57,13 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   agents: 'Agents 团队',
   workspaces: '工作区设置',
   memory: '记忆',
+  permissions: '权限管理',
   files: '文件与同步',
   shortcuts: '快捷键',
   integrations: 'MCP',
   'im-integrations': 'IM 集成',
   updates: '版本与更新',
+  logs: '应用日志',
 }
 
 export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
@@ -65,9 +73,11 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   agents: '管理内置角色、推荐关键词与子代理运行时身份',
   workspaces: '管理多个本地工作区的基本信息、目录和默认行为',
   memory: '查看、搜索、蒸馏和确认工作区与全局记忆',
+  permissions: '管理权限模式和工具调用规则',
   files: '管理文件接入、同步状态与资料上下文',
   shortcuts: '管理键盘快捷键与常用自动化操作',
   integrations: '管理 MCP 服务发现与连接状态',
   'im-integrations': '管理微信、飞书等 IM 平台链接',
   updates: '管理 Lume 的版本检查、下载与安装体验',
+  logs: '查看应用、Agent、工具调用、MCP 与 Skill 加载运行日志',
 }

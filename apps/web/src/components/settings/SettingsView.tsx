@@ -10,11 +10,13 @@ import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
+import { PermissionSettings } from './PermissionSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
 import { AutomationSettings } from '../automation/AutomationSettings'
 import { MemorySettings } from './MemorySettings'
 import { VersionUpdateSettings } from './VersionUpdateSettings'
+import { LogSettings } from './LogSettings'
 import {
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
@@ -73,11 +75,13 @@ export function SettingsView() {
           {tab === 'agents' && <AgentsSettings />}
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
+          {tab === 'permissions' && <PermissionSettings />}
           {tab === 'files' && <SettingsContentShell><SkillsSettings /></SettingsContentShell>}
           {tab === 'shortcuts' && <SettingsContentShell><AutomationSettings /></SettingsContentShell>}
           {tab === 'integrations' && <McpSettings />}
           {tab === 'im-integrations' && <ImSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
+          {tab === 'logs' && <LogSettings />}
         </main>
       </ScrollArea>
     </div>

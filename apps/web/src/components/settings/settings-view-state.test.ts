@@ -17,4 +17,17 @@ describe('settings view state', () => {
     expect(ids).toContain('im-integrations')
     expect(ids.indexOf('im-integrations')).toBe(ids.indexOf('integrations') + 1)
   })
+
+  test('places permission management before files and integrations', () => {
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
+    expect(ids).toContain('permissions')
+    expect(ids.indexOf('permissions')).toBeLessThan(ids.indexOf('files'))
+    expect(ids.indexOf('permissions')).toBeLessThan(ids.indexOf('integrations'))
+  })
+
+  test('includes application logs after update settings', () => {
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
+    expect(ids).toContain('logs')
+    expect(ids.indexOf('logs')).toBe(ids.indexOf('updates') + 1)
+  })
 })
