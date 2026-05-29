@@ -14,15 +14,22 @@ import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subag
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
 import { formatConsoleArgs } from "./services/infra/log-format";
+import { writeLogRecord } from "./services/infra/logger";
 
 // JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
 for (const level of ["log", "info", "warn", "error", "debug"] as const) {
   console[level] = (...args: unknown[]) => {
-    stderr.write(`${formatConsoleArgs({
+    const line = formatConsoleArgs({
       source: "sidecar",
       context: "app",
       args
-    })}\n`);
+    });
+    stderr.write(`${line}\n`);
+    writeLogRecord({
+      level: level === "log" ? "info" : level,
+      context: "console",
+      message: line
+    });
   };
 }
 

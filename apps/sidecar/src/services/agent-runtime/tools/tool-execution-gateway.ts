@@ -42,6 +42,7 @@ export interface ToolExecutionGatewayInput {
   descriptor: LumeToolDescriptor;
   input: unknown;
   permissionMode?: PermissionRuntimeMode;
+  classifierEnabled?: boolean;
   permissionRules?: PermissionRule[];
   privateWriteRoots?: string[];
   context: LumeGuardrailContext;
@@ -62,6 +63,7 @@ export class ToolExecutionGateway {
       descriptor: input.descriptor,
       input: input.input,
       mode: input.permissionMode,
+      classifierEnabled: input.classifierEnabled,
       context: {
         threadId: input.context.threadId,
         cwd: input.context.cwd,

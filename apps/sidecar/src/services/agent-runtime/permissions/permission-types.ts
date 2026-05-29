@@ -58,6 +58,7 @@ export interface PermissionDecisionInput {
   descriptor: LumeToolDescriptor;
   input: unknown;
   mode?: PermissionRuntimeMode;
+  classifierEnabled?: boolean;
   context: PermissionRuntimeContext;
   rules?: PermissionRule[];
 }

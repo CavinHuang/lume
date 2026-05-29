@@ -26,7 +26,7 @@ import {
 } from "../agent-runtime/tools/mcp/create-mcp-tools";
 import type { ToolRuntimeDiagnostic } from "../agent-runtime/tools/tool-runtime";
 import { getWorkspaceMcpConfig } from "../agent/agent-workspace-manager";
-import { createLogger, type Logger } from "../infra/logger";
+import { createDiagnosticLogSummary, createLogger, type Logger } from "../infra/logger";
 
 export interface WorkspaceSdkMcpManager {
   sync(configs: Record<string, NormalizedMcpServerConfig>): void;
@@ -275,6 +275,11 @@ export class WorkspaceMcpManager {
 
     state.sdk.sync(normalized);
     state.knownServerIds = currentIds;
+    this.logger.info("MCP workspace synced", {
+      workspaceSlug,
+      totalServers: currentIds.size,
+      enabledServers: currentEnabledIds.size
+    });
 
     const connectionAttempts: Array<Promise<void>> = [];
     for (const serverId of currentEnabledIds) {
@@ -387,13 +392,29 @@ export class WorkspaceMcpManager {
         error: { code: "not_found", message: `MCP server not found: ${input.serverId}` }
       };
     }
+    const startedAt = Date.now();
     try {
+      this.logger.info("MCP diagnostic tool call started", {
+        workspaceSlug: input.workspaceSlug,
+        serverId: input.serverId,
+        originalToolName: input.originalToolName,
+        argsSummary: createDiagnosticLogSummary(input.args)
+      });
       const result = await this.ensureWorkspaceState(input.workspaceSlug).sdk.callTool(
         input.serverId,
         input.originalToolName,
         input.args,
         { timeoutMs: input.timeoutMs }
       );
+      this.logger.info("MCP diagnostic tool call completed", {
+        workspaceSlug: input.workspaceSlug,
+        serverId: input.serverId,
+        originalToolName: input.originalToolName,
+        isError: result.isError === true,
+        truncated: result.truncated === true,
+        textSummary: createDiagnosticLogSummary(result.text),
+        elapsedMs: Date.now() - startedAt
+      });
       return {
         serverId: input.serverId,
         originalToolName: input.originalToolName,
@@ -403,10 +424,18 @@ export class WorkspaceMcpManager {
         ...(result.truncated !== undefined ? { truncated: result.truncated } : {})
       };
     } catch (error) {
+      const publicError = mapPublicError(error, entry);
+      this.logger.warn("MCP diagnostic tool call failed", {
+        workspaceSlug: input.workspaceSlug,
+        serverId: input.serverId,
+        originalToolName: input.originalToolName,
+        error: publicError.message,
+        elapsedMs: Date.now() - startedAt
+      });
       return {
         serverId: input.serverId,
         originalToolName: input.originalToolName,
-        error: mapPublicError(error, entry)
+        error: publicError
       };
     }
   }
@@ -475,7 +504,35 @@ export class WorkspaceMcpManager {
   ): Promise<McpCallResult> {
     await this.syncWorkspace(workspaceSlug);
     const state = this.ensureWorkspaceState(workspaceSlug);
-    return state.sdk.callTool(serverId, originalToolName, args, options);
+    const startedAt = Date.now();
+    this.logger.info("MCP runtime tool call started", {
+      workspaceSlug,
+      serverId,
+      originalToolName,
+      argsSummary: createDiagnosticLogSummary(args)
+    });
+    try {
+      const result = await state.sdk.callTool(serverId, originalToolName, args, options);
+      this.logger.info("MCP runtime tool call completed", {
+        workspaceSlug,
+        serverId,
+        originalToolName,
+        isError: result.isError === true,
+        truncated: result.truncated === true,
+        textSummary: createDiagnosticLogSummary(result.text),
+        elapsedMs: Date.now() - startedAt
+      });
+      return result;
+    } catch (error) {
+      this.logger.warn("MCP runtime tool call failed", {
+        workspaceSlug,
+        serverId,
+        originalToolName,
+        error: error instanceof Error ? error.message : String(error),
+        elapsedMs: Date.now() - startedAt
+      });
+      throw error;
+    }
   }
 
   private ensureWorkspaceState(workspaceSlug: string): WorkspaceState {

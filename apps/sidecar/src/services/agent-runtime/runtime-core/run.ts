@@ -976,6 +976,7 @@ export async function createRuntimeCoreSession(
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,
       contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
+      maxOutputTokens: input.resolvedModel?.maxTokens,
       systemPrompt,
       memoryContext: contextAssembly.memoryContext,
       sessionMessages: context.messages,

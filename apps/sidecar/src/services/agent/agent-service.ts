@@ -297,17 +297,12 @@ function handleRuntimeThreadStateMessage(
   message: SDKMessage,
   sessionStateManager: ReturnType<typeof getSessionStateManager>
 ): void {
-  if (message.type === "result" && message.usage) {
-    const usage = message.usage;
-    const totalTokens = (usage.input_tokens ?? 0)
-      + (usage.output_tokens ?? 0)
-      + (usage.cache_read_input_tokens ?? 0)
-      + (usage.cache_creation_input_tokens ?? 0);
-    const contextWindow = message.modelUsage ? Object.values(message.modelUsage)[0]?.contextWindow : undefined;
+  if (message.type === "result" && message.contextUsage) {
+    const contextUsage = message.contextUsage;
     sessionStateManager.updateTokens(
       threadId,
-      totalTokens,
-      contextWindow
+      numberValue(contextUsage.totalTokens),
+      numberValue(contextUsage.contextWindow) || undefined
     );
   }
 
@@ -475,43 +470,49 @@ function resolveAssistantCreatedAtFromSdkMessages(messages: SDKMessage[]): numbe
 
 function extractAssistantTurnTokenUsage(messages: SDKMessage[]): Record<string, unknown> | undefined {
   const result = [...messages].reverse().find((message) => (
-    message.type === "result" && (message.usage || message.usageRecords)
+    message.type === "result" && message.contextUsage && message.billingUsage
   ));
   if (!result || result.type !== "result") {
     return undefined;
   }
 
-  if (result.usage) {
-    const inputTokens = numberValue(result.usage.input_tokens);
-    const outputTokens = numberValue(result.usage.output_tokens);
-    const cachedTokens = numberValue(result.usage.cache_read_input_tokens)
-      + numberValue(result.usage.cache_creation_input_tokens);
-    return {
-      source: "provider",
-      scope: "assistant_turn",
-      inputTokens,
-      outputTokens,
-      cachedTokens,
-      totalTokens: inputTokens + outputTokens + cachedTokens
-    };
-  }
-
-  const usageRecords = Array.isArray(result.usageRecords) ? result.usageRecords : [];
-  if (usageRecords.length === 0) {
+  const contextUsage = (result as Extract<SDKMessage, { type: "result" }> & {
+    contextUsage?: NonNullable<Extract<SDKMessage, { type: "result" }>["contextUsage"]>;
+  }).contextUsage;
+  const billingUsage = (result as Extract<SDKMessage, { type: "result" }> & {
+    billingUsage?: NonNullable<Extract<SDKMessage, { type: "result" }>["billingUsage"]>;
+  }).billingUsage;
+  if (!contextUsage || !billingUsage) {
     return undefined;
   }
-  const inputTokens = usageRecords.reduce((sum, record) => sum + numberValue(record.inputTokens), 0);
-  const outputTokens = usageRecords.reduce((sum, record) => sum + numberValue(record.outputTokens), 0);
-  const cachedTokens = usageRecords.reduce((sum, record) => (
-    sum + numberValue(record.cacheReadInputTokens) + numberValue(record.cacheCreationInputTokens)
-  ), 0);
+  const latestRecord = billingUsage.latestRecord ?? billingUsage.records[billingUsage.records.length - 1];
+  const inputTokens = numberValue(latestRecord?.inputTokens ?? billingUsage.cumulative.inputTokens);
+  const outputTokens = numberValue(latestRecord?.outputTokens ?? billingUsage.cumulative.outputTokens);
+  const cacheReadInputTokens = numberValue(latestRecord?.cacheReadInputTokens ?? billingUsage.cumulative.cacheReadInputTokens);
+  const cacheCreationInputTokens = numberValue(latestRecord?.cacheCreationInputTokens ?? billingUsage.cumulative.cacheCreationInputTokens);
+  const directCachedTokens = numberValue((latestRecord as { cachedTokens?: number } | undefined)?.cachedTokens);
+  const cachedTokens = directCachedTokens > 0
+    ? directCachedTokens
+    : cacheReadInputTokens + cacheCreationInputTokens;
+  const totalTokens = numberValue(latestRecord?.totalTokens) || inputTokens + outputTokens + cachedTokens;
   return {
     source: "provider",
     scope: "assistant_turn",
-    inputTokens,
-    outputTokens,
-    cachedTokens,
-    totalTokens: inputTokens + outputTokens + cachedTokens
+    providerOutputTokens: outputTokens,
+    contextUsage: {
+      source: contextUsage.source,
+      totalTokens: numberValue(contextUsage.totalTokens),
+      contextWindow: numberValue(contextUsage.contextWindow)
+    },
+    billingUsage: {
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      cachedTokens,
+      totalTokens,
+      costUSD: numberValue(latestRecord?.costUSD ?? billingUsage.totalCostUSD)
+    }
   };
 }
 

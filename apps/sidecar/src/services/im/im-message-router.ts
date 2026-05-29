@@ -5,7 +5,9 @@ import {
   type AgentSendInput,
   type AgentThreadMeta,
   type AgentThreadSource,
+  type AgentToolPermissionDecision,
   type AgentToolPermissionRequest,
+  type AgentToolPermissionResponseInput,
   type ImThreadBinding,
   type ImPeerKind,
   type ImProvider,
@@ -13,7 +15,10 @@ import {
 } from "@lume/shared";
 import { emitAgentNotification } from "../agent/agent-notification-service";
 import { createAgentThread, updateAgentThreadMeta } from "../agent/agent-thread-manager";
-import { appendAgentMessage } from "../agent/agent-service";
+import { appendAgentMessage, submitAgentToolPermission } from "../agent/agent-service";
+import { getAgentWorkspace } from "../agent/agent-workspace-manager";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { getImAccount } from "./im-config-manager";
 import {
   getImThreadBindingByPeer,
   getImThreadBindingByThreadId,
@@ -39,6 +44,9 @@ export interface ImMessageRouterDeps {
   createThread?: (title: string, workspaceId?: string) => { id: string } | Promise<{ id: string }>;
   updateThreadMeta?: (threadId: string, patch: Pick<AgentThreadMeta, "source">) => void | Promise<void>;
   sendMessage?: (input: AgentSendInput) => void | Promise<void>;
+  submitToolPermission?: (input: AgentToolPermissionResponseInput) => { ok: true };
+  sendBoundTextMessage?: (input: SendBoundImTextMessageInput) => Promise<{ ok: true }>;
+  emitNotification?: (method: string, params: unknown) => void;
 }
 
 type ImAgentStreamEmitter = {
@@ -50,6 +58,14 @@ type ImAgentStreamEmitter = {
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 };
+
+interface ResolvedImApprovalPolicy {
+  enabled: boolean;
+  allowTextApprove: boolean;
+  allowAlways: "disabled" | "desktop-only" | "dm-only";
+  groupApproval: "disabled" | "desktop-only";
+  approverPeerIds: string[];
+}
 
 interface CreateImAgentStreamEmitterOptions {
   emitNotification?: (method: string, params: unknown) => void;
@@ -65,6 +81,42 @@ function userMessageForMessage(message: InboundImRouteMessage): string {
     return `${message.senderId.trim()}: ${message.text}`;
   }
   return message.text;
+}
+
+type ParsedImApprovalCommand =
+  | { type: "none" }
+  | { type: "invalid"; message: string }
+  | { type: "command"; requestId: string; decision: AgentToolPermissionDecision };
+
+function normalizeImApprovalDecision(raw: string): AgentToolPermissionDecision | null {
+  const normalized = raw.trim().toLowerCase().replace(/-/g, "_");
+  if (normalized === "allow_once" || normalized === "once" || normalized === "allow") {
+    return "allow_once";
+  }
+  if (normalized === "allow_always" || normalized === "always") {
+    return "allow_always";
+  }
+  if (normalized === "deny" || normalized === "reject" || normalized === "no") {
+    return "deny";
+  }
+  return null;
+}
+
+function parseImApprovalCommand(text: string): ParsedImApprovalCommand {
+  const parts = text.trim().split(/\s+/).filter(Boolean);
+  const head = parts[0]?.toLowerCase();
+  if (!head || !/^\/approve(?:@\S+)?$/.test(head)) {
+    return { type: "none" };
+  }
+  const requestId = parts[1]?.trim();
+  const decision = parts[2] ? normalizeImApprovalDecision(parts[2]) : null;
+  if (!requestId || !decision) {
+    return {
+      type: "invalid",
+      message: "审批命令格式不正确。请回复：/approve <审批ID> allow-once 或 /approve <审批ID> deny"
+    };
+  }
+  return { type: "command", requestId, decision };
 }
 
 function sourceForMessage(message: InboundImRouteMessage): AgentThreadSource {
@@ -181,6 +233,181 @@ function emitImDeliveryRuntimeEvent(
   });
 }
 
+function emitPermissionResolvedRuntimeEvent(
+  threadId: string,
+  input: AgentToolPermissionResponseInput,
+  emitNotification: (method: string, params: unknown) => void
+): void {
+  const createdAt = new Date().toISOString();
+  emitNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
+    threadId,
+    event: {
+      id: `${threadId}:${input.requestId}:permission.resolved:${Date.now()}`,
+      type: "permission.resolved",
+      runId: `permission:${input.requestId}`,
+      threadId,
+      createdAt,
+      requestId: input.requestId,
+      decision: input.decision,
+      source: "im"
+    }
+  });
+}
+
+function formatDecisionLabel(decision: AgentToolPermissionDecision): string {
+  if (decision === "allow_once") return "允许一次";
+  if (decision === "allow_always") return "始终允许";
+  return "拒绝";
+}
+
+function resolveImApprovalWorkspaceSlug(binding: ImThreadBinding): string | undefined {
+  const account = getImAccount(binding.accountId);
+  if (!account?.workspaceId) return undefined;
+  return getAgentWorkspace(account.workspaceId)?.slug;
+}
+
+function resolveImApprovalPolicy(binding: ImThreadBinding): ResolvedImApprovalPolicy {
+  const im = getEffectiveLumeConfig(resolveImApprovalWorkspaceSlug(binding)).permissions?.approvals?.im;
+  const account = im?.accounts?.[binding.accountId];
+  return {
+    enabled: account?.enabled ?? im?.enabled ?? true,
+    allowTextApprove: account?.allowTextApprove ?? im?.allowTextApprove ?? true,
+    allowAlways: account?.allowAlways ?? im?.allowAlways ?? "desktop-only",
+    groupApproval: account?.groupApproval ?? im?.groupApproval ?? "desktop-only",
+    approverPeerIds: account?.approverPeerIds ?? []
+  };
+}
+
+function canBindingApproveViaIm(binding: ImThreadBinding, policy: ResolvedImApprovalPolicy): boolean {
+  if (policy.approverPeerIds.length === 0) {
+    return true;
+  }
+  return policy.approverPeerIds.includes(binding.peerId);
+}
+
+function formatToolPermissionRequestForIm(
+  request: AgentToolPermissionRequest,
+  binding: ImThreadBinding
+): string | null {
+  const policy = resolveImApprovalPolicy(binding);
+  if (!policy.enabled) {
+    return null;
+  }
+  const lines = [
+    "需要确认工具执行",
+    `工具: ${request.toolName}`,
+    `风险: ${request.risk}`,
+    `原因: ${request.reason}`,
+    `审批 ID: ${request.requestId}`
+  ];
+
+  if (binding.peerKind === "group") {
+    if (policy.groupApproval === "disabled") {
+      return null;
+    }
+    lines.push("群聊暂不支持通过微信审批工具权限，请在 Lume 桌面端处理。");
+    return lines.join("\n");
+  }
+
+  if (!policy.allowTextApprove) {
+    lines.push("IM 审批未启用，请在 Lume 桌面端处理。");
+    return lines.join("\n");
+  }
+
+  lines.push(
+    "回复以下命令处理：",
+    `/approve ${request.requestId} allow-once`,
+    `/approve ${request.requestId} deny`
+  );
+  if (policy.allowAlways === "dm-only" && request.canAllowAlways !== false) {
+    lines.push(`可选: /approve ${request.requestId} allow-always`);
+  }
+  return lines.join("\n");
+}
+
+async function deliverToolPermissionRequestToIm(
+  request: AgentToolPermissionRequest,
+  sendBoundTextMessage: (input: SendBoundImTextMessageInput) => Promise<{ ok: true }>
+): Promise<void> {
+  const binding = getImThreadBindingByThreadId(request.threadId)
+    ?? (request.originThreadId ? getImThreadBindingByThreadId(request.originThreadId) : null);
+  if (!binding) {
+    return;
+  }
+  const text = formatToolPermissionRequestForIm(request, binding);
+  if (!text) {
+    return;
+  }
+  await sendBoundTextMessage({
+    binding,
+    text
+  });
+}
+
+async function routeImApprovalCommand(
+  binding: ImThreadBinding,
+  command: Exclude<ParsedImApprovalCommand, { type: "none" }>,
+  deps: ImMessageRouterDeps
+): Promise<{ threadId: string }> {
+  const sendBoundTextMessage = deps.sendBoundTextMessage ?? sendBoundImTextMessage;
+  const emitNotification = deps.emitNotification ?? emitAgentNotification;
+  if (command.type === "invalid") {
+    await sendBoundTextMessage({ binding, text: command.message });
+    return { threadId: binding.threadId };
+  }
+  const policy = resolveImApprovalPolicy(binding);
+  if (!policy.enabled || !policy.allowTextApprove) {
+    await sendBoundTextMessage({
+      binding,
+      text: "IM 审批未启用，请在 Lume 桌面端处理。"
+    });
+    return { threadId: binding.threadId };
+  }
+  if (!canBindingApproveViaIm(binding, policy)) {
+    await sendBoundTextMessage({
+      binding,
+      text: "当前微信会话没有权限处理审批，请在 Lume 桌面端处理。"
+    });
+    return { threadId: binding.threadId };
+  }
+  if (binding.peerKind === "group") {
+    await sendBoundTextMessage({
+      binding,
+      text: "群聊暂不支持通过微信审批工具权限，请在 Lume 桌面端处理。"
+    });
+    return { threadId: binding.threadId };
+  }
+  if (command.decision === "allow_always" && policy.allowAlways !== "dm-only") {
+    await sendBoundTextMessage({
+      binding,
+      text: "IM 暂不允许授予始终允许，请在 Lume 桌面端处理。"
+    });
+    return { threadId: binding.threadId };
+  }
+
+  const input: AgentToolPermissionResponseInput = {
+    threadId: binding.threadId,
+    requestId: command.requestId,
+    decision: command.decision
+  };
+  try {
+    const submitToolPermission = deps.submitToolPermission ?? submitAgentToolPermission;
+    submitToolPermission(input);
+    emitPermissionResolvedRuntimeEvent(binding.threadId, input, emitNotification);
+    await sendBoundTextMessage({
+      binding,
+      text: `已${formatDecisionLabel(command.decision)}审批请求 ${command.requestId}。`
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await sendBoundTextMessage({
+      binding,
+      text: `审批请求 ${command.requestId} 处理失败：${message}`
+    });
+  }
+  return { threadId: binding.threadId };
+}
+
 export function createImAgentStreamEmitter(
   threadId: string,
   options: CreateImAgentStreamEmitterOptions = {}
@@ -224,6 +451,10 @@ export function createImAgentStreamEmitter(
     },
     onToolPermissionRequest: (request) => {
       emitNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
+      void deliverToolPermissionRequestToIm(request, sendBoundTextMessage)
+        .catch((error) => {
+          console.error("[IM] 微信权限审批提示发送失败:", error);
+        });
     }
   };
 }
@@ -237,6 +468,10 @@ export async function routeInboundImMessage(
   deps: ImMessageRouterDeps = {}
 ): Promise<{ threadId: string }> {
   const existing = getImThreadBindingByPeer(message);
+  const approvalCommand = parseImApprovalCommand(message.text);
+  if (existing && approvalCommand.type !== "none") {
+    return routeImApprovalCommand(existing, approvalCommand, deps);
+  }
   const thread = existing
     ? { id: existing.threadId }
     : await (deps.createThread ?? ((title: string, workspaceId?: string) => createAgentThread(title, undefined, workspaceId)))(

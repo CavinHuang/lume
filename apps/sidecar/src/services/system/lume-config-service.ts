@@ -2,12 +2,17 @@ import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, writeFile
 import { dirname, join } from "node:path";
 import YAML from "yaml";
 import {
+  DEFAULT_LUME_PERMISSION_APPROVALS,
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
   type LumeConfigAuditEntry,
   type LumeConfigAuditSource,
   type LumeConfigFile,
+  type LumeConfigImAccountApprovalPolicy,
+  type LumeConfigImApprovalPolicy,
+  type LumeConfigPermissionApprovalRoutes,
   type LumeConfigPermissionRule,
   type LumeConfigSectionSet,
+  type LumeConfigSubagentApprovalPolicy,
   type LumeEffectiveConfig
 } from "@lume/shared";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
@@ -56,12 +61,24 @@ function createDefaultLumeConfig(): LumeConfigFile {
       classifier: {
         enabled: false
       },
-      privateWriteRoots: []
+      privateWriteRoots: [],
+      approvals: createDefaultPermissionApprovals()
     },
     hooks: {
       internal: { ...DEFAULT_INTERNAL_HOOKS }
     },
     workspaces: {}
+  };
+}
+
+function createDefaultPermissionApprovals(): LumeConfigPermissionApprovalRoutes {
+  return {
+    desktop: { ...(DEFAULT_LUME_PERMISSION_APPROVALS.desktop ?? {}) },
+    subagent: { ...(DEFAULT_LUME_PERMISSION_APPROVALS.subagent ?? {}) },
+    im: {
+      ...(DEFAULT_LUME_PERMISSION_APPROVALS.im ?? {}),
+      accounts: { ...(DEFAULT_LUME_PERMISSION_APPROVALS.im?.accounts ?? {}) }
+    }
   };
 }
 
@@ -131,6 +148,124 @@ function normalizePermissionRules(value: unknown): LumeConfigPermissionRule[] {
     });
   }
   return rules;
+}
+
+function normalizeSubagentApprovalPolicy(value: unknown): LumeConfigSubagentApprovalPolicy {
+  if (!isPlainObject(value)) return {};
+  return {
+    ...(value.mode === "inherit" || value.mode === "ask-parent" || value.mode === "deny-high-risk"
+      ? { mode: value.mode }
+      : {}),
+    ...(value.allowAlways === "disabled" || value.allowAlways === "desktop-only" || value.allowAlways === "parent-only"
+      ? { allowAlways: value.allowAlways }
+      : {})
+  };
+}
+
+function normalizeApprovalAllowAlwaysPolicy(value: unknown): LumeConfigImAccountApprovalPolicy["allowAlways"] {
+  if (value === "disabled" || value === "desktop-only" || value === "dm-only") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeImAccountApprovalPolicy(value: unknown): LumeConfigImAccountApprovalPolicy {
+  if (!isPlainObject(value)) return {};
+  const allowAlways = normalizeApprovalAllowAlwaysPolicy(value.allowAlways);
+  return {
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
+    ...(typeof value.allowTextApprove === "boolean" ? { allowTextApprove: value.allowTextApprove } : {}),
+    ...(allowAlways ? { allowAlways } : {}),
+    ...(value.groupApproval === "disabled" || value.groupApproval === "desktop-only"
+      ? { groupApproval: value.groupApproval }
+      : {}),
+    ...(Array.isArray(value.approverPeerIds)
+      ? { approverPeerIds: normalizeUniqueStringArray(value.approverPeerIds) }
+      : {})
+  };
+}
+
+function normalizeImApprovalPolicy(value: unknown): LumeConfigImApprovalPolicy {
+  if (!isPlainObject(value)) return {};
+  const allowAlways = normalizeApprovalAllowAlwaysPolicy(value.allowAlways);
+  const accounts: Record<string, LumeConfigImAccountApprovalPolicy> = {};
+  if (isPlainObject(value.accounts)) {
+    for (const [accountId, policyValue] of Object.entries(value.accounts)) {
+      const normalizedAccountId = accountId.trim();
+      if (!normalizedAccountId) continue;
+      const normalizedPolicy = normalizeImAccountApprovalPolicy(policyValue);
+      if (Object.keys(normalizedPolicy).length > 0) {
+        accounts[normalizedAccountId] = normalizedPolicy;
+      }
+    }
+  }
+  return {
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
+    ...(typeof value.allowTextApprove === "boolean" ? { allowTextApprove: value.allowTextApprove } : {}),
+    ...(allowAlways ? { allowAlways } : {}),
+    ...(value.groupApproval === "disabled" || value.groupApproval === "desktop-only"
+      ? { groupApproval: value.groupApproval }
+      : {}),
+    ...(Object.keys(accounts).length > 0 ? { accounts } : {})
+  };
+}
+
+function normalizePermissionApprovals(value: unknown): LumeConfigPermissionApprovalRoutes {
+  if (!isPlainObject(value)) return {};
+  const desktop = isPlainObject(value.desktop) && typeof value.desktop.enabled === "boolean"
+    ? { enabled: value.desktop.enabled }
+    : {};
+  const subagent = normalizeSubagentApprovalPolicy(value.subagent);
+  const im = normalizeImApprovalPolicy(value.im);
+  return {
+    ...(Object.keys(desktop).length > 0 ? { desktop } : {}),
+    ...(Object.keys(subagent).length > 0 ? { subagent } : {}),
+    ...(Object.keys(im).length > 0 ? { im } : {})
+  };
+}
+
+function mergeImAccountApprovalPolicies(
+  base?: Record<string, LumeConfigImAccountApprovalPolicy>,
+  overlay?: Record<string, LumeConfigImAccountApprovalPolicy>
+): Record<string, LumeConfigImAccountApprovalPolicy> {
+  const merged: Record<string, LumeConfigImAccountApprovalPolicy> = {};
+  for (const accountId of new Set([...Object.keys(base ?? {}), ...Object.keys(overlay ?? {})])) {
+    merged[accountId] = {
+      ...(base?.[accountId] ?? {}),
+      ...(overlay?.[accountId] ?? {})
+    };
+  }
+  return merged;
+}
+
+function mergeImApprovalPolicy(
+  base?: LumeConfigImApprovalPolicy,
+  overlay?: LumeConfigImApprovalPolicy
+): LumeConfigImApprovalPolicy | undefined {
+  if (!base && !overlay) return undefined;
+  return {
+    ...(base ?? {}),
+    ...(overlay ?? {}),
+    accounts: mergeImAccountApprovalPolicies(base?.accounts, overlay?.accounts)
+  };
+}
+
+function mergePermissionApprovals(
+  base?: LumeConfigPermissionApprovalRoutes,
+  overlay?: LumeConfigPermissionApprovalRoutes
+): LumeConfigPermissionApprovalRoutes {
+  const im = mergeImApprovalPolicy(base?.im, overlay?.im);
+  return {
+    desktop: {
+      ...(base?.desktop ?? {}),
+      ...(overlay?.desktop ?? {})
+    },
+    subagent: {
+      ...(base?.subagent ?? {}),
+      ...(overlay?.subagent ?? {})
+    },
+    ...(im ? { im } : {})
+  };
 }
 
 function normalizeHooksSection(value: unknown): NonNullable<LumeConfigSectionSet["hooks"]> {
@@ -252,6 +387,9 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
       };
     }
     normalizedPermissions.privateWriteRoots = normalizeUniqueStringArray(value.permissions.privateWriteRoots);
+    if (isPlainObject(value.permissions.approvals)) {
+      normalizedPermissions.approvals = normalizePermissionApprovals(value.permissions.approvals);
+    }
     next.permissions = normalizedPermissions;
   }
 
@@ -320,7 +458,8 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
         ...(fallback.permissions?.classifier ?? {}),
         ...(base.permissions?.classifier ?? {})
       },
-      privateWriteRoots: base.permissions?.privateWriteRoots ?? fallback.permissions?.privateWriteRoots ?? []
+      privateWriteRoots: base.permissions?.privateWriteRoots ?? fallback.permissions?.privateWriteRoots ?? [],
+      approvals: mergePermissionApprovals(fallback.permissions?.approvals, base.permissions?.approvals)
     },
     hooks: {
       internal: {
@@ -496,7 +635,8 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       privateWriteRoots: [
         ...(file.permissions?.privateWriteRoots ?? []),
         ...(overlay?.permissions?.privateWriteRoots ?? [])
-      ]
+      ],
+      approvals: mergePermissionApprovals(file.permissions?.approvals, overlay?.permissions?.approvals)
     },
     hooks: {
       internal: {

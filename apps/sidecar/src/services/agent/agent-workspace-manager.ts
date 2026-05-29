@@ -31,6 +31,7 @@ import {
 import { seedDefaultSkills } from "../skills/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { createLogger } from "../infra/logger";
 
 interface AgentWorkspacesIndex {
   version: number;
@@ -38,6 +39,7 @@ interface AgentWorkspacesIndex {
 }
 
 const INDEX_VERSION = 1;
+const log = createLogger("agent-workspace-manager");
 
 function writeJsonAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -158,9 +160,10 @@ function copyDefaultSkills(workspaceSlug: string): void {
       copiedCount += 1;
     }
     if (copiedCount > 0) {
-      console.log(`[Agent 工作区] 已补齐默认 Skills (${copiedCount}) 到: ${workspaceSlug}`);
+      log.info("default skills copied to workspace", { workspaceSlug, copiedCount });
     }
-  } catch {
+  } catch (error) {
+    log.warn("default skills copy skipped", { workspaceSlug, error });
     // default-skills 不存在或复制失败时跳过
   }
 }
@@ -466,8 +469,8 @@ export function getWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
       try {
         const content = readFileSync(skillMdPath, "utf-8");
         skills.push(parseSkillFrontmatter(content, entry.name));
-      } catch {
-        console.warn(`[Agent 工作区] 解析 Skill 失败: ${entry.name}`);
+      } catch (error) {
+        log.warn("workspace skill parse failed", { workspaceSlug, skillSlug: entry.name, error });
       }
     }
   } catch {
@@ -528,5 +531,5 @@ export function deleteWorkspaceSkill(workspaceSlug: string, skillSlug: string): 
   }
 
   rmSync(skillPath, { recursive: true, force: true });
-  console.log(`[Agent 工作区] 已删除 Skill: ${workspaceSlug}/${skillSlug}`);
+  log.info("workspace skill deleted", { workspaceSlug, skillSlug });
 }

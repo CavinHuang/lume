@@ -12,10 +12,13 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { getDefaultSkillsDir } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
 
 export type DefaultSkillsSource =
   | { kind: "archive"; path: string }
   | { kind: "directory"; path: string };
+
+const log = createLogger("default-skills-seeder");
 
 function resolveBundledDefaultSkillsDir(): string | null {
   const fromEnv = process.env.LUME_DEFAULT_SKILLS_DIR?.trim();
@@ -113,7 +116,7 @@ export function extractDefaultSkillsArchive(archivePath: string, userDir: string
 export function seedDefaultSkills(): void {
   const source = resolveBundledDefaultSkillsSource();
   if (!source || !existsSync(source.path)) {
-    console.log("[配置] 未找到内置 default-skills 资源，跳过");
+    log.info("bundled default skills source missing, skipped");
     return;
   }
 
@@ -122,7 +125,7 @@ export function seedDefaultSkills(): void {
   try {
     if (source.kind === "archive") {
       extractDefaultSkillsArchive(source.path, userDir);
-      console.log("[配置] 已同步默认 Skills 资源包");
+      log.info("default skills archive synced", { source: source.path, target: userDir });
       return;
     }
 
@@ -132,9 +135,9 @@ export function seedDefaultSkills(): void {
       const target = join(userDir, entry.name);
       if (existsSync(target)) continue;
       cpSync(sourcePath, target, { recursive: true });
-      console.log(`[配置] 已同步默认 Skill: ${entry.name}`);
+      log.info("default skill synced", { skillSlug: entry.name });
     }
   } catch (error) {
-    console.warn("[配置] 同步默认 Skills 失败:", error);
+    log.warn("default skills sync failed", { error });
   }
 }

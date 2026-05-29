@@ -131,6 +131,74 @@ describe("lume-config-service", () => {
     expect(effective.permissions?.privateWriteRoots).toEqual([".lume", ".lume/artifacts"]);
   });
 
+  test("应支持权限审批路由配置并允许 workspace 覆盖", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "permissions.approvals",
+      value: {
+        subagent: {
+          mode: "ask-parent",
+          allowAlways: "desktop-only"
+        },
+        im: {
+          enabled: true,
+          allowTextApprove: true,
+          allowAlways: "desktop-only",
+          groupApproval: "desktop-only",
+          accounts: {
+            "weixin-work": {
+              enabled: true,
+              allowTextApprove: true,
+              allowAlways: "dm-only"
+            }
+          }
+        }
+      }
+    });
+
+    updateLumeConfigSection({
+      source: "agent",
+      workspaceSlug: "default",
+      path: "permissions.approvals",
+      value: {
+        im: {
+          allowTextApprove: false,
+          accounts: {
+            "weixin-work": {
+              enabled: false
+            },
+            "weixin-personal": {
+              enabled: true
+            }
+          }
+        }
+      }
+    });
+
+    const effective = getEffectiveLumeConfig("default");
+
+    expect(effective.permissions?.approvals?.subagent).toEqual({
+      mode: "ask-parent",
+      allowAlways: "desktop-only"
+    });
+    expect(effective.permissions?.approvals?.im).toEqual({
+      enabled: true,
+      allowTextApprove: false,
+      allowAlways: "desktop-only",
+      groupApproval: "desktop-only",
+      accounts: {
+        "weixin-work": {
+          enabled: false,
+          allowTextApprove: true,
+          allowAlways: "dm-only"
+        },
+        "weixin-personal": {
+          enabled: true
+        }
+      }
+    });
+  });
+
   test("应正确叠加 workspace 覆盖配置", () => {
     updateLumeConfigSection({
       source: "system",

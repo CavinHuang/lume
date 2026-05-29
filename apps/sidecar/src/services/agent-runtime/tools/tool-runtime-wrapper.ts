@@ -1,6 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
+import { createDiagnosticLogSummary, createLogger } from "../../infra/logger";
 import type { FileAccessLedger } from "./file-access-ledger";
 import type { LumeToolDescriptor } from "./tool-types";
 
@@ -15,6 +16,7 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
   const { descriptor } = input;
   const tool = descriptor.definition;
   let calls = 0;
+  const log = createLogger("tool-runtime", input.threadId);
 
   return {
     ...tool,
@@ -35,20 +37,67 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       runtimeWrapped: true
     },
     async call(rawInput, context) {
+      const startedAt = Date.now();
+      log.info("tool call started", {
+        threadId: input.threadId,
+        toolName: tool.name,
+        canonicalName: descriptor.canonicalName,
+        source: descriptor.source,
+        capability: descriptor.metadata.capability,
+        riskLevel: descriptor.metadata.riskLevel,
+        toolUseId: context.toolUseId,
+        inputSummary: createDiagnosticLogSummary(rawInput)
+      });
       const payloadGuard = enforcePayloadPolicy(descriptor, rawInput, context.toolUseId);
-      if (payloadGuard) return payloadGuard;
+      if (payloadGuard) {
+        log.warn("tool call blocked by payload policy", {
+          threadId: input.threadId,
+          toolName: tool.name,
+          canonicalName: descriptor.canonicalName,
+          toolUseId: context.toolUseId,
+          elapsedMs: Date.now() - startedAt
+        });
+        return payloadGuard;
+      }
 
       calls++;
       const maxCalls = descriptor.metadata.executionPolicy?.maxCallsPerTurn;
       if (maxCalls !== undefined && calls > maxCalls) {
+        log.warn("tool call blocked by max call policy", {
+          threadId: input.threadId,
+          toolName: tool.name,
+          canonicalName: descriptor.canonicalName,
+          toolUseId: context.toolUseId,
+          calls,
+          maxCalls,
+          elapsedMs: Date.now() - startedAt
+        });
         return errorResult(context.toolUseId, `${tool.name} 超过本轮最大调用次数 ${maxCalls}`);
       }
 
       const executionGuard = enforceExecutionPolicy(descriptor, rawInput, context.toolUseId);
-      if (executionGuard) return executionGuard;
+      if (executionGuard) {
+        log.warn("tool call blocked by execution policy", {
+          threadId: input.threadId,
+          toolName: tool.name,
+          canonicalName: descriptor.canonicalName,
+          toolUseId: context.toolUseId,
+          elapsedMs: Date.now() - startedAt
+        });
+        return executionGuard;
+      }
 
       const fileGuard = await enforceFileAccessPolicy(input, rawInput, context.toolUseId);
-      if (fileGuard) return fileGuard;
+      if (fileGuard) {
+        log.warn("tool call blocked by file access policy", {
+          threadId: input.threadId,
+          toolName: tool.name,
+          canonicalName: descriptor.canonicalName,
+          toolUseId: context.toolUseId,
+          elapsedMs: Date.now() - startedAt
+        });
+        return fileGuard;
+      }
 
       context.emitEvent?.({
         type: "system",
@@ -66,6 +115,14 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       try {
         result = await tool.call(rawInput, context);
       } catch (error) {
+        log.error("tool call threw", {
+          threadId: input.threadId,
+          toolName: tool.name,
+          canonicalName: descriptor.canonicalName,
+          toolUseId: context.toolUseId,
+          error,
+          elapsedMs: Date.now() - startedAt
+        });
         result = errorResult(context.toolUseId, `${tool.name} 执行失败：${normalizeErrorMessage(error)}`);
       }
 
@@ -87,6 +144,21 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         ...(governed.result.is_error === true ? { error_code: "tool_error" } : {}),
         session_id: context.sessionId ?? input.threadId
       } as any);
+
+      log[governed.result.is_error === true ? "warn" : "info"]("tool call completed", {
+        threadId: input.threadId,
+        toolName: tool.name,
+        canonicalName: descriptor.canonicalName,
+        source: descriptor.source,
+        capability: descriptor.metadata.capability,
+        riskLevel: descriptor.metadata.riskLevel,
+        toolUseId: context.toolUseId,
+        isError: governed.result.is_error === true,
+        outputSummary: governed.summary,
+        originalSize: governed.originalSize,
+        truncated: governed.truncated,
+        elapsedMs: Date.now() - startedAt
+      });
 
       return governed.result;
     }

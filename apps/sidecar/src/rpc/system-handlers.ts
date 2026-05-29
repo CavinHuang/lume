@@ -9,6 +9,7 @@ import {
 import type {
   GitHubReleaseListOptions,
   NetworkDiagnosticResult,
+  ReadLogFileInput,
   UpdateGeneralSettingsInput,
   UpdateUiStateInput
 } from "@lume/shared";
@@ -28,6 +29,11 @@ import {
   getPersistedGeneralSettings,
   updatePersistedGeneralSettings
 } from "../services/system/general-settings-service";
+import {
+  exportAllLogFiles,
+  listLogFiles,
+  readLogFile
+} from "../services/infra/log-viewer-service";
 import { getActiveProxyConfig } from "../services/system/proxy-settings-manager";
 import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
 import {
@@ -36,6 +42,7 @@ import {
   lumeConfigEffectiveInputSchema,
   lumeConfigUpdateInputSchema,
   systemConfigUpdateInputSchema,
+  readLogFileInputSchema,
   updateGeneralSettingsInputSchema,
   updateUiStateInputSchema
 } from "./schemas";
@@ -141,6 +148,20 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
           GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE
         )
       ),
+    [GENERAL_SETTINGS_IPC_CHANNELS.LIST_LOG_FILES]: async () => listLogFiles(),
+    [GENERAL_SETTINGS_IPC_CHANNELS.READ_LOG_FILE]: async (params) =>
+      readLogFile(
+        validateInput(
+          readLogFileInputSchema,
+          params ?? {},
+          GENERAL_SETTINGS_IPC_CHANNELS.READ_LOG_FILE
+        ) as ReadLogFileInput
+      ),
+    [GENERAL_SETTINGS_IPC_CHANNELS.EXPORT_LOGS]: async () => {
+      const result = exportAllLogFiles();
+      openInSystem(result.path);
+      return result;
+    },
     [LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
       const input = validateInput(
         lumeConfigEffectiveInputSchema,

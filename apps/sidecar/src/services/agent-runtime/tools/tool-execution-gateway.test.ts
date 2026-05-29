@@ -61,6 +61,35 @@ describe("ToolExecutionGateway", () => {
     });
   });
 
+  test("forwards classifierEnabled into PermissionRuntime", async () => {
+    const seenClassifierEnabled: unknown[] = [];
+    const gateway = new ToolExecutionGateway({
+      guardrails: guardrail({ behavior: "allow" }),
+      permissionRuntime: {
+        async authorize(input) {
+          seenClassifierEnabled.push(input.classifierEnabled);
+          return {
+            status: "approval_required",
+            reasonCode: "runtime_ask",
+            riskLevel: "medium",
+            explanation: "runtime asks"
+          };
+        }
+      } as Pick<PermissionRuntime, "authorize">
+    });
+
+    await gateway.authorize({
+      toolName: "Bash",
+      descriptor: descriptor(),
+      input: { command: "pwd" },
+      permissionMode: "default",
+      classifierEnabled: false,
+      context: { threadId: "thread-1" }
+    });
+
+    expect(seenClassifierEnabled).toEqual([false]);
+  });
+
   test("uses descriptor metadata as the approval source of truth", async () => {
     const gateway = new ToolExecutionGateway({
       guardrails: guardrail({ behavior: "allow" })

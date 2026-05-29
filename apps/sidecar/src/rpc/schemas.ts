@@ -262,6 +262,59 @@ const lumeConfigSubagentStrategySchema = z.object({
   defaultModelRef: nonEmptyTrimmedStringSchema.optional()
 }).strict();
 
+const lumeConfigPermissionRuleSchema = z.object({
+  id: z.string().optional(),
+  tool: nonEmptyTrimmedStringSchema,
+  commandPattern: z.string().optional(),
+  pathPattern: z.string().optional(),
+  action: z.enum(["allow", "ask", "deny"]),
+  scope: z.enum(["session", "workspace", "global"]).optional()
+}).strict();
+
+const lumeConfigApprovalAllowAlwaysSchema = z.enum(["disabled", "desktop-only", "dm-only"]);
+
+const lumeConfigSubagentApprovalSchema = z.object({
+  mode: z.enum(["inherit", "ask-parent", "deny-high-risk"]).optional(),
+  allowAlways: z.enum(["disabled", "desktop-only", "parent-only"]).optional()
+}).strict();
+
+const lumeConfigImAccountApprovalSchema = z.object({
+  enabled: z.boolean().optional(),
+  allowTextApprove: z.boolean().optional(),
+  allowAlways: lumeConfigApprovalAllowAlwaysSchema.optional(),
+  groupApproval: z.enum(["disabled", "desktop-only"]).optional(),
+  approverPeerIds: z.array(nonEmptyTrimmedStringSchema).optional()
+}).strict();
+
+const lumeConfigImApprovalSchema = z.object({
+  enabled: z.boolean().optional(),
+  allowTextApprove: z.boolean().optional(),
+  allowAlways: lumeConfigApprovalAllowAlwaysSchema.optional(),
+  groupApproval: z.enum(["disabled", "desktop-only"]).optional(),
+  accounts: z.record(z.string(), lumeConfigImAccountApprovalSchema).optional()
+}).strict();
+
+const lumeConfigPermissionApprovalsSchema = z.object({
+  desktop: z.object({
+    enabled: z.boolean().optional()
+  }).strict().optional(),
+  subagent: lumeConfigSubagentApprovalSchema.optional(),
+  im: lumeConfigImApprovalSchema.optional()
+}).strict();
+
+const lumeConfigPermissionsSchema = z.object({
+  toolPolicy: z.object({
+    allow: z.array(z.string()).optional(),
+    deny: z.array(z.string()).optional()
+  }).strict().optional(),
+  rules: z.array(lumeConfigPermissionRuleSchema).optional(),
+  classifier: z.object({
+    enabled: z.boolean().optional()
+  }).strict().optional(),
+  privateWriteRoots: z.array(z.string()).optional(),
+  approvals: lumeConfigPermissionApprovalsSchema.optional()
+}).strict();
+
 const lumeConfigUpdateBaseSchema = z.object({
   source: z.enum(["user", "agent", "system"]),
   workspaceSlug: optionalIdSchema,
@@ -304,6 +357,14 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("agent.permissionMode"),
     value: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).nullable()
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("permissions"),
+    value: lumeConfigPermissionsSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("permissions.approvals"),
+    value: lumeConfigPermissionApprovalsSchema
   })
 ]);
 
@@ -559,7 +620,8 @@ export const submitAskUserQuestionInputSchema = z.object({
 export const submitToolPermissionInputSchema = z.object({
   threadId: idSchema,
   requestId: idSchema,
-  decision: z.enum(["allow_once", "allow_always", "deny"])
+  decision: z.enum(["allow_once", "allow_always", "deny"]),
+  threadPermissionMode: z.enum(["bypassPermissions"]).optional()
 });
 
 export const submitTaskApprovalInputSchema = z.object({
@@ -719,6 +781,13 @@ export const updateGeneralSettingsInputSchema = z.object({
 
 export const clearCacheInputSchema = z.object({
   logs: z.boolean().optional()
+}).strict();
+
+export const readLogFileInputSchema = z.object({
+  fileName: z.string().min(1),
+  levels: z.array(z.enum(["trace", "debug", "info", "warn", "error", "fatal"])).optional(),
+  query: z.string().optional(),
+  maxLines: z.number().int().min(1).max(20000).optional()
 }).strict();
 
 export const lumeConfigEffectiveInputSchema = z.object({

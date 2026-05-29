@@ -10,13 +10,16 @@ export interface PermissionSessionGrantInput {
 export interface PermissionSessionStore {
   grant(input: PermissionSessionGrantInput): void;
   grantFingerprint(threadId: string, fingerprint: string): void;
+  bypass(threadId: string): void;
   isGranted(input: PermissionSessionGrantInput): boolean;
   isFingerprintGranted(threadId: string, fingerprint: string): boolean;
+  isBypassed(threadId: string): boolean;
   clear(threadId: string): void;
 }
 
 export function createPermissionSessionStore(): PermissionSessionStore {
   const grantsByThread = new Map<string, Set<string>>();
+  const bypassedThreads = new Set<string>();
   const grantFingerprint = (threadId: string, fingerprint: string): void => {
     const normalized = fingerprint.trim();
     if (!normalized) return;
@@ -44,6 +47,11 @@ export function createPermissionSessionStore(): PermissionSessionStore {
       grantFingerprint(input.threadId, fingerprint);
     },
     grantFingerprint,
+    bypass(threadId) {
+      const normalized = threadId.trim();
+      if (!normalized) return;
+      bypassedThreads.add(normalized);
+    },
     isGranted(input) {
       return isFingerprintGranted(input.threadId, buildPermissionFingerprint({
         descriptor: input.descriptor,
@@ -51,8 +59,14 @@ export function createPermissionSessionStore(): PermissionSessionStore {
       }));
     },
     isFingerprintGranted,
+    isBypassed(threadId) {
+      const normalized = threadId.trim();
+      if (!normalized) return false;
+      return bypassedThreads.has(normalized);
+    },
     clear(threadId) {
       grantsByThread.delete(threadId);
+      bypassedThreads.delete(threadId);
     }
   };
 }

@@ -1,4 +1,4 @@
-import type { LumeRuntimeEvent } from "@lume/shared";
+import type { LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
 import type { LumeRunItem } from "./run-items";
 import type { LumeRunState } from "./run-state";
 
@@ -311,27 +311,20 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
     }];
   }
   if (item.name === "result") {
-    const usage = asRecord(payload.usage);
-    const inputTokens = numberValue(usage.input_tokens);
-    const outputTokens = numberValue(usage.output_tokens);
-    const cachedTokens = numberValue(usage.cache_read_input_tokens)
-      + numberValue(usage.cache_creation_input_tokens);
-    const totalTokens = inputTokens
-      + outputTokens
-      + cachedTokens;
+    const context = normalizeRuntimeContextUsage(payload.contextUsage);
+    const billing = normalizeRuntimeBillingUsage(payload.billingUsage);
+    if (!context || !billing) return [];
     return [{
       id: `${run.runId}:${item.id}:usage.updated`,
       type: "usage.updated",
       threadId: run.threadId,
       runId: run.runId,
       createdAt: item.createdAt,
-      inputTokens,
-      outputTokens,
-      ...(cachedTokens > 0 ? { cachedTokens } : {}),
-      ...optionalUsageRecords(payload.usageRecords, payload.modelUsage),
-      totalTokens,
-      ...optionalNumber("contextWindow", contextWindowFromModelUsage(payload.modelUsage)),
-      ...(typeof payload.total_cost_usd === "number" ? { costUSD: payload.total_cost_usd } : {})
+      ...(stringField(payload.subagent_run_id) ? { subagentRunId: stringField(payload.subagent_run_id) } : {}),
+      ...(stringField(payload.parent_tool_use_id) ? { parentToolUseId: stringField(payload.parent_tool_use_id) } : {}),
+      scope: usageScopeFromBilling(billing),
+      context,
+      billing
     }];
   }
   return [];
@@ -510,63 +503,129 @@ function contextWindowFromMetadata(metadata: Record<string, unknown>): number | 
   return undefined;
 }
 
-function contextWindowFromModelUsage(modelUsage: unknown): number | undefined {
-  const usageByModel = asRecord(modelUsage);
-  for (const usage of Object.values(usageByModel)) {
-    const record = asRecord(usage);
-    if (typeof record.contextWindow === "number" && Number.isFinite(record.contextWindow)) {
-      return record.contextWindow;
-    }
-  }
-  return undefined;
+function normalizeRuntimeContextUsage(
+  value: unknown
+): Extract<LumeRuntimeEvent, { type: "usage.updated" }>["context"] | null {
+  const record = asRecord(value);
+  const contextWindow = numberValue(record.contextWindow);
+  if (contextWindow <= 0) return null;
+  const usage = normalizeRuntimeUsage(record);
+  const sections = asRecord(record.sections);
+  const normalizedSections = {
+    ...optionalNumber("systemTokens", numberOrUndefined(sections.systemTokens)),
+    ...optionalNumber("memoryTokens", numberOrUndefined(sections.memoryTokens)),
+    ...optionalNumber("toolSchemaTokens", numberOrUndefined(sections.toolSchemaTokens)),
+    ...optionalNumber("messageTokens", numberOrUndefined(sections.messageTokens))
+  };
+  return {
+    source: record.source === "provider" ? "provider" : "estimated",
+    ...usage,
+    estimatedTailTokens: numberValue(record.estimatedTailTokens),
+    ...(Object.keys(normalizedSections).length > 0 ? { sections: normalizedSections } : {}),
+    contextWindow,
+    contextWindowSource: isContextWindowSource(record.contextWindowSource)
+      ? record.contextWindowSource
+      : "fallback"
+  };
 }
 
-function optionalUsageRecords(
-  sdkUsageRecords: unknown,
-  modelUsage: unknown
-): Pick<Extract<LumeRuntimeEvent, { type: "usage.updated" }>, "usageRecords"> | {} {
-  if (Array.isArray(sdkUsageRecords)) {
-    const usageRecords = sdkUsageRecords
-      .map((usage) => {
-        const record = asRecord(usage);
-        const inputTokens = numberValue(record.inputTokens);
-        const outputTokens = numberValue(record.outputTokens);
-        const directCachedTokens = numberValue(record.cachedTokens);
-        const cachedTokens = directCachedTokens > 0
-          ? directCachedTokens
-          : numberValue(record.cacheReadInputTokens) + numberValue(record.cacheCreationInputTokens);
-        return {
-          callerLabel: stringValue(record.callerLabel, "LLM call"),
-          ...(typeof record.model === "string" && record.model.trim() ? { model: record.model } : {}),
-          ...(typeof record.turn === "number" && Number.isFinite(record.turn) ? { turn: record.turn } : {}),
-          inputTokens,
-          outputTokens,
-          ...(cachedTokens > 0 ? { cachedTokens } : {}),
-          ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
-        };
-      })
-      .filter((record) => record.inputTokens > 0 || record.outputTokens > 0 || (record.cachedTokens ?? 0) > 0);
-    if (usageRecords.length > 0) return { usageRecords };
+function normalizeRuntimeBillingUsage(
+  value: unknown
+): Extract<LumeRuntimeEvent, { type: "usage.updated" }>["billing"] | null {
+  const record = asRecord(value);
+  const cumulative = normalizeRuntimeUsage(record.cumulative);
+  const records = Array.isArray(record.records)
+    ? record.records.map(normalizeRuntimeBillingRecord).filter((item): item is NonNullable<typeof item> => item !== null)
+    : [];
+  const latestRecord = normalizeRuntimeBillingRecord(record.latestRecord);
+  if (
+    cumulative.totalTokens <= 0
+    && records.length === 0
+    && !latestRecord
+  ) {
+    return null;
   }
+  return {
+    cumulative,
+    ...(latestRecord ? { latestRecord } : {}),
+    records,
+    totalCostUSD: numberValue(record.totalCostUSD)
+  };
+}
 
-  const usageByModel = asRecord(modelUsage);
-  const usageRecords = Object.entries(usageByModel)
-    .map(([modelId, usage]) => {
-      const record = asRecord(usage);
-      const inputTokens = numberValue(record.inputTokens);
-      const outputTokens = numberValue(record.outputTokens);
-      const cachedTokens = numberValue(record.cacheReadInputTokens)
-        + numberValue(record.cacheCreationInputTokens);
-      return {
-        callerLabel: modelId,
-        inputTokens,
-        outputTokens,
-        ...(cachedTokens > 0 ? { cachedTokens } : {}),
-        ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
-      };
-    })
-    .filter((record) => record.inputTokens > 0 || record.outputTokens > 0 || (record.cachedTokens ?? 0) > 0);
-  return usageRecords.length > 0 ? { usageRecords } : {};
+function normalizeRuntimeUsage(value: unknown): RuntimeNormalizedUsage {
+  const record = asRecord(value);
+  const inputTokens = numberValue(record.inputTokens);
+  const outputTokens = numberValue(record.outputTokens);
+  const cacheReadInputTokens = numberValue(record.cacheReadInputTokens);
+  const cacheCreationInputTokens = numberValue(record.cacheCreationInputTokens);
+  const splitCachedTokens = cacheReadInputTokens + cacheCreationInputTokens;
+  const directCachedTokens = numberValue(record.cachedTokens);
+  const cachedTokens = splitCachedTokens > 0 ? splitCachedTokens : directCachedTokens;
+  const explicitTotalTokens = numberValue(record.totalTokens);
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadInputTokens,
+    cacheCreationInputTokens,
+    cachedTokens,
+    totalTokens: explicitTotalTokens > 0 ? explicitTotalTokens : inputTokens + outputTokens + cachedTokens
+  };
+}
+
+function normalizeRuntimeBillingRecord(
+  value: unknown
+): Extract<LumeRuntimeEvent, { type: "usage.updated" }>["billing"]["records"][number] | null {
+  const record = asRecord(value);
+  const usage = normalizeRuntimeUsage(record);
+  if (usage.totalTokens <= 0) return null;
+  const usageIdentity = normalizeRuntimeUsageIdentity(record.usageIdentity);
+  return {
+    callerLabel: stringValue(record.callerLabel, usageIdentity?.callerLabel ?? "LLM call"),
+    callerKind: usageIdentity?.callerKind ?? stringValue(record.callerKind, "conversation"),
+    ...(usageIdentity ? { usageIdentity } : {}),
+    ...(typeof record.model === "string" && record.model.trim() ? { model: record.model } : {}),
+    ...(typeof record.turn === "number" && Number.isFinite(record.turn) ? { turn: record.turn } : usageIdentity?.turn !== undefined ? { turn: usageIdentity.turn } : {}),
+    ...(typeof record.threadId === "string" && record.threadId.trim() ? { threadId: record.threadId } : usageIdentity?.threadId ? { threadId: usageIdentity.threadId } : {}),
+    ...(typeof record.runId === "string" && record.runId.trim() ? { runId: record.runId } : usageIdentity?.runId ? { runId: usageIdentity.runId } : {}),
+    ...(typeof record.parentThreadId === "string" && record.parentThreadId.trim() ? { parentThreadId: record.parentThreadId } : usageIdentity?.parentThreadId ? { parentThreadId: usageIdentity.parentThreadId } : {}),
+    ...(typeof record.parentRunId === "string" && record.parentRunId.trim() ? { parentRunId: record.parentRunId } : usageIdentity?.parentRunId ? { parentRunId: usageIdentity.parentRunId } : {}),
+    ...(typeof record.subagentRunId === "string" && record.subagentRunId.trim() ? { subagentRunId: record.subagentRunId } : usageIdentity?.subagentRunId ? { subagentRunId: usageIdentity.subagentRunId } : {}),
+    ...(typeof record.responseId === "string" && record.responseId.trim() ? { responseId: record.responseId } : usageIdentity?.responseId ? { responseId: usageIdentity.responseId } : {}),
+    ...usage,
+    ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
+  };
+}
+
+function normalizeRuntimeUsageIdentity(
+  value: unknown
+): Extract<LumeRuntimeEvent, { type: "usage.updated" }>["billing"]["records"][number]["usageIdentity"] | undefined {
+  const record = asRecord(value);
+  if (typeof record.threadId !== "string" || !record.threadId.trim()) return undefined;
+  return {
+    threadId: record.threadId,
+    callerKind: stringValue(record.callerKind, "conversation"),
+    ...(typeof record.runId === "string" && record.runId.trim() ? { runId: record.runId } : {}),
+    ...(typeof record.parentThreadId === "string" && record.parentThreadId.trim() ? { parentThreadId: record.parentThreadId } : {}),
+    ...(typeof record.parentRunId === "string" && record.parentRunId.trim() ? { parentRunId: record.parentRunId } : {}),
+    ...(typeof record.subagentRunId === "string" && record.subagentRunId.trim() ? { subagentRunId: record.subagentRunId } : {}),
+    ...(typeof record.responseId === "string" && record.responseId.trim() ? { responseId: record.responseId } : {}),
+    ...(typeof record.turn === "number" && Number.isFinite(record.turn) ? { turn: record.turn } : {}),
+    ...(typeof record.callerLabel === "string" && record.callerLabel.trim() ? { callerLabel: record.callerLabel } : {})
+  };
+}
+
+function usageScopeFromBilling(
+  billing: Extract<LumeRuntimeEvent, { type: "usage.updated" }>["billing"]
+): Extract<LumeRuntimeEvent, { type: "usage.updated" }>["scope"] {
+  const latest = billing.latestRecord ?? billing.records[billing.records.length - 1];
+  if (latest?.callerKind === "subagent" || latest?.subagentRunId) return "subagent";
+  if (latest && latest.callerKind !== "conversation") return "background";
+  return "main";
+}
+
+function isContextWindowSource(value: unknown): value is Extract<LumeRuntimeEvent, { type: "usage.updated" }>["context"]["contextWindowSource"] {
+  return value === "model" || value === "provider" || value === "fallback";
 }
 
 function optionalBudget(metadata: Record<string, unknown>): { budget: NonNullable<Extract<LumeRuntimeEvent, { type: "context.compaction.started" }>["budget"]> } | {} {

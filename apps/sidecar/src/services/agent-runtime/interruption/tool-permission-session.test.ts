@@ -20,6 +20,8 @@ describe("tool-permission-session", () => {
   afterEach(() => {
     runtimePermissionSessionStore.clear("s2");
     runtimePermissionSessionStore.clear("s2-fingerprint");
+    runtimePermissionSessionStore.clear("parent-session");
+    runtimePermissionSessionStore.clear("child-session");
     runtimePermissionSessionStore.clear("cold-continuation-thread");
     if (prevConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
@@ -67,6 +69,64 @@ describe("tool-permission-session", () => {
     expect(runtimePermissionSessionStore.isFingerprintGranted("s2-fingerprint", "bash:rm -rf /tmp/nope")).toBeFalse();
   });
 
+  test("allow_always 应遵守请求级审批策略", async () => {
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-policy",
+        requestId: "req-policy",
+        toolUseId: "tool-policy",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        canAllowAlways: false,
+        input: { command: "git status" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+    expect(() => submitToolPermissionDecision({
+      threadId: "s-policy",
+      requestId: "req-policy",
+      decision: "allow_always"
+    })).toThrow("当前审批策略不允许始终允许");
+    submitToolPermissionDecision({
+      threadId: "s-policy",
+      requestId: "req-policy",
+      decision: "deny"
+    });
+    expect(await waitPromise).toBe("deny");
+  });
+
+  test("本线程全部允许应遵守请求级审批策略", async () => {
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-thread-policy",
+        requestId: "req-thread-policy",
+        toolUseId: "tool-thread-policy",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        canAllowAlways: false,
+        input: { command: "git status" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+    expect(() => submitToolPermissionDecision({
+      threadId: "s-thread-policy",
+      requestId: "req-thread-policy",
+      decision: "allow_once",
+      threadPermissionMode: "bypassPermissions"
+    })).toThrow("当前审批策略不允许切换为全部允许");
+    expect(runtimePermissionSessionStore.isBypassed("s-thread-policy")).toBeFalse();
+    submitToolPermissionDecision({
+      threadId: "s-thread-policy",
+      requestId: "req-thread-policy",
+      decision: "deny"
+    });
+    expect(await waitPromise).toBe("deny");
+  });
+
   test("应支持由父会话提交子会话权限决策", async () => {
     const waitPromise = waitForToolPermissionDecision(
       {
@@ -90,6 +150,35 @@ describe("tool-permission-session", () => {
     expect(handled).toBeTrue();
     const decision = await waitPromise;
     expect(decision).toBe("allow_once");
+  });
+
+  test("提交本线程全部允许时应切换审批会话和原始运行会话", async () => {
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "child-session",
+        requestId: "req-bypass",
+        toolUseId: "tool-bypass",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        input: { command: "echo hi" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+    setToolPermissionApprovalSession("req-bypass", "parent-session");
+
+    const handled = submitToolPermissionDecision({
+      threadId: "parent-session",
+      requestId: "req-bypass",
+      decision: "allow_once",
+      threadPermissionMode: "bypassPermissions"
+    });
+
+    expect(handled).toBeTrue();
+    expect(runtimePermissionSessionStore.isBypassed("parent-session")).toBeTrue();
+    expect(runtimePermissionSessionStore.isBypassed("child-session")).toBeTrue();
+    expect(await waitPromise).toBe("allow_once");
   });
 
   test("listPending 应保留 subagentLabel，供 UI 展示子代理名称", async () => {

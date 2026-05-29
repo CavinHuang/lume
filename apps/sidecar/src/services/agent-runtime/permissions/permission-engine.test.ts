@@ -126,6 +126,36 @@ describe("PermissionEngine", () => {
     });
   });
 
+  test("classifier can be disabled so metadata remains the approval source", async () => {
+    let classifierCalls = 0;
+    const engine = new PermissionEngine({
+      classifier: {
+        async classify() {
+          classifierCalls += 1;
+          return {
+            riskLevel: "low",
+            reasonCode: "test_classifier",
+            explanation: "测试分类器允许",
+            shouldAsk: false
+          };
+        }
+      }
+    });
+
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "pwd" },
+      mode: "dontAsk",
+      classifierEnabled: false,
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "approval_required",
+      reasonCode: "metadata_requires_approval",
+      riskLevel: "high"
+    });
+    expect(classifierCalls).toBe(0);
+  });
+
   test("bypassPermissions allows approval checks without suppressing structured reason", async () => {
     const engine = new PermissionEngine();
 
@@ -166,6 +196,22 @@ describe("PermissionEngine", () => {
       context: { threadId: "thread-1", cwd: "/tmp/project" }
     })).resolves.toMatchObject({
       status: "approval_required"
+    });
+  });
+
+  test("session bypass allows later approvals in the same thread", async () => {
+    const session = createPermissionSessionStore();
+    const engine = new PermissionEngine({ session });
+    session.bypass("thread-1");
+
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "rm -rf /tmp/nope" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "session_bypass"
     });
   });
 

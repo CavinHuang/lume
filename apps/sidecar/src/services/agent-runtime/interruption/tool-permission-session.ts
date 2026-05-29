@@ -39,6 +39,14 @@ export function markToolFingerprintAllowed(threadId: string, fingerprint?: strin
   runtimePermissionSessionStore.grantFingerprint(threadId, normalized);
 }
 
+export function markToolPermissionSessionBypassed(...threadIds: Array<string | undefined>): void {
+  for (const threadId of threadIds) {
+    const normalized = threadId?.trim();
+    if (!normalized) continue;
+    runtimePermissionSessionStore.bypass(normalized);
+  }
+}
+
 export function clearToolPermissionSession(threadId: string): void {
   runtimePermissionSessionStore.clear(threadId);
   cancelPendingToolPermissionBySession(threadId);
@@ -112,14 +120,24 @@ export function waitForToolPermissionDecision(
 }
 
 export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): boolean {
+  const shouldBypassThread = input.threadPermissionMode === "bypassPermissions" && input.decision !== "deny";
   const pending = pendingToolPermissionResolvers.get(input.requestId);
   if (!pending) {
     const persisted = findPersistedToolPermissionRequest(input.threadId, input.requestId);
+    if (input.decision === "allow_always" && persisted?.canAllowAlways === false) {
+      throw new Error("当前审批策略不允许始终允许");
+    }
+    if (shouldBypassThread && persisted?.canAllowAlways === false) {
+      throw new Error("当前审批策略不允许切换为全部允许");
+    }
     const handled = resolvePersistedToolApprovalInterruption({
       approvalThreadId: input.threadId,
       requestId: input.requestId,
       decision: input.decision
     });
+    if (handled && shouldBypassThread) {
+      markToolPermissionSessionBypassed(input.threadId, persisted?.threadId, persisted?.originThreadId);
+    }
     if (handled && input.decision === "allow_always" && persisted?.grantSuggestion?.fingerprint) {
       markToolFingerprintAllowed(
         persisted.originThreadId ?? persisted.threadId,
@@ -130,6 +148,15 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
   }
   if (pending.approvalSessionId !== input.threadId) {
     throw new Error("工具权限确认会话不匹配");
+  }
+  if (input.decision === "allow_always" && pending.request.canAllowAlways === false) {
+    throw new Error("当前审批策略不允许始终允许");
+  }
+  if (shouldBypassThread && pending.request.canAllowAlways === false) {
+    throw new Error("当前审批策略不允许切换为全部允许");
+  }
+  if (shouldBypassThread) {
+    markToolPermissionSessionBypassed(input.threadId, pending.threadId, pending.request.originThreadId);
   }
   void pending.resolve(input.decision);
   return true;

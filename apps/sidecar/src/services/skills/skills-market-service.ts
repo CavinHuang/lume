@@ -14,6 +14,7 @@ import type {
 } from "@lume/shared";
 import { getWorkspaceSkills } from "../agent/agent-workspace-manager";
 import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
 import { seedDefaultSkills } from "./default-skills-seeder";
 import { getInstalledSkillSourceMetadata, saveLocalInstalledSkillMetadata, type InstalledSkillSourceMeta } from "./skills-market-metadata";
 
@@ -29,6 +30,7 @@ const TRUST_PRIORITY: Record<SkillCatalogItem["trustLevel"], number> = {
   "review-required": 1,
   "blocked-by-default": 2
 };
+const log = createLogger("skills-market-service");
 
 function parseSkillFrontmatter(content: string, slug: string): SkillMeta {
   const meta: SkillMeta = { slug, name: slug };
@@ -60,8 +62,8 @@ function readSkillsFromDir(skillsDir: string): SkillMeta[] {
     if (!existsSync(skillMdPath)) continue;
     try {
       skills.push(parseSkillFrontmatter(readFileSync(skillMdPath, "utf-8"), entry.name));
-    } catch {
-      console.warn(`[Skills Market] 解析 skill 失败: ${entry.name}`);
+    } catch (error) {
+      log.warn("skill market skill parse failed", { skillSlug: entry.name, error });
     }
   }
   return skills;

@@ -1066,7 +1066,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const result = submitAgentToolPermission({
         threadId: input.threadId,
         requestId: input.requestId,
-        decision: input.decision
+        decision: input.decision,
+        ...(input.threadPermissionMode ? { threadPermissionMode: input.threadPermissionMode } : {})
       });
       return result;
     },

@@ -38,11 +38,48 @@ function emitSuccessfulRun(emit: {
     type: "result",
     subtype: "success",
     duration_ms: 12,
+    contextUsage: {
+      source: "provider",
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadInputTokens: 3,
+      cacheCreationInputTokens: 2,
+      totalTokens: 20,
+      estimatedTailTokens: 0,
+      contextWindow: 1000,
+      contextWindowSource: "model"
+    },
+    billingUsage: {
+      cumulative: {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 2,
+        totalTokens: 20
+      },
+      latestRecord: {
+        callerLabel: "Turn 1",
+        model: "model-test",
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 2,
+        totalTokens: 20,
+        costUSD: 0.01,
+        usageIdentity: {
+          threadId: "thread-1",
+          callerKind: "conversation",
+          turn: 1
+        }
+      },
+      records: [],
+      totalCostUSD: 0.01
+    },
     usage: {
       input_tokens: 10,
       output_tokens: 5,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0
+      cache_read_input_tokens: 3,
+      cache_creation_input_tokens: 2
     }
   } as SDKMessage);
   emit.onComplete();
@@ -325,10 +362,21 @@ describe("agent-service", () => {
     expect(appended[1]?.message.metadata?.tokenUsage).toEqual({
       source: "provider",
       scope: "assistant_turn",
-      inputTokens: 10,
-      outputTokens: 5,
-      cachedTokens: 0,
-      totalTokens: 15
+      providerOutputTokens: 5,
+      contextUsage: {
+        source: "provider",
+        totalTokens: 20,
+        contextWindow: 1000
+      },
+      billingUsage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 2,
+        cachedTokens: 5,
+        totalTokens: 20,
+        costUSD: 0.01
+      }
     });
 
     expect(visibleMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
@@ -337,10 +385,21 @@ describe("agent-service", () => {
     expect(visibleMessages[1]?.metadata?.tokenUsage).toEqual({
       source: "provider",
       scope: "assistant_turn",
-      inputTokens: 10,
-      outputTokens: 5,
-      cachedTokens: 0,
-      totalTokens: 15
+      providerOutputTokens: 5,
+      contextUsage: {
+        source: "provider",
+        totalTokens: 20,
+        contextWindow: 1000
+      },
+      billingUsage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 2,
+        cachedTokens: 5,
+        totalTokens: 20,
+        costUSD: 0.01
+      }
     });
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
   });

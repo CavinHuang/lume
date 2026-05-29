@@ -35,6 +35,7 @@ export class PermissionEngine {
   async decide(input: PermissionDecisionInput): Promise<PermissionDecision> {
     const mode = normalizePermissionMode(input.mode);
     const riskLevel = normalizeRisk(input.descriptor.metadata.riskLevel);
+    const sessionBypass = this.session.isBypassed(input.context.threadId);
 
     if (mode === "plan") {
       if (input.descriptor.metadata.allowedInPlanMode) {
@@ -65,9 +66,9 @@ export class PermissionEngine {
           matchedRuleId: rule.id
         };
       }
-      if (mode === "bypassPermissions") {
+      if (mode === "bypassPermissions" || sessionBypass) {
         return {
-          ...allow("mode_bypass", "bypassPermissions 跳过审批，但不跳过运行时安全策略", riskLevel, input),
+          ...bypassAllow(sessionBypass, riskLevel, input),
           matchedRuleId: rule.id
         };
       }
@@ -77,8 +78,8 @@ export class PermissionEngine {
       };
     }
 
-    if (mode === "bypassPermissions") {
-      return allow("mode_bypass", "bypassPermissions 跳过审批，但不跳过运行时安全策略", riskLevel, input);
+    if (mode === "bypassPermissions" || sessionBypass) {
+      return bypassAllow(sessionBypass, riskLevel, input);
     }
 
     if (this.session.isGranted({
@@ -101,6 +102,15 @@ export class PermissionEngine {
       input.descriptor.metadata.riskLevel === "low"
     ) {
       return allow("metadata_low", "工具 metadata 声明低风险且默认无需审批", "low", input);
+    }
+
+    if (input.classifierEnabled === false) {
+      return approval(
+        "metadata_requires_approval",
+        "工具 metadata 要求确认该工具调用",
+        riskLevel,
+        input
+      );
     }
 
     const classification = await this.classifier.classify({
@@ -159,6 +169,21 @@ function allow(
     ...(classification ? { classification } : {}),
     grantSuggestion: grantSuggestion(input)
   };
+}
+
+function bypassAllow(
+  sessionBypass: boolean,
+  riskLevel: LumeToolRiskLevel | "critical",
+  input: PermissionDecisionInput
+): PermissionDecision {
+  return allow(
+    sessionBypass ? "session_bypass" : "mode_bypass",
+    sessionBypass
+      ? "本线程已切换为全部允许，但不跳过运行时安全策略"
+      : "bypassPermissions 跳过审批，但不跳过运行时安全策略",
+    riskLevel,
+    input
+  );
 }
 
 function deny(

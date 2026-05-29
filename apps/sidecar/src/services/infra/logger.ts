@@ -31,17 +31,23 @@ function resolveLogsDir(): string {
 }
 
 let logsDir: string | null = null;
+let logsDirCacheKey: string | null = null;
 
 function getResolvedLogsDir(): string {
-  if (!logsDir) {
+  const cacheKey = process.env.LUME_CONFIG_DIR?.trim() || "";
+  if (!logsDir || logsDirCacheKey !== cacheKey) {
     logsDir = resolveLogsDir();
+    logsDirCacheKey = cacheKey;
   }
   return logsDir;
 }
 
-// 获取当前日期字符串
-function getDateStr(): string {
-  return new Date().toISOString().slice(0, 10);
+export function getCurrentLogFileName(date = new Date()): string {
+  return `lume-${date.toISOString().slice(0, 10)}.log`;
+}
+
+export function shouldWriteLogFile(value = process.env.LUME_LOG_FILE): boolean {
+  return value?.trim().toLowerCase() !== "false";
 }
 
 // 日志级别
@@ -97,8 +103,62 @@ function emitConsoleLine(line: string): void {
   stderr.write(`${line}\n`);
 }
 
+function isSensitiveDiagnosticKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[-_\s]/g, "");
+  return normalized.includes("token")
+    || normalized.includes("secret")
+    || normalized.includes("password")
+    || normalized.includes("apikey")
+    || normalized.includes("authorization");
+}
+
+export function redactDiagnosticLogData(input: unknown, seen = new WeakSet<object>()): unknown {
+  if (input instanceof Error) {
+    return {
+      name: input.name,
+      message: input.message,
+      ...(input.stack ? { stack: input.stack } : {})
+    };
+  }
+  if (typeof input === "bigint") {
+    return input.toString();
+  }
+  if (Array.isArray(input)) {
+    return input.map((item) => redactDiagnosticLogData(item, seen));
+  }
+  if (input && typeof input === "object") {
+    if (seen.has(input)) {
+      return "[Circular]";
+    }
+    seen.add(input);
+    const output: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+      output[key] = isSensitiveDiagnosticKey(key) ? "[redacted]" : redactDiagnosticLogData(value, seen);
+    }
+    return output;
+  }
+  return input;
+}
+
+export function createDiagnosticLogSummary(input: unknown, maxChars = 500): string {
+  const redacted = redactDiagnosticLogData(input);
+  let text: string;
+  try {
+    text = typeof redacted === "string" ? redacted : JSON.stringify(redacted ?? {});
+  } catch {
+    text = String(redacted);
+  }
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}...(truncated)`;
+}
+
 function getBaseLogger(): LoggerBackend {
   if (baseLogger) {
+    return baseLogger;
+  }
+
+  if (!shouldWriteLogFile()) {
+    baseLogger = createConsoleBackend();
     return baseLogger;
   }
 
@@ -106,7 +166,7 @@ function getBaseLogger(): LoggerBackend {
     {
       target: "pino/file",
       options: {
-        destination: join(getResolvedLogsDir(), `${getDateStr()}.log`),
+        destination: join(getResolvedLogsDir(), getCurrentLogFileName()),
         mkdir: true
       }
     }
@@ -131,9 +191,14 @@ function getBaseLogger(): LoggerBackend {
   } catch (error) {
     if (!didWarnPinoUnavailable) {
       didWarnPinoUnavailable = true;
-      console.warn("[logger] pino unavailable, falling back to console logger", {
-        error: error instanceof Error ? error.message : String(error)
-      });
+      emitConsoleLine(formatStructuredLogLine({
+        source: LOG_SOURCE,
+        context: "logger",
+        message: "pino unavailable, falling back to console logger",
+        data: {
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }));
     }
     baseLogger = createConsoleBackend();
   }
@@ -151,15 +216,28 @@ export interface Logger {
   child(bindings: { context?: string; sessionId?: string }): Logger;
 }
 
+export function writeLogRecord(input: {
+  level: "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+  context: string;
+  message: string;
+  data?: Record<string, unknown>;
+  sessionId?: string;
+}): void {
+  const payload = redactDiagnosticLogData(input.data ?? {}) as Record<string, unknown>;
+  getBaseLogger().child({
+    context: input.context,
+    ...(input.sessionId ? { sessionId: input.sessionId } : {})
+  })[input.level](payload, input.message);
+}
+
 // 创建带上下文的日志器
 export function createLogger(context: string, sessionId?: string): Logger {
-  const getChild = () => getBaseLogger().child({ context, sessionId });
   const write = (
     level: "trace" | "debug" | "info" | "warn" | "error" | "fatal",
     msg: string,
     data?: Record<string, unknown>
   ): void => {
-    const payload = data ?? {};
+    const payload = redactDiagnosticLogData(data ?? {}) as Record<string, unknown>;
     if (CONSOLE_ENABLED && LEVEL_ORDER[level] >= LEVEL_ORDER[MIN_LEVEL]) {
       emitConsoleLine(formatStructuredLogLine({
         source: LOG_SOURCE,
@@ -168,7 +246,13 @@ export function createLogger(context: string, sessionId?: string): Logger {
         data: payload
       }));
     }
-    getChild()[level](payload, msg);
+    writeLogRecord({
+      level,
+      context,
+      message: msg,
+      data: payload,
+      sessionId
+    });
   };
 
   return {
@@ -201,5 +285,5 @@ export function getLogsDir(): string {
 
 // 获取当前日志文件路径
 export function getCurrentLogPath(): string {
-  return join(getResolvedLogsDir(), `${getDateStr()}.log`);
+  return join(getResolvedLogsDir(), getCurrentLogFileName());
 }

@@ -1,4 +1,8 @@
-import type { AgentMessageAttachmentInput } from "@lume/shared";
+import type {
+  AgentMessageAttachmentInput,
+  RuntimeBillingUsageSummary,
+  RuntimeUsageContextSnapshot
+} from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
 import type { LumeRunItem } from "./run-items";
 
@@ -77,6 +81,8 @@ export interface LumeRunState {
     outputTokens: number;
     totalTokens: number;
     costUSD?: number;
+    context?: RuntimeUsageContextSnapshot;
+    billing?: RuntimeBillingUsageSummary;
   };
   error?: {
     code: string;

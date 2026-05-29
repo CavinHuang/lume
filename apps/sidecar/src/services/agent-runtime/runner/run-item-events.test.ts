@@ -397,24 +397,26 @@ describe("projectRunStateToRuntimeEvents", () => {
           name: "result",
           payload: {
             type: "result",
-            usage: {
-              input_tokens: 10,
-              output_tokens: 5,
-              cache_read_input_tokens: 3,
-              cache_creation_input_tokens: 2
+            contextUsage: {
+              source: "provider",
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadInputTokens: 3,
+              cacheCreationInputTokens: 2,
+              totalTokens: 20,
+              estimatedTailTokens: 0,
+              contextWindow: 1000,
+              contextWindowSource: "model"
             },
-            modelUsage: {
-              "gpt-test": {
+            billingUsage: {
+              cumulative: {
                 inputTokens: 10,
                 outputTokens: 5,
                 cacheReadInputTokens: 3,
                 cacheCreationInputTokens: 2,
-                costUSD: 0.01,
-                contextWindow: 1000
-              }
-            },
-            usageRecords: [
-              {
+                totalTokens: 20
+              },
+              latestRecord: {
                 callerLabel: "Turn 1",
                 model: "gpt-test",
                 inputTokens: 6,
@@ -422,20 +424,50 @@ describe("projectRunStateToRuntimeEvents", () => {
                 cacheReadInputTokens: 1,
                 cacheCreationInputTokens: 1,
                 costUSD: 0.004,
-                turn: 1
+                totalTokens: 10,
+                turn: 1,
+                usageIdentity: {
+                  threadId: "thread-1",
+                  callerKind: "conversation",
+                  turn: 1
+                }
               },
-              {
-                callerLabel: "Turn 2",
-                model: "gpt-test",
-                inputTokens: 4,
-                outputTokens: 3,
-                cacheReadInputTokens: 2,
-                cacheCreationInputTokens: 1,
-                costUSD: 0.006,
-                turn: 2
-              }
-            ],
-            total_cost_usd: 0.01
+              records: [
+                {
+                  callerLabel: "Turn 1",
+                  model: "gpt-test",
+                  inputTokens: 6,
+                  outputTokens: 2,
+                  cacheReadInputTokens: 1,
+                  cacheCreationInputTokens: 1,
+                  totalTokens: 10,
+                  costUSD: 0.004,
+                  turn: 1,
+                  usageIdentity: {
+                    threadId: "thread-1",
+                    callerKind: "conversation",
+                    turn: 1
+                  }
+                },
+                {
+                  callerLabel: "Turn 2",
+                  model: "gpt-test",
+                  inputTokens: 4,
+                  outputTokens: 3,
+                  cacheReadInputTokens: 2,
+                  cacheCreationInputTokens: 1,
+                  totalTokens: 10,
+                  costUSD: 0.006,
+                  turn: 2,
+                  usageIdentity: {
+                    threadId: "thread-1",
+                    callerKind: "conversation",
+                    turn: 2
+                  }
+                }
+              ],
+              totalCostUSD: 0.01
+            }
           },
           createdAt: "2026-04-30T00:00:03.000Z"
         }
@@ -471,32 +503,152 @@ describe("projectRunStateToRuntimeEvents", () => {
     expect(events).toContainEqual(expect.objectContaining({
       id: "run-1:result:usage.updated",
       type: "usage.updated",
-      inputTokens: 10,
-      outputTokens: 5,
-      cachedTokens: 5,
-      usageRecords: [
-        {
+      scope: "main",
+      context: {
+        source: "provider",
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 2,
+        cachedTokens: 5,
+        totalTokens: 20,
+        estimatedTailTokens: 0,
+        contextWindow: 1000,
+        contextWindowSource: "model"
+      },
+      billing: {
+        cumulative: {
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadInputTokens: 3,
+          cacheCreationInputTokens: 2,
+          cachedTokens: 5,
+          totalTokens: 20
+        },
+        latestRecord: expect.objectContaining({
           callerLabel: "Turn 1",
+          inputTokens: 6,
+          outputTokens: 2,
+          cachedTokens: 2
+        }),
+        records: [
+        expect.objectContaining({
+          callerLabel: "Turn 1",
+          callerKind: "conversation",
           model: "gpt-test",
           turn: 1,
           inputTokens: 6,
           outputTokens: 2,
+          cacheReadInputTokens: 1,
+          cacheCreationInputTokens: 1,
           cachedTokens: 2,
           costUSD: 0.004
-        },
-        {
+        }),
+        expect.objectContaining({
           callerLabel: "Turn 2",
+          callerKind: "conversation",
           model: "gpt-test",
           turn: 2,
           inputTokens: 4,
           outputTokens: 3,
+          cacheReadInputTokens: 2,
+          cacheCreationInputTokens: 1,
           cachedTokens: 3,
           costUSD: 0.006
-        }
-      ],
-      totalTokens: 20,
-      contextWindow: 1000,
-      costUSD: 0.01
+        })
+        ],
+        totalCostUSD: 0.01
+      }
+    }));
+  });
+
+  test("does not project legacy usage fields as context usage", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      generatedItems: [{
+        type: "system_event",
+        id: "legacy-result",
+        name: "result",
+        payload: {
+          type: "result",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5
+          },
+          modelUsage: {
+            "gpt-test": {
+              inputTokens: 10,
+              outputTokens: 5,
+              contextWindow: 1000
+            }
+          }
+        },
+        createdAt: "2026-04-30T00:00:03.000Z"
+      }]
+    }));
+
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "usage.updated"
+    }));
+  });
+
+  test("projects subagent result usage without treating it as main scope", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      generatedItems: [{
+        type: "system_event",
+        id: "subagent-result",
+        name: "result",
+        payload: {
+          type: "result",
+          subagent_run_id: "child-run-1",
+          parent_tool_use_id: "tool-agent-1",
+          contextUsage: {
+            source: "provider",
+            inputTokens: 20,
+            outputTokens: 6,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            totalTokens: 26,
+            estimatedTailTokens: 0,
+            contextWindow: 200000,
+            contextWindowSource: "model"
+          },
+          billingUsage: {
+            cumulative: {
+              inputTokens: 20,
+              outputTokens: 6,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              totalTokens: 26
+            },
+            latestRecord: {
+              callerLabel: "Subagent",
+              model: "gpt-test",
+              inputTokens: 20,
+              outputTokens: 6,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              totalTokens: 26,
+              usageIdentity: {
+                threadId: "child-run-1",
+                parentThreadId: "thread-1",
+                subagentRunId: "child-run-1",
+                callerKind: "subagent"
+              }
+            },
+            records: [],
+            totalCostUSD: 0
+          }
+        },
+        createdAt: "2026-04-30T00:00:03.000Z"
+      }]
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      id: "run-1:subagent-result:usage.updated",
+      type: "usage.updated",
+      scope: "subagent",
+      subagentRunId: "child-run-1",
+      parentToolUseId: "tool-agent-1"
     }));
   });
 

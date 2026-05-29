@@ -1,4 +1,5 @@
 import {
+  calculateAutoCompactThreshold,
   compactConversation,
   shouldAutoCompact,
   type AgentContextController,
@@ -40,6 +41,7 @@ export interface KernelContextControllerInput {
   threadId: string;
   model: string;
   contextWindow: number;
+  maxOutputTokens?: number;
   systemPrompt: string;
   memoryContext?: string;
   sessionMessages?: KernelMessage[];
@@ -131,7 +133,10 @@ export function createKernelContextController(input: KernelContextControllerInpu
     systemPrompt: input.systemPrompt,
     memoryContext: input.memoryContext,
     sessionMessages: input.sessionMessages,
-    toolSchemaTokens: input.toolSchemaTokens
+    toolSchemaTokens: input.toolSchemaTokens,
+    reservedOutputTokens: input.maxOutputTokens !== undefined
+      ? Math.min(Math.max(0, input.maxOutputTokens), 20_000)
+      : undefined
   });
   const metadata = createKernelCompactionMetadata(input.contextWindow, sourceMessageIds, preservedSegment, budget);
   return {
@@ -142,6 +147,7 @@ export function createKernelContextController(input: KernelContextControllerInpu
         state,
         estimatedTokens,
         contextWindow: input.contextWindow,
+        maxOutputTokens: input.maxOutputTokens,
         budget
       }),
     microCompactMessages: ({ messages }) =>
@@ -164,13 +170,14 @@ function shouldKernelAutoCompact(input: {
   state: Parameters<typeof shouldAutoCompact>[2];
   estimatedTokens: number;
   contextWindow: number;
+  maxOutputTokens?: number;
   budget: ContextBudgetSnapshot;
 }): boolean {
   if (input.state.consecutiveFailures >= 3) return false;
   const sdkHistoryTriggers = shouldAutoCompact(input.messages, input.model, input.state);
   if (sdkHistoryTriggers) return true;
 
-  const threshold = Math.floor(input.contextWindow * 0.85);
+  const threshold = calculateAutoCompactThreshold(input.contextWindow, input.maxOutputTokens);
   const nonSessionBudgetTokens = Math.max(0, input.budget.usedTokens - input.budget.sections.session);
   const estimatedFullRequestTokens =
     nonSessionBudgetTokens + Math.max(input.budget.sections.session, input.estimatedTokens);

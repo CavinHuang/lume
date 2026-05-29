@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { LumeRuntimeEvent, SDKMessage } from "@lume/shared";
+import type {
+  LumeRuntimeEvent,
+  RuntimeBillingUsageSummary,
+  RuntimeNormalizedUsage,
+  RuntimeUsageContextSnapshot,
+  SDKMessage
+} from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
 import type { TaskContractPlanPreview } from "../plan/task-contract-write-tool";
 import type { ContextAssemblyInput } from "../context/context-assembler";
@@ -149,17 +155,18 @@ export class LumeRunObserver {
         }
       }
       await this.recordSdkMessageTrace(message);
-      if (message.type === "result" && message.usage) {
-        const inputTokens = message.usage.input_tokens ?? 0;
-        const outputTokens = message.usage.output_tokens ?? 0;
-        const cachedTokens = (message.usage.cache_read_input_tokens ?? 0)
-          + (message.usage.cache_creation_input_tokens ?? 0);
+      if (message.type === "result" && message.contextUsage && message.billingUsage) {
+        const context = normalizeRuntimeContextUsage(message.contextUsage);
+        const billing = normalizeRuntimeBillingUsage(message.billingUsage);
+        const cumulative = billing.cumulative;
         await this.stateStore.update(this.state.runId, {
           usage: {
-            inputTokens,
-            outputTokens,
-            totalTokens: inputTokens + outputTokens + cachedTokens,
-            costUSD: message.total_cost_usd
+            inputTokens: cumulative.inputTokens,
+            outputTokens: cumulative.outputTokens,
+            totalTokens: context.totalTokens,
+            costUSD: billing.totalCostUSD,
+            context,
+            billing
           }
         });
       }
@@ -637,10 +644,113 @@ function extractCompactionMetadata(message: SDKMessage): Record<string, unknown>
   };
 }
 
+function normalizeRuntimeContextUsage(value: unknown): RuntimeUsageContextSnapshot {
+  const record = asRecord(value);
+  const sections = asRecord(record.sections);
+  const normalizedSections = {
+    ...optionalNumber("systemTokens", numberOrUndefined(sections.systemTokens)),
+    ...optionalNumber("memoryTokens", numberOrUndefined(sections.memoryTokens)),
+    ...optionalNumber("toolSchemaTokens", numberOrUndefined(sections.toolSchemaTokens)),
+    ...optionalNumber("messageTokens", numberOrUndefined(sections.messageTokens))
+  };
+  return {
+    source: record.source === "provider" ? "provider" : "estimated",
+    ...normalizeRuntimeUsage(record),
+    estimatedTailTokens: numberValue(record.estimatedTailTokens),
+    ...(Object.keys(normalizedSections).length > 0 ? { sections: normalizedSections } : {}),
+    contextWindow: numberValue(record.contextWindow),
+    contextWindowSource: record.contextWindowSource === "model" || record.contextWindowSource === "provider"
+      ? record.contextWindowSource
+      : "fallback"
+  };
+}
+
+function normalizeRuntimeBillingUsage(value: unknown): RuntimeBillingUsageSummary {
+  const record = asRecord(value);
+  const latestRecord = normalizeRuntimeBillingRecord(record.latestRecord);
+  return {
+    cumulative: normalizeRuntimeUsage(record.cumulative),
+    ...(latestRecord ? { latestRecord } : {}),
+    records: Array.isArray(record.records)
+      ? record.records.map(normalizeRuntimeBillingRecord).filter((item): item is NonNullable<typeof item> => item !== null)
+      : [],
+    totalCostUSD: numberValue(record.totalCostUSD)
+  };
+}
+
+function normalizeRuntimeBillingRecord(value: unknown): RuntimeBillingUsageSummary["records"][number] | null {
+  const record = asRecord(value);
+  const usage = normalizeRuntimeUsage(record);
+  if (usage.totalTokens <= 0) return null;
+  const identity = asRecord(record.usageIdentity);
+  const callerKind = typeof identity.callerKind === "string" && identity.callerKind.trim()
+    ? identity.callerKind
+    : stringField(record.callerKind) ?? "conversation";
+  return {
+    callerLabel: stringField(record.callerLabel) ?? stringField(identity.callerLabel) ?? "LLM call",
+    callerKind,
+    ...(typeof record.model === "string" && record.model.trim() ? { model: record.model } : {}),
+    ...(typeof record.turn === "number" && Number.isFinite(record.turn) ? { turn: record.turn } : {}),
+    ...(typeof identity.threadId === "string" && identity.threadId.trim()
+      ? {
+          usageIdentity: {
+            threadId: identity.threadId,
+            callerKind,
+            ...(typeof identity.runId === "string" && identity.runId.trim() ? { runId: identity.runId } : {}),
+            ...(typeof identity.parentThreadId === "string" && identity.parentThreadId.trim() ? { parentThreadId: identity.parentThreadId } : {}),
+            ...(typeof identity.parentRunId === "string" && identity.parentRunId.trim() ? { parentRunId: identity.parentRunId } : {}),
+            ...(typeof identity.subagentRunId === "string" && identity.subagentRunId.trim() ? { subagentRunId: identity.subagentRunId } : {}),
+            ...(typeof identity.responseId === "string" && identity.responseId.trim() ? { responseId: identity.responseId } : {}),
+            ...(typeof identity.turn === "number" && Number.isFinite(identity.turn) ? { turn: identity.turn } : {}),
+            ...(typeof identity.callerLabel === "string" && identity.callerLabel.trim() ? { callerLabel: identity.callerLabel } : {})
+          }
+        }
+      : {}),
+    ...usage,
+    ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
+  };
+}
+
+function normalizeRuntimeUsage(value: unknown): RuntimeNormalizedUsage {
+  const record = asRecord(value);
+  const inputTokens = numberValue(record.inputTokens);
+  const outputTokens = numberValue(record.outputTokens);
+  const cacheReadInputTokens = numberValue(record.cacheReadInputTokens);
+  const cacheCreationInputTokens = numberValue(record.cacheCreationInputTokens);
+  const splitCachedTokens = cacheReadInputTokens + cacheCreationInputTokens;
+  const directCachedTokens = numberValue(record.cachedTokens);
+  const cachedTokens = splitCachedTokens > 0 ? splitCachedTokens : directCachedTokens;
+  const explicitTotalTokens = numberValue(record.totalTokens);
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadInputTokens,
+    cacheCreationInputTokens,
+    cachedTokens,
+    totalTokens: explicitTotalTokens > 0 ? explicitTotalTokens : inputTokens + outputTokens + cachedTokens
+  };
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalNumber<K extends string>(key: K, value: number | undefined): Record<K, number> | {} {
+  return value === undefined ? {} : { [key]: value } as Record<K, number>;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function normalizeSubagentStatus(status: unknown): "running" | "completed" | "failed" | "cancelled" {

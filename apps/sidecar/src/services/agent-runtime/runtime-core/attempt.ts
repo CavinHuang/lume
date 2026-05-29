@@ -30,6 +30,10 @@ import {
   resolveConfiguredPermissionRules,
   resolveConfiguredPrivateWriteRoots
 } from "../permissions/permission-config";
+import {
+  resolveSubagentCanAllowAlways,
+  resolveSubagentPermissionPolicyDecision
+} from "./subagent-permission-policy";
 import type { LumeWorkflowPermissionBeforeDecisionEvent } from "../../workflow-hooks/hook-events";
 import {
   resolvePermissionDecision,
@@ -180,6 +184,7 @@ function createCanUseToolHandler(
       descriptor,
       input,
       permissionMode: params.input.permissionMode,
+      classifierEnabled: config.permissions?.classifier?.enabled ?? false,
       permissionRules,
       privateWriteRoots,
       context: {
@@ -336,6 +341,39 @@ function createCanUseToolHandler(
     }
 
     const grantFingerprint = authorization.grantSuggestion?.fingerprint;
+    const canAllowAlways = resolveSubagentCanAllowAlways({
+      isSubagent: Boolean(subagentRunId),
+      allowAlways: config.permissions?.approvals?.subagent?.allowAlways,
+      hasGrantSuggestion: Boolean(grantFingerprint)
+    });
+
+    const subagentPolicyDecision = resolveSubagentPermissionPolicyDecision({
+      isSubagent: Boolean(subagentRunId),
+      mode: config.permissions?.approvals?.subagent?.mode,
+      authorizationStatus: authorization.status,
+      risk: authorization.risk,
+      toolName
+    });
+    if (subagentPolicyDecision) {
+      recordPermissionDenial({
+        threadId: params.runtime.sessionId,
+        descriptor,
+        toolName,
+        rawInput: input,
+        reasonCode: subagentPolicyDecision.reasonCode
+      });
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+        reason: subagentPolicyDecision.reasonCode
+      });
+      return {
+        behavior: subagentPolicyDecision.behavior,
+        message: subagentPolicyDecision.message
+      };
+    }
 
     const request = {
       threadId: params.runtime.sessionId,
@@ -352,6 +390,7 @@ function createCanUseToolHandler(
       ...(authorization.matchedRuleId ? { matchedRuleId: authorization.matchedRuleId } : {}),
       ...(authorization.classification ? { classification: authorization.classification } : {}),
       ...(authorization.grantSuggestion ? { grantSuggestion: authorization.grantSuggestion } : {}),
+      canAllowAlways,
       input: sanitizeToolInput(input),
       ...(automationExecution ? {
         interruptionType: "automation_approval" as const,
