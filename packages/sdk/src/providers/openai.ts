@@ -68,11 +68,23 @@ interface OpenAIChatResponse {
     finish_reason: 'stop' | 'length' | 'tool_calls' | 'content_filter' | string
   }>
   usage?: {
-    prompt_tokens: number
-    completion_tokens: number
-    total_tokens: number
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    prompt_tokens_details?: {
+      cached_tokens?: number
+    }
+    input_tokens?: number
+    output_tokens?: number
+    input_tokens_details?: {
+      cached_tokens?: number
+    }
+    prompt_cache_hit_tokens?: number
+    prompt_cache_miss_tokens?: number
   }
 }
+
+type OpenAIUsage = NonNullable<OpenAIChatResponse['usage']>
 
 interface OpenAIStreamChunk {
   choices?: Array<{
@@ -97,7 +109,17 @@ interface OpenAIStreamChunk {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
-  }
+    prompt_tokens_details?: {
+      cached_tokens?: number
+    }
+    input_tokens?: number
+    output_tokens?: number
+    input_tokens_details?: {
+      cached_tokens?: number
+    }
+    prompt_cache_hit_tokens?: number
+    prompt_cache_miss_tokens?: number
+  } | null
 }
 
 function normalizeContentBlocks(content: unknown): NormalizedContentBlock[] {
@@ -186,6 +208,7 @@ export class OpenAIProvider implements LLMProvider {
       max_tokens: params.maxTokens,
       messages,
       stream: true,
+      stream_options: { include_usage: true },
     }
 
     if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
@@ -227,8 +250,7 @@ export class OpenAIProvider implements LLMProvider {
     const decoder = new TextDecoder()
     let buffer = ''
     let finishReason: string | null = null
-    let promptTokens = 0
-    let completionTokens = 0
+    let streamedUsage: OpenAIStreamChunk['usage'] | undefined
     const textParts: string[] = []
     const reasoningParts: string[] = []
     const toolCalls = new Map<number, OpenAIToolCall>()
@@ -238,8 +260,7 @@ export class OpenAIProvider implements LLMProvider {
     ): Promise<Array<CreateMessageStreamEvent>> => {
       const events: Array<CreateMessageStreamEvent> = []
       if (chunk.usage) {
-        promptTokens = chunk.usage.prompt_tokens || promptTokens
-        completionTokens = chunk.usage.completion_tokens || completionTokens
+        streamedUsage = chunk.usage
       }
 
       for (const choice of chunk.choices ?? []) {
@@ -390,10 +411,7 @@ export class OpenAIProvider implements LLMProvider {
     return {
       content,
       stopReason: this.mapFinishReason(finishReason || 'stop'),
-      usage: {
-        input_tokens: promptTokens,
-        output_tokens: completionTokens,
-      },
+      usage: normalizeOpenAIUsage(streamedUsage),
     }
   }
 
@@ -620,10 +638,7 @@ export class OpenAIProvider implements LLMProvider {
     return {
       content,
       stopReason,
-      usage: {
-        input_tokens: data.usage?.prompt_tokens || 0,
-        output_tokens: data.usage?.completion_tokens || 0,
-      },
+      usage: normalizeOpenAIUsage(data.usage),
     }
   }
 
@@ -641,6 +656,31 @@ export class OpenAIProvider implements LLMProvider {
         return reason
     }
   }
+}
+
+function normalizeOpenAIUsage(usage: OpenAIUsage | OpenAIStreamChunk['usage'] | undefined): CreateMessageResponse['usage'] {
+  const promptTokens = tokenValue(usage?.input_tokens ?? usage?.prompt_tokens)
+  const outputTokens = tokenValue(usage?.output_tokens ?? usage?.completion_tokens)
+  const cacheReadInputTokens = tokenValue(
+    usage?.input_tokens_details?.cached_tokens
+      ?? usage?.prompt_tokens_details?.cached_tokens
+      ?? usage?.prompt_cache_hit_tokens,
+  )
+  const promptCacheMissTokens = numberOrUndefined(usage?.prompt_cache_miss_tokens)
+  return {
+    input_tokens: promptCacheMissTokens ?? Math.max(0, promptTokens - cacheReadInputTokens),
+    output_tokens: outputTokens,
+    cache_read_input_tokens: cacheReadInputTokens,
+    cache_creation_input_tokens: 0,
+  }
+}
+
+function tokenValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : undefined
 }
 
 function imageSourceToOpenAIUrl(source: unknown): string | null {

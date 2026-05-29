@@ -10,10 +10,16 @@
 
 import type { LLMProvider } from '../providers/types.js'
 import type { NormalizedMessageParam } from '../providers/types.js'
+import type { NormalizedProviderUsage } from '../types.js'
 import {
   estimateMessagesTokens,
-  getAutoCompactThreshold,
+  getContextWindowSize,
 } from './tokens.js'
+import {
+  calculateAutoCompactThreshold,
+  createEstimatedContextUsage,
+  normalizeProviderUsage,
+} from './usage.js'
 
 /**
  * State for tracking auto-compaction across turns.
@@ -42,13 +48,21 @@ export function shouldAutoCompact(
   messages: any[],
   model: string,
   state: AutoCompactState,
+  options: {
+    contextUsage?: { totalTokens: number; contextWindow: number }
+    maxOutputTokens?: number
+  } = {},
 ): boolean {
   if (state.consecutiveFailures >= 3) return false
 
-  const estimatedTokens = estimateMessagesTokens(messages)
-  const threshold = getAutoCompactThreshold(model)
+  const contextUsage = options.contextUsage ?? createEstimatedContextUsage({
+    messageTokens: estimateMessagesTokens(messages),
+    contextWindow: getContextWindowSize(model),
+    contextWindowSource: 'model',
+  })
+  const threshold = calculateAutoCompactThreshold(contextUsage.contextWindow, options.maxOutputTokens)
 
-  return estimatedTokens >= threshold
+  return contextUsage.totalTokens >= threshold
 }
 
 /**
@@ -66,6 +80,7 @@ export async function compactConversation(
   compactedMessages: NormalizedMessageParam[]
   summary: string
   state: AutoCompactState
+  usage?: NormalizedProviderUsage
 }> {
   try {
     // Strip images before compacting to save tokens
@@ -106,6 +121,7 @@ export async function compactConversation(
     return {
       compactedMessages,
       summary,
+      usage: normalizeProviderUsage(response.usage),
       state: {
         compacted: true,
         turnCounter: state.turnCounter,

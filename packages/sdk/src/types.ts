@@ -104,6 +104,9 @@ export interface SDKAssistantMessage {
   parent_tool_use_id?: string | null
   /** Set when the assistant turn ended due to an error. */
   error?: SDKAssistantMessageError
+  usage?: NormalizedProviderUsage
+  usageIdentity?: UsageIdentity
+  costUSD?: number
 }
 
 export interface SDKToolResultMessage {
@@ -146,6 +149,9 @@ export interface SDKResultMessage {
    * Per-provider-call usage records for host/runtime observability.
    */
   usageRecords?: SDKUsageRecord[]
+  billingUsage?: BillingUsageSummary
+  contextUsage?: ContextUsageSnapshot
+  progressUsage?: AgentProgressUsage
   permission_denials?: SDKPermissionDenial[]
   structured_output?: unknown
   errors?: string[]
@@ -250,6 +256,7 @@ export interface AgentContextController {
     model: string
     state: import('./utils/compact.js').AutoCompactState
     estimatedTokens: number
+    contextUsage?: ContextUsageSnapshot
   }) => boolean | Promise<boolean>
   microCompactMessages?: (input: {
     messages: import('./providers/types.js').NormalizedMessageParam[]
@@ -274,6 +281,7 @@ export interface AgentContextController {
     summary: string
     state?: import('./utils/compact.js').AutoCompactState
     metadata?: AgentContextCompactionMetadata
+    usage?: NormalizedProviderUsage
   }>
   onCompactionBoundary?: (boundary: AgentContextCompactionBoundary) => void | Promise<void>
 }
@@ -584,6 +592,65 @@ export interface SDKElicitationCompleteMessage {
 // Token Usage
 // --------------------------------------------------------------------------
 
+export type ProviderCallKind =
+  | 'conversation'
+  | 'compaction'
+  | 'subagent'
+  | 'title'
+  | 'memory'
+  | 'classifier'
+  | 'side_query'
+
+export interface UsageIdentity {
+  threadId: string
+  runId?: string
+  parentThreadId?: string
+  parentRunId?: string
+  subagentRunId?: string
+  responseId?: string
+  turn?: number
+  callerKind: ProviderCallKind
+  callerLabel?: string
+}
+
+export interface NormalizedProviderUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+  totalTokens: number
+}
+
+export interface ContextUsageSnapshot extends NormalizedProviderUsage {
+  source: 'provider' | 'estimated'
+  estimatedTailTokens: number
+  sections?: {
+    systemTokens: number
+    memoryTokens: number
+    toolSchemaTokens: number
+    messageTokens: number
+  }
+  contextWindow: number
+  contextWindowSource: 'model' | 'provider' | 'fallback'
+}
+
+export interface BillingUsageRecord extends NormalizedProviderUsage {
+  usageIdentity: UsageIdentity
+  callerLabel: string
+  model: string
+  costUSD: number
+  turn?: number
+}
+
+export interface BillingUsageSummary {
+  cumulative: NormalizedProviderUsage
+  latestRecord?: BillingUsageRecord
+  records: BillingUsageRecord[]
+  totalCostUSD: number
+}
+
+export interface AgentProgressUsage extends NormalizedProviderUsage {}
+
 export interface TokenUsage {
   input_tokens: number
   output_tokens: number
@@ -613,12 +680,21 @@ export interface ModelUsage {
 export interface SDKUsageRecord {
   callerLabel: string
   model: string
+  usageIdentity?: UsageIdentity
+  callerKind?: ProviderCallKind
+  threadId?: string
+  runId?: string
+  parentThreadId?: string
+  parentRunId?: string
+  subagentRunId?: string
+  responseId?: string
   inputTokens: number
   outputTokens: number
   cacheReadInputTokens: number
   cacheCreationInputTokens: number
+  totalTokens?: number
   costUSD: number
-  turn: number
+  turn?: number
 }
 
 // --------------------------------------------------------------------------

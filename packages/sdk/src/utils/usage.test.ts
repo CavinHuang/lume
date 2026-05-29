@@ -1,0 +1,234 @@
+import { describe, expect, test } from "bun:test"
+import type { NormalizedMessageParam } from "../providers/types.js"
+import {
+  calculateAutoCompactThreshold,
+  createAgentProgressTracker,
+  createContextUsageSnapshot,
+  createEstimatedContextUsage,
+  normalizeProviderUsage,
+} from "./usage.js"
+import { estimateMessagesTokens } from "./tokens.js"
+
+describe("provider usage normalization", () => {
+  test("keeps provider input tokens exclusive of cache tokens", () => {
+    const usage = normalizeProviderUsage({
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_read_input_tokens: 30,
+      cache_creation_input_tokens: 10,
+    })
+
+    expect(usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadInputTokens: 30,
+      cacheCreationInputTokens: 10,
+      totalTokens: 160,
+    })
+  })
+
+  test("subtracts cache tokens when a provider reports input tokens inclusive of cache", () => {
+    const usage = normalizeProviderUsage({
+      input_tokens: 140,
+      output_tokens: 20,
+      cache_read_input_tokens: 30,
+      cache_creation_input_tokens: 10,
+    }, { inputIncludesCache: true })
+
+    expect(usage.inputTokens).toBe(100)
+    expect(usage.totalTokens).toBe(160)
+  })
+
+  test("normalizes OpenAI Responses usage details", () => {
+    const usage = normalizeProviderUsage({
+      input_tokens: 140,
+      output_tokens: 20,
+      input_tokens_details: { cached_tokens: 40 },
+    })
+
+    expect(usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 0,
+      totalTokens: 160,
+    })
+  })
+
+  test("normalizes DeepSeek prompt cache hit and miss fields", () => {
+    const usage = normalizeProviderUsage({
+      prompt_cache_hit_tokens: 40,
+      prompt_cache_miss_tokens: 100,
+      completion_tokens: 20,
+    })
+
+    expect(usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 0,
+      totalTokens: 160,
+    })
+  })
+
+  test("normalizes Gemini usage metadata cached tokens", () => {
+    const usage = normalizeProviderUsage({
+      usageMetadata: {
+        promptTokenCount: 140,
+        cachedContentTokenCount: 40,
+        candidatesTokenCount: 18,
+        thoughtsTokenCount: 2,
+      },
+    })
+
+    expect(usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 0,
+      totalTokens: 160,
+    })
+  })
+})
+
+describe("auto-compaction threshold", () => {
+  test("reserves output tokens before applying the small-window buffer", () => {
+    expect(calculateAutoCompactThreshold(200_000, 16_384)).toBe(170_616)
+  })
+
+  test("uses larger buffers for large context windows", () => {
+    expect(calculateAutoCompactThreshold(500_000)).toBe(450_000)
+    expect(calculateAutoCompactThreshold(1_000_000, 8_192)).toBe(941_808)
+  })
+})
+
+describe("agent progress usage", () => {
+  test("keeps the latest input and cumulative output across progress updates", () => {
+    const tracker = createAgentProgressTracker()
+
+    tracker.update(normalizeProviderUsage({ input_tokens: 100, output_tokens: 10 }))
+    tracker.update(normalizeProviderUsage({ input_tokens: 150, output_tokens: 5 }))
+
+    expect(tracker.snapshot()).toEqual({
+      inputTokens: 150,
+      outputTokens: 15,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      totalTokens: 165,
+    })
+  })
+})
+
+describe("estimated context usage", () => {
+  test("creates an estimated snapshot with explicit sections", () => {
+    expect(createEstimatedContextUsage({
+      messageTokens: 30,
+      systemTokens: 20,
+      memoryTokens: 10,
+      toolSchemaTokens: 5,
+      contextWindow: 200_000,
+      contextWindowSource: "model",
+    })).toEqual({
+      source: "estimated",
+      inputTokens: 65,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      totalTokens: 65,
+      estimatedTailTokens: 65,
+      sections: {
+        systemTokens: 20,
+        memoryTokens: 10,
+        toolSchemaTokens: 5,
+        messageTokens: 30,
+      },
+      contextWindow: 200_000,
+      contextWindowSource: "model",
+    })
+  })
+})
+
+describe("context usage snapshots", () => {
+  test("anchors on the latest conversation assistant usage and estimates tail messages", () => {
+    const tail: NormalizedMessageParam[] = [{ role: "user", content: "tail message after provider anchor" }]
+    const messages = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: "anchored",
+        usage: normalizeProviderUsage({ input_tokens: 100, output_tokens: 20 }),
+        usageIdentity: { threadId: "thread-1", callerKind: "conversation" },
+      },
+      ...tail,
+    ] as Array<NormalizedMessageParam & Record<string, unknown>>
+
+    const snapshot = createContextUsageSnapshot(messages, {
+      threadId: "thread-1",
+      contextWindow: 200_000,
+      contextWindowSource: "model",
+    })
+
+    const tailTokens = estimateMessagesTokens(tail)
+    expect(snapshot.source).toBe("provider")
+    expect(snapshot.inputTokens).toBe(100 + tailTokens)
+    expect(snapshot.outputTokens).toBe(20)
+    expect(snapshot.estimatedTailTokens).toBe(tailTokens)
+    expect(snapshot.totalTokens).toBe(120 + tailTokens)
+  })
+
+  test("ignores compaction and subagent usage as main context anchors", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: "summary",
+        usage: normalizeProviderUsage({ input_tokens: 10, output_tokens: 5 }),
+        usageIdentity: { threadId: "thread-1", callerKind: "compaction" },
+      },
+      {
+        role: "assistant",
+        content: "child",
+        usage: normalizeProviderUsage({ input_tokens: 300, output_tokens: 40 }),
+        usageIdentity: { threadId: "thread-1", callerKind: "subagent" },
+      },
+      { role: "user", content: "main thread tail" },
+    ] as Array<NormalizedMessageParam & Record<string, unknown>>
+
+    const snapshot = createContextUsageSnapshot(messages, {
+      threadId: "thread-1",
+      contextWindow: 200_000,
+      contextWindowSource: "model",
+      systemTokens: 11,
+      memoryTokens: 7,
+      toolSchemaTokens: 5,
+    })
+
+    expect(snapshot.source).toBe("estimated")
+    expect(snapshot.sections).toMatchObject({
+      systemTokens: 11,
+      memoryTokens: 7,
+      toolSchemaTokens: 5,
+    })
+  })
+
+  test("falls back to estimated sections when there is no provider anchor", () => {
+    const messages = [{ role: "user", content: "estimate me" }] as NormalizedMessageParam[]
+
+    const snapshot = createContextUsageSnapshot(messages, {
+      threadId: "thread-1",
+      contextWindow: 200_000,
+      contextWindowSource: "fallback",
+      systemTokens: 4,
+      memoryTokens: 3,
+      toolSchemaTokens: 2,
+    })
+
+    expect(snapshot.source).toBe("estimated")
+    expect(snapshot.contextWindowSource).toBe("fallback")
+    expect(snapshot.sections).toEqual({
+      systemTokens: 4,
+      memoryTokens: 3,
+      toolSchemaTokens: 2,
+      messageTokens: estimateMessagesTokens(messages),
+    })
+  })
+})

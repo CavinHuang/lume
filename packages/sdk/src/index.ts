@@ -298,6 +298,15 @@ export {
   AUTOCOMPACT_BUFFER_TOKENS,
 } from './utils/tokens.js'
 
+export {
+  normalizeProviderUsage,
+  getCachedTokens,
+  calculateAutoCompactThreshold,
+  createAgentProgressTracker,
+  createEstimatedContextUsage,
+  createContextUsageSnapshot,
+} from './utils/usage.js'
+
 // --------------------------------------------------------------------------
 // Context Compression
 // --------------------------------------------------------------------------
@@ -490,6 +499,13 @@ export type {
   QueryResult,
   ThinkingConfig,
   TokenUsage,
+  ProviderCallKind,
+  UsageIdentity,
+  NormalizedProviderUsage,
+  ContextUsageSnapshot,
+  BillingUsageRecord,
+  BillingUsageSummary,
+  AgentProgressUsage,
   ModelUsage,
   InitializationResult,
   MCPServerStatus,

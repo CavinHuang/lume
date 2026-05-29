@@ -62,14 +62,7 @@ export class AnthropicProvider implements LLMProvider {
     return {
       content: response.content as CreateMessageResponse['content'],
       stopReason: response.stop_reason || 'end_turn',
-      usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-        cache_creation_input_tokens:
-          (response.usage as any).cache_creation_input_tokens,
-        cache_read_input_tokens:
-          (response.usage as any).cache_read_input_tokens,
-      },
+      usage: normalizeAnthropicUsage(response.usage),
     }
   }
 
@@ -126,14 +119,37 @@ export class AnthropicProvider implements LLMProvider {
     return {
       content: response.content as CreateMessageResponse['content'],
       stopReason: response.stop_reason || 'end_turn',
-      usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-        cache_creation_input_tokens:
-          (response.usage as any).cache_creation_input_tokens,
-        cache_read_input_tokens:
-          (response.usage as any).cache_read_input_tokens,
-      },
+      usage: normalizeAnthropicUsage(response.usage),
     }
   }
+}
+
+function normalizeAnthropicUsage(usage: Anthropic.Messages.Usage): CreateMessageResponse['usage'] {
+  const raw = usage as Anthropic.Messages.Usage & {
+    cache_creation_input_tokens?: number
+    cache_read_input_tokens?: number
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number
+      ephemeral_1h_input_tokens?: number
+    }
+  }
+  const directCacheCreation = numberOrUndefined(raw.cache_creation_input_tokens)
+  const detailedCacheCreation =
+    tokenValue(raw.cache_creation?.ephemeral_5m_input_tokens)
+    + tokenValue(raw.cache_creation?.ephemeral_1h_input_tokens)
+
+  return {
+    input_tokens: tokenValue(raw.input_tokens),
+    output_tokens: tokenValue(raw.output_tokens),
+    cache_creation_input_tokens: directCacheCreation ?? detailedCacheCreation,
+    cache_read_input_tokens: tokenValue(raw.cache_read_input_tokens),
+  }
+}
+
+function tokenValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : undefined
 }

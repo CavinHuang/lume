@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { QueryEngine } from "../engine.js"
 import { AgentTool, clearAgents, registerAgents } from "./agent-tool.js"
 import type { LLMProvider, CreateMessageParams, CreateMessageResponse, NormalizedTool } from "../providers/types.js"
-import type { ToolDefinition } from "../types.js"
+import type { SDKMessage, ToolDefinition } from "../types.js"
 
 class StaticProvider implements LLMProvider {
   readonly apiType = "anthropic-messages" as const
@@ -139,4 +139,84 @@ describe("AgentTool parallel execution", () => {
     expect(observedToolNames[0]).not.toContain("Edit")
     expect(observedToolNames[0]).not.toContain("Agent")
   })
+
+  test("AgentTool annotates subagent result usage for parent runtime projection", async () => {
+    const emitted: SDKMessage[] = []
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "child done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 4 }
+    }])
+
+    const result = await AgentTool.call({
+      prompt: "child task",
+      description: "child",
+      subagent_run_id: "child-run-1",
+      mode: "bypassPermissions"
+    }, {
+      cwd: process.cwd(),
+      provider,
+      model: "test-model",
+      apiType: "anthropic-messages",
+      sessionId: "parent-thread",
+      emitEvent: (event) => emitted.push(event)
+    })
+
+    expect(result.is_error).toBeFalsy()
+    expect(emitted.find((event) => event.type === "result")).toMatchObject({
+      type: "result",
+      subagent_run_id: "child-run-1",
+      session_id: "parent-thread",
+      contextUsage: expect.objectContaining({
+        totalTokens: 14
+      }),
+      billingUsage: expect.objectContaining({
+        latestRecord: expect.objectContaining({
+          outputTokens: 4,
+          usageIdentity: expect.objectContaining({
+            threadId: "child-run-1"
+          })
+        })
+      })
+    })
+  })
+
+  test("background AgentTool progress uses latest child input and cumulative output tokens", async () => {
+    const emitted: SDKMessage[] = []
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "background child done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 20, output_tokens: 6 }
+    }])
+
+    await AgentTool.call({
+      prompt: "background child task",
+      description: "background",
+      subagent_run_id: "child-run-bg",
+      mode: "bypassPermissions",
+      run_in_background: true
+    }, {
+      cwd: process.cwd(),
+      provider,
+      model: "test-model",
+      apiType: "anthropic-messages",
+      sessionId: "parent-thread",
+      emitEvent: (event) => emitted.push(event)
+    })
+
+    await waitFor(() => emitted.some((event) =>
+      event.type === "system"
+      && event.subtype === "task_progress"
+      && event.usage.total_tokens === 26
+    ))
+  })
 })
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < 500) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  expect(predicate()).toBe(true)
+}

@@ -25,6 +25,11 @@ import type {
   AgentContextCompactionMetadata,
   AgentContextCompactionTrigger,
   SDKUsageRecord,
+  BillingUsageRecord,
+  BillingUsageSummary,
+  ContextUsageSnapshot,
+  NormalizedProviderUsage,
+  UsageIdentity,
 } from './types.js'
 import type {
   LLMProvider,
@@ -40,6 +45,10 @@ import {
   estimateSystemPromptTokens,
   getContextWindowSize,
 } from './utils/tokens.js'
+import {
+  createContextUsageSnapshot,
+  normalizeProviderUsage,
+} from './utils/usage.js'
 import {
   shouldAutoCompact,
   compactConversation as defaultCompactConversation,
@@ -300,9 +309,12 @@ async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
 export class QueryEngine {
   private config: QueryEngineConfig
   private provider: LLMProvider
-  public messages: NormalizedMessageParam[] = []
+  public messages: Array<NormalizedMessageParam & {
+    usage?: NormalizedProviderUsage
+    usageIdentity?: UsageIdentity
+  }> = []
   private totalUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
-  private usageRecords: SDKUsageRecord[] = []
+  private usageRecords: BillingUsageRecord[] = []
   private totalCost = 0
   private turnCount = 0
   private compactState: AutoCompactState
@@ -323,37 +335,158 @@ export class QueryEngine {
     this.hookRegistry = config.hookRegistry
   }
 
-  private recordProviderUsage(usage: CreateMessageResponse['usage']): void {
-    const costUSD = estimateCost(this.config.model, usage)
-    this.totalUsage.input_tokens += usage.input_tokens
-    this.totalUsage.output_tokens += usage.output_tokens
-    if (usage.cache_creation_input_tokens) {
+  private recordProviderUsage(
+    usage: CreateMessageResponse['usage'] | NormalizedProviderUsage,
+    usageIdentity: UsageIdentity,
+  ): BillingUsageRecord {
+    const normalized = 'input_tokens' in usage
+      ? normalizeProviderUsage(usage)
+      : usage
+    const costUSD = estimateCost(this.config.model, {
+      input_tokens: normalized.inputTokens,
+      output_tokens: normalized.outputTokens,
+    })
+    this.totalUsage.input_tokens += normalized.inputTokens
+    this.totalUsage.output_tokens += normalized.outputTokens
+    if (normalized.cacheCreationInputTokens) {
       this.totalUsage.cache_creation_input_tokens =
         (this.totalUsage.cache_creation_input_tokens || 0) +
-        usage.cache_creation_input_tokens
+        normalized.cacheCreationInputTokens
     }
-    if (usage.cache_read_input_tokens) {
+    if (normalized.cacheReadInputTokens) {
       this.totalUsage.cache_read_input_tokens =
         (this.totalUsage.cache_read_input_tokens || 0) +
-        usage.cache_read_input_tokens
+        normalized.cacheReadInputTokens
     }
     this.totalCost += costUSD
-    this.usageRecords.push({
-      callerLabel: `Turn ${this.turnCount}`,
+    const record: BillingUsageRecord = {
+      ...normalized,
+      usageIdentity,
+      callerLabel: usageIdentity.callerLabel ?? `Turn ${this.turnCount}`,
       model: this.config.model,
-      inputTokens: usage.input_tokens,
-      outputTokens: usage.output_tokens,
-      cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
-      cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
       costUSD,
-      turn: this.turnCount,
-    })
+      ...(usageIdentity.turn !== undefined ? { turn: usageIdentity.turn } : {}),
+    }
+    this.usageRecords.push(record)
+    return record
   }
 
   private optionalUsageRecords(): { usageRecords?: SDKUsageRecord[] } {
     return this.usageRecords.length > 0
-      ? { usageRecords: this.usageRecords.map((record) => ({ ...record })) }
+      ? { usageRecords: this.usageRecords.map((record) => ({
+          ...record,
+          callerKind: record.usageIdentity.callerKind,
+          threadId: record.usageIdentity.threadId,
+          ...(record.usageIdentity.runId ? { runId: record.usageIdentity.runId } : {}),
+          ...(record.usageIdentity.parentThreadId ? { parentThreadId: record.usageIdentity.parentThreadId } : {}),
+          ...(record.usageIdentity.parentRunId ? { parentRunId: record.usageIdentity.parentRunId } : {}),
+          ...(record.usageIdentity.subagentRunId ? { subagentRunId: record.usageIdentity.subagentRunId } : {}),
+          ...(record.usageIdentity.responseId ? { responseId: record.usageIdentity.responseId } : {}),
+        })) }
       : {}
+  }
+
+  private createUsageIdentity(
+    callerKind: UsageIdentity['callerKind'],
+    options: Partial<Omit<UsageIdentity, 'threadId' | 'callerKind'>> = {},
+  ): UsageIdentity {
+    return {
+      threadId: this.sessionId,
+      callerKind,
+      runId: this.sessionId,
+      responseId: crypto.randomUUID(),
+      ...options,
+    }
+  }
+
+  private createBillingUsageSummary(): BillingUsageSummary {
+    const cumulative = normalizeProviderUsage({
+      input_tokens: this.totalUsage.input_tokens,
+      output_tokens: this.totalUsage.output_tokens,
+      cache_read_input_tokens: this.totalUsage.cache_read_input_tokens ?? 0,
+      cache_creation_input_tokens: this.totalUsage.cache_creation_input_tokens ?? 0,
+    })
+    return {
+      cumulative,
+      ...(this.usageRecords.length > 0 ? { latestRecord: { ...this.usageRecords[this.usageRecords.length - 1]! } } : {}),
+      records: this.usageRecords.map((record) => ({ ...record })),
+      totalCostUSD: this.totalCost,
+    }
+  }
+
+  private normalizedUsageFromRecord(record: BillingUsageRecord): NormalizedProviderUsage {
+    return {
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
+      cacheReadInputTokens: record.cacheReadInputTokens,
+      cacheCreationInputTokens: record.cacheCreationInputTokens,
+      totalTokens: record.totalTokens,
+    }
+  }
+
+  private getContextWindow(): number {
+    return getContextWindowSize(this.config.model)
+  }
+
+  private estimateToolSchemaTokens(): number {
+    return this.config.tools.reduce(
+      (sum, tool) => sum + Math.ceil((tool.description.length + tool.name.length) / 4),
+      0,
+    )
+  }
+
+  private createContextUsage(): ContextUsageSnapshot {
+    return createContextUsageSnapshot(this.messages, {
+      threadId: this.sessionId,
+      contextWindow: this.getContextWindow(),
+      contextWindowSource: 'model',
+      systemTokens: estimateSystemPromptTokens(this.config.systemPrompt || ''),
+      memoryTokens: 0,
+      toolSchemaTokens: this.estimateToolSchemaTokens(),
+    })
+  }
+
+  private createResultUsageFields(): {
+    usage: TokenUsage
+    model_usage: Record<string, { input_tokens: number; output_tokens: number }>
+    modelUsage: Record<string, {
+      inputTokens: number
+      outputTokens: number
+      cacheReadInputTokens: number
+      cacheCreationInputTokens: number
+      webSearchRequests: number
+      costUSD: number
+      contextWindow: number
+      maxOutputTokens: number
+    }>
+    usageRecords?: SDKUsageRecord[]
+    billingUsage: BillingUsageSummary
+    contextUsage: ContextUsageSnapshot
+  } {
+    const contextUsage = this.createContextUsage()
+    const usage = { ...this.totalUsage }
+    const snakeCaseUsage = {
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+    }
+    const camelCaseUsage = {
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+      cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+      webSearchRequests: 0,
+      costUSD: this.totalCost,
+      contextWindow: contextUsage.contextWindow,
+      maxOutputTokens: this.config.maxTokens,
+    }
+    return {
+      usage,
+      model_usage: { [this.config.model]: snakeCaseUsage },
+      modelUsage: { [this.config.model]: camelCaseUsage },
+      ...this.optionalUsageRecords(),
+      billingUsage: this.createBillingUsageSummary(),
+      contextUsage,
+    }
   }
 
   /**
@@ -384,7 +517,8 @@ export class QueryEngine {
   }
 
   private async shouldCompactAutomatically(): Promise<boolean> {
-    const estimatedTokens = estimateMessagesTokens(this.messages)
+    const contextUsage = this.createContextUsage()
+    const estimatedTokens = contextUsage.totalTokens
     const controller = this.config.contextController
     if (controller?.shouldAutoCompact) {
       return controller.shouldAutoCompact({
@@ -392,9 +526,13 @@ export class QueryEngine {
         model: this.config.model,
         state: this.compactState,
         estimatedTokens,
+        contextUsage,
       })
     }
-    return shouldAutoCompact(this.messages as any[], this.config.model, this.compactState)
+    return shouldAutoCompact(this.messages as any[], this.config.model, this.compactState, {
+      contextUsage,
+      maxOutputTokens: this.config.maxTokens,
+    })
   }
 
   private async compactMessages(
@@ -405,6 +543,7 @@ export class QueryEngine {
     summary: string
     state: AutoCompactState
     metadata?: AgentContextCompactionMetadata
+    usage?: NormalizedProviderUsage
   }> {
     const controller = this.config.contextController
     if (controller?.compactConversation) {
@@ -425,6 +564,7 @@ export class QueryEngine {
           consecutiveFailures: 0,
         },
         metadata: result.metadata,
+        usage: result.usage,
       }
     }
     return defaultCompactConversation(
@@ -507,11 +647,17 @@ export class QueryEngine {
   private async *runCompaction(
     trigger: AgentContextCompactionTrigger,
   ): AsyncGenerator<SDKMessage> {
-    const preTokens = estimateMessagesTokens(this.messages)
+    const preTokens = this.createContextUsage().totalTokens
     const startMetadata = await this.getCompactionStartMetadata(trigger, preTokens)
     yield this.createCompactionStartedEvent(trigger, preTokens, startMetadata)
 
     const result = await this.compactMessages(trigger, preTokens)
+    if (result.usage) {
+      this.recordProviderUsage(result.usage, this.createUsageIdentity('compaction', {
+        callerLabel: 'Compaction',
+        turn: this.turnCount,
+      }))
+    }
     this.messages = result.compactedMessages
     this.compactState = result.state
     const boundary: AgentContextCompactionBoundary = {
@@ -593,8 +739,7 @@ export class QueryEngine {
         type: 'result',
         subtype: 'error_during_execution',
         is_error: true,
-        usage: this.totalUsage,
-        ...this.optionalUsageRecords(),
+        ...this.createResultUsageFields(),
         num_turns: 0,
         cost: 0,
         errors: ['Blocked by UserPromptSubmit hook'],
@@ -621,21 +766,7 @@ export class QueryEngine {
         num_turns: 0,
         total_cost_usd: this.totalCost,
         duration_api_ms: Math.round(this.apiTimeMs),
-        usage: this.totalUsage,
-        model_usage: { [this.config.model]: { input_tokens: 0, output_tokens: 0 } },
-        modelUsage: {
-          [this.config.model]: {
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadInputTokens: 0,
-            cacheCreationInputTokens: 0,
-            webSearchRequests: 0,
-            costUSD: this.totalCost,
-            contextWindow: 0,
-            maxOutputTokens: this.config.maxTokens,
-          },
-        },
-        ...this.optionalUsageRecords(),
+        ...this.createResultUsageFields(),
         cost: this.totalCost,
       } as SDKMessage
       yield {
@@ -839,8 +970,7 @@ export class QueryEngine {
           type: 'result',
           subtype: 'error_during_execution',
           is_error: true,
-          usage: this.totalUsage,
-          ...this.optionalUsageRecords(),
+          ...this.createResultUsageFields(),
           num_turns: this.turnCount,
           cost: this.totalCost,
           errors: [err?.message || 'Unknown provider error'],
@@ -857,21 +987,37 @@ export class QueryEngine {
       // Track API timing
       this.apiTimeMs += performance.now() - apiStart
 
+      const usageIdentity = this.createUsageIdentity('conversation', {
+        callerLabel: `Turn ${this.turnCount}`,
+        turn: this.turnCount,
+      })
+      let usageRecord: BillingUsageRecord | undefined
+
       // Track usage (normalized by provider)
       if (response.usage) {
-        this.recordProviderUsage(response.usage)
+        usageRecord = this.recordProviderUsage(response.usage, usageIdentity)
       }
 
       // Add assistant message to conversation
-      this.messages.push({ role: 'assistant', content: response.content as any })
+      this.messages.push({
+        role: 'assistant',
+        content: response.content as any,
+        ...(usageRecord ? { usage: this.normalizedUsageFromRecord(usageRecord), usageIdentity } : {}),
+      })
 
       // Yield assistant message
       yield {
         type: 'assistant',
+        session_id: this.sessionId,
         message: {
           role: 'assistant',
           content: response.content as any,
         },
+        ...(usageRecord ? {
+          usage: this.normalizedUsageFromRecord(usageRecord),
+          usageIdentity,
+          costUSD: usageRecord.costUSD,
+        } : {}),
       }
 
       if (this.config.initialization?.outputStyle === 'streamlined') {
@@ -1006,22 +1152,6 @@ export class QueryEngine {
         ? 'error_max_turns'
         : 'success'
 
-    // Build per-model usage in both formats for compatibility
-    const snakeCaseUsage = {
-      input_tokens: this.totalUsage.input_tokens,
-      output_tokens: this.totalUsage.output_tokens,
-    }
-    const camelCaseUsage = {
-      inputTokens: this.totalUsage.input_tokens,
-      outputTokens: this.totalUsage.output_tokens,
-      cacheReadInputTokens: this.totalUsage.cache_read_input_tokens ?? 0,
-      cacheCreationInputTokens: this.totalUsage.cache_creation_input_tokens ?? 0,
-      webSearchRequests: 0,
-      costUSD: this.totalCost,
-      contextWindow: 0,
-      maxOutputTokens: this.config.maxTokens,
-    }
-
     const finalText = [...this.messages]
       .reverse()
       .find((message) => message.role === 'assistant')
@@ -1045,11 +1175,7 @@ export class QueryEngine {
       num_turns: this.turnCount,
       total_cost_usd: this.totalCost,
       duration_api_ms: Math.round(this.apiTimeMs),
-      usage: this.totalUsage,
-      /** @deprecated Use modelUsage */
-      model_usage: { [this.config.model]: snakeCaseUsage },
-      modelUsage: { [this.config.model]: camelCaseUsage },
-      ...this.optionalUsageRecords(),
+      ...this.createResultUsageFields(),
       cost: this.totalCost,
       permission_denials: this.permissionDenials,
       structured_output: structuredOutput,

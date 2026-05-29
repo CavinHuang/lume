@@ -12,6 +12,7 @@ import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { loadSession } from '../session.js'
 import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from './subagent-output.js'
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
+import { createAgentProgressTracker } from '../utils/usage.js'
 
 // Store for registered agent definitions
 let registeredAgents: Record<string, AgentDefinition> = {}
@@ -162,6 +163,8 @@ export const AgentTool: ToolDefinition = {
 
     let subagentStatus: 'completed' | 'errored' | 'aborted' = 'completed'
     let subagentErrorMessage = ''
+    const progressTracker = createAgentProgressTracker()
+    let latestProgressUsage = progressTracker.snapshot()
 
     const runSubagent = async (
       progress?: {
@@ -202,7 +205,7 @@ export const AgentTool: ToolDefinition = {
           return { behavior: 'allow' }
         },
         includePartialMessages: false,
-        sessionId: context.sessionId,
+        sessionId: agentId,
         permissionMode: input.mode,
         abortSignal: context.abortSignal,
       })
@@ -231,6 +234,9 @@ export const AgentTool: ToolDefinition = {
           context.emitEvent?.(taggedEvent)
         }
         if (event.type === 'assistant') {
+          if (event.usage) {
+            latestProgressUsage = progressTracker.update(event.usage)
+          }
           const summary = summarizeSubagentAssistantEvent(
             event.message.content as Array<Record<string, unknown>>,
             resultText,
@@ -249,7 +255,7 @@ export const AgentTool: ToolDefinition = {
               description: progress.description,
               last_tool_name: toolCalls.at(-1),
               usage: {
-                total_tokens: 0,
+                total_tokens: latestProgressUsage.totalTokens,
                 tool_uses: toolUseCount,
                 duration_ms: Date.now() - startedAt,
               },
@@ -350,7 +356,7 @@ export const AgentTool: ToolDefinition = {
             description: task.subject,
             last_tool_name: 'Agent',
             usage: {
-              total_tokens: 0,
+              total_tokens: latestProgressUsage.totalTokens,
               tool_uses: 1,
               duration_ms: 0,
             },
@@ -381,7 +387,7 @@ export const AgentTool: ToolDefinition = {
             description: task.subject,
             last_tool_name: 'Agent',
             usage: {
-              total_tokens: 0,
+              total_tokens: latestProgressUsage.totalTokens,
               tool_uses: 1,
               duration_ms: 0,
             },

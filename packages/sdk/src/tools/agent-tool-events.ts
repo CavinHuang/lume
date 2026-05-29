@@ -2,6 +2,7 @@ import type { SDKMessage } from "../types.js"
 
 function isSupportedSubagentStreamingEvent(message: SDKMessage): boolean {
   return message.type === "assistant"
+    || message.type === "result"
     || message.type === "stream_event"
     || message.type === "tool_result"
     || message.type === "tool_progress"

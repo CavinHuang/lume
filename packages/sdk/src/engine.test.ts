@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { QueryEngine } from "./engine.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
+import { normalizeProviderUsage } from "./utils/usage.js"
 
 class StaticProvider implements LLMProvider {
   readonly apiType = "anthropic-messages" as const
@@ -353,6 +354,113 @@ describe("QueryEngine context controller", () => {
   });
 });
 
+describe("QueryEngine auto compaction usage", () => {
+  test("uses provider context usage threshold and records compaction usage outside the context anchor", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "text", text: "compact summary" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1000, output_tokens: 8 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 50, output_tokens: 10 }
+      }
+    ]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 16_384,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      sessionId: "thread-compact"
+    });
+    engine.messages.push({
+      role: "assistant",
+      content: "",
+      usage: {
+        inputTokens: 170_600,
+        outputTokens: 20,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        totalTokens: 170_620
+      },
+      usageIdentity: {
+        threadId: "thread-compact",
+        callerKind: "conversation",
+        turn: 1
+      }
+    } as any);
+
+    const events = await collectEvents(engine);
+    const result = events.find((event) => (event as { type?: string }).type === "result") as any;
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "context_compaction_started",
+      compact_metadata: expect.objectContaining({
+        trigger: "auto",
+        pre_tokens: expect.any(Number)
+      })
+    }));
+    expect(result.billingUsage.records.map((record: any) => record.usageIdentity.callerKind)).toEqual([
+      "compaction",
+      "conversation"
+    ]);
+    expect(result.billingUsage.records[0]).toMatchObject({
+      inputTokens: 1000,
+      outputTokens: 8
+    });
+    expect(result.contextUsage).toMatchObject({
+      source: "provider",
+      inputTokens: 50,
+      outputTokens: 10,
+      totalTokens: 60
+    });
+  });
+
+  test("does not auto compact when only non-conversation usage is above threshold", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 50, output_tokens: 10 }
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 16_384,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      sessionId: "thread-non-conversation"
+    });
+    engine.messages.push({
+      role: "assistant",
+      content: "",
+      usage: normalizeProviderUsage({ input_tokens: 300_000, output_tokens: 1_000 }),
+      usageIdentity: {
+        threadId: "thread-non-conversation",
+        callerKind: "compaction"
+      }
+    } as any);
+
+    const events = await collectEvents(engine);
+
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "context_compaction_started"
+    }));
+  });
+});
+
 describe("QueryEngine skill allowed tools", () => {
   test("applies Skill.allowedTools to subsequent provider turns in the same run", async () => {
     const observedTools: string[][] = [];
@@ -422,6 +530,63 @@ describe("QueryEngine skill allowed tools", () => {
 });
 
 describe("QueryEngine usage records", () => {
+  test("emits assistant usage and final billing/context usage contract", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_input_tokens: 30
+      }
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "gpt-4o-mini",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      sessionId: "thread-usage"
+    });
+
+    const events = await collectEvents(engine);
+    const assistant = events.find((event) => (event as { type?: string }).type === "assistant") as any;
+    const result = events.find((event) => (event as { type?: string }).type === "result") as any;
+
+    expect(assistant.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadInputTokens: 30,
+      cacheCreationInputTokens: 0,
+      totalTokens: 150
+    });
+    expect(assistant.usageIdentity).toMatchObject({
+      threadId: "thread-usage",
+      callerKind: "conversation",
+      turn: 1
+    });
+    expect(result.billingUsage.cumulative).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadInputTokens: 30,
+      cacheCreationInputTokens: 0,
+      totalTokens: 150
+    });
+    expect(result.billingUsage.latestRecord).toMatchObject({
+      outputTokens: 20,
+      usageIdentity: expect.objectContaining({ callerKind: "conversation" })
+    });
+    expect(result.contextUsage).toMatchObject({
+      source: "provider",
+      totalTokens: 150,
+      contextWindow: 128_000
+    });
+  });
+
   test("includes per-provider-call usage records in the final result", async () => {
     const provider = new StaticProvider([
       {
