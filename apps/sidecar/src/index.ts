@@ -12,6 +12,7 @@ import { imRuntimeManager } from "./services/im/im-runtime-manager";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
+import { cleanupExpiredTrash } from "./services/agent/agent-thread-manager";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
 import { formatConsoleArgs } from "./services/infra/log-format";
 import { writeLogRecord } from "./services/infra/logger";
@@ -124,6 +125,8 @@ async function boot(): Promise<void> {
     });
   }
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
+  // 启动时清理过期回收站条目
+  try { cleanupExpiredTrash(); } catch { /* non-critical */ }
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_COMPLETED, event);
   });

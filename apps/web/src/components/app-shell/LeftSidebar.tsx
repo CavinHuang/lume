@@ -6,8 +6,10 @@ import {
   agentThreadsAtom,
   agentWorkspacesAtom,
   activeTabIdAtom,
+  archiveInitialViewAtom,
   commandPaletteOpenAtom,
   currentWorkspaceIdAtom,
+  settingsInitialTabAtom,
   sidebarCollapsedAtom,
   tabsAtom,
   workspacePinnedIdsAtom,
@@ -42,6 +44,8 @@ export function LeftSidebar() {
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [pinnedIds, setPinnedIds] = useAtom(workspacePinnedIdsAtom)
   const setOpenCommandPalette = useSetAtom(commandPaletteOpenAtom)
+  const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
+  const setArchiveInitialView = useSetAtom(archiveInitialViewAtom)
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [confirmState, setConfirmState] = useState<{
@@ -156,22 +160,22 @@ export function LeftSidebar() {
 
     setConfirmState({
       open: true,
-      title: '删除会话',
-      description: `确认删除会话「${thread.title}」？此操作不可撤销。`,
-      confirmLabel: '删除',
-      destructive: true,
+      title: '归档会话',
+      description: `确认归档会话「${thread.title}」？你可以在设置 > 归档中恢复。`,
+      confirmLabel: '归档',
+      destructive: false,
       onConfirm: async () => {
         try {
-          await sidecarCall('agent:delete-thread', { threadId: thread.id })
+          await sidecarCall('agent:archive-thread', { threadId: thread.id })
           setThreads((previous) => previous.filter((item) => item.id !== thread.id))
           setTabs((previous) => previous.filter((tab) => tab.id !== thread.id))
           if (activeTabId === thread.id) {
             setActiveTabId(null)
           }
-          toast.success('已删除')
+          toast.success('已归档')
         } catch (error) {
-          console.error('[LeftSidebar] 删除失败:', error)
-          toast.error('删除失败')
+          console.error('[LeftSidebar] 归档失败:', error)
+          toast.error('归档失败')
         }
       },
     })
@@ -268,6 +272,11 @@ export function LeftSidebar() {
 
   const handleFooterAction = (actionId: LumeSidebarFooterActionId) => {
     if (actionId === 'settings') {
+      openSettings()
+    }
+    if (actionId === 'recycle-bin') {
+      setSettingsInitialTab('archive')
+      setArchiveInitialView('trash')
       openSettings()
     }
   }

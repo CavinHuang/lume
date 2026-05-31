@@ -20,7 +20,15 @@ import {
   toggleAgentThreadPin,
   forkAgentThread,
   truncateAgentMessagesFrom,
-  updateAgentThreadMeta
+  updateAgentThreadMeta,
+  archiveAgentThread,
+  restoreAgentThread,
+  trashAgentThread,
+  restoreAgentThreadFromTrash,
+  permanentlyDeleteAgentThread,
+  listArchivedThreads,
+  listTrashedThreads,
+  cleanupExpiredTrash,
 } from "../services/agent/agent-thread-manager";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
@@ -570,6 +578,38 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       getAgentRuntimeStatusManager().clearSession(input.threadId);
       context.planModePhaseTracker.clearSession(input.threadId);
       return { ok: true };
+    },
+    [AGENT_IPC_CHANNELS.ARCHIVE_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.ARCHIVE_THREAD);
+      log.info("[Agent 线程] 归档", { threadId: input.threadId.slice(0, 8) });
+      return archiveAgentThread(input.threadId);
+    },
+    [AGENT_IPC_CHANNELS.RESTORE_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.RESTORE_THREAD);
+      return restoreAgentThread(input.threadId);
+    },
+    [AGENT_IPC_CHANNELS.TRASH_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.TRASH_THREAD);
+      log.info("[Agent 线程] 移入回收站", { threadId: input.threadId.slice(0, 8) });
+      return trashAgentThread(input.threadId);
+    },
+    [AGENT_IPC_CHANNELS.RESTORE_THREAD_FROM_TRASH]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.RESTORE_THREAD_FROM_TRASH);
+      return restoreAgentThreadFromTrash(input.threadId);
+    },
+    [AGENT_IPC_CHANNELS.PERMANENTLY_DELETE_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.PERMANENTLY_DELETE_THREAD);
+      log.info("[Agent 线程] 永久删除", { threadId: input.threadId.slice(0, 8) });
+      permanentlyDeleteAgentThread(input.threadId);
+      getAgentRuntimeStatusManager().clearSession(input.threadId);
+      context.planModePhaseTracker.clearSession(input.threadId);
+      return { ok: true };
+    },
+    [AGENT_IPC_CHANNELS.LIST_ARCHIVED_THREADS]: async () => listArchivedThreads(),
+    [AGENT_IPC_CHANNELS.LIST_TRASHED_THREADS]: async () => listTrashedThreads(),
+    [AGENT_IPC_CHANNELS.CLEANUP_EXPIRED_TRASH]: async () => {
+      const count = cleanupExpiredTrash();
+      return { cleanedCount: count };
     },
     [AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS);

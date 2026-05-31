@@ -152,7 +152,9 @@ function writeIndex(index: AgentThreadsIndex): void {
 }
 
 export function listAgentThreads(): AgentThreadMeta[] {
-  return readIndex().threads.sort((a, b) => b.updatedAt - a.updatedAt);
+  return readIndex().threads
+    .filter((t) => !t.status || t.status === "active")
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function getAgentThreadMeta(id: string): AgentThreadMeta | undefined {
@@ -372,7 +374,7 @@ export function updateAgentThreadMeta(
   updates: Partial<
     Pick<
       AgentThreadMeta,
-      "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource"
+      "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
     >
   > & {
     modelRef?: string | null;
@@ -540,6 +542,63 @@ export function deleteAgentThread(id: string): void {
   }
 
   console.log(`[Agent 线程] 已删除线程: ${removed.title} (${removed.id})`);
+}
+
+// ===== 归档与回收站 =====
+
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
+
+export function listArchivedThreads(): AgentThreadMeta[] {
+  return readIndex().threads
+    .filter((t) => t.status === "archived")
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function listTrashedThreads(): AgentThreadMeta[] {
+  return readIndex().threads
+    .filter((t) => t.status === "trashed")
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function archiveAgentThread(id: string): AgentThreadMeta {
+  console.log(`[Agent 线程] 归档 ${id.slice(0, 8)}`);
+  return updateAgentThreadMeta(id, { status: "archived" });
+}
+
+export function restoreAgentThread(id: string): AgentThreadMeta {
+  console.log(`[Agent 线程] 从归档恢复 ${id.slice(0, 8)}`);
+  return updateAgentThreadMeta(id, { status: undefined, trashedAt: undefined });
+}
+
+export function trashAgentThread(id: string): AgentThreadMeta {
+  console.log(`[Agent 线程] 移入回收站 ${id.slice(0, 8)}`);
+  return updateAgentThreadMeta(id, { status: "trashed", trashedAt: Date.now() });
+}
+
+export function restoreAgentThreadFromTrash(id: string): AgentThreadMeta {
+  return updateAgentThreadMeta(id, { status: "archived", trashedAt: undefined });
+}
+
+export function permanentlyDeleteAgentThread(id: string): void {
+  deleteAgentThread(id);
+}
+
+/** 清理回收站中超过 30 天的线程，返回清理数量 */
+export function cleanupExpiredTrash(): number {
+  const index = readIndex();
+  const now = Date.now();
+  const toDelete = index.threads.filter(
+    (t) => t.status === "trashed" && t.trashedAt && (now - t.trashedAt) > TRASH_RETENTION_MS
+  );
+
+  for (const thread of toDelete) {
+    deleteAgentThread(thread.id);
+  }
+
+  if (toDelete.length > 0) {
+    console.log(`[Agent 线程] 已清理 ${toDelete.length} 个过期回收站条目`);
+  }
+  return toDelete.length;
 }
 
 export function truncateAgentMessagesFrom(threadId: string, messageId: string): AgentMessage[] {

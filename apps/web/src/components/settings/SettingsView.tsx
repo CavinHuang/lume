@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type * as React from 'react'
 import {
   Settings,
 } from 'lucide-react'
+import { useSetAtom, useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { settingsInitialTabAtom, archiveInitialViewAtom } from '@/atoms'
 import { GeneralSettings } from './GeneralSettings'
 import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
@@ -16,6 +18,7 @@ import { MemorySettings } from './MemorySettings'
 import { VersionUpdateSettings } from './VersionUpdateSettings'
 import { LogSettings } from './LogSettings'
 import { WebSearchSettings } from './WebSearchSettings'
+import { ArchiveSettings } from './ArchiveSettings'
 import {
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
@@ -24,7 +27,26 @@ import {
 } from './settings-view-state'
 
 export function SettingsView() {
-  const [tab, setTab] = useState<SettingsViewTab>('general')
+  const initialTab = useAtomValue(settingsInitialTabAtom)
+  const clearInitialTab = useSetAtom(settingsInitialTabAtom)
+  const archiveInitialView = useAtomValue(archiveInitialViewAtom)
+  const clearArchiveInitialView = useSetAtom(archiveInitialViewAtom)
+  const [tab, setTab] = useState<SettingsViewTab>(() => {
+    if (initialTab && SETTINGS_NAV_ITEMS.some((item) => item.id === initialTab)) {
+      return initialTab as SettingsViewTab
+    }
+    return 'general'
+  })
+
+  useEffect(() => {
+    if (initialTab) {
+      if (SETTINGS_NAV_ITEMS.some((item) => item.id === initialTab)) {
+        setTab(initialTab as SettingsViewTab)
+      }
+      clearInitialTab(null)
+      if (archiveInitialView) clearArchiveInitialView(null)
+    }
+  }, [initialTab, clearInitialTab, archiveInitialView, clearArchiveInitialView])
   const title = SETTINGS_PAGE_TITLES[tab]
   const subtitle = SETTINGS_PAGE_SUBTITLES[tab]
 
@@ -86,6 +108,7 @@ export function SettingsView() {
           {tab === 'web-search' && <WebSearchSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
           {tab === 'logs' && <LogSettings />}
+          {tab === 'archive' && <ArchiveSettings initialView={archiveInitialView ?? undefined} />}
         </main>
       </ScrollArea>
     </div>

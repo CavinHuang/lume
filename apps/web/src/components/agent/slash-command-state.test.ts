@@ -8,7 +8,7 @@ describe('buildSlashSuggestionItems', () => {
       { slug: 'debug', name: 'Debug', description: 'Investigate runtime failures' },
     ], '')
 
-    expect(items.slice(0, 3).map((item) => item.title)).toEqual(['/clear', '/compact', '/resume'])
+    expect(items.slice(0, 2).map((item) => item.title)).toEqual(['/clear', '/compact'])
     expect(items.some((item) => item.title === '/using-superpowers' && item.section === 'skill')).toBe(true)
   })
 

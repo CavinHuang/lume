@@ -1,4 +1,5 @@
 import {
+  Archive,
   Box,
   Cog,
   Database,
@@ -29,6 +30,7 @@ export type SettingsViewTab =
   | 'web-search'
   | 'updates'
   | 'logs'
+  | 'archive'
 
 export const SETTINGS_NAV_ITEMS: Array<{
   id: SettingsViewTab
@@ -48,6 +50,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'web-search', label: '网络搜索', icon: Search },
   { id: 'updates', label: '版本与更新', icon: RefreshCw },
   { id: 'logs', label: '应用日志', icon: ScrollText },
+  { id: 'archive', label: '归档', icon: Archive },
 ]
 
 export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
@@ -64,6 +67,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   'web-search': '网络搜索',
   updates: '版本与更新',
   logs: '应用日志',
+  archive: '归档与回收站',
 }
 
 export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
@@ -80,4 +84,5 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   'web-search': '配置网络搜索后端、API Key 和搜索策略',
   updates: '管理 Lume 的版本检查、下载与安装体验',
   logs: '查看应用、Agent、工具调用、MCP 与 Skill 加载运行日志',
+  archive: '查看已归档的会话，恢复或永久删除，管理回收站',
 }

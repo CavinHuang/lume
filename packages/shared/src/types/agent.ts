@@ -84,6 +84,9 @@ export interface AgentThreadSource {
 
 // ===== Agent 线程管理 =====
 
+/** 线程生命周期状态 */
+export type AgentThreadStatus = 'active' | 'archived' | 'trashed'
+
 /**
  * Agent 线程轻量索引项
  *
@@ -115,6 +118,10 @@ export interface AgentThreadMeta {
   parentThreadId?: string
   /** 是否置顶 */
   pinned?: boolean
+  /** 线程生命周期状态，未定义时等同 'active' */
+  status?: AgentThreadStatus
+  /** 进入回收站的时间戳（status 为 'trashed' 时设置） */
+  trashedAt?: number
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
@@ -1042,6 +1049,22 @@ export const AGENT_IPC_CHANNELS = {
   MOVE_THREAD: 'agent:move-thread',
   /** 删除线程 */
   DELETE_THREAD: 'agent:delete-thread',
+  /** 归档线程（软删除，从侧边栏隐藏） */
+  ARCHIVE_THREAD: 'agent:archive-thread',
+  /** 从归档恢复线程 */
+  RESTORE_THREAD: 'agent:restore-thread',
+  /** 将归档线程移入回收站 */
+  TRASH_THREAD: 'agent:trash-thread',
+  /** 从回收站恢复线程回归档 */
+  RESTORE_THREAD_FROM_TRASH: 'agent:restore-thread-from-trash',
+  /** 永久删除回收站中的线程 */
+  PERMANENTLY_DELETE_THREAD: 'agent:permanently-delete-thread',
+  /** 列出归档线程 */
+  LIST_ARCHIVED_THREADS: 'agent:list-archived-threads',
+  /** 列出回收站线程 */
+  LIST_TRASHED_THREADS: 'agent:list-trashed-threads',
+  /** 清理过期回收站条目 */
+  CLEANUP_EXPIRED_TRASH: 'agent:cleanup-expired-trash',
   /** 从指定消息开始截断线程（包含该消息） */
   TRUNCATE_THREAD_MESSAGES_FROM: 'agent:truncate-thread-messages-from',
   // 工作区管理

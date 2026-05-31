@@ -19,6 +19,7 @@ import {
   SquarePen,
   Plus,
   Trash2,
+  Archive,
   X,
 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -760,14 +761,13 @@ function ThreadRow({
             重命名
           </ThreadMenuItem>
           <ThreadMenuItem
-            icon={<Trash2 size={13} />}
-            destructive
+            icon={<Archive size={13} />}
             onClick={() => {
               onDeleteThread(thread.id)
               setMenuOpen(false)
             }}
           >
-            删除
+            归档
           </ThreadMenuItem>
         </div>
       )}

@@ -36,16 +36,7 @@ const COMMON_SLASH_COMMANDS: CommonSlashCommand[] = [
     section: 'capability',
     keywords: ['compact', 'compress', 'history', '压缩', '历史'],
   },
-  {
-    id: 'resume',
-    label: 'resume',
-    type: 'command',
-    title: '/resume',
-    subtitle: '恢复之前的会话或上下文',
-    section: 'capability',
-    keywords: ['resume', 'session', 'restore', '恢复', '会话'],
-  },
-  {
+{
     id: 'mcp',
     label: 'mcp',
     type: 'command',
