@@ -94,6 +94,9 @@ export interface LLMProvider {
   /** The API type this provider implements. */
   readonly apiType: ApiType
 
+  /** Count request input tokens with the provider API when supported. */
+  countTokens?(params: CreateMessageParams): Promise<number | null>
+
   /** Send a message and get a response. */
   createMessage(params: CreateMessageParams): Promise<CreateMessageResponse>
 

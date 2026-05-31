@@ -3,6 +3,53 @@ import { describe, expect, test } from "bun:test"
 import { AnthropicProvider } from "./anthropic.js"
 
 describe("AnthropicProvider", () => {
+  test("counts request input tokens with Anthropic countTokens when available", async () => {
+    const provider = new AnthropicProvider({ apiKey: "sk-test" })
+    const calls: unknown[] = []
+    ;(provider as any).client = {
+      beta: {
+        messages: {
+          countTokens: async (request: unknown) => {
+            calls.push(request)
+            return { input_tokens: 321 }
+          },
+        },
+      },
+    }
+
+    const tokens = await provider.countTokens?.({
+      model: "claude-test",
+      maxTokens: 100,
+      system: "system prompt",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        name: "read_file",
+        description: "Read a file",
+        input_schema: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      }],
+    })
+
+    expect(tokens).toBe(321)
+    expect(calls).toEqual([{
+      model: "claude-test",
+      system: "system prompt",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        name: "read_file",
+        description: "Read a file",
+        input_schema: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      }],
+    }])
+  })
+
   test("maps cache creation detail fields when aggregate field is absent", async () => {
     const provider = new AnthropicProvider({ apiKey: "sk-test" })
     ;(provider as any).client = {

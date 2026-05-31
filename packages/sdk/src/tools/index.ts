@@ -20,6 +20,12 @@ import { NotebookEditTool } from './notebook-edit.js'
 // Web
 import { WebFetchTool } from './web-fetch.js'
 import { WebSearchTool } from './web-search.js'
+import {
+  GuanlanHotnewsTool,
+  GuanlanReadTool,
+  GuanlanResearchTool,
+  GuanlanSearchTool,
+} from './guanlan.js'
 
 // Agent & Multi-agent
 import { AgentTool } from './agent-tool.js'
@@ -84,6 +90,10 @@ const ALL_TOOLS: ToolDefinition[] = [
   // Web
   WebFetchTool,
   WebSearchTool,
+  GuanlanSearchTool,
+  GuanlanReadTool,
+  GuanlanHotnewsTool,
+  GuanlanResearchTool,
 
   // Agent & Multi-agent
   AgentTool,
@@ -212,6 +222,10 @@ export {
   NotebookEditTool,
   WebFetchTool,
   WebSearchTool,
+  GuanlanSearchTool,
+  GuanlanReadTool,
+  GuanlanHotnewsTool,
+  GuanlanResearchTool,
   // Agent
   AgentTool,
   SendMessageTool,

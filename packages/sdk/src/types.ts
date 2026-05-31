@@ -60,6 +60,7 @@ export type SDKMessage =
   | SDKPartialMessage
   | SDKSystemMessage
   | SDKContextCompactionStartedMessage
+  | SDKContextCompactionProgressMessage
   | SDKCompactBoundaryMessage
   | SDKStatusMessage
   | SDKTaskNotificationMessage
@@ -216,6 +217,7 @@ export interface SDKSystemMessage {
 }
 
 export type AgentContextCompactionTrigger = 'auto' | 'manual' | 'prompt_too_long'
+export type AgentContextCompactionStage = 'summarizing' | 'rewriting_context'
 
 export interface AgentContextCompactionMetadata {
   policy?: string
@@ -247,6 +249,15 @@ export interface AgentContextCompactionBoundary {
   preTokens: number
   postTokens?: number
   summary?: string
+  metadata?: AgentContextCompactionMetadata
+}
+
+export interface AgentContextCompactionProgress {
+  trigger: AgentContextCompactionTrigger
+  preTokens: number
+  stage: AgentContextCompactionStage | string
+  progress: number
+  message?: string
   metadata?: AgentContextCompactionMetadata
 }
 
@@ -337,6 +348,24 @@ export interface SDKContextCompactionStartedMessage {
   compact_metadata: {
     trigger: AgentContextCompactionTrigger
     pre_tokens: number
+    context_window?: number
+    budget?: AgentContextCompactionMetadata['budget']
+    policy?: string
+    source?: string
+  }
+  uuid?: string
+  session_id?: string
+}
+
+export interface SDKContextCompactionProgressMessage {
+  type: 'system'
+  subtype: 'context_compaction_progress'
+  compact_metadata: {
+    trigger: AgentContextCompactionTrigger
+    pre_tokens: number
+    stage: AgentContextCompactionStage | string
+    progress: number
+    message?: string
     context_window?: number
     budget?: AgentContextCompactionMetadata['budget']
     policy?: string

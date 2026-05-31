@@ -136,7 +136,27 @@ describe("QueryEngine context controller", () => {
       })
     });
 
+    expect((await iterator.next()).value).toMatchObject({
+      type: "system",
+      subtype: "context_compaction_progress",
+      compact_metadata: expect.objectContaining({
+        trigger: "auto",
+        stage: "summarizing",
+        progress: expect.any(Number)
+      })
+    });
+
     releaseCompaction.resolve();
+    expect((await iterator.next()).value).toMatchObject({
+      type: "system",
+      subtype: "context_compaction_progress",
+      compact_metadata: expect.objectContaining({
+        trigger: "auto",
+        stage: "rewriting_context",
+        progress: expect.any(Number)
+      })
+    });
+
     expect((await iterator.next()).value).toMatchObject({
       type: "system",
       subtype: "compact_boundary",
@@ -405,7 +425,8 @@ describe("QueryEngine auto compaction usage", () => {
       subtype: "context_compaction_started",
       compact_metadata: expect.objectContaining({
         trigger: "auto",
-        pre_tokens: expect.any(Number)
+        pre_tokens: expect.any(Number),
+        context_window: 200_000
       })
     }));
     expect(result.billingUsage.records.map((record: any) => record.usageIdentity.callerKind)).toEqual([

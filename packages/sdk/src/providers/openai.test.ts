@@ -245,4 +245,42 @@ describe("OpenAIProvider", () => {
       cache_creation_input_tokens: 0,
     })
   })
+
+  test("merges partial streaming usage chunks without dropping cache fields", async () => {
+    globalThis.fetch = (async () => {
+      const stream = [
+        'data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":30011,"completion_tokens":233,"total_tokens":30244}}',
+        'data: {"choices":[],"usage":{"prompt_tokens_details":{"cached_tokens":19904}}}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n")
+      return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test", retryConfig: fastRetry })
+    const generator = provider.createMessageStream({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    let final
+    while (true) {
+      const next = await generator.next()
+      if (next.done) {
+        final = next.value
+        break
+      }
+    }
+
+    expect(final?.usage).toEqual({
+      input_tokens: 10107,
+      output_tokens: 233,
+      cache_read_input_tokens: 19904,
+      cache_creation_input_tokens: 0,
+    })
+  })
 })

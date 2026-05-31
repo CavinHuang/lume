@@ -18,4 +18,13 @@ describe("SDK tool registry", () => {
     expect(names).not.toContain("automation_delete");
     expect(names).not.toContain("automation_run_now");
   });
+
+  test("exposes Guanlan as dedicated built-in web tools", () => {
+    const names = getAllBaseTools().map((tool) => tool.name);
+
+    expect(names).toContain("guanlan_search");
+    expect(names).toContain("guanlan_read");
+    expect(names).toContain("guanlan_hotnews");
+    expect(names).toContain("guanlan_research");
+  });
 });

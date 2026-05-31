@@ -23,6 +23,7 @@ import type {
   ContentBlockParam,
   AgentContextCompactionBoundary,
   AgentContextCompactionMetadata,
+  AgentContextCompactionStage,
   AgentContextCompactionTrigger,
   SDKUsageRecord,
   BillingUsageRecord,
@@ -215,6 +216,22 @@ function compactMetadataBudget(metadata?: AgentContextCompactionMetadata): Agent
   const budget = metadata?.budget
   if (!budget || typeof budget !== 'object') return undefined
   return budget
+}
+
+function mergeCompactionMetadata(
+  base: AgentContextCompactionMetadata,
+  override?: AgentContextCompactionMetadata,
+): AgentContextCompactionMetadata {
+  return {
+    ...base,
+    ...override,
+    budget: override?.budget ?? base.budget,
+  }
+}
+
+function compactionStageMessage(stage: AgentContextCompactionStage): string {
+  if (stage === 'summarizing') return '正在生成上下文摘要'
+  return '正在恢复压缩后的上下文'
 }
 
 // ============================================================================
@@ -597,6 +614,33 @@ export class QueryEngine {
     } as SDKMessage
   }
 
+  private createCompactionProgressEvent(
+    trigger: AgentContextCompactionTrigger,
+    preTokens: number,
+    stage: AgentContextCompactionStage,
+    progress: number,
+    metadata?: AgentContextCompactionMetadata,
+  ): SDKMessage {
+    return {
+      type: 'system',
+      subtype: 'context_compaction_progress',
+      compact_metadata: {
+        trigger,
+        pre_tokens: preTokens,
+        stage,
+        progress,
+        message: compactionStageMessage(stage),
+        ...(compactMetadataContextWindow(metadata) !== undefined
+          ? { context_window: compactMetadataContextWindow(metadata) }
+          : {}),
+        ...(compactMetadataBudget(metadata) ? { budget: compactMetadataBudget(metadata) } : {}),
+        ...(typeof metadata?.policy === 'string' ? { policy: metadata.policy } : {}),
+        ...(typeof metadata?.source === 'string' ? { source: metadata.source } : {}),
+      },
+      session_id: this.sessionId,
+    } as SDKMessage
+  }
+
   private createCompactBoundaryEvent(
     boundary: AgentContextCompactionBoundary,
   ): SDKMessage {
@@ -629,18 +673,21 @@ export class QueryEngine {
     trigger: AgentContextCompactionTrigger,
     preTokens: number,
   ): Promise<AgentContextCompactionMetadata | undefined> {
+    const baseMetadata: AgentContextCompactionMetadata = {
+      contextWindow: this.getContextWindow(),
+    }
     const controller = this.config.contextController
-    if (!controller?.getCompactionMetadata) return undefined
+    if (!controller?.getCompactionMetadata) return baseMetadata
     try {
-      return await controller.getCompactionMetadata({
+      return mergeCompactionMetadata(baseMetadata, await controller.getCompactionMetadata({
         messages: this.messages,
         model: this.config.model,
         state: this.compactState,
         trigger,
         preTokens,
-      })
+      }))
     } catch {
-      return undefined
+      return baseMetadata
     }
   }
 
@@ -650,8 +697,11 @@ export class QueryEngine {
     const preTokens = this.createContextUsage().totalTokens
     const startMetadata = await this.getCompactionStartMetadata(trigger, preTokens)
     yield this.createCompactionStartedEvent(trigger, preTokens, startMetadata)
+    yield this.createCompactionProgressEvent(trigger, preTokens, 'summarizing', 45, startMetadata)
 
     const result = await this.compactMessages(trigger, preTokens)
+    const resultMetadata = mergeCompactionMetadata({ contextWindow: this.getContextWindow() }, result.metadata)
+    yield this.createCompactionProgressEvent(trigger, preTokens, 'rewriting_context', 85, resultMetadata)
     if (result.usage) {
       this.recordProviderUsage(result.usage, this.createUsageIdentity('compaction', {
         callerLabel: 'Compaction',
@@ -665,7 +715,7 @@ export class QueryEngine {
       preTokens,
       postTokens: estimateMessagesTokens(this.messages),
       summary: result.summary,
-      metadata: result.metadata,
+      metadata: resultMetadata,
     }
     await this.config.contextController?.onCompactionBoundary?.(boundary)
     yield this.createCompactBoundaryEvent(boundary)

@@ -176,6 +176,52 @@ describe("context usage snapshots", () => {
     expect(snapshot.totalTokens).toBe(120 + tailTokens)
   })
 
+  test("walks back to the first split assistant sibling before estimating tool result tail", () => {
+    const usage = normalizeProviderUsage({ input_tokens: 100, output_tokens: 20 })
+    const firstToolResult: NormalizedMessageParam = {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "tool-1", content: "first tool output" }],
+    }
+    const splitAssistant: NormalizedMessageParam = {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "tool-2", name: "Read", input: { path: "second.txt" } }],
+    }
+    const secondToolResult: NormalizedMessageParam = {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "tool-2", content: "second tool output" }],
+    }
+    const messages = [
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tool-1", name: "Read", input: { path: "first.txt" } }],
+        usage,
+        usageIdentity: { threadId: "thread-1", callerKind: "conversation", responseId: "resp-1" },
+      },
+      firstToolResult,
+      {
+        ...splitAssistant,
+        usage,
+        usageIdentity: { threadId: "thread-1", callerKind: "conversation", responseId: "resp-1" },
+      },
+      secondToolResult,
+    ] as Array<NormalizedMessageParam & Record<string, unknown>>
+
+    const snapshot = createContextUsageSnapshot(messages, {
+      threadId: "thread-1",
+      contextWindow: 200_000,
+      contextWindowSource: "model",
+    })
+
+    const tailTokens = estimateMessagesTokens([
+      firstToolResult,
+      splitAssistant,
+      secondToolResult,
+    ])
+    expect(snapshot.source).toBe("provider")
+    expect(snapshot.estimatedTailTokens).toBe(tailTokens)
+    expect(snapshot.totalTokens).toBe(120 + tailTokens)
+  })
+
   test("ignores compaction and subagent usage as main context anchors", () => {
     const messages = [
       {

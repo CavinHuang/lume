@@ -209,7 +209,8 @@ export function createContextUsageSnapshot(
 
   const anchor = messages[anchorIndex]!
   const usage = anchor.usage!
-  const tailMessages = messages.slice(anchorIndex + 1)
+  const estimationStartIndex = findFirstSplitResponseSiblingIndex(messages, anchorIndex, options.threadId)
+  const tailMessages = messages.slice(estimationStartIndex + 1)
   const estimatedTailTokens = estimateMessagesTokens(tailMessages)
   return {
     source: 'provider',
@@ -239,6 +240,38 @@ function findLatestConversationUsageAnchor(
     return index
   }
   return -1
+}
+
+function findFirstSplitResponseSiblingIndex(
+  messages: Array<NormalizedMessageParam & {
+    usage?: NormalizedProviderUsage
+    usageIdentity?: UsageIdentity
+  }>,
+  anchorIndex: number,
+  threadId: string,
+): number {
+  const responseId = messages[anchorIndex]?.usageIdentity?.responseId
+  if (!responseId) return anchorIndex
+
+  let startIndex = anchorIndex
+  for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    const identity = message?.usageIdentity
+    const priorResponseId = identity?.responseId
+    if (
+      message?.role === 'assistant'
+      && priorResponseId === responseId
+      && identity?.threadId === threadId
+      && identity.callerKind === 'conversation'
+    ) {
+      startIndex = index
+      continue
+    }
+    if (message?.role === 'assistant' && priorResponseId && priorResponseId !== responseId) {
+      break
+    }
+  }
+  return startIndex
 }
 
 function tokenValue(value: unknown): number {

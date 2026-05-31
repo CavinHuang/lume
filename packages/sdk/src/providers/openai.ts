@@ -85,6 +85,7 @@ interface OpenAIChatResponse {
 }
 
 type OpenAIUsage = NonNullable<OpenAIChatResponse['usage']>
+type OpenAIStreamUsage = NonNullable<OpenAIStreamChunk['usage']>
 
 interface OpenAIStreamChunk {
   choices?: Array<{
@@ -260,7 +261,7 @@ export class OpenAIProvider implements LLMProvider {
     ): Promise<Array<CreateMessageStreamEvent>> => {
       const events: Array<CreateMessageStreamEvent> = []
       if (chunk.usage) {
-        streamedUsage = chunk.usage
+        streamedUsage = mergeOpenAIUsage(streamedUsage, chunk.usage)
       }
 
       for (const choice of chunk.choices ?? []) {
@@ -377,17 +378,17 @@ export class OpenAIProvider implements LLMProvider {
     const tailEvents = await processBuffer(true)
     for (const event of tailEvents) {
       yield event
-        }
+    }
 
-        const content: NormalizedResponseBlock[] = []
-        const reasoning = reasoningParts.join('')
-        if (reasoning) {
-            content.push({ type: 'thinking', thinking: reasoning })
-        }
-        const text = textParts.join('')
-        if (text) {
-            content.push({ type: 'text', text })
-        }
+    const content: NormalizedResponseBlock[] = []
+    const reasoning = reasoningParts.join('')
+    if (reasoning) {
+      content.push({ type: 'thinking', thinking: reasoning })
+    }
+    const text = textParts.join('')
+    if (text) {
+      content.push({ type: 'text', text })
+    }
 
     for (const toolCall of [...toolCalls.entries()].sort((a, b) => a[0] - b[0]).map((entry) => entry[1])) {
       let input: any
@@ -672,6 +673,84 @@ function normalizeOpenAIUsage(usage: OpenAIUsage | OpenAIStreamChunk['usage'] | 
     output_tokens: outputTokens,
     cache_read_input_tokens: cacheReadInputTokens,
     cache_creation_input_tokens: 0,
+  }
+}
+
+function mergeOpenAIUsage(
+  current: OpenAIStreamChunk['usage'] | undefined,
+  next: OpenAIStreamUsage,
+): OpenAIStreamChunk['usage'] {
+  if (!current) {
+    return next
+  }
+  const merged: OpenAIStreamUsage = { ...current }
+
+  setNumberField(merged, next, 'prompt_tokens')
+  setNumberField(merged, next, 'completion_tokens')
+  setNumberField(merged, next, 'total_tokens')
+  setNumberField(merged, next, 'input_tokens')
+  setNumberField(merged, next, 'output_tokens')
+  setNumberField(merged, next, 'prompt_cache_miss_tokens')
+  setPositiveNumberField(merged, next, 'prompt_cache_hit_tokens')
+
+  if (next.prompt_tokens_details) {
+    const currentCachedTokens = current.prompt_tokens_details?.cached_tokens
+    merged.prompt_tokens_details = {
+      ...current.prompt_tokens_details,
+      ...next.prompt_tokens_details,
+    }
+    if (
+      tokenValue(next.prompt_tokens_details.cached_tokens) === 0
+      && tokenValue(currentCachedTokens) > 0
+    ) {
+      merged.prompt_tokens_details.cached_tokens = currentCachedTokens
+    }
+  }
+  if (next.input_tokens_details) {
+    const currentCachedTokens = current.input_tokens_details?.cached_tokens
+    merged.input_tokens_details = {
+      ...current.input_tokens_details,
+      ...next.input_tokens_details,
+    }
+    if (
+      tokenValue(next.input_tokens_details.cached_tokens) === 0
+      && tokenValue(currentCachedTokens) > 0
+    ) {
+      merged.input_tokens_details.cached_tokens = currentCachedTokens
+    }
+  }
+
+  return merged
+}
+
+type OpenAIUsageNumberField =
+  | 'prompt_tokens'
+  | 'completion_tokens'
+  | 'total_tokens'
+  | 'input_tokens'
+  | 'output_tokens'
+  | 'prompt_cache_hit_tokens'
+  | 'prompt_cache_miss_tokens'
+
+function setNumberField(
+  target: OpenAIStreamUsage,
+  source: OpenAIStreamUsage,
+  field: OpenAIUsageNumberField,
+): void {
+  const value = source[field]
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    target[field] = value
+  }
+}
+
+function setPositiveNumberField(
+  target: OpenAIStreamUsage,
+  source: OpenAIStreamUsage,
+  field: OpenAIUsageNumberField,
+): void {
+  const value = source[field]
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    target[field] = value
   }
 }
 

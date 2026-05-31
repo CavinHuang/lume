@@ -24,6 +24,56 @@ export class AnthropicProvider implements LLMProvider {
     })
   }
 
+  async countTokens(params: CreateMessageParams): Promise<number | null> {
+    const requestParams: Record<string, unknown> = {
+      model: params.model,
+      system: params.system,
+      messages: params.messages as Anthropic.MessageParam[],
+      tools: params.tools
+        ? (params.tools as Anthropic.Tool[])
+        : undefined,
+    }
+
+    if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
+      requestParams.thinking = {
+        type: 'enabled',
+        budget_tokens: params.thinking.budget_tokens,
+      }
+    } else if (params.thinking?.type === 'adaptive') {
+      requestParams.thinking = {
+        type: 'enabled',
+        budget_tokens: 10000,
+      }
+    }
+
+    if (params.effort) {
+      requestParams.effort = params.effort
+    }
+
+    const client = this.client as unknown as {
+      beta?: { messages?: { countTokens?: (request: Record<string, unknown>) => Promise<unknown> } }
+      messages?: { countTokens?: (request: Record<string, unknown>) => Promise<unknown> }
+    }
+    const counter = client.beta?.messages?.countTokens
+      ? client.beta.messages
+      : client.messages?.countTokens
+        ? client.messages
+        : undefined
+    if (!counter?.countTokens) {
+      return null
+    }
+
+    try {
+      const response = await counter.countTokens(requestParams)
+      const inputTokens = (response as { input_tokens?: unknown }).input_tokens
+      return typeof inputTokens === 'number' && Number.isFinite(inputTokens)
+        ? Math.max(0, Math.round(inputTokens))
+        : null
+    } catch {
+      return null
+    }
+  }
+
   async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
     const requestParams: Anthropic.MessageCreateParamsNonStreaming = {
       model: params.model,

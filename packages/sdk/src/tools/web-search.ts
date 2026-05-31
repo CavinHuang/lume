@@ -2,16 +2,40 @@
  * WebSearchTool - Web search with provider fallback
  */
 
+import { spawn } from 'node:child_process'
 import { defineTool } from './types.js'
 import { ensureNetworkAllowed } from '../utils/pathing.js'
 import { sdkFetch } from './web-request.js'
 
-interface SearchResult {
+export interface SearchResult {
   title: string
   url: string
   snippet?: string
   content?: string
 }
+
+type WebSearchProviderName =
+  | 'guanlan'
+  | 'exa'
+  | 'pipellm'
+  | 'zhipu'
+  | 'tavily'
+  | 'brave'
+  | 'duckduckgo'
+  | 'bing'
+
+const DEFAULT_PROVIDER_ORDER: WebSearchProviderName[] = [
+  'guanlan',
+  'exa',
+  'pipellm',
+  'zhipu',
+  'tavily',
+  'brave',
+  'duckduckgo',
+  'bing',
+]
+
+const PROVIDER_NAMES = new Set<WebSearchProviderName>(DEFAULT_PROVIDER_ORDER)
 
 // ─── HTML content cleaning pipeline ───────────────────────────
 
@@ -85,6 +109,9 @@ function truncateContent(text: string, maxChars: number): string {
 
 const MAX_CONTENT_CHARS = 1500
 const MAX_CONCURRENT_FETCHES = 3
+const GUANLAN_TIMEOUT_MS = 20000
+const MAX_GUANLAN_STDERR_CHARS = 2000
+const MAX_GUANLAN_STDOUT_CHARS = 200000
 
 async function fetchPageContent(
   url: string,
@@ -158,7 +185,119 @@ function getEnvKey(names: string[]): string | undefined {
   return undefined
 }
 
+export function resolveEnabledWebSearchProviders(envValue = process.env.LUME_WEB_SEARCH_PROVIDERS): WebSearchProviderName[] {
+  if (envValue === undefined) return [...DEFAULT_PROVIDER_ORDER]
+  return envValue
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter((item): item is WebSearchProviderName => PROVIDER_NAMES.has(item as WebSearchProviderName))
+}
+
 // ─── Search providers ─────────────────────────────────────────
+
+export interface CommandResult {
+  code: number
+  stdout: string
+  stderr: string
+}
+
+async function runCommand(command: string, args: string[], timeoutMs = GUANLAN_TIMEOUT_MS): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: 'utf-8',
+      },
+    })
+    let stdout = ''
+    let stderr = ''
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM')
+      resolve({ code: 124, stdout, stderr: stderr || 'command timed out' })
+    }, timeoutMs)
+    child.stdout?.on('data', (chunk) => {
+      stdout = truncateRawText(stdout + chunk.toString('utf8'), MAX_GUANLAN_STDOUT_CHARS)
+    })
+    child.stderr?.on('data', (chunk) => {
+      stderr = truncateRawText(stderr + chunk.toString('utf8'), MAX_GUANLAN_STDERR_CHARS)
+    })
+    child.on('error', (error) => {
+      clearTimeout(timeout)
+      resolve({ code: 127, stdout, stderr: error.message })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timeout)
+      resolve({ code: code ?? 0, stdout, stderr })
+    })
+  })
+}
+
+export function truncateRawText(text: string, maxChars: number): string {
+  return text.length > maxChars ? `${text.slice(0, maxChars)}...(truncated)` : text
+}
+
+export function parseGuanlanSearchOutput(output: string): SearchResult[] {
+  let payload: unknown
+  try {
+    payload = JSON.parse(output)
+  } catch {
+    return []
+  }
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { results?: unknown[] } | null)?.results)
+      ? (payload as { results: unknown[] }).results
+      : []
+
+  return items
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const record = item as Record<string, unknown>
+      const title = readResultString(record.title) || readResultString(record.name)
+      const url = readResultString(record.url) || readResultString(record.link)
+      if (!title || !url) return null
+      const snippet = readResultString(record.snippet) || readResultString(record.content)
+      return { title, url, ...(snippet ? { snippet } : {}) }
+    })
+    .filter((item): item is SearchResult => !!item)
+}
+
+function readResultString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function clampProviderLimit(numResults: number): number {
+  return Math.max(1, Math.min(Math.trunc(numResults || 5), 10))
+}
+
+export async function runGuanlanPython(args: string[], timeoutMs = GUANLAN_TIMEOUT_MS): Promise<CommandResult> {
+  const configuredPython = process.env.LUME_GUANLAN_PYTHON?.trim()
+  if (configuredPython) return runCommand(configuredPython, args, timeoutMs)
+
+  const first = await runCommand('python3', args, timeoutMs)
+  if (first.code !== 127) return first
+  return runCommand('python', args, timeoutMs)
+}
+
+async function searchWithGuanlan(query: string, numResults: number) {
+  if (process.env.LUME_GUANLAN_ENABLED !== '1') return null
+  const result = await runGuanlanPython([
+    '-m',
+    'guanlan',
+    'search',
+    query,
+    '--profile',
+    'china',
+    '--limit',
+    String(clampProviderLimit(numResults)),
+    '--json',
+  ])
+  if (result.code !== 0) {
+    throw new Error(`Guanlan search failed: ${truncateRawText(result.stderr || result.stdout, MAX_GUANLAN_STDERR_CHARS)}`)
+  }
+  return { data: parseGuanlanSearchOutput(result.stdout), is_error: false } as const
+}
 
 function decodeDuckDuckGoRedirectUrl(rawUrl: string): string {
   const normalized = rawUrl.replace(/&amp;/gi, '&')
@@ -395,15 +534,18 @@ export const WebSearchTool = defineTool({
 
     try {
       const numResults = typeof input.num_results === 'number' ? input.num_results : 5
-      const attempts = [
-        () => searchWithExa(query, numResults, context.sandbox),
-        () => searchWithPipellm(query, numResults, context.sandbox),
-        () => searchWithZhipu(query, numResults, context.sandbox),
-        () => searchWithTavily(query, numResults, context.sandbox),
-        () => searchWithBrave(query, numResults, context.sandbox),
-        () => searchWithDuckDuckGo(query, numResults, context.sandbox),
-        () => searchWithBing(query, numResults, context.sandbox),
-      ]
+      const providerAttempts: Record<WebSearchProviderName, () => Promise<unknown>> = {
+        guanlan: () => searchWithGuanlan(query, numResults),
+        exa: () => searchWithExa(query, numResults, context.sandbox),
+        pipellm: () => searchWithPipellm(query, numResults, context.sandbox),
+        zhipu: () => searchWithZhipu(query, numResults, context.sandbox),
+        tavily: () => searchWithTavily(query, numResults, context.sandbox),
+        brave: () => searchWithBrave(query, numResults, context.sandbox),
+        duckduckgo: () => searchWithDuckDuckGo(query, numResults, context.sandbox),
+        bing: () => searchWithBing(query, numResults, context.sandbox),
+      }
+      const attempts = resolveEnabledWebSearchProviders()
+        .map((provider) => providerAttempts[provider])
 
       let rawResults: SearchResult[] | null = null
       let lastError: unknown = null
@@ -411,8 +553,8 @@ export const WebSearchTool = defineTool({
       for (const attempt of attempts) {
         try {
           const result = await attempt()
-          if (result && !('is_error' in result && result.is_error)) {
-            rawResults = (result as { data: SearchResult[] }).data
+          if (isSearchProviderResult(result) && result.is_error !== true) {
+            rawResults = result.data
             if (rawResults && rawResults.length > 0) break
           }
         } catch (error) {
@@ -436,3 +578,7 @@ export const WebSearchTool = defineTool({
     }
   },
 })
+
+function isSearchProviderResult(value: unknown): value is { data: SearchResult[]; is_error?: boolean } {
+  return !!value && typeof value === 'object' && Array.isArray((value as { data?: unknown }).data)
+}

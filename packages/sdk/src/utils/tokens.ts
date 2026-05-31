@@ -6,10 +6,27 @@
  */
 
 /**
- * Rough token estimation: ~4 chars per token (conservative).
+ * Rough token estimation.
+ *
+ * ASCII-heavy text is roughly 4 chars/token, while CJK and emoji-like
+ * codepoints are closer to 1 char/token. This keeps live context estimates from
+ * badly undercounting Chinese/Japanese/Korean prompts.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
+  if (!text) return 0
+  let asciiChars = 0
+  let fullTokenChars = 0
+
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0
+    if (countsAsFullTokenChar(code)) {
+      fullTokenChars += 1
+    } else {
+      asciiChars += 1
+    }
+  }
+
+  return fullTokenChars + Math.ceil(asciiChars / 4)
 }
 
 /**
@@ -20,22 +37,70 @@ export function estimateMessagesTokens(
 ): number {
   let total = 0
   for (const msg of messages) {
-    if (typeof msg.content === 'string') {
-      total += estimateTokens(msg.content)
-    } else if (Array.isArray(msg.content)) {
-      for (const block of msg.content) {
-        if ('text' in block && typeof block.text === 'string') {
-          total += estimateTokens(block.text)
-        } else if ('content' in block && typeof block.content === 'string') {
-          total += estimateTokens(block.content)
-        } else {
-          // tool_use, image, etc - rough estimate
-          total += estimateTokens(JSON.stringify(block))
-        }
-      }
-    }
+    total += estimateContentTokens(msg.content)
   }
   return total
+}
+
+const IMAGE_OR_DOCUMENT_TOKEN_ESTIMATE = 2_000
+
+function estimateContentTokens(content: unknown): number {
+  if (typeof content === 'string') return estimateTokens(content)
+  if (Array.isArray(content)) {
+    return content.reduce((sum, block) => sum + estimateContentBlockTokens(block), 0)
+  }
+  if (content === null || content === undefined) return 0
+  return estimateTokens(safeStringify(content))
+}
+
+function estimateContentBlockTokens(block: unknown): number {
+  if (typeof block === 'string') return estimateTokens(block)
+  if (!block || typeof block !== 'object') return 0
+  const record = block as Record<string, unknown>
+
+  if (record.type === 'text' && typeof record.text === 'string') {
+    return estimateTokens(record.text)
+  }
+  if (record.type === 'thinking' && typeof record.thinking === 'string') {
+    return estimateTokens(record.thinking)
+  }
+  if (record.type === 'redacted_thinking' && typeof record.data === 'string') {
+    return estimateTokens(record.data)
+  }
+  if (record.type === 'image' || record.type === 'document') {
+    return IMAGE_OR_DOCUMENT_TOKEN_ESTIMATE
+  }
+  if (record.type === 'tool_result') {
+    return estimateContentTokens(record.content)
+  }
+  if (record.type === 'tool_use') {
+    return estimateTokens(`${String(record.name ?? '')}${safeStringify(record.input ?? {})}`)
+  }
+  if (typeof record.text === 'string') {
+    return estimateTokens(record.text)
+  }
+  if ('content' in record) {
+    return estimateContentTokens(record.content)
+  }
+  return estimateTokens(safeStringify(record))
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function countsAsFullTokenChar(code: number): boolean {
+  return (
+    (code >= 0x3400 && code <= 0x9fff)
+    || (code >= 0xf900 && code <= 0xfaff)
+    || (code >= 0x3040 && code <= 0x30ff)
+    || (code >= 0xac00 && code <= 0xd7af)
+    || code >= 0x1f300
+  )
 }
 
 /**
