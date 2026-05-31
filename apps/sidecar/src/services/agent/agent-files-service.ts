@@ -70,6 +70,11 @@ function resolveWorkspaceResourcesDir(workspaceSlug: string): string {
   return getWorkspaceResourcesPath(workspaceSlug);
 }
 
+function resolveWorkspaceRootDir(workspaceSlug: string): string {
+  validatePathSegment(workspaceSlug, "workspaceSlug");
+  return getAgentWorkspacePath(workspaceSlug);
+}
+
 function getThreadAttachmentScope(workspaceSlug: string, sessionId: string): AttachmentScope {
   return { kind: "thread", workspaceSlug, threadId: sessionId };
 }
@@ -257,6 +262,31 @@ export function listWorkspaceDirectory(
   return enrichEntriesWithAttachmentMeta(items, resourcesDir, attachmentMeta);
 }
 
+export function listWorkspaceRootDirectory(
+  workspaceSlug: string,
+  targetPath?: string
+): FileEntry[] {
+  const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
+  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  if (!existsSync(resolved)) return [];
+
+  const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => {
+    const fullPath = join(resolved, entry.name);
+    return {
+      name: entry.name,
+      path: fullPath,
+      isDirectory: entry.isDirectory()
+    } satisfies FileEntry;
+  });
+
+  items.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+    return a.name.localeCompare(b.name, "en");
+  });
+
+  return items;
+}
+
 export function deleteAgentFile(
   workspaceSlug: string,
   sessionId: string,
@@ -299,6 +329,26 @@ export function deleteWorkspaceFile(
     rmSync(resolved, { force: true });
   }
   deleteAttachmentMeta(getWorkspaceAttachmentScope(workspaceSlug), resolved);
+  return { ok: true };
+}
+
+export function deleteWorkspaceRootFile(
+  workspaceSlug: string,
+  targetPath: string
+): { ok: true } {
+  const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
+  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  if (resolve(resolved) === resolve(workspaceRoot)) {
+    throw new Error("不能删除工作区根目录");
+  }
+  if (!existsSync(resolved)) return { ok: true };
+
+  const stat = statSync(resolved);
+  if (stat.isDirectory()) {
+    rmSync(resolved, { recursive: true, force: true });
+  } else {
+    rmSync(resolved, { force: true });
+  }
   return { ok: true };
 }
 
@@ -354,6 +404,31 @@ export function renameWorkspaceFile(
   assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(workspaceSlug));
   movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(getWorkspaceAttachmentScope(workspaceSlug), resolved, nextPath);
+  return { ok: true, path: nextPath };
+}
+
+export function renameWorkspaceRootFile(
+  workspaceSlug: string,
+  targetPath: string,
+  newName: string
+): { ok: true; path: string } {
+  const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
+  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  if (resolve(resolved) === resolve(workspaceRoot)) {
+    throw new Error("不能重命名工作区根目录");
+  }
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+  const safeName = validateNewName(newName);
+  const nextPath = join(dirname(resolved), safeName);
+  if (!isWithin(workspaceRoot, nextPath)) {
+    throw new Error("重命名后路径超出工作区根目录");
+  }
+  if (existsSync(nextPath)) {
+    throw new Error("目标名称已存在");
+  }
+  movePathWithFallback(resolved, nextPath);
   return { ok: true, path: nextPath };
 }
 
@@ -430,6 +505,40 @@ export function moveWorkspaceFile(
   return { ok: true, path: nextPath };
 }
 
+export function moveWorkspaceRootFile(
+  workspaceSlug: string,
+  targetPath: string,
+  targetDir: string
+): { ok: true; path: string } {
+  const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
+  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  const resolvedTargetDir = resolveSafePath(workspaceRoot, targetDir, "目标路径超出工作区根目录");
+
+  if (resolve(resolved) === resolve(workspaceRoot)) {
+    throw new Error("不能移动工作区根目录");
+  }
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+  if (!existsSync(resolvedTargetDir) || !statSync(resolvedTargetDir).isDirectory()) {
+    throw new Error("目标目录不存在");
+  }
+
+  const nextPath = join(resolvedTargetDir, basename(resolved));
+  if (!isWithin(workspaceRoot, nextPath)) {
+    throw new Error("移动后路径超出工作区根目录");
+  }
+  if (resolve(nextPath) === resolve(resolved)) {
+    return { ok: true, path: nextPath };
+  }
+  if (existsSync(nextPath)) {
+    throw new Error("目标路径已存在同名文件");
+  }
+
+  movePathWithFallback(resolved, nextPath);
+  return { ok: true, path: nextPath };
+}
+
 function spawnDetached(command: string, args: string[]): void {
   const child = spawn(command, args, {
     detached: true,
@@ -481,6 +590,19 @@ export function openWorkspacePath(
 ): { ok: true } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
   const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+  openInSystem(resolved);
+  return { ok: true };
+}
+
+export function openWorkspaceRootPath(
+  workspaceSlug: string,
+  targetPath: string
+): { ok: true } {
+  const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
+  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -546,6 +668,18 @@ export function readWorkspacePath(
 ): { content: string; truncated: boolean } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
   const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  if (!existsSync(resolved)) {
+    throw new Error("目标不存在");
+  }
+  return readPreviewableText(resolved);
+}
+
+export function readWorkspaceRootPath(
+  workspaceSlug: string,
+  targetPath: string
+): { content: string; truncated: boolean } {
+  const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
+  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -805,6 +939,34 @@ export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSaved
     } else {
       deleteAttachmentMeta(scope, targetPath);
     }
+  }
+
+  return results;
+}
+
+export function saveFilesToWorkspaceRoot(input: WorkspaceSaveFilesInput): AgentSavedFile[] {
+  const workspaceRoot = resolveWorkspaceRootDir(input.workspaceSlug);
+  const results: AgentSavedFile[] = [];
+
+  for (const file of input.files) {
+    const targetPath = resolve(join(workspaceRoot, file.filename));
+    if (!isWithin(workspaceRoot, targetPath)) {
+      throw new Error(`文件路径越界: ${file.filename}`);
+    }
+    mkdirSync(dirname(targetPath), { recursive: true });
+    if (file.sourcePath && file.sourcePath.trim()) {
+      const resolvedSourcePath = resolve(file.sourcePath);
+      if (!existsSync(resolvedSourcePath) || !statSync(resolvedSourcePath).isFile()) {
+        throw new Error(`源文件不存在: ${file.filename}`);
+      }
+      copyFileSync(resolvedSourcePath, targetPath);
+    } else if (file.data) {
+      const buffer = Buffer.from(file.data, "base64");
+      writeFileSync(targetPath, buffer);
+    } else {
+      throw new Error(`缺少文件内容: ${file.filename}`);
+    }
+    results.push({ filename: file.filename, targetPath });
   }
 
   return results;

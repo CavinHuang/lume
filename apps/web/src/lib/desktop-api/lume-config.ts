@@ -3,8 +3,10 @@ import type {
   LumeConfigPermissionApprovalRoutes,
   LumeConfigPermissionMode,
   LumeConfigPermissionsSection,
+  LumeConfigSkillsSection,
   LumeConfigThinkingLevel,
   LumeConfigSubagentModelStrategy,
+  LumeConfigWebSearchSection,
   LumeEffectiveConfig,
 } from '@lume/shared'
 import { sidecarCall } from './system'
@@ -72,6 +74,15 @@ export const updatePermissionsSection = (value: LumeConfigPermissionsSection, wo
     summary: 'update permission settings',
   })
 
+export const updateSkillsConfig = (value: LumeConfigSkillsSection, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'skills',
+    value,
+    summary: 'update workspace skills settings',
+  })
+
 export const updatePermissionApprovals = (value: LumeConfigPermissionApprovalRoutes, workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
     source: 'user',
@@ -79,4 +90,13 @@ export const updatePermissionApprovals = (value: LumeConfigPermissionApprovalRou
     path: 'permissions.approvals',
     value,
     summary: 'update permission approval routes',
+  })
+
+export const updateWebSearchConfig = (value: LumeConfigWebSearchSection, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'webSearch',
+    value,
+    summary: 'update web search settings',
   })

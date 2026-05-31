@@ -549,6 +549,47 @@ fn open_external(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn save_text_file_dialog(filename: String, content: String) -> Result<serde_json::Value, String> {
+    let path = rfd::FileDialog::new()
+        .set_file_name(&filename)
+        .save_file()
+        .ok_or_else(|| "用户取消了保存".to_string())?;
+    std::fs::write(&path, content.as_bytes())
+        .map_err(|e| format!("保存文件失败 ({}): {e}", path.display()))?;
+    Ok(serde_json::json!({ "path": path.to_string_lossy().to_string() }))
+}
+
+#[tauri::command]
+fn open_in_system(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("路径不存在: {path}"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开失败: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开失败: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开失败: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn read_text_file(path: String) -> Result<serde_json::Value, String> {
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("read selected file failed ({}): {e}", path))?;
@@ -1457,7 +1498,9 @@ fn main() {
             stat_file_paths,
             open_folder_dialog,
             open_external,
-            read_text_file
+            read_text_file,
+            save_text_file_dialog,
+            open_in_system
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

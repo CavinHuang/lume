@@ -2,8 +2,10 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
-import { useState, useEffect, useMemo } from 'react'
+import Mention from '@tiptap/extension-mention'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
+import { Folder, Plus } from 'lucide-react'
 import {
   agentThreadsAtom,
   agentWorkspacesAtom,
@@ -15,7 +17,7 @@ import {
   agentPlanModePhaseAtom,
   welcomePromptSeedAtom,
 } from '@/atoms'
-import { sidecarCall, agentSend, openFileDialog } from '@/lib/desktop-api'
+import { sidecarCall, agentSend, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
@@ -23,23 +25,24 @@ import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDia
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
 import { AGENT_IPC_CHANNELS, type AgentThreadMeta, type LumeConfigThinkingLevel } from '@lume/shared'
+import { LUME_CONFIG_IPC_CHANNELS } from '@lume/shared'
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
+import { createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
 
 interface WelcomeViewProps {
   workspaceId?: string
 }
 
 export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProps) {
-  const threads = useAtomValue(agentThreadsAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const setWorkspaces = useSetAtom(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
-  const [tabs, setTabs] = useAtom(tabsAtom)
-  const setActiveTabId = useAtom(activeTabIdAtom)[1]
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
@@ -60,15 +63,6 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
   useEffect(() => {
-    getEffectiveLumeConfig()
-      .then((config) => {
-        if (config.agent?.thinkingLevel) setThinkingLevel(config.agent.thinkingLevel)
-        if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
     setSelectedWorkspaceId(initialWorkspaceId ?? currentWorkspaceId ?? null)
   }, [currentWorkspaceId, initialWorkspaceId])
 
@@ -78,6 +72,36 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   )
 
   const workspaceSlug = selectedWorkspace?.slug ?? null
+  const configWorkspaceSlug = workspaceSlug ?? undefined
+
+  useEffect(() => {
+    let cancelled = false
+    getEffectiveLumeConfig(configWorkspaceSlug)
+      .then((config) => {
+        if (!cancelled) {
+          if (config.agent?.thinkingLevel) setThinkingLevel(config.agent.thinkingLevel)
+          if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [configWorkspaceSlug])
+
+  useEffect(() => {
+    let cancelled = false
+    const unlisten = onSidecarEvent((method) => {
+      if (method !== LUME_CONFIG_IPC_CHANNELS.CHANGED) return
+      getEffectiveLumeConfig(configWorkspaceSlug)
+        .then((config) => {
+          if (!cancelled) {
+            if (config.agent?.thinkingLevel) setThinkingLevel(config.agent.thinkingLevel)
+            if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
+          }
+        })
+        .catch(() => {})
+    })
+    return () => { cancelled = true; unlisten.then((fn) => fn()) }
+  }, [configWorkspaceSlug])
 
   useEffect(() => {
     setModelRef(undefined)
@@ -85,35 +109,47 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     setModelId(undefined)
   }, [workspaceSlug])
 
-  const recentThreads = useMemo(() => {
-    if (!selectedWorkspaceId) return []
-    return threads
-      .filter((t) => t.workspaceId === selectedWorkspaceId && !t.pinned)
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [threads, selectedWorkspaceId])
-
   const welcomeSurfaceModel = useMemo(
     () =>
       buildWelcomeSurfaceViewModel({
         workspaceName: selectedWorkspace?.name ?? null,
-        recentThreads,
-        recentFiles: pendingFiles.map((file) => ({
-          filename: file.filename,
-          sourcePath: file.sourcePath,
-        })),
       }),
-    [pendingFiles, recentThreads, selectedWorkspace?.name]
+    [selectedWorkspace?.name]
   )
+
+  const mentionSuggestionOpenRef = useRef(false)
+  const workspaceSlugRef = useRef<string | null>(workspaceSlug)
+  const setMentionSuggestionOpen = useCallback((open: boolean) => {
+    mentionSuggestionOpenRef.current = open
+  }, [])
+
+  useEffect(() => {
+    workspaceSlugRef.current = workspaceSlug
+  }, [workspaceSlug])
+
+  const getWorkspaceSlug = () => workspaceSlugRef.current
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ undoRedo: false }),
-      Placeholder.configure({ placeholder: '输入 @文件 /Skill #MCP，或直接描述你想完成的任务...' }),
+      StarterKit.configure({ undoRedo: false, bold: false, italic: false, strike: false }),
+      Placeholder.configure({ placeholder: '输入 /命令 $技能，或直接描述你想完成的任务...' }),
+      Mention.configure({
+        HTMLAttributes: {
+          class: 'mention bg-orange-500/10 text-orange-600 dark:text-orange-400 px-0.5 rounded font-medium text-[13px]',
+        },
+        suggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen),
+      }),
+      Mention.extend({ name: 'skillMention' }).configure({
+        HTMLAttributes: {
+          class: 'mention bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-0.5 rounded font-medium text-[13px]',
+        },
+        suggestion: createSuggestionRenderer('$', '__welcome__', '$', getWorkspaceSlug, setMentionSuggestionOpen),
+      }),
     ],
     editorProps: {
       attributes: { class: 'outline-none min-h-[80px] max-h-[200px] overflow-y-auto text-[14px] leading-relaxed' },
       handleKeyDown(_, event) {
-        if (event.key === 'Enter' && !event.shiftKey && !sending) {
+        if (event.key === 'Enter' && !event.shiftKey && !sending && !mentionSuggestionOpenRef.current) {
           event.preventDefault()
           handleSend()
           return true
@@ -226,26 +262,6 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     )
   }
 
-  const handleOpenThread = (thread: AgentThreadMeta) => {
-    setActiveTabId(thread.id)
-    if (!tabs.find((t) => t.id === thread.id)) {
-      setTabs((prev) => [...prev, { id: thread.id, type: 'agent' as const, title: thread.title, threadId: thread.id }])
-    }
-  }
-
-  const handleOpenThreadById = (threadId: string) => {
-    const thread = threads.find((item) => item.id === threadId)
-    if (!thread) return
-    handleOpenThread(thread)
-  }
-
-  const handleChoosePromptSeed = (promptSeed: string) => {
-    if (!editor) return
-    editor.commands.clearContent()
-    editor.commands.insertContent(promptSeed)
-    editor.commands.focus('end')
-  }
-
   const handleThinkingLevelChange = async (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
     try {
@@ -256,7 +272,23 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     }
   }
 
+  const handlePermissionModeChange = (value: PermissionModeValue) => {
+    setPermissionMode(value)
+  }
+
   const hasText = editorText.trim().length > 0
+
+  const folderBar = (
+    <div className="flex items-center gap-1.5 overflow-x-auto">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-3)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_50%,transparent)] hover:text-[var(--text-2)]"
+      >
+        <Plus size={13} />
+        选择附加的项目文件夹
+      </button>
+    </div>
+  )
 
   return (
     <>
@@ -300,7 +332,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
           <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
         }
         permissionModePicker={
-          <PermissionModePicker value={permissionMode} onChange={setPermissionMode} />
+          <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
         }
         editor={editor}
         pendingFiles={pendingFiles}
@@ -308,11 +340,10 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         hasText={Boolean(hasText)}
         onSend={handleSend}
         onAttach={handleAttach}
-        onOpenThread={handleOpenThreadById}
-        onChoosePromptSeed={handleChoosePromptSeed}
         onRemovePendingFile={(index) =>
           setPendingFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
         }
+        folderBar={folderBar}
       />
       <CreateWorkspaceDialog
         open={createWorkspaceOpen}

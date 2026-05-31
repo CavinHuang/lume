@@ -7,16 +7,9 @@ import type {
 } from '@lume/shared'
 import { GENERAL_SETTINGS_DEFAULTS as SHARED_GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 
-export type SettingsTab = 'general' | 'channels' | 'agent' | 'mcp' | 'skills' | 'automation' | 'about'
-
 export type CacheCleanupKey = 'frontendTemp' | 'previewRender' | 'logs'
 
 export type CacheCleanupSelection = Record<CacheCleanupKey, boolean>
-
-export interface SettingsNavItem {
-  id: SettingsTab
-  label: string
-}
 
 export interface ThemeModeOption {
   value: ThemeMode
@@ -35,16 +28,6 @@ export interface CacheCleanupOption {
   label: string
   desc: string
 }
-
-export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
-  { id: 'general', label: '常规设置' },
-  { id: 'channels', label: '供应商配置' },
-  { id: 'agent', label: 'Agent' },
-  { id: 'mcp', label: 'MCP' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'automation', label: '自动化' },
-  { id: 'about', label: '关于' },
-]
 
 export const GENERAL_SETTINGS_DEFAULTS = SHARED_GENERAL_SETTINGS_DEFAULTS
 

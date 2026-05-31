@@ -5,6 +5,7 @@ import {
   type MemoryIngestSourcesJob,
   type MemoryStartIngestSourcesResult
 } from "@lume/shared";
+import { createLogger } from "../services/infra/logger";
 import {
   readMemoryTool,
   rememberMemoryTool,
@@ -33,6 +34,8 @@ import {
 } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
+
+const log = createLogger("rpc.memory");
 
 const ingestJobs = new Map<string, MemoryIngestSourcesJob>();
 
@@ -124,6 +127,7 @@ async function runMemoryIngestJob(jobId: string, input: MemoryIngestSourcesInput
   const job = ingestJobs.get(jobId);
   if (!job) return;
   try {
+    log.info("ingest job started", { jobId, workspaceSlug: input.workspaceSlug, sourceCount: input.sources.length });
     const result = await ingestExternalMemorySources(input);
     ingestJobs.set(jobId, {
       ...job,
@@ -131,12 +135,21 @@ async function runMemoryIngestJob(jobId: string, input: MemoryIngestSourcesInput
       completedAt: Date.now(),
       result
     });
+    log.info("ingest job completed", {
+      jobId,
+      workspaceSlug: input.workspaceSlug,
+      scannedSources: result.scannedSources,
+      candidateCount: result.candidateCount,
+      actions: result.actions
+    });
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     ingestJobs.set(jobId, {
       ...job,
       status: "failed",
       completedAt: Date.now(),
-      error: error instanceof Error ? error.message : String(error)
+      error: message
     });
+    log.error("ingest job failed", { jobId, workspaceSlug: input.workspaceSlug, error: message });
   }
 }

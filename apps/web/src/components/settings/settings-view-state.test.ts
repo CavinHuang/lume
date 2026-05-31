@@ -18,10 +18,9 @@ describe('settings view state', () => {
     expect(ids.indexOf('im-integrations')).toBe(ids.indexOf('integrations') + 1)
   })
 
-  test('places permission management before files and integrations', () => {
+  test('places permission management before integrations', () => {
     const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
     expect(ids).toContain('permissions')
-    expect(ids.indexOf('permissions')).toBeLessThan(ids.indexOf('files'))
     expect(ids.indexOf('permissions')).toBeLessThan(ids.indexOf('integrations'))
   })
 

@@ -87,6 +87,7 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
       );
     },
     [AUTOMATION_IPC_CHANNELS.TOGGLE_JOB]: async (params) => {
+      await startAutomationRunner();
       const input = validateInput(
         automationToggleInputSchema,
         params,

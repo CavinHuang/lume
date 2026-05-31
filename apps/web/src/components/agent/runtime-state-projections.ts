@@ -140,6 +140,16 @@ export function buildContextWindowProgress(
         sectionSource = 'live'
       }
     }
+    if ((event.type === 'tool.completed' || event.type === 'tool.failed') && !event.parentToolUseId && !event.subagentRunId) {
+      const tokens = estimateToolResultTokens(event)
+      usedTokens += tokens
+      contextInputTokens += tokens
+      hasRuntimeContextSignal ||= tokens > 0
+      if (sectionSource !== 'budget') {
+        sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
+        sectionSource = 'live'
+      }
+    }
     if (event.type === 'context.compaction.started') {
       if (isPositiveTokenCount(event.contextWindow)) {
         contextWindow = event.contextWindow
@@ -412,6 +422,10 @@ function isPositiveTokenCount(value: unknown): value is number {
 function estimateLiveTokens(value: string): number {
   const trimmed = value.trim()
   return trimmed.length > 0 ? Math.ceil(trimmed.length / 4) : 0
+}
+
+function estimateToolResultTokens(event: Extract<LumeRuntimeEvent, { type: 'tool.completed' | 'tool.failed' }>): number {
+  return estimateLiveTokens(event.type === 'tool.completed' ? event.resultPreview ?? '' : event.error.message)
 }
 
 function estimateHistoryMessageUsage(messages: ContextWindowHistoryMessage[]): {

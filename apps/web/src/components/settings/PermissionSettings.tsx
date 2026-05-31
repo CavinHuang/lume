@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
-import { Loader2, Plus, Save, Trash2 } from 'lucide-react'
+import { Check, Loader2, Map, Pencil, Plus, Save, Shield, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
   LumeConfigPermissionRuleAction,
@@ -16,18 +16,31 @@ import {
   updatePermissionsSection,
 } from '@/lib/desktop-api/lume-config'
 import {
+  PERMISSION_OPTIONS,
+  TONE_CLASS,
+  type PermissionModeIconKey,
+  type PermissionOption,
+} from '@/components/settings/agent-settings-state'
+import {
   buildPermissionScopeOptions,
   buildPermissionSettingsDraft,
   createPermissionRuleDraft,
   formatPermissionScopeLabel,
   GLOBAL_PERMISSION_SCOPE_VALUE,
   normalizePermissionRuleDrafts,
-  PERMISSION_MODE_OPTIONS,
   type PermissionRuleDraft,
   type PermissionSettingsDraft,
 } from './permission-settings-state'
 
-type SavingTarget = null | 'settings'
+const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
+  shield: Shield,
+  pencil: Pencil,
+  'shield-check': ShieldCheck,
+  'shield-off': ShieldOff,
+  map: Map,
+}
+
+type SavingTarget = null | 'mode' | 'rules'
 
 const RULE_ACTION_OPTIONS: Array<{
   value: LumeConfigPermissionRuleAction
@@ -97,10 +110,6 @@ export function PermissionSettings() {
     }
   }, [reload])
 
-  const updateDraft = (patch: Partial<PermissionSettingsDraft>) => {
-    setDraft((current) => current ? { ...current, ...patch } : current)
-  }
-
   const updateRule = (index: number, patch: Partial<PermissionRuleDraft>) => {
     setDraft((current) => {
       if (!current) return current
@@ -125,12 +134,27 @@ export function PermissionSettings() {
     )
   }
 
+  const handlePermissionModeChange = async (value: PermissionOption['value']) => {
+    if (!draft || draft.permissionMode === value) return
+    setDraft((current) => current ? { ...current, permissionMode: value } : current)
+    setSaving('mode')
+    try {
+      const nextConfig = await updateAgentPermissionMode(value, selectedWorkspaceSlug)
+      setConfig(nextConfig)
+      setDraft(buildPermissionSettingsDraft(nextConfig))
+    } catch (error) {
+      console.error('[PermissionSettings] save mode FAILED:', error)
+      toast.error('保存权限模式失败')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   const savePermissionSettings = async () => {
     if (!config || !draft) return
-    setSaving('settings')
+    setSaving('rules')
     try {
-      const afterMode = await updateAgentPermissionMode(draft.permissionMode, selectedWorkspaceSlug)
-      const basePermissions = afterMode.permissions ?? config.permissions ?? {}
+      const basePermissions = config.permissions ?? {}
       const nextPermissions: LumeConfigPermissionsSection = {
         ...basePermissions,
         toolPolicy: { allow: [], deny: [] },
@@ -139,10 +163,10 @@ export function PermissionSettings() {
       const nextConfig = await updatePermissionsSection(nextPermissions, selectedWorkspaceSlug)
       setConfig(nextConfig)
       setDraft(buildPermissionSettingsDraft(nextConfig))
-      toast.success(`权限设置已保存到 ${scopeLabel}`)
+      toast.success(`权限规则已保存到 ${scopeLabel}`)
     } catch (error) {
-      console.error('[PermissionSettings] save settings FAILED:', error)
-      toast.error('保存权限设置失败')
+      console.error('[PermissionSettings] save rules FAILED:', error)
+      toast.error('保存权限规则失败')
     } finally {
       setSaving(null)
     }
@@ -184,33 +208,35 @@ export function PermissionSettings() {
         title="权限模式"
         description="控制 Agent 执行工具时是否需要用户确认。"
       >
-        <div className="rounded-[8px] bg-[var(--surface-2)] p-2">
-          {PERMISSION_MODE_OPTIONS.map((option) => {
+        <div className="space-y-1">
+          {PERMISSION_OPTIONS.map((option) => {
             const selected = draft.permissionMode === option.value
+            const Icon = ICON_MAP[option.icon]
             return (
               <button
                 key={option.value}
                 type="button"
-                onClick={() => updateDraft({ permissionMode: option.value })}
+                onClick={() => void handlePermissionModeChange(option.value)}
                 className={cn(
-                  'flex w-full items-start gap-3 rounded-[8px] px-3 py-3 text-left transition-colors',
-                  selected ? 'bg-[var(--surface-1)] text-[var(--text-1)] shadow-[0_1px_2px_rgba(20,24,40,0.04)]' : 'text-[var(--text-2)] hover:bg-[color-mix(in_oklab,var(--surface-1)_70%,transparent)]'
+                  'flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                  selected
+                    ? 'border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]'
+                    : 'border-transparent hover:bg-[var(--surface-2)]',
                 )}
               >
-                <span
-                  className={cn(
-                    'mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
-                    selected ? 'border-[var(--text-1)]' : 'border-[var(--text-3)]'
-                  )}
-                >
-                  {selected && <span className="h-2 w-2 rounded-full bg-[var(--text-1)]" />}
+                <span className={cn('flex size-7 shrink-0 items-center justify-center rounded-full border', TONE_CLASS[option.tone])}>
+                  <Icon size={14} />
                 </span>
-                <span className="min-w-0">
-                  <span className="block text-[14px] font-semibold">{option.label}</span>
-                  <span className="mt-1 block text-[12px] leading-5 text-[var(--text-3)]">
-                    {option.description}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[12.5px] font-medium text-[var(--text-1)]">{option.label}</span>
+                    <span className={cn('rounded-full border px-1.5 py-0.5 text-[9.5px] font-medium', TONE_CLASS[option.tone])}>
+                      {option.emphasis}
+                    </span>
                   </span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--text-3)]">{option.desc}</span>
                 </span>
+                {selected && <Check size={14} className="shrink-0 text-[var(--brand)]" />}
               </button>
             )
           })}
@@ -296,11 +322,11 @@ export function PermissionSettings() {
           <Button
             type="button"
             className="h-9 rounded-[8px]"
-            disabled={saving === 'settings'}
+            disabled={saving === 'rules'}
             onClick={() => void savePermissionSettings()}
           >
-            {saving === 'settings' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-            保存
+            {saving === 'rules' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            保存规则
           </Button>
         </div>
       </SettingsCard>

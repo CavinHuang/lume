@@ -38,6 +38,7 @@ export function LogSettings() {
   const [loadingContent, setLoadingContent] = React.useState(false)
   const [exporting, setExporting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [contentRefreshKey, setContentRefreshKey] = React.useState(0)
 
   const selectedFile = React.useMemo(
     () => snapshot?.files.find((file) => file.name === selectedFileName) ?? null,
@@ -54,6 +55,7 @@ export function LogSettings() {
         if (current && result.files.some((file) => file.name === current)) return current
         return result.files[0]?.name ?? ''
       })
+      setContentRefreshKey((k) => k + 1)
     } catch (loadError) {
       console.error('[LogSettings] load files FAILED:', loadError)
       setError('加载日志文件失败')
@@ -102,7 +104,7 @@ export function LogSettings() {
     return () => {
       cancelled = true
     }
-  }, [level, query, selectedFileName])
+  }, [contentRefreshKey, level, query, selectedFileName])
 
   const handleOpenDir = async () => {
     try {

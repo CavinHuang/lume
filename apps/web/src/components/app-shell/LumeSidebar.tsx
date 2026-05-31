@@ -166,7 +166,7 @@ export function LumeSidebar({
           'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 82%, white) 0%, color-mix(in oklab, var(--surface-1) 74%, var(--surface-2)) 100%)',
       }}
     >
-      <div className="flex flex-col gap-3 px-4 pb-4 pt-4">
+      <div className="flex flex-col gap-1 px-4 pb-4 pt-4">
         {model.topActions.map((action) => {
           if (action.id === 'new-chat') {
             return (

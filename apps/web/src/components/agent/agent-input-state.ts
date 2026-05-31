@@ -1,6 +1,11 @@
 import type { PlanModePhase } from '@lume/shared'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 
+interface AgentInputConfigWorkspace {
+  id: string
+  slug: string
+}
+
 interface PermissionPlanSyncInput {
   permissionMode: PermissionModeValue
   defaultPermissionMode: PermissionModeValue
@@ -10,6 +15,14 @@ interface PermissionPlanSyncInput {
 
 interface PermissionPlanSyncOutput {
   permissionMode: PermissionModeValue
+  autoSelectedPlan: boolean
+}
+
+interface PermissionDefaultConfigSyncInput {
+  currentPermissionMode: PermissionModeValue
+  nextDefaultPermissionMode: PermissionModeValue
+  threadPermissionMode?: PermissionModeValue
+  planPhase?: PlanModePhase
   autoSelectedPlan: boolean
 }
 
@@ -45,4 +58,38 @@ export function syncPermissionModeWithPlanModePhase(input: PermissionPlanSyncInp
     permissionMode: input.permissionMode,
     autoSelectedPlan: false,
   }
+}
+
+export function syncPermissionModeWithDefaultConfig(input: PermissionDefaultConfigSyncInput): PermissionPlanSyncOutput {
+  if (input.threadPermissionMode) {
+    return {
+      permissionMode: input.threadPermissionMode,
+      autoSelectedPlan: false,
+    }
+  }
+
+  const planSynced = syncPermissionModeWithPlanModePhase({
+    permissionMode: input.currentPermissionMode,
+    defaultPermissionMode: input.nextDefaultPermissionMode,
+    planPhase: input.planPhase,
+    autoSelectedPlan: input.autoSelectedPlan,
+  })
+
+  if (planSynced.permissionMode === 'plan' && planSynced.autoSelectedPlan) {
+    return planSynced
+  }
+
+  return {
+    permissionMode: input.nextDefaultPermissionMode,
+    autoSelectedPlan: false,
+  }
+}
+
+export function resolveAgentInputConfigWorkspaceSlug(input: {
+  threadWorkspaceId?: string | null
+  currentWorkspaceId?: string | null
+  workspaces: AgentInputConfigWorkspace[]
+}): string | undefined {
+  const workspaceId = input.threadWorkspaceId ?? input.currentWorkspaceId
+  return input.workspaces.find((workspace) => workspace.id === workspaceId)?.slug
 }

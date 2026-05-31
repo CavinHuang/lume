@@ -88,6 +88,37 @@ describe("automation-manager", () => {
     expect(listAutomationJobs()[0]?.triggerModes).toEqual(["manual", "schedule", "chat"]);
   });
 
+  test("应维护可调度任务的 nextRunAt 状态", () => {
+    const futureRunAt = Date.now() + 60_000;
+    const once = createAutomationJob({
+      name: "稍后提醒",
+      schedule: { type: "once", runAt: futureRunAt },
+      prompt: "提醒我检查发布状态"
+    });
+    expect(once.nextRunAt).toBe(futureRunAt);
+    expect(once.lastRunAt).toBeUndefined();
+
+    const disabled = updateAutomationJob({
+      id: once.id,
+      enabled: false
+    });
+    expect(disabled.nextRunAt).toBeNull();
+
+    const interval = updateAutomationJob({
+      id: once.id,
+      enabled: true,
+      schedule: { type: "interval", intervalMs: 60_000 }
+    });
+    expect(interval.nextRunAt).toBeGreaterThanOrEqual(interval.updatedAt + 59_000);
+    expect(interval.nextRunAt).toBeLessThanOrEqual(interval.updatedAt + 61_000);
+
+    const manual = updateAutomationJob({
+      id: once.id,
+      schedule: { type: "manual" }
+    });
+    expect(manual.nextRunAt).toBeNull();
+  });
+
   test("索引损坏时应自动备份并回退空列表", () => {
     const indexPath = getAutomationJobsPath();
     writeFileSync(indexPath, "{broken-json", "utf-8");

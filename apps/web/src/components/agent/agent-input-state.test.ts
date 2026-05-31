@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { shouldSendAgentInputOnEnter, syncPermissionModeWithPlanModePhase } from './agent-input-state'
+import {
+  resolveAgentInputConfigWorkspaceSlug,
+  shouldSendAgentInputOnEnter,
+  syncPermissionModeWithDefaultConfig,
+  syncPermissionModeWithPlanModePhase,
+} from './agent-input-state'
 
 describe('syncPermissionModeWithPlanModePhase', () => {
   test('auto-selects plan while the thread is planning', () => {
@@ -48,6 +53,54 @@ describe('syncPermissionModeWithPlanModePhase', () => {
       permissionMode: 'plan',
       autoSelectedPlan: false,
     })
+  })
+})
+
+describe('syncPermissionModeWithDefaultConfig', () => {
+  test('updates the composer mode when the thread has no manual permission override', () => {
+    expect(syncPermissionModeWithDefaultConfig({
+      currentPermissionMode: 'default',
+      nextDefaultPermissionMode: 'dontAsk',
+      autoSelectedPlan: false,
+    })).toEqual({
+      permissionMode: 'dontAsk',
+      autoSelectedPlan: false,
+    })
+  })
+
+  test('keeps the manual thread override when default config changes', () => {
+    expect(syncPermissionModeWithDefaultConfig({
+      currentPermissionMode: 'acceptEdits',
+      nextDefaultPermissionMode: 'dontAsk',
+      threadPermissionMode: 'acceptEdits',
+      autoSelectedPlan: false,
+    })).toEqual({
+      permissionMode: 'acceptEdits',
+      autoSelectedPlan: false,
+    })
+  })
+})
+
+describe('resolveAgentInputConfigWorkspaceSlug', () => {
+  const workspaces = [
+    { id: 'workspace-1', slug: 'alpha' },
+    { id: 'workspace-2', slug: 'beta' },
+  ]
+
+  test('uses the thread workspace before the current workspace', () => {
+    expect(resolveAgentInputConfigWorkspaceSlug({
+      threadWorkspaceId: 'workspace-2',
+      currentWorkspaceId: 'workspace-1',
+      workspaces,
+    })).toBe('beta')
+  })
+
+  test('falls back to the current workspace for new threads without metadata yet', () => {
+    expect(resolveAgentInputConfigWorkspaceSlug({
+      threadWorkspaceId: null,
+      currentWorkspaceId: 'workspace-1',
+      workspaces,
+    })).toBe('alpha')
   })
 })
 

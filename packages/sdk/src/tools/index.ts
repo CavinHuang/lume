@@ -56,9 +56,6 @@ import {
   McpAuthTool,
 } from './mcp-resource-tools.js'
 
-// Scheduling
-import { AutomationCreateTool, AutomationListTool, AutomationDeleteTool, AutomationUpdateTool, AutomationRunNowTool } from './automation-tools.js'
-
 // LSP
 import { LSPTool } from './lsp-tool.js'
 
@@ -120,13 +117,6 @@ const ALL_TOOLS: ToolDefinition[] = [
   SubscribePollingTool,
   UnsubscribePollingTool,
   McpAuthTool,
-
-  // Scheduling
-  AutomationCreateTool,
-  AutomationListTool,
-  AutomationDeleteTool,
-  AutomationUpdateTool,
-  AutomationRunNowTool,
 
   // LSP
   LSPTool,
@@ -249,12 +239,6 @@ export {
   SubscribePollingTool,
   UnsubscribePollingTool,
   McpAuthTool,
-  // Scheduling
-  AutomationCreateTool,
-  AutomationListTool,
-  AutomationDeleteTool,
-  AutomationUpdateTool,
-  AutomationRunNowTool,
   // LSP
   LSPTool,
   // Config

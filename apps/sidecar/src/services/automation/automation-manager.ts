@@ -5,10 +5,10 @@ import type {
   AutomationDeleteJobInput,
   AutomationJob,
   AutomationJobsIndex,
-  AutomationSchedule,
   AutomationUpdateJobInput
 } from "@lume/shared";
 import { getAutomationJobsPath } from "../infra/config-paths";
+import { getNextAutomationRunAt, validateAutomationSchedule } from "./automation-schedule";
 
 const INDEX_VERSION = 1;
 
@@ -52,34 +52,6 @@ function writeIndex(index: AutomationJobsIndex): void {
   writeJsonAtomic(indexPath, JSON.stringify(index, null, 2));
 }
 
-function validateSchedule(schedule: AutomationSchedule): void {
-  if (!schedule || typeof schedule !== "object") {
-    throw new Error("schedule 无效");
-  }
-  if (schedule.type === "cron") {
-    if (!schedule.cronExpr || !schedule.cronExpr.trim()) {
-      throw new Error("cron 类型任务缺少 cronExpr");
-    }
-    return;
-  }
-  if (schedule.type === "once") {
-    if (typeof schedule.runAt !== "number" || !Number.isFinite(schedule.runAt) || schedule.runAt <= 0) {
-      throw new Error("once 类型任务缺少有效 runAt");
-    }
-    return;
-  }
-  if (schedule.type === "interval") {
-    if (typeof schedule.intervalMs !== "number" || !Number.isFinite(schedule.intervalMs) || schedule.intervalMs <= 0) {
-      throw new Error("interval 类型任务缺少有效 intervalMs");
-    }
-    return;
-  }
-  if (schedule.type === "manual") {
-    return;
-  }
-  throw new Error(`不支持的 schedule.type: ${(schedule as { type?: string }).type ?? "unknown"}`);
-}
-
 function normalizeName(name: string): string {
   const trimmed = String(name ?? "").trim();
   if (!trimmed) {
@@ -102,12 +74,13 @@ export function listAutomationJobs(): AutomationJob[] {
 
 export function createAutomationJob(input: AutomationCreateJobInput): AutomationJob {
   const index = readIndex();
-  validateSchedule(input.schedule);
+  validateAutomationSchedule(input.schedule);
   const now = Date.now();
+  const enabled = input.enabled ?? true;
   const job: AutomationJob = {
     id: randomUUID(),
     name: normalizeName(input.name),
-    enabled: input.enabled ?? true,
+    enabled,
     workspaceId: input.workspaceId?.trim() || undefined,
     threadId: input.threadId?.trim() || undefined,
     schedule: input.schedule,
@@ -116,6 +89,7 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     ...(input.defaultModel ? { defaultModel: input.defaultModel.trim() } : {}),
     ...(input.toolResourceIds ? { toolResourceIds: input.toolResourceIds } : {}),
     prompt: normalizePrompt(input.prompt),
+    nextRunAt: enabled ? getNextAutomationRunAt(input.schedule, now) : null,
     createdAt: now,
     updatedAt: now
   };
@@ -132,21 +106,28 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
   }
   const existing = index.jobs[targetIndex] as AutomationJob;
   if (input.schedule) {
-    validateSchedule(input.schedule);
+    validateAutomationSchedule(input.schedule);
   }
+  const schedule = input.schedule ?? existing.schedule;
+  const enabled = input.enabled ?? existing.enabled;
+  const updatedAt = Date.now();
+  const shouldRecomputeNextRun = input.schedule !== undefined
+    || input.enabled !== undefined
+    || existing.nextRunAt === undefined;
   const updated: AutomationJob = {
     ...existing,
     ...(input.name !== undefined ? { name: normalizeName(input.name) } : {}),
-    ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+    enabled,
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId.trim() || undefined } : {}),
     ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
-    ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
+    schedule,
     ...(input.triggerModes !== undefined ? { triggerModes: input.triggerModes } : {}),
     ...(input.description !== undefined ? { description: input.description.trim() || undefined } : {}),
     ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel.trim() || undefined } : {}),
     ...(input.toolResourceIds !== undefined ? { toolResourceIds: input.toolResourceIds } : {}),
     ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
-    updatedAt: Date.now()
+    ...(shouldRecomputeNextRun ? { nextRunAt: enabled ? getNextAutomationRunAt(schedule, updatedAt) : null } : {}),
+    updatedAt
   };
   index.jobs[targetIndex] = updated;
   writeIndex(index);
@@ -161,4 +142,22 @@ export function deleteAutomationJob(input: AutomationDeleteJobInput): { ok: true
   }
   writeIndex({ ...index, jobs: next });
   return { ok: true };
+}
+
+export function recordAutomationJobRun(input: { id: string; startedAt: number }): AutomationJob {
+  const index = readIndex();
+  const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
+  if (targetIndex < 0) {
+    throw new Error(`自动化任务不存在: ${input.id}`);
+  }
+  const existing = index.jobs[targetIndex] as AutomationJob;
+  const updated: AutomationJob = {
+    ...existing,
+    lastRunAt: input.startedAt,
+    nextRunAt: existing.enabled ? getNextAutomationRunAt(existing.schedule, input.startedAt) : null,
+    updatedAt: Date.now()
+  };
+  index.jobs[targetIndex] = updated;
+  writeIndex(index);
+  return updated;
 }

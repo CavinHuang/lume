@@ -133,13 +133,6 @@ export {
   UnsubscribePollingTool,
   McpAuthTool,
 
-  // Scheduling
-  AutomationCreateTool,
-  AutomationListTool,
-  AutomationDeleteTool,
-  AutomationUpdateTool,
-  AutomationRunNowTool,
-
   // LSP
   LSPTool,
 
@@ -402,8 +395,6 @@ export {
 export {
   setMcpConnections,
 } from './tools/mcp-resource-tools.js'
-
-export type { AutomationJob } from './tools/automation-tools.js'
 
 export {
   getConfig,

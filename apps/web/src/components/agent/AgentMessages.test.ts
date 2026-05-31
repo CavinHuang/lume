@@ -280,6 +280,64 @@ describe('reconcileUserMessageVersions', () => {
 })
 
 describe('projectVisibleThreadMessages', () => {
+  test('restores persisted compaction status from assistant sdk messages when runtime events are empty', () => {
+    const visibleThreadMessages = [{
+      id: 'assistant-compact',
+      role: 'assistant',
+      content: '压缩后继续回答',
+      createdAt: Date.parse('2026-05-01T07:23:00.000Z'),
+      sdkMessages: [
+        {
+          type: 'system',
+          subtype: 'context_compaction_started',
+          compact_metadata: {
+            trigger: 'auto',
+            pre_tokens: 900,
+          },
+        },
+        {
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact_metadata: {
+            trigger: 'auto',
+            pre_tokens: 900,
+            post_tokens: 280,
+          },
+        },
+      ],
+    }] as AgentMessage[]
+
+    expect(projectVisibleThreadMessages(visibleThreadMessages)).toEqual([
+      {
+        id: 'assistant-compact:0:context_compaction_started',
+        type: 'system',
+        variant: 'context_compaction',
+        status: 'active',
+        text: '正在自动压缩上下文',
+        createdAt: '2026-05-01T07:23:00.000Z',
+      },
+      {
+        id: 'assistant-compact:1:compact_boundary',
+        type: 'system',
+        variant: 'context_compaction',
+        status: 'completed',
+        text: '上下文已自动压缩',
+        createdAt: '2026-05-01T07:23:00.000Z',
+      },
+      {
+        id: 'assistant-compact',
+        type: 'assistant',
+        text: '压缩后继续回答',
+        thinking: '',
+        messageId: 'assistant-compact',
+        completedAt: '2026-05-01T07:23:00.000Z',
+        blocks: [{ type: 'text', id: 'text:assistant-compact', text: '压缩后继续回答' }],
+        status: 'completed',
+        toolCalls: [],
+      },
+    ])
+  })
+
   test('projects forked transcript messages when runtime events are empty', () => {
     const visibleThreadMessages = [
       {

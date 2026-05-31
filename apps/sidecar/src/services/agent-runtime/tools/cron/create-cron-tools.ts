@@ -7,7 +7,12 @@ import {
   listAutomationJobs,
   updateAutomationJob
 } from "../../../automation/automation-manager";
-import { listAutomationRuns, runAutomationJobNow } from "../../../automation/automation-runner-service";
+import {
+  listAutomationRuns,
+  refreshAutomationRunnerJobs,
+  runAutomationJobNow,
+  startAutomationRunner
+} from "../../../automation/automation-runner-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 
 interface CreateAutomationToolsInput {
@@ -45,11 +50,16 @@ function resolveTargetJob(jobId: string, workspaceId?: string): AutomationJob {
   return target;
 }
 
+async function syncAutomationRunnerJobs(): Promise<void> {
+  await startAutomationRunner();
+  await refreshAutomationRunnerJobs();
+}
+
 function parseSchedule(raw: unknown): AutomationSchedule {
   const payload = (raw ?? {}) as Record<string, unknown>;
   const typeRaw = asString(payload.type);
-  if (!typeRaw || (typeRaw !== "cron" && typeRaw !== "once" && typeRaw !== "interval")) {
-    throw new Error("schedule.type 必须是 cron | once | interval");
+  if (!typeRaw || (typeRaw !== "cron" && typeRaw !== "once" && typeRaw !== "interval" && typeRaw !== "manual")) {
+    throw new Error("schedule.type 必须是 cron | once | interval | manual");
   }
   return {
     type: typeRaw,
@@ -89,7 +99,7 @@ const SetSchema = Type.Object({
   sessionId: Type.Optional(Type.String()),
   schedule: Type.Optional(
     Type.Object({
-      type: Type.Union([Type.Literal("cron"), Type.Literal("once"), Type.Literal("interval")]),
+      type: Type.Union([Type.Literal("cron"), Type.Literal("once"), Type.Literal("interval"), Type.Literal("manual")]),
       cronExpr: Type.Optional(Type.String()),
       runAt: Type.Optional(Type.Number()),
       intervalMs: Type.Optional(Type.Number()),
@@ -175,6 +185,7 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
             threadId,
             enabled: asBoolean(args.enabled)
           });
+          await syncAutomationRunnerJobs();
           return { ok: true, action, job: created };
         }
 
@@ -184,10 +195,12 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
 
         if (action === "delete") {
           const result = deleteAutomationJob({ id: target.id });
+          await syncAutomationRunnerJobs();
           return { ok: true, action, result };
         }
         if (action === "enable" || action === "disable") {
           const updated = updateAutomationJob({ id: target.id, enabled: action === "enable" });
+          await syncAutomationRunnerJobs();
           return { ok: true, action, job: updated };
         }
         if (action === "run_now") {
@@ -202,14 +215,16 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
           };
         }
         if (action === "update") {
+          const nextThreadId = asString(args.threadId) ?? asString(args.sessionId);
           const updated = updateAutomationJob({
             id: target.id,
             ...(asString(args.name) ? { name: asString(args.name) } : {}),
             ...(asString(args.prompt) ? { prompt: asString(args.prompt) } : {}),
             ...(args.schedule ? { schedule: parseSchedule(args.schedule) } : {}),
-            ...(asString(args.sessionId) ? { sessionId: asString(args.sessionId) } : {}),
+            ...(nextThreadId ? { threadId: nextThreadId } : {}),
             ...(asBoolean(args.enabled) !== undefined ? { enabled: asBoolean(args.enabled) } : {})
           });
+          await syncAutomationRunnerJobs();
           return { ok: true, action, job: updated };
         }
         throw new Error(`不支持的 action: ${action}`);
@@ -246,4 +261,3 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
     })
   ];
 }
-

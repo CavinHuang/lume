@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@lume/agent-sdk";
 import { createSdkCronTools } from "./create-cron-tools";
+import {
+  listAutomationRuns,
+  startAutomationRunner,
+  stopAutomationRunner
+} from "../../../automation/automation-runner-service";
 
 function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
   const tool = tools.find((item) => item.name === name);
@@ -27,7 +32,8 @@ describe("create-cron-tools", () => {
     process.env.LUME_CONFIG_DIR = tempConfigDir;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stopAutomationRunner();
     if (oldConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -105,5 +111,51 @@ describe("create-cron-tools", () => {
     expect(details.ok).toBeTrue();
     expect(details.accepted).toBeTrue();
     expect((details.message ?? "").includes("异步执行")).toBeTrue();
+  });
+
+  test("update 应支持将定时任务切回 manual 调度", async () => {
+    const tools = createSdkCronTools({ workspaceId: "ws-1", sessionId: "session-main-1" });
+    const setTool = resolveTool(tools, "automation_set");
+
+    const createResult = await callTool(setTool, {
+      action: "create",
+      name: "可切换任务",
+      prompt: "按需执行",
+      schedule: { type: "cron", cronExpr: "0 9 * * *" }
+    });
+    const createdId = (createResult as { job?: { id?: string } }).job?.id;
+    expect(Boolean(createdId)).toBeTrue();
+
+    const updateResult = await callTool(setTool, {
+      action: "update",
+      id: createdId,
+      schedule: { type: "manual" }
+    });
+
+    const updatedSchedule = (updateResult as { job?: { schedule?: { type?: string }; nextRunAt?: number | null } }).job?.schedule;
+    const nextRunAt = (updateResult as { job?: { nextRunAt?: number | null } }).job?.nextRunAt;
+    expect(updatedSchedule?.type).toBe("manual");
+    expect(nextRunAt).toBeNull();
+  });
+
+  test("创建定时任务后应刷新正在运行的 scheduler", async () => {
+    await startAutomationRunner();
+    const tools = createSdkCronTools({ workspaceId: "ws-1", sessionId: "session-main-1" });
+    const setTool = resolveTool(tools, "automation_set");
+
+    const createResult = await callTool(setTool, {
+      action: "create",
+      name: "刷新调度任务",
+      prompt: "执行一次刷新验证",
+      schedule: { type: "interval", intervalMs: 1000 }
+    });
+    const createdId = (createResult as { job?: { id?: string } }).job?.id;
+    expect(Boolean(createdId)).toBeTrue();
+
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+
+    const runs = listAutomationRuns({ jobId: createdId, limit: 5 });
+    expect(runs.length).toBeGreaterThan(0);
+    expect(runs[0]?.trigger).toBe("schedule");
   });
 });

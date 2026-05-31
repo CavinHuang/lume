@@ -3,6 +3,7 @@ import type {
   MemoryOrganizeEntriesResult
 } from "@lume/shared";
 import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { createLogger } from "../infra/logger";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { claimFromEntry, claimKey, claimObjectEquals } from "./claim";
 import { areMemoryStatementsSimilar } from "./dedupe";
@@ -16,6 +17,8 @@ import type {
   MemoryV2Scope,
   MemoryV2Status
 } from "./types";
+
+const log = createLogger("memory-v2.entry-organizer");
 
 const DEFAULT_ORGANIZE_BATCH_SIZE = 40;
 
@@ -61,6 +64,12 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
     scopes: ["global", "workspace"],
     includeStatuses: ["active", "suspected_stale"]
   }).sort(compareEntriesForOrganization);
+
+  log.info("organizeMemoryEntries started", {
+    workspaceSlug: input.workspaceSlug,
+    entryCount: entries.length
+  });
+
   const items: MemoryOrganizeEntriesResult["items"] = [];
   const supersededIds = new Set<string>();
   const planItems = await resolveOrganizePlan(input, entries);
@@ -104,13 +113,22 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
     });
   }
 
-  return {
+  const result = {
     workspaceSlug: input.workspaceSlug,
     scannedEntries: entries.length,
     keptEntries: entries.length - supersededIds.size,
     supersededDuplicates: items.length,
     items
   };
+
+  log.info("organizeMemoryEntries completed", {
+    workspaceSlug: input.workspaceSlug,
+    scannedEntries: result.scannedEntries,
+    keptEntries: result.keptEntries,
+    supersededDuplicates: result.supersededDuplicates
+  });
+
+  return result;
 }
 
 function markDuplicate(input: {

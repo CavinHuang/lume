@@ -12,6 +12,8 @@ import {
   type LogFileListResult,
   type ReadLogFileInput,
   type ReadLogFileResult,
+  type TestSearchBackendInput,
+  type TestSearchBackendResult,
   type UpdateGeneralSettingsInput,
 } from '@lume/shared'
 
@@ -100,6 +102,9 @@ export const readLogFile = (input: ReadLogFileInput) =>
 
 export const exportLogs = () =>
   sidecarCall<ExportLogsResult>(GENERAL_SETTINGS_IPC_CHANNELS.EXPORT_LOGS, {})
+
+export const testSearchBackend = (input: TestSearchBackendInput) =>
+  sidecarCall<TestSearchBackendResult>(GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND, input)
 
 export const clearCache = async (input: ClearCacheInput): Promise<ClearCacheResult> => {
   const browserResult = await clearBrowserCaches(input)

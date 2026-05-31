@@ -287,6 +287,49 @@ describe('runtime-state projections', () => {
     })
   })
 
+  test('estimates completed tool output as live input context before runtime usage arrives', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'run-started',
+        type: 'run.started',
+        model: {
+          provider: 'openai',
+          modelId: 'gpt-test',
+          contextWindow: 100,
+        },
+      },
+      {
+        ...base,
+        id: 'user-submitted',
+        type: 'message.user.submitted',
+        text: '12345678',
+      },
+      {
+        ...base,
+        id: 'tool-completed',
+        type: 'tool.completed',
+        toolCallId: 'tool-1',
+        toolName: 'Bash',
+        resultPreview: 'abcdefghijkl',
+      },
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      usedTokens: 5,
+      contextWindow: 100,
+      remainingTokens: 95,
+      percent: 5,
+      sections: [
+        { id: 'input', label: '输入', tokens: 5, percent: 5 },
+      ],
+    })
+  })
+
   test('continues live estimate from latest provider context when a new run starts', () => {
     const base = {
       threadId: 'thread-1',

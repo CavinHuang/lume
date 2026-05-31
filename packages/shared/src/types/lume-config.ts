@@ -127,6 +127,26 @@ export interface LumeConfigPermissionRule {
   scope?: LumeConfigPermissionRuleScope
 }
 
+import type { WebSearchProvider } from "./general-settings"
+
+export type WebSearchStrategy = "priority" | "joint"
+
+export interface LumeConfigWebSearchSection {
+  strategy?: WebSearchStrategy
+  providers?: Partial<Record<WebSearchProvider, {
+    enabled?: boolean
+    apiKey?: string
+  }>>
+}
+
+export const DEFAULT_LUME_WEB_SEARCH: LumeConfigWebSearchSection = {
+  strategy: "priority",
+  providers: {
+    duckduckgo: { enabled: true },
+    bing: { enabled: true }
+  }
+}
+
 export interface LumeConfigSectionSet {
   models?: LumeConfigModelsSection
   agent?: LumeConfigAgentSection
@@ -137,6 +157,7 @@ export interface LumeConfigSectionSet {
   plugins?: LumeConfigPluginsSection
   permissions?: LumeConfigPermissionsSection
   hooks?: LumeConfigHooksSection
+  webSearch?: LumeConfigWebSearchSection
 }
 
 export interface LumeConfigFile extends LumeConfigSectionSet {

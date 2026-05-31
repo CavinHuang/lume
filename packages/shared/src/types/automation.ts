@@ -42,12 +42,18 @@ export interface AutomationJob {
   description?: string
   /** 默认模型展示值 */
   defaultModel?: string
+  /** 推理强度（off / low / medium / high / max） */
+  thinkingLevel?: string
   /** 任务可用工具与资源标识 */
   toolResourceIds?: string[]
   /** 执行提示词（后续可扩展为 workflow） */
   prompt: string
   /** 执行结果回写线程 ID（可选） */
   threadId?: string
+  /** 最近一次实际触发时间戳 */
+  lastRunAt?: number
+  /** 下一次预计触发时间戳；手动或禁用任务为 null */
+  nextRunAt?: number | null
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
@@ -70,6 +76,7 @@ export interface AutomationCreateJobInput {
   triggerModes?: AutomationTriggerMode[]
   description?: string
   defaultModel?: string
+  thinkingLevel?: string
   toolResourceIds?: string[]
   prompt: string
 }
@@ -85,6 +92,7 @@ export interface AutomationUpdateJobInput {
   triggerModes?: AutomationTriggerMode[]
   description?: string
   defaultModel?: string
+  thinkingLevel?: string
   toolResourceIds?: string[]
   prompt?: string
 }

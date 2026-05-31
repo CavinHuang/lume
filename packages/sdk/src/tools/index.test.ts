@@ -8,4 +8,14 @@ describe("SDK tool registry", () => {
     expect(names).not.toContain("EnterPlanMode");
     expect(names).not.toContain("ExitPlanMode");
   });
+
+  test("does not expose in-memory automation task stubs", () => {
+    const names = getAllBaseTools().map((tool) => tool.name);
+
+    expect(names).not.toContain("automation_create");
+    expect(names).not.toContain("automation_list");
+    expect(names).not.toContain("automation_update");
+    expect(names).not.toContain("automation_delete");
+    expect(names).not.toContain("automation_run_now");
+  });
 });

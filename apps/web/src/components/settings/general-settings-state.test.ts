@@ -3,7 +3,6 @@ import {
   CACHE_CLEANUP_OPTIONS,
   GENERAL_SETTINGS_DEFAULTS,
   PROXY_MODE_OPTIONS,
-  SETTINGS_NAV_ITEMS,
   THEME_MODE_OPTIONS,
   createDefaultCacheCleanupSelection,
   hasSelectedCacheCleanup,
@@ -12,13 +11,6 @@ import {
 } from './general-settings-state'
 
 describe('general settings state', () => {
-  test('general settings nav metadata places 常规设置 first', () => {
-    expect(SETTINGS_NAV_ITEMS[0]).toMatchObject({
-      id: 'general',
-      label: '常规设置',
-    })
-  })
-
   test('theme mode options are system/light/dark', () => {
     expect(THEME_MODE_OPTIONS.map((option) => option.value)).toEqual([
       'system',

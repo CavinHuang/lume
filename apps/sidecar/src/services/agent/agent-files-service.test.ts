@@ -11,6 +11,7 @@ import {
   getAgentSessionPath,
   listAttachedDirectory,
   listAgentDirectory,
+  listWorkspaceRootDirectory,
   listWorkspaceDirectory,
   moveAttachedPath,
   renameAttachedPath,
@@ -19,9 +20,11 @@ import {
   renameAgentFile,
   renameWorkspaceFile,
   readAgentPath,
+  readWorkspaceRootPath,
   resolveThreadAttachmentPath,
   resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
+  saveFilesToWorkspaceRoot,
   saveFilesToWorkspace,
   searchAgentWorkspaceFiles,
   toThreadRelativePath
@@ -232,6 +235,29 @@ describe("agent-files-service file ops", () => {
     expect(entry?.externalAttachment).toEqual({
       label: "外部附加",
       absoluteSourcePath: sourcePath
+    });
+  });
+
+  test("工作区根目录文件管理应列出并读取 bootstrap 文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-root-files";
+
+    saveFilesToWorkspaceRoot({
+      workspaceSlug,
+      files: [{ filename: "WORKSPACE.md", data: Buffer.from("# workspace").toString("base64") }]
+    });
+    saveFilesToWorkspace({
+      workspaceSlug,
+      files: [{ filename: "resource.md", data: Buffer.from("# resource").toString("base64") }]
+    });
+
+    const rootEntries = listWorkspaceRootDirectory(workspaceSlug);
+    expect(rootEntries.some((entry) => entry.name === "WORKSPACE.md")).toBeTrue();
+    expect(rootEntries.some((entry) => entry.name === "resources")).toBeTrue();
+    expect(rootEntries.some((entry) => entry.name === "resource.md")).toBeFalse();
+    expect(readWorkspaceRootPath(workspaceSlug, "WORKSPACE.md")).toEqual({
+      content: "# workspace",
+      truncated: false
     });
   });
 

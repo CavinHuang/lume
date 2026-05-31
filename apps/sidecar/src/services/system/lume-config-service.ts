@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import YAML from "yaml";
 import {
   DEFAULT_LUME_PERMISSION_APPROVALS,
+  DEFAULT_LUME_WEB_SEARCH,
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
   type LumeConfigAuditEntry,
   type LumeConfigAuditSource,
@@ -13,7 +14,9 @@ import {
   type LumeConfigPermissionRule,
   type LumeConfigSectionSet,
   type LumeConfigSubagentApprovalPolicy,
-  type LumeEffectiveConfig
+  type LumeConfigWebSearchSection,
+  type LumeEffectiveConfig,
+  type WebSearchProvider
 } from "@lume/shared";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
 
@@ -67,6 +70,7 @@ function createDefaultLumeConfig(): LumeConfigFile {
     hooks: {
       internal: { ...DEFAULT_INTERNAL_HOOKS }
     },
+    webSearch: { ...DEFAULT_LUME_WEB_SEARCH },
     workspaces: {}
   };
 }
@@ -281,6 +285,45 @@ function normalizeHooksSection(value: unknown): NonNullable<LumeConfigSectionSet
   };
 }
 
+const WEB_SEARCH_PROVIDER_KEYS: WebSearchProvider[] = ["exa", "tavily", "brave", "duckduckgo", "pipellm", "zhipu", "bing"];
+
+function normalizeWebSearchSection(value: unknown): LumeConfigWebSearchSection {
+  if (!isPlainObject(value)) return { ...DEFAULT_LUME_WEB_SEARCH };
+  const strategy = value.strategy === "priority" || value.strategy === "joint" ? value.strategy : DEFAULT_LUME_WEB_SEARCH.strategy;
+  const providers: LumeConfigWebSearchSection["providers"] = {};
+  if (isPlainObject(value.providers)) {
+    for (const key of WEB_SEARCH_PROVIDER_KEYS) {
+      const entry = value.providers[key];
+      if (!isPlainObject(entry)) continue;
+      providers[key] = {
+        ...(typeof entry.enabled === "boolean" ? { enabled: entry.enabled } : {}),
+        ...(typeof entry.apiKey === "string" && entry.apiKey.trim() ? { apiKey: entry.apiKey.trim() } : {})
+      };
+    }
+  }
+  return { strategy, ...(Object.keys(providers).length > 0 ? { providers } : {}) };
+}
+
+export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
+  const providers = config.providers ?? {};
+  const envMap: Partial<Record<WebSearchProvider, string[]>> = {
+    brave: ["BRAVE_API_KEY", "LUME_BRAVE_API_KEY"],
+    tavily: ["TAVILY_API_KEY", "LUME_TAVILY_API_KEY"],
+    exa: ["EXA_API_KEY", "LUME_EXA_API_KEY"],
+    pipellm: ["PIPELLM_API_KEY", "LUME_PIPELLM_API_KEY"],
+    zhipu: ["ZHIPU_API_KEY", "LUME_ZHIPU_API_KEY"]
+  };
+  for (const [provider, keys] of Object.entries(envMap)) {
+    if (!keys) continue;
+    const apiKey = providers[provider as WebSearchProvider]?.apiKey;
+    for (const key of keys) {
+      if (apiKey) {
+        process.env[key] = apiKey;
+      }
+    }
+  }
+}
+
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (!isPlainObject(value)) {
     return {};
@@ -397,6 +440,10 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     next.hooks = normalizeHooksSection(value.hooks);
   }
 
+  if (isPlainObject(value.webSearch)) {
+    next.webSearch = normalizeWebSearchSection(value.webSearch);
+  }
+
   return next;
 }
 
@@ -466,6 +513,10 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
         ...DEFAULT_INTERNAL_HOOKS,
         ...(base.hooks?.internal ?? {})
       }
+    },
+    webSearch: {
+      ...(DEFAULT_LUME_WEB_SEARCH),
+      ...(base.webSearch ?? {})
     },
     workspaces
   };
@@ -571,7 +622,7 @@ function appendAuditEntry(entry: LumeConfigAuditEntry): void {
 export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveConfig {
   const file = readOrCreateLumeConfig();
   const overlay = workspaceSlug ? file.workspaces?.[workspaceSlug] : undefined;
-  return {
+  const effective: LumeEffectiveConfig = {
     version: CONFIG_VERSION,
     sourcePath: getLumeConfigYamlPath(),
     workspaceSlug,
@@ -644,8 +695,18 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
         ...(file.hooks?.internal ?? {}),
         ...(overlay?.hooks?.internal ?? {})
       }
+    },
+    webSearch: {
+      ...(file.webSearch ?? {}),
+      ...(overlay?.webSearch ?? {}),
+      providers: {
+        ...(file.webSearch?.providers ?? {}),
+        ...(overlay?.webSearch?.providers ?? {})
+      }
     }
   };
+  syncWebSearchEnvVars(effective.webSearch ?? {});
+  return effective;
 }
 
 export function updateLumeConfigSection(input: UpdateLumeConfigSectionInput): LumeEffectiveConfig {

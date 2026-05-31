@@ -1195,6 +1195,20 @@ export const AGENT_IPC_CHANNELS = {
   MOVE_WORKSPACE_FILE: 'agent:move-workspace-file',
   /** 保存文件到工作区共享目录 */
   SAVE_FILES_TO_WORKSPACE: 'agent:save-files-to-workspace',
+  /** 列出工作区根目录内容 */
+  LIST_WORKSPACE_ROOT_DIRECTORY: 'agent:list-workspace-root-directory',
+  /** 删除工作区根目录文件/目录 */
+  DELETE_WORKSPACE_ROOT_FILE: 'agent:delete-workspace-root-file',
+  /** 用系统默认应用打开工作区根目录文件 */
+  OPEN_WORKSPACE_ROOT_FILE: 'agent:open-workspace-root-file',
+  /** 读取工作区根目录文件内容用于内嵌预览 */
+  READ_WORKSPACE_ROOT_FILE: 'agent:read-workspace-root-file',
+  /** 重命名工作区根目录文件/目录 */
+  RENAME_WORKSPACE_ROOT_FILE: 'agent:rename-workspace-root-file',
+  /** 移动工作区根目录文件/目录 */
+  MOVE_WORKSPACE_ROOT_FILE: 'agent:move-workspace-root-file',
+  /** 保存文件到工作区根目录 */
+  SAVE_FILES_TO_WORKSPACE_ROOT: 'agent:save-files-to-workspace-root',
   /** 将工作区共享文件或目录附加到当前线程 */
   ATTACH_WORKSPACE_RESOURCE_TO_THREAD: 'agent:attach-workspace-resource-to-thread',
   /** 搜索工作区文件（用于 @ 引用） */

@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentMessageAttachmentInput } from '@lume/shared'
+import type { AgentMessage, AgentMessageAttachmentInput, SDKMessage } from '@lume/shared'
 import type { RuntimeAssistantTokenUsageView, RuntimeMessageView } from './runtime-message-view'
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 80
@@ -102,26 +102,28 @@ export function reconcileUserMessageVersions(
 }
 
 export function projectVisibleThreadMessages(visibleThreadMessages: AgentMessage[]): RuntimeMessageView[] {
-  return visibleThreadMessages
-    .filter((message) => message.role === 'user' || message.role === 'assistant')
-    .map((message): RuntimeMessageView => {
-      const createdAt = new Date(message.createdAt).toISOString()
-      if (message.role === 'user') {
-        return withPersistedUserAttachments({
-          id: message.id,
-          type: 'user',
-          text: message.content,
-          createdAt,
-          messageId: message.id,
-          versionGroupId: message.versionGroupId,
-          versionIndex: message.versionIndex,
-          versionCount: message.versionCount,
-        }, message)
-      }
+  const projected: RuntimeMessageView[] = []
+  for (const message of visibleThreadMessages) {
+    const createdAt = new Date(message.createdAt).toISOString()
+    projected.push(...projectPersistedCompactionMessages(message, createdAt))
+    if (message.role === 'user') {
+      projected.push(withPersistedUserAttachments({
+        id: message.id,
+        type: 'user',
+        text: message.content,
+        createdAt,
+        messageId: message.id,
+        versionGroupId: message.versionGroupId,
+        versionIndex: message.versionIndex,
+        versionCount: message.versionCount,
+      }, message))
+      continue
+    }
 
+    if (message.role === 'assistant') {
       const tokenUsage = readPersistedAssistantTokenUsage(message.metadata)
       const tokenCount = tokenUsage?.outputTokens
-      return {
+      projected.push({
         id: message.id,
         type: 'assistant',
         text: message.content,
@@ -138,8 +140,10 @@ export function projectVisibleThreadMessages(visibleThreadMessages: AgentMessage
           : {}),
         ...(tokenUsage ? { tokenUsage } : {}),
         toolCalls: [],
-      }
-    })
+      })
+    }
+  }
+  return projected
 }
 
 export function collectNewRuntimeMessageIds(
@@ -234,6 +238,41 @@ function assignFiniteUsageNumber<K extends keyof RuntimeAssistantTokenUsageView>
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function projectPersistedCompactionMessages(
+  message: AgentMessage,
+  fallbackCreatedAt: string,
+): RuntimeMessageView[] {
+  if (!Array.isArray(message.sdkMessages)) return []
+  return message.sdkMessages
+    .map((sdkMessage, index) => projectPersistedCompactionMessage(message.id, index, sdkMessage, fallbackCreatedAt))
+    .filter((item): item is Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }> => item !== null)
+}
+
+function projectPersistedCompactionMessage(
+  messageId: string,
+  index: number,
+  sdkMessage: SDKMessage,
+  fallbackCreatedAt: string,
+): Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }> | null {
+  if (sdkMessage.type !== 'system') return null
+  if (sdkMessage.subtype !== 'context_compaction_started' && sdkMessage.subtype !== 'compact_boundary') return null
+  const metadata = asRecord((sdkMessage as SDKMessage & { compact_metadata?: unknown }).compact_metadata)
+  const mode = metadata?.trigger === 'manual' ? '手动' : '自动'
+  const createdAt = typeof (sdkMessage as SDKMessage & { timestamp?: unknown }).timestamp === 'string'
+    ? (sdkMessage as SDKMessage & { timestamp: string }).timestamp
+    : fallbackCreatedAt
+  return {
+    id: `${messageId}:${index}:${sdkMessage.subtype}`,
+    type: 'system',
+    variant: 'context_compaction',
+    status: sdkMessage.subtype === 'context_compaction_started' ? 'active' : 'completed',
+    text: sdkMessage.subtype === 'context_compaction_started'
+      ? `正在${mode}压缩上下文`
+      : `上下文已${mode}压缩`,
+    createdAt,
+  }
 }
 
 function projectVisibleAssistantBlocks(message: AgentMessage): Extract<RuntimeMessageView, { type: 'assistant' }>['blocks'] {

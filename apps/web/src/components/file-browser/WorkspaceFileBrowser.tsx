@@ -9,6 +9,7 @@ import { normalizeDirectoryEntriesResponse } from './FileBrowser'
 
 interface WorkspaceFileBrowserProps {
   workspaceSlug?: string
+  listChannel?: string
   refreshToken?: number
   selectedPath?: string
   onOpenFile?: (path: string) => void
@@ -18,6 +19,7 @@ interface WorkspaceFileBrowserProps {
 
 export function WorkspaceFileBrowser({
   workspaceSlug,
+  listChannel = 'agent:list-workspace-directory',
   refreshToken = 0,
   selectedPath,
   onOpenFile,
@@ -32,7 +34,7 @@ export function WorkspaceFileBrowser({
     if (!workspaceSlug) return
     setLoading(true)
     try {
-      const r = await sidecarCall<{ entries: FileEntry[] }>('agent:list-workspace-directory', {
+      const r = await sidecarCall<{ entries: FileEntry[] }>(listChannel, {
         workspaceSlug,
       })
       setEntries(normalizeDirectoryEntriesResponse(r))
@@ -41,7 +43,7 @@ export function WorkspaceFileBrowser({
     } finally {
       setLoading(false)
     }
-  }, [workspaceSlug])
+  }, [listChannel, workspaceSlug])
 
   useEffect(() => {
     loadRoot()
@@ -87,6 +89,7 @@ export function WorkspaceFileBrowser({
               entry={entry}
               depth={0}
               workspaceSlug={workspaceSlug}
+              listChannel={listChannel}
               parentRefreshTick={rootTick}
               selectedPath={selectedPath}
               onOpenFile={onOpenFile}
@@ -107,6 +110,7 @@ function WorkspaceFileTreeItem({
   entry,
   depth,
   workspaceSlug,
+  listChannel,
   parentRefreshTick,
   selectedPath,
   onOpenFile,
@@ -116,6 +120,7 @@ function WorkspaceFileTreeItem({
   entry: FileEntry
   depth: number
   workspaceSlug: string
+  listChannel: string
   parentRefreshTick: number
   selectedPath?: string
   onOpenFile?: (path: string) => void
@@ -139,7 +144,7 @@ function WorkspaceFileTreeItem({
     }
     if (!open && !childrenLoaded) {
       try {
-        const r = await sidecarCall<{ entries: FileEntry[] }>('agent:list-workspace-directory', {
+        const r = await sidecarCall<{ entries: FileEntry[] }>(listChannel, {
           workspaceSlug,
           path: entry.path,
         })
@@ -183,6 +188,7 @@ function WorkspaceFileTreeItem({
           entry={child}
           depth={depth + 1}
           workspaceSlug={workspaceSlug}
+          listChannel={listChannel}
           parentRefreshTick={parentRefreshTick}
           selectedPath={selectedPath}
           onOpenFile={onOpenFile}

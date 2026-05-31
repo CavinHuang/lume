@@ -190,7 +190,8 @@ function formatLogTime(value: unknown): string {
   if (Number.isNaN(date.getTime())) {
     return String(value ?? "");
   }
-  return date.toISOString().replace("T", " ").replace("Z", "");
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
 function safeTimestamp(date: Date): string {

@@ -2,23 +2,23 @@ import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
-import { Bot, Send, Square, Paperclip, X } from 'lucide-react'
+import { Bot, Send, Square, FileText, Image, Paperclip, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { agentSend, getThreadMessages, openFileDialog, sidecarCall } from '@/lib/desktop-api'
+import { agentSend, getThreadMessages, onSidecarEvent, openFileDialog, sidecarCall } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
 import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
+  LUME_CONFIG_IPC_CHANNELS,
   type AgentMessage,
   type AgentMessageAttachmentInput,
   type AgentSavedFile,
   type Channel,
   type LumeConfigAgentDefaultStrategy,
+  type LumeEffectiveConfig,
   type LumeConfigThinkingLevel,
-  type SkillMeta,
-  type WorkspaceMcpConfig,
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { MentionList } from './MentionList'
@@ -31,10 +31,15 @@ import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-
 import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
-import { composerControlTriggerClassName } from './composer-control-styles'
 import { cancelPendingDebouncedAgentInputSend, createDebouncedAgentInputSend } from './agent-input-send-debounce'
-import { shouldSendAgentInputOnEnter, syncPermissionModeWithPlanModePhase } from './agent-input-state'
-import { buildSlashSuggestionItems, type MentionItem } from './slash-command-state'
+import {
+  resolveAgentInputConfigWorkspaceSlug,
+  shouldSendAgentInputOnEnter,
+  syncPermissionModeWithDefaultConfig,
+  syncPermissionModeWithPlanModePhase,
+} from './agent-input-state'
+import { type MentionItem } from './slash-command-state'
+import { createSuggestionRenderer } from './editor-mention-suggestions'
 import { buildContextWindowProgress } from './runtime-state-projections'
 import { ContextWindowIndicator } from './ContextWindowIndicator'
 import { getThreadSelectionSummary } from '@/components/model-selection/model-selection-state'
@@ -64,69 +69,41 @@ export interface PendingMessageAttachment {
   data?: string
 }
 
-/** 获取各类 mention 的建议列表 */
-async function fetchSuggestions(
-  trigger: string,
+/** 占位：AgentInput 中 @ 文件 + @agent 的建议逻辑仍保留在此 */
+async function fetchAgentAndFileSuggestions(
   query: string,
   threadId: string,
-  workspaceSlug: string | null
 ): Promise<MentionItem[]> {
+  const agentItems = buildAgentRoleMentionItems(query)
   try {
-    if (trigger === '@') {
-      const agentItems = buildAgentRoleMentionItems(query)
-      try {
-        const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_DIRECTORY, { threadId, path: '.' }) as {
-          entries: Array<{ name: string; type: string }>
-        }
-        const entries = result?.entries ?? []
-        const fileItems = entries
-          .filter((e) => e.name.toLowerCase().includes(query.toLowerCase()))
-          .slice(0, 10)
-          .map((e) => ({
-            id: e.name,
-            label: e.name,
-            type: 'file' as const,
-            section: 'file' as const,
-          }))
-        return [...agentItems, ...fileItems]
-      } catch {
-        return agentItems
-      }
+    const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_DIRECTORY, { threadId, path: '.' }) as {
+      entries: Array<{ name: string; type: string }>
     }
-
-    if (trigger === '/') {
-      if (!workspaceSlug) return []
-      const skills = await sidecarCall<SkillMeta[]>(AGENT_IPC_CHANNELS.GET_SKILLS, { workspaceSlug })
-      const list = Array.isArray(skills) ? skills : []
-      return buildSlashSuggestionItems(list, query)
-    }
-
-    if (trigger === '#') {
-      if (!workspaceSlug) return []
-      const result = await sidecarCall<WorkspaceMcpConfig>(AGENT_IPC_CHANNELS.GET_MCP_CONFIG, { workspaceSlug })
-      const entries = Object.entries(result?.servers ?? {})
-      return entries
-        .filter(([name, entry]) => entry.enabled && name.toLowerCase().includes(query.toLowerCase()))
-        .slice(0, 10)
-        .map(([name]) => ({ id: name, label: name, type: 'mcp' as const }))
-    }
+    const entries = result?.entries ?? []
+    const fileItems = entries
+      .filter((e) => e.name.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 10)
+      .map((e) => ({
+        id: e.name,
+        label: e.name,
+        type: 'file' as const,
+        section: 'file' as const,
+      }))
+    return [...agentItems, ...fileItems]
   } catch {
-    // 静默
+    return agentItems
   }
-  return []
 }
 
-/** 用 DOM 定位的浮动面板渲染 mention 建议 */
-function createSuggestionRenderer(
-  trigger: string,
+/** AgentInput 专用的 @ suggestion renderer（包含 agent + 文件） */
+function createAgentSuggestionRenderer(
   threadId: string,
-  char: string,
-  getWorkspaceSlug: () => string | null,
-  setSuggestionOpen: (open: boolean) => void
+  _getWorkspaceSlug: () => string | null,
+  setSuggestionOpen: (open: boolean) => void,
 ) {
   return {
-    char,
-    items: ({ query }: { query: string }) => fetchSuggestions(trigger, query, threadId, getWorkspaceSlug()),
+    char: '@',
+    items: ({ query }: { query: string }) => fetchAgentAndFileSuggestions(query, threadId),
     render: () => {
       let component: ReactRenderer<MentionListRef> | null = null
       let wrapper: HTMLDivElement | null = null
@@ -140,17 +117,17 @@ function createSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: char as '@' | '/' | '#' },
+            props: { ...props, trigger: '@' as const },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
 
-          updatePosition(wrapper, props, char)
+          updateMentionPosition(wrapper, props)
         },
 
         onUpdate: (props: SuggestionProps) => {
           component?.updateProps(props)
-          if (wrapper) updatePosition(wrapper, props, char)
+          if (wrapper) updateMentionPosition(wrapper, props)
         },
 
         onKeyDown: (props: SuggestionKeyDownProps) => {
@@ -172,24 +149,9 @@ function createSuggestionRenderer(
   }
 }
 
-function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: string) {
+function updateMentionPosition(wrapper: HTMLDivElement, props: SuggestionProps) {
   const rect = props.clientRect?.()
   if (!rect) return
-
-  if (char === '/') {
-    const editorEl = props.editor.view.dom
-    const anchor = editorEl.closest('[data-agent-composer-anchor]') as HTMLElement | null
-    const anchorRect = anchor?.getBoundingClientRect()
-    if (anchorRect) {
-      wrapper.style.left = `${Math.max(12, anchorRect.left)}px`
-      wrapper.style.width = `${Math.min(anchorRect.width, window.innerWidth - 24)}px`
-      wrapper.style.bottom = `${window.innerHeight - anchorRect.top + 8}px`
-      wrapper.style.top = 'auto'
-      return
-    }
-  }
-
-  // 面板显示在光标上方
   const estimatedWidth = 360
   const safeLeft = Math.min(rect.left, window.innerWidth - estimatedWidth - 16)
   wrapper.style.left = `${Math.max(12, safeLeft)}px`
@@ -229,11 +191,37 @@ export function AgentInput({
   const [localSending, setLocalSending] = useState(false)
   const [historyMessages, setHistoryMessages] = useState<AgentMessage[]>([])
   const mentionSuggestionOpenRef = useRef(false)
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
     [threadId],
   )
+  const configWorkspaceSlug = useMemo(() => resolveAgentInputConfigWorkspaceSlug({
+    threadWorkspaceId: thread?.workspaceId,
+    currentWorkspaceId,
+    workspaces,
+  }), [currentWorkspaceId, thread?.workspaceId, workspaces])
+
+  const applyEffectiveConfig = useCallback((config: LumeEffectiveConfig) => {
+    const nextDefaultPermissionMode = config.agent?.permissionMode ?? 'default'
+    defaultPermissionModeRef.current = nextDefaultPermissionMode
+    setPermissionMode((current) => {
+      const next = syncPermissionModeWithDefaultConfig({
+        currentPermissionMode: current,
+        nextDefaultPermissionMode,
+        threadPermissionMode: threadPermissionModesRef.current[threadId],
+        planPhase: planModePhase?.phase,
+        autoSelectedPlan: autoSelectedPlanModeRef.current,
+      })
+      autoSelectedPlanModeRef.current = next.autoSelectedPlan
+      return next.permissionMode
+    })
+    if (config.agent?.thinkingLevel) {
+      setThinkingLevel(config.agent.thinkingLevel)
+    }
+    setDefaultStrategy(config.models?.agent ?? {})
+  }, [planModePhase?.phase, threadId])
 
   useEffect(() => {
     threadPermissionModesRef.current = threadPermissionModes
@@ -249,20 +237,35 @@ export function AgentInput({
       .then((items) => setChannels(items))
       .catch(console.error)
       .finally(() => setChannelsLoaded(true))
+  }, [])
 
-    getEffectiveLumeConfig()
+  useEffect(() => {
+    let cancelled = false
+    getEffectiveLumeConfig(configWorkspaceSlug)
       .then((config) => {
-        if (config.agent?.thinkingLevel) {
-          setThinkingLevel(config.agent.thinkingLevel)
-        }
-        if (config.agent?.permissionMode) {
-          defaultPermissionModeRef.current = config.agent.permissionMode
-          setPermissionMode(threadPermissionModesRef.current[threadId] ?? config.agent.permissionMode)
-        }
-        setDefaultStrategy(config.models?.agent ?? {})
+        if (!cancelled) applyEffectiveConfig(config)
       })
       .catch(() => {})
-  }, [])
+    return () => {
+      cancelled = true
+    }
+  }, [applyEffectiveConfig, configWorkspaceSlug])
+
+  useEffect(() => {
+    let cancelled = false
+    const unlisten = onSidecarEvent((method) => {
+      if (method !== LUME_CONFIG_IPC_CHANNELS.CHANGED) return
+      getEffectiveLumeConfig(configWorkspaceSlug)
+        .then((config) => {
+          if (!cancelled) applyEffectiveConfig(config)
+        })
+        .catch(() => {})
+    })
+    return () => {
+      cancelled = true
+      unlisten.then((fn) => fn())
+    }
+  }, [applyEffectiveConfig, configWorkspaceSlug])
 
   useEffect(() => {
     setPermissionMode((current) => {
@@ -310,25 +313,25 @@ export function AgentInput({
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ undoRedo: false }),
-      Placeholder.configure({ placeholder: '输入任务... 支持 @Agent/@文件 /Skill #MCP' }),
+      StarterKit.configure({ undoRedo: false, bold: false, italic: false, strike: false }),
+      Placeholder.configure({ placeholder: '输入任务... 支持 @Agent/@文件 /命令 $技能' }),
       Mention.configure({
         HTMLAttributes: {
           class: 'mention bg-blue-500/10 text-blue-600 dark:text-blue-400 px-0.5 rounded font-medium text-[13px]',
         },
-        suggestion: createSuggestionRenderer('@', threadId, '@', getWorkspaceSlug, setMentionSuggestionOpen),
+        suggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen),
       }),
-      Mention.extend({ name: 'skillMention' }).configure({
+      Mention.extend({ name: 'slashMention' }).configure({
         HTMLAttributes: {
           class: 'mention bg-orange-500/10 text-orange-600 dark:text-orange-400 px-0.5 rounded font-medium text-[13px]',
         },
         suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen),
       }),
-      Mention.extend({ name: 'mcpMention' }).configure({
+      Mention.extend({ name: 'skillMention' }).configure({
         HTMLAttributes: {
-          class: 'mention bg-purple-500/10 text-purple-600 dark:text-purple-400 px-0.5 rounded font-medium text-[13px]',
+          class: 'mention bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-0.5 rounded font-medium text-[13px]',
         },
-        suggestion: createSuggestionRenderer('#', threadId, '#', getWorkspaceSlug, setMentionSuggestionOpen),
+        suggestion: createSuggestionRenderer('$', threadId, '$', getWorkspaceSlug, setMentionSuggestionOpen),
       }),
     ],
     editorProps: {
@@ -542,15 +545,39 @@ export function AgentInput({
             }
             leadingTools={
               <>
-                <button
-                  onClick={handleAttach}
-                  className={composerControlTriggerClassName}
-                  title="附加文件"
-                  type="button"
-                >
-                  <Paperclip size={13} />
-                  文件
-                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setAttachMenuOpen((v) => !v)}
+                    className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+                    title="添加"
+                    type="button"
+                  >
+                    <Plus size={13} />
+                  </button>
+                  {attachMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
+                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
+                        <button
+                          type="button"
+                          onClick={() => { setAttachMenuOpen(false); handleAttach() }}
+                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                        >
+                          <FileText size={15} className="text-[var(--text-3)]" />
+                          文件
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setAttachMenuOpen(false); handleAttach() }}
+                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                        >
+                          <Image size={15} className="text-[var(--text-3)]" />
+                          图片
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
                 <ModelPicker threadId={threadId} />
                 <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
                 <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />

@@ -4,7 +4,6 @@ import type {
   RuntimeAssistantMessageView,
   RuntimeAssistantTokenUsageView,
   RuntimeMessageView,
-  RuntimeSystemMessageView,
   RuntimeToolCallView,
 } from './runtime-message-view'
 
@@ -72,7 +71,7 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         flushAssistant(messages, currentAssistant)
       }
       currentAssistant = null
-      upsertContextCompactionNotice(messages, event)
+      appendContextCompactionNotice(messages, event)
       terminalClosed = false
       return
     }
@@ -270,24 +269,18 @@ function applyAssistantImDelivery(
   }
 }
 
-function upsertContextCompactionNotice(
+function appendContextCompactionNotice(
   messages: RuntimeMessageView[],
   event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.completed' }>,
 ): void {
-  const notice: RuntimeSystemMessageView = {
+  messages.push({
     id: event.id,
     type: 'system',
     variant: 'context_compaction',
     status: event.type === 'context.compaction.started' ? 'active' : 'completed',
     text: formatContextCompactionNoticeText(event),
     createdAt: event.createdAt,
-  }
-  const last = messages.at(-1)
-  if (last?.type === 'system' && last.variant === 'context_compaction') {
-    messages[messages.length - 1] = notice
-    return
-  }
-  messages.push(notice)
+  })
 }
 
 function formatContextCompactionNoticeText(

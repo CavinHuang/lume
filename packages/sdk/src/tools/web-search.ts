@@ -10,7 +10,155 @@ interface SearchResult {
   title: string
   url: string
   snippet?: string
+  content?: string
 }
+
+// ─── HTML content cleaning pipeline ───────────────────────────
+
+const NOISE_SELECTORS = [
+  /<nav[\s>][\s\S]*?<\/nav>/gi,
+  /<footer[\s>][\s\S]*?<\/footer>/gi,
+  /<header[\s>][\s\S]*?<\/header>/gi,
+  /<aside[\s>][\s\S]*?<\/aside>/gi,
+  /<form[\s>][\s\S]*?<\/form>/gi,
+  /<noscript[\s>][\s\S]*?<\/noscript>/gi,
+  /<iframe[\s>][\s\S]*?<\/iframe>/gi,
+  /<style[\s>][\s\S]*?<\/style>/gi,
+  /<script[\s>][\s\S]*?<\/script>/gi,
+  /<svg[\s>][\s\S]*?<\/svg>/gi,
+  /<!--[\s\S]*?-->/g,
+]
+
+const WHITESPACE = /[ \t]+/g
+const MULTI_NEWLINES = /\n{3,}/g
+
+function extractMainContent(html: string): string {
+  let text = html
+
+  // Strip <head> entirely
+  text = text.replace(/<head[\s>][\s\S]*?<\/head>/gi, '')
+
+  // Strip noise sections
+  for (const pattern of NOISE_SELECTORS) {
+    text = text.replace(pattern, ' ')
+  }
+
+  // Try to find <main> or <article> if present
+  const mainMatch = /<(?:main|article)[^>]*>([\s\S]*?)<\/(?:main|article)>/i.exec(text)
+  if (mainMatch?.[1]) {
+    text = mainMatch[1]
+  }
+
+  // Strip all remaining tags
+  text = text.replace(/<[^>]+>/g, ' ')
+
+  // Decode common HTML entities
+  text = text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+
+  // Collapse whitespace
+  text = text.replace(WHITESPACE, ' ').replace(MULTI_NEWLINES, '\n\n').trim()
+
+  return text
+}
+
+function truncateContent(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  const truncated = text.slice(0, maxChars)
+  const lastSentenceEnd = Math.max(
+    truncated.lastIndexOf('. '),
+    truncated.lastIndexOf('。'),
+    truncated.lastIndexOf('! '),
+    truncated.lastIndexOf('？'),
+    truncated.lastIndexOf('\n')
+  )
+  if (lastSentenceEnd > maxChars * 0.5) {
+    return truncated.slice(0, lastSentenceEnd + 1).trimEnd() + '…'
+  }
+  return truncated.trimEnd() + '…'
+}
+
+const MAX_CONTENT_CHARS = 1500
+const MAX_CONCURRENT_FETCHES = 3
+
+async function fetchPageContent(
+  url: string,
+  sandbox: unknown
+): Promise<string | null> {
+  const sandboxError = ensureNetworkAllowed(url, sandbox as never)
+  if (sandboxError) return null
+  try {
+    const response = await sdkFetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!response.ok) return null
+    const html = await response.text()
+    const cleaned = extractMainContent(html)
+    return truncateContent(cleaned, MAX_CONTENT_CHARS)
+  } catch {
+    return null
+  }
+}
+
+async function enrichResultsWithContent(
+  results: SearchResult[],
+  sandbox: unknown
+): Promise<SearchResult[]> {
+  const toFetch = results.filter((r) => !r.content || r.content.length < 50)
+  if (toFetch.length === 0) return results
+
+  const enriched = new Map<string, string | null | undefined>()
+
+  // Fetch in batches of MAX_CONCURRENT_FETCHES
+  for (let i = 0; i < toFetch.length; i += MAX_CONCURRENT_FETCHES) {
+    const batch = toFetch.slice(i, i + MAX_CONCURRENT_FETCHES)
+    const contents = await Promise.all(
+      batch.map((r) => fetchPageContent(r.url, sandbox))
+    )
+    batch.forEach((r, j) => enriched.set(r.url, contents[j]))
+  }
+
+  return results.map((r) => {
+    const content = enriched.get(r.url) ?? null
+    return content ? { ...r, content } : r
+  })
+}
+
+// ─── Result formatting ────────────────────────────────────────
+
+function formatResults(results: SearchResult[], query: string): string {
+  if (results.length === 0) return `No results found for "${query}".`
+  const parts = results.map((r, i) => {
+    const parts = [`[${i + 1}] ${r.title}`, `    URL: ${r.url}`]
+    if (r.snippet) parts.push(`    ${r.snippet}`)
+    if (r.content) parts.push(`    Content: ${r.content}`)
+    return parts.join('\n')
+  })
+  return `Search results for "${query}":\n\n${parts.join('\n\n')}`
+}
+
+// ─── API key helpers ──────────────────────────────────────────
+
+function getEnvKey(names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim()
+    if (value) return value
+  }
+  return undefined
+}
+
+// ─── Search providers ─────────────────────────────────────────
 
 function decodeDuckDuckGoRedirectUrl(rawUrl: string): string {
   const normalized = rawUrl.replace(/&amp;/gi, '&')
@@ -24,107 +172,137 @@ function decodeDuckDuckGoRedirectUrl(rawUrl: string): string {
   }
 }
 
-function getBraveApiKey(): string | undefined {
-  return process.env.BRAVE_API_KEY?.trim() || process.env.LUME_BRAVE_API_KEY?.trim() || undefined
-}
-
-function getTavilyApiKey(): string | undefined {
-  return process.env.TAVILY_API_KEY?.trim() || process.env.LUME_TAVILY_API_KEY?.trim() || undefined
-}
-
-function normalizeResults(results: SearchResult[], query: string, numResults: number) {
-  return {
-    query,
-    results: results.slice(0, Math.max(1, Math.min(numResults || 5, results.length))),
-  }
-}
-
 async function searchWithBrave(query: string, numResults: number, sandbox: unknown) {
-  const apiKey = getBraveApiKey()
+  const apiKey = getEnvKey(['BRAVE_API_KEY', 'LUME_BRAVE_API_KEY'])
   if (!apiKey) return null
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${Math.max(1, Math.min(numResults || 5, 10))}`
   const sandboxError = ensureNetworkAllowed(url, sandbox as never)
-  if (sandboxError) {
-    return { data: sandboxError, is_error: true } as const
-  }
+  if (sandboxError) return { data: sandboxError, is_error: true } as const
   const response = await sdkFetch(url, {
-    headers: {
-      'x-subscription-token': apiKey,
-      accept: 'application/json',
-      'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)',
-    },
+    headers: { 'x-subscription-token': apiKey, accept: 'application/json' },
     signal: AbortSignal.timeout(15000),
   })
-  if (!response.ok) {
-    throw new Error(`Brave search failed: HTTP ${response.status}`)
-  }
+  if (!response.ok) throw new Error(`Brave search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
     web?: { results?: Array<{ title?: string; url?: string; description?: string }> }
   }
   const results = (payload.web?.results ?? [])
-    .map((item) => ({
-      title: item.title ?? '',
-      url: item.url ?? '',
-      snippet: item.description ?? '',
-    }))
+    .map((item) => ({ title: item.title ?? '', url: item.url ?? '', snippet: item.description ?? '' }))
     .filter((item) => item.title && item.url)
-  return { data: normalizeResults(results, query, numResults) } as const
+  return { data: results, is_error: false } as const
 }
 
 async function searchWithTavily(query: string, numResults: number, sandbox: unknown) {
-  const apiKey = getTavilyApiKey()
+  const apiKey = getEnvKey(['TAVILY_API_KEY', 'LUME_TAVILY_API_KEY'])
   if (!apiKey) return null
   const url = 'https://api.tavily.com/search'
   const sandboxError = ensureNetworkAllowed(url, sandbox as never)
-  if (sandboxError) {
-    return { data: sandboxError, is_error: true } as const
-  }
+  if (sandboxError) return { data: sandboxError, is_error: true } as const
   const response = await sdkFetch(url, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)',
-    },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      api_key: apiKey,
-      query,
-      search_depth: 'basic',
+      api_key: apiKey, query, search_depth: 'basic',
       max_results: Math.max(1, Math.min(numResults || 5, 10)),
     }),
     signal: AbortSignal.timeout(15000),
   })
-  if (!response.ok) {
-    throw new Error(`Tavily search failed: HTTP ${response.status}`)
-  }
+  if (!response.ok) throw new Error(`Tavily search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
     results?: Array<{ title?: string; url?: string; content?: string }>
   }
   const results = (payload.results ?? [])
+    .map((item) => ({ title: item.title ?? '', url: item.url ?? '', snippet: item.content ?? '' }))
+    .filter((item) => item.title && item.url)
+  return { data: results, is_error: false } as const
+}
+
+async function searchWithExa(query: string, numResults: number, sandbox: unknown) {
+  const apiKey = getEnvKey(['EXA_API_KEY', 'LUME_EXA_API_KEY'])
+  if (!apiKey) return null
+  const url = 'https://api.exa.ai/search'
+  const sandboxError = ensureNetworkAllowed(url, sandbox as never)
+  if (sandboxError) return { data: sandboxError, is_error: true } as const
+  const response = await sdkFetch(url, {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query, type: 'auto',
+      numResults: Math.max(1, Math.min(numResults || 5, 10)),
+      contents: { text: { maxCharacters: 1000 } },
+    }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!response.ok) throw new Error(`Exa search failed: HTTP ${response.status}`)
+  const payload = await response.json() as {
+    results?: Array<{ title?: string; url?: string; text?: string }>
+  }
+  const results = (payload.results ?? [])
     .map((item) => ({
-      title: item.title ?? '',
-      url: item.url ?? '',
-      snippet: item.content ?? '',
+      title: item.title ?? '', url: item.url ?? '',
+      snippet: '', content: item.text ? truncateContent(item.text, MAX_CONTENT_CHARS) : undefined,
     }))
     .filter((item) => item.title && item.url)
-  return { data: normalizeResults(results, query, numResults) } as const
+  return { data: results, is_error: false } as const
+}
+
+async function searchWithPipellm(query: string, numResults: number, sandbox: unknown) {
+  const apiKey = getEnvKey(['PIPELLM_API_KEY', 'LUME_PIPELLM_API_KEY'])
+  if (!apiKey) return null
+  const url = 'https://api.pipellm.com/v1/search'
+  const sandboxError = ensureNetworkAllowed(url, sandbox as never)
+  if (sandboxError) return { data: sandboxError, is_error: true } as const
+  const response = await sdkFetch(url, {
+    method: 'POST',
+    headers: { 'authorization': `Bearer ${apiKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ query, max_results: Math.max(1, Math.min(numResults || 5, 10)) }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!response.ok) throw new Error(`PipeLLM search failed: HTTP ${response.status}`)
+  const payload = await response.json() as {
+    results?: Array<{ title?: string; url?: string; snippet?: string }>
+  }
+  const results = (payload.results ?? [])
+    .map((item) => ({ title: item.title ?? '', url: item.url ?? '', snippet: item.snippet ?? '' }))
+    .filter((item) => item.title && item.url)
+  return { data: results, is_error: false } as const
+}
+
+async function searchWithZhipu(query: string, numResults: number, sandbox: unknown) {
+  const apiKey = getEnvKey(['ZHIPU_API_KEY', 'LUME_ZHIPU_API_KEY'])
+  if (!apiKey) return null
+  const url = 'https://open.bigmodel.cn/api/paas/v4/web_search'
+  const sandboxError = ensureNetworkAllowed(url, sandbox as never)
+  if (sandboxError) return { data: sandboxError, is_error: true } as const
+  const response = await sdkFetch(url, {
+    method: 'POST',
+    headers: { 'authorization': `Bearer ${apiKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ query, count: Math.max(1, Math.min(numResults || 5, 10)) }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!response.ok) throw new Error(`Zhipu search failed: HTTP ${response.status}`)
+  const payload = await response.json() as {
+    data?: Array<{ title?: string; link?: string; content?: string; snippet?: string }>
+  }
+  const results = (payload.data ?? [])
+    .map((item) => ({
+      title: item.title ?? '', url: item.link ?? '',
+      snippet: item.snippet ?? '',
+      content: item.content ? truncateContent(item.content, MAX_CONTENT_CHARS) : undefined,
+    }))
+    .filter((item) => item.title && item.url)
+  return { data: results, is_error: false } as const
 }
 
 async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: unknown) {
-  const encoded = encodeURIComponent(query)
-  const url = `https://html.duckduckgo.com/html/?q=${encoded}`
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
   const sandboxError = ensureNetworkAllowed(url, sandbox as never)
-  if (sandboxError) {
-    return { data: sandboxError, is_error: true } as const
-  }
+  if (sandboxError) return { data: sandboxError, is_error: true } as const
   const response = await sdkFetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)',
-    },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)' },
     signal: AbortSignal.timeout(15000),
   })
-  if (!response.ok) {
-    throw new Error(`DuckDuckGo search failed: HTTP ${response.status}`)
-  }
+  if (!response.ok) throw new Error(`DuckDuckGo search failed: HTTP ${response.status}`)
 
   const html = await response.text()
   const resultRegex = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi
@@ -132,17 +310,13 @@ async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: 
 
   let match: RegExpExecArray | null
   const links: Array<{ title: string; url: string }> = []
-
   while ((match = resultRegex.exec(html)) !== null) {
     const href = decodeDuckDuckGoRedirectUrl(match[1] ?? '')
     const rawTitle = match[2]
     if (!rawTitle) continue
     const title = rawTitle.replace(/<[^>]+>/g, '').trim()
-    if (href && title) {
-      links.push({ title, url: href })
-    }
+    if (href && title) links.push({ title, url: href })
   }
-
   const snippets: string[] = []
   while ((match = snippetRegex.exec(html)) !== null) {
     const rawSnippet = match[1]
@@ -155,19 +329,51 @@ async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: 
   for (let i = 0; i < limit; i++) {
     const link = links[i]
     if (!link) continue
-    results.push({
-      title: link.title,
-      url: link.url,
-      snippet: snippets[i],
-    })
+    results.push({ title: link.title, url: link.url, snippet: snippets[i] })
   }
-
-  return { data: normalizeResults(results, query, numResults) } as const
+  return { data: results, is_error: false } as const
 }
+
+async function searchWithBing(query: string, numResults: number, sandbox: unknown) {
+  const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}`
+  const sandboxError = ensureNetworkAllowed(url, sandbox as never)
+  if (sandboxError) return { data: sandboxError, is_error: true } as const
+  const response = await sdkFetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    },
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!response.ok) throw new Error(`Bing search failed: HTTP ${response.status}`)
+
+  const html = await response.text()
+  const results: SearchResult[] = []
+  const liRegex = /<li class="b_algo"[^>]*>([\s\S]*?)<\/li>/gi
+  let liMatch: RegExpExecArray | null
+  while ((liMatch = liRegex.exec(html)) !== null) {
+    if (results.length >= (numResults || 5)) break
+    const block = liMatch[1]
+    if (!block) continue
+    const hrefMatch = /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block)
+    if (!hrefMatch) continue
+    const rawUrl = hrefMatch[1]
+    const rawTitle = hrefMatch[2]
+    if (!rawUrl || !rawTitle) continue
+    const title = rawTitle.replace(/<[^>]+>/g, '').trim()
+    if (!title) continue
+    const snippetMatch = /<div class="b_caption"[^>]*>([\s\S]*?)<\/div>/i.exec(block)
+    const snippet = snippetMatch ? snippetMatch[1]?.replace(/<[^>]+>/g, '').trim() ?? '' : ''
+    results.push({ title, url: rawUrl, snippet })
+  }
+  return { data: results, is_error: false } as const
+}
+
+// ─── Tool definition ──────────────────────────────────────────
 
 export const WebSearchTool = defineTool({
   name: 'WebSearch',
-  description: 'Search the web for information. Returns search results with titles, URLs, and snippets.',
+  description: 'Search the web for information. Returns search results with titles, URLs, snippets, and extracted page content.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -190,24 +396,41 @@ export const WebSearchTool = defineTool({
     try {
       const numResults = typeof input.num_results === 'number' ? input.num_results : 5
       const attempts = [
-        () => searchWithBrave(query, numResults, context.sandbox),
+        () => searchWithExa(query, numResults, context.sandbox),
+        () => searchWithPipellm(query, numResults, context.sandbox),
+        () => searchWithZhipu(query, numResults, context.sandbox),
         () => searchWithTavily(query, numResults, context.sandbox),
+        () => searchWithBrave(query, numResults, context.sandbox),
         () => searchWithDuckDuckGo(query, numResults, context.sandbox),
+        () => searchWithBing(query, numResults, context.sandbox),
       ]
 
+      let rawResults: SearchResult[] | null = null
       let lastError: unknown = null
+
       for (const attempt of attempts) {
         try {
           const result = await attempt()
-          if (result) {
-            return result
+          if (result && !('is_error' in result && result.is_error)) {
+            rawResults = (result as { data: SearchResult[] }).data
+            if (rawResults && rawResults.length > 0) break
           }
         } catch (error) {
           lastError = error
         }
       }
 
-      throw lastError ?? new Error('No search provider available')
+      if (!rawResults || rawResults.length === 0) {
+        throw lastError ?? new Error('No search provider available')
+      }
+
+      // Enrich results without content by fetching pages
+      const needsEnrichment = rawResults.some((r) => !r.content || r.content.length < 50)
+      const enriched = needsEnrichment
+        ? await enrichResultsWithContent(rawResults.slice(0, numResults), context.sandbox)
+        : rawResults
+
+      return { data: formatResults(enriched, query) }
     } catch (err: any) {
       return { data: `Search error: ${err.message}`, is_error: true }
     }

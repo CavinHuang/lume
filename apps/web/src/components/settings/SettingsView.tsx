@@ -11,12 +11,11 @@ import { AgentsSettings } from './AgentsSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
 import { PermissionSettings } from './PermissionSettings'
-import { SkillsSettings } from './SkillsSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
-import { AutomationSettings } from '../automation/AutomationSettings'
 import { MemorySettings } from './MemorySettings'
 import { VersionUpdateSettings } from './VersionUpdateSettings'
 import { LogSettings } from './LogSettings'
+import { WebSearchSettings } from './WebSearchSettings'
 import {
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
@@ -76,10 +75,15 @@ export function SettingsView() {
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
           {tab === 'permissions' && <PermissionSettings />}
-          {tab === 'files' && <SettingsContentShell><SkillsSettings /></SettingsContentShell>}
-          {tab === 'shortcuts' && <SettingsContentShell><AutomationSettings /></SettingsContentShell>}
+          {tab === 'shortcuts' && (
+            <SettingsPlaceholder
+              title="快捷键"
+              desc="快捷键配置会在后续版本回到这里，自动化入口已移到侧边栏。"
+            />
+          )}
           {tab === 'integrations' && <McpSettings />}
           {tab === 'im-integrations' && <ImSettings />}
+          {tab === 'web-search' && <WebSearchSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
           {tab === 'logs' && <LogSettings />}
         </main>

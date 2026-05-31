@@ -1,17 +1,12 @@
 import type { Editor } from '@tiptap/react'
 import { EditorContent } from '@tiptap/react'
-import { ArrowRight, ChevronRight, Code2, FileText, ListChecks, Loader2, Paperclip, Send } from 'lucide-react'
+import { Loader2, Image, FileText, Plus, Send } from 'lucide-react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { RecentThreads } from './RecentThreads'
 import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
-import type {
-  WelcomeSurfaceFileItem,
-  WelcomeSurfacePanel,
-  WelcomeSurfaceViewModel,
-  WelcomeSurfaceWorkflowItem,
-} from './welcome-surface-view-model'
+import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
 
 interface PendingFile {
   filename: string
@@ -31,9 +26,8 @@ interface LumeWelcomeSurfaceProps {
   hasText: boolean
   onSend: () => void
   onAttach: () => void
-  onOpenThread: (threadId: string) => void
-  onChoosePromptSeed: (promptSeed: string) => void
   onRemovePendingFile: (index: number) => void
+  folderBar?: ReactNode
 }
 
 export function LumeWelcomeSurface({
@@ -49,18 +43,15 @@ export function LumeWelcomeSurface({
   hasText,
   onSend,
   onAttach,
-  onOpenThread,
-  onChoosePromptSeed,
   onRemovePendingFile,
+  folderBar,
 }: LumeWelcomeSurfaceProps) {
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const composerState = deriveLumeComposerState({
     hasText,
     mode: sending ? 'busy' : 'idle',
   })
   const interactionLockProps = sending ? ({ inert: '' } as Record<string, string>) : {}
-  const recentThreadsPanel = requirePanelById(model.lowerPanels, 'recent-threads')
-  const workflowsPanel = requirePanelById(model.lowerPanels, 'recommended-workflows')
-  const recentFilesPanel = requirePanelById(model.lowerPanels, 'recent-files')
 
   return (
     <div
@@ -79,9 +70,9 @@ export function LumeWelcomeSurface({
         }}
       />
 
-      <div className="relative flex-1 overflow-y-auto">
-        <div className="relative mx-auto flex w-full max-w-[1104px] flex-col px-5 pb-8 pt-7 md:px-7 md:pb-10 lg:px-8">
-          <section className="mx-auto flex w-full max-w-[640px] flex-col items-center pt-4 text-center md:pt-7">
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto">
+        <div className="relative mx-auto flex w-full max-w-[1104px] flex-col items-center px-5 py-10 md:px-7 lg:px-8">
+          <section className="flex w-full max-w-[840px] flex-col items-center text-center">
             <HeroMark />
 
             <h1 className="mt-5 text-[28px] font-semibold text-[var(--text-1)] md:text-[32px]">
@@ -102,57 +93,11 @@ export function LumeWelcomeSurface({
             </div>
           </section>
 
-          <section className="mt-7 grid grid-cols-1 gap-4 lg:grid-cols-[1.04fr_1fr_1fr]">
-          {recentThreadsPanel.id === 'recent-threads' && (
-            <RecentThreads panel={recentThreadsPanel} onOpen={onOpenThread} />
-          )}
-
-          {workflowsPanel.id === 'recommended-workflows' && (
-            <PanelFrame title={workflowsPanel.title} subtitle={workflowsPanel.subtitle}>
-              <div
-                {...interactionLockProps}
-                data-welcome-lock="workflow-panel"
-                aria-disabled={sending}
-                className="flex flex-1 flex-col"
-              >
-                {workflowsPanel.items.map((item) => (
-                  <WorkflowRow
-                    key={item.id}
-                    item={item}
-                    disabled={sending}
-                    onChoosePromptSeed={onChoosePromptSeed}
-                  />
-                ))}
-                <button
-                  type="button"
-                  disabled={sending}
-                  className="mx-auto mt-auto inline-flex items-center gap-1 pt-3 text-[12px] font-medium text-[var(--brand)] transition-colors hover:text-[color:color-mix(in_oklab,var(--brand)_72%,black)] disabled:opacity-60"
-                >
-                  查看全部工作流
-                  <ArrowRight size={13} />
-                </button>
-              </div>
-            </PanelFrame>
-          )}
-
-          {recentFilesPanel.id === 'recent-files' && (
-            <PanelFrame title={recentFilesPanel.title} subtitle={recentFilesPanel.subtitle}>
-              <div className="flex flex-1 flex-col gap-2">
-                {recentFilesPanel.items.map((item) => (
-                  <RecentFileRow key={item.id} item={item} />
-                ))}
-              </div>
-            </PanelFrame>
-          )}
-        </section>
-        </div>
-      </div>
-
-      <section className="relative mx-auto w-full max-w-[1104px] shrink-0 px-5 pb-6 pt-0 md:px-7 lg:px-8">
           <div
             {...interactionLockProps}
             data-welcome-lock="composer"
             aria-disabled={sending}
+            className="mt-8 w-full max-w-[840px]"
           >
             <LumeComposer
               tone={composerState.tone}
@@ -195,19 +140,41 @@ export function LumeWelcomeSurface({
               }
               leadingTools={
                 <>
-                  <button
-                    type="button"
-                    aria-label="添加文件"
-                    title="添加文件"
-                    onClick={onAttach}
-                    disabled={sending}
-                    className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
-                  >
-                    <Paperclip size={15} />
-                  </button>
-                  <ToolbarChip>@ 文件</ToolbarChip>
-                  <ToolbarChip>/Skill</ToolbarChip>
-                  <ToolbarChip># MCP</ToolbarChip>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      aria-label="添加"
+                      title="添加"
+                      onClick={() => setAttachMenuOpen((v) => !v)}
+                      disabled={sending}
+                      className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+                    >
+                      <Plus size={15} />
+                    </button>
+                    {attachMenuOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
+                        <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
+                          <button
+                            type="button"
+                            onClick={() => { setAttachMenuOpen(false); onAttach() }}
+                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                          >
+                            <FileText size={15} className="text-[var(--text-3)]" />
+                            文件
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setAttachMenuOpen(false); onAttach() }}
+                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                          >
+                            <Image size={15} className="text-[var(--text-3)]" />
+                            图片
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </>
               }
               trailingTools={
@@ -215,13 +182,6 @@ export function LumeWelcomeSurface({
                   {composerModelPicker}
                   {permissionModePicker}
                   {thinkingLevelPicker}
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex h-8 items-center gap-2 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] px-2.5 text-[11.5px] font-medium text-[var(--text-3)]"
-                  >
-                    ⌘ ↵
-                  </button>
                 </>
               }
               actionSlot={
@@ -249,10 +209,18 @@ export function LumeWelcomeSurface({
               }
             />
           </div>
+          {folderBar && (
+            <div
+              className="mt-[-12px] w-full max-w-[840px] rounded-b-[1rem] border border-t-0 border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] px-3 pt-6 pb-2"
+            >
+              {folderBar}
+            </div>
+          )}
           <p className="mt-3 text-center text-[12px] text-[var(--text-3)]">
             Lume 可能会犯错，请核查重要信息。
           </p>
-        </section>
+        </div>
+      </div>
     </div>
   )
 }
@@ -269,110 +237,3 @@ function HeroMark() {
   )
 }
 
-function requirePanelById<TPanel extends WelcomeSurfacePanel['id']>(
-  panels: WelcomeSurfacePanel[],
-  panelId: TPanel,
-) {
-  const panel = panels.find(
-    (panel): panel is Extract<WelcomeSurfacePanel, { id: TPanel }> => panel.id === panelId,
-  )
-
-  if (!panel) {
-    throw new Error(`Missing welcome surface panel: ${panelId}`)
-  }
-
-  return panel
-}
-
-function PanelFrame({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string
-  subtitle: string
-  children: ReactNode
-}) {
-  return (
-    <section className="flex h-full min-h-[190px] flex-col rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_50%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_95%,transparent)] p-4 shadow-[0_16px_34px_-32px_hsl(var(--shadow-panel)/0.34)]">
-      <header className="mb-3">
-        <p className="text-[12px] font-semibold text-[var(--text-1)]">
-          {title}
-        </p>
-        <p className="mt-1 text-[12px] leading-5 text-[var(--text-2)]">{subtitle}</p>
-      </header>
-      {children}
-    </section>
-  )
-}
-
-function WorkflowRow({
-  item,
-  disabled,
-  onChoosePromptSeed,
-}: {
-  item: WelcomeSurfaceWorkflowItem
-  disabled: boolean
-  onChoosePromptSeed: (promptSeed: string) => void
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onChoosePromptSeed(item.promptSeed)}
-      className="group flex items-center gap-3 border-b border-[color:color-mix(in_oklab,var(--border-strong)_34%,transparent)] py-2.5 text-left transition-colors last:border-b-0 hover:bg-[color:color-mix(in_oklab,var(--surface-2)_55%,transparent)]"
-    >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
-        <WorkflowGlyph id={item.id} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px] font-medium text-[var(--text-1)]">{item.title}</div>
-        <div className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{item.description}</div>
-      </div>
-      <span className="shrink-0 text-[var(--text-2)] transition-transform group-hover:translate-x-0.5">
-        <ChevronRight size={15} />
-      </span>
-    </button>
-  )
-}
-
-function WorkflowGlyph({ id }: { id: WelcomeSurfaceWorkflowItem['id'] }) {
-  if (id === 'deep-interview') {
-    return <FileText size={15} strokeWidth={2.2} />
-  }
-
-  if (id === 'ralplan') {
-    return <ListChecks size={15} strokeWidth={2.2} />
-  }
-
-  return <Code2 size={15} strokeWidth={2.2} />
-}
-
-function RecentFileRow({ item }: { item: WelcomeSurfaceFileItem }) {
-  return (
-    <div
-      className={cn(
-        'rounded-lg border px-3.5 py-2.5',
-        item.kind === 'file'
-          ? 'border-transparent bg-[color:color-mix(in_oklab,var(--surface-2)_76%,transparent)]'
-          : 'border-dashed border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_62%,transparent)]',
-      )}
-    >
-      <div className={cn('text-[13px] font-medium', item.kind === 'file' ? 'text-[var(--text-1)]' : 'text-[var(--text-2)]')}>
-        {item.title}
-      </div>
-      <div className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{item.meta}</div>
-    </div>
-  )
-}
-
-function ToolbarChip({ children }: { children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      className="inline-flex h-8 items-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] px-2.5 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
-    >
-      {children}
-    </button>
-  )
-}

@@ -4,22 +4,43 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  ExternalLink,
+  FileText,
   Folder,
   FolderOpen,
+  Loader2,
   MoreHorizontal,
+  MoveRight,
+  Pencil,
   Plus,
   Search,
   ShieldCheck,
+  Trash2,
+  Upload,
 } from 'lucide-react'
 import { useAtom } from 'jotai'
 import { toast } from 'sonner'
-import type { AgentWorkspace } from '@lume/shared'
+import type { AgentWorkspace, LumeConfigSkillsSection, SkillCatalogItem, WorkspaceCapabilities, WorkspaceMcpConfig } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
-import { sidecarCall } from '@/lib/desktop-api'
+import { getEffectiveLumeConfig, getMcpConfig, getSkillMarketCatalog, openFileDialog, saveMcpConfig, sidecarCall, updateSkillsConfig } from '@/lib/desktop-api'
 import { Switch } from '@/components/ui/switch'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
+import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
+
+type WorkspaceSettingsTab = 'overview' | 'files' | 'capabilities'
+
+interface WorkspaceFilePreview {
+  content: string
+  truncated: boolean
+}
+
+const WORKSPACE_SETTINGS_TABS: Array<{ id: WorkspaceSettingsTab; label: string }> = [
+  { id: 'overview', label: '概览' },
+  { id: 'files', label: '文件' },
+  { id: 'capabilities', label: '能力开关' },
+]
 
 const WORKSPACE_ACCENTS = [
   'from-[#6d5cff] to-[#9d86ff]',
@@ -47,6 +68,7 @@ export function WorkspacesSettings() {
   const [openOnStart, setOpenOnStart] = React.useState(true)
   const [preserveLayout, setPreserveLayout] = React.useState(true)
   const [jumpToSavedWorkspace, setJumpToSavedWorkspace] = React.useState(true)
+  const [activeTab, setActiveTab] = React.useState<WorkspaceSettingsTab>('overview')
 
   const selectedWorkspace = React.useMemo(
     () => workspaces.find((item) => item.id === selectedWorkspaceId) ?? workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null,
@@ -204,6 +226,121 @@ export function WorkspacesSettings() {
         lastOpenedLabel={formatRelativeDay(selectedWorkspace.updatedAt)}
       />
 
+      <div className="flex items-center gap-1 rounded-[10px] border border-border bg-[var(--surface-1)] p-1 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+        {WORKSPACE_SETTINGS_TABS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => setActiveTab(item.id)}
+            className={cn(
+              'h-8 rounded-[8px] px-3 text-[13px] font-medium transition-colors',
+              activeTab === item.id
+                ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
+            )}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'overview' && (
+        <WorkspaceOverviewPanel
+          currentWorkspaceId={currentWorkspaceId}
+          filteredWorkspaces={filteredWorkspaces}
+          handleDelete={handleDelete}
+          handleOpenResources={handleOpenResources}
+          handleSave={handleSave}
+          jumpToSavedWorkspace={jumpToSavedWorkspace}
+          openOnStart={openOnStart}
+          preserveLayout={preserveLayout}
+          query={query}
+          rootPath={rootPath}
+          selectedWorkspace={selectedWorkspace}
+          setCreateWorkspaceOpen={setCreateWorkspaceOpen}
+          setCurrentWorkspaceId={setCurrentWorkspaceId}
+          setJumpToSavedWorkspace={setJumpToSavedWorkspace}
+          setOpenOnStart={setOpenOnStart}
+          setPreserveLayout={setPreserveLayout}
+          setQuery={setQuery}
+          setSelectedWorkspaceId={setSelectedWorkspaceId}
+          setWorkspaceDescription={setWorkspaceDescription}
+          setWorkspaceName={setWorkspaceName}
+          workspaceDescription={workspaceDescription}
+          workspaceName={workspaceName}
+        />
+      )}
+
+      {activeTab === 'files' && (
+        <WorkspaceFilesPanel workspace={selectedWorkspace} />
+      )}
+
+      {activeTab === 'capabilities' && (
+        <WorkspaceCapabilitiesPanel workspace={selectedWorkspace} />
+      )}
+
+      <CreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onOpenChange={setCreateWorkspaceOpen}
+        onCreated={(workspace) => {
+          setWorkspaces((prev) => (prev.some((item) => item.id === workspace.id) ? prev : [...prev, workspace]))
+          setCurrentWorkspaceId(workspace.id)
+          setSelectedWorkspaceId(workspace.id)
+        }}
+      />
+    </div>
+  )
+}
+
+function WorkspaceOverviewPanel({
+  currentWorkspaceId,
+  filteredWorkspaces,
+  handleDelete,
+  handleOpenResources,
+  handleSave,
+  jumpToSavedWorkspace,
+  openOnStart,
+  preserveLayout,
+  query,
+  rootPath,
+  selectedWorkspace,
+  setCreateWorkspaceOpen,
+  setCurrentWorkspaceId,
+  setJumpToSavedWorkspace,
+  setOpenOnStart,
+  setPreserveLayout,
+  setQuery,
+  setSelectedWorkspaceId,
+  setWorkspaceDescription,
+  setWorkspaceName,
+  workspaceDescription,
+  workspaceName,
+}: {
+  currentWorkspaceId: string | null
+  filteredWorkspaces: AgentWorkspace[]
+  handleDelete: () => Promise<void>
+  handleOpenResources: (path?: string) => Promise<void>
+  handleSave: () => Promise<void>
+  jumpToSavedWorkspace: boolean
+  openOnStart: boolean
+  preserveLayout: boolean
+  query: string
+  rootPath: string
+  selectedWorkspace: AgentWorkspace
+  setCreateWorkspaceOpen: (open: boolean) => void
+  setCurrentWorkspaceId: (id: string | null) => void
+  setJumpToSavedWorkspace: (checked: boolean) => void
+  setOpenOnStart: (checked: boolean) => void
+  setPreserveLayout: (checked: boolean) => void
+  setQuery: (query: string) => void
+  setSelectedWorkspaceId: (id: string) => void
+  setWorkspaceDescription: (description: string) => void
+  setWorkspaceName: (name: string) => void
+  workspaceDescription: string
+  workspaceName: string
+}) {
+  return (
+    <>
       <div className="grid grid-cols-[minmax(0,438px)_minmax(0,1fr)] gap-4">
         <div className="space-y-4">
           <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
@@ -409,15 +546,339 @@ export function WorkspacesSettings() {
         </div>
       </div>
 
-      <CreateWorkspaceDialog
-        open={createWorkspaceOpen}
-        onOpenChange={setCreateWorkspaceOpen}
-        onCreated={(workspace) => {
-          setWorkspaces((prev) => (prev.some((item) => item.id === workspace.id) ? prev : [...prev, workspace]))
-          setCurrentWorkspaceId(workspace.id)
-          setSelectedWorkspaceId(workspace.id)
-        }}
-      />
+    </>
+  )
+}
+
+function WorkspaceFilesPanel({ workspace }: { workspace: AgentWorkspace }) {
+  const [selectedPath, setSelectedPath] = React.useState('')
+  const [searchQuery, setSearchQuery] = React.useState('')
+  const [preview, setPreview] = React.useState<WorkspaceFilePreview | null>(null)
+  const [previewLoading, setPreviewLoading] = React.useState(false)
+  const [refreshToken, setRefreshToken] = React.useState(0)
+  const [busyAction, setBusyAction] = React.useState<string | null>(null)
+
+  const refreshFiles = () => setRefreshToken((value) => value + 1)
+
+  const handleOpenFile = async (path: string) => {
+    setSelectedPath(path)
+    setPreviewLoading(true)
+    try {
+      const nextPreview = await sidecarCall<WorkspaceFilePreview>(AGENT_IPC_CHANNELS.READ_WORKSPACE_ROOT_FILE, {
+        workspaceSlug: workspace.slug,
+        path,
+      })
+      setPreview(nextPreview)
+    } catch (error) {
+      console.error('[WorkspacesSettings] 预览工作区文件失败:', error)
+      setPreview(null)
+      toast.error('预览文件失败')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const runFileAction = async (action: string, task: () => Promise<void>) => {
+    setBusyAction(action)
+    try {
+      await task()
+      refreshFiles()
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleUpload = () => runFileAction('upload', async () => {
+    const result = await openFileDialog()
+    if (result.files.length === 0) return
+    await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE_ROOT, {
+      workspaceSlug: workspace.slug,
+      files: result.files.map((file) => ({ filename: file.filename, sourcePath: file.sourcePath })),
+    })
+    toast.success(`已保存 ${result.files.length} 个文件到工作区`)
+  })
+
+  const handleOpenExternal = () => runFileAction('open', async () => {
+    if (!selectedPath) return
+    await sidecarCall(AGENT_IPC_CHANNELS.OPEN_WORKSPACE_ROOT_FILE, {
+      workspaceSlug: workspace.slug,
+      path: selectedPath,
+    })
+  })
+
+  const handleRename = () => runFileAction('rename', async () => {
+    if (!selectedPath) return
+    const fallbackName = selectedPath.split('/').filter(Boolean).pop() ?? selectedPath
+    const newName = window.prompt('重命名为', fallbackName)?.trim()
+    if (!newName || newName === fallbackName) return
+    await sidecarCall(AGENT_IPC_CHANNELS.RENAME_WORKSPACE_ROOT_FILE, {
+      workspaceSlug: workspace.slug,
+      path: selectedPath,
+      newName,
+    })
+    setSelectedPath('')
+    setPreview(null)
+    toast.success('已重命名')
+  })
+
+  const handleMove = () => runFileAction('move', async () => {
+    if (!selectedPath) return
+    const targetDir = window.prompt('移动到目录（使用 . 表示根目录）', '.')?.trim()
+    if (targetDir === undefined) return
+    await sidecarCall(AGENT_IPC_CHANNELS.MOVE_WORKSPACE_ROOT_FILE, {
+      workspaceSlug: workspace.slug,
+      path: selectedPath,
+      targetDir,
+    })
+    setSelectedPath('')
+    setPreview(null)
+    toast.success('已移动')
+  })
+
+  const handleDeleteFile = () => runFileAction('delete', async () => {
+    if (!selectedPath) return
+    if (!window.confirm(`确认删除「${selectedPath}」？`)) return
+    await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE_ROOT_FILE, {
+      workspaceSlug: workspace.slug,
+      path: selectedPath,
+    })
+    setSelectedPath('')
+    setPreview(null)
+    toast.success('已删除')
+  })
+
+  return (
+    <section className="grid min-h-[560px] grid-cols-[minmax(280px,360px)_minmax(0,1fr)] overflow-hidden rounded-[10px] border border-border bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <div className="min-h-0 border-r border-border">
+        <div className="border-b border-border p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="text-[15px] font-semibold text-[var(--text-1)]">工作区文件</h3>
+              <p className="mt-1 truncate text-[12px] text-[var(--text-3)]">{workspace.name}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleUpload()}
+              className="inline-flex h-8 items-center gap-1.5 rounded-[7px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
+            >
+              {busyAction === 'upload' ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              上传
+            </button>
+          </div>
+          <label className="mt-3 flex h-9 items-center gap-2 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
+            <Search size={15} />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="筛选文件"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+            />
+          </label>
+        </div>
+        <WorkspaceFileBrowser
+          workspaceSlug={workspace.slug}
+          listChannel={AGENT_IPC_CHANNELS.LIST_WORKSPACE_ROOT_DIRECTORY}
+          refreshToken={refreshToken}
+          selectedPath={selectedPath}
+          onOpenFile={(path) => void handleOpenFile(path)}
+          showHeader={false}
+          searchQuery={searchQuery}
+        />
+      </div>
+
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <div className="flex min-h-[64px] items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-[15px] font-semibold text-[var(--text-1)]">{selectedPath || '选择文件查看预览'}</div>
+            <div className="mt-1 text-[12px] text-[var(--text-3)]">第一版支持预览、打开、重命名、移动、删除与上传，不内置编辑器。</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <IconButton disabled={!selectedPath || busyAction === 'open'} title="系统打开" onClick={() => void handleOpenExternal()}>
+              <ExternalLink size={15} />
+            </IconButton>
+            <IconButton disabled={!selectedPath || busyAction === 'rename'} title="重命名" onClick={() => void handleRename()}>
+              <Pencil size={15} />
+            </IconButton>
+            <IconButton disabled={!selectedPath || busyAction === 'move'} title="移动" onClick={() => void handleMove()}>
+              <MoveRight size={15} />
+            </IconButton>
+            <IconButton disabled={!selectedPath || busyAction === 'delete'} title="删除" tone="danger" onClick={() => void handleDeleteFile()}>
+              <Trash2 size={15} />
+            </IconButton>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          {previewLoading ? (
+            <PreviewEmpty icon={<Loader2 size={20} className="animate-spin" />} label="正在加载预览..." />
+          ) : preview ? (
+            <div className="space-y-3">
+              {preview.truncated && (
+                <div className="rounded-[8px] border border-amber-300/30 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
+                  文件内容过长，当前仅显示前 512 KB。
+                </div>
+              )}
+              <pre className="min-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-border bg-[var(--surface-2)] p-4 font-mono text-[12px] leading-6 text-[var(--text-1)]">
+                {preview.content}
+              </pre>
+            </div>
+          ) : (
+            <PreviewEmpty icon={<FileText size={22} />} label="从左侧选择一个文件开始预览" />
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function WorkspaceCapabilitiesPanel({ workspace }: { workspace: AgentWorkspace }) {
+  const [capabilities, setCapabilities] = React.useState<WorkspaceCapabilities | null>(null)
+  const [mcpConfig, setMcpConfig] = React.useState<WorkspaceMcpConfig | null>(null)
+  const [skills, setSkills] = React.useState<SkillCatalogItem[]>([])
+  const [disabledSkills, setDisabledSkills] = React.useState<Set<string>>(new Set())
+  const [loading, setLoading] = React.useState(true)
+  const [busyKey, setBusyKey] = React.useState<string | null>(null)
+  const [mcpSearchQuery, setMcpSearchQuery] = React.useState('')
+  const [skillSearchQuery, setSkillSearchQuery] = React.useState('')
+
+  const refresh = React.useCallback(async () => {
+    setLoading(true)
+    try {
+      const [nextCapabilities, nextMcpConfig, nextSkillsCatalog, nextConfig] = await Promise.all([
+        sidecarCall<WorkspaceCapabilities>(AGENT_IPC_CHANNELS.GET_CAPABILITIES, { workspaceSlug: workspace.slug }),
+        getMcpConfig(workspace.slug),
+        getSkillMarketCatalog(workspace.slug, true),
+        getEffectiveLumeConfig(workspace.slug),
+      ])
+      const nextDisabledSkills = new Set(nextConfig.skills?.disabled ?? [])
+      setCapabilities(nextCapabilities)
+      setMcpConfig(nextMcpConfig)
+      setSkills(nextSkillsCatalog.items.filter((item) => item.installState === 'installed' || nextDisabledSkills.has(item.slug)))
+      setDisabledSkills(nextDisabledSkills)
+    } catch (error) {
+      console.error('[WorkspacesSettings] 加载能力开关失败:', error)
+      toast.error('加载能力开关失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [workspace.slug])
+
+  React.useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  const handleToggleMcpServer = async (serverName: string, enabled: boolean) => {
+    if (!mcpConfig) return
+    setBusyKey(`mcp:${serverName}`)
+    try {
+      const entry = mcpConfig.servers[serverName]
+      if (!entry) return
+      await saveMcpConfig(workspace.slug, {
+        servers: {
+          ...mcpConfig.servers,
+          [serverName]: { ...entry, enabled },
+        },
+      })
+      toast.success(enabled ? 'MCP 服务已启用' : 'MCP 服务已关闭')
+      await refresh()
+    } catch (error) {
+      console.error('[WorkspacesSettings] 保存 MCP 开关失败:', error)
+      toast.error('保存 MCP 开关失败')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const handleToggleSkill = async (skillSlug: string, enabled: boolean) => {
+    setBusyKey(`skill:${skillSlug}`)
+    try {
+      const nextDisabled = new Set(disabledSkills)
+      if (enabled) nextDisabled.delete(skillSlug)
+      else nextDisabled.add(skillSlug)
+      const nextSkills: LumeConfigSkillsSection = { disabled: Array.from(nextDisabled).sort() }
+      await updateSkillsConfig(nextSkills, workspace.slug)
+      setDisabledSkills(nextDisabled)
+      toast.success(enabled ? '技能已启用' : '技能已关闭')
+      await refresh()
+    } catch (error) {
+      console.error('[WorkspacesSettings] 保存技能开关失败:', error)
+      toast.error('保存技能开关失败')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-[320px] items-center justify-center rounded-[10px] border border-border bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
+        <Loader2 size={14} className="mr-2 animate-spin" />
+        加载能力开关...
+      </div>
+    )
+  }
+
+  const mcpServers = capabilities?.mcpServers ?? []
+  const normalizedMcpSearchQuery = mcpSearchQuery.trim().toLowerCase()
+  const normalizedSkillSearchQuery = skillSearchQuery.trim().toLowerCase()
+  const filteredMcpServers = normalizedMcpSearchQuery
+    ? mcpServers.filter((server) => (
+      server.name.toLowerCase().includes(normalizedMcpSearchQuery) ||
+      server.type.toLowerCase().includes(normalizedMcpSearchQuery)
+    ))
+    : mcpServers
+  const filteredSkills = normalizedSkillSearchQuery
+    ? skills.filter((skill) => (
+      skill.name.toLowerCase().includes(normalizedSkillSearchQuery) ||
+      skill.slug.toLowerCase().includes(normalizedSkillSearchQuery) ||
+      (skill.description ?? '').toLowerCase().includes(normalizedSkillSearchQuery)
+    ))
+    : skills
+
+  return (
+    <div className="space-y-4">
+      <SettingsPanel title="MCP 服务" description="只控制当前工作区的 server 启用状态，连接和工具级配置保留在 MCP 设置。">
+        <CapabilitySearchInput
+          value={mcpSearchQuery}
+          onChange={setMcpSearchQuery}
+          placeholder="搜索 MCP 服务"
+        />
+        <div className="space-y-2">
+          {mcpServers.length === 0 && <EmptyLine label="当前工作区没有 MCP 服务" />}
+          {mcpServers.length > 0 && filteredMcpServers.length === 0 && <EmptyLine label="没有匹配的 MCP 服务" />}
+          {filteredMcpServers.map((server) => (
+            <ToggleRow
+              key={server.name}
+              label={server.name}
+              description={server.type}
+              checked={server.enabled}
+              disabled={busyKey === `mcp:${server.name}`}
+              onCheckedChange={(checked) => void handleToggleMcpServer(server.name, checked)}
+            />
+          ))}
+        </div>
+      </SettingsPanel>
+
+      <SettingsPanel title="技能" description="只控制当前工作区已安装技能的启用状态，安装和详情继续使用技能管理入口。">
+        <CapabilitySearchInput
+          value={skillSearchQuery}
+          onChange={setSkillSearchQuery}
+          placeholder="搜索技能"
+        />
+        <div className="space-y-2">
+          {skills.length === 0 && <EmptyLine label="当前工作区没有已安装技能" />}
+          {skills.length > 0 && filteredSkills.length === 0 && <EmptyLine label="没有匹配的技能" />}
+          {filteredSkills.map((skill) => (
+            <ToggleRow
+              key={skill.slug}
+              label={skill.name}
+              description={skill.description ?? skill.slug}
+              checked={!disabledSkills.has(skill.slug)}
+              disabled={busyKey === `skill:${skill.slug}`}
+              onCheckedChange={(checked) => void handleToggleSkill(skill.slug, checked)}
+            />
+          ))}
+        </div>
+      </SettingsPanel>
     </div>
   )
 }
@@ -542,6 +1003,118 @@ function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
         props.className,
       )}
     />
+  )
+}
+
+function IconButton({
+  children,
+  disabled,
+  onClick,
+  title,
+  tone = 'neutral',
+}: {
+  children: React.ReactNode
+  disabled?: boolean
+  onClick: () => void
+  title: string
+  tone?: 'neutral' | 'danger'
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+      className={cn(
+        'flex size-8 items-center justify-center rounded-[7px] border border-border bg-[var(--surface-1)] text-[var(--text-2)] hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-45',
+        tone === 'danger' && 'text-[#ff4e4e] hover:bg-[#fff5f5]'
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function PreviewEmpty({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div className="flex min-h-[420px] flex-col items-center justify-center rounded-[8px] border border-dashed border-border bg-[var(--surface-2)] text-center text-[13px] text-[var(--text-3)]">
+      <div className="mb-3 flex size-10 items-center justify-center rounded-[10px] bg-[var(--surface-1)] text-[var(--text-3)]">
+        {icon}
+      </div>
+      {label}
+    </div>
+  )
+}
+
+function SettingsPanel({
+  children,
+  description,
+  title,
+}: {
+  children: React.ReactNode
+  description: string
+  title: string
+}) {
+  return (
+    <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <h3 className="text-[17px] font-semibold leading-6 text-[var(--text-1)]">{title}</h3>
+      <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{description}</p>
+      <div className="mt-4">{children}</div>
+    </section>
+  )
+}
+
+function CapabilitySearchInput({
+  onChange,
+  placeholder,
+  value,
+}: {
+  onChange: (value: string) => void
+  placeholder: string
+  value: string
+}) {
+  return (
+    <label className="mb-3 flex h-9 items-center gap-2 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
+      <Search size={15} />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+      />
+    </label>
+  )
+}
+
+function ToggleRow({
+  checked,
+  description,
+  disabled,
+  label,
+  onCheckedChange,
+}: {
+  checked: boolean
+  description: string
+  disabled?: boolean
+  label: string
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex min-h-[56px] items-center justify-between gap-3 rounded-[8px] border border-border px-3 py-2">
+      <div className="min-w-0">
+        <div className="truncate text-[13px] font-semibold text-[var(--text-1)]">{label}</div>
+        <div className="mt-1 line-clamp-2 text-[12px] leading-4 text-[var(--text-3)]">{description}</div>
+      </div>
+      <LumeSwitch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+    </div>
+  )
+}
+
+function EmptyLine({ label }: { label: string }) {
+  return (
+    <div className="rounded-[8px] border border-dashed border-border px-3 py-8 text-center text-[13px] text-[var(--text-3)]">
+      {label}
+    </div>
   )
 }
 

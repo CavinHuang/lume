@@ -10,6 +10,7 @@ import type {
   GitHubReleaseListOptions,
   NetworkDiagnosticResult,
   ReadLogFileInput,
+  TestSearchBackendInput,
   UpdateGeneralSettingsInput,
   UpdateUiStateInput
 } from "@lume/shared";
@@ -34,6 +35,7 @@ import {
   listLogFiles,
   readLogFile
 } from "../services/infra/log-viewer-service";
+import { testSearchBackend } from "../services/infra/search-test-service";
 import { getActiveProxyConfig } from "../services/system/proxy-settings-manager";
 import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
 import {
@@ -161,6 +163,10 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       const result = exportAllLogFiles();
       openInSystem(result.path);
       return result;
+    },
+    [GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND]: async (params) => {
+      const input = (params ?? {}) as TestSearchBackendInput;
+      return testSearchBackend(input);
     },
     [LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
       const input = validateInput(

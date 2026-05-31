@@ -9,10 +9,11 @@ import type {
 import { createAgentThreadWithModelRef } from "../agent/agent-thread-manager";
 import { getAgentThreadMeta } from "../agent/agent-thread-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { listAutomationJobs, updateAutomationJob } from "./automation-manager";
+import { listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from "./automation-manager";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
 import { getEffectiveSystemConfig } from "../system/system-config-service";
+import { matchCronExpression } from "./automation-schedule";
 
 type JobDisposer = () => void;
 
@@ -35,49 +36,6 @@ function minuteKey(date: Date): string {
   const hh = String(date.getHours()).padStart(2, "0");
   const mm = String(date.getMinutes()).padStart(2, "0");
   return `${y}-${m}-${d}T${hh}:${mm}`;
-}
-
-function parseCronField(token: string, min: number, value: number): boolean {
-  const raw = token.trim();
-  if (!raw) return false;
-  if (raw === "*") return true;
-  if (raw.startsWith("*/")) {
-    const step = Number.parseInt(raw.slice(2), 10);
-    if (!Number.isFinite(step) || step <= 0) return false;
-    return (value - min) % step === 0;
-  }
-  const segments = raw.split(",");
-  for (const segment of segments) {
-    const part = segment.trim();
-    if (!part) continue;
-    if (part.includes("-")) {
-      const [startRaw, endRaw] = part.split("-", 2);
-      const start = Number.parseInt(startRaw ?? "", 10);
-      const end = Number.parseInt(endRaw ?? "", 10);
-      if (Number.isFinite(start) && Number.isFinite(end) && value >= start && value <= end) {
-        return true;
-      }
-      continue;
-    }
-    const exact = Number.parseInt(part, 10);
-    if (Number.isFinite(exact) && value === exact) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function matchCronExpr(expr: string, date: Date): boolean {
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [minExpr, hourExpr, dayExpr, monthExpr, weekExpr] = parts;
-  return (
-    parseCronField(minExpr ?? "", 0, date.getMinutes())
-    && parseCronField(hourExpr ?? "", 0, date.getHours())
-    && parseCronField(dayExpr ?? "", 1, date.getDate())
-    && parseCronField(monthExpr ?? "", 1, date.getMonth() + 1)
-    && parseCronField(weekExpr ?? "", 0, date.getDay())
-  );
 }
 
 function appendRun(run: AutomationRun): void {
@@ -198,12 +156,19 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     runMessage = error instanceof Error ? error.message : String(error);
   } finally {
     runningJobs.delete(job.id);
-    if (job.schedule.type === "once") {
-      try {
-        updateAutomationJob({ id: job.id, enabled: false });
-      } catch {
-        // ignore disable failure
-      }
+  }
+
+  let latestJob = job;
+  try {
+    latestJob = recordAutomationJobRun({ id: job.id, startedAt });
+  } catch {
+    // ignore status write failure
+  }
+  if (job.schedule.type === "once") {
+    try {
+      latestJob = updateAutomationJob({ id: job.id, enabled: false });
+    } catch {
+      // ignore disable failure
     }
   }
 
@@ -223,7 +188,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     notificationWriter("automation:run-completed", {
       run,
       jobName: job.name,
-      jobEnabled: job.enabled
+      jobEnabled: latestJob.enabled
     });
   }
   return run;
@@ -264,7 +229,7 @@ function scheduleJob(job: AutomationJob): void {
       const now = new Date();
       const key = minuteKey(now);
       if (lastCronMinuteKeyByJob.get(job.id) === key) return;
-      if (!matchCronExpr(expr, now)) return;
+      if (!matchCronExpression(expr, now)) return;
       lastCronMinuteKeyByJob.set(job.id, key);
       void executeJob(latest, "schedule");
     }, 15_000);

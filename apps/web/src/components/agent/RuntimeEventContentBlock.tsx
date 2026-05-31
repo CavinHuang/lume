@@ -8,7 +8,7 @@ import { useSetAtom } from 'jotai'
 import { activeTabIdAtom, agentThreadsAtom, tabsAtom } from '@/atoms'
 import type { PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
-import { agentSend, getThreadMessageVersions, sidecarCall } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
 import { AGENT_IPC_CHANNELS, getAgentRole, type AgentMessage, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
@@ -1150,9 +1150,26 @@ function AssistantMessageFooter({
     }
   }
 
-  const handleDownload = (format: AssistantDownloadFormat) => {
-    downloadAssistantMessage(text, messageId, format)
+  const handleDownload = async (format: AssistantDownloadFormat) => {
     setDownloadMenuOpen(false)
+    try {
+      const savedPath = await downloadAssistantMessage(text, messageId, format)
+      if (savedPath) {
+        toast.success('已保存', {
+          description: savedPath,
+          duration: 6000,
+          action: {
+            label: '打开',
+            onClick: () => { openInSystem(savedPath).catch(() => {}) },
+          },
+        })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes('取消')) {
+        toast.error('保存失败', { description: message })
+      }
+    }
   }
 
   return (
@@ -1325,19 +1342,18 @@ function percentInteger(value: unknown): number | undefined {
 
 type AssistantDownloadFormat = 'html' | 'txt'
 
-function downloadAssistantMessage(text: string, messageId: string | undefined, format: AssistantDownloadFormat): void {
+async function downloadAssistantMessage(text: string, messageId: string | undefined, format: AssistantDownloadFormat): Promise<string | null> {
   const filenameBase = messageId ?? `assistant-${Date.now()}`
+  const filename = `${filenameBase}.${format}`
   const payload = format === 'html' ? buildAssistantMessageHtml(text) : text
-  const mediaType = format === 'html' ? 'text/html;charset=utf-8' : 'text/plain;charset=utf-8'
-  const blob = new Blob([payload], { type: mediaType })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `${filenameBase}.${format}`
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
+  try {
+    const result = await saveTextFileDialog(filename, payload)
+    return result.path
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('取消')) return null
+    throw error
+  }
 }
 
 function buildAssistantMessageHtml(text: string): string {

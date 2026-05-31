@@ -6,7 +6,7 @@ import { normalizeSlashSuggestionItems, type MentionItem } from './slash-command
 interface MentionListProps {
   items: MentionItem[]
   command: (item: { id: string; label: string }) => void
-  trigger?: '@' | '/' | '#'
+  trigger?: '@' | '/' | '#' | '$'
 }
 
 export interface MentionListRef {
@@ -49,7 +49,9 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         ? '继续输入关键词搜索 Agent 或文件'
         : trigger === '#'
           ? '继续输入关键词搜索 MCP 服务'
-          : '继续输入关键词搜索技能或 slash 能力'
+          : trigger === '$'
+            ? '继续输入关键词搜索技能'
+            : '继续输入关键词搜索技能或 slash 能力'
       return (
         <div className="min-w-[280px] rounded-[1.25rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] p-3 shadow-[0_22px_52px_-32px_hsl(var(--shadow-panel)/0.45)]">
           <p className="text-[12px] font-medium text-[var(--text-2)]">没有匹配项</p>
@@ -66,7 +68,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       command: <TerminalSquare size={16} className="text-[var(--text-2)]" />,
     }
 
-    if (trigger === '/') {
+    if (trigger === '/' || trigger === '$') {
       let previousSection: MentionItem['section'] | undefined
 
       return (
@@ -120,12 +122,14 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       )
     }
 
-    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : 'Slash Commands'
+    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : trigger === '$' ? 'Skills' : 'Slash Commands'
     const panelDescription = trigger === '@'
       ? '选择专业 Agent 或引用当前工作区文件'
       : trigger === '#'
         ? '选择可用的 MCP 服务与工具入口'
-        : '常用能力和工作区技能都可以在这里快速插入'
+        : trigger === '$'
+          ? '选择工作区技能快速插入'
+          : '常用能力和工作区技能都可以在这里快速插入'
     let previousSection: MentionItem['section'] | undefined
 
     return (

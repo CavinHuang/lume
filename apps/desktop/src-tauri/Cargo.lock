@@ -2124,7 +2124,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lume_desktop"
+name = "lume"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",

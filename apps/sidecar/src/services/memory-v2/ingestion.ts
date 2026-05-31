@@ -6,6 +6,7 @@ import type {
 } from "@lume/shared";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { createLogger } from "../infra/logger";
 import { readWorkspacePath } from "../agent/agent-files-service";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import {
@@ -18,6 +19,8 @@ import type {
   MemoryV2Candidate,
   MemoryV2Scope
 } from "./types";
+
+const log = createLogger("memory-v2.ingestion");
 
 const DEFAULT_CHUNK_SIZE = 4000;
 const DEFAULT_BATCH_MAX_CHARS = 12000;
@@ -160,7 +163,7 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
     }
   }
 
-  return {
+  const result = {
     workspaceSlug: input.workspaceSlug,
     scannedSources: input.sources.length,
     scannedChunks: chunks.length,
@@ -169,6 +172,17 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
     actions,
     items
   };
+
+  log.info("ingestMemorySources completed", {
+    workspaceSlug: input.workspaceSlug,
+    scannedSources: result.scannedSources,
+    scannedChunks: result.scannedChunks,
+    scannedBatches: result.scannedBatches,
+    candidateCount,
+    actions
+  });
+
+  return result;
 }
 
 export async function ingestWorkspaceMemoryFiles(input: {

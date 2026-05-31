@@ -85,6 +85,38 @@ describe('Model settings UI contract', () => {
     expect(settingsViewSource).not.toContain('工作区管理入口会继续复用左上角工作区选择与创建能力。')
   })
 
+  test('WorkspacesSettings exposes workspace tabs and lightweight file management', () => {
+    const source = readWebFile('src', 'components', 'settings', 'WorkspacesSettings.tsx')
+
+    expect(source).toContain('WORKSPACE_SETTINGS_TABS')
+    expect(source).toContain("id: 'overview'")
+    expect(source).toContain("id: 'files'")
+    expect(source).toContain("id: 'capabilities'")
+    expect(source).toContain('WorkspaceFilesPanel')
+    expect(source).toContain('WorkspaceFileBrowser')
+    expect(source).toContain('AGENT_IPC_CHANNELS.LIST_WORKSPACE_ROOT_DIRECTORY')
+    expect(source).toContain('AGENT_IPC_CHANNELS.READ_WORKSPACE_ROOT_FILE')
+    expect(source).toContain('AGENT_IPC_CHANNELS.OPEN_WORKSPACE_ROOT_FILE')
+    expect(source).toContain('AGENT_IPC_CHANNELS.RENAME_WORKSPACE_ROOT_FILE')
+    expect(source).toContain('AGENT_IPC_CHANNELS.MOVE_WORKSPACE_ROOT_FILE')
+    expect(source).toContain('AGENT_IPC_CHANNELS.DELETE_WORKSPACE_ROOT_FILE')
+    expect(source).toContain('AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE_ROOT')
+  })
+
+  test('WorkspacesSettings stacks MCP and skill capability sections with search', () => {
+    const source = readWebFile('src', 'components', 'settings', 'WorkspacesSettings.tsx')
+
+    expect(source).toContain("const [mcpSearchQuery, setMcpSearchQuery]")
+    expect(source).toContain("const [skillSearchQuery, setSkillSearchQuery]")
+    expect(source).toContain('filteredMcpServers')
+    expect(source).toContain('filteredSkills')
+    expect(source).toContain("item.installState === 'installed' || nextDisabledSkills.has(item.slug)")
+    expect(source).toContain('搜索 MCP 服务')
+    expect(source).toContain('搜索技能')
+    expect(source).toContain('<div className="space-y-4">')
+    expect(source).not.toContain('<div className="grid grid-cols-2 gap-4">')
+  })
+
   test('AgentSettings follows the model-provider design surface instead of the old overview panel', () => {
     const source = readWebFile('src', 'components', 'settings', 'AgentSettings.tsx')
 

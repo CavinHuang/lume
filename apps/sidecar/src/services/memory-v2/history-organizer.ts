@@ -2,9 +2,12 @@ import type {
   MemoryOrganizeHistoryInput,
   MemoryOrganizeHistoryResult
 } from "@lume/shared";
+import { createLogger } from "../infra/logger";
 import { getAgentThreadMessages, listAgentThreads } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { ingestMemorySources } from "./ingestion";
+
+const log = createLogger("memory-v2.history-organizer");
 
 const DEFAULT_HISTORY_LIMIT = 200;
 const MAX_HISTORY_LIMIT = 1000;
@@ -29,6 +32,14 @@ export async function organizeMemoryHistory(
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-limit);
   const scannedSources = new Set(messages.map((message) => message.sourcePath)).size;
+
+  log.info("organizeMemoryHistory started", {
+    workspaceSlug: input.workspaceSlug,
+    scannedSources,
+    scannedMessages: messages.length,
+    limit
+  });
+
   const result = await ingestMemorySources({
     workspaceSlug: input.workspaceSlug,
     sources: messages.map((message) => ({
@@ -41,7 +52,7 @@ export async function organizeMemoryHistory(
     }))
   });
 
-  return {
+  const output = {
     workspaceSlug: input.workspaceSlug,
     scannedSources,
     scannedMessages: messages.length,
@@ -60,6 +71,16 @@ export async function organizeMemoryHistory(
       ...(item.pendingId ? { pendingId: item.pendingId } : {})
     }))
   };
+
+  log.info("organizeMemoryHistory completed", {
+    workspaceSlug: input.workspaceSlug,
+    scannedSources,
+    scannedMessages: messages.length,
+    candidateCount: output.candidateCount,
+    actions: output.actions
+  });
+
+  return output;
 }
 
 function collectWorkspaceUserMessages(workspaceId: string): HistoryUserMessage[] {

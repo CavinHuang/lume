@@ -65,6 +65,19 @@ export interface ExportLogsResult {
   sizeBytes: number
 }
 
+export type WebSearchProvider = "exa" | "tavily" | "brave" | "duckduckgo" | "pipellm" | "zhipu" | "bing"
+
+export interface TestSearchBackendInput {
+  provider: WebSearchProvider
+  apiKey?: string
+}
+
+export interface TestSearchBackendResult {
+  ok: boolean
+  provider: WebSearchProvider
+  error?: string
+}
+
 export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
   windowBehavior: {
@@ -86,5 +99,6 @@ export const GENERAL_SETTINGS_IPC_CHANNELS = {
   CLEAR_CACHE: "general-settings:clear-cache",
   LIST_LOG_FILES: "general-settings:list-log-files",
   READ_LOG_FILE: "general-settings:read-log-file",
-  EXPORT_LOGS: "general-settings:export-logs"
+  EXPORT_LOGS: "general-settings:export-logs",
+  TEST_SEARCH_BACKEND: "general-settings:test-search-backend"
 } as const

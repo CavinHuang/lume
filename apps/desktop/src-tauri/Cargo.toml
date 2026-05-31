@@ -1,5 +1,5 @@
 [package]
-name = "lume_desktop"
+name = "lume"
 version = "0.1.0"
 description = "Lume desktop shell"
 authors = ["Lume Team"]
@@ -20,3 +20,7 @@ rfd = "0.15"
 webbrowser = "1"
 log = "0.4"
 dirs = "5"
+
+[[bin]]
+name = "Lume"
+path = "src/main.rs"
