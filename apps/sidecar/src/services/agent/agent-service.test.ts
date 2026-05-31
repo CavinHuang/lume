@@ -166,6 +166,33 @@ function emitManualCompaction(emit: {
     policy: "kernel-v1",
     source: "agent-runtime-kernel"
   });
+  emit.onSdkMessage({
+    type: "system",
+    subtype: "context_compaction_progress",
+    compact_metadata: {
+      trigger: "manual",
+      pre_tokens: 1234,
+      stage: "summarizing",
+      progress: 45,
+      message: "正在生成上下文摘要",
+      policy: "kernel-v1",
+      source: "agent-runtime-kernel"
+    }
+  } as SDKMessage);
+  emit.onRuntimeEvent?.({
+    id: "compact-progress",
+    type: "context.compaction.progress",
+    threadId: "thread-test",
+    runId: "run-test",
+    createdAt: "2026-05-17T00:00:00.500Z",
+    trigger: "manual",
+    preTokens: 1234,
+    stage: "summarizing",
+    progress: 45,
+    message: "正在生成上下文摘要",
+    policy: "kernel-v1",
+    source: "agent-runtime-kernel"
+  });
   emit.onRuntimeEvent?.({
     id: "compact-completed",
     type: "context.compaction.completed",
@@ -506,10 +533,16 @@ describe("agent-service", () => {
     expect(getAgentThreadMessages(thread.id)).toEqual([]);
     expect(getAgentThreadSDKMessages(thread.id).map((message) =>
       message.type === "system" ? message.subtype : message.type
-    )).toEqual(["context_compaction_started", "compact_boundary", "result"]);
+    )).toEqual(["context_compaction_started", "context_compaction_progress", "compact_boundary", "result"]);
     expect(runtimeEvents).not.toContainEqual(expect.objectContaining({
       type: "message.user.submitted",
       text: "/compact"
+    }));
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({
+      type: "context.compaction.progress",
+      trigger: "manual",
+      stage: "summarizing",
+      progress: expect.any(Number)
     }));
     expect(runtimeEvents).toContainEqual(expect.objectContaining({
       type: "context.compaction.completed",

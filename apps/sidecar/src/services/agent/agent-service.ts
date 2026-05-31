@@ -306,7 +306,10 @@ function handleRuntimeThreadStateMessage(
     );
   }
 
-  if (message.type === "system" && message.subtype === "context_compaction_started") {
+  if (
+    message.type === "system"
+    && (message.subtype === "context_compaction_started" || message.subtype === "context_compaction_progress")
+  ) {
     log.info("线程开始压缩", { threadId: threadId.slice(0, 8) });
   }
 
@@ -416,6 +419,7 @@ function shouldPersistAssistantTurnSdkMessage(message: SDKMessage): boolean {
   }
   return message.type === "system" && (
     message.subtype === "context_compaction_started"
+    || message.subtype === "context_compaction_progress"
     || message.subtype === "compact_boundary"
     || message.subtype === "task_started"
     || message.subtype === "task_progress"
@@ -738,7 +742,10 @@ export async function sendAgentMessage(
     onSdkMessage: (message) => {
       const stampedMessage = ensureSdkMessageCreatedAt(message);
       handleRuntimeThreadStateMessage(threadId, stampedMessage, sessionStateManager);
-      if (stampedMessage.type === "system" && stampedMessage.subtype === "context_compaction_started") {
+      if (
+        stampedMessage.type === "system"
+        && (stampedMessage.subtype === "context_compaction_started" || stampedMessage.subtype === "context_compaction_progress")
+      ) {
         runtimeStatusManager.markCompacting(threadId);
       }
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {

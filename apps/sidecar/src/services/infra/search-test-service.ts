@@ -1,7 +1,20 @@
 import type { TestSearchBackendInput, TestSearchBackendResult, WebSearchProvider } from "@lume/shared";
+import { ensureGuanlanReady, type GuanlanRuntimeStatus } from "./guanlan-runtime-service";
 import { fetchWithProxy } from "./proxy-fetch";
 
-export async function testSearchBackend(input: TestSearchBackendInput): Promise<TestSearchBackendResult> {
+type GuanlanStatusReader = () => Promise<GuanlanRuntimeStatus>;
+
+export function createSearchBackendTester(readGuanlanStatus: GuanlanStatusReader = ensureGuanlanReady) {
+  return (input: TestSearchBackendInput): Promise<TestSearchBackendResult> =>
+    testSearchBackendWithDependencies(input, readGuanlanStatus);
+}
+
+export const testSearchBackend = createSearchBackendTester();
+
+async function testSearchBackendWithDependencies(
+  input: TestSearchBackendInput,
+  readGuanlanStatus: GuanlanStatusReader
+): Promise<TestSearchBackendResult> {
   const { provider, apiKey } = input;
   try {
     switch (provider) {
@@ -19,6 +32,8 @@ export async function testSearchBackend(input: TestSearchBackendInput): Promise<
         return await testDuckDuckGo();
       case "bing":
         return await testBing();
+      case "guanlan":
+        return await testGuanlan(readGuanlanStatus);
       default:
         return { ok: false, provider, error: "未知搜索后端" };
     }
@@ -99,4 +114,13 @@ async function testBing(): Promise<TestSearchBackendResult> {
     signal: AbortSignal.timeout(10000)
   });
   return { ok: response.ok, provider: "bing", ...(response.ok ? {} : { error: `HTTP ${response.status}` }) };
+}
+
+async function testGuanlan(readGuanlanStatus: GuanlanStatusReader): Promise<TestSearchBackendResult> {
+  const status = await readGuanlanStatus();
+  return {
+    ok: status.ok,
+    provider: "guanlan",
+    ...(status.ok ? {} : { error: status.error ?? "Guanlan 不可用" })
+  };
 }
