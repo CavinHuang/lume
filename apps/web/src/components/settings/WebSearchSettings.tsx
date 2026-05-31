@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Check, Eye, EyeOff, Loader2, Save, X } from 'lucide-react'
+import { Check, Eye, EyeOff, Loader2, Save, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
   LumeConfigWebSearchSection,
@@ -23,7 +23,37 @@ interface ProviderMeta {
   badge?: string
 }
 
-const PROVIDERS: ProviderMeta[] = [
+const GUANLAN_PROVIDER: ProviderMeta = {
+  id: 'guanlan',
+  label: '观澜 / Guanlan',
+  description: '基于第三方开源项目「观澜 Guanlan」，Alice 启动时自动安装，无需配置。',
+  needsApiKey: false,
+  link: 'https://github.com/shenyangs/Guanlan',
+  linkLabel: 'github.com/shenyangs/Guanlan →',
+  badge: '第三方',
+}
+
+const GUANLAN_BADGES = ['第三方', '免费', '无需 Key']
+const GUANLAN_CAPABILITIES = [
+  {
+    name: 'guanlan_search',
+    description: '中文搜索 — Baidu/Bing/DDG 多后端聚合，信源路由与分类',
+  },
+  {
+    name: 'guanlan_read',
+    description: '网页阅读 — Jina Reader + 直连 HTML 降级链，中文网页质量检测',
+  },
+  {
+    name: 'guanlan_hotnews',
+    description: '中文热榜 — 百度/微博/B站/IT之家/V2EX 多源聚合',
+  },
+  {
+    name: 'guanlan_research',
+    description: '研究证据包 — 自动路由信源、拆分查询、多角色搜索',
+  },
+]
+
+const SEARCH_PROVIDERS: ProviderMeta[] = [
   {
     id: 'exa',
     label: 'Exa Search',
@@ -80,6 +110,8 @@ const PROVIDERS: ProviderMeta[] = [
     linkLabel: 'duckduckgo.com →',
   },
 ]
+
+const PROVIDERS: ProviderMeta[] = [GUANLAN_PROVIDER, ...SEARCH_PROVIDERS]
 
 type TestStatus = 'idle' | 'testing' | 'ok' | 'fail' | 'empty'
 
@@ -284,7 +316,7 @@ export function WebSearchSettings() {
 
       <SettingsCard title="搜索引擎" description="配置启用的搜索后端，按列表顺序决定优先级。">
         <div className="space-y-3">
-          {PROVIDERS.map((meta, index) => {
+          {SEARCH_PROVIDERS.map((meta, index) => {
             const draft = drafts[meta.id]
             const testStatus = testStatuses[meta.id] ?? 'idle'
             const hasKey = !meta.needsApiKey || !!draft.apiKey || draft.hasExistingKey
@@ -401,7 +433,7 @@ export function WebSearchSettings() {
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-3)]">
-                  7
+                  {SEARCH_PROVIDERS.length + 1}
                 </span>
                 <div>
                   <p className="text-[14px] font-medium text-[var(--text-1)]">
@@ -420,6 +452,88 @@ export function WebSearchSettings() {
             </div>
           </div>
         </div>
+      </SettingsCard>
+
+      <SettingsCard title="中文互联网搜索增强" description={GUANLAN_PROVIDER.description}>
+        {(() => {
+          const meta = GUANLAN_PROVIDER
+          const draft = drafts[meta.id]
+
+          return (
+            <div
+              className={cn(
+                'rounded-[12px] bg-[var(--surface-2)] p-5 transition-opacity',
+                draft.enabled ? '' : 'opacity-50'
+              )}
+            >
+              <div className="flex items-start gap-4">
+                <div className="mt-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-[color-mix(in_oklab,var(--brand)_16%,var(--surface-1))] text-[var(--brand)] sm:flex">
+                  <Search size={16} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex min-w-0 flex-wrap items-center gap-3">
+                      <p className="text-[15px] font-semibold text-[var(--text-1)]">{meta.label}</p>
+                      {GUANLAN_BADGES.map((badge) => (
+                        <span
+                          key={badge}
+                          className={cn(
+                            'rounded-[6px] px-2 py-0.5 text-[12px] font-semibold',
+                            badge === '第三方'
+                              ? 'bg-orange-500/10 text-orange-500'
+                              : badge === '免费'
+                                ? 'bg-green-600/10 text-green-600'
+                                : 'bg-[color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] text-[var(--brand)]'
+                          )}
+                        >
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                    <label className="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
+                      <input
+                        type="checkbox"
+                        className="peer sr-only"
+                        checked={draft.enabled}
+                        onChange={(e) => void handleToggleProvider(meta.id, e.target.checked)}
+                      />
+                      <div className="peer h-5 w-9 rounded-full bg-[var(--border)] transition-colors after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-[var(--brand)] peer-checked:after:translate-x-4" />
+                    </label>
+                  </div>
+                  <p className="mt-2 text-[13px] leading-6 text-[var(--text-3)]">
+                    观澜是一个开源的中文互联网研究工具（MIT License），让 AI Agent 看懂中文互联网。Alice 内置了以下能力：
+                  </p>
+                  <ul className="mt-3 space-y-2 text-[13px] leading-5 text-[var(--text-3)]">
+                    {GUANLAN_CAPABILITIES.map((item) => (
+                      <li key={item.name} className="flex gap-3">
+                        <span className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--text-2)]" />
+                        <span>
+                          <code className="rounded-[4px] bg-[color-mix(in_oklab,var(--brand)_8%,transparent)] px-1 py-0.5 font-mono text-[13px] text-[var(--text-1)]">
+                            {item.name}
+                          </code>
+                          <span className="ml-2">{item.description}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-3">
+                    <a
+                      href={meta.link}
+                      className="font-mono text-[13px] text-[var(--text-1)] hover:text-[var(--brand)] hover:underline"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        window.open(meta.link, '_blank')
+                      }}
+                    >
+                      {meta.linkLabel}
+                    </a>
+                    <span className="text-[13px] text-[var(--text-3)]">MIT License</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </SettingsCard>
     </div>
   )
@@ -477,7 +591,8 @@ function SettingsCard({ title, description, children }: { title: string; descrip
 function buildInitialDrafts(): DraftMap {
   const drafts: Partial<DraftMap> = {}
   for (const meta of PROVIDERS) {
-    drafts[meta.id] = { enabled: !meta.needsApiKey, apiKey: '', hasExistingKey: false }
+    const enabledByDefault = meta.id === 'guanlan' ? false : !meta.needsApiKey
+    drafts[meta.id] = { enabled: enabledByDefault, apiKey: '', hasExistingKey: false }
   }
   return drafts as DraftMap
 }
@@ -495,8 +610,9 @@ function applyConfig(
     const next: Partial<DraftMap> = {}
     for (const meta of PROVIDERS) {
       const entry = section?.providers?.[meta.id]
+      const enabledByDefault = meta.id === 'guanlan' ? false : !meta.needsApiKey
       next[meta.id] = {
-        enabled: entry?.enabled ?? !meta.needsApiKey,
+        enabled: entry?.enabled ?? enabledByDefault,
         apiKey: '',
         hasExistingKey: !!entry?.apiKey,
       }

@@ -26,6 +26,12 @@ export interface MemoryOverviewMetric {
   tone: 'neutral' | 'good' | 'warn'
 }
 
+export interface MemoryLayerMetric {
+  label: string
+  value: string
+  desc: string
+}
+
 export interface MemoryDetailRow {
   label: string
   value: string
@@ -208,6 +214,45 @@ export function buildMemoryOverviewMetrics(snapshot: MemorySettingsSnapshot | nu
       label: '待处理',
       value: String(pending),
       tone: pending > 0 ? 'warn' : 'neutral',
+    },
+  ]
+}
+
+export function buildMemoryLayerMetrics(snapshot: MemorySettingsSnapshot | null): MemoryLayerMetric[] {
+  const entries = [
+    ...(snapshot?.workspaceEntries ?? []),
+    ...(snapshot?.globalEntries ?? []),
+  ].filter((entry) => entry.status === 'active' || entry.status === 'suspected_stale')
+  const isProfile = (entry: MemorySettingsEntrySummary) =>
+    entry.claim?.predicate === 'preferred_name'
+    || entry.claim?.predicate === 'identity'
+    || entry.tags.some((tag) => ['profile', 'identity', 'preferred-name'].includes(tag.toLowerCase()))
+  const isVoice = (entry: MemorySettingsEntrySummary) =>
+    entry.claim?.predicate === 'writing_style'
+    || entry.tags.some((tag) => ['voice', 'writing-style'].includes(tag.toLowerCase()))
+  const isInstruction = (entry: MemorySettingsEntrySummary) =>
+    entry.tags.some((tag) => ['instruction', 'rule', 'workflow'].includes(tag.toLowerCase()))
+    || entry.claim?.predicate === 'source_of_truth'
+  return [
+    {
+      label: '身份画像',
+      value: String(entries.filter(isProfile).length),
+      desc: '称呼、身份和稳定个人信息',
+    },
+    {
+      label: '写作风格',
+      value: String(entries.filter(isVoice).length),
+      desc: '文风、语气和表达偏好',
+    },
+    {
+      label: '规则指令',
+      value: String(entries.filter(isInstruction).length),
+      desc: '工作方式、事实源和项目约定',
+    },
+    {
+      label: '语义条目',
+      value: String(entries.length),
+      desc: '可被召回和整理的结构化记忆',
     },
   ]
 }

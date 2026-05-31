@@ -334,6 +334,16 @@ export interface MemorySettingsEntrySummary {
   updated: string;
   pinned: boolean;
   tags: string[];
+  claim?: MemoryClaim;
+}
+
+export interface MemorySettingsPendingCandidateSummary {
+  scope: "global" | "workspace";
+  kind: MemoryKind;
+  confidence: "low" | "medium" | "high";
+  statement: string;
+  tags: string[];
+  claim?: MemoryClaim;
 }
 
 export interface MemorySettingsPendingSummary {
@@ -345,6 +355,44 @@ export interface MemorySettingsPendingSummary {
   statement: string;
   reason: string;
   existingIds: string[];
+  candidate: MemorySettingsPendingCandidateSummary;
+  existingEntries: MemorySettingsEntrySummary[];
+}
+
+export interface MemoryUpdateEntryInput {
+  workspaceSlug: string;
+  scope: "global" | "workspace";
+  id: string;
+  statement?: string;
+  kind?: MemoryKind;
+  confidence?: "low" | "medium" | "high";
+  tags?: string[];
+}
+
+export interface MemoryDeleteEntryInput {
+  workspaceSlug: string;
+  scope: "global" | "workspace";
+  id: string;
+}
+
+export interface MemoryResolvePendingInput {
+  workspaceSlug: string;
+  path: string;
+  action: "accept" | "reject" | "resolve";
+  candidateOverride?: {
+    statement?: string;
+    kind?: MemoryKind;
+    confidence?: "low" | "medium" | "high";
+    tags?: string[];
+  };
+}
+
+export interface MemoryMutationResult {
+  ok: true;
+  id: string;
+  path: string;
+  entryId?: string;
+  entryPath?: string;
 }
 
 export interface MemoryPendingCounts {
@@ -413,6 +461,9 @@ export const MEMORY_IPC_CHANNELS = {
   INGEST_SOURCES: "memory:ingest-sources",
   GET_INGEST_JOB: "memory:get-ingest-job",
   OPEN_SOURCE: "memory:open-source",
+  UPDATE_ENTRY: "memory:update-entry",
+  DELETE_ENTRY: "memory:delete-entry",
+  RESOLVE_PENDING: "memory:resolve-pending",
   GET_RUNTIME_CONFIG: "memory:get-runtime-config",
   UPDATE_RUNTIME_CONFIG: "memory:update-runtime-config"
 } as const;

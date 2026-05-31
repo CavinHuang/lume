@@ -5,7 +5,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
-import { Folder, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import {
   agentThreadsAtom,
   agentWorkspacesAtom,

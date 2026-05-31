@@ -1,14 +1,19 @@
 import * as React from 'react'
 import {
   AlertTriangle,
+  Check,
   Clock3,
   Download,
   FileText,
   Globe2,
   History,
+  Pencil,
   RefreshCw,
+  Save,
   SearchCheck,
   ShieldCheck,
+  Trash2,
+  XCircle,
 } from 'lucide-react'
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
@@ -18,9 +23,11 @@ import type {
   MemoryIngestSourceInput,
   MemoryIngestSourcesJob,
   MemoryIngestSourcesResult,
+  MemoryKind,
   MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryResult,
   MemoryReadToolResult,
+  MemoryResolvePendingInput,
   MemoryRuntimeConfig,
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
@@ -43,6 +50,9 @@ import {
   organizeMemoryEntries,
   organizeMemoryHistory,
   readMemory,
+  deleteMemoryEntry,
+  resolveMemoryPending,
+  updateMemoryEntry,
   updateEmbeddingModelRef,
   updateMemoryRuntimeConfig,
 } from '@/lib/desktop-api'
@@ -57,6 +67,7 @@ import {
   MEMORY_STATUS_LABELS,
   MEMORY_TOOL_POLICY_GROUPS,
   buildEmbeddingModelOptions,
+  buildMemoryLayerMetrics,
   buildMemoryDetailRows,
   buildMemoryOverviewMetrics,
   buildRerankModelOptions,
@@ -94,6 +105,7 @@ export function MemorySettings() {
   const [ingestResult, setIngestResult] = React.useState<MemoryIngestSourcesResult | null>(null)
   const [memoryDetail, setMemoryDetail] = React.useState<MemoryReadToolResult | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = React.useState<string | null>(null)
+  const [detailDirty, setDetailDirty] = React.useState(false)
   const [externalText, setExternalText] = React.useState('')
   const [workspaceFilePath, setWorkspaceFilePath] = React.useState('')
 
@@ -186,9 +198,78 @@ export function MemorySettings() {
 
   const handleInspectMemoryEntry = (entry: MemorySettingsEntrySummary) => runAction(`inspect-${entry.id}`, async () => {
     if (!workspaceSlug) return
+    if (detailDirty && selectedMemoryId !== entry.id && !window.confirm('当前记忆还有未保存修改，切换后会丢失。继续吗？')) {
+      return
+    }
+    setDetailDirty(false)
     setSelectedMemoryId(entry.id)
     const detail = await readMemory({ workspaceSlug, id: entry.id })
     setMemoryDetail(detail)
+  })
+
+  const handleUpdateMemoryEntry = (
+    entry: MemorySettingsEntrySummary,
+    input: {
+      statement: string
+      kind: MemoryKind
+      confidence: MemorySettingsEntrySummary['confidence']
+      tags: string[]
+    },
+  ) => runAction(`update-${entry.id}`, async () => {
+    if (!workspaceSlug) return
+    await updateMemoryEntry({
+      workspaceSlug,
+      scope: entry.scope,
+      id: entry.id,
+      statement: input.statement,
+      kind: input.kind,
+      confidence: input.confidence,
+      tags: input.tags,
+    })
+    const detail = await readMemory({ workspaceSlug, id: entry.id })
+    setMemoryDetail(detail)
+    setDetailDirty(false)
+    await refresh()
+    toast.success('记忆已更新')
+  })
+
+  const handleDeleteMemoryEntry = (entry: MemorySettingsEntrySummary) => runAction(`delete-${entry.id}`, async () => {
+    if (!workspaceSlug) return
+    if (!window.confirm('删除后这条记忆不会再参与召回。确定删除吗？')) return
+    await deleteMemoryEntry({
+      workspaceSlug,
+      scope: entry.scope,
+      id: entry.id,
+    })
+    setSelectedMemoryId(null)
+    setMemoryDetail(null)
+    setDetailDirty(false)
+    await refresh()
+    toast.success('记忆已删除')
+  })
+
+  const handleResolvePending = (
+    item: MemorySettingsPendingSummary,
+    action: 'accept' | 'reject' | 'resolve',
+    candidateOverride?: MemoryResolvePendingInput['candidateOverride'],
+  ) => runAction(`pending-${action}-${item.id}`, async () => {
+    if (!workspaceSlug) return
+    const actionLabel = action === 'accept'
+      ? candidateOverride
+        ? '合并后接受'
+        : '接受候选记忆'
+      : action === 'reject'
+      ? '保留现有并忽略候选'
+      : '标记为已处理'
+    if (!window.confirm(`${actionLabel}？`)) return
+    await resolveMemoryPending({
+      workspaceSlug,
+      path: item.path,
+      action,
+      candidateOverride,
+    })
+    await refresh()
+    toast.success(actionLabel)
   })
 
   const handleTogglePolicyGroup = (
@@ -312,6 +393,12 @@ export function MemorySettings() {
     }])
   })
 
+  const selectedMemoryEntry = React.useMemo(() => {
+    if (!snapshot || !selectedMemoryId) return null
+    return [...snapshot.workspaceEntries, ...snapshot.globalEntries]
+      .find((entry) => entry.id === selectedMemoryId) ?? null
+  }, [selectedMemoryId, snapshot])
+
   if (!workspaceSlug) {
     return (
       <EmptyPanel title="暂无工作区" desc="创建或选择一个工作区后即可管理记忆。" />
@@ -376,6 +463,7 @@ export function MemorySettings() {
           onIngestLocalFiles={() => void handleIngestLocalFiles()}
           onIngestLocalFolder={() => void handleIngestLocalFolder()}
           onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
+          onOpenFile={(path) => void handleOpenMemoryFile(path)}
           onRerankModel={(modelRef) => void handleRerankModel(modelRef)}
           onSemanticMode={(mode) => void handleSemanticMode(mode)}
           onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
@@ -394,11 +482,14 @@ export function MemorySettings() {
       {view === 'workspace' && (
         <MemoryCollectionPanel
           entries={snapshot?.workspaceEntries ?? []}
-          files={(snapshot?.files ?? []).filter((file) => file.scope === 'workspace')}
           busyAction={busyAction}
           detail={memoryDetail}
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
           onInspectEntry={(entry) => void handleInspectMemoryEntry(entry)}
+          onUpdateEntry={(entry, input) => void handleUpdateMemoryEntry(entry, input)}
+          onDeleteEntry={(entry) => void handleDeleteMemoryEntry(entry)}
+          onDirtyChange={setDetailDirty}
+          selectedEntry={selectedMemoryEntry}
           selectedEntryId={selectedMemoryId}
           title="工作区"
         />
@@ -407,11 +498,14 @@ export function MemorySettings() {
       {view === 'global' && (
         <MemoryCollectionPanel
           entries={snapshot?.globalEntries ?? []}
-          files={(snapshot?.files ?? []).filter((file) => file.scope === 'global')}
           busyAction={busyAction}
           detail={memoryDetail}
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
           onInspectEntry={(entry) => void handleInspectMemoryEntry(entry)}
+          onUpdateEntry={(entry, input) => void handleUpdateMemoryEntry(entry, input)}
+          onDeleteEntry={(entry) => void handleDeleteMemoryEntry(entry)}
+          onDirtyChange={setDetailDirty}
+          selectedEntry={selectedMemoryEntry}
           selectedEntryId={selectedMemoryId}
           title="全局"
         />
@@ -419,8 +513,10 @@ export function MemorySettings() {
 
       {view === 'pending' && (
         <PendingMemoryPanel
+          busyAction={busyAction}
           items={snapshot?.pending ?? []}
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
+          onResolvePending={(item, action, candidateOverride) => void handleResolvePending(item, action, candidateOverride)}
         />
       )}
     </div>
@@ -443,6 +539,7 @@ function OverviewPanel({
   onIngestLocalFiles,
   onIngestLocalFolder,
   onIngestWorkspaceFile,
+  onOpenFile,
   onOrganizeEntries,
   onOrganizeHistory,
   onRerankModel,
@@ -468,6 +565,7 @@ function OverviewPanel({
   onIngestLocalFiles: () => void
   onIngestLocalFolder: () => void
   onIngestWorkspaceFile: () => void
+  onOpenFile: (path: string) => void
   onOrganizeEntries: () => void
   onOrganizeHistory: () => void
   onRerankModel: (modelRef: string) => void
@@ -479,6 +577,7 @@ function OverviewPanel({
   onWorkspaceFilePathChange: (value: string) => void
 }) {
   const metrics = buildMemoryOverviewMetrics(snapshot)
+  const layerMetrics = buildMemoryLayerMetrics(snapshot)
   const embeddingOptions = React.useMemo(() => buildEmbeddingModelOptions(channels), [channels])
   const rerankOptions = React.useMemo(() => buildRerankModelOptions(channels), [channels])
   const ingestRunning = ingestJob?.status === 'running'
@@ -496,6 +595,16 @@ function OverviewPanel({
             )}>
               {metric.value}
             </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {layerMetrics.map((metric) => (
+          <div key={metric.label} className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+            <div className="text-[12px] font-medium text-[var(--text-3)]">{metric.label}</div>
+            <div className="mt-1 text-[17px] font-semibold text-[var(--text-1)]">{metric.value}</div>
+            <div className="mt-1 text-[11px] leading-4 text-[var(--text-3)]">{metric.desc}</div>
           </div>
         ))}
       </div>
@@ -700,7 +809,7 @@ function OverviewPanel({
                 ? summarizeMemoryIngestSourcesJob(ingestJob)
                 : ingestResult
                 ? summarizeMemoryIngestSourcesResult(ingestResult)
-                : '从粘贴文本、工作区文件、本地文件或文件夹提取记忆。附件默认仍只是当前对话上下文。'}
+                : '从粘贴文本、工作区文件、本地文件或文件夹提取稳定事实、偏好、决策、经验和状态。需要命中显式记忆句式，或配置提取模型做 LLM 分析；附件默认仍只是当前对话上下文。'}
             </p>
           </div>
         </div>
@@ -773,6 +882,18 @@ function OverviewPanel({
           </div>
         </div>
       </div>
+
+      <details className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+        <summary className="cursor-pointer text-[13px] font-semibold text-[var(--text-1)]">
+          原始文件
+        </summary>
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {(snapshot?.files ?? []).map((file) => (
+            <FileRow key={file.path} file={file} onOpenFile={onOpenFile} />
+          ))}
+          {(snapshot?.files ?? []).length === 0 && <EmptyInline text="暂无原始文件" />}
+        </div>
+      </details>
     </section>
   )
 }
@@ -781,18 +902,32 @@ function MemoryCollectionPanel({
   busyAction,
   detail,
   entries,
-  files,
+  onDeleteEntry,
+  onDirtyChange,
   onOpenFile,
   onInspectEntry,
+  onUpdateEntry,
+  selectedEntry,
   selectedEntryId,
   title,
 }: {
   busyAction: string | null
   detail: MemoryReadToolResult | null
   entries: MemorySettingsEntrySummary[]
-  files: MemorySettingsFileSummary[]
+  onDeleteEntry: (entry: MemorySettingsEntrySummary) => void
+  onDirtyChange: (dirty: boolean) => void
   onOpenFile: (path: string) => void
   onInspectEntry: (entry: MemorySettingsEntrySummary) => void
+  onUpdateEntry: (
+    entry: MemorySettingsEntrySummary,
+    input: {
+      statement: string
+      kind: MemoryKind
+      confidence: MemorySettingsEntrySummary['confidence']
+      tags: string[]
+    },
+  ) => void
+  selectedEntry: MemorySettingsEntrySummary | null
   selectedEntryId: string | null
   title: string
 }) {
@@ -802,13 +937,7 @@ function MemoryCollectionPanel({
         {title === '全局' ? <Globe2 size={16} /> : <FileText size={16} />}
         {title}
       </div>
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_minmax(0,1.1fr)]">
-        <div className="space-y-2">
-          {files.map((file) => (
-            <FileRow key={file.path} file={file} onOpenFile={onOpenFile} />
-          ))}
-          {files.length === 0 && <EmptyInline text="暂无文件" />}
-        </div>
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.3fr)]">
         <div className="space-y-2">
           {entries.map((entry) => (
             <EntryRow
@@ -821,43 +950,247 @@ function MemoryCollectionPanel({
           ))}
           {entries.length === 0 && <EmptyInline text="暂无语义记忆" />}
         </div>
-        <MemoryDetailPanel detail={detail} onOpenFile={onOpenFile} />
+        <MemoryDetailPanel
+          busyAction={busyAction}
+          detail={detail}
+          entry={selectedEntry}
+          onDeleteEntry={onDeleteEntry}
+          onDirtyChange={onDirtyChange}
+          onOpenFile={onOpenFile}
+          onUpdateEntry={onUpdateEntry}
+        />
       </div>
     </section>
   )
 }
 
 function PendingMemoryPanel({
+  busyAction,
   items,
   onOpenFile,
+  onResolvePending,
 }: {
+  busyAction: string | null
   items: MemorySettingsPendingSummary[]
   onOpenFile: (path: string) => void
+  onResolvePending: (
+    item: MemorySettingsPendingSummary,
+    action: 'accept' | 'reject' | 'resolve',
+    candidateOverride?: MemoryResolvePendingInput['candidateOverride'],
+  ) => void
 }) {
   const openItems = items.filter((item) => item.status === 'open')
   return (
     <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       <div className="space-y-2">
         {openItems.map((item) => (
-          <button
+          <PendingMemoryCard
             key={item.id}
-            type="button"
-            onClick={() => onOpenFile(item.path)}
-            className="block w-full rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]"
-          >
-            <div className="flex flex-wrap items-center gap-2 text-[12px] font-medium text-[var(--text-3)]">
-              <StatusBadge tone={item.type === 'conflict' ? 'warn' : 'neutral'}>
-                {MEMORY_PENDING_LABELS[item.type]}
-              </StatusBadge>
-              <span>{formatDate(item.created)}</span>
-            </div>
-            <p className="mt-2 line-clamp-2 text-[13px] leading-5 text-[var(--text-1)]">{item.statement}</p>
-            <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[var(--text-3)]">{item.reason}</p>
-          </button>
+            busyAction={busyAction}
+            item={item}
+            onOpenFile={onOpenFile}
+            onResolvePending={onResolvePending}
+          />
         ))}
         {openItems.length === 0 && <EmptyInline text="暂无待处理记忆" />}
       </div>
     </section>
+  )
+}
+
+function PendingMemoryCard({
+  busyAction,
+  item,
+  onOpenFile,
+  onResolvePending,
+}: {
+  busyAction: string | null
+  item: MemorySettingsPendingSummary
+  onOpenFile: (path: string) => void
+  onResolvePending: (
+    item: MemorySettingsPendingSummary,
+    action: 'accept' | 'reject' | 'resolve',
+    candidateOverride?: MemoryResolvePendingInput['candidateOverride'],
+  ) => void
+}) {
+  const [mergeMode, setMergeMode] = React.useState(false)
+  const [statement, setStatement] = React.useState(item.candidate.statement)
+  const [kind, setKind] = React.useState<MemoryKind>(item.candidate.kind)
+  const [confidence, setConfidence] = React.useState<MemorySettingsEntrySummary['confidence']>(item.candidate.confidence)
+  const [tagsText, setTagsText] = React.useState(item.candidate.tags.join(', '))
+
+  React.useEffect(() => {
+    setMergeMode(false)
+    setStatement(item.candidate.statement)
+    setKind(item.candidate.kind)
+    setConfidence(item.candidate.confidence)
+    setTagsText(item.candidate.tags.join(', '))
+  }, [item])
+
+  const tags = parseTags(tagsText)
+  const override = (): NonNullable<MemoryResolvePendingInput['candidateOverride']> => ({
+    statement: statement.trim(),
+    kind,
+    confidence,
+    tags,
+  })
+
+  return (
+    <div className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      <div className="flex flex-wrap items-center gap-2 text-[12px] font-medium text-[var(--text-3)]">
+        <StatusBadge tone={item.type === 'conflict' ? 'warn' : 'neutral'}>
+          {MEMORY_PENDING_LABELS[item.type]}
+        </StatusBadge>
+        <span>{item.candidate.scope === 'global' ? '全局' : '工作区'}</span>
+        <span>{formatDate(item.created)}</span>
+      </div>
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-[8px] border border-border bg-[var(--surface-1)] p-3">
+          <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-[var(--text-3)]">
+            候选记忆
+            <StatusBadge tone="neutral">{MEMORY_KIND_LABELS[item.candidate.kind]}</StatusBadge>
+            <StatusBadge tone="neutral">{MEMORY_CONFIDENCE_LABELS[item.candidate.confidence]}</StatusBadge>
+          </div>
+          {mergeMode ? (
+            <div className="mt-2 space-y-2">
+              <textarea
+                className="min-h-[86px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-2)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
+                value={statement}
+                disabled={busyAction !== null}
+                onChange={(event) => setStatement(event.target.value)}
+              />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <select
+                  className="h-8 rounded-[8px] border border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)]"
+                  value={kind}
+                  disabled={busyAction !== null}
+                  onChange={(event) => setKind(event.target.value as MemoryKind)}
+                >
+                  {EDITABLE_MEMORY_KINDS.map((memoryKind) => (
+                    <option key={memoryKind} value={memoryKind}>{MEMORY_KIND_LABELS[memoryKind]}</option>
+                  ))}
+                </select>
+                <select
+                  className="h-8 rounded-[8px] border border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)]"
+                  value={confidence}
+                  disabled={busyAction !== null}
+                  onChange={(event) => setConfidence(event.target.value as MemorySettingsEntrySummary['confidence'])}
+                >
+                  {(['low', 'medium', 'high'] as const).map((value) => (
+                    <option key={value} value={value}>{MEMORY_CONFIDENCE_LABELS[value]}</option>
+                  ))}
+                </select>
+              </div>
+              <input
+                className="h-8 w-full rounded-[8px] border border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
+                value={tagsText}
+                disabled={busyAction !== null}
+                onChange={(event) => setTagsText(event.target.value)}
+                placeholder="标签，用逗号分隔"
+              />
+            </div>
+          ) : (
+            <>
+              <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-5 text-[var(--text-1)]">{item.candidate.statement}</p>
+              {item.candidate.claim && (
+                <p className="mt-2 break-words font-mono text-[12px] leading-5 text-[var(--text-3)]">{formatClaim(item.candidate.claim)}</p>
+              )}
+            </>
+          )}
+        </div>
+        <div className="rounded-[8px] border border-border bg-[var(--surface-1)] p-3">
+          <div className="text-[12px] font-semibold text-[var(--text-3)]">现有相关记忆</div>
+          <div className="mt-2 space-y-2">
+            {item.existingEntries.map((entry) => (
+              <div key={entry.id} className="rounded-[8px] border border-border bg-[var(--surface-2)] p-2">
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-3)]">
+                  <span>{summarizeMemoryEntry(entry)}</span>
+                  <span>{MEMORY_CONFIDENCE_LABELS[entry.confidence]}</span>
+                </div>
+                <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--text-1)]">{entry.statement}</p>
+                {entry.claim && (
+                  <p className="mt-1 break-words font-mono text-[11px] leading-5 text-[var(--text-3)]">{formatClaim(entry.claim)}</p>
+                )}
+              </div>
+            ))}
+            {item.existingEntries.length === 0 && <EmptyInline text="没有关联旧记忆" />}
+          </div>
+        </div>
+      </div>
+      <p className="mt-3 text-[12px] leading-5 text-[var(--text-3)]">{item.reason}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {mergeMode ? (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null || statement.trim().length === 0}
+              onClick={() => onResolvePending(item, 'accept', override())}
+            >
+              <Save size={14} />
+              保存并接受
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null}
+              onClick={() => setMergeMode(false)}
+            >
+              <XCircle size={14} />
+              取消
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null}
+              onClick={() => onResolvePending(item, 'accept')}
+            >
+              <Check size={14} />
+              接受候选
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null}
+              onClick={() => setMergeMode(true)}
+            >
+              <Pencil size={14} />
+              手动合并
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null}
+              onClick={() => onResolvePending(item, 'reject')}
+            >
+              <XCircle size={14} />
+              保留现有
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null}
+              onClick={() => onResolvePending(item, 'resolve')}
+            >
+              <Check size={14} />
+              已处理
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busyAction !== null}
+              onClick={() => onOpenFile(item.path)}
+            >
+              <FileText size={14} />
+              源文件
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -922,33 +1255,194 @@ function EntryRow({
   )
 }
 
+const EDITABLE_MEMORY_KINDS: MemoryKind[] = ['preference', 'fact', 'decision', 'lesson', 'summary']
+
 function MemoryDetailPanel({
+  busyAction,
   detail,
+  entry,
+  onDeleteEntry,
+  onDirtyChange,
   onOpenFile,
+  onUpdateEntry,
 }: {
+  busyAction: string | null
   detail: MemoryReadToolResult | null
+  entry: MemorySettingsEntrySummary | null
+  onDeleteEntry: (entry: MemorySettingsEntrySummary) => void
+  onDirtyChange: (dirty: boolean) => void
   onOpenFile: (path: string) => void
+  onUpdateEntry: (
+    entry: MemorySettingsEntrySummary,
+    input: {
+      statement: string
+      kind: MemoryKind
+      confidence: MemorySettingsEntrySummary['confidence']
+      tags: string[]
+    },
+  ) => void
 }) {
   const rows = buildMemoryDetailRows(detail)
+  const [statement, setStatement] = React.useState('')
+  const [kind, setKind] = React.useState<MemoryKind>('fact')
+  const [confidence, setConfidence] = React.useState<MemorySettingsEntrySummary['confidence']>('medium')
+  const [tagsText, setTagsText] = React.useState('')
+  const [editMode, setEditMode] = React.useState(false)
+
+  React.useEffect(() => {
+    setStatement(entry?.statement ?? detail?.text ?? '')
+    setKind(entry?.kind ?? 'fact')
+    setConfidence(entry?.confidence ?? 'medium')
+    setTagsText(entry?.tags.join(', ') ?? '')
+    setEditMode(false)
+    onDirtyChange(false)
+  }, [detail?.text, entry, onDirtyChange])
+
+  const tags = parseTags(tagsText)
+  const isDirty = entry ? (
+    statement.trim() !== entry.statement
+    || kind !== entry.kind
+    || confidence !== entry.confidence
+    || tags.join('|') !== entry.tags.join('|')
+  ) : false
+  React.useEffect(() => {
+    onDirtyChange(isDirty)
+  }, [isDirty, onDirtyChange])
   if (!detail) {
     return <EmptyInline text="选择一条记忆查看完整内容" />
   }
   const path = detail.path ?? detail.citation
+  const resetDraft = () => {
+    setStatement(entry?.statement ?? detail.text)
+    setKind(entry?.kind ?? 'fact')
+    setConfidence(entry?.confidence ?? 'medium')
+    setTagsText(entry?.tags.join(', ') ?? '')
+    setEditMode(false)
+    onDirtyChange(false)
+  }
   return (
     <div className="min-w-0 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-[13px] font-semibold text-[var(--text-1)]">记忆详情</div>
-        {path && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onOpenFile(path)}
-          >
-            <FileText size={14} />
-            打开文件
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {entry && (
+            <>
+              {editMode ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busyAction !== null || !isDirty || statement.trim().length === 0}
+                    onClick={() => {
+                      onUpdateEntry(entry, {
+                        statement: statement.trim(),
+                        kind,
+                        confidence,
+                        tags,
+                      })
+                      setEditMode(false)
+                      onDirtyChange(false)
+                    }}
+                  >
+                    <Save size={14} />
+                    保存
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busyAction !== null}
+                    onClick={resetDraft}
+                  >
+                    <XCircle size={14} />
+                    取消
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busyAction !== null}
+                  onClick={() => setEditMode(true)}
+                >
+                  <Pencil size={14} />
+                  编辑
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busyAction !== null}
+                onClick={() => onDeleteEntry(entry)}
+              >
+                <Trash2 size={14} />
+                删除
+              </Button>
+            </>
+          )}
+          {path && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busyAction !== null}
+              onClick={() => onOpenFile(path)}
+            >
+              <FileText size={14} />
+              打开源文件
+            </Button>
+          )}
+        </div>
       </div>
+      {entry && editMode && (
+        <div className="mt-3 space-y-2">
+          <label className="block">
+            <span className="text-[12px] font-medium text-[var(--text-3)]">内容</span>
+            <textarea
+              className="mt-1 min-h-[96px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
+              value={statement}
+              disabled={busyAction !== null}
+              onChange={(event) => setStatement(event.target.value)}
+            />
+          </label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[12px] font-medium text-[var(--text-3)]">类型</span>
+              <select
+                className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
+                value={kind}
+                disabled={busyAction !== null}
+                onChange={(event) => setKind(event.target.value as MemoryKind)}
+              >
+                {EDITABLE_MEMORY_KINDS.map((item) => (
+                  <option key={item} value={item}>{MEMORY_KIND_LABELS[item]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[12px] font-medium text-[var(--text-3)]">置信度</span>
+              <select
+                className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
+                value={confidence}
+                disabled={busyAction !== null}
+                onChange={(event) => setConfidence(event.target.value as MemorySettingsEntrySummary['confidence'])}
+              >
+                {(['low', 'medium', 'high'] as const).map((item) => (
+                  <option key={item} value={item}>{MEMORY_CONFIDENCE_LABELS[item]}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="block">
+            <span className="text-[12px] font-medium text-[var(--text-3)]">标签</span>
+            <input
+              className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
+              value={tagsText}
+              disabled={busyAction !== null}
+              onChange={(event) => setTagsText(event.target.value)}
+              placeholder="用逗号分隔"
+            />
+          </label>
+        </div>
+      )}
       {rows.length > 0 && (
         <dl className="mt-3 grid gap-2 text-[12px]">
           {rows.map((row) => (
@@ -959,9 +1453,16 @@ function MemoryDetailPanel({
           ))}
         </dl>
       )}
-      <pre className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-border bg-[var(--surface-1)] p-3 text-[12px] leading-5 text-[var(--text-1)]">
-        {detail.text}
-      </pre>
+      {!entry && (
+        <pre className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-border bg-[var(--surface-1)] p-3 text-[12px] leading-5 text-[var(--text-1)]">
+          {detail.text}
+        </pre>
+      )}
+      {entry && !editMode && (
+        <pre className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-border bg-[var(--surface-1)] p-3 text-[12px] leading-5 text-[var(--text-1)]">
+          {entry.statement}
+        </pre>
+      )}
     </div>
   )
 }
@@ -1007,6 +1508,17 @@ function formatDate(value?: string | number) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '未知'
   return date.toLocaleString()
+}
+
+function parseTags(value: string): string[] {
+  return Array.from(new Set(value
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean)))
+}
+
+function formatClaim(claim: NonNullable<MemorySettingsEntrySummary['claim']>): string {
+  return `${claim.subject}.${claim.predicate} = ${claim.object}`
 }
 
 function memorySettingsErrorMessage(error: unknown): string {

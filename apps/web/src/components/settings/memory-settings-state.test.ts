@@ -3,6 +3,7 @@ import {
   MEMORY_SETTINGS_VIEWS,
   MEMORY_TOOL_POLICY_GROUPS,
   buildEmbeddingModelOptions,
+  buildMemoryLayerMetrics,
   buildRerankModelOptions,
   buildMemoryDetailRows,
   buildMemoryOverviewMetrics,
@@ -71,6 +72,96 @@ describe('memory settings state', () => {
       total: 2,
     })).toBe('1 个冲突 · 1 个可能过期')
     expect(pendingNotice()).toBe('无待处理记忆')
+  })
+
+  test('layer metrics expose Alice-style memory categories without changing storage', () => {
+    const snapshot = {
+      workspaceSlug: 'demo',
+      counts: {
+        active: 3,
+        workspace: 2,
+        global: 1,
+        suspectedStale: 0,
+        pinned: 0,
+        daily: 0,
+        runs: 0,
+        pending: {
+          conflicts: 0,
+          stale: 0,
+          lowConfidence: 0,
+          total: 0,
+        },
+      },
+      files: [],
+      workspaceEntries: [{
+        id: 'voice-1',
+        path: 'voice.md',
+        scope: 'workspace' as const,
+        kind: 'preference' as const,
+        status: 'active' as const,
+        confidence: 'high' as const,
+        statement: '用户写作风格偏好简洁、有温度',
+        updated: '2026-05-31T00:00:00.000Z',
+        pinned: false,
+        tags: ['voice', 'writing-style'],
+        claim: {
+          subject: 'user/self',
+          predicate: 'writing_style',
+          object: '简洁、有温度',
+        },
+      }, {
+        id: 'rule-1',
+        path: 'rule.md',
+        scope: 'workspace' as const,
+        kind: 'fact' as const,
+        status: 'active' as const,
+        confidence: 'high' as const,
+        statement: 'Markdown 是事实源',
+        updated: '2026-05-31T00:00:00.000Z',
+        pinned: false,
+        tags: [],
+        claim: {
+          subject: 'workspace/default',
+          predicate: 'source_of_truth',
+          object: 'Markdown',
+        },
+      }],
+      globalEntries: [{
+        id: 'profile-1',
+        path: 'profile.md',
+        scope: 'global' as const,
+        kind: 'preference' as const,
+        status: 'active' as const,
+        confidence: 'high' as const,
+        statement: '用户希望被称呼为 Mason',
+        updated: '2026-05-31T00:00:00.000Z',
+        pinned: false,
+        tags: ['profile', 'identity', 'preferred-name'],
+        claim: {
+          subject: 'user/self',
+          predicate: 'preferred_name',
+          object: 'Mason',
+        },
+      }],
+      pending: [],
+      retrieval: {
+        semantic: {
+          mode: 'auto' as const,
+          status: 'available' as const,
+          message: '语义召回可用',
+        },
+        rerank: {
+          source: 'disabled' as const,
+        },
+      },
+    }
+
+    expect(buildMemoryLayerMetrics(snapshot).map((item) => [item.label, item.value])).toEqual([
+      ['身份画像', '1'],
+      ['写作风格', '1'],
+      ['规则指令', '1'],
+      ['语义条目', '3'],
+    ])
   })
 
   test('labels keep memory UI compact and localized', () => {

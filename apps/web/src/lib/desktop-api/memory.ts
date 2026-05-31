@@ -1,18 +1,22 @@
 import type {
   MemoryReadToolInput,
   MemoryReadToolResult,
+  MemoryDeleteEntryInput,
   MemoryIngestSourcesInput,
   MemoryIngestSourcesJob,
   MemoryIngestSourcesJobInput,
+  MemoryMutationResult,
   MemoryStartIngestSourcesResult,
   MemoryOrganizeEntriesInput,
   MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryInput,
   MemoryOrganizeHistoryResult,
   MemoryRememberToolInput,
+  MemoryResolvePendingInput,
   MemoryRuntimeConfig,
   MemorySettingsSnapshot,
   MemoryToolWriteResult,
+  MemoryUpdateEntryInput,
   UpdateMemoryRuntimeConfigInput,
 } from '@lume/shared'
 import { MEMORY_IPC_CHANNELS } from '@lume/shared'
@@ -41,6 +45,15 @@ export const getMemoryIngestJob = (input: MemoryIngestSourcesJobInput) =>
 
 export const openMemorySource = (input: { workspaceSlug: string; path: string }) =>
   sidecarCall<{ ok: true }>(MEMORY_IPC_CHANNELS.OPEN_SOURCE, input)
+
+export const updateMemoryEntry = (input: MemoryUpdateEntryInput) =>
+  sidecarCall<MemoryMutationResult>(MEMORY_IPC_CHANNELS.UPDATE_ENTRY, input)
+
+export const deleteMemoryEntry = (input: MemoryDeleteEntryInput) =>
+  sidecarCall<MemoryMutationResult>(MEMORY_IPC_CHANNELS.DELETE_ENTRY, input)
+
+export const resolveMemoryPending = (input: MemoryResolvePendingInput) =>
+  sidecarCall<MemoryMutationResult>(MEMORY_IPC_CHANNELS.RESOLVE_PENDING, input)
 
 export const getMemoryRuntimeConfig = () =>
   sidecarCall<MemoryRuntimeConfig>(MEMORY_IPC_CHANNELS.GET_RUNTIME_CONFIG, {})
