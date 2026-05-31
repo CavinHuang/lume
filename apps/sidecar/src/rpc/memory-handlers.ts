@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
   MEMORY_IPC_CHANNELS,
+  type MemoryDeleteEntryInput,
   type MemoryIngestSourcesInput,
   type MemoryIngestSourcesJob,
-  type MemoryStartIngestSourcesResult
+  type MemoryKind,
+  type MemoryMutationResult,
+  type MemoryResolvePendingInput,
+  type MemoryStartIngestSourcesResult,
+  type MemoryUpdateEntryInput
 } from "@lume/shared";
 import { createLogger } from "../services/infra/logger";
 import {
@@ -16,11 +21,14 @@ import { openMemoryV2Source } from "../services/memory-v2/source-open";
 import { organizeMemoryHistory } from "../services/memory-v2/history-organizer";
 import { organizeMemoryEntries } from "../services/memory-v2/entry-organizer";
 import { ingestExternalMemorySources } from "../services/memory-v2/ingestion";
+import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
 import {
   getMemoryRuntimeConfig,
   updateMemoryRuntimeConfig
 } from "../services/memory-v2/policy";
+import type { MemoryV2Kind } from "../services/memory-v2/types";
 import {
+  memoryDeleteEntryInputSchema,
   memoryIngestSourcesInputSchema,
   memoryIngestSourcesJobInputSchema,
   memoryOrganizeEntriesInputSchema,
@@ -28,7 +36,9 @@ import {
   memoryOpenSourceInputSchema,
   memoryReadToolInputSchema,
   memoryRememberToolInputSchema,
+  memoryResolvePendingInputSchema,
   memorySearchInputSchema,
+  memoryUpdateEntryInputSchema,
   workspaceSlugInputSchema,
   updateMemoryRuntimeConfigInputSchema
 } from "./schemas";
@@ -92,6 +102,21 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
         validateInput(memoryOpenSourceInputSchema, params, MEMORY_IPC_CHANNELS.OPEN_SOURCE)
       );
     },
+    [MEMORY_IPC_CHANNELS.UPDATE_ENTRY]: async (params) => {
+      return updateMemoryEntryFromSettings(
+        validateInput(memoryUpdateEntryInputSchema, params, MEMORY_IPC_CHANNELS.UPDATE_ENTRY)
+      );
+    },
+    [MEMORY_IPC_CHANNELS.DELETE_ENTRY]: async (params) => {
+      return deleteMemoryEntryFromSettings(
+        validateInput(memoryDeleteEntryInputSchema, params, MEMORY_IPC_CHANNELS.DELETE_ENTRY)
+      );
+    },
+    [MEMORY_IPC_CHANNELS.RESOLVE_PENDING]: async (params) => {
+      return resolveMemoryPendingFromSettings(
+        validateInput(memoryResolvePendingInputSchema, params, MEMORY_IPC_CHANNELS.RESOLVE_PENDING)
+      );
+    },
     [MEMORY_IPC_CHANNELS.GET_RUNTIME_CONFIG]: async () => {
       return getMemoryRuntimeConfig();
     },
@@ -101,6 +126,58 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
       );
     }
   };
+}
+
+function updateMemoryEntryFromSettings(input: MemoryUpdateEntryInput): MemoryMutationResult {
+  const entry = createMemoryV2Store().updateEntry({
+    scope: input.scope,
+    workspaceSlug: input.workspaceSlug,
+    id: input.id,
+    statement: input.statement,
+    kind: toMemoryV2Kind(input.kind),
+    confidence: input.confidence,
+    tags: input.tags
+  });
+  return {
+    ok: true,
+    id: entry.frontmatter.id,
+    path: entry.path
+  };
+}
+
+function deleteMemoryEntryFromSettings(input: MemoryDeleteEntryInput): MemoryMutationResult {
+  return createMemoryV2Store().deleteEntry({
+    scope: input.scope,
+    workspaceSlug: input.workspaceSlug,
+    id: input.id
+  });
+}
+
+function resolveMemoryPendingFromSettings(input: MemoryResolvePendingInput): MemoryMutationResult {
+  return createMemoryV2Store().resolvePending({
+    workspaceSlug: input.workspaceSlug,
+    path: input.path,
+    action: input.action,
+    candidateOverride: input.candidateOverride
+      ? {
+          statement: input.candidateOverride.statement,
+          kind: toMemoryV2Kind(input.candidateOverride.kind),
+          confidence: input.candidateOverride.confidence,
+          tags: input.candidateOverride.tags
+        }
+      : undefined
+  });
+}
+
+function toMemoryV2Kind(kind?: MemoryKind): MemoryV2Kind | undefined {
+  if (!kind) return undefined;
+  if (kind === "preference" || kind === "fact" || kind === "decision" || kind === "lesson") {
+    return kind;
+  }
+  if (kind === "summary" || kind === "episode" || kind === "milestone") {
+    return "state";
+  }
+  throw new Error("不支持的记忆类型");
 }
 
 function startMemoryIngestJob(input: MemoryIngestSourcesInput): MemoryStartIngestSourcesResult {

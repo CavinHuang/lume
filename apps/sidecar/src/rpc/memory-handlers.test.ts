@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -10,7 +10,7 @@ import {
 } from "@lume/shared";
 import { createAgentThread, appendAgentTranscriptMessage } from "../services/agent/agent-thread-manager";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
-import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
+import { createMemoryV2Store, readEntryFile, readPendingFile } from "../services/memory-v2/markdown-store";
 import { createMemoryHandlers } from "./memory-handlers";
 
 let root: string;
@@ -242,6 +242,105 @@ describe("memory handlers", () => {
         }
       }
     });
+  });
+
+  test("settings handlers manually update and delete memory entries", async () => {
+    const store = createMemoryV2Store();
+    const entry = store.writeEntry({
+      kind: "preference",
+      targetScope: "workspace",
+      statement: "用户喜欢简短回复",
+      confidence: "high",
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+
+    const handlers = createMemoryHandlers();
+    const updated = await handlers[MEMORY_IPC_CHANNELS.UPDATE_ENTRY]?.({
+      workspaceSlug: "demo",
+      scope: "workspace",
+      id: entry.frontmatter.id,
+      statement: "用户喜欢直接但有温度的回复",
+      confidence: "medium",
+      tags: ["style", "manual"]
+    });
+
+    expect(updated).toMatchObject({
+      ok: true,
+      id: entry.frontmatter.id,
+      path: entry.path
+    });
+    expect(readEntryFile(entry.path).statement).toBe("用户喜欢直接但有温度的回复");
+    expect(readEntryFile(entry.path).frontmatter.tags).toEqual(["style", "manual"]);
+
+    const deleted = await handlers[MEMORY_IPC_CHANNELS.DELETE_ENTRY]?.({
+      workspaceSlug: "demo",
+      scope: "workspace",
+      id: entry.frontmatter.id
+    });
+
+    expect(deleted).toMatchObject({
+      ok: true,
+      id: entry.frontmatter.id,
+      path: entry.path
+    });
+    expect(existsSync(entry.path)).toBe(false);
+  });
+
+  test("settings handler accepts pending conflicts without exposing an agent delete tool", async () => {
+    const store = createMemoryV2Store();
+    const existing = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户希望被称呼为 Mason",
+      confidence: "high",
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Mason"
+      }
+    });
+    const pending = store.writePending({
+      type: "conflict",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Alice",
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Alice"
+        }
+      },
+      existingIds: [existing.frontmatter.id],
+      reason: "称呼偏好变化"
+    });
+
+    const handlers = createMemoryHandlers();
+    const accepted = await handlers[MEMORY_IPC_CHANNELS.RESOLVE_PENDING]?.({
+      workspaceSlug: "demo",
+      path: pending.path,
+      action: "accept",
+      candidateOverride: {
+        statement: "用户希望在演示时被称呼为 Alice",
+        kind: "summary",
+        confidence: "medium",
+        tags: ["profile", "reviewed"]
+      }
+    });
+
+    expect(accepted).toMatchObject({
+      ok: true,
+      path: pending.path
+    });
+    expect(readPendingFile(pending.path).frontmatter.status).toBe("resolved");
+    expect(readEntryFile(existing.path).frontmatter.status).toBe("superseded");
+    const acceptedEntry = createMemoryV2Store()
+      .listEntries({ scopes: ["global"], includeStatuses: ["active"] })
+      .find((entry) => entry.statement === "用户希望在演示时被称呼为 Alice");
+    expect(acceptedEntry?.frontmatter.kind).toBe("state");
+    expect(acceptedEntry?.frontmatter.tags).toEqual(["profile", "reviewed"]);
+    expect(MEMORY_IPC_CHANNELS).not.toHaveProperty("AGENT_DELETE_ENTRY");
   });
 });
 
