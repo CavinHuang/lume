@@ -125,15 +125,15 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: s
 
   if (char === '/' || char === '$') {
     const editorEl = props.editor.view.dom
-    // 优先使用 LumeComposer 元素（有 border、radius 的实际输入框），而非外层 anchor
-    const composer = editorEl.closest('[data-tone]') as HTMLElement | null
     const anchor = editorEl.closest('[data-agent-composer-anchor]') as HTMLElement | null
-    const widthRef = composer ?? anchor
-    const widthRect = widthRef?.getBoundingClientRect()
     const anchorRect = anchor?.getBoundingClientRect()
-    if (widthRect && anchorRect) {
-      wrapper.style.left = `${Math.max(12, widthRect.left)}px`
-      wrapper.style.width = `${Math.min(widthRect.width, window.innerWidth - 24)}px`
+    const composer = editorEl.closest('[data-tone]') as HTMLElement | null
+    if (anchorRect && composer) {
+      // clientWidth / clientLeft 不含 border，面板精确嵌在输入框 border 内侧
+      const safeLeft = Math.max(12, anchorRect.left + composer.clientLeft)
+      const safeWidth = Math.min(composer.clientWidth, window.innerWidth - 24)
+      wrapper.style.left = `${safeLeft}px`
+      wrapper.style.width = `${safeWidth}px`
       wrapper.style.bottom = `${window.innerHeight - anchorRect.top + 8}px`
       wrapper.style.top = 'auto'
       return
