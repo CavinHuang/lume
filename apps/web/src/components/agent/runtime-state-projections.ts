@@ -41,7 +41,19 @@ export interface ContextWindowProgress {
   label: string
   detail: string
   sections: ContextWindowProgressSection[]
+  compaction?: ContextWindowCompactionState
   usage?: ContextWindowUsageSummary
+}
+
+export interface ContextWindowCompactionState {
+  status: 'compacting' | 'completed'
+  trigger: string
+  preTokens: number
+  postTokens?: number
+  stage?: string
+  progress?: number
+  message?: string
+  summary?: string
 }
 
 export interface ContextWindowProgressSection {
@@ -101,7 +113,9 @@ export function buildContextWindowProgress(
   let contextInputTokens = 0
   let contextOutputTokens = 0
   let contextCachedTokens = 0
+  let contextEstimatedTailTokens = 0
   let hasRuntimeContextSignal = false
+  let compaction: ContextWindowCompactionState | undefined
 
   for (const event of events) {
     if (event.type === 'run.started') {
@@ -116,14 +130,16 @@ export function buildContextWindowProgress(
         contextInputTokens = 0
         contextOutputTokens = 0
         contextCachedTokens = 0
+        contextEstimatedTailTokens = 0
       } else if (sectionSource !== 'budget') {
-        sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
+        sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow, contextEstimatedTailTokens)
       }
     }
     if (event.type === 'message.user.submitted') {
       const tokens = estimateLiveTokens(event.text)
       usedTokens += tokens
       contextInputTokens += tokens
+      contextEstimatedTailTokens = 0
       hasRuntimeContextSignal ||= tokens > 0
       if (sectionSource !== 'budget') {
         sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
@@ -134,6 +150,7 @@ export function buildContextWindowProgress(
       const tokens = estimateLiveTokens(event.delta)
       usedTokens += tokens
       contextOutputTokens += tokens
+      contextEstimatedTailTokens = 0
       hasRuntimeContextSignal ||= tokens > 0
       if (sectionSource !== 'budget') {
         sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
@@ -144,6 +161,7 @@ export function buildContextWindowProgress(
       const tokens = estimateToolResultTokens(event)
       usedTokens += tokens
       contextInputTokens += tokens
+      contextEstimatedTailTokens = 0
       hasRuntimeContextSignal ||= tokens > 0
       if (sectionSource !== 'budget') {
         sections = buildUsageSections(contextInputTokens, contextOutputTokens, contextCachedTokens, contextWindow)
@@ -160,7 +178,34 @@ export function buildContextWindowProgress(
       contextInputTokens = event.preTokens
       contextOutputTokens = 0
       contextCachedTokens = 0
+      contextEstimatedTailTokens = 0
       hasRuntimeContextSignal = true
+      compaction = {
+        status: 'compacting',
+        trigger: event.trigger,
+        preTokens: event.preTokens,
+      }
+    }
+    if (event.type === 'context.compaction.progress') {
+      if (isPositiveTokenCount(event.contextWindow)) {
+        contextWindow = event.contextWindow
+      }
+      usedTokens = event.preTokens
+      sections = buildBudgetSections(event.budget, contextWindow)
+      sectionSource = sections.length > 0 ? 'budget' : 'none'
+      contextInputTokens = event.preTokens
+      contextOutputTokens = 0
+      contextCachedTokens = 0
+      contextEstimatedTailTokens = 0
+      hasRuntimeContextSignal = true
+      compaction = {
+        status: 'compacting',
+        trigger: event.trigger,
+        preTokens: event.preTokens,
+        stage: event.stage,
+        progress: event.progress,
+        ...(event.message ? { message: event.message } : {}),
+      }
     }
     if (event.type === 'context.compaction.completed') {
       if (isPositiveTokenCount(event.contextWindow)) {
@@ -172,7 +217,15 @@ export function buildContextWindowProgress(
       contextInputTokens = usedTokens
       contextOutputTokens = 0
       contextCachedTokens = 0
+      contextEstimatedTailTokens = 0
       hasRuntimeContextSignal = true
+      compaction = {
+        status: 'completed',
+        trigger: event.trigger,
+        preTokens: event.preTokens,
+        ...(event.postTokens !== undefined ? { postTokens: event.postTokens } : {}),
+        ...(event.summary ? { summary: event.summary } : {}),
+      }
     }
     if (event.type === 'usage.updated') {
       if (event.scope !== 'main') continue
@@ -183,6 +236,7 @@ export function buildContextWindowProgress(
       contextInputTokens = event.context.inputTokens
       contextOutputTokens = event.context.outputTokens
       contextCachedTokens = event.context.cachedTokens
+      contextEstimatedTailTokens = event.context.estimatedTailTokens
       hasRuntimeContextSignal ||= event.context.totalTokens > 0
       usage = {
         inputTokens: event.billing.cumulative.inputTokens,
@@ -192,7 +246,13 @@ export function buildContextWindowProgress(
         ...buildUsageRecords(event.billing.records),
       }
       if (sectionSource !== 'budget') {
-        sections = buildUsageSections(event.context.inputTokens, event.context.outputTokens, event.context.cachedTokens, contextWindow)
+        sections = buildUsageSections(
+          event.context.inputTokens,
+          event.context.outputTokens,
+          event.context.cachedTokens,
+          contextWindow,
+          event.context.estimatedTailTokens,
+        )
         sectionSource = 'usage'
       }
     }
@@ -218,6 +278,7 @@ export function buildContextWindowProgress(
     label: 'Context window',
     detail: `${formatTokenCount(clampedUsedTokens)} / ${formatTokenCount(contextWindow)} tokens`,
     sections,
+    ...(compaction ? { compaction } : {}),
     ...(usage ? { usage } : {}),
   }
 }
@@ -275,6 +336,13 @@ function formatRuntimeEvent(event: LumeRuntimeEvent): Omit<LiveRuntimeEventRow, 
     return {
       label: 'Context compacting',
       detail: `${event.trigger} · ${event.preTokens} tokens`,
+      tone: 'active',
+    }
+  }
+  if (event.type === 'context.compaction.progress') {
+    return {
+      label: 'Context compacting',
+      detail: `${event.progress}% · ${event.message ?? event.stage}`,
       tone: 'active',
     }
   }
@@ -421,7 +489,18 @@ function isPositiveTokenCount(value: unknown): value is number {
 
 function estimateLiveTokens(value: string): number {
   const trimmed = value.trim()
-  return trimmed.length > 0 ? Math.ceil(trimmed.length / 4) : 0
+  if (!trimmed) return 0
+  let asciiChars = 0
+  let fullTokenChars = 0
+  for (const char of trimmed) {
+    const code = char.codePointAt(0) ?? 0
+    if (countsAsFullTokenChar(code)) {
+      fullTokenChars += 1
+    } else {
+      asciiChars += 1
+    }
+  }
+  return fullTokenChars + Math.ceil(asciiChars / 4)
 }
 
 function estimateToolResultTokens(event: Extract<LumeRuntimeEvent, { type: 'tool.completed' | 'tool.failed' }>): number {
@@ -458,13 +537,35 @@ function estimateHistoryValueTokens(value: unknown): number {
   }
   if (!value || typeof value !== 'object') return 0
   const record = value as Record<string, unknown>
+  if (record.type === 'image' || record.type === 'document') return 2_000
+  if (record.type === 'thinking' && typeof record.thinking === 'string') return estimateLiveTokens(record.thinking)
+  if (record.type === 'redacted_thinking' && typeof record.data === 'string') return estimateLiveTokens(record.data)
+  if (record.type === 'tool_use') return estimateLiveTokens(`${String(record.name ?? '')}${safeStringify(record.input ?? {})}`)
   if (typeof record.text === 'string') return estimateLiveTokens(record.text)
   if ('content' in record) return estimateHistoryValueTokens(record.content)
   try {
-    return estimateLiveTokens(JSON.stringify(value))
+    return estimateLiveTokens(safeStringify(value))
   } catch {
     return 0
   }
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function countsAsFullTokenChar(code: number): boolean {
+  return (
+    (code >= 0x3400 && code <= 0x9fff)
+    || (code >= 0xf900 && code <= 0xfaff)
+    || (code >= 0x3040 && code <= 0x30ff)
+    || (code >= 0xac00 && code <= 0xd7af)
+    || code >= 0x1f300
+  )
 }
 
 function buildUsageSections(
@@ -472,9 +573,13 @@ function buildUsageSections(
   outputTokens: number,
   cachedTokens: number,
   contextWindow: number,
+  estimatedTailTokens = 0,
 ): ContextWindowProgressSection[] {
+  const tailTokens = Math.min(Math.max(0, estimatedTailTokens), Math.max(0, inputTokens))
+  const providerInputTokens = Math.max(0, inputTokens - tailTokens)
   return [
-    { id: 'input', label: '输入', tokens: inputTokens, percent: sectionPercent(inputTokens, contextWindow) },
+    { id: 'input', label: '输入', tokens: providerInputTokens, percent: sectionPercent(providerInputTokens, contextWindow) },
+    { id: 'estimatedTail', label: '实时估算', tokens: tailTokens, percent: sectionPercent(tailTokens, contextWindow) },
     { id: 'cached', label: '缓存命中', tokens: cachedTokens, percent: sectionPercent(cachedTokens, contextWindow) },
     { id: 'output', label: '输出', tokens: outputTokens, percent: sectionPercent(outputTokens, contextWindow) },
   ].filter((section) => section.tokens > 0)

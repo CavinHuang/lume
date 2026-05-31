@@ -14,7 +14,7 @@ export interface RuntimeToolCallView {
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
 export type MemoryContextUsedViewEvent = Extract<LumeRuntimeEvent, { type: 'memory.context.used' }>
-export type ContextCompactionViewEvent = Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.completed' }>
+export type ContextCompactionViewEvent = Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>
 export type PlanPreviewView = Pick<
   Extract<LumeRuntimeEvent, { type: 'plan.preview' }>,
   'contractId' | 'title' | 'summary' | 'markdown' | 'planFilePath' | 'planVerified' | 'stepCount'

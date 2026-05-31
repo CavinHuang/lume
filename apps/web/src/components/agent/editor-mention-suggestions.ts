@@ -125,16 +125,19 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: s
 
   if (char === '/' || char === '$') {
     const editorEl = props.editor.view.dom
-    const anchor = editorEl.closest('[data-agent-composer-anchor]') as HTMLElement | null
-    const anchorRect = anchor?.getBoundingClientRect()
     const composer = editorEl.closest('[data-tone]') as HTMLElement | null
-    if (anchorRect && composer) {
-      // clientWidth / clientLeft 不含 border，面板精确嵌在输入框 border 内侧
-      const safeLeft = Math.max(12, anchorRect.left + composer.clientLeft)
-      const safeWidth = Math.min(composer.clientWidth, window.innerWidth - 24)
+    const composerRect = composer?.getBoundingClientRect()
+    if (composer && composerRect) {
+      const safeLeft = Math.max(12, composerRect.left)
+      const safeWidth = Math.min(
+        composerRect.width - Math.max(0, safeLeft - composerRect.left),
+        window.innerWidth - safeLeft - 12,
+      )
       wrapper.style.left = `${safeLeft}px`
       wrapper.style.width = `${safeWidth}px`
-      wrapper.style.bottom = `${window.innerHeight - anchorRect.top + 8}px`
+      wrapper.style.maxWidth = `${safeWidth}px`
+      wrapper.style.boxSizing = 'border-box'
+      wrapper.style.bottom = `${window.innerHeight - composerRect.top + 8}px`
       wrapper.style.top = 'auto'
       return
     }

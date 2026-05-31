@@ -257,9 +257,14 @@ function projectPersistedCompactionMessage(
   fallbackCreatedAt: string,
 ): Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }> | null {
   if (sdkMessage.type !== 'system') return null
-  if (sdkMessage.subtype !== 'context_compaction_started' && sdkMessage.subtype !== 'compact_boundary') return null
+  if (
+    sdkMessage.subtype !== 'context_compaction_started'
+    && sdkMessage.subtype !== 'context_compaction_progress'
+    && sdkMessage.subtype !== 'compact_boundary'
+  ) return null
   const metadata = asRecord((sdkMessage as SDKMessage & { compact_metadata?: unknown }).compact_metadata)
   const mode = metadata?.trigger === 'manual' ? '手动' : '自动'
+  const progressMessage = typeof metadata?.message === 'string' ? metadata.message : undefined
   const createdAt = typeof (sdkMessage as SDKMessage & { timestamp?: unknown }).timestamp === 'string'
     ? (sdkMessage as SDKMessage & { timestamp: string }).timestamp
     : fallbackCreatedAt
@@ -267,8 +272,10 @@ function projectPersistedCompactionMessage(
     id: `${messageId}:${index}:${sdkMessage.subtype}`,
     type: 'system',
     variant: 'context_compaction',
-    status: sdkMessage.subtype === 'context_compaction_started' ? 'active' : 'completed',
-    text: sdkMessage.subtype === 'context_compaction_started'
+    status: sdkMessage.subtype === 'compact_boundary' ? 'completed' : 'active',
+    text: sdkMessage.subtype === 'context_compaction_progress'
+      ? progressMessage ?? `正在${mode}压缩上下文`
+      : sdkMessage.subtype === 'context_compaction_started'
       ? `正在${mode}压缩上下文`
       : `上下文已${mode}压缩`,
     createdAt,

@@ -297,6 +297,17 @@ describe('projectVisibleThreadMessages', () => {
         },
         {
           type: 'system',
+          subtype: 'context_compaction_progress',
+          compact_metadata: {
+            trigger: 'auto',
+            pre_tokens: 900,
+            stage: 'summarizing',
+            progress: 45,
+            message: '正在生成上下文摘要',
+          },
+        },
+        {
+          type: 'system',
           subtype: 'compact_boundary',
           compact_metadata: {
             trigger: 'auto',
@@ -317,7 +328,15 @@ describe('projectVisibleThreadMessages', () => {
         createdAt: '2026-05-01T07:23:00.000Z',
       },
       {
-        id: 'assistant-compact:1:compact_boundary',
+        id: 'assistant-compact:1:context_compaction_progress',
+        type: 'system',
+        variant: 'context_compaction',
+        status: 'active',
+        text: '正在生成上下文摘要',
+        createdAt: '2026-05-01T07:23:00.000Z',
+      },
+      {
+        id: 'assistant-compact:2:compact_boundary',
         type: 'system',
         variant: 'context_compaction',
         status: 'completed',

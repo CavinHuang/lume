@@ -33,6 +33,8 @@ mock.module('@ant-design/x-markdown', () => ({
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
+  openInSystem: async () => undefined,
+  saveTextFileDialog: async () => undefined,
   sidecarCall: async () => undefined,
 }))
 

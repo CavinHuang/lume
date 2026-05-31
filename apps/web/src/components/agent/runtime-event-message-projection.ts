@@ -66,7 +66,11 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
       return
     }
 
-    if (event.type === 'context.compaction.started' || event.type === 'context.compaction.completed') {
+    if (
+      event.type === 'context.compaction.started'
+      || event.type === 'context.compaction.progress'
+      || event.type === 'context.compaction.completed'
+    ) {
       if (currentAssistant && assistantHasContent(currentAssistant)) {
         flushAssistant(messages, currentAssistant)
       }
@@ -271,22 +275,25 @@ function applyAssistantImDelivery(
 
 function appendContextCompactionNotice(
   messages: RuntimeMessageView[],
-  event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.completed' }>,
+  event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>,
 ): void {
   messages.push({
     id: event.id,
     type: 'system',
     variant: 'context_compaction',
-    status: event.type === 'context.compaction.started' ? 'active' : 'completed',
+    status: event.type === 'context.compaction.completed' ? 'completed' : 'active',
     text: formatContextCompactionNoticeText(event),
     createdAt: event.createdAt,
   })
 }
 
 function formatContextCompactionNoticeText(
-  event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.completed' }>,
+  event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>,
 ): string {
   const mode = event.trigger === 'manual' ? '手动' : '自动'
+  if (event.type === 'context.compaction.progress') {
+    return event.message ?? `正在${mode}压缩上下文`
+  }
   return event.type === 'context.compaction.started'
     ? `正在${mode}压缩上下文`
     : `上下文已${mode}压缩`

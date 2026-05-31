@@ -69,6 +69,10 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
             </div>
           </div>
 
+          {progress.compaction && (
+            <CompactionStatusBlock compaction={progress.compaction} />
+          )}
+
           <div className="border-t border-border/35 px-3 py-2">
             <div className="mb-2 flex items-center justify-between text-[10px]">
               <span className="font-medium text-foreground/65">占用明细</span>
@@ -181,6 +185,46 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function CompactionStatusBlock({
+  compaction,
+}: {
+  compaction: NonNullable<ContextWindowProgress['compaction']>
+}) {
+  const compacting = compaction.status === 'compacting'
+  const mode = compaction.trigger === 'manual' ? '手动' : '自动'
+  return (
+    <div className="border-t border-border/35 px-3 py-2">
+      <div className="mb-2 flex items-center justify-between gap-3 text-[10px]">
+        <span className="font-medium text-foreground/65">压缩状态</span>
+        <span className={cn(
+          'rounded-md border px-1.5 py-0.5 font-medium',
+          compacting
+            ? 'border-amber-500/25 bg-amber-500/5 text-amber-500'
+            : 'border-emerald-500/25 bg-emerald-500/5 text-emerald-500',
+        )}>
+          {compacting ? `正在${mode}压缩` : `已${mode}压缩`}
+        </span>
+      </div>
+      {(compaction.message || typeof compaction.progress === 'number') && (
+        <div className="mb-2 rounded-md border border-border/30 bg-foreground/[0.025] px-2 py-1.5 text-[10px] text-foreground/55">
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate">{compaction.message ?? compaction.stage}</span>
+            {typeof compaction.progress === 'number' && (
+              <span className="shrink-0 font-mono text-amber-500">{compaction.progress}%</span>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="space-y-1">
+        <UsageSummaryRow label="压缩前" value={formatTokenNumber(compaction.preTokens)} />
+        {typeof compaction.postTokens === 'number' && (
+          <UsageSummaryRow label="压缩后" value={formatTokenNumber(compaction.postTokens)} valueClassName="text-emerald-500" />
+        )}
+      </div>
     </div>
   )
 }

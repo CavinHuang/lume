@@ -13,6 +13,14 @@ describe('ContextWindowIndicator contract', () => {
       tone: 'active',
       label: 'Context window',
       detail: '420 / 1K tokens',
+      compaction: {
+        status: 'compacting',
+        trigger: 'auto',
+        preTokens: 850,
+        stage: 'summarizing',
+        progress: 45,
+        message: '正在生成上下文摘要',
+      },
       usage: {
         inputTokens: 300,
         cachedTokens: 60,
@@ -48,6 +56,12 @@ describe('ContextWindowIndicator contract', () => {
     expect(html).toContain('Auto Compact')
     expect(html).toContain('Collapse')
     expect(html).toContain('占用明细')
+    expect(html).toContain('压缩状态')
+    expect(html).toContain('正在自动压缩')
+    expect(html).toContain('正在生成上下文摘要')
+    expect(html).toContain('45%')
+    expect(html).toContain('压缩前')
+    expect(html).toContain('850')
     expect(html).toContain('系统')
     expect(html).toContain('130')
     expect(html).toContain('13%')

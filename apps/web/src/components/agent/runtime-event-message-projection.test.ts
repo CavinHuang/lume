@@ -350,6 +350,17 @@ describe('runtime-event-message-projection', () => {
         source: 'agent-runtime-kernel',
       }),
       event({
+        type: 'context.compaction.progress',
+        id: 'compact-progress',
+        trigger: 'auto',
+        preTokens: 900,
+        stage: 'summarizing',
+        progress: 45,
+        message: '正在生成上下文摘要',
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+      }),
+      event({
         type: 'context.compaction.completed',
         id: 'compact-complete',
         trigger: 'auto',
@@ -372,6 +383,14 @@ describe('runtime-event-message-projection', () => {
         variant: 'context_compaction',
         status: 'active',
         text: '正在自动压缩上下文',
+        createdAt: '2026-05-11T00:00:00.000Z',
+      },
+      {
+        id: 'compact-progress',
+        type: 'system',
+        variant: 'context_compaction',
+        status: 'active',
+        text: '正在生成上下文摘要',
         createdAt: '2026-05-11T00:00:00.000Z',
       },
       {

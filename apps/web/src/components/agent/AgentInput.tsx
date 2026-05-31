@@ -514,7 +514,7 @@ export function AgentInput({
   return (
     <div className="px-3 pb-4 pt-2">
       <div className="w-full px-14">
-        <div data-agent-composer-anchor>
+        <div>
           <LumeComposer
             tone={composerState.tone}
             scale="compact"

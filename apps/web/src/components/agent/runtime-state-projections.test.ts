@@ -17,6 +17,7 @@ function usageUpdatedEvent(input: {
   outputTokens: number
   cachedTokens?: number
   totalTokens?: number
+  estimatedTailTokens?: number
   contextWindow: number
   costUSD?: number
   scope?: 'main' | 'subagent' | 'background'
@@ -56,7 +57,7 @@ function usageUpdatedEvent(input: {
       outputTokens: input.outputTokens,
       cachedTokens,
       totalTokens,
-      estimatedTailTokens: 0,
+      estimatedTailTokens: input.estimatedTailTokens ?? 0,
       contextWindow: input.contextWindow,
       contextWindowSource: 'model',
     },
@@ -287,6 +288,41 @@ describe('runtime-state projections', () => {
     })
   })
 
+  test('does not undercount CJK live text while runtime usage is pending', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'run-started',
+        type: 'run.started',
+        model: {
+          provider: 'openai',
+          modelId: 'gpt-test',
+          contextWindow: 100,
+        },
+      },
+      {
+        ...base,
+        id: 'user-submitted',
+        type: 'message.user.submitted',
+        text: '你好世界',
+      },
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      usedTokens: 4,
+      contextWindow: 100,
+      remainingTokens: 96,
+      percent: 4,
+      sections: [
+        { id: 'input', label: '输入', tokens: 4, percent: 4 },
+      ],
+    })
+  })
+
   test('estimates completed tool output as live input context before runtime usage arrives', () => {
     const base = {
       threadId: 'thread-1',
@@ -428,6 +464,35 @@ describe('runtime-state projections', () => {
     })
   })
 
+  test('splits provider input and estimated tail tokens into separate context sections', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      usageUpdatedEvent({
+        ...base,
+        id: 'usage',
+        inputTokens: 100,
+        outputTokens: 10,
+        cachedTokens: 5,
+        totalTokens: 115,
+        estimatedTailTokens: 7,
+        contextWindow: 200,
+      }),
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      usedTokens: 115,
+      sections: [
+        { id: 'input', label: '输入', tokens: 93, percent: 47 },
+        { id: 'estimatedTail', label: '实时估算', tokens: 7, percent: 4 },
+        { id: 'cached', label: '缓存命中', tokens: 5, percent: 3 },
+        { id: 'output', label: '输出', tokens: 10, percent: 5 },
+      ],
+    })
+  })
+
   test('keeps compaction budget sections for context occupancy details', () => {
     const base = {
       threadId: 'thread-1',
@@ -468,6 +533,72 @@ describe('runtime-state projections', () => {
         { id: 'toolSchemas', label: '工具 Schema', tokens: 40, percent: 4 },
         { id: 'reservedOutput', label: '输出预留', tokens: 50, percent: 5 },
       ],
+    })
+  })
+
+  test('exposes current compaction state to the context indicator model', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'compact-started',
+        type: 'context.compaction.started',
+        trigger: 'auto',
+        preTokens: 850,
+        contextWindow: 1000,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+      },
+      {
+        ...base,
+        id: 'compact-progress',
+        type: 'context.compaction.progress',
+        trigger: 'auto',
+        preTokens: 850,
+        contextWindow: 1000,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+        stage: 'summarizing',
+        progress: 45,
+        message: '正在生成上下文摘要',
+      },
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      compaction: {
+        status: 'compacting',
+        trigger: 'auto',
+        preTokens: 850,
+        stage: 'summarizing',
+        progress: 45,
+        message: '正在生成上下文摘要',
+      },
+    })
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'compact-completed',
+        type: 'context.compaction.completed',
+        trigger: 'auto',
+        preTokens: 850,
+        postTokens: 320,
+        contextWindow: 1000,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+        summary: 'kept important context',
+      },
+    ] satisfies LumeRuntimeEvent[])).toMatchObject({
+      compaction: {
+        status: 'completed',
+        trigger: 'auto',
+        preTokens: 850,
+        postTokens: 320,
+        summary: 'kept important context',
+      },
     })
   })
 
