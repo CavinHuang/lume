@@ -129,4 +129,63 @@ describe("memory-v2 settings snapshot", () => {
     expect(snapshot.files.some((file) => file.path === memoryFile)).toBe(true);
     expect(snapshot.pending).toEqual([]);
   });
+
+  test("includes pending candidates and existing entry summaries for manual conflict review", () => {
+    const store = createMemoryV2Store();
+    const existing = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户希望被称呼为 Mason",
+      confidence: "high",
+      tags: ["profile"],
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Mason"
+      }
+    });
+    store.writePending({
+      type: "conflict",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Alice",
+        confidence: "medium",
+        tags: ["profile", "manual-review"],
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Alice"
+        }
+      },
+      existingIds: [existing.frontmatter.id],
+      reason: "称呼偏好变化"
+    });
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+
+    expect(snapshot.pending[0]).toMatchObject({
+      candidate: {
+        statement: "用户希望被称呼为 Alice",
+        kind: "preference",
+        scope: "global",
+        confidence: "medium",
+        tags: ["profile", "manual-review"],
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Alice"
+        }
+      },
+      existingEntries: [{
+        id: existing.frontmatter.id,
+        statement: "用户希望被称呼为 Mason",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }]
+    });
+  });
 });

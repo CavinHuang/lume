@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import { getMemoryV2ScopePaths, type MemoryV2ScopePaths } from "./paths";
@@ -17,6 +17,14 @@ import type {
 } from "./types";
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
+const ALL_ENTRY_STATUSES: MemoryV2Status[] = [
+  "active",
+  "archived",
+  "superseded",
+  "pending_conflict",
+  "pending_low_confidence",
+  "suspected_stale"
+];
 
 export interface MemoryV2Store {
   ensureMemoryFile(scope: MemoryV2Scope, workspaceSlug?: string): string;
@@ -40,6 +48,20 @@ export interface MemoryV2Store {
     id: string;
     related: string[];
   }): MemoryV2Entry;
+  updateEntry(input: {
+    scope: MemoryV2Scope;
+    workspaceSlug?: string;
+    id: string;
+    statement?: string;
+    kind?: MemoryV2EntryFrontmatter["kind"];
+    confidence?: MemoryV2EntryFrontmatter["confidence"];
+    tags?: string[];
+  }): MemoryV2Entry;
+  deleteEntry(input: {
+    scope: MemoryV2Scope;
+    workspaceSlug?: string;
+    id: string;
+  }): { ok: true; id: string; path: string };
   writePending(input: {
     type: MemoryV2PendingType;
     candidate: MemoryV2Candidate;
@@ -56,6 +78,17 @@ export interface MemoryV2Store {
     scopes?: MemoryV2Scope[];
     includeStatuses?: MemoryV2PendingFrontmatter["status"][];
   }): MemoryV2PendingItem[];
+  resolvePending(input: {
+    workspaceSlug: string;
+    path: string;
+    action: "accept" | "reject" | "resolve";
+    candidateOverride?: {
+      statement?: string;
+      kind?: MemoryV2EntryFrontmatter["kind"];
+      confidence?: MemoryV2EntryFrontmatter["confidence"];
+      tags?: string[];
+    };
+  }): { ok: true; id: string; path: string; entryId?: string; entryPath?: string };
   readMemoryMarkdown(scope: MemoryV2Scope, workspaceSlug?: string): string;
   appendDaily(input: {
     scope: MemoryV2Scope;
@@ -77,9 +110,12 @@ export function createMemoryV2Store(): MemoryV2Store {
     writeEntry,
     updateEntryStatus,
     updateEntryRelations,
+    updateEntry,
+    deleteEntry,
     writePending,
     listEntries,
     listPending,
+    resolvePending,
     readMemoryMarkdown,
     appendDaily,
     appendRunArchive
@@ -185,6 +221,56 @@ export function updateEntryRelations(input: {
   return next;
 }
 
+export function updateEntry(input: {
+  scope: MemoryV2Scope;
+  workspaceSlug?: string;
+  id: string;
+  statement?: string;
+  kind?: MemoryV2EntryFrontmatter["kind"];
+  confidence?: MemoryV2EntryFrontmatter["confidence"];
+  tags?: string[];
+}): MemoryV2Entry {
+  const entry = findEntryById(input);
+  if (!entry) {
+    throw new Error(`Memory entry not found: ${input.id}`);
+  }
+  const nextStatement = input.statement === undefined ? entry.statement : input.statement.trim();
+  if (!nextStatement) {
+    throw new Error("Memory entry statement cannot be empty");
+  }
+  const next: MemoryV2Entry = {
+    ...entry,
+    statement: nextStatement,
+    frontmatter: {
+      ...entry.frontmatter,
+      ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.confidence ? { confidence: input.confidence } : {}),
+      ...(input.tags ? { tags: cleanList(input.tags) } : {}),
+      updated: new Date().toISOString()
+    }
+  };
+  writeMarkdownDocument(next.path, next.frontmatter, next.statement);
+  return next;
+}
+
+export function deleteEntry(input: {
+  scope: MemoryV2Scope;
+  workspaceSlug?: string;
+  id: string;
+}): { ok: true; id: string; path: string } {
+  const entry = findEntryById(input);
+  if (!entry) {
+    throw new Error(`Memory entry not found: ${input.id}`);
+  }
+  rmSync(entry.path, { force: true });
+  removeEntryReferences(input.id, input.workspaceSlug);
+  return {
+    ok: true,
+    id: entry.frontmatter.id,
+    path: entry.path
+  };
+}
+
 export function writePending(input: {
   type: MemoryV2PendingType;
   candidate: MemoryV2Candidate;
@@ -206,6 +292,10 @@ export function writePending(input: {
       kind: input.candidate.kind,
       targetScope: input.candidate.targetScope,
       statement: input.candidate.statement.trim(),
+      confidence: input.candidate.confidence,
+      tags: cleanList(input.candidate.tags),
+      entities: cleanList(input.candidate.entities),
+      appliesWhen: input.candidate.appliesWhen,
       ...(input.candidate.claim ? { claim: input.candidate.claim } : {})
     },
     existing: input.existingIds?.length ? { ids: input.existingIds } : undefined,
@@ -271,6 +361,67 @@ export function listPending(input: {
     }
   }
   return items.sort((a, b) => b.frontmatter.created.localeCompare(a.frontmatter.created));
+}
+
+export function resolvePending(input: {
+  workspaceSlug: string;
+  path: string;
+  action: "accept" | "reject" | "resolve";
+  candidateOverride?: {
+    statement?: string;
+    kind?: MemoryV2EntryFrontmatter["kind"];
+    confidence?: MemoryV2EntryFrontmatter["confidence"];
+    tags?: string[];
+  };
+}): { ok: true; id: string; path: string; entryId?: string; entryPath?: string } {
+  const pending = findPendingByPath(input);
+  if (!pending) {
+    throw new Error("Memory pending item not found");
+  }
+  if (pending.frontmatter.status !== "open") {
+    return {
+      ok: true,
+      id: pending.frontmatter.id,
+      path: pending.path
+    };
+  }
+  if (input.action !== "accept") {
+    updatePendingStatus(pending, input.action === "reject" ? "archived" : "resolved");
+    return {
+      ok: true,
+      id: pending.frontmatter.id,
+      path: pending.path
+    };
+  }
+
+  const candidate = candidateFromPending(pending, input.workspaceSlug, input.candidateOverride);
+  const entry = writeEntry(candidate, {
+    supersedes: pending.frontmatter.existing?.ids,
+    source: {
+      type: "manual",
+      run_id: pending.frontmatter.evidence?.run_id,
+      record_ids: pending.frontmatter.evidence?.record_ids
+    }
+  });
+  for (const existingId of pending.frontmatter.existing?.ids ?? []) {
+    const existing = findEntryByIdAcrossScopes(existingId, input.workspaceSlug);
+    if (!existing) continue;
+    updateEntryStatus({
+      scope: existing.frontmatter.scope,
+      workspaceSlug: input.workspaceSlug,
+      id: existing.frontmatter.id,
+      status: "superseded",
+      supersededBy: entry.frontmatter.id
+    });
+  }
+  updatePendingStatus(pending, "resolved");
+  return {
+    ok: true,
+    id: pending.frontmatter.id,
+    path: pending.path,
+    entryId: entry.frontmatter.id,
+    entryPath: entry.path
+  };
 }
 
 export function readMemoryMarkdown(scope: MemoryV2Scope, workspaceSlug?: string): string {
@@ -409,6 +560,103 @@ function findEntryById(input: {
   }).find((entry) => entry.frontmatter.id === input.id);
 }
 
+function findEntryByIdAcrossScopes(id: string, workspaceSlug?: string): MemoryV2Entry | undefined {
+  return listEntries({
+    workspaceSlug,
+    scopes: ["global", "workspace"],
+    includeStatuses: ALL_ENTRY_STATUSES
+  }).find((entry) => entry.frontmatter.id === id);
+}
+
+function removeEntryReferences(id: string, workspaceSlug?: string): void {
+  for (const entry of listEntries({
+    workspaceSlug,
+    scopes: ["global", "workspace"],
+    includeStatuses: ALL_ENTRY_STATUSES
+  })) {
+    const related = entry.frontmatter.related.filter((value) => value !== id);
+    const supersedes = entry.frontmatter.supersedes.filter((value) => value !== id);
+    const supersededBy = entry.frontmatter.superseded_by === id ? null : entry.frontmatter.superseded_by;
+    if (
+      related.length === entry.frontmatter.related.length
+      && supersedes.length === entry.frontmatter.supersedes.length
+      && supersededBy === entry.frontmatter.superseded_by
+    ) {
+      continue;
+    }
+    writeMarkdownDocument(entry.path, {
+      ...entry.frontmatter,
+      related,
+      supersedes,
+      superseded_by: supersededBy,
+      updated: new Date().toISOString()
+    }, entry.statement);
+  }
+}
+
+function findPendingByPath(input: {
+  workspaceSlug: string;
+  path: string;
+}): MemoryV2PendingItem | undefined {
+  return listPending({
+    workspaceSlug: input.workspaceSlug,
+    scopes: ["global", "workspace"]
+  }).find((item) => item.path === input.path);
+}
+
+function candidateFromPending(
+  item: MemoryV2PendingItem,
+  workspaceSlug: string,
+  override?: {
+    statement?: string;
+    kind?: MemoryV2EntryFrontmatter["kind"];
+    confidence?: MemoryV2EntryFrontmatter["confidence"];
+    tags?: string[];
+  }
+): MemoryV2Candidate {
+  const targetScope = item.frontmatter.candidate.targetScope;
+  const appliesWhen = item.frontmatter.candidate.appliesWhen ?? {};
+  const statement = override?.statement === undefined
+    ? item.frontmatter.candidate.statement
+    : override.statement.trim();
+  if (!statement) {
+    throw new Error("Memory pending candidate statement cannot be empty");
+  }
+  return {
+    kind: override?.kind ?? item.frontmatter.candidate.kind,
+    targetScope,
+    statement,
+    confidence: override?.confidence ?? item.frontmatter.candidate.confidence ?? "medium",
+    tags: override?.tags === undefined ? item.frontmatter.candidate.tags : cleanList(override.tags),
+    entities: item.frontmatter.candidate.entities,
+    appliesWhen: targetScope === "workspace" && !appliesWhen.workspaceSlug
+      ? { ...appliesWhen, workspaceSlug }
+      : appliesWhen,
+    claim: item.frontmatter.candidate.claim,
+    evidence: item.frontmatter.evidence
+      ? {
+          runId: item.frontmatter.evidence.run_id,
+          recordIds: item.frontmatter.evidence.record_ids
+        }
+      : undefined
+  };
+}
+
+function updatePendingStatus(
+  item: MemoryV2PendingItem,
+  status: MemoryV2PendingFrontmatter["status"]
+): MemoryV2PendingItem {
+  const next: MemoryV2PendingItem = {
+    ...item,
+    frontmatter: {
+      ...item.frontmatter,
+      status
+    }
+  };
+  writeMarkdownDocument(next.path, next.frontmatter, next.body);
+  return next;
+}
+
 function normalizeEntryFrontmatter(raw: MemoryV2EntryFrontmatter, path: string): MemoryV2EntryFrontmatter {
   if (!raw.id || !raw.kind || !raw.scope) {
     throw new Error(`Invalid memory entry frontmatter: ${path}`);
@@ -436,6 +684,9 @@ function normalizePendingFrontmatter(raw: MemoryV2PendingFrontmatter, path: stri
     ...raw,
     candidate: {
       ...raw.candidate,
+      tags: cleanList(raw.candidate.tags),
+      entities: cleanList(raw.candidate.entities),
+      appliesWhen: raw.candidate.appliesWhen ?? {},
       claim: normalizeMemoryV2Claim(raw.candidate.claim)
     },
     existing: raw.existing?.ids?.length ? { ids: cleanList(raw.existing.ids) } : undefined,

@@ -36,9 +36,9 @@ export function extractExplicitMemoryCandidates(input: {
     targetScope,
     statement,
     confidence: "high",
-    tags: inferTags(text),
+    tags: inferTags(text, statement),
     entities: inferEntities(text),
-    claim: inferMemoryV2Claim({ statement, tags: inferTags(text) }),
+    claim: inferMemoryV2Claim({ statement, tags: inferTags(text, statement) }),
     appliesWhen: targetScope === "workspace" && input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug }
       : {},
@@ -266,10 +266,14 @@ function inferKind(text: string, statement: string): MemoryV2Candidate["kind"] {
   return "fact";
 }
 
-function inferTags(text: string): string[] {
+function inferTags(text: string, statement = ""): string[] {
+  const combined = `${text}\n${statement}`;
   const tags = ["explicit-intent"];
-  if (/memory|记忆/.test(text)) tags.push("memory");
-  if (/workflow|commit|push|提交|推送/.test(text)) tags.push("workflow");
+  if (/memory|记忆/.test(combined)) tags.push("memory");
+  if (/workflow|commit|push|提交|推送/.test(combined)) tags.push("workflow");
+  if (/写作风格|文风|语气|表达风格|措辞|行文|writing style|voice|tone/.test(combined)) {
+    tags.push("voice", "writing-style");
+  }
   return tags;
 }
 
@@ -304,6 +308,7 @@ function buildExtractionSystemPrompt(): string {
     "- \"叫我 Mason\" -> subject=user/self, predicate=preferred_name, object=Mason.",
     "- \"我叫 Mason\" -> subject=user/self, predicate=preferred_name, object=Mason.",
     "- \"就想叫你 Alice\" -> subject=assistant/self, predicate=preferred_name, object=Alice.",
+    "- \"我的写作风格偏好简洁、有温度\" -> subject=user/self, predicate=writing_style, object=简洁、有温度.",
     "- \"Lume Memory V2 使用 Markdown 作为事实源\" -> subject=workspace/default, predicate=source_of_truth, object=Markdown.",
     "Do not use assistant/self claims to overwrite product/system identity; they are user-given naming preferences.",
     "Candidate fields: kind, targetScope, statement, confidence, sourceRole, sourceText, reason, tags, entities, claim."
@@ -349,6 +354,7 @@ function buildBatchExtractionSystemPrompt(): string {
     "Use kind preference, fact, decision, lesson, or state.",
     "Use targetScope global for cross-workspace user preferences; use workspace for project facts, decisions, lessons, and state.",
     "Add claim when the memory can be represented as a stable fact edge: {subject, predicate, object}.",
+    "Use predicate writing_style for durable user writing voice, tone, wording, and prose-style preferences; tag them with voice and writing-style.",
     "Candidate fields: sourceId, kind, targetScope, statement, confidence, sourceRole, sourceText, reason, tags, entities, claim."
   ].join("\n");
 }

@@ -149,6 +149,52 @@ describe("memory-v2 user message prefix", () => {
     expect(context.userMessageForModel.match(/用户希望被称呼为 Mason/g)).toHaveLength(1);
   });
 
+  test("renders user identity claims in user_profile instead of generic recalled claims", async () => {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Mason",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"],
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }
+    });
+
+    const context = await buildMemoryV2UserMessageContext({
+      workspaceSlug: "demo",
+      sessionType: "main",
+      userMessage: "我叫什么名字？"
+    });
+
+    const profileSection = context.userMessageForModel.match(/<user_profile>[\s\S]*?<\/user_profile>/)?.[0] ?? "";
+    const claimsSection = context.userMessageForModel.match(/<recalled_claims>[\s\S]*?<\/recalled_claims>/)?.[0] ?? "";
+    expect(profileSection).toContain("user/self.preferred_name = Mason");
+    expect(claimsSection).not.toContain("user/self.preferred_name = Mason");
+  });
+
+  test("renders pinned global memory separately from generic recall", () => {
+    const prefix = buildMemoryUserMessagePrefix([{
+      ...recallItem,
+      id: "global:MEMORY.md",
+      kind: "state",
+      scope: "global",
+      statement: "全局规则：最终回复需要说明改动文件和剩余风险。",
+      reason: "global memory brief",
+      pinned: true
+    }]);
+
+    const globalSection = prefix.match(/<global_memory>[\s\S]*?<\/global_memory>/)?.[0] ?? "";
+    const relevantSection = prefix.match(/<relevant_recall>[\s\S]*?<\/relevant_recall>/)?.[0] ?? "";
+    expect(globalSection).toContain("全局规则：最终回复需要说明改动文件和剩余风险。");
+    expect(relevantSection).not.toContain("全局规则");
+  });
+
   test("dedupes and limits final memory items before injecting them into the user message", async () => {
     const store = createMemoryV2Store();
     store.writeEntry({
@@ -365,5 +411,33 @@ describe("memory-v2 user message prefix", () => {
     expect(context.userMessageForModel).not.toContain("  <conversation_history>");
     expect(context.userMessageForModel).not.toContain("thread-secret");
     expect(context.userMessageForModel).not.toContain("glm-4.5");
+  });
+
+  test("injects writing style claims for writing tasks even when the query does not name memory", async () => {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户写作风格偏好简洁、有温度",
+        confidence: "high",
+        tags: ["voice", "writing-style"],
+        claim: {
+          subject: "user/self",
+          predicate: "writing_style",
+          object: "简洁、有温度"
+        }
+      }
+    });
+
+    const context = await buildMemoryV2UserMessageContext({
+      workspaceSlug: "demo",
+      sessionType: "main",
+      userMessage: "帮我写一段项目介绍"
+    });
+
+    expect(context.userMessageForModel).toContain("<user_voice>");
+    expect(context.userMessageForModel).toContain("Treat <user_voice> as tone and writing-style guidance only");
+    expect(context.userMessageForModel).toContain("user/self.writing_style = 简洁、有温度");
   });
 });

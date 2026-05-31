@@ -12,6 +12,7 @@ export const MEMORY_CLAIM_SUBJECT_WORKSPACE = "workspace/default";
 export const MEMORY_CLAIM_PREFERRED_NAME = "preferred_name";
 export const MEMORY_CLAIM_IDENTITY = "identity";
 export const MEMORY_CLAIM_PREFERENCE = "preference";
+export const MEMORY_CLAIM_WRITING_STYLE = "writing_style";
 export const MEMORY_CLAIM_SOURCE_OF_TRUTH = "source_of_truth";
 
 export interface MemoryV2QueryPlan {
@@ -73,6 +74,15 @@ export function inferMemoryV2Claim(input: {
     };
   }
 
+  const writingStyle = extractWritingStyle(statement, tags);
+  if (writingStyle) {
+    return {
+      subject: MEMORY_CLAIM_SUBJECT_USER,
+      predicate: MEMORY_CLAIM_WRITING_STYLE,
+      object: writingStyle
+    };
+  }
+
   const sourceOfTruth = extractSourceOfTruth(statement);
   if (sourceOfTruth) {
     return {
@@ -126,6 +136,13 @@ export function planMemoryV2Query(query: string): MemoryV2QueryPlan {
       includeConversationHistory
     };
   }
+  if (/写作风格|文风|语气|表达风格|措辞|行文|writing style|voice|tone/.test(text)) {
+    return {
+      querySubject: MEMORY_CLAIM_SUBJECT_USER,
+      desiredPredicates: [MEMORY_CLAIM_WRITING_STYLE, MEMORY_CLAIM_PREFERENCE],
+      includeConversationHistory
+    };
+  }
   if (/偏好|喜欢|默认|习惯|prefer|preference|default|habit/.test(text)) {
     return {
       querySubject: workspaceScoped
@@ -161,8 +178,19 @@ export function sortClaimMatchesFirst(items: MemoryV2RecallItem[], plan: MemoryV
     const aClaim = isClaimMatchForQuery(a, plan) ? 1 : 0;
     const bClaim = isClaimMatchForQuery(b, plan) ? 1 : 0;
     if (aClaim !== bClaim) return bClaim - aClaim;
+    if (aClaim && bClaim) {
+      const predicateOrder = claimPredicateRank(a, plan) - claimPredicateRank(b, plan);
+      if (predicateOrder !== 0) return predicateOrder;
+    }
     return b.score - a.score;
   });
+}
+
+function claimPredicateRank(item: Pick<MemoryV2RecallItem, "claim">, plan: MemoryV2QueryPlan): number {
+  if (!item.claim) return Number.MAX_SAFE_INTEGER;
+  const normalized = normalizeKeyPart(item.claim.predicate);
+  const index = plan.desiredPredicates.findIndex((predicate) => normalizeKeyPart(predicate) === normalized);
+  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
 }
 
 function extractFirst(value: string, patterns: RegExp[]): string | undefined {
@@ -171,6 +199,19 @@ function extractFirst(value: string, patterns: RegExp[]): string | undefined {
     if (name && !/什么|谁|what|who/i.test(name)) return stripNameNoise(name);
   }
   return undefined;
+}
+
+function extractWritingStyle(value: string, tags: Set<string>): string | undefined {
+  if (!tags.has("voice") && !tags.has("writing-style") && !/写作风格|文风|语气|表达风格|措辞|行文|writing style|voice|tone/i.test(value)) {
+    return undefined;
+  }
+  return extractFirst(value, [
+    /(?:我|用户)(?:的)?(?:写作风格|文风|表达风格|语气)(?:是|偏好|喜欢|为|:|：)?\s*([^。！？\n]+)/i,
+    /用户(?:的)?(?:写作风格|文风|表达风格|语气)(?:是|偏好|喜欢|为|:|：)?\s*([^。！？\n]+)/i,
+    /(?:我|用户)(?:写作|表达|回复)(?:时)?(?:偏好|喜欢|习惯)\s*([^。！？\n]+)/i,
+    /user (?:writing style|voice|tone)(?: is|:)?\s*([^.!?\n]+)/i,
+    /user prefers\s*([^.!?\n]+?)\s*(?:writing|tone|voice|style)/i
+  ]) ?? (tags.has("voice") || tags.has("writing-style") ? value : undefined);
 }
 
 function extractSourceOfTruth(value: string): string | undefined {

@@ -5,9 +5,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   appendDaily,
   appendRunArchive,
+  createMemoryV2Store,
+  deleteEntry,
   listEntries,
   readEntryFile,
+  readPendingFile,
   redactArchiveRecord,
+  resolvePending,
+  updateEntry,
   writeEntry
 } from "./markdown-store";
 
@@ -67,4 +72,165 @@ describe("memory-v2 markdown store", () => {
       redacted: true
     });
   });
+
+  test("manually updates an entry statement and metadata", () => {
+    const entry = writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户希望被称呼为 Mason",
+      confidence: "high",
+      tags: ["profile"]
+    });
+
+    const updated = updateEntry({
+      scope: "global",
+      id: entry.frontmatter.id,
+      statement: "用户希望被称呼为 Alice",
+      kind: "fact",
+      confidence: "medium",
+      tags: ["profile", "manual"]
+    });
+
+    expect(updated.statement).toBe("用户希望被称呼为 Alice");
+    expect(updated.frontmatter.kind).toBe("fact");
+    expect(updated.frontmatter.confidence).toBe("medium");
+    expect(updated.frontmatter.tags).toEqual(["profile", "manual"]);
+    expect(readEntryFile(entry.path).statement).toBe("用户希望被称呼为 Alice");
+  });
+
+  test("manually deletes an entry and removes stale relations from neighbors", () => {
+    const first = writeEntry({
+      kind: "fact",
+      targetScope: "workspace",
+      statement: "第一条记忆",
+      confidence: "high",
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    const second = writeEntry({
+      kind: "fact",
+      targetScope: "workspace",
+      statement: "第二条记忆",
+      confidence: "high",
+      appliesWhen: { workspaceSlug: "demo" }
+    }, {
+      related: [first.frontmatter.id],
+      supersedes: [first.frontmatter.id]
+    });
+    updateEntryStatusForTest(first.frontmatter.id, second.frontmatter.id);
+
+    const result = deleteEntry({
+      scope: "workspace",
+      workspaceSlug: "demo",
+      id: first.frontmatter.id
+    });
+
+    expect(result).toEqual({ ok: true, id: first.frontmatter.id, path: first.path });
+    expect(existsSync(first.path)).toBe(false);
+    const refreshedSecond = readEntryFile(second.path);
+    expect(refreshedSecond.frontmatter.related).toEqual([]);
+    expect(refreshedSecond.frontmatter.supersedes).toEqual([]);
+  });
+
+  test("accepts a pending conflict into a real entry and supersedes existing entries", () => {
+    const store = createMemoryV2Store();
+    const existing = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户希望被称呼为 Mason",
+      confidence: "high",
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Mason"
+      }
+    });
+    const pending = store.writePending({
+      type: "conflict",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Alice",
+        confidence: "high",
+        tags: ["profile", "identity", "preferred-name"],
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Alice"
+        }
+      },
+      existingIds: [existing.frontmatter.id],
+      reason: "同一称呼偏好发生变化"
+    });
+
+    const result = resolvePending({
+      workspaceSlug: "demo",
+      path: pending.path,
+      action: "accept"
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.entryId).toBeTruthy();
+    const entryId = result.entryId;
+    if (!entryId) throw new Error("pending accept did not create entry");
+    const accepted = listEntries({ scopes: ["global"], includeStatuses: ["active"] })
+      .find((entry) => entry.frontmatter.id === entryId);
+    expect(accepted?.statement).toBe("用户希望被称呼为 Alice");
+    expect(accepted?.frontmatter.claim?.object).toBe("Alice");
+    expect(readEntryFile(existing.path).frontmatter.status).toBe("superseded");
+    expect(readEntryFile(existing.path).frontmatter.superseded_by).toBe(entryId);
+    expect(readPendingFile(pending.path).frontmatter.status).toBe("resolved");
+  });
+
+  test("accepts a pending conflict with a manual candidate override", () => {
+    const store = createMemoryV2Store();
+    const existing = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户希望被称呼为 Mason",
+      confidence: "high"
+    });
+    const pending = store.writePending({
+      type: "conflict",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户希望被称呼为 Alice",
+        confidence: "medium",
+        tags: ["profile"]
+      },
+      existingIds: [existing.frontmatter.id],
+      reason: "称呼偏好变化"
+    });
+
+    const result = resolvePending({
+      workspaceSlug: "demo",
+      path: pending.path,
+      action: "accept",
+      candidateOverride: {
+        statement: "用户希望在产品演示时被称呼为 Alice",
+        kind: "fact",
+        confidence: "high",
+        tags: ["profile", "demo"]
+      }
+    });
+
+    const entryId = result.entryId;
+    if (!entryId) throw new Error("pending accept did not create entry");
+    const accepted = listEntries({ scopes: ["global"], includeStatuses: ["active"] })
+      .find((entry) => entry.frontmatter.id === entryId);
+    expect(accepted?.statement).toBe("用户希望在产品演示时被称呼为 Alice");
+    expect(accepted?.frontmatter.kind).toBe("fact");
+    expect(accepted?.frontmatter.confidence).toBe("high");
+    expect(accepted?.frontmatter.tags).toEqual(["profile", "demo"]);
+  });
 });
+
+function updateEntryStatusForTest(id: string, supersededBy: string): void {
+  createMemoryV2Store().updateEntryStatus({
+    scope: "workspace",
+    workspaceSlug: "demo",
+    id,
+    status: "superseded",
+    supersededBy
+  });
+}

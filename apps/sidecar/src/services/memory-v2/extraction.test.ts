@@ -70,6 +70,23 @@ describe("extractExplicitMemoryCandidates", () => {
     })]);
   });
 
+  test("extracts explicit writing-style memory with a voice claim", () => {
+    expect(extractExplicitMemoryCandidates({
+      text: "记住：我的写作风格偏好简洁、有温度",
+      workspaceSlug: "demo"
+    })).toEqual([expect.objectContaining({
+      kind: "preference",
+      targetScope: "global",
+      statement: "我的写作风格偏好简洁、有温度",
+      tags: expect.arrayContaining(["voice", "writing-style"]),
+      claim: {
+        subject: "user/self",
+        predicate: "writing_style",
+        object: "简洁、有温度"
+      }
+    })]);
+  });
+
   test("extracts explicit remember intent as workspace fact", () => {
     expect(extractExplicitMemoryCandidates({
       text: "记住 Lume Memory V2 使用 Markdown 作为事实源",

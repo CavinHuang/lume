@@ -114,6 +114,53 @@ describe("searchMemoryV2", () => {
     });
   });
 
+  test("recalls writing-style claims before unrelated preference memories", async () => {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户写作风格偏好简洁、有温度",
+        confidence: "high",
+        tags: ["voice", "writing-style"],
+        claim: {
+          subject: "user/self",
+          predicate: "writing_style",
+          object: "简洁、有温度"
+        }
+      }
+    });
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement: "用户偏好默认用中文回答",
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preference",
+          object: "默认用中文回答"
+        }
+      }
+    });
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "我的文风应该是什么样？",
+      maxResults: 3,
+      semantic: "off"
+    });
+
+    expect(results[0]).toMatchObject({
+      statement: "用户写作风格偏好简洁、有温度",
+      claim: {
+        subject: "user/self",
+        predicate: "writing_style"
+      }
+    });
+  });
+
   test("recalls assistant preferred-name claim for assistant identity questions before history", async () => {
     await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",

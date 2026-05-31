@@ -63,6 +63,10 @@ export interface MemoryV2PendingFrontmatter {
     kind: MemoryV2Kind;
     targetScope: MemoryV2Scope;
     statement: string;
+    confidence?: MemoryV2Confidence;
+    tags?: string[];
+    entities?: string[];
+    appliesWhen?: Record<string, string>;
     claim?: MemoryV2Claim;
   };
   existing?: {

@@ -54,6 +54,7 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     explicitModelRef: runtimeConfig.retrieval.rerankModelRef
   });
   const openPending = pending.filter((item) => item.frontmatter.status === "open");
+  const entryById = new Map([...workspaceEntries, ...globalEntries].map((entry) => [entry.frontmatter.id, entry]));
   const dailyFiles = listFiles(workspacePaths.dailyDir, "daily", "workspace");
   const runFiles = listFiles(workspacePaths.runsDir, "run", "workspace");
   const files: MemorySettingsFileSummary[] = [
@@ -77,7 +78,7 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     files,
     workspaceEntries: workspaceEntries.map(entrySummary),
     globalEntries: globalEntries.map(entrySummary),
-    pending: pending.map(pendingSummary),
+    pending: pending.map((item) => pendingSummary(item, entryById)),
     retrieval: {
       semantic: {
         mode: runtimeConfig.retrieval.semantic,
@@ -160,11 +161,16 @@ function entrySummary(entry: MemoryV2Entry): MemorySettingsEntrySummary {
     statement: entry.statement,
     updated: entry.frontmatter.updated,
     pinned: entry.frontmatter.pinned,
-    tags: entry.frontmatter.tags
+    tags: entry.frontmatter.tags,
+    ...(entry.frontmatter.claim ? { claim: entry.frontmatter.claim } : {})
   };
 }
 
-function pendingSummary(item: MemoryV2PendingItem): MemorySettingsPendingSummary {
+function pendingSummary(
+  item: MemoryV2PendingItem,
+  entryById: Map<string, MemoryV2Entry>
+): MemorySettingsPendingSummary {
+  const existingIds = item.frontmatter.existing?.ids ?? [];
   return {
     id: item.frontmatter.id,
     path: item.path,
@@ -173,7 +179,19 @@ function pendingSummary(item: MemoryV2PendingItem): MemorySettingsPendingSummary
     created: item.frontmatter.created,
     statement: item.frontmatter.candidate.statement,
     reason: item.frontmatter.reason,
-    existingIds: item.frontmatter.existing?.ids ?? []
+    existingIds,
+    candidate: {
+      scope: item.frontmatter.candidate.targetScope,
+      kind: fromV2Kind(item.frontmatter.candidate.kind),
+      confidence: item.frontmatter.candidate.confidence ?? "medium",
+      statement: item.frontmatter.candidate.statement,
+      tags: item.frontmatter.candidate.tags ?? [],
+      ...(item.frontmatter.candidate.claim ? { claim: item.frontmatter.candidate.claim } : {})
+    },
+    existingEntries: existingIds
+      .map((id) => entryById.get(id))
+      .filter((entry): entry is MemoryV2Entry => Boolean(entry))
+      .map(entrySummary)
   };
 }
 

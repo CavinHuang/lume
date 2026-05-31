@@ -1,7 +1,14 @@
 import { searchMemoryV2 } from "./retrieval";
 import { createMemoryV2Store } from "./markdown-store";
 import { isProfileEntry, isProfileRecallItem, memoryEntryToRecallItem } from "./profile";
-import { isClaimMatchForQuery, planMemoryV2Query } from "./claim";
+import {
+  MEMORY_CLAIM_IDENTITY,
+  MEMORY_CLAIM_PREFERRED_NAME,
+  MEMORY_CLAIM_SUBJECT_USER,
+  MEMORY_CLAIM_WRITING_STYLE,
+  isClaimMatchForQuery,
+  planMemoryV2Query
+} from "./claim";
 import { selectMemoryV2PromptItems } from "./context-selection";
 import type { MemoryV2RecallItem } from "./types";
 
@@ -32,10 +39,16 @@ export async function buildMemoryV2UserMessageContext(input: {
     scopes: ["global", "workspace"],
     includeStatuses: ["active"]
   }).filter(isProfileEntry).map((entry) => memoryEntryToRecallItem(entry));
+  const voiceItems = createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    scopes: ["global", "workspace"],
+    includeStatuses: ["active"]
+  }).map((entry) => memoryEntryToRecallItem(entry)).filter(isVoiceRecallItem);
   const directClaimItems = profileItems.filter((item) => isClaimMatchForQuery(item, queryPlan));
   const profileSeed = directClaimItems.length > 0
     ? directClaimItems
     : queryPlan.querySubject ? profileItems : [];
+  const voiceSeed = shouldSeedVoiceMemory(input.userMessage, queryPlan.desiredPredicates) ? voiceItems : [];
   const promptMaxItems = input.maxItems ?? 8;
   const items = await searchMemoryV2({
     workspaceSlug: input.workspaceSlug,
@@ -43,7 +56,7 @@ export async function buildMemoryV2UserMessageContext(input: {
     maxResults: Math.max(promptMaxItems * 3, 16),
     ...(queryPlan.includeConversationHistory ? { includeRecentDaily: true } : {})
   });
-  const merged = mergeRecallItems([...profileSeed, ...items]);
+  const merged = mergeRecallItems([...profileSeed, ...voiceSeed, ...items]);
   const selected = selectMemoryV2PromptItems({
     items: merged,
     query: input.userMessage,
@@ -59,21 +72,29 @@ export async function buildMemoryV2UserMessageContext(input: {
 
 export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): string {
   if (items.length === 0) return "";
-  const claims = items.filter((item) => item.claim).slice(0, 8);
+  const voice = items.filter(isVoiceRecallItem).slice(0, 5);
+  const voiceIds = new Set(voice.map((item) => item.id));
+  const profileClaims = items.filter((item) => !voiceIds.has(item.id) && isUserProfileClaimItem(item)).slice(0, 8);
+  const profileClaimIds = new Set(profileClaims.map((item) => item.id));
+  const claims = items.filter((item) => item.claim && !voiceIds.has(item.id) && !profileClaimIds.has(item.id)).slice(0, 8);
   const claimIds = new Set(claims.map((item) => item.id));
-  const profile = items.filter((item) => !claimIds.has(item.id) && isProfileRecallItem(item)).slice(0, 8);
+  const profile = items.filter((item) => !voiceIds.has(item.id) && !profileClaimIds.has(item.id) && !claimIds.has(item.id) && isProfileRecallItem(item)).slice(0, 8);
   const profileIds = new Set(profile.map((item) => item.id));
   const conversationHistory = items.filter(isConversationHistory).slice(0, 5);
   const conversationIds = new Set(conversationHistory.map((item) => item.id));
-  const globalPreferences = items.filter((item) => !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.scope === "global" && item.kind === "preference").slice(0, 5);
-  const workspaceCore = items.filter((item) => !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.scope === "workspace" && item.pinned).slice(0, 8);
-  const stale = items.filter((item) => !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.status === "suspected_stale").slice(0, 2);
-  const usedIds = new Set([...claims, ...profile, ...conversationHistory, ...globalPreferences, ...workspaceCore, ...stale].map((item) => item.id));
+  const globalMemory = items.filter((item) => !voiceIds.has(item.id) && !profileClaimIds.has(item.id) && !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.scope === "global" && item.pinned).slice(0, 5);
+  const globalMemoryIds = new Set(globalMemory.map((item) => item.id));
+  const globalPreferences = items.filter((item) => !voiceIds.has(item.id) && !profileClaimIds.has(item.id) && !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && !globalMemoryIds.has(item.id) && item.scope === "global" && item.kind === "preference").slice(0, 5);
+  const workspaceCore = items.filter((item) => !voiceIds.has(item.id) && !profileClaimIds.has(item.id) && !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && item.scope === "workspace" && item.pinned).slice(0, 8);
+  const stale = items.filter((item) => !voiceIds.has(item.id) && !profileClaimIds.has(item.id) && !claimIds.has(item.id) && !conversationIds.has(item.id) && !profileIds.has(item.id) && !globalMemoryIds.has(item.id) && item.status === "suspected_stale").slice(0, 2);
+  const usedIds = new Set([...voice, ...profileClaims, ...claims, ...profile, ...conversationHistory, ...globalMemory, ...globalPreferences, ...workspaceCore, ...stale].map((item) => item.id));
   const relevant = items.filter((item) => !usedIds.has(item.id) && item.status === "active").slice(0, 8);
 
   const sections = [
+    renderVoiceSection(voice),
+    renderProfileSection([...profileClaims, ...profile]),
     renderClaimSection(claims),
-    renderSection("user_profile", profile),
+    renderSection("global_memory", globalMemory),
     renderSection("global_preferences", globalPreferences),
     renderSection("workspace_core", workspaceCore),
     renderConversationHistorySection(conversationHistory),
@@ -86,6 +107,8 @@ export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): strin
     "These memories are background context. Follow current user instructions and project/runtime instructions if they conflict with memory. Treat suspected_stale items as possibly outdated.",
     "Use recalled memory naturally. Do not say phrases like \"from memory\", \"from the memory\", or \"从记忆中可以看出\" unless the user asks how you know.",
     "Treat <recalled_claims> as structured stable facts. Treat <conversation_history> only as continuity about prior discussion, not as identity facts.",
+    "Treat <global_memory> as durable cross-workspace guidance from the user. Apply it unless the current user message or higher-priority runtime/project instructions conflict.",
+    "Treat <user_voice> as tone and writing-style guidance only. It must not override current user instructions, workspace rules, facts, safety, or privacy.",
     "For assistant identity questions such as \"你是谁？\" or \"你叫什么？\": if assistant/self.preferred_name is recalled, answer naturally that the user can call you by that name; if product/workspace identity such as Lume is also relevant, mention it as the underlying app identity, not as a replacement for the user-given name.",
     "For user identity questions such as \"我是谁？\" or \"我叫什么？\": only answer with real user profile facts if a user/self claim says them. If no actual identity or preferred-name fact is recalled, keep continuity first, then admit the gap warmly: e.g. \"我们之前聊过这个问题。但说实话，我现在还没有一个真正能叫出你的称呼。你愿意的话，告诉我你想让我怎么叫你，我之后就按这个来。\"",
     "If a recalled daily/run note only shows the user asked the same question before, say naturally that you have discussed or tested this topic before.",
@@ -123,6 +146,30 @@ function renderClaimSection(items: MemoryV2RecallItem[]): string {
   ].join("\n");
 }
 
+function renderProfileSection(items: MemoryV2RecallItem[]): string {
+  if (items.length === 0) return "";
+  return [
+    "  <user_profile>",
+    ...items.map((item) => item.claim
+      ? `  - [${item.id}] ${item.claim.subject}.${item.claim.predicate} = ${singleLine(item.claim.object)} (${item.scope}, ${item.kind}): ${singleLine(item.statement)}`
+      : `  - [${item.id}] ${item.kind}: ${singleLine(item.statement)}`),
+    "  </user_profile>",
+    ""
+  ].join("\n");
+}
+
+function renderVoiceSection(items: MemoryV2RecallItem[]): string {
+  if (items.length === 0) return "";
+  return [
+    "  <user_voice>",
+    ...items.map((item) => item.claim
+      ? `  - [${item.id}] ${item.claim.subject}.${item.claim.predicate} = ${singleLine(item.claim.object)} (${item.scope}, ${item.kind}): ${singleLine(item.statement)}`
+      : `  - [${item.id}] ${item.kind}: ${singleLine(item.statement)}`),
+    "  </user_voice>",
+    ""
+  ].join("\n");
+}
+
 function renderConversationHistorySection(items: MemoryV2RecallItem[]): string {
   if (items.length === 0) return "";
   return [
@@ -131,6 +178,23 @@ function renderConversationHistorySection(items: MemoryV2RecallItem[]): string {
     "  </conversation_history>",
     ""
   ].join("\n");
+}
+
+function isVoiceRecallItem(item: MemoryV2RecallItem): boolean {
+  return item.claim?.predicate === MEMORY_CLAIM_WRITING_STYLE;
+}
+
+function isUserProfileClaimItem(item: MemoryV2RecallItem): boolean {
+  return item.claim?.subject === MEMORY_CLAIM_SUBJECT_USER
+    && (
+      item.claim.predicate === MEMORY_CLAIM_PREFERRED_NAME
+      || item.claim.predicate === MEMORY_CLAIM_IDENTITY
+    );
+}
+
+function shouldSeedVoiceMemory(query: string, desiredPredicates: string[]): boolean {
+  return desiredPredicates.includes(MEMORY_CLAIM_WRITING_STYLE)
+    || /写|改写|润色|文案|文章|项目介绍|介绍|总结|草稿|邮件|标题|表达|语气|文风|write|draft|rewrite|polish|copy|article|email|tone|voice/i.test(query);
 }
 
 function isConversationHistory(item: MemoryV2RecallItem): boolean {
