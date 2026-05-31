@@ -97,22 +97,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       },
     }))
 
-    if (displayItems.length === 0) {
-      const emptyLabel = trigger === '@'
-        ? '继续输入关键词搜索 Agent 或文件'
-        : trigger === '#'
-          ? '继续输入关键词搜索 MCP 服务'
-          : trigger === '$'
-            ? '继续输入关键词搜索技能'
-            : '继续输入关键词搜索技能或 slash 能力'
-      return (
-        <div className="min-w-[280px] rounded-[1.25rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] p-3 shadow-[0_22px_52px_-32px_hsl(var(--shadow-panel)/0.45)]">
-          <p className="text-[12px] font-medium text-[var(--text-2)]">没有匹配项</p>
-          <p className="mt-1 text-[11px] text-[var(--text-3)]">{emptyLabel}</p>
-        </div>
-      )
-    }
-
+    // MCP 状态面板：优先于空状态检查，确保面板切换时宽度不变
     if (panelMode === 'mcp-status') {
       return (
         <div className="w-full overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_98%,transparent)] shadow-[0_18px_46px_-34px_hsl(var(--shadow-panel)/0.42)]">
@@ -166,6 +151,22 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
             <span>← 返回命令列表</span>
             <span>Esc 关闭</span>
           </div>
+        </div>
+      )
+    }
+
+    if (displayItems.length === 0) {
+      const emptyLabel = trigger === '@'
+        ? '继续输入关键词搜索 Agent 或文件'
+        : trigger === '#'
+          ? '继续输入关键词搜索 MCP 服务'
+          : trigger === '$'
+            ? '继续输入关键词搜索技能'
+            : '继续输入关键词搜索技能或 slash 能力'
+      return (
+        <div className="min-w-[280px] rounded-[1.25rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] p-3 shadow-[0_22px_52px_-32px_hsl(var(--shadow-panel)/0.45)]">
+          <p className="text-[12px] font-medium text-[var(--text-2)]">没有匹配项</p>
+          <p className="mt-1 text-[11px] text-[var(--text-3)]">{emptyLabel}</p>
         </div>
       )
     }
