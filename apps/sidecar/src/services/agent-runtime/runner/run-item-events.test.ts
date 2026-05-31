@@ -361,6 +361,26 @@ describe("projectRunStateToRuntimeEvents", () => {
         },
         {
           type: "system_event",
+          id: "compact-progress",
+          name: "context_compaction_progress",
+          payload: {
+            type: "system",
+            subtype: "context_compaction_progress",
+            compact_metadata: {
+              trigger: "auto",
+              pre_tokens: 900,
+              stage: "summarizing",
+              progress: 45,
+              message: "正在生成上下文摘要",
+              policy: "kernel-v1",
+              source: "agent-runtime-kernel",
+              context_window: 1000
+            }
+          },
+          createdAt: "2026-04-30T00:00:01.500Z"
+        },
+        {
+          type: "system_event",
           id: "compact-done",
           name: "compact_boundary",
           payload: {
@@ -484,6 +504,18 @@ describe("projectRunStateToRuntimeEvents", () => {
         totalTokens: 1000,
         sections: expect.objectContaining({ session: 650 })
       }),
+      policy: "kernel-v1",
+      source: "agent-runtime-kernel"
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      id: "run-1:compact-progress:context.compaction.progress",
+      type: "context.compaction.progress",
+      trigger: "auto",
+      preTokens: 900,
+      contextWindow: 1000,
+      stage: "summarizing",
+      progress: 45,
+      message: "正在生成上下文摘要",
       policy: "kernel-v1",
       source: "agent-runtime-kernel"
     }));

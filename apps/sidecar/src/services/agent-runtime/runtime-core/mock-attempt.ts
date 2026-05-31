@@ -313,6 +313,19 @@ export async function runRuntimeCoreMockCompactionAttempt(
     content: [{ type: "text", text: input.userMessage }],
     timestamp: Date.now()
   });
+  emit.onSdkMessage({
+    type: "system",
+    subtype: "context_compaction_progress",
+    compact_metadata: {
+      trigger: "manual",
+      pre_tokens: 0,
+      stage: "summarizing",
+      progress: 45,
+      message: "正在生成上下文摘要",
+      policy: "mock-runtime-core",
+      source: "mock-runtime-core"
+    }
+  } as any);
   emit.onSdkMessage({ type: "system", subtype: "compact_boundary" } as any);
   sessionManager.appendCompaction(summary, currentLeafId, 0, {
     source: "mock-runtime-core"

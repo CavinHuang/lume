@@ -1,6 +1,8 @@
 import {
   calculateAutoCompactThreshold,
   compactConversation,
+  estimateMessagesTokens,
+  estimateTokens,
   shouldAutoCompact,
   type AgentContextController,
   type AgentContextCompactionMetadata
@@ -57,7 +59,12 @@ export function createContextBudgetSnapshot(input: ContextBudgetSnapshotInput): 
   const sections = {
     system: estimateTokens(input.systemPrompt ?? ""),
     memory: estimateTokens(input.memoryContext ?? ""),
-    session: sessionMessages.length > 0 ? estimateTokens(JSON.stringify(sessionMessages)) : 0,
+    session: sessionMessages.length > 0
+      ? estimateMessagesTokens(sessionMessages.map((message) => ({
+          role: message.role,
+          content: message.content ?? ""
+        })))
+      : 0,
     toolSchemas: input.toolSchemaTokens ?? 0,
     reservedOutput: input.reservedOutputTokens ?? Math.floor(input.total * 0.05)
   };
@@ -198,10 +205,6 @@ function createKernelCompactionMetadata(
     ...(preservedSegment ? { preservedSegment } : {}),
     budget
   };
-}
-
-function estimateTokens(value: string): number {
-  return Math.ceil(value.length / 4);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

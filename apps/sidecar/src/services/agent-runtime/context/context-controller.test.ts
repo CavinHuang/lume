@@ -30,6 +30,25 @@ describe("Kernel context controller", () => {
     });
   });
 
+  test("uses content-aware token estimates for kernel budget sections", () => {
+    expect(createContextBudgetSnapshot({
+      model: "gpt-test",
+      total: 10_000,
+      systemPrompt: "你好世界",
+      sessionMessages: [{
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "12345678" },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "x".repeat(40_000) } }
+        ]
+      }],
+      reservedOutputTokens: 0
+    }).sections).toMatchObject({
+      system: 4,
+      session: 2_002
+    });
+  });
+
   test("truncates oversized tool results while preserving active tool pairs", () => {
     const largeOutput = `${"a".repeat(60)}${"b".repeat(60)}`;
     const messages = sanitizeKernelContextMessages([

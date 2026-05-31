@@ -293,6 +293,24 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
       source: stringValue(metadata.source, "agent-sdk")
     }];
   }
+  if (item.name === "context_compaction_progress") {
+    return [{
+      id: `${run.runId}:${item.id}:context.compaction.progress`,
+      type: "context.compaction.progress",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      trigger: stringValue(metadata.trigger, "auto"),
+      preTokens: numberValue(metadata.pre_tokens),
+      ...optionalNumber("contextWindow", contextWindowFromMetadata(metadata)),
+      ...optionalBudget(metadata),
+      policy: stringValue(metadata.policy, "sdk-default"),
+      source: stringValue(metadata.source, "agent-sdk"),
+      stage: stringValue(metadata.stage, "summarizing"),
+      progress: clampProgress(numberValue(metadata.progress)),
+      ...(typeof metadata.message === "string" ? { message: metadata.message } : {})
+    }];
+  }
   if (item.name === "compact_boundary") {
     return [{
       id: `${run.runId}:${item.id}:context.compaction.completed`,
@@ -651,4 +669,9 @@ function optionalBudget(metadata: Record<string, unknown>): { budget: NonNullabl
 
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function clampProgress(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
 }

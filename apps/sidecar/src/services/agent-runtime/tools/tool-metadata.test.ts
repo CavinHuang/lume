@@ -47,4 +47,20 @@ describe("tool-metadata", () => {
     });
     expect(isToolAllowedInPlanMode("TaskReport")).toBeFalse();
   });
+
+  test("classifies Guanlan tools as low-risk plan-safe network reads", () => {
+    for (const name of [
+      "guanlan_search",
+      "guanlan_read",
+      "guanlan_hotnews",
+      "guanlan_research"
+    ]) {
+      expect(getToolMetadata(name)).toMatchObject({
+        category: "network",
+        riskLevel: "low",
+        allowedInPlanMode: true
+      });
+      expect(isToolAllowedInPlanMode(name)).toBeTrue();
+    }
+  });
 });
