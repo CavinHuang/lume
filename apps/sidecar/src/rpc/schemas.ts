@@ -171,6 +171,37 @@ export const memoryOpenSourceInputSchema = z.object({
   path: z.string().min(1)
 });
 
+const memoryEntryScopeSchema = z.enum(["global", "workspace"]);
+const memoryEntryConfidenceSchema = z.enum(["low", "medium", "high"]);
+
+export const memoryUpdateEntryInputSchema = z.object({
+  workspaceSlug: idSchema,
+  scope: memoryEntryScopeSchema,
+  id: z.string().trim().min(1),
+  statement: z.string().trim().min(1).optional(),
+  kind: memoryKindSchema.optional(),
+  confidence: memoryEntryConfidenceSchema.optional(),
+  tags: z.array(z.string()).optional()
+}).strict();
+
+export const memoryDeleteEntryInputSchema = z.object({
+  workspaceSlug: idSchema,
+  scope: memoryEntryScopeSchema,
+  id: z.string().trim().min(1)
+}).strict();
+
+export const memoryResolvePendingInputSchema = z.object({
+  workspaceSlug: idSchema,
+  path: z.string().trim().min(1),
+  action: z.enum(["accept", "reject", "resolve"]),
+  candidateOverride: z.object({
+    statement: z.string().trim().min(1).optional(),
+    kind: memoryKindSchema.optional(),
+    confidence: memoryEntryConfidenceSchema.optional(),
+    tags: z.array(z.string()).optional()
+  }).strict().optional()
+}).strict();
+
 export const memoryToolPolicySchema = z.object({
   allow: z.array(z.string()).optional(),
   deny: z.array(z.string()).optional()
@@ -315,6 +346,25 @@ const lumeConfigPermissionsSchema = z.object({
   approvals: lumeConfigPermissionApprovalsSchema.optional()
 }).strict();
 
+const lumeConfigWebSearchProviderSchema = z.object({
+  enabled: z.boolean().optional(),
+  apiKey: z.string().trim().min(1).optional()
+}).strict();
+
+const lumeConfigWebSearchSchema = z.object({
+  strategy: z.enum(["priority", "joint"]).optional(),
+  providers: z.object({
+    guanlan: lumeConfigWebSearchProviderSchema.optional(),
+    exa: lumeConfigWebSearchProviderSchema.optional(),
+    pipellm: lumeConfigWebSearchProviderSchema.optional(),
+    zhipu: lumeConfigWebSearchProviderSchema.optional(),
+    tavily: lumeConfigWebSearchProviderSchema.optional(),
+    brave: lumeConfigWebSearchProviderSchema.optional(),
+    duckduckgo: lumeConfigWebSearchProviderSchema.optional(),
+    bing: lumeConfigWebSearchProviderSchema.optional()
+  }).strict().optional()
+}).strict();
+
 const lumeConfigUpdateBaseSchema = z.object({
   source: z.enum(["user", "agent", "system"]),
   workspaceSlug: optionalIdSchema,
@@ -365,6 +415,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("permissions.approvals"),
     value: lumeConfigPermissionApprovalsSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("webSearch"),
+    value: lumeConfigWebSearchSchema
   })
 ]);
 

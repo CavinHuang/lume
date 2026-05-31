@@ -63,6 +63,76 @@ describe("lume-config-service", () => {
     });
   });
 
+  test("应识别 guanlan 搜索后端并同步启用顺序到环境变量", () => {
+    const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
+    const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;
+    const prevGuanlanPython = process.env.LUME_GUANLAN_PYTHON;
+    const prevLumePython = process.env.LUME_PYTHON;
+    try {
+      process.env.LUME_PYTHON = "/custom/python";
+      updateLumeConfigSection({
+        source: "system",
+        path: "webSearch",
+        value: {
+          strategy: "priority",
+          providers: {
+            guanlan: { enabled: true },
+            exa: { enabled: false, apiKey: "exa-key" },
+            bing: { enabled: true },
+            duckduckgo: { enabled: false }
+          }
+        }
+      });
+
+      const effective = getEffectiveLumeConfig("default");
+
+      expect(effective.webSearch?.providers?.guanlan).toEqual({ enabled: true });
+      expect(process.env.LUME_WEB_SEARCH_PROVIDERS).toBe("guanlan,bing");
+      expect(process.env.LUME_GUANLAN_ENABLED).toBe("1");
+      expect(process.env.LUME_GUANLAN_PYTHON).toBe("/custom/python");
+    } finally {
+      if (prevProviders === undefined) delete process.env.LUME_WEB_SEARCH_PROVIDERS;
+      else process.env.LUME_WEB_SEARCH_PROVIDERS = prevProviders;
+      if (prevGuanlanEnabled === undefined) delete process.env.LUME_GUANLAN_ENABLED;
+      else process.env.LUME_GUANLAN_ENABLED = prevGuanlanEnabled;
+      if (prevGuanlanPython === undefined) delete process.env.LUME_GUANLAN_PYTHON;
+      else process.env.LUME_GUANLAN_PYTHON = prevGuanlanPython;
+      if (prevLumePython === undefined) delete process.env.LUME_PYTHON;
+      else process.env.LUME_PYTHON = prevLumePython;
+    }
+  });
+
+  test("禁用 guanlan 时不设置 guanlan 启用标记", () => {
+    const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
+    const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;
+    const prevGuanlanPython = process.env.LUME_GUANLAN_PYTHON;
+    try {
+      updateLumeConfigSection({
+        source: "system",
+        path: "webSearch",
+        value: {
+          providers: {
+            guanlan: { enabled: false },
+            bing: { enabled: true }
+          }
+        }
+      });
+
+      getEffectiveLumeConfig("default");
+
+      expect(process.env.LUME_WEB_SEARCH_PROVIDERS).toBe("bing");
+      expect(process.env.LUME_GUANLAN_ENABLED).toBe("");
+      expect(process.env.LUME_GUANLAN_PYTHON).toBe("");
+    } finally {
+      if (prevProviders === undefined) delete process.env.LUME_WEB_SEARCH_PROVIDERS;
+      else process.env.LUME_WEB_SEARCH_PROVIDERS = prevProviders;
+      if (prevGuanlanEnabled === undefined) delete process.env.LUME_GUANLAN_ENABLED;
+      else process.env.LUME_GUANLAN_ENABLED = prevGuanlanEnabled;
+      if (prevGuanlanPython === undefined) delete process.env.LUME_GUANLAN_PYTHON;
+      else process.env.LUME_GUANLAN_PYTHON = prevGuanlanPython;
+    }
+  });
+
   test("应支持 hooks.internal 的 workspace 覆盖", () => {
     updateLumeConfigSection({
       source: "system",

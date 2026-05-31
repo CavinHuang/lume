@@ -18,7 +18,8 @@ import {
   type LumeEffectiveConfig,
   type WebSearchProvider
 } from "@lume/shared";
-import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
+import { getConfigDir, getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
+import { ensureGuanlanReady } from "../infra/guanlan-runtime-service";
 
 interface UpdateLumeConfigSectionInput {
   source: LumeConfigAuditSource;
@@ -285,7 +286,7 @@ function normalizeHooksSection(value: unknown): NonNullable<LumeConfigSectionSet
   };
 }
 
-const WEB_SEARCH_PROVIDER_KEYS: WebSearchProvider[] = ["exa", "tavily", "brave", "duckduckgo", "pipellm", "zhipu", "bing"];
+const WEB_SEARCH_PROVIDER_KEYS: WebSearchProvider[] = ["guanlan", "exa", "pipellm", "zhipu", "tavily", "brave", "duckduckgo", "bing"];
 
 function normalizeWebSearchSection(value: unknown): LumeConfigWebSearchSection {
   if (!isPlainObject(value)) return { ...DEFAULT_LUME_WEB_SEARCH };
@@ -306,6 +307,10 @@ function normalizeWebSearchSection(value: unknown): LumeConfigWebSearchSection {
 
 export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   const providers = config.providers ?? {};
+  const enabledProviders = WEB_SEARCH_PROVIDER_KEYS.filter((provider) => providers[provider]?.enabled === true);
+  process.env.LUME_WEB_SEARCH_PROVIDERS = enabledProviders.join(",");
+  syncGuanlanEnv(enabledProviders.includes("guanlan"));
+
   const envMap: Partial<Record<WebSearchProvider, string[]>> = {
     brave: ["BRAVE_API_KEY", "LUME_BRAVE_API_KEY"],
     tavily: ["TAVILY_API_KEY", "LUME_TAVILY_API_KEY"],
@@ -321,6 +326,34 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
         process.env[key] = apiKey;
       }
     }
+  }
+}
+
+function syncGuanlanEnv(enabled: boolean): void {
+  process.env.LUME_GUANLAN_ENABLED = enabled ? "1" : "";
+  if (!enabled) {
+    process.env.LUME_GUANLAN_PYTHON = "";
+    return;
+  }
+  const explicitPython = process.env.LUME_PYTHON?.trim();
+  if (explicitPython) {
+    process.env.LUME_GUANLAN_PYTHON = explicitPython;
+    return;
+  }
+  const runtimeRoot = join(getConfigDir(), "runtime", "python");
+  const managedPython = [
+    join(runtimeRoot, "bin", "python3"),
+    join(runtimeRoot, "python.exe")
+  ].find((candidate) => existsSync(candidate));
+  process.env.LUME_GUANLAN_PYTHON = managedPython ?? "";
+  if (!managedPython) {
+    void ensureGuanlanReady()
+      .then((status) => {
+        if (status.ok && status.pythonPath) {
+          process.env.LUME_GUANLAN_PYTHON = status.pythonPath;
+        }
+      })
+      .catch(() => {});
   }
 }
 

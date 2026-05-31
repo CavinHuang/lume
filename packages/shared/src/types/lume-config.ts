@@ -142,6 +142,7 @@ export interface LumeConfigWebSearchSection {
 export const DEFAULT_LUME_WEB_SEARCH: LumeConfigWebSearchSection = {
   strategy: "priority",
   providers: {
+    guanlan: { enabled: false },
     duckduckgo: { enabled: true },
     bing: { enabled: true }
   }

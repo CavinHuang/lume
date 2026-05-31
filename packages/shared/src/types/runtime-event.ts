@@ -24,6 +24,7 @@ export type RuntimeEventType =
   | "ask_user.requested"
   | "memory.context.used"
   | "context.compaction.started"
+  | "context.compaction.progress"
   | "context.compaction.completed"
   | "usage.updated";
 
@@ -244,6 +245,19 @@ export interface ContextCompactionStartedRuntimeEvent extends RuntimeEventBase {
   source: string;
 }
 
+export interface ContextCompactionProgressRuntimeEvent extends RuntimeEventBase {
+  type: "context.compaction.progress";
+  trigger: "auto" | "manual" | "prompt_too_long" | string;
+  preTokens: number;
+  contextWindow?: number;
+  budget?: ContextBudgetRuntimeSnapshot;
+  policy: string;
+  source: string;
+  stage: string;
+  progress: number;
+  message?: string;
+}
+
 export interface MemoryContextUsedRuntimeEvent extends RuntimeEventBase {
   type: "memory.context.used";
   messageId?: string;
@@ -355,5 +369,6 @@ export type LumeRuntimeEvent =
   | RunCancelledRuntimeEvent
   | MemoryContextUsedRuntimeEvent
   | ContextCompactionStartedRuntimeEvent
+  | ContextCompactionProgressRuntimeEvent
   | ContextCompactionCompletedRuntimeEvent
   | UsageUpdatedRuntimeEvent;
