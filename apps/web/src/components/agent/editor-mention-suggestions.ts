@@ -87,7 +87,7 @@ export function createSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: char as '@' | '/' | '#' | '$' },
+            props: { ...props, trigger: char as '@' | '/' | '#' | '$', getWorkspaceSlug },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)

@@ -1,12 +1,15 @@
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { Blocks, Bot, Box, File, Hash, TerminalSquare } from 'lucide-react'
+import { Blocks, Bot, Box, File, Hash, TerminalSquare, ArrowLeft, Loader2 } from 'lucide-react'
 import { normalizeSlashSuggestionItems, type MentionItem } from './slash-command-state'
+import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
+import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
 
 interface MentionListProps {
   items: MentionItem[]
   command: (item: { id: string; label: string }) => void
   trigger?: '@' | '/' | '#' | '$'
+  getWorkspaceSlug?: () => string | null
 }
 
 export interface MentionListRef {
@@ -14,19 +17,69 @@ export interface MentionListRef {
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
-  function MentionList({ items, command, trigger = '/' }, ref) {
+  function MentionList({ items, command, trigger = '/', getWorkspaceSlug }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0)
+    const [panelMode, setPanelMode] = useState<'commands' | 'mcp-status'>('commands')
+    const [mcpRows, setMcpRows] = useState<McpServerRow[]>([])
+    const [mcpLoading, setMcpLoading] = useState(false)
+    const [mcpSelectedIndex, setMcpSelectedIndex] = useState(0)
     const displayItems = trigger === '/' ? normalizeSlashSuggestionItems(items) : items
 
     useEffect(() => setSelectedIndex(0), [items])
 
+    const fetchMcpData = useCallback(async () => {
+      const slug = getWorkspaceSlug?.()
+      if (!slug) return
+      setMcpLoading(true)
+      try {
+        const [statusResult, configResult] = await Promise.all([
+          getMcpStatus(slug, { waitForConnections: false }),
+          getMcpConfig(slug),
+        ])
+        const rows = buildMcpServerRows(configResult?.servers, statusResult?.servers)
+        setMcpRows(rows)
+      } catch {
+        setMcpRows([])
+      } finally {
+        setMcpLoading(false)
+      }
+    }, [getWorkspaceSlug])
+
     const selectItem = useCallback((index: number) => {
       const item = displayItems[index]
-      if (item) command({ id: item.id, label: item.label })
-    }, [displayItems, command])
+      if (!item) return
+      if (item.id === 'mcp' && item.type === 'command') {
+        setPanelMode('mcp-status')
+        setMcpSelectedIndex(0)
+        fetchMcpData()
+        return
+      }
+      command({ id: item.id, label: item.label })
+    }, [displayItems, command, fetchMcpData])
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
+        if (panelMode === 'mcp-status') {
+          if (event.key === 'Escape') {
+            return false
+          }
+          if (event.key === 'Backspace') {
+            setPanelMode('commands')
+            return true
+          }
+          if (mcpRows.length > 0) {
+            if (event.key === 'ArrowUp') {
+              setMcpSelectedIndex((i) => (i + mcpRows.length - 1) % mcpRows.length)
+              return true
+            }
+            if (event.key === 'ArrowDown') {
+              setMcpSelectedIndex((i) => (i + 1) % mcpRows.length)
+              return true
+            }
+          }
+          return false
+        }
+
         if (displayItems.length === 0) return false
         if (event.key === 'ArrowUp') {
           setSelectedIndex((i) => (i + displayItems.length - 1) % displayItems.length)
@@ -56,6 +109,63 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         <div className="min-w-[280px] rounded-[1.25rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] p-3 shadow-[0_22px_52px_-32px_hsl(var(--shadow-panel)/0.45)]">
           <p className="text-[12px] font-medium text-[var(--text-2)]">没有匹配项</p>
           <p className="mt-1 text-[11px] text-[var(--text-3)]">{emptyLabel}</p>
+        </div>
+      )
+    }
+
+    if (panelMode === 'mcp-status') {
+      return (
+        <div className="w-full overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_98%,transparent)] shadow-[0_18px_46px_-34px_hsl(var(--shadow-panel)/0.42)]">
+          {/* 标题栏 */}
+          <div className="flex items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
+            <button
+              className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-3)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_52%,transparent)] hover:text-[var(--text-2)]"
+              onClick={() => setPanelMode('commands')}
+            >
+              <ArrowLeft size={14} />
+            </button>
+            <span className="text-[12px] font-medium text-[var(--text-1)]">MCP 服务状态</span>
+          </div>
+
+          {/* 内容区 */}
+          {mcpLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 size={16} className="animate-spin text-[var(--text-3)]" />
+            </div>
+          ) : mcpRows.length === 0 ? (
+            <div className="px-3 py-6 text-center text-[12px] text-[var(--text-3)]">
+              暂无 MCP 服务配置
+            </div>
+          ) : (
+            <div className="max-h-[280px] overflow-y-auto p-2">
+              {mcpRows.map((row, index) => (
+                <div
+                  key={row.name}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-[0.75rem] px-2.5 py-2 transition-colors',
+                    index === mcpSelectedIndex
+                      ? 'bg-[color:color-mix(in_oklab,var(--surface-3)_72%,transparent)]'
+                      : 'hover:bg-[color:color-mix(in_oklab,var(--surface-3)_42%,transparent)]'
+                  )}
+                  onMouseEnter={() => setMcpSelectedIndex(index)}
+                >
+                  <span className={cn('size-2 shrink-0 rounded-full', getMcpStatusDotClass(row.status))} />
+                  <span className="truncate text-[12px] font-medium text-[var(--text-1)]">
+                    {row.displayName}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[11px] text-[var(--text-3)]">
+                    {row.toolCount > 0 ? `${row.toolCount} 个工具` : '无工具'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 底栏提示 */}
+          <div className="flex items-center justify-between border-t border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-1.5 text-[10px] text-[var(--text-3)]">
+            <span>← 返回命令列表</span>
+            <span>Esc 关闭</span>
+          </div>
         </div>
       )
     }
@@ -212,4 +322,19 @@ function getMentionSectionLabel(section: MentionItem['section']): string {
   if (section === 'agent') return 'Agents'
   if (section === 'file') return 'Files'
   return 'Workspace Skills'
+}
+
+function getMcpStatusDotClass(status: McpUiStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'bg-[#20c872]'
+    case 'connecting':
+      return 'bg-[#4f7df3] animate-pulse'
+    case 'warning':
+      return 'bg-[#ff9d2e]'
+    case 'disconnected':
+      return 'bg-[#a3aabc]'
+    default:
+      return 'bg-[#a3aabc]'
+  }
 }
