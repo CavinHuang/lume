@@ -5,9 +5,9 @@ import {
   Clock3,
   Download,
   FileText,
-  Globe2,
   History,
   Pencil,
+  Plus,
   RefreshCw,
   Save,
   SearchCheck,
@@ -24,6 +24,7 @@ import type {
   MemoryIngestSourcesJob,
   MemoryIngestSourcesResult,
   MemoryKind,
+  MemoryOrganizeJob,
   MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryResult,
   MemoryReadToolResult,
@@ -36,11 +37,11 @@ import type {
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   getMemoryRuntimeConfig,
   getMemoryIngestJob,
+  getMemoryOrganizeJob,
   getMemorySettingsSnapshot,
   ingestMemorySources,
   listChannels,
@@ -50,12 +51,14 @@ import {
   organizeMemoryEntries,
   organizeMemoryHistory,
   readMemory,
+  rememberMemory,
   deleteMemoryEntry,
   resolveMemoryPending,
   updateMemoryEntry,
   updateEmbeddingModelRef,
   updateMemoryRuntimeConfig,
 } from '@/lib/desktop-api'
+import { updateMemoryExtractionModelRef } from '@/lib/desktop-api/lume-config'
 import { cn } from '@/lib/utils'
 import {
   MEMORY_CITATION_MODE_LABELS,
@@ -66,25 +69,93 @@ import {
   MEMORY_SETTINGS_VIEWS,
   MEMORY_STATUS_LABELS,
   MEMORY_TOOL_POLICY_GROUPS,
+  MEMORY_USER_CATEGORY_META,
+  applyMemoryIngestTargetScope,
   buildEmbeddingModelOptions,
+  buildMemoryIngestItemRows,
   buildMemoryLayerMetrics,
   buildMemoryDetailRows,
   buildMemoryOverviewMetrics,
   buildRerankModelOptions,
+  filterMemoryEntriesByUserCategory,
   isMemoryToolGroupEnabled,
   localOnnxStatusLabel,
   localOnnxStatusTone,
+  memoryEntryLayerLabel,
+  memoryPendingCandidateLayerLabel,
   pendingNotice,
   setMemoryToolGroupEnabled,
   summarizeLocalOnnxStatus,
+  summarizeMemoryExtractionStatus,
   summarizeMemoryIngestSourcesJob,
+  summarizeMemoryOrganizeJob,
   summarizeMemoryOrganizeEntriesResult,
   summarizeMemoryOrganizeResult,
   summarizeMemoryIngestSourcesResult,
   summarizeMemoryEntry,
   type MemorySettingsView,
   type MemoryToolPolicyGroupId,
+  type MemoryUserCategory,
+  type MemoryIngestTargetScopeMode,
 } from './memory-settings-state'
+
+function pollOrganizeJob(input: {
+  jobId: string
+  setJob: React.Dispatch<React.SetStateAction<MemoryOrganizeJob | null>>
+  refresh: () => Promise<void>
+  onCompleted: (job: MemoryOrganizeJob) => void
+}): () => void {
+  let disposed = false
+  let timer: number | undefined
+
+  const poll = async () => {
+    try {
+      const nextJob = await getMemoryOrganizeJob({ jobId: input.jobId })
+      if (disposed) return
+      input.setJob(nextJob)
+      if (nextJob.status === 'running') {
+        timer = window.setTimeout(poll, 1200)
+        return
+      }
+      if (nextJob.status === 'completed') {
+        input.onCompleted(nextJob)
+        await input.refresh()
+        return
+      }
+      toast.error(summarizeMemoryOrganizeJob(nextJob))
+    } catch (error) {
+      if (!disposed) {
+        const message = memorySettingsErrorMessage(error)
+        input.setJob((current) => current?.jobId === input.jobId
+          ? {
+            ...current,
+            status: 'failed',
+            completedAt: Date.now(),
+            error: message,
+          }
+          : current)
+        toast.error(message)
+      }
+    }
+  }
+
+  timer = window.setTimeout(poll, 800)
+  return () => {
+    disposed = true
+    if (timer) window.clearTimeout(timer)
+  }
+}
+
+function manualMemoryTags(category: MemoryUserCategory): string[] {
+  if (category === 'profile') return ['profile']
+  if (category === 'voice') return ['voice', 'writing-style']
+  if (category === 'instruction') return ['instruction', 'rule']
+  return ['workflow']
+}
+
+function isUserMemoryCategory(view: MemorySettingsView): view is MemoryUserCategory {
+  return view === 'profile' || view === 'workflow' || view === 'voice' || view === 'instruction'
+}
 
 export function MemorySettings() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -94,11 +165,13 @@ export function MemorySettings() {
     [currentWorkspaceId, workspaces],
   )
   const workspaceSlug = workspace?.slug ?? null
-  const [view, setView] = React.useState<MemorySettingsView>('overview')
+  const [view, setView] = React.useState<MemorySettingsView>('profile')
   const [runtimeConfig, setRuntimeConfig] = React.useState<MemoryRuntimeConfig | null>(null)
   const [snapshot, setSnapshot] = React.useState<MemorySettingsSnapshot | null>(null)
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
+  const [entryOrganizeJob, setEntryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
+  const [historyOrganizeJob, setHistoryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
   const [entryOrganizeResult, setEntryOrganizeResult] = React.useState<MemoryOrganizeEntriesResult | null>(null)
   const [organizeResult, setOrganizeResult] = React.useState<MemoryOrganizeHistoryResult | null>(null)
   const [ingestJob, setIngestJob] = React.useState<MemoryIngestSourcesJob | null>(null)
@@ -106,6 +179,8 @@ export function MemorySettings() {
   const [memoryDetail, setMemoryDetail] = React.useState<MemoryReadToolResult | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = React.useState<string | null>(null)
   const [detailDirty, setDetailDirty] = React.useState(false)
+  const [manualMemoryText, setManualMemoryText] = React.useState('')
+  const [ingestTargetScope, setIngestTargetScope] = React.useState<MemoryIngestTargetScopeMode>('auto')
   const [externalText, setExternalText] = React.useState('')
   const [workspaceFilePath, setWorkspaceFilePath] = React.useState('')
 
@@ -182,10 +257,43 @@ export function MemorySettings() {
     }
   }, [ingestJob?.jobId, ingestJob?.status, refresh])
 
+  React.useEffect(() => {
+    if (!entryOrganizeJob || entryOrganizeJob.status !== 'running') return undefined
+    return pollOrganizeJob({
+      jobId: entryOrganizeJob.jobId,
+      setJob: setEntryOrganizeJob,
+      refresh,
+      onCompleted: (job) => {
+        if (job.kind !== 'entries' || !job.result) return
+        const result = job.result as MemoryOrganizeEntriesResult
+        setEntryOrganizeResult(result)
+        toast.success(summarizeMemoryOrganizeEntriesResult(result))
+      },
+    })
+  }, [entryOrganizeJob?.jobId, entryOrganizeJob?.status, refresh])
+
+  React.useEffect(() => {
+    if (!historyOrganizeJob || historyOrganizeJob.status !== 'running') return undefined
+    return pollOrganizeJob({
+      jobId: historyOrganizeJob.jobId,
+      setJob: setHistoryOrganizeJob,
+      refresh,
+      onCompleted: (job) => {
+        if (job.kind !== 'history' || !job.result) return
+        const result = job.result as MemoryOrganizeHistoryResult
+        setOrganizeResult(result)
+        toast.success(summarizeMemoryOrganizeResult(result))
+      },
+    })
+  }, [historyOrganizeJob?.jobId, historyOrganizeJob?.status, refresh])
+
   const runAction = async (name: string, action: () => Promise<void>) => {
     setBusyAction(name)
     try {
       await action()
+    } catch (error) {
+      console.error(`[MemorySettings] ${name} FAILED:`, error)
+      toast.error(memorySettingsErrorMessage(error, '记忆操作失败'))
     } finally {
       setBusyAction(null)
     }
@@ -235,17 +343,42 @@ export function MemorySettings() {
 
   const handleDeleteMemoryEntry = (entry: MemorySettingsEntrySummary) => runAction(`delete-${entry.id}`, async () => {
     if (!workspaceSlug) return
-    if (!window.confirm('删除后这条记忆不会再参与召回。确定删除吗？')) return
-    await deleteMemoryEntry({
+    const toastId = toast.loading('正在删除记忆...')
+    try {
+      await deleteMemoryEntry({
+        workspaceSlug,
+        scope: entry.scope,
+        id: entry.id,
+      })
+      setSelectedMemoryId(null)
+      setMemoryDetail(null)
+      setDetailDirty(false)
+      await refresh()
+      toast.success('记忆已删除', { id: toastId })
+    } catch (error) {
+      console.error('[MemorySettings] delete entry FAILED:', error)
+      toast.error(memorySettingsErrorMessage(error, '删除记忆失败'), { id: toastId })
+    }
+  })
+
+  const handleAddManualMemory = (category: MemoryUserCategory) => runAction(`manual-${category}`, async () => {
+    if (!workspaceSlug) return
+    const content = manualMemoryText.trim()
+    if (!content) {
+      toast.error('请先写一条要记住的内容')
+      return
+    }
+    await rememberMemory({
       workspaceSlug,
-      scope: entry.scope,
-      id: entry.id,
+      scope: category === 'workflow' ? 'workspace' : 'global',
+      kind: category === 'profile' ? 'fact' : 'preference',
+      content,
+      confidence: 0.85,
+      tags: manualMemoryTags(category),
     })
-    setSelectedMemoryId(null)
-    setMemoryDetail(null)
-    setDetailDirty(false)
+    setManualMemoryText('')
     await refresh()
-    toast.success('记忆已删除')
+    toast.success('记忆已添加')
   })
 
   const handleResolvePending = (
@@ -261,15 +394,20 @@ export function MemorySettings() {
       : action === 'reject'
       ? '保留现有并忽略候选'
       : '标记为已处理'
-    if (!window.confirm(`${actionLabel}？`)) return
-    await resolveMemoryPending({
-      workspaceSlug,
-      path: item.path,
-      action,
-      candidateOverride,
-    })
-    await refresh()
-    toast.success(actionLabel)
+    const toastId = toast.loading(`${actionLabel}中...`)
+    try {
+      await resolveMemoryPending({
+        workspaceSlug,
+        path: item.path,
+        action,
+        candidateOverride,
+      })
+      await refresh()
+      toast.success(`${actionLabel}成功`, { id: toastId })
+    } catch (error) {
+      console.error('[MemorySettings] resolve pending FAILED:', error)
+      toast.error(memorySettingsErrorMessage(error, `${actionLabel}失败`), { id: toastId })
+    }
   })
 
   const handleTogglePolicyGroup = (
@@ -306,6 +444,12 @@ export function MemorySettings() {
     await refresh()
   })
 
+  const handleExtractionModel = (modelRef: string) => runAction('extraction-model', async () => {
+    if (!workspaceSlug) return
+    await updateMemoryExtractionModelRef(modelRef.trim() || undefined, workspaceSlug)
+    await refresh()
+  })
+
   const handleRerankModel = (modelRef: string) => runAction('rerank-model', async () => {
     if (!runtimeConfig) return
     const nextConfig = await updateMemoryRuntimeConfig({
@@ -320,18 +464,18 @@ export function MemorySettings() {
 
   const handleOrganizeHistory = () => runAction('organize-history', async () => {
     if (!workspaceSlug) return
-    const result = await organizeMemoryHistory({ workspaceSlug, limit: 200 })
-    setOrganizeResult(result)
-    await refresh()
-    toast.success(summarizeMemoryOrganizeResult(result))
+    setOrganizeResult(null)
+    const job = await organizeMemoryHistory({ workspaceSlug, limit: 200 })
+    setHistoryOrganizeJob(job)
+    toast.success('已开始后台生成记忆')
   })
 
   const handleOrganizeEntries = () => runAction('organize-entries', async () => {
     if (!workspaceSlug) return
-    const result = await organizeMemoryEntries({ workspaceSlug })
-    setEntryOrganizeResult(result)
-    await refresh()
-    toast.success(summarizeMemoryOrganizeEntriesResult(result))
+    setEntryOrganizeResult(null)
+    const job = await organizeMemoryEntries({ workspaceSlug })
+    setEntryOrganizeJob(job)
+    toast.success('已开始后台整理记忆')
   })
 
   const startIngestJob = async (sources: MemoryIngestSourceInput[]) => {
@@ -339,7 +483,7 @@ export function MemorySettings() {
     setIngestResult(null)
     const job = await ingestMemorySources({
       workspaceSlug,
-      sources,
+      sources: applyMemoryIngestTargetScope(sources, ingestTargetScope),
     })
     setIngestJob(job)
     toast.success('已开始后台整理资料')
@@ -398,6 +542,11 @@ export function MemorySettings() {
     return [...snapshot.workspaceEntries, ...snapshot.globalEntries]
       .find((entry) => entry.id === selectedMemoryId) ?? null
   }, [selectedMemoryId, snapshot])
+  const userMemoryEntries = React.useMemo(
+    () => [...(snapshot?.globalEntries ?? []), ...(snapshot?.workspaceEntries ?? [])],
+    [snapshot?.globalEntries, snapshot?.workspaceEntries],
+  )
+  const userCategory = isUserMemoryCategory(view) ? view : null
 
   if (!workspaceSlug) {
     return (
@@ -414,14 +563,21 @@ export function MemorySettings() {
               <FileText size={15} />
               {workspace.name} · Memory V2
             </div>
-            <h3 className="mt-2 text-[17px] font-semibold leading-6 text-[var(--text-1)]">记忆</h3>
+            <h3 className="mt-2 text-[17px] font-semibold leading-6 text-[var(--text-1)]">用户记忆</h3>
+            <p className="mt-1 max-w-2xl text-[13px] leading-5 text-[var(--text-3)]">
+              Lume 会在对话中自动提取长期有用的信息；你也可以在这里手动添加、修改或删除。
+            </p>
           </div>
           <div className="flex items-center gap-2">
             {snapshot?.counts.pending.total ? (
-              <div className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-amber-200 bg-amber-50 px-2 text-[12px] font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <button
+                type="button"
+                onClick={() => setView('pending')}
+                className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-amber-200 bg-amber-50 px-2 text-[12px] font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
+              >
                 <AlertTriangle size={14} />
                 {pendingNotice(snapshot.counts.pending)}
-              </div>
+              </button>
             ) : null}
             <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busyAction !== null}>
               <RefreshCw size={14} />
@@ -431,17 +587,17 @@ export function MemorySettings() {
         </div>
       </section>
 
-      <div className="flex gap-2 overflow-x-auto">
+      <div className="grid overflow-hidden rounded-[10px] border border-border bg-[var(--surface-2)] p-1 sm:grid-cols-4">
         {MEMORY_SETTINGS_VIEWS.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => setView(item.id)}
             className={cn(
-              'inline-flex h-8 shrink-0 items-center rounded-[8px] border px-3 text-[13px] font-medium transition-colors',
+              'min-h-10 rounded-[8px] px-3 text-center text-[13px] font-semibold transition-colors',
               view === item.id
-                ? 'border-[var(--brand)] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                : 'border-border bg-[var(--surface-1)] text-[var(--text-2)] hover:bg-[var(--surface-2)]',
+                ? 'bg-[var(--surface-1)] text-[var(--text-1)] shadow-sm'
+                : 'text-[var(--text-3)] hover:bg-[var(--surface-1)] hover:text-[var(--text-1)]',
             )}
           >
             {item.label}
@@ -449,41 +605,15 @@ export function MemorySettings() {
         ))}
       </div>
 
-      {view === 'overview' && (
-        <OverviewPanel
+      {userCategory && (
+        <UserMemoryPanel
           busyAction={busyAction}
-          channels={channels}
-          runtimeConfig={runtimeConfig}
-          snapshot={snapshot}
-          onCitationsMode={(mode) => void handleCitationsMode(mode)}
-          onEmbeddingModel={(modelRef) => void handleEmbeddingModel(modelRef)}
-          onOrganizeEntries={() => void handleOrganizeEntries()}
-          onOrganizeHistory={() => void handleOrganizeHistory()}
-          onIngestPastedText={() => void handleIngestPastedText()}
-          onIngestLocalFiles={() => void handleIngestLocalFiles()}
-          onIngestLocalFolder={() => void handleIngestLocalFolder()}
-          onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
-          onOpenFile={(path) => void handleOpenMemoryFile(path)}
-          onRerankModel={(modelRef) => void handleRerankModel(modelRef)}
-          onSemanticMode={(mode) => void handleSemanticMode(mode)}
-          onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
-          externalText={externalText}
-          ingestJob={ingestJob}
-          ingestResult={ingestResult}
-          entryOrganizeResult={entryOrganizeResult}
-          organizeResult={organizeResult}
-          workspaceSlug={workspaceSlug}
-          workspaceFilePath={workspaceFilePath}
-          onExternalTextChange={setExternalText}
-          onWorkspaceFilePathChange={setWorkspaceFilePath}
-        />
-      )}
-
-      {view === 'workspace' && (
-        <MemoryCollectionPanel
-          entries={snapshot?.workspaceEntries ?? []}
-          busyAction={busyAction}
+          category={userCategory}
           detail={memoryDetail}
+          entries={userMemoryEntries}
+          manualMemoryText={manualMemoryText}
+          onManualMemoryTextChange={setManualMemoryText}
+          onAddManualMemory={(category) => void handleAddManualMemory(category)}
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
           onInspectEntry={(entry) => void handleInspectMemoryEntry(entry)}
           onUpdateEntry={(entry, input) => void handleUpdateMemoryEntry(entry, input)}
@@ -491,23 +621,6 @@ export function MemorySettings() {
           onDirtyChange={setDetailDirty}
           selectedEntry={selectedMemoryEntry}
           selectedEntryId={selectedMemoryId}
-          title="工作区"
-        />
-      )}
-
-      {view === 'global' && (
-        <MemoryCollectionPanel
-          entries={snapshot?.globalEntries ?? []}
-          busyAction={busyAction}
-          detail={memoryDetail}
-          onOpenFile={(path) => void handleOpenMemoryFile(path)}
-          onInspectEntry={(entry) => void handleInspectMemoryEntry(entry)}
-          onUpdateEntry={(entry, input) => void handleUpdateMemoryEntry(entry, input)}
-          onDeleteEntry={(entry) => void handleDeleteMemoryEntry(entry)}
-          onDirtyChange={setDetailDirty}
-          selectedEntry={selectedMemoryEntry}
-          selectedEntryId={selectedMemoryId}
-          title="全局"
         />
       )}
 
@@ -519,6 +632,38 @@ export function MemorySettings() {
           onResolvePending={(item, action, candidateOverride) => void handleResolvePending(item, action, candidateOverride)}
         />
       )}
+
+      <OverviewPanel
+        busyAction={busyAction}
+        channels={channels}
+        runtimeConfig={runtimeConfig}
+        snapshot={snapshot}
+        onCitationsMode={(mode) => void handleCitationsMode(mode)}
+        onEmbeddingModel={(modelRef) => void handleEmbeddingModel(modelRef)}
+        onExtractionModel={(modelRef) => void handleExtractionModel(modelRef)}
+        onOrganizeEntries={() => void handleOrganizeEntries()}
+        onOrganizeHistory={() => void handleOrganizeHistory()}
+        onIngestPastedText={() => void handleIngestPastedText()}
+        onIngestLocalFiles={() => void handleIngestLocalFiles()}
+        onIngestLocalFolder={() => void handleIngestLocalFolder()}
+        onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
+        onOpenFile={(path) => void handleOpenMemoryFile(path)}
+        onRerankModel={(modelRef) => void handleRerankModel(modelRef)}
+        onSemanticMode={(mode) => void handleSemanticMode(mode)}
+        onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
+        externalText={externalText}
+        ingestJob={ingestJob}
+        ingestResult={ingestResult}
+        ingestTargetScope={ingestTargetScope}
+        entryOrganizeJob={entryOrganizeJob}
+        entryOrganizeResult={entryOrganizeResult}
+        historyOrganizeJob={historyOrganizeJob}
+        organizeResult={organizeResult}
+        workspaceFilePath={workspaceFilePath}
+        onExternalTextChange={setExternalText}
+        onIngestTargetScope={setIngestTargetScope}
+        onWorkspaceFilePathChange={setWorkspaceFilePath}
+      />
     </div>
   )
 }
@@ -531,10 +676,15 @@ function OverviewPanel({
   externalText,
   ingestJob,
   ingestResult,
+  ingestTargetScope,
+  entryOrganizeJob,
   entryOrganizeResult,
+  historyOrganizeJob,
   onCitationsMode,
   onEmbeddingModel,
+  onExtractionModel,
   onExternalTextChange,
+  onIngestTargetScope,
   onIngestPastedText,
   onIngestLocalFiles,
   onIngestLocalFolder,
@@ -546,7 +696,6 @@ function OverviewPanel({
   onSemanticMode,
   onToggle,
   organizeResult,
-  workspaceSlug,
   workspaceFilePath,
   onWorkspaceFilePathChange,
 }: {
@@ -557,10 +706,15 @@ function OverviewPanel({
   externalText: string
   ingestJob: MemoryIngestSourcesJob | null
   ingestResult: MemoryIngestSourcesResult | null
+  ingestTargetScope: MemoryIngestTargetScopeMode
+  entryOrganizeJob: MemoryOrganizeJob | null
   entryOrganizeResult: MemoryOrganizeEntriesResult | null
+  historyOrganizeJob: MemoryOrganizeJob | null
   onCitationsMode: (mode: MemoryCitationsMode) => void
   onEmbeddingModel: (modelRef: string) => void
+  onExtractionModel: (modelRef: string) => void
   onExternalTextChange: (value: string) => void
+  onIngestTargetScope: (scope: MemoryIngestTargetScopeMode) => void
   onIngestPastedText: () => void
   onIngestLocalFiles: () => void
   onIngestLocalFolder: () => void
@@ -572,7 +726,6 @@ function OverviewPanel({
   onSemanticMode: (mode: MemoryRuntimeConfig['retrieval']['semantic']) => void
   onToggle: (groupId: MemoryToolPolicyGroupId, enabled: boolean) => void
   organizeResult: MemoryOrganizeHistoryResult | null
-  workspaceSlug: string | null
   workspaceFilePath: string
   onWorkspaceFilePathChange: (value: string) => void
 }) {
@@ -580,10 +733,28 @@ function OverviewPanel({
   const layerMetrics = buildMemoryLayerMetrics(snapshot)
   const embeddingOptions = React.useMemo(() => buildEmbeddingModelOptions(channels), [channels])
   const rerankOptions = React.useMemo(() => buildRerankModelOptions(channels), [channels])
+  const extractionOptions = rerankOptions
+  const ingestItemRows = React.useMemo(() => buildMemoryIngestItemRows(ingestResult), [ingestResult])
   const ingestRunning = ingestJob?.status === 'running'
+  const entryOrganizeRunning = entryOrganizeJob?.status === 'running'
+  const historyOrganizeRunning = historyOrganizeJob?.status === 'running'
   return (
-    <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+    <details className="group rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <summary className="cursor-pointer list-none">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[14px] font-semibold text-[var(--text-1)]">高级设置</div>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+              模型、语义召回、整理记忆和外部资料导入。默认配置已经可用，通常不需要调整。
+            </p>
+          </div>
+          <span className="rounded-[8px] border border-border bg-[var(--surface-2)] px-2 py-1 text-[12px] font-medium text-[var(--text-3)]">
+            <span className="group-open:hidden">展开</span>
+            <span className="hidden group-open:inline">收起</span>
+          </span>
+        </div>
+      </summary>
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
         {metrics.map((metric) => (
           <div key={metric.label} className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
             <div className="text-[12px] text-[var(--text-3)]">{metric.label}</div>
@@ -758,7 +929,9 @@ function OverviewPanel({
             整理记忆
           </div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
-            {entryOrganizeResult
+            {entryOrganizeRunning && entryOrganizeJob
+              ? summarizeMemoryOrganizeJob(entryOrganizeJob)
+              : entryOrganizeResult
               ? summarizeMemoryOrganizeEntriesResult(entryOrganizeResult)
               : '使用 LLM 分析已经写入的工作区和全局记忆数据，归并相似重复项；模型不可用时只做保守本地去重。'}
           </p>
@@ -766,11 +939,11 @@ function OverviewPanel({
         <Button
           variant="outline"
           size="sm"
-          disabled={busyAction !== null}
+          disabled={busyAction !== null || entryOrganizeRunning || historyOrganizeRunning}
           onClick={onOrganizeEntries}
         >
-          <RefreshCw size={14} className={busyAction === 'organize-entries' ? 'animate-spin' : undefined} />
-          {busyAction === 'organize-entries' ? '整理中' : '整理记忆'}
+          <RefreshCw size={14} className={entryOrganizeRunning || busyAction === 'organize-entries' ? 'animate-spin' : undefined} />
+          {entryOrganizeRunning || busyAction === 'organize-entries' ? '整理中' : '整理记忆'}
         </Button>
       </div>
 
@@ -781,7 +954,9 @@ function OverviewPanel({
             从历史对话生成记忆
           </div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
-            {organizeResult
+            {historyOrganizeRunning && historyOrganizeJob
+              ? summarizeMemoryOrganizeJob(historyOrganizeJob)
+              : organizeResult
               ? summarizeMemoryOrganizeResult(organizeResult)
               : '从当前工作区历史线程里提取稳定记忆；这是生成新记忆，不是整理已有记忆数据。'}
           </p>
@@ -789,11 +964,11 @@ function OverviewPanel({
         <Button
           variant="outline"
           size="sm"
-          disabled={busyAction !== null}
+          disabled={busyAction !== null || entryOrganizeRunning || historyOrganizeRunning}
           onClick={onOrganizeHistory}
         >
-          <RefreshCw size={14} className={busyAction === 'organize-history' ? 'animate-spin' : undefined} />
-          {busyAction === 'organize-history' ? '生成中' : '生成记忆'}
+          <RefreshCw size={14} className={historyOrganizeRunning || busyAction === 'organize-history' ? 'animate-spin' : undefined} />
+          {historyOrganizeRunning || busyAction === 'organize-history' ? '生成中' : '生成记忆'}
         </Button>
       </div>
 
@@ -811,13 +986,58 @@ function OverviewPanel({
                 ? summarizeMemoryIngestSourcesResult(ingestResult)
                 : '从粘贴文本、工作区文件、本地文件或文件夹提取稳定事实、偏好、决策、经验和状态。需要命中显式记忆句式，或配置提取模型做 LLM 分析；附件默认仍只是当前对话上下文。'}
             </p>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+              支持 md、txt、json、yaml；本地单文件最多读取前 512KB，文件夹最多扫描 200 个文本文件、6 层目录。
+            </p>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+              粘贴文本会先拆块分析：命中“记住、以后、叫我、我的写作风格”等明确句式可直接写入；普通资料需要配置提取模型，并且必须能从原文找到可引用的长期事实、偏好、决策、经验或当前状态。
+            </p>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+              {summarizeMemoryExtractionStatus(snapshot?.extraction)}
+            </p>
+            <label className="mt-2 block max-w-[360px]">
+              <span className="text-[12px] font-medium text-[var(--text-3)]">提取模型</span>
+              <select
+                className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
+                disabled={extractionOptions.length === 0 || busyAction !== null || ingestRunning}
+                value={snapshot?.extraction.modelRef ?? ''}
+                onChange={(event) => onExtractionModel(event.target.value)}
+              >
+                <option value="">{extractionOptions.length === 0 ? '未检测到可用聊天模型' : '未启用'}</option>
+                {extractionOptions.map((option) => (
+                  <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex rounded-[8px] border border-border bg-[var(--surface-1)] p-0.5">
+            {([
+              ['auto', '自动'],
+              ['workspace', '工作区'],
+              ['global', '全局'],
+            ] as const).map(([scope, label]) => (
+              <button
+                key={scope}
+                type="button"
+                disabled={busyAction !== null || ingestRunning}
+                onClick={() => onIngestTargetScope(scope)}
+                className={cn(
+                  'h-7 rounded-[6px] px-2 text-[12px] font-medium',
+                  ingestTargetScope === scope
+                    ? 'bg-[var(--surface-2)] text-[var(--text-1)] shadow-sm'
+                    : 'text-[var(--text-3)]',
+                )}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <div className="space-y-2">
             <textarea
               className="min-h-[92px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
-              placeholder="粘贴需要整理成记忆的资料"
+              placeholder="例如：叫我 Mason。以后默认用中文回答。我的写作风格偏好简洁、有温度。"
               value={externalText}
               disabled={busyAction !== null || ingestRunning}
               onChange={(event) => onExternalTextChange(event.target.value)}
@@ -833,14 +1053,6 @@ function OverviewPanel({
             </Button>
           </div>
           <div className="space-y-2">
-            <div className="h-[176px] overflow-hidden rounded-[8px] border border-border bg-[var(--surface-1)]">
-              <WorkspaceFileBrowser
-                workspaceSlug={workspaceSlug ?? undefined}
-                selectedPath={workspaceFilePath}
-                onOpenFile={onWorkspaceFilePathChange}
-                showHeader={false}
-              />
-            </div>
             <input
               className="h-9 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
               placeholder="工作区文件路径，例如 docs/project.md"
@@ -848,6 +1060,9 @@ function OverviewPanel({
               disabled={busyAction !== null || ingestRunning}
               onChange={(event) => onWorkspaceFilePathChange(event.target.value)}
             />
+            <p className="text-[12px] leading-5 text-[var(--text-3)]">
+              工作区路径用于整理项目内已有文本文件；本地资料请使用下面的文件或文件夹选择。
+            </p>
             <Button
               variant="outline"
               size="sm"
@@ -881,6 +1096,22 @@ function OverviewPanel({
             </div>
           </div>
         </div>
+        {ingestItemRows.length > 0 ? (
+          <div className="mt-3 space-y-2 border-t border-border pt-3">
+            {ingestItemRows.map((row) => (
+              <div key={row.id} className="rounded-[8px] border border-border bg-[var(--surface-1)] p-2">
+                <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-[var(--text-1)]">
+                  <StatusBadge tone={row.tone}>{row.title}</StatusBadge>
+                </div>
+                <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--text-3)]">{row.desc}</p>
+              </div>
+            ))}
+          </div>
+        ) : ingestResult && ingestResult.candidateCount === 0 ? (
+          <div className="mt-3 rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-3)]">
+            没有抽取出候选记忆。可以使用“记住 / 以后 / 我偏好 / 叫我 / 我的写作风格”这类明确句式，或配置记忆提取模型做 LLM 分析；重复、冲突、低置信内容不会直接写成可用记忆。
+          </div>
+        ) : null}
       </div>
 
       <details className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
@@ -894,28 +1125,35 @@ function OverviewPanel({
           {(snapshot?.files ?? []).length === 0 && <EmptyInline text="暂无原始文件" />}
         </div>
       </details>
-    </section>
+    </details>
   )
 }
 
-function MemoryCollectionPanel({
+function UserMemoryPanel({
   busyAction,
+  category,
   detail,
   entries,
+  manualMemoryText,
+  onAddManualMemory,
   onDeleteEntry,
   onDirtyChange,
+  onManualMemoryTextChange,
   onOpenFile,
   onInspectEntry,
   onUpdateEntry,
   selectedEntry,
   selectedEntryId,
-  title,
 }: {
   busyAction: string | null
+  category: MemoryUserCategory
   detail: MemoryReadToolResult | null
   entries: MemorySettingsEntrySummary[]
+  manualMemoryText: string
+  onAddManualMemory: (category: MemoryUserCategory) => void
   onDeleteEntry: (entry: MemorySettingsEntrySummary) => void
   onDirtyChange: (dirty: boolean) => void
+  onManualMemoryTextChange: (value: string) => void
   onOpenFile: (path: string) => void
   onInspectEntry: (entry: MemorySettingsEntrySummary) => void
   onUpdateEntry: (
@@ -929,17 +1167,52 @@ function MemoryCollectionPanel({
   ) => void
   selectedEntry: MemorySettingsEntrySummary | null
   selectedEntryId: string | null
-  title: string
 }) {
+  const meta = MEMORY_USER_CATEGORY_META[category]
+  const filteredEntries = React.useMemo(
+    () => filterMemoryEntriesByUserCategory(entries, category),
+    [category, entries],
+  )
   return (
     <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
-      <div className="mb-3 flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
-        {title === '全局' ? <Globe2 size={16} /> : <FileText size={16} />}
-        {title}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
+            {category === 'instruction' ? <ShieldCheck size={16} /> : category === 'voice' ? <Pencil size={16} /> : <FileText size={16} />}
+            {meta.label}
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{meta.desc}</p>
+        </div>
+        <div className="rounded-[8px] border border-border bg-[var(--surface-2)] px-2 py-1 text-[12px] font-medium text-[var(--text-3)]">
+          {filteredEntries.length} 条
+        </div>
       </div>
       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.3fr)]">
-        <div className="space-y-2">
-          {entries.map((entry) => (
+        <div className="space-y-3">
+          <div className="rounded-[10px] border border-border bg-[var(--surface-2)] p-3">
+            <div className="flex gap-2">
+              <input
+                value={manualMemoryText}
+                onChange={(event) => onManualMemoryTextChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    onAddManualMemory(category)
+                  }
+                }}
+                placeholder={meta.placeholder}
+                className="min-h-9 flex-1 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none transition-colors placeholder:text-[var(--text-4)] focus:border-[var(--brand)]"
+              />
+              <Button
+                size="sm"
+                onClick={() => onAddManualMemory(category)}
+                disabled={busyAction === `manual-${category}`}
+              >
+                <Plus size={14} />
+                添加
+              </Button>
+            </div>
+          </div>
+          {filteredEntries.map((entry) => (
             <EntryRow
               key={entry.id}
               busy={busyAction === `inspect-${entry.id}`}
@@ -948,7 +1221,7 @@ function MemoryCollectionPanel({
               onInspectEntry={onInspectEntry}
             />
           ))}
-          {entries.length === 0 && <EmptyInline text="暂无语义记忆" />}
+          {filteredEntries.length === 0 && <EmptyInline text={meta.empty} />}
         </div>
         <MemoryDetailPanel
           busyAction={busyAction}
@@ -1048,6 +1321,7 @@ function PendingMemoryCard({
         <div className="rounded-[8px] border border-border bg-[var(--surface-1)] p-3">
           <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-[var(--text-3)]">
             候选记忆
+            <StatusBadge tone="neutral">{memoryPendingCandidateLayerLabel(item.candidate)}</StatusBadge>
             <StatusBadge tone="neutral">{MEMORY_KIND_LABELS[item.candidate.kind]}</StatusBadge>
             <StatusBadge tone="neutral">{MEMORY_CONFIDENCE_LABELS[item.candidate.confidence]}</StatusBadge>
           </div>
@@ -1105,6 +1379,7 @@ function PendingMemoryCard({
               <div key={entry.id} className="rounded-[8px] border border-border bg-[var(--surface-2)] p-2">
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-3)]">
                   <span>{summarizeMemoryEntry(entry)}</span>
+                  <StatusBadge tone="neutral">{memoryEntryLayerLabel(entry)}</StatusBadge>
                   <span>{MEMORY_CONFIDENCE_LABELS[entry.confidence]}</span>
                 </div>
                 <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--text-1)]">{entry.statement}</p>
@@ -1241,6 +1516,7 @@ function EntryRow({
     >
       <div className="flex flex-wrap items-center gap-2 text-[12px] font-medium text-[var(--text-3)]">
         <span>{summarizeMemoryEntry(entry)}</span>
+        <StatusBadge tone="neutral">{memoryEntryLayerLabel(entry)}</StatusBadge>
         {entry.pinned && <StatusBadge tone="good">置顶</StatusBadge>}
         {entry.status === 'suspected_stale' && <StatusBadge tone="warn">{MEMORY_STATUS_LABELS.suspected_stale}</StatusBadge>}
         {busy && <StatusBadge tone="neutral">读取中</StatusBadge>}
@@ -1521,11 +1797,11 @@ function formatClaim(claim: NonNullable<MemorySettingsEntrySummary['claim']>): s
   return `${claim.subject}.${claim.predicate} = ${claim.object}`
 }
 
-function memorySettingsErrorMessage(error: unknown): string {
+function memorySettingsErrorMessage(error: unknown, fallback = '读取记忆设置失败'): string {
   const detail = error instanceof Error
     ? error.message
     : typeof error === 'string'
       ? error
       : ''
-  return detail ? `读取记忆设置失败：${detail}` : '读取记忆设置失败'
+  return detail ? `${fallback}：${detail}` : fallback
 }

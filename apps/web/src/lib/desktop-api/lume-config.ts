@@ -47,6 +47,15 @@ export const updateEmbeddingModelRef = (modelRef: string, workspaceSlug?: string
     summary: 'update memory embedding model',
   })
 
+export const updateMemoryExtractionModelRef = (modelRef: string | undefined, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'memory.extraction.modelRef',
+    value: modelRef,
+    summary: modelRef ? 'update memory extraction model' : 'clear memory extraction model',
+  })
+
 export const updateAgentThinkingLevel = (value: LumeConfigThinkingLevel, workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
     source: 'user',
