@@ -3,10 +3,12 @@ import type { RuntimeMessageView } from './runtime-message-view'
 import type { AgentMessage } from '@lume/shared'
 import {
   collectNewRuntimeMessageIds,
-  getPreservedScrollTopAfterResize,
+  getProgrammaticScrollHoldUntil,
+  getLatestUserMessageKey,
   isNearScrollBottom,
   projectVisibleThreadMessages,
   reconcileUserMessageVersions,
+  shouldApplyThreadMessagesResult,
   shouldAutoScrollAfterUserScroll,
 } from './agent-message-state'
 
@@ -75,12 +77,70 @@ describe('agent message scroll helpers', () => {
     })).toBe(false)
   })
 
-  test('preserves viewport position when historical content changes height', () => {
-    expect(getPreservedScrollTopAfterResize({
-      currentScrollTop: 300,
-      previousScrollHeight: 1200,
-      nextScrollHeight: 1360,
-    })).toBe(460)
+  test('keeps auto scroll enabled during programmatic scroll adjustments', () => {
+    expect(shouldAutoScrollAfterUserScroll({
+      currentScrollTop: 400,
+      previousScrollTop: 460,
+      nearBottom: false,
+      programmatic: true,
+    })).toBe(true)
+  })
+
+  test('keeps smooth programmatic scrolling active until it reaches the bottom or times out', () => {
+    expect(getProgrammaticScrollHoldUntil({
+      now: 100,
+      behavior: 'smooth',
+    })).toBe(Number.POSITIVE_INFINITY)
+    expect(getProgrammaticScrollHoldUntil({
+      now: 100,
+      behavior: 'auto',
+    })).toBe(280)
+  })
+
+  test('builds a stable key for the latest user message', () => {
+    const messages: RuntimeMessageView[] = [
+      {
+        id: 'user:1',
+        type: 'user',
+        text: 'first',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      {
+        id: 'assistant:1',
+        type: 'assistant',
+        text: 'answer',
+        thinking: '',
+        toolCalls: [],
+        blocks: [{ type: 'text', id: 'text:1', text: 'answer' }],
+        status: 'completed',
+      },
+      {
+        id: 'user:2',
+        type: 'user',
+        text: 'second',
+        createdAt: '2026-05-01T00:01:00.000Z',
+      },
+    ]
+
+    expect(getLatestUserMessageKey(messages)).toBe('2026-05-01T00:01:00.000Z:second')
+  })
+
+  test('rejects stale thread message fetch results after switching threads', () => {
+    expect(shouldApplyThreadMessagesResult({
+      requestedThreadId: 'thread-a',
+      currentThreadId: 'thread-a',
+      cancelled: false,
+    })).toBe(true)
+    expect(shouldApplyThreadMessagesResult({
+      requestedThreadId: 'thread-a',
+      currentThreadId: 'thread-b',
+      cancelled: false,
+    })).toBe(false)
+    expect(shouldApplyThreadMessagesResult({
+      requestedThreadId: 'thread-a',
+      currentThreadId: 'thread-a',
+      cancelled: true,
+    })).toBe(false)
   })
 
 })

@@ -11,11 +11,13 @@ mock.module('@ant-design/x-markdown', () => ({
     children: React.ReactNode
     className?: string
     rootClassName?: string
-  }) => (
-    <section data-x-markdown="true" data-root-class={rootClassName ?? ''} className={className}>
-      {children}
-    </section>
-  ),
+  }) => {
+    return (
+      <section data-x-markdown="true" data-root-class={rootClassName ?? ''} className={className}>
+        {children}
+      </section>
+    )
+  },
 }))
 
 const {

@@ -74,19 +74,19 @@ describe('RuntimeEvent UI boundary', () => {
     expect(content).toContain('overflow-y-auto')
   })
 
-  test('user-expanded tool blocks skip regular list resize compensation', () => {
+  test('agent transcript avoids height-delta resize compensation on the streaming path', () => {
     const messages = source('apps/web/src/components/agent/AgentMessages.tsx')
     const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
     const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
 
-    expect(messages).toContain('suspendResizeCompensationUntilRef')
+    expect(messages).toContain('bottomRef')
+    expect(messages).toContain('scheduleBottomScroll')
+    expect(messages).toContain('programmaticScrollUntilRef')
+    expect(messages).not.toContain('getBoundingClientRect')
+    expect(messages).not.toContain('getPreservedScrollTopAfterResize')
     expect(messages).toContain('suspendScrollCompensationForUserResize')
     expect(contentBlock).toContain('onUserResizeStart')
     expect(subagentPanel).toContain('onUserResizeStart')
-    expect(subagentPanel).not.toContain('max-h-[min(70vh,720px)]')
-    expect(subagentPanel).not.toContain('overflow-y-auto overscroll-contain')
-    expect(subagentPanel).toContain('sticky top-0 z-10')
-    expect(subagentPanel).not.toContain('overflow-anchor:none')
   })
 
   test('tool and subagent expansion use animated delayed-unmount panels', () => {
@@ -107,5 +107,29 @@ describe('RuntimeEvent UI boundary', () => {
     expect(animatedPanel).toContain('duration-200')
     expect(animatedPanel).toContain('visualOpen')
     expect(animatedPanel).toContain('requestAnimationFrame')
+  })
+
+  test('collapsed markdown previews do not mount full markdown renderers', () => {
+    const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
+    const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
+
+    expect(contentBlock).toContain('expanded &&')
+    expect(contentBlock).not.toContain("expanded ? '' : 'max-h-[390px] overflow-hidden'")
+    expect(subagentPanel).not.toContain('<SubagentMarkdown output={output} compact />')
+  })
+
+  test('stable markdown renderers are memoized', () => {
+    const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
+    const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
+
+    expect(contentBlock).toContain('const SmoothText = memo(')
+    expect(subagentPanel).toContain('export const SubagentMarkdown = memo(')
+  })
+
+  test('streaming markdown updates are throttled at the message renderer boundary', () => {
+    const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
+
+    expect(contentBlock).toContain('MARKDOWN_STREAM_MIN_DELAY_MS')
+    expect(contentBlock).toContain('minDelay: MARKDOWN_STREAM_MIN_DELAY_MS')
   })
 })

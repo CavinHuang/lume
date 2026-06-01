@@ -143,6 +143,26 @@ describe('runtime-event-state', () => {
     ])
   })
 
+  test('keeps existing state when hydrated RuntimeEvents are structurally unchanged', () => {
+    const events = [
+      runtimeEvent({ id: 'user-1', type: 'message.user.submitted', text: 'hi' }),
+      runtimeEvent({ id: 'done-1', type: 'run.completed' }),
+    ]
+    const prev = {
+      'thread-1': {
+        events,
+        terminalStatus: 'completed' as const,
+        updatedAt: 123,
+      },
+    }
+    const result: AgentThreadRuntimeEventsResult = {
+      threadId: 'thread-1',
+      events: events.map((event) => ({ ...event })),
+    }
+
+    expect(hydrateRuntimeEvents(prev, result)).toBe(prev)
+  })
+
   test('hydrates missing persisted user events into existing live state', () => {
     const result: AgentThreadRuntimeEventsResult = {
       threadId: 'thread-1',

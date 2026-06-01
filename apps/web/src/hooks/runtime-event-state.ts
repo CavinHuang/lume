@@ -83,7 +83,13 @@ function sortRuntimeEvents(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
 }
 
 function sameRuntimeEvents(a: LumeRuntimeEvent[], b: LumeRuntimeEvent[]): boolean {
-  return a.length === b.length && a.every((event, index) => event === b[index])
+  return a.length === b.length && a.every((event, index) => sameRuntimeEvent(event, b[index]))
+}
+
+function sameRuntimeEvent(a: LumeRuntimeEvent, b: LumeRuntimeEvent | undefined): boolean {
+  if (a === b) return true
+  if (!b) return false
+  return JSON.stringify(a) === JSON.stringify(b)
 }
 
 function isDuplicateSubmittedUserEvent(

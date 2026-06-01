@@ -16,13 +16,20 @@ mock.module('@ant-design/x-markdown', () => ({
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
+  openInSystem: async () => undefined,
+  saveTextFileDialog: async () => undefined,
+  sidecarCall: async () => undefined,
 }))
 
 mock.module('./tool-result-renderers', () => ({
   ToolResultRenderer: () => null,
 }))
 
-const { MarkdownCode } = await import('./RuntimeEventContentBlock')
+const contentBlockModule = await import('./RuntimeEventContentBlock')
+const { MarkdownCode } = contentBlockModule
+const normalizeMarkdownCodeProps = (contentBlockModule as typeof contentBlockModule & {
+  normalizeMarkdownCodeProps?: (props: Record<string, unknown>) => Record<string, unknown>
+}).normalizeMarkdownCodeProps
 
 function renderFileLink(path: string): string {
   return renderToStaticMarkup(
@@ -49,5 +56,42 @@ describe('RuntimeEventContentBlock markdown file links', () => {
     expect(renderFileLink('src/App.tsx')).toContain('lucide-file-code')
     expect(renderFileLink('data/config.json')).toContain('lucide-file-braces')
     expect(renderFileLink('images/diagram.png')).toContain('lucide-file-image')
+  })
+
+  test('normalizes markdown code class attributes without React DOM warnings', () => {
+    const consoleErrors: string[] = []
+    const originalConsoleError = console.error
+    console.error = (...args: unknown[]) => {
+      consoleErrors.push(args.map(String).join(' '))
+    }
+
+    try {
+      const markup = renderToStaticMarkup(
+        <MarkdownCode {...({ class: 'language-ts' } as Record<string, unknown>)}>
+          {'const answer = 42'}
+        </MarkdownCode>,
+      )
+
+      expect(markup).toContain('class="language-ts"')
+      expect(consoleErrors.join('\n')).not.toContain('Invalid DOM property `class`')
+    } finally {
+      console.error = originalConsoleError
+    }
+  })
+
+  test('strips raw class props before spreading code attributes', () => {
+    expect(typeof normalizeMarkdownCodeProps).toBe('function')
+
+    const codeProps = normalizeMarkdownCodeProps?.({
+      class: 'language-ts',
+      className: 'existing-code-class',
+      title: 'code title',
+    })
+
+    expect(codeProps).toEqual({
+      className: 'language-ts existing-code-class',
+      title: 'code title',
+    })
+    expect(codeProps).not.toHaveProperty('class')
   })
 })

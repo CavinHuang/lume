@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState } from 'react'
+import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState, type TouchEventHandler, type WheelEventHandler } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { agentRuntimeEventsAtom, agentSubagentRunsAtom } from '@/atoms'
@@ -15,10 +15,12 @@ import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
 import {
   collectNewRuntimeMessageIds,
   collectRuntimeMessageIds,
-  getPreservedScrollTopAfterResize,
+  getLatestUserMessageKey,
+  getProgrammaticScrollHoldUntil,
   isNearScrollBottom,
   projectVisibleThreadMessages,
   reconcileUserMessageVersions,
+  shouldApplyThreadMessagesResult,
   shouldAutoScrollAfterUserScroll,
 } from './agent-message-state'
 
@@ -34,10 +36,15 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const activeThreadIdRef = useRef(threadId)
   const prevThreadIdRef = useRef(threadId)
   const previousMessageIdsRef = useRef<{ threadId: string; ids: Set<string> }>({ threadId, ids: new Set() })
   const previousScrollTopRef = useRef(0)
-  const suspendResizeCompensationUntilRef = useRef(0)
+  const programmaticScrollUntilRef = useRef(0)
+  const programmaticScrollReleaseTimeoutRef = useRef<number | null>(null)
+  const scheduledBottomScrollFrameRef = useRef(0)
+  const latestUserMessageKeyRef = useRef<string | null>(null)
   const shouldAutoScrollRef = useRef(true)
   const showScrollButtonRef = useRef(false)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
@@ -67,6 +74,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       .join('|'),
     [projectedMessages],
   )
+  const latestUserMessageKey = useMemo(() => getLatestUserMessageKey(liveMessages), [liveMessages])
   const setScrollButtonVisible = useCallback((visible: boolean) => {
     if (showScrollButtonRef.current === visible) return
     showScrollButtonRef.current = visible
@@ -74,22 +82,75 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
   }, [])
   const suspendScrollCompensationForUserResize = useCallback(() => {
     shouldAutoScrollRef.current = false
-    suspendResizeCompensationUntilRef.current = performance.now() + 800
   }, [])
+  const clearProgrammaticScrollReleaseTimeout = useCallback(() => {
+    if (programmaticScrollReleaseTimeoutRef.current === null) return
+    window.clearTimeout(programmaticScrollReleaseTimeoutRef.current)
+    programmaticScrollReleaseTimeoutRef.current = null
+  }, [])
+  const releaseProgrammaticScroll = useCallback(() => {
+    programmaticScrollUntilRef.current = 0
+    clearProgrammaticScrollReleaseTimeout()
+  }, [clearProgrammaticScrollReleaseTimeout])
+  const markProgrammaticScroll = useCallback((behavior: ScrollBehavior) => {
+    clearProgrammaticScrollReleaseTimeout()
+    programmaticScrollUntilRef.current = getProgrammaticScrollHoldUntil({
+      now: performance.now(),
+      behavior,
+    })
+    if (behavior !== 'smooth') return
+    programmaticScrollReleaseTimeoutRef.current = window.setTimeout(() => {
+      programmaticScrollReleaseTimeoutRef.current = null
+      programmaticScrollUntilRef.current = 0
+    }, 1200)
+  }, [clearProgrammaticScrollReleaseTimeout])
+  const isProgrammaticScrollActive = useCallback(() => (
+    programmaticScrollUntilRef.current === Number.POSITIVE_INFINITY
+    || performance.now() < programmaticScrollUntilRef.current
+  ), [])
+  const suspendAutoScrollForUserNavigation = useCallback((deltaY?: number) => {
+    const container = scrollContainerRef.current
+    if (typeof deltaY === 'number' && deltaY >= 0 && container && isNearScrollBottom(container)) return
+    releaseProgrammaticScroll()
+    shouldAutoScrollRef.current = false
+  }, [releaseProgrammaticScroll])
+  const handleWheelNavigation = useCallback<WheelEventHandler<HTMLDivElement>>((event) => {
+    suspendAutoScrollForUserNavigation(event.deltaY)
+  }, [suspendAutoScrollForUserNavigation])
+  const handleTouchNavigation = useCallback<TouchEventHandler<HTMLDivElement>>(() => {
+    suspendAutoScrollForUserNavigation()
+  }, [suspendAutoScrollForUserNavigation])
+  const scrollBottomIntoView = useCallback((behavior: ScrollBehavior) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    markProgrammaticScroll(behavior)
+    const bottom = bottomRef.current
+    if (bottom && typeof bottom.scrollIntoView === 'function') {
+      bottom.scrollIntoView({ block: 'end', behavior })
+    } else {
+      container.scrollTop = container.scrollHeight
+    }
+    previousScrollTopRef.current = container.scrollTop
+    setScrollButtonVisible(false)
+  }, [markProgrammaticScroll, setScrollButtonVisible])
+  const scheduleBottomScroll = useCallback(() => {
+    if (scheduledBottomScrollFrameRef.current !== 0) return
+    scheduledBottomScrollFrameRef.current = requestAnimationFrame(() => {
+      scheduledBottomScrollFrameRef.current = 0
+      if (!shouldAutoScrollRef.current) return
+      scrollBottomIntoView('auto')
+    })
+  }, [scrollBottomIntoView])
   const scrollMessagesToBottom = useCallback((animation: 'instant' | 'smooth' = 'smooth') => {
     const container = scrollContainerRef.current
     if (!container) return undefined
 
     shouldAutoScrollRef.current = true
+    const behavior: ScrollBehavior = animation === 'smooth' ? 'smooth' : 'auto'
 
     const scrollOnce = () => {
-      if (animation === 'smooth' && typeof container.scrollTo === 'function') {
-        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
-      } else {
-        container.scrollTop = container.scrollHeight
-      }
-      previousScrollTopRef.current = container.scrollTop
-      setScrollButtonVisible(false)
+      scrollBottomIntoView(behavior)
     }
 
     scrollOnce()
@@ -106,7 +167,15 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       cancelAnimationFrame(firstFrame)
       cancelAnimationFrame(secondFrame)
     }
-  }, [setScrollButtonVisible])
+  }, [scrollBottomIntoView])
+
+  useEffect(() => () => {
+    if (scheduledBottomScrollFrameRef.current !== 0) {
+      cancelAnimationFrame(scheduledBottomScrollFrameRef.current)
+      scheduledBottomScrollFrameRef.current = 0
+    }
+    clearProgrammaticScrollReleaseTimeout()
+  }, [clearProgrammaticScrollReleaseTimeout])
 
   // 首次访问线程时拉取 subagent runs
   useEffect(() => {
@@ -133,10 +202,29 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       })
   }, [runtimeEvents.length, setRuntimeEvents, threadId])
 
+  useLayoutEffect(() => {
+    activeThreadIdRef.current = threadId
+    setVisibleThreadMessages([])
+  }, [threadId])
+
   useEffect(() => {
-    getThreadMessages(threadId)
-      .then((messages) => setVisibleThreadMessages(messages))
-      .catch((err) => console.error('[AgentMessages] 加载线程消息失败:', err))
+    let cancelled = false
+    const requestedThreadId = threadId
+    getThreadMessages(requestedThreadId)
+      .then((messages) => {
+        if (!shouldApplyThreadMessagesResult({
+          requestedThreadId,
+          currentThreadId: activeThreadIdRef.current,
+          cancelled,
+        })) return
+        setVisibleThreadMessages(messages)
+      })
+      .catch((err) => {
+        if (!cancelled) console.error('[AgentMessages] 加载线程消息失败:', err)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [threadId, userVersionRefreshKey])
 
   useEffect(() => {
@@ -152,64 +240,57 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
 
     const currentScrollTop = container.scrollTop
     const nearBottom = isNearScrollBottom(container)
+    const programmatic = isProgrammaticScrollActive()
+    if (programmatic && nearBottom) {
+      releaseProgrammaticScroll()
+    }
     shouldAutoScrollRef.current = shouldAutoScrollAfterUserScroll({
       currentScrollTop,
       previousScrollTop: previousScrollTopRef.current,
       nearBottom,
+      programmatic,
     })
     previousScrollTopRef.current = currentScrollTop
+    if (programmatic && shouldAutoScrollRef.current) {
+      if (nearBottom) setScrollButtonVisible(false)
+      return
+    }
     setScrollButtonVisible(!nearBottom && liveMessages.length > 0)
-  }, [liveMessages.length, setScrollButtonVisible])
+  }, [isProgrammaticScrollActive, liveMessages.length, releaseProgrammaticScroll, setScrollButtonVisible])
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current
     const content = contentRef.current
     if (!container || !content) return
 
-    let previousScrollHeight = container.scrollHeight
-    let previousContentHeight = content.getBoundingClientRect().height
     const resizeObserver = new ResizeObserver(() => {
-      const nextContentHeight = content.getBoundingClientRect().height
-      if (nextContentHeight === previousContentHeight) return
-      previousContentHeight = nextContentHeight
-
-      const nextScrollHeight = container.scrollHeight
-      if (performance.now() < suspendResizeCompensationUntilRef.current) {
-        previousScrollTopRef.current = container.scrollTop
-        previousScrollHeight = nextScrollHeight
-        setScrollButtonVisible(!isNearScrollBottom(container) && liveMessages.length > 0)
-        return
-      }
-
       if (shouldAutoScrollRef.current) {
-        container.scrollTop = container.scrollHeight
-      } else {
-        container.scrollTop = getPreservedScrollTopAfterResize({
-          currentScrollTop: container.scrollTop,
-          previousScrollHeight,
-          nextScrollHeight,
-        })
+        scheduleBottomScroll()
       }
-      previousScrollTopRef.current = container.scrollTop
-      previousScrollHeight = container.scrollHeight
-      setScrollButtonVisible(!isNearScrollBottom(container) && liveMessages.length > 0)
     })
 
     resizeObserver.observe(content)
     return () => resizeObserver.disconnect()
-  }, [liveMessages.length, setScrollButtonVisible])
+  }, [scheduleBottomScroll])
 
   useLayoutEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
       prevThreadIdRef.current = threadId
       shouldAutoScrollRef.current = true
+      latestUserMessageKeyRef.current = latestUserMessageKey
       return scrollMessagesToBottom('instant')
     }
+
+    if (latestUserMessageKey && latestUserMessageKeyRef.current !== latestUserMessageKey) {
+      latestUserMessageKeyRef.current = latestUserMessageKey
+      return scrollMessagesToBottom('instant')
+    }
+    latestUserMessageKeyRef.current = latestUserMessageKey
 
     if (shouldAutoScrollRef.current && liveMessages.length > 0) {
       return scrollMessagesToBottom('instant')
     }
-  }, [liveMessages.length, scrollMessagesToBottom, threadId])
+  }, [latestUserMessageKey, liveMessages.length, scrollMessagesToBottom, threadId])
 
   const items: React.ReactNode[] = []
   for (let i = 0; i < liveMessages.length; i++) {
@@ -235,6 +316,8 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
+        onWheel={handleWheelNavigation}
+        onTouchMove={handleTouchNavigation}
         className="h-full w-full overflow-y-auto"
       >
         <div
@@ -252,6 +335,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
           ) : (
             <>
               {items}
+              <div ref={bottomRef} className="h-px w-full" aria-hidden />
             </>
           )}
         </div>

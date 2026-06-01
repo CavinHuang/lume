@@ -24,14 +24,14 @@ mock.module('./tool-result-renderers', () => ({
 const { PlanPreviewCard } = await import('./RuntimeEventContentBlock')
 
 describe('PlanPreviewCard', () => {
-  test('renders a collapsed Markdown plan preview with file and expand controls', () => {
+  test('renders collapsed plan metadata without mounting the Markdown body', () => {
     const markup = renderToStaticMarkup(
       <PlanPreviewCard
         preview={{
           contractId: 'plan-1',
           title: 'Ship runtime',
           summary: 'Review before executing',
-          markdown: '# Ship runtime\n\n## Steps\n1. Inspect',
+          markdown: '# Ship runtime\n\n## Steps\n1. Inspect\n\nHidden expensive body',
           planFilePath: 'plans/plan-1.md',
           planVerified: true,
           stepCount: 1,
@@ -45,7 +45,8 @@ describe('PlanPreviewCard', () => {
     expect(markup).toContain('Ship runtime')
     expect(markup).toContain('Review before executing')
     expect(markup).toContain('plans/plan-1.md')
-    expect(markup).toContain('# Ship runtime')
+    expect(markup).not.toContain('data-x-markdown="true"')
+    expect(markup).not.toContain('Hidden expensive body')
     expect(markup).toContain('展开计划')
     expect(markup).toContain('复制计划')
     expect(markup).toContain('打开计划文件')

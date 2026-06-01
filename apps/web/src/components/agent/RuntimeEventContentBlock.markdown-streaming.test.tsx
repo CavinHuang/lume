@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { LumeRuntimeEvent } from '@lume/shared'
 import type { RuntimeMessageView } from './runtime-message-view'
 
 mock.module('@lume/ui', () => ({
@@ -8,26 +9,25 @@ mock.module('@lume/ui', () => ({
 }))
 
 mock.module('@ant-design/x-markdown', () => ({
-  XMarkdown: ({
-    children,
-    streaming,
-  }: {
+  XMarkdown: ({ children, streaming }: {
     children: React.ReactNode
     streaming?: {
       hasNextChunk?: boolean
       enableAnimation?: boolean
       tail?: boolean
     }
-  }) => (
-    <article
-      data-x-markdown="true"
-      data-has-next-chunk={String(streaming?.hasNextChunk)}
-      data-enable-animation={String(streaming?.enableAnimation)}
-      data-tail={String(streaming?.tail)}
-    >
-      {children}
-    </article>
-  ),
+  }) => {
+    return (
+      <article
+        data-x-markdown="true"
+        data-has-next-chunk={String(streaming?.hasNextChunk)}
+        data-enable-animation={String(streaming?.enableAnimation)}
+        data-tail={String(streaming?.tail)}
+      >
+        {children}
+      </article>
+    )
+  },
 }))
 
 mock.module('@/lib/desktop-api', () => ({
@@ -88,6 +88,86 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
     expect(markup).toContain('data-has-next-chunk="true"')
     expect(markup).toContain('data-enable-animation="true"')
     expect(markup).toContain('data-tail="true"')
+  })
+
+  test('shows the streaming tail only on the active text block', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-1',
+      type: 'assistant',
+      text: 'beforeafter',
+      thinking: '',
+      status: 'streaming',
+      toolCalls: [],
+      blocks: [
+        { type: 'text', id: 'text-1', text: 'before' },
+        {
+          type: 'tool_call',
+          id: 'tool-1',
+          toolCall: {
+            id: 'tool-1',
+            toolName: 'Read',
+            input: {},
+            status: 'completed',
+          },
+        },
+        { type: 'text', id: 'text-2', text: 'after' },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        streaming
+        threadId="thread-1"
+      />,
+    )
+
+    expect(markup.match(/data-tail="true"/g)?.length ?? 0).toBe(1)
+    expect(markup.match(/data-tail="false"/g)?.length ?? 0).toBe(1)
+  })
+
+  test('does not keep a markdown tail on old text while task progress is active', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-1',
+      type: 'assistant',
+      text: 'before',
+      thinking: '',
+      status: 'streaming',
+      toolCalls: [],
+      blocks: [
+        { type: 'text', id: 'text-1', text: 'before' },
+        {
+          type: 'task_progress',
+          id: 'task-progress-1',
+          event: {
+            type: 'task.progress',
+            taskRunId: 'task-run-1',
+            contractId: 'contract-1',
+            currentTaskId: 'task-1',
+            status: 'running',
+            tasks: [{
+              id: 'task-1',
+              title: '读取文件',
+              status: 'running',
+              attemptCount: 1,
+            }],
+            message: '正在执行：读取文件',
+            createdAt: '2026-05-01T00:00:00.000Z',
+          } as Extract<LumeRuntimeEvent, { type: 'task.progress' }>,
+        },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        streaming
+        threadId="thread-1"
+      />,
+    )
+
+    expect(markup.match(/data-tail="true"/g)?.length ?? 0).toBe(0)
+    expect(markup.match(/data-tail="false"/g)?.length ?? 0).toBe(1)
   })
 
   test('renders assistant token usage as a hover-only footer', () => {

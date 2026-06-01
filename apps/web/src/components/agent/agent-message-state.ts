@@ -2,6 +2,7 @@ import type { AgentMessage, AgentMessageAttachmentInput, SDKMessage } from '@lum
 import type { RuntimeAssistantTokenUsageView, RuntimeMessageView } from './runtime-message-view'
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 80
+const PROGRAMMATIC_SCROLL_HOLD_MS = 180
 
 type ScrollMetrics = {
   scrollHeight: number
@@ -20,28 +21,38 @@ export function shouldAutoScrollAfterUserScroll({
   currentScrollTop,
   previousScrollTop,
   nearBottom,
+  programmatic = false,
 }: {
   currentScrollTop: number
   previousScrollTop: number
   nearBottom: boolean
+  programmatic?: boolean
 }): boolean {
+  if (programmatic) return true
   if (currentScrollTop < previousScrollTop) return false
   return nearBottom
 }
 
-export function getPreservedScrollTopAfterResize({
-  currentScrollTop,
-  previousScrollHeight,
-  nextScrollHeight,
+export function getProgrammaticScrollHoldUntil({
+  now,
+  behavior,
 }: {
-  currentScrollTop: number
-  previousScrollHeight: number
-  nextScrollHeight: number
+  now: number
+  behavior: ScrollBehavior
 }): number {
-  if (previousScrollHeight <= 0 || previousScrollHeight === nextScrollHeight) {
-    return currentScrollTop
-  }
-  return currentScrollTop + nextScrollHeight - previousScrollHeight
+  return behavior === 'smooth' ? Number.POSITIVE_INFINITY : now + PROGRAMMATIC_SCROLL_HOLD_MS
+}
+
+export function shouldApplyThreadMessagesResult({
+  requestedThreadId,
+  currentThreadId,
+  cancelled,
+}: {
+  requestedThreadId: string
+  currentThreadId: string
+  cancelled: boolean
+}): boolean {
+  return !cancelled && requestedThreadId === currentThreadId
 }
 
 export function reconcileUserMessageVersions(
@@ -161,6 +172,16 @@ export function collectNewRuntimeMessageIds(
 
 export function collectRuntimeMessageIds(messages: RuntimeMessageView[]): Set<string> {
   return new Set(messages.map((message) => message.id))
+}
+
+export function getLatestUserMessageKey(messages: RuntimeMessageView[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.type === 'user') {
+      return `${message.createdAt}:${message.text}`
+    }
+  }
+  return null
 }
 
 function withPersistedUserAttachments(

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
@@ -15,6 +15,8 @@ import { AGENT_IPC_CHANNELS, getAgentRole, type AgentMessage, type AgentRoleDefi
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
+
+const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
   message: RuntimeMessageView
@@ -72,6 +74,9 @@ export function RuntimeEventContentBlock({
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
   const contentBlocks = message.blocks.filter((block) => block.type !== 'task_progress')
+  const activeStreamingTextBlockId = streaming === true && message.status === 'streaming'
+    ? findActiveStreamingTextBlockId(message.blocks)
+    : null
   const activitySignature = contentBlocks
     .map((block) => {
       if (block.type === 'text') return `text:${block.text}`
@@ -100,7 +105,7 @@ export function RuntimeEventContentBlock({
             onOpenThreadFile={onOpenThreadFile}
             onOpenMemorySource={onOpenMemorySource}
             onUserResizeStart={onUserResizeStart}
-            isStreaming={streaming === true && message.status === 'streaming'}
+            isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
             isActiveThinking={block.type === 'thinking'
               && streaming === true
               && message.status === 'streaming'
@@ -130,6 +135,11 @@ export function RuntimeEventContentBlock({
       </div>
     </div>
   )
+}
+
+function findActiveStreamingTextBlockId(blocks: RuntimeAssistantBlock[]): string | null {
+  const lastBlock = blocks.at(-1)
+  return lastBlock?.type === 'text' ? lastBlock.id : null
 }
 
 function ImDeliveryStatusLine({
@@ -708,7 +718,7 @@ const MARKDOWN_INCOMPLETE_COMPONENTS = {
   table: 'incomplete-table',
 } as const
 
-function SmoothText({
+const SmoothText = memo(function SmoothText({
   text,
   isStreaming,
   onOpenThreadFile,
@@ -720,6 +730,7 @@ function SmoothText({
   const { displayedContent } = useSmoothStream({
     content: text,
     isStreaming,
+    minDelay: MARKDOWN_STREAM_MIN_DELAY_MS,
   })
   const isDark = useIsDark()
   const markdownStreaming = useMemo(() => ({
@@ -752,7 +763,7 @@ function SmoothText({
       </XMarkdown>
     </div>
   )
-}
+})
 
 export function PlanPreviewCard({
   preview,
@@ -764,7 +775,6 @@ export function PlanPreviewCard({
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const feedbackStateRef = useRef<CopyFeedbackState>({ resetTimeoutId: null })
-  const isDark = useIsDark()
   const canOpenFile = Boolean(preview.planFilePath && onOpenThreadFile)
 
   useEffect(() => () => {
@@ -850,39 +860,46 @@ export function PlanPreviewCard({
         </div>
       </div>
 
-      <div className={cn('relative mt-6', expanded ? '' : 'max-h-[390px] overflow-hidden')}>
-        <XMarkdown
-          className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
-          rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
-          components={{
-            code: (props) => (
-              <MarkdownCode
-                {...(props as MarkdownCodeProps)}
-                onOpenThreadFile={onOpenThreadFile}
-              />
-            ),
-          }}
-        >
-          {preview.markdown}
-        </XMarkdown>
-        {!expanded && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex h-28 items-end justify-center bg-gradient-to-t from-[#f4f4f5] via-[#f4f4f5]/88 to-transparent pb-2">
-            <button
-              type="button"
-              onClick={() => setExpanded(true)}
-              className="pointer-events-auto rounded-full bg-[#1f232b] px-4 py-1.5 text-[14px] font-semibold text-white shadow-[0_10px_24px_rgba(31,35,43,0.22)] transition-transform hover:scale-[1.02]"
-            >
-              展开计划
-            </button>
-          </div>
-        )}
-      </div>
+      {expanded && (
+        <div className="relative mt-6">
+          <PlanPreviewMarkdown markdown={preview.markdown} onOpenThreadFile={onOpenThreadFile} />
+        </div>
+      )}
     </article>
   )
 }
 
+const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
+  markdown,
+  onOpenThreadFile,
+}: {
+  markdown: string
+  onOpenThreadFile?: (path: string) => void
+}) {
+  const isDark = useIsDark()
+  const components = useMemo(() => ({
+    code: (props: MarkdownCodeProps) => (
+      <MarkdownCode
+        {...props}
+        onOpenThreadFile={onOpenThreadFile}
+      />
+    ),
+  }), [onOpenThreadFile])
+
+  return (
+    <XMarkdown
+      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
+      rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
+      components={components}
+    >
+      {markdown}
+    </XMarkdown>
+  )
+})
+
 type MarkdownCodeProps = HTMLAttributes<HTMLElement> & {
   children?: ReactNode
+  class?: string
   block?: boolean
   lang?: string
   domNode?: unknown
@@ -928,7 +945,24 @@ export function MarkdownCode({
     )
   }
 
-  return <code {...rest}>{children}</code>
+  const codeProps = normalizeMarkdownCodeProps(rest as Record<string, unknown>) as HTMLAttributes<HTMLElement>
+  return <code {...codeProps}>{children}</code>
+}
+
+export function normalizeMarkdownCodeProps(props: Record<string, unknown>): Record<string, unknown> {
+  const {
+    class: rawClassName,
+    className,
+    ...rest
+  } = props
+  const normalizedClassName = cn(
+    typeof rawClassName === 'string' ? rawClassName : undefined,
+    typeof className === 'string' ? className : undefined,
+  )
+  return {
+    ...rest,
+    ...(normalizedClassName ? { className: normalizedClassName } : {}),
+  }
 }
 
 function flattenText(value: ReactNode): string {

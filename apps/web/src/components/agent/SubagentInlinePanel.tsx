@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useSyncExternalStore } from 'react'
+import { memo, useState, useRef, useEffect, useLayoutEffect, useSyncExternalStore } from 'react'
 import { useAtomValue } from 'jotai'
 import { Loader2, ChevronDown, Bot, Copy, Check, AlertTriangle } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
@@ -210,7 +210,9 @@ function SubagentCompletedPreview({ output }: { output?: string }) {
 
   return (
     <div className="max-h-12 overflow-hidden px-3 pb-2">
-      <SubagentMarkdown output={output} compact />
+      <p className="line-clamp-2 text-[12px] leading-relaxed text-foreground/55">
+        {getSubagentCollapsedPreviewText(output)}
+      </p>
     </div>
   )
 }
@@ -377,7 +379,7 @@ function useIsDark(): boolean {
   )
 }
 
-export function SubagentMarkdown({ output, compact = false }: { output: string; compact?: boolean }) {
+export const SubagentMarkdown = memo(function SubagentMarkdown({ output, compact = false }: { output: string; compact?: boolean }) {
   const isDark = useIsDark()
 
   return (
@@ -393,4 +395,14 @@ export function SubagentMarkdown({ output, compact = false }: { output: string; 
       </XMarkdown>
     </div>
   )
+})
+
+function getSubagentCollapsedPreviewText(output: string): string {
+  const withoutCodeBlocks = output.replace(/```[\s\S]*?```/g, ' ')
+  const withoutLinks = withoutCodeBlocks.replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+  const plain = withoutLinks
+    .replace(/[#>*_`~|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return plain || '结果已完成'
 }
