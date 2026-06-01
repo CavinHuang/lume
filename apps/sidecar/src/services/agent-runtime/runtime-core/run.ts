@@ -26,9 +26,7 @@ import {
   finalizeSubagentOutputFromState,
   summarizeSubagentAssistantEvent,
   type ToolDefinition,
-  annotateSubagentStreamingEvent,
-  WebFetchTool,
-  WebSearchTool
+  annotateSubagentStreamingEvent
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
@@ -49,6 +47,7 @@ import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
+import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
@@ -558,8 +557,7 @@ function createBaseSdkAlignedTools(
     GlobTool,
     GrepTool,
     ListDirectoryTool,
-    WebSearchTool,
-    WebFetchTool
+    ...createSdkWebTools()
   ];
 
   if (permissionMode === "plan") {

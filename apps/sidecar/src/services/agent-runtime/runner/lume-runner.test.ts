@@ -625,7 +625,56 @@ describe("LumeRunner", () => {
       type: "result",
       subtype: "error_max_turns",
       is_error: true,
-      num_turns: 20
+      num_turns: 20,
+      contextUsage: {
+        inputTokens: 10,
+        outputTokens: 2,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        totalTokens: 12,
+        estimatedTailTokens: 0,
+        contextWindow: 1000,
+        contextWindowSource: "model",
+        source: "provider"
+      },
+      billingUsage: {
+        cumulative: {
+          inputTokens: 10,
+          outputTokens: 2,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          totalTokens: 12
+        },
+        latestRecord: {
+          callerLabel: "Conversation",
+          model: "model-1",
+          inputTokens: 10,
+          outputTokens: 2,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          totalTokens: 12,
+          costUSD: 0,
+          usageIdentity: {
+            threadId: "thread-1",
+            callerKind: "conversation"
+          }
+        },
+        records: [{
+          callerLabel: "Conversation",
+          model: "model-1",
+          inputTokens: 10,
+          outputTokens: 2,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          totalTokens: 12,
+          costUSD: 0,
+          usageIdentity: {
+            threadId: "thread-1",
+            callerKind: "conversation"
+          }
+        }],
+        totalCostUSD: 0
+      }
     } as SDKMessage]));
 
     expect(result).toEqual({

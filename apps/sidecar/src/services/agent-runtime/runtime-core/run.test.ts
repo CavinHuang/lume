@@ -252,6 +252,45 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("开启 Guanlan 后应暴露 Guanlan 内置工具", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-guanlan-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    updateLumeConfigSection({
+      source: "user",
+      path: "webSearch",
+      value: {
+        strategy: "priority",
+        providers: {
+          guanlan: { enabled: true },
+          duckduckgo: { enabled: true },
+          bing: { enabled: true }
+        }
+      }
+    });
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-guanlan-tools-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "guanlan-tool-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits"
+    });
+
+    const toolNames = result.session.getActiveToolNames();
+    expect(toolNames).toContain("guanlan_search");
+    expect(toolNames).toContain("guanlan_read");
+    expect(toolNames).toContain("guanlan_hotnews");
+    expect(toolNames).toContain("guanlan_research");
+
+    result.session.dispose();
+  });
+
   test("应通过 workspace MCP manager 注入 MCP 工具与资源工具", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-mcp-config-"));
     process.env.LUME_CONFIG_DIR = configDir;
