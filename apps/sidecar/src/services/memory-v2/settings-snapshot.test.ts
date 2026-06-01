@@ -7,6 +7,7 @@ import { appendDaily, appendRunArchive, createMemoryV2Store } from "./markdown-s
 import { getMemoryV2SettingsSnapshot } from "./settings-snapshot";
 import { smartAddMemoryV2Candidate } from "./smart-add";
 import { updateMemoryRuntimeConfig } from "./policy";
+import { updateLumeConfigSection } from "../system/lume-config-service";
 
 let root: string;
 
@@ -116,6 +117,25 @@ describe("memory-v2 settings snapshot", () => {
     expect(snapshot.retrieval.rerank).toEqual({
       modelRef: "openai/gpt-5-mini",
       source: "explicit"
+    });
+  });
+
+  test("reports whether LLM memory extraction is configured", () => {
+    expect(getMemoryV2SettingsSnapshot("demo").extraction).toEqual({
+      source: "disabled",
+      message: "未配置记忆提取模型；外部资料只会使用显式记忆句式。"
+    });
+
+    updateLumeConfigSection({
+      source: "system",
+      path: "memory.extraction.modelRef",
+      value: "openai/gpt-5-mini"
+    });
+
+    expect(getMemoryV2SettingsSnapshot("demo").extraction).toEqual({
+      modelRef: "openai/gpt-5-mini",
+      source: "configured",
+      message: "已配置记忆提取模型，外部资料会优先使用 LLM 分析。"
     });
   });
 

@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   MEMORY_IPC_CHANNELS,
   type MemoryIngestSourcesJob,
+  type MemoryOrganizeJob,
   type MemoryOrganizeEntriesResult,
-  type MemoryStartIngestSourcesResult
+  type MemoryStartIngestSourcesResult,
+  type MemoryStartOrganizeJobResult
 } from "@lume/shared";
 import { createAgentThread, appendAgentTranscriptMessage } from "../services/agent/agent-thread-manager";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
@@ -15,6 +17,7 @@ import { createMemoryHandlers } from "./memory-handlers";
 
 let root: string;
 const GET_INGEST_JOB = "memory:get-ingest-job";
+const GET_ORGANIZE_JOB = "memory:get-organize-job";
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "lume-memory-rpc-"));
@@ -62,10 +65,12 @@ describe("memory handlers", () => {
     });
 
     const handlers = createMemoryHandlers();
-    const result = await handlers[MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY]?.({
+    const started = await handlers[MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY]?.({
       workspaceSlug: "demo",
       limit: 20
-    });
+    }) as MemoryStartOrganizeJobResult;
+    const job = await waitForOrganizeJob(handlers, started?.jobId);
+    const result = job.result;
 
     expect(result).toMatchObject({
       workspaceSlug: "demo",
@@ -95,9 +100,11 @@ describe("memory handlers", () => {
     });
 
     const handlers = createMemoryHandlers();
-    const result = await handlers[MEMORY_IPC_CHANNELS.ORGANIZE_ENTRIES]?.({
+    const started = await handlers[MEMORY_IPC_CHANNELS.ORGANIZE_ENTRIES]?.({
       workspaceSlug: "demo"
-    }) as MemoryOrganizeEntriesResult;
+    }) as MemoryStartOrganizeJobResult;
+    const job = await waitForOrganizeJob(handlers, started?.jobId);
+    const result = job.result as MemoryOrganizeEntriesResult;
 
     expect(result).toMatchObject({
       workspaceSlug: "demo",
@@ -358,4 +365,22 @@ async function waitForIngestJob(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("ingest job did not finish");
+}
+
+async function waitForOrganizeJob(
+  handlers: ReturnType<typeof createMemoryHandlers>,
+  jobId: unknown
+) : Promise<MemoryOrganizeJob> {
+  expect(typeof jobId).toBe("string");
+  if (typeof jobId !== "string") throw new Error("organize job did not start");
+  const getJob = handlers[GET_ORGANIZE_JOB];
+  expect(getJob).toBeDefined();
+  if (!getJob) throw new Error("missing organize job handler");
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const job = await getJob({ jobId }) as MemoryOrganizeJob;
+    if (job.status !== "running") return job;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("organize job did not finish");
 }

@@ -1,5 +1,6 @@
 import type {
   MemoryOrganizeHistoryInput,
+  MemoryOrganizeProgress,
   MemoryOrganizeHistoryResult
 } from "@lume/shared";
 import { createLogger } from "../infra/logger";
@@ -20,7 +21,7 @@ interface HistoryUserMessage {
 }
 
 export async function organizeMemoryHistory(
-  input: MemoryOrganizeHistoryInput
+  input: MemoryOrganizeHistoryInput & { onProgress?: (progress: MemoryOrganizeProgress) => void }
 ): Promise<MemoryOrganizeHistoryResult> {
   const workspace = getAgentWorkspaceBySlug(input.workspaceSlug);
   if (!workspace) {
@@ -39,6 +40,12 @@ export async function organizeMemoryHistory(
     scannedMessages: messages.length,
     limit
   });
+  input.onProgress?.({
+    label: "扫描历史对话",
+    scannedItems: messages.length,
+    processedItems: 0,
+    candidateCount: 0
+  });
 
   const result = await ingestMemorySources({
     workspaceSlug: input.workspaceSlug,
@@ -49,7 +56,20 @@ export async function organizeMemoryHistory(
       content: message.text,
       sourceRef: message.sourcePath,
       updatedAt: message.createdAt
-    }))
+    })),
+    onProgress: (progress) => {
+      const processedItems = progress.scannedBatches > 0
+        ? Math.min(messages.length, Math.ceil(messages.length * progress.processedBatches / progress.scannedBatches))
+        : 0;
+      input.onProgress?.({
+        label: "分析历史对话",
+        scannedItems: messages.length,
+        processedItems,
+        scannedBatches: progress.scannedBatches,
+        processedBatches: progress.processedBatches,
+        candidateCount: progress.candidateCount
+      });
+    }
   });
 
   const output = {

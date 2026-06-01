@@ -105,6 +105,7 @@ export function memoryEntryToRecallItem(entry: MemoryV2Entry, reason = "profile 
     reason,
     score: 100,
     pinned: entry.frontmatter.pinned,
+    tags: entry.frontmatter.tags,
     claim: claimFromEntry(entry)
   };
 }

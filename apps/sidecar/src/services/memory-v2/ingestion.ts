@@ -2,6 +2,7 @@ import type {
   MemoryOrganizeHistoryActionCounts,
   MemoryIngestSourcesInput,
   MemoryIngestSourcesItem,
+  MemoryIngestSourcesProgress,
   MemoryIngestSourcesResult
 } from "@lume/shared";
 import { readFile, readdir, stat } from "node:fs/promises";
@@ -72,11 +73,14 @@ export interface MemoryIngestionInput {
   chunkSize?: number;
   batchMaxChars?: number;
   extractBatchCandidates?: MemoryIngestionBatchExtractor;
+  onProgress?: (progress: MemoryIngestSourcesProgress) => void;
 }
 
 export type MemoryIngestionItem = MemoryIngestSourcesItem;
 
 export type MemoryIngestionResult = MemoryIngestSourcesResult;
+
+export type MemoryIngestionProgressCallback = (progress: MemoryIngestSourcesProgress) => void;
 
 export interface MemoryIngestionChunk {
   id: string;
@@ -132,15 +136,26 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
 
   const batches = createIngestionBatches(chunks, batchMaxChars);
   const extractBatchCandidates = input.extractBatchCandidates ?? defaultExtractBatchCandidates;
+  const progress: MemoryIngestSourcesProgress = {
+    scannedSources: input.sources.length,
+    scannedChunks: chunks.length,
+    scannedBatches: batches.length,
+    processedBatches: 0,
+    candidateCount: 0
+  };
+  input.onProgress?.({ ...progress });
+
   for (const batch of batches) {
     const candidates = await extractBatchCandidates({
       workspaceSlug: input.workspaceSlug,
       chunks: batch
     });
     const chunkById = new Map(batch.map((chunk) => [chunk.id, chunk]));
+    const chunksWithCandidates = new Set<string>();
     for (const item of candidates) {
       const chunk = chunkById.get(item.sourceId);
       if (!chunk) continue;
+      chunksWithCandidates.add(chunk.id);
       candidateCount += 1;
       const result = await smartAddMemoryV2Candidate({
         workspaceSlug: input.workspaceSlug,
@@ -159,6 +174,22 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
         reason: result.reason,
         ...(result.entry ? { entryId: result.entry.frontmatter.id } : {}),
         ...(result.pending ? { pendingId: result.pending.frontmatter.id } : {})
+      });
+    }
+    progress.processedBatches += 1;
+    progress.candidateCount = candidateCount;
+    input.onProgress?.({ ...progress });
+
+    for (const chunk of batch) {
+      if (chunksWithCandidates.has(chunk.id)) continue;
+      actions.suppressed += 1;
+      items.push({
+        sourceId: chunk.source.id,
+        sourcePath: chunk.sourcePath,
+        statement: chunk.source.title,
+        scope: chunk.source.targetScope,
+        action: "suppressed",
+        reason: "No durable memory candidates found."
       });
     }
   }
@@ -349,7 +380,7 @@ export async function ingestLocalMemoryFolders(input: {
 }
 
 export async function ingestExternalMemorySources(
-  input: MemoryIngestSourcesInput
+  input: MemoryIngestSourcesInput & { onProgress?: MemoryIngestionProgressCallback }
 ): Promise<MemoryIngestSourcesResult> {
   const sources: MemoryIngestionSource[] = [];
   const skippedItems: MemoryIngestionItem[] = [];
@@ -451,7 +482,8 @@ export async function ingestExternalMemorySources(
     ? await ingestMemorySources({
       workspaceSlug: input.workspaceSlug,
       sources,
-      batchMaxChars: input.batchMaxChars
+      batchMaxChars: input.batchMaxChars,
+      onProgress: input.onProgress
     })
     : emptyIngestionResult(input.workspaceSlug);
   return {

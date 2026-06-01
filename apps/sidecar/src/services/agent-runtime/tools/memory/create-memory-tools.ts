@@ -55,6 +55,10 @@ function optionalClaim(value: unknown): MemoryClaim | undefined {
   };
 }
 
+function memoryV2RememberScope(value: unknown): MemoryScope {
+  return value === "global" ? "global" : "workspace";
+}
+
 function optionalStringRecord(value: unknown): Record<string, string> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const out: Record<string, string> = {};
@@ -143,7 +147,7 @@ export function createSdkMemoryTools(params: {
       inputSchema: {
         type: "object",
         properties: {
-          scope: { type: "string", enum: ["global", "workspace", "agent", "session"] },
+          scope: { type: "string", enum: ["global", "workspace"] },
           kind: { type: "string", enum: ["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"] },
           content: { type: "string", minLength: 1 },
           title: { type: "string" },
@@ -171,7 +175,7 @@ export function createSdkMemoryTools(params: {
       async call(input) {
         return rememberMemoryTool({
           workspaceSlug: params.workspaceSlug,
-          scope: String(input.scope ?? "workspace") as MemoryScope,
+          scope: memoryV2RememberScope(input.scope),
           kind: String(input.kind ?? "fact") as MemoryKind,
           content: String(input.content ?? ""),
           title: typeof input.title === "string" ? input.title : undefined,

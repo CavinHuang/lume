@@ -174,6 +174,7 @@ function entryRecallCandidates(entries: MemoryV2Entry[]): MemoryV2RecallItem[] {
     reason: entry.frontmatter.pinned ? "pinned memory" : "matched memory entry",
     score: 0,
     pinned: entry.frontmatter.pinned,
+    tags: entry.frontmatter.tags,
     claim: claimFromEntry(entry)
   }));
 }

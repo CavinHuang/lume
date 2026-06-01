@@ -68,6 +68,33 @@ describe("ingestMemorySources", () => {
     ]);
   });
 
+  test("writes multiple explicit memories from one pasted text source", async () => {
+    createAgentWorkspace("Demo", { slug: "demo" });
+
+    const result = await ingestMemorySources({
+      workspaceSlug: "demo",
+      sources: [{
+        id: "paste-1",
+        kind: "pasted_text",
+        title: "多条偏好",
+        content: "叫我 Mason。以后默认用中文回答",
+        sourceRef: "pasted://paste-1",
+        targetScope: "global"
+      }]
+    });
+
+    expect(result.candidateCount).toBe(2);
+    expect(result.actions.new).toBe(2);
+    expect(result.items.map((item) => item.statement)).toEqual([
+      "用户希望被称呼为 Mason",
+      "默认用中文回答"
+    ]);
+    expect(listEntries({ workspaceSlug: "demo", scopes: ["global"] }).map((entry) => entry.statement)).toEqual([
+      "默认用中文回答",
+      "用户希望被称呼为 Mason"
+    ]);
+  });
+
   test("skips duplicate claims from repeated sources", async () => {
     createAgentWorkspace("Demo", { slug: "demo" });
     const source = {
@@ -134,6 +161,11 @@ describe("ingestMemorySources", () => {
   test("splits ingestion analysis when the batch budget is exceeded", async () => {
     createAgentWorkspace("Demo", { slug: "demo" });
     const calls: string[][] = [];
+    const progressEvents: Array<{
+      scannedBatches: number;
+      processedBatches: number;
+      candidateCount: number;
+    }> = [];
 
     const result = await ingestMemorySources({
       workspaceSlug: "demo",
@@ -156,6 +188,13 @@ describe("ingestMemorySources", () => {
           targetScope: "global"
         }
       ],
+      onProgress: (progress) => {
+        progressEvents.push({
+          scannedBatches: progress.scannedBatches,
+          processedBatches: progress.processedBatches,
+          candidateCount: progress.candidateCount
+        });
+      },
       extractBatchCandidates: async ({ chunks }) => {
         calls.push(chunks.map((chunk) => chunk.sourcePath));
         return chunks.map((chunk) => ({
@@ -171,6 +210,38 @@ describe("ingestMemorySources", () => {
     ]);
     expect(result.scannedBatches).toBe(2);
     expect(result.candidateCount).toBe(2);
+    expect(progressEvents).toEqual([
+      { scannedBatches: 2, processedBatches: 0, candidateCount: 0 },
+      { scannedBatches: 2, processedBatches: 1, candidateCount: 1 },
+      { scannedBatches: 2, processedBatches: 2, candidateCount: 2 }
+    ]);
+  });
+
+  test("reports analyzed chunks that do not produce durable memory candidates", async () => {
+    createAgentWorkspace("Demo", { slug: "demo" });
+
+    const result = await ingestMemorySources({
+      workspaceSlug: "demo",
+      sources: [{
+        id: "paste-1",
+        kind: "pasted_text",
+        title: "普通文本",
+        content: "这只是一段临时聊天内容，没有需要长期记住的事实。",
+        sourceRef: "pasted://paste-1"
+      }],
+      extractBatchCandidates: async () => []
+    });
+
+    expect(result.scannedSources).toBe(1);
+    expect(result.scannedChunks).toBe(1);
+    expect(result.candidateCount).toBe(0);
+    expect(result.actions.suppressed).toBe(1);
+    expect(result.items).toEqual([expect.objectContaining({
+      sourcePath: "pasted://paste-1#chunk-1",
+      statement: "普通文本",
+      action: "suppressed",
+      reason: "No durable memory candidates found."
+    })]);
   });
 });
 

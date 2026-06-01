@@ -15,6 +15,7 @@ import {
 import { getMemoryV2ScopePaths } from "./paths";
 import { createMemoryV2Store } from "./markdown-store";
 import { resolveMemoryEmbeddingModelRef, resolveMemoryEmbeddingStatusModelRef } from "./embedding";
+import { resolveMemoryExtractionModelRef } from "./extraction";
 import { getLocalOnnxMemoryEmbeddingStatus } from "./local-embedding";
 import { resolveMemoryRerankModelRef } from "./rerank";
 import { getSemanticIndexStatus } from "./semantic-index";
@@ -41,6 +42,7 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
   });
   const runtimeConfig = getMemoryRuntimeConfig();
   const lumeConfig = getEffectiveLumeConfig(workspaceSlug);
+  const extractionModelRef = resolveMemoryExtractionModelRef(lumeConfig);
   const embeddingModelRef = resolveMemoryEmbeddingModelRef(lumeConfig);
   const semanticModelRef = resolveMemoryEmbeddingStatusModelRef(lumeConfig);
   const localOnnx = getLocalOnnxMemoryEmbeddingStatus();
@@ -79,6 +81,13 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     workspaceEntries: workspaceEntries.map(entrySummary),
     globalEntries: globalEntries.map(entrySummary),
     pending: pending.map((item) => pendingSummary(item, entryById)),
+    extraction: {
+      ...(extractionModelRef ? { modelRef: extractionModelRef } : {}),
+      source: extractionModelRef ? "configured" : "disabled",
+      message: extractionModelRef
+        ? "已配置记忆提取模型，外部资料会优先使用 LLM 分析。"
+        : "未配置记忆提取模型；外部资料只会使用显式记忆句式。"
+    },
     retrieval: {
       semantic: {
         mode: runtimeConfig.retrieval.semantic,

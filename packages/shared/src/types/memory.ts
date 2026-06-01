@@ -1,8 +1,6 @@
 export type MemoryScope =
   | "global"
-  | "workspace"
-  | "agent"
-  | "session";
+  | "workspace";
 
 export type MemoryKind =
   | "raw"
@@ -233,6 +231,43 @@ export interface MemoryOrganizeEntriesResult {
   items: MemoryOrganizeEntriesItem[];
 }
 
+export type MemoryOrganizeJobKind = "history" | "entries";
+
+export type MemoryOrganizeJobStatus = "running" | "completed" | "failed";
+
+export interface MemoryOrganizeProgress {
+  label: string;
+  scannedItems: number;
+  processedItems: number;
+  scannedBatches?: number;
+  processedBatches?: number;
+  candidateCount?: number;
+}
+
+export interface MemoryStartOrganizeJobResult {
+  jobId: string;
+  kind: MemoryOrganizeJobKind;
+  workspaceSlug: string;
+  status: "running";
+  startedAt: number;
+}
+
+export interface MemoryOrganizeJobInput {
+  jobId: string;
+}
+
+export interface MemoryOrganizeJob {
+  jobId: string;
+  kind: MemoryOrganizeJobKind;
+  workspaceSlug: string;
+  status: MemoryOrganizeJobStatus;
+  startedAt: number;
+  completedAt?: number;
+  progress?: MemoryOrganizeProgress;
+  result?: MemoryOrganizeHistoryResult | MemoryOrganizeEntriesResult;
+  error?: string;
+}
+
 export type MemoryIngestSourceInput =
   | {
     kind: "pasted_text";
@@ -298,12 +333,21 @@ export interface MemoryIngestSourcesJobInput {
   jobId: string;
 }
 
+export interface MemoryIngestSourcesProgress {
+  scannedSources: number;
+  scannedChunks: number;
+  scannedBatches: number;
+  processedBatches: number;
+  candidateCount: number;
+}
+
 export interface MemoryIngestSourcesJob {
   jobId: string;
   workspaceSlug: string;
   status: MemoryIngestSourcesJobStatus;
   startedAt: number;
   completedAt?: number;
+  progress?: MemoryIngestSourcesProgress;
   result?: MemoryIngestSourcesResult;
   error?: string;
 }
@@ -418,6 +462,11 @@ export interface MemorySettingsSnapshot {
   workspaceEntries: MemorySettingsEntrySummary[];
   globalEntries: MemorySettingsEntrySummary[];
   pending: MemorySettingsPendingSummary[];
+  extraction: {
+    modelRef?: string;
+    source: "configured" | "disabled";
+    message: string;
+  };
   retrieval: MemorySettingsRetrievalStatus;
 }
 
@@ -458,6 +507,7 @@ export const MEMORY_IPC_CHANNELS = {
   SETTINGS_SNAPSHOT: "memory:settings-snapshot",
   ORGANIZE_HISTORY: "memory:organize-history",
   ORGANIZE_ENTRIES: "memory:organize-entries",
+  GET_ORGANIZE_JOB: "memory:get-organize-job",
   INGEST_SOURCES: "memory:ingest-sources",
   GET_INGEST_JOB: "memory:get-ingest-job",
   OPEN_SOURCE: "memory:open-source",

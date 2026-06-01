@@ -45,4 +45,20 @@ describe("create-runtime-memory-tools", () => {
     const names = tools.map((tool) => tool.name);
     expect(names).toEqual([]);
   });
+
+  test("memory.remember 只向 agent 暴露真实支持的全局和工作区范围", () => {
+    const tools = createSdkMemoryTools({
+      workspaceSlug: "demo",
+      enabledTools: new Set(["memory.remember"]),
+      includeCitations: true
+    });
+    const rememberTool = tools.find((tool) => tool.name === "memory.remember");
+    expect(rememberTool?.inputSchema).toMatchObject({
+      properties: {
+        scope: {
+          enum: ["global", "workspace"]
+        }
+      }
+    });
+  });
 });

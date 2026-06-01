@@ -21,6 +21,15 @@ export function extractExplicitMemoryCandidates(input: {
 }): MemoryV2Candidate[] {
   const text = input.text.trim();
   if (!text || DO_NOT_REMEMBER_RE.test(text)) return [];
+  const segments = splitExplicitMemorySegments(text);
+  if (segments.length > 1) {
+    return dedupeMemoryV2Candidates(segments.flatMap((segment) =>
+      extractExplicitMemoryCandidates({
+        text: segment,
+        workspaceSlug: input.workspaceSlug
+      })
+    ));
+  }
 
   const preferredName = extractPreferredNameCandidate(input);
   if (preferredName) return [preferredName];
@@ -48,6 +57,68 @@ export function extractExplicitMemoryCandidates(input: {
   }];
 }
 
+function splitExplicitMemorySegments(text: string): string[] {
+  return text
+    .split(/(?<=[。！？!?])\s+/u)
+    .flatMap((part) => part.split(/(?<=[。！？!?])/u))
+    .flatMap(splitExplicitMemoryConnectors)
+    .map((part) => part.trim().replace(/[。！？!?]+$/u, "").trim())
+    .filter(Boolean);
+}
+
+function splitExplicitMemoryConnectors(text: string): string[] {
+  const parts = text.trim().split(/\s+(?=(?:以后|记住|叫我|称呼我|喊我|就想叫你|想叫你|希望叫你|叫你|称呼你|喊你))/u);
+  return parts.length > 1 ? parts : [text];
+}
+
+function dedupeMemoryV2Candidates(candidates: MemoryV2Candidate[]): MemoryV2Candidate[] {
+  const seen = new Set<string>();
+  const result: MemoryV2Candidate[] = [];
+  for (const candidate of candidates) {
+    const key = memoryV2CandidateKey(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(candidate);
+  }
+  return result;
+}
+
+function mergeMemoryV2Candidates(
+  parsed: MemoryV2Candidate[],
+  explicitCandidates: MemoryV2Candidate[]
+): MemoryV2Candidate[] {
+  if (parsed.length === 0) return explicitCandidates;
+  const parsedKeys = new Set(parsed.map(memoryV2CandidateKey));
+  const parsedQuotes = new Set(parsed.map(memoryV2CandidateQuote).filter(Boolean));
+  const missingExplicit = explicitCandidates.filter((candidate) => {
+    if (candidate.claim) return !parsedKeys.has(memoryV2CandidateKey(candidate));
+    const quote = memoryV2CandidateQuote(candidate);
+    return !quote || !parsedQuotes.has(quote);
+  });
+  return [...parsed, ...missingExplicit];
+}
+
+function memoryV2CandidateQuote(candidate: MemoryV2Candidate): string {
+  return candidate.evidence?.quote?.trim() ?? "";
+}
+
+function memoryV2CandidateKey(candidate: MemoryV2Candidate): string {
+  const claim = candidate.claim;
+  if (claim) {
+    return [
+      candidate.targetScope,
+      claim.subject,
+      claim.predicate,
+      claim.object
+    ].join("\u0000").toLowerCase();
+  }
+  return [
+    candidate.targetScope,
+    candidate.kind,
+    candidate.statement
+  ].join("\u0000").toLowerCase();
+}
+
 export async function extractMemoryCandidatesWithLlm(input: {
   text: string;
   workspaceSlug?: string;
@@ -57,13 +128,14 @@ export async function extractMemoryCandidatesWithLlm(input: {
 }): Promise<MemoryV2Candidate[]> {
   const text = stripMemoryUserMessagePrefix(input.text).trim();
   if (!text || DO_NOT_REMEMBER_RE.test(text)) return [];
+  const explicitCandidates = extractExplicitMemoryCandidates({ text, workspaceSlug: input.workspaceSlug });
   const config = getEffectiveLumeConfig(input.workspaceSlug);
   const modelRefs = resolveMemoryExtractionModelRefs(config, {
     modelRef: input.modelRef,
     fallbackModelRefs: input.fallbackModelRefs
   });
   if (modelRefs.length === 0) {
-    return extractExplicitMemoryCandidates(input);
+    return explicitCandidates;
   }
 
   for (const modelRef of modelRefs) {
@@ -74,12 +146,12 @@ export async function extractMemoryCandidatesWithLlm(input: {
         modelRef,
         createProvider: input.createProvider
       });
-      if (parsed) return parsed;
+      if (parsed) return mergeMemoryV2Candidates(parsed, explicitCandidates);
     } catch {
       continue;
     }
   }
-  return extractExplicitMemoryCandidates(input);
+  return explicitCandidates;
 }
 
 export interface MemoryBatchExtractionSource {
@@ -106,6 +178,7 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
     }))
     .filter((source) => source.sourceId && source.text && !DO_NOT_REMEMBER_RE.test(source.text));
   if (sources.length === 0) return [];
+  const explicitCandidates = extractExplicitBatchCandidates(sources, input.workspaceSlug);
 
   const config = getEffectiveLumeConfig(input.workspaceSlug);
   const modelRefs = resolveMemoryExtractionModelRefs(config, {
@@ -113,7 +186,7 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
     fallbackModelRefs: input.fallbackModelRefs
   });
   if (modelRefs.length === 0) {
-    return extractExplicitBatchCandidates(sources, input.workspaceSlug);
+    return explicitCandidates;
   }
 
   for (const modelRef of modelRefs) {
@@ -124,12 +197,12 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
         modelRef,
         createProvider: input.createProvider
       });
-      if (parsed) return parsed;
+      if (parsed) return mergeBatchExtractionCandidates(parsed, explicitCandidates);
     } catch {
       continue;
     }
   }
-  return extractExplicitBatchCandidates(sources, input.workspaceSlug);
+  return explicitCandidates;
 }
 
 export function resolveMemoryExtractionModelRef(config: Pick<LumeEffectiveConfig, "memory">): string | undefined {
@@ -418,6 +491,33 @@ function extractExplicitBatchCandidates(
       candidate
     }))
   );
+}
+
+function mergeBatchExtractionCandidates(
+  parsed: MemoryBatchExtractionCandidate[],
+  explicitCandidates: MemoryBatchExtractionCandidate[]
+): MemoryBatchExtractionCandidate[] {
+  if (parsed.length === 0) return explicitCandidates;
+  const parsedKeys = new Set(parsed.map(batchCandidateKey));
+  const missingExplicit = explicitCandidates.filter((item) => !parsedKeys.has(batchCandidateKey(item)));
+  return [...parsed, ...missingExplicit];
+}
+
+function batchCandidateKey(item: MemoryBatchExtractionCandidate): string {
+  const claim = item.candidate.claim;
+  if (claim) {
+    return [
+      item.candidate.targetScope,
+      claim.subject,
+      claim.predicate,
+      claim.object
+    ].join("\u0000").toLowerCase();
+  }
+  return [
+    item.candidate.targetScope,
+    item.candidate.kind,
+    item.candidate.statement
+  ].join("\u0000").toLowerCase();
 }
 
 function parseLlmBatchExtractionResponse(

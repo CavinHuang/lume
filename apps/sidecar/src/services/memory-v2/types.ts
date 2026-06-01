@@ -133,5 +133,6 @@ export interface MemoryV2RecallItem {
   reason: string;
   score: number;
   pinned?: boolean;
+  tags?: string[];
   claim?: MemoryV2Claim;
 }

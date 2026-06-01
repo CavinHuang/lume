@@ -103,6 +103,73 @@ describe("extractExplicitMemoryCandidates", () => {
     })]);
   });
 
+  test("extracts multiple explicit memories from one text", () => {
+    expect(extractExplicitMemoryCandidates({
+      text: "叫我 Mason。以后默认用中文回答",
+      workspaceSlug: "demo"
+    })).toEqual([
+      expect.objectContaining({
+        statement: "用户希望被称呼为 Mason",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }),
+      expect.objectContaining({
+        kind: "preference",
+        targetScope: "global",
+        statement: "默认用中文回答"
+      })
+    ]);
+  });
+
+  test("extracts multiple explicit memories joined without punctuation", () => {
+    expect(extractExplicitMemoryCandidates({
+      text: "叫我 Mason 以后默认用中文回答",
+      workspaceSlug: "demo"
+    })).toEqual([
+      expect.objectContaining({
+        statement: "用户希望被称呼为 Mason",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      }),
+      expect.objectContaining({
+        kind: "preference",
+        targetScope: "global",
+        statement: "默认用中文回答"
+      })
+    ]);
+  });
+
+  test("extracts assistant name and writing style from one explicit text", () => {
+    expect(extractExplicitMemoryCandidates({
+      text: "就想叫你 Alice。记住：我的写作风格偏好简洁、有温度",
+      workspaceSlug: "demo"
+    })).toEqual([
+      expect.objectContaining({
+        statement: "用户希望用 Alice 称呼助手",
+        claim: {
+          subject: "assistant/self",
+          predicate: "preferred_name",
+          object: "Alice"
+        }
+      }),
+      expect.objectContaining({
+        statement: "我的写作风格偏好简洁、有温度",
+        tags: expect.arrayContaining(["voice", "writing-style"]),
+        claim: {
+          subject: "user/self",
+          predicate: "writing_style",
+          object: "简洁、有温度"
+        }
+      })
+    ]);
+  });
+
   test("suppresses durable extraction when user says not to remember", () => {
     expect(extractExplicitMemoryCandidates({
       text: "不要记住这个：临时 token 是 abc"
@@ -166,6 +233,62 @@ describe("extractExplicitMemoryCandidates", () => {
     })]);
   });
 
+  test("keeps explicit single-message claims when the LLM extracts a different claim", async () => {
+    const candidates = await extractMemoryCandidatesWithLlm({
+      text: "叫我 Mason 以后默认用中文回答",
+      workspaceSlug: "demo",
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage() {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [{
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户偏好默认用中文回答",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "以后默认用中文回答",
+                  reason: "User stated a durable language preference.",
+                  claim: {
+                    subject: "user/self",
+                    predicate: "preference",
+                    object: "默认用中文回答"
+                  }
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(candidates).toEqual([
+      expect.objectContaining({
+        statement: "用户偏好默认用中文回答",
+        claim: {
+          subject: "user/self",
+          predicate: "preference",
+          object: "默认用中文回答"
+        }
+      }),
+      expect.objectContaining({
+        statement: "用户希望被称呼为 Mason",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      })
+    ]);
+  });
+
   test("uses LLM batch extraction with per-source citations", async () => {
     const calls: Array<{ userContent: string }> = [];
     const candidates = await extractMemoryBatchCandidatesWithLlm({
@@ -218,22 +341,35 @@ describe("extractExplicitMemoryCandidates", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.userContent).toContain("source-a#chunk-1");
     expect(calls[0]?.userContent).toContain("source-b#chunk-1");
-    expect(candidates).toEqual([{
-      sourceId: "source-b#chunk-1",
-      candidate: expect.objectContaining({
-        statement: "用户希望用 Alice 称呼助手",
-        evidence: expect.objectContaining({
-          quote: "就想叫你 Alice"
+    expect(candidates).toEqual([
+      {
+        sourceId: "source-b#chunk-1",
+        candidate: expect.objectContaining({
+          statement: "用户希望用 Alice 称呼助手",
+          evidence: expect.objectContaining({
+            quote: "就想叫你 Alice"
+          })
         })
-      })
-    }]);
+      },
+      {
+        sourceId: "source-a#chunk-1",
+        candidate: expect.objectContaining({
+          statement: "用户希望被称呼为 Mason",
+          claim: {
+            subject: "user/self",
+            predicate: "preferred_name",
+            object: "Mason"
+          }
+        })
+      }
+    ]);
   });
 
   test("rejects batch candidates that cite the wrong source text", async () => {
     const candidates = await extractMemoryBatchCandidatesWithLlm({
       sources: [{
         sourceId: "source-a#chunk-1",
-        text: "叫我 Mason"
+        text: "今天随便聊两句。"
       }],
       modelRef: "openai/gpt-5-mini",
       createProvider: () => ({
@@ -266,9 +402,193 @@ describe("extractExplicitMemoryCandidates", () => {
     expect(candidates).toEqual([]);
   });
 
-  test("trusts the LLM gate when it decides not to extract", async () => {
+  test("keeps explicit batch memory intent when the LLM gate misses it", async () => {
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [{
+        sourceId: "source-a#chunk-1",
+        text: "叫我 Mason"
+      }],
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage() {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: false,
+                candidates: []
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(candidates).toEqual([{
+      sourceId: "source-a#chunk-1",
+      candidate: expect.objectContaining({
+        statement: "用户希望被称呼为 Mason",
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object: "Mason"
+        }
+      })
+    }]);
+  });
+
+  test("keeps explicit batch memory intent from the same source when the LLM extracts a different claim", async () => {
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [{
+        sourceId: "source-a#chunk-1",
+        text: "就想叫你 Alice"
+      }],
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage() {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [{
+                  sourceId: "source-a#chunk-1",
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户偏好温暖直接的回应风格",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "就想叫你 Alice",
+                  reason: "The model extracted a different durable preference.",
+                  claim: {
+                    subject: "user/self",
+                    predicate: "preference",
+                    object: "温暖直接的回应风格"
+                  }
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(candidates).toEqual([
+      {
+        sourceId: "source-a#chunk-1",
+        candidate: expect.objectContaining({
+          statement: "用户偏好温暖直接的回应风格",
+          claim: {
+            subject: "user/self",
+            predicate: "preference",
+            object: "温暖直接的回应风格"
+          }
+        })
+      },
+      {
+        sourceId: "source-a#chunk-1",
+        candidate: expect.objectContaining({
+          statement: "用户希望用 Alice 称呼助手",
+          claim: {
+            subject: "assistant/self",
+            predicate: "preferred_name",
+            object: "Alice"
+          }
+        })
+      }
+    ]);
+  });
+
+  test("does not duplicate the same explicit batch claim when the LLM already extracted it", async () => {
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [{
+        sourceId: "source-a#chunk-1",
+        text: "就想叫你 Alice"
+      }],
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage() {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [{
+                  sourceId: "source-a#chunk-1",
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户希望用 Alice 称呼助手",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "就想叫你 Alice",
+                  reason: "User gave the assistant a preferred name.",
+                  tags: ["profile"],
+                  claim: {
+                    subject: "assistant/self",
+                    predicate: "preferred_name",
+                    object: "Alice"
+                  }
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toEqual({
+      sourceId: "source-a#chunk-1",
+      candidate: expect.objectContaining({
+        statement: "用户希望用 Alice 称呼助手"
+      })
+    });
+  });
+
+  test("keeps explicit memory intent when the LLM gate misses it", async () => {
     const candidates = await extractMemoryCandidatesWithLlm({
-      text: "以后默认用中文回答",
+      text: "叫我 Mason",
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage() {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: false,
+                candidates: []
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(candidates).toEqual([expect.objectContaining({
+      statement: "用户希望被称呼为 Mason",
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Mason"
+      }
+    })]);
+  });
+
+  test("trusts the LLM gate for non-explicit messages", async () => {
+    const candidates = await extractMemoryCandidatesWithLlm({
+      text: "今天随便聊两句。",
       modelRef: "openai/gpt-5-mini",
       createProvider: () => ({
         apiType: "openai-completions",
@@ -293,7 +613,7 @@ describe("extractExplicitMemoryCandidates", () => {
 
   test("rejects LLM candidates that do not cite user source text", async () => {
     const candidates = await extractMemoryCandidatesWithLlm({
-      text: "以后默认用中文回答",
+      text: "今天随便聊两句。",
       modelRef: "openai/gpt-5-mini",
       createProvider: () => ({
         apiType: "openai-completions",

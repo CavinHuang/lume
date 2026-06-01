@@ -1,5 +1,6 @@
 import type {
   MemoryOrganizeEntriesInput,
+  MemoryOrganizeProgress,
   MemoryOrganizeEntriesResult
 } from "@lume/shared";
 import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
@@ -55,6 +56,7 @@ export interface MemoryOrganizeEntriesOptions extends MemoryOrganizeEntriesInput
   organizeBatchSize?: number;
   createProvider?: MemoryEntryOrganizerProviderFactory;
   planEntries?: MemoryEntryOrganizerPlanner;
+  onProgress?: (progress: MemoryOrganizeProgress) => void;
 }
 
 export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions): Promise<MemoryOrganizeEntriesResult> {
@@ -68,6 +70,13 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
   log.info("organizeMemoryEntries started", {
     workspaceSlug: input.workspaceSlug,
     entryCount: entries.length
+  });
+  input.onProgress?.({
+    label: "扫描已有记忆",
+    scannedItems: entries.length,
+    processedItems: 0,
+    scannedBatches: Math.ceil(entries.length / normalizeOrganizeBatchSize(input.organizeBatchSize)),
+    processedBatches: 0
   });
 
   const items: MemoryOrganizeEntriesResult["items"] = [];
@@ -167,12 +176,15 @@ async function resolveOrganizePlan(
   const candidates = entries.map(toOrganizeCandidate);
   const batchSize = normalizeOrganizeBatchSize(input.organizeBatchSize);
   if (input.planEntries) {
-    return sanitizeOrganizePlan(await planCandidateBatches(input.planEntries, candidates, batchSize), candidates);
+    return sanitizeOrganizePlan(
+      await planCandidateBatches(input.planEntries, candidates, batchSize, input.onProgress),
+      candidates
+    );
   }
   const planner = safeCreateLlmOrganizerPlanner(input);
   if (!planner) return [];
   try {
-    return sanitizeOrganizePlan(await planCandidateBatches(planner, candidates, batchSize), candidates);
+    return sanitizeOrganizePlan(await planCandidateBatches(planner, candidates, batchSize, input.onProgress), candidates);
   } catch {
     return [];
   }
@@ -181,14 +193,33 @@ async function resolveOrganizePlan(
 async function planCandidateBatches(
   planner: MemoryEntryOrganizerPlanner,
   candidates: MemoryEntryOrganizeCandidate[],
-  batchSize: number
+  batchSize: number,
+  onProgress?: (progress: MemoryOrganizeProgress) => void
 ): Promise<MemoryEntryOrganizePlanItem[]> {
+  const scannedBatches = Math.max(1, Math.ceil(candidates.length / batchSize));
   if (candidates.length <= batchSize) {
-    return planner(candidates);
+    const plan = await planner(candidates);
+    onProgress?.({
+      label: "分析已有记忆",
+      scannedItems: candidates.length,
+      processedItems: candidates.length,
+      scannedBatches,
+      processedBatches: 1
+    });
+    return plan;
   }
   const plans: MemoryEntryOrganizePlanItem[] = [];
+  let processedBatches = 0;
   for (let start = 0; start < candidates.length; start += batchSize) {
     plans.push(...await planner(candidates.slice(start, start + batchSize)));
+    processedBatches += 1;
+    onProgress?.({
+      label: "分析已有记忆",
+      scannedItems: candidates.length,
+      processedItems: Math.min(candidates.length, start + batchSize),
+      scannedBatches,
+      processedBatches
+    });
   }
   return plans;
 }

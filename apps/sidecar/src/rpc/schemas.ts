@@ -82,7 +82,7 @@ export const imWeixinLoginPollInputSchema = z.object({
   verifyCode: z.string().optional()
 });
 
-const memoryScopeSchema = z.enum(["global", "workspace", "agent", "session"]);
+const memoryScopeSchema = z.enum(["global", "workspace"]);
 const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);
 const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual"]);
 
@@ -165,6 +165,8 @@ export const memoryIngestSourcesInputSchema = z.object({
 export const memoryIngestSourcesJobInputSchema = z.object({
   jobId: z.string().trim().min(1)
 });
+
+export const memoryOrganizeJobInputSchema = memoryIngestSourcesJobInputSchema;
 
 export const memoryOpenSourceInputSchema = z.object({
   workspaceSlug: idSchema,

@@ -54,6 +54,7 @@ export async function buildMemoryV2UserMessageContext(input: {
     workspaceSlug: input.workspaceSlug,
     query: input.userMessage,
     maxResults: Math.max(promptMaxItems * 3, 16),
+    ...(profileSeed.length > 0 || voiceSeed.length > 0 ? { semantic: "off" as const } : {}),
     ...(queryPlan.includeConversationHistory ? { includeRecentDaily: true } : {})
   });
   const merged = mergeRecallItems([...profileSeed, ...voiceSeed, ...items]);
@@ -181,7 +182,9 @@ function renderConversationHistorySection(items: MemoryV2RecallItem[]): string {
 }
 
 function isVoiceRecallItem(item: MemoryV2RecallItem): boolean {
-  return item.claim?.predicate === MEMORY_CLAIM_WRITING_STYLE;
+  if (item.claim?.predicate === MEMORY_CLAIM_WRITING_STYLE) return true;
+  const tags = new Set((item.tags ?? []).map((tag) => tag.trim().toLowerCase()));
+  return tags.has("voice") || tags.has("writing-style");
 }
 
 function isUserProfileClaimItem(item: MemoryV2RecallItem): boolean {

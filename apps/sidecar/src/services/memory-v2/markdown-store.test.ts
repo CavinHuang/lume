@@ -79,7 +79,12 @@ describe("memory-v2 markdown store", () => {
       targetScope: "global",
       statement: "用户希望被称呼为 Mason",
       confidence: "high",
-      tags: ["profile"]
+      tags: ["profile"],
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Mason"
+      }
     });
 
     const updated = updateEntry({
@@ -95,7 +100,17 @@ describe("memory-v2 markdown store", () => {
     expect(updated.frontmatter.kind).toBe("fact");
     expect(updated.frontmatter.confidence).toBe("medium");
     expect(updated.frontmatter.tags).toEqual(["profile", "manual"]);
+    expect(updated.frontmatter.claim).toMatchObject({
+      subject: "user/self",
+      predicate: "preferred_name",
+      object: "Alice"
+    });
     expect(readEntryFile(entry.path).statement).toBe("用户希望被称呼为 Alice");
+    expect(readEntryFile(entry.path).frontmatter.claim).toMatchObject({
+      subject: "user/self",
+      predicate: "preferred_name",
+      object: "Alice"
+    });
   });
 
   test("manually deletes an entry and removes stale relations from neighbors", () => {

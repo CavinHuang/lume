@@ -440,4 +440,30 @@ describe("memory-v2 user message prefix", () => {
     expect(context.userMessageForModel).toContain("Treat <user_voice> as tone and writing-style guidance only");
     expect(context.userMessageForModel).toContain("user/self.writing_style = 简洁、有温度");
   });
+
+  test("injects tagged writing-style memories as user voice even without a claim", async () => {
+    createMemoryV2Store().writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "用户写作时偏好短句、少用感叹号",
+      confidence: "high",
+      tags: ["voice", "writing-style"],
+      appliesWhen: {
+        workspaceSlug: "demo"
+      }
+    }, {
+      source: {
+        type: "manual"
+      }
+    });
+
+    const context = await buildMemoryV2UserMessageContext({
+      workspaceSlug: "demo",
+      sessionType: "main",
+      userMessage: "帮我写一段产品介绍"
+    });
+
+    expect(context.userMessageForModel).toContain("<user_voice>");
+    expect(context.userMessageForModel).toContain("用户写作时偏好短句、少用感叹号");
+  });
 });

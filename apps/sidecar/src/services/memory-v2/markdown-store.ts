@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import { getMemoryV2ScopePaths, type MemoryV2ScopePaths } from "./paths";
-import { normalizeMemoryV2Claim } from "./claim";
+import { inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
 import type {
   MemoryV2Candidate,
   MemoryV2Entry,
@@ -238,6 +238,11 @@ export function updateEntry(input: {
   if (!nextStatement) {
     throw new Error("Memory entry statement cannot be empty");
   }
+  const nextTags = input.tags ? cleanList(input.tags) : entry.frontmatter.tags;
+  const nextClaim = inferMemoryV2Claim({
+    statement: nextStatement,
+    tags: nextTags
+  }) ?? entry.frontmatter.claim;
   const next: MemoryV2Entry = {
     ...entry,
     statement: nextStatement,
@@ -245,7 +250,8 @@ export function updateEntry(input: {
       ...entry.frontmatter,
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.confidence ? { confidence: input.confidence } : {}),
-      ...(input.tags ? { tags: cleanList(input.tags) } : {}),
+      tags: nextTags,
+      ...(nextClaim ? { claim: nextClaim } : {}),
       updated: new Date().toISOString()
     }
   };
