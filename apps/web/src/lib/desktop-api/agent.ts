@@ -19,10 +19,17 @@ import type {
   AgentMessageVersionsResult,
   AgentMessage,
   AgentThreadRuntimeEventsResult,
+  AgentMessageQueueInput,
+  AgentMessageQueueOperationResult,
+  AgentMessageQueueSnapshot,
+  AgentPromoteQueuedMessageToGuidanceInput,
+  AgentRemoveQueuedMessageInput,
+  AgentReorderMessageQueueInput,
+  AgentThreadMessageDispatchResult,
 } from '@lume/shared'
 
 export const agentSend = (input: AgentSendInput) =>
-  invoke<{ ok: true }>('sidecar_call', {
+  invoke<AgentThreadMessageDispatchResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE,
     params: input,
   })
@@ -90,5 +97,29 @@ export const executeTaskContract = (input: AgentExecuteTaskContractInput) =>
 export const getAgentRunTrace = (input: AgentRunTraceInput) =>
   invoke<AgentRunTraceResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.GET_RUN_TRACE,
+    params: input,
+  })
+
+export const listAgentMessageQueue = (input: AgentMessageQueueInput) =>
+  invoke<AgentMessageQueueSnapshot>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.LIST_MESSAGE_QUEUE,
+    params: input,
+  })
+
+export const reorderAgentMessageQueue = (input: AgentReorderMessageQueueInput) =>
+  invoke<AgentMessageQueueOperationResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.REORDER_MESSAGE_QUEUE,
+    params: input,
+  })
+
+export const removeQueuedAgentMessage = (input: AgentRemoveQueuedMessageInput) =>
+  invoke<AgentMessageQueueOperationResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE,
+    params: input,
+  })
+
+export const promoteQueuedAgentMessageToGuidance = (input: AgentPromoteQueuedMessageToGuidanceInput) =>
+  invoke<AgentMessageQueueOperationResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE,
     params: input,
   })

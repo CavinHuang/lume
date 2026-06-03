@@ -31,6 +31,54 @@ interface AgentInputEnterEvent {
   shiftKey: boolean
 }
 
+export type AgentInputSubmitAction = 'send' | 'queue' | 'stop' | 'busy' | 'disabled'
+
+export interface AgentInputSubmitState {
+  action: AgentInputSubmitAction
+  canSubmit: boolean
+  label: string
+}
+
+export function deriveAgentInputSubmitState(input: {
+  hasText: boolean
+  streaming: boolean
+  localSending: boolean
+}): AgentInputSubmitState {
+  if (input.localSending) {
+    return {
+      action: 'busy',
+      canSubmit: false,
+      label: '发送中',
+    }
+  }
+  if (input.streaming) {
+    if (input.hasText) {
+      return {
+        action: 'queue',
+        canSubmit: true,
+        label: '排队',
+      }
+    }
+    return {
+      action: 'stop',
+      canSubmit: true,
+      label: '停止',
+    }
+  }
+  if (input.hasText) {
+    return {
+      action: 'send',
+      canSubmit: true,
+      label: '发送',
+    }
+  }
+  return {
+    action: 'disabled',
+    canSubmit: false,
+    label: '发送',
+  }
+}
+
 export function shouldSendAgentInputOnEnter(
   event: AgentInputEnterEvent,
   mentionSuggestionOpen: boolean,

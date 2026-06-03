@@ -1,8 +1,15 @@
 
 import type { SDKMessage } from "@lume/agent-sdk";
 import type {
+  AgentMessageQueueOperationResult,
+  AgentMessageQueueSnapshot,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
+  AgentPendingGuidance,
+  AgentPromoteQueuedMessageToGuidanceInput,
+  AgentQueuedMessage,
+  AgentRemoveQueuedMessageInput,
+  AgentReorderMessageQueueInput,
   AgentThreadMessageDispatchResult,
   AgentMessageAppendedEvent,
   AgentToolPolicy,
@@ -11,6 +18,7 @@ import type {
   AgentGenerateTitleInput,
   LumeRuntimeEvent
 } from "@lume/shared";
+import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
 import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
@@ -49,11 +57,13 @@ import { buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
-import { AgentRuntimeKernel } from "../agent-runtime/kernel/agent-runtime-kernel";
+import { AgentRuntimeKernel, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
+import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
+import { emitAgentNotification } from "./agent-notification-service";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -99,10 +109,15 @@ const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   execute: async (dispatch) => {
-    await sendAgentMessage(dispatch.input, dispatch.emit);
+    try {
+      await sendAgentMessage(dispatch.input, dispatch.emit);
+    } finally {
+      restoreUnconsumedGuidanceToQueue(dispatch.input.threadId);
+    }
   },
   onQueuedCountChange: (threadId, queuedCount) => {
     getAgentRuntimeStatusManager().setQueuedCount(threadId, queuedCount);
+    emitAgentMessageQueueChanged(threadId);
   },
   onDispatchError: (dispatch, error) => {
     dispatch.emit.onError(error instanceof Error ? error.message : String(error));
@@ -863,12 +878,83 @@ export function appendAgentMessage(
   return agentRuntimeKernel.dispatch(input, emit, options);
 }
 
+export function listAgentMessageQueue(threadId: string): AgentMessageQueueSnapshot {
+  return {
+    threadId,
+    queuedMessages: agentRuntimeKernel.listQueued(threadId).map(toQueuedMessage),
+    pendingGuidance: runGuidanceStore.listPending(threadId)
+  };
+}
+
+export function reorderAgentMessageQueue(input: AgentReorderMessageQueueInput): AgentMessageQueueOperationResult {
+  agentRuntimeKernel.reorderQueued(input.threadId, input.orderedMessageIds);
+  return finishQueueOperation(input.threadId);
+}
+
+export function removeQueuedAgentMessage(input: AgentRemoveQueuedMessageInput): AgentMessageQueueOperationResult {
+  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId);
+  return finishQueueOperation(input.threadId, {
+    ...(removed ? { removedMessage: toQueuedMessage(removed) } : {})
+  });
+}
+
+export function promoteQueuedAgentMessageToGuidance(
+  input: AgentPromoteQueuedMessageToGuidanceInput
+): AgentMessageQueueOperationResult {
+  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId);
+  const promotedGuidance = removed ? runGuidanceStore.addQueuedDispatch(removed) : undefined;
+  return finishQueueOperation(input.threadId, {
+    ...(promotedGuidance ? { promotedGuidance } : {})
+  });
+}
+
 export async function waitForAgentRuntimeKernelIdleForTest(): Promise<void> {
   await agentRuntimeKernel.waitForIdleForTest();
 }
 
 export function resetAgentRuntimeKernelForTest(): void {
   agentRuntimeKernel.resetForTest();
+  runGuidanceStore.resetForTest();
+}
+
+function finishQueueOperation(
+  threadId: string,
+  extra: {
+    removedMessage?: AgentQueuedMessage;
+    promotedGuidance?: AgentPendingGuidance;
+  } = {}
+): AgentMessageQueueOperationResult {
+  const snapshot = listAgentMessageQueue(threadId);
+  emitAgentMessageQueueChanged(threadId, snapshot);
+  return {
+    ok: true,
+    snapshot,
+    ...extra
+  };
+}
+
+function emitAgentMessageQueueChanged(threadId: string, snapshot = listAgentMessageQueue(threadId)): void {
+  emitAgentNotification(AGENT_IPC_CHANNELS.MESSAGE_QUEUE_CHANGED, snapshot);
+}
+
+function restoreUnconsumedGuidanceToQueue(threadId: string): void {
+  const dispatches = runGuidanceStore.drainUnconsumedDispatches<
+    AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>
+  >(threadId);
+  if (dispatches.length === 0) {
+    return;
+  }
+  agentRuntimeKernel.prependQueuedDispatches(threadId, dispatches);
+  emitAgentMessageQueueChanged(threadId);
+}
+
+function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>): AgentQueuedMessage {
+  return {
+    id: dispatch.id,
+    threadId: dispatch.threadId,
+    text: dispatch.text,
+    createdAt: dispatch.createdAt
+  };
 }
 
 export function stopAgent(threadId: string): void {

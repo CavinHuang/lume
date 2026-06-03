@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, PlanModePhaseChangedEvent, AgentSendInput } from '@lume/shared'
+import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
 import type { RuntimeEventState } from '@/hooks/runtime-event-state'
 
 export const agentThreadsAtom = atom<AgentThreadMeta[]>([])
@@ -11,6 +11,7 @@ export const agentStreamingStatesAtom = atom<Record<string, StreamingState>>({})
 export const agentRuntimeStatusAtom = atom<Record<string, AgentRuntimeStatus>>({})
 export const agentRuntimeEventsAtom = atom<RuntimeEventState>({})
 export const agentPendingInteractiveAtom = atom<Record<string, AgentPendingInteractiveState>>({})
+export const agentMessageQueueAtom = atom<Record<string, AgentMessageQueueSnapshot>>({})
 export const agentSubagentRunsAtom = atom<Record<string, SubagentRunRecord[]>>({})
 
 export const agentPlanModePhaseAtom = atom<Record<string, PlanModePhaseChangedEvent>>({})

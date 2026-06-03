@@ -36,6 +36,10 @@ import {
   appendAgentMessage,
   sendAgentMessage,
   generateAgentTitle,
+  listAgentMessageQueue,
+  promoteQueuedAgentMessageToGuidance,
+  removeQueuedAgentMessage,
+  reorderAgentMessageQueue,
   stopAgent,
   submitAgentToolPermission,
   submitAskUserQuestionAnswers
@@ -141,7 +145,9 @@ import {
   agentGetThreadMessageVersionsInputSchema,
   agentListSubagentRunsInputSchema,
   agentMoveThreadInputSchema,
+  agentQueuedMessageInputSchema,
   agentRecentThreadMessagesInputSchema,
+  agentReorderMessageQueueInputSchema,
   agentSendInputSchema,
   agentThreadIdInputSchema,
   agentTruncateThreadInputSchema,
@@ -1216,6 +1222,34 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return appendAgentMessage(input, createAgentStreamEmitter(input.threadId), {
         onExecutionStarted: createExecutionStartCallback(input)
       });
+    },
+    [AGENT_IPC_CHANNELS.LIST_MESSAGE_QUEUE]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.LIST_MESSAGE_QUEUE);
+      return listAgentMessageQueue(input.threadId);
+    },
+    [AGENT_IPC_CHANNELS.REORDER_MESSAGE_QUEUE]: async (params) => {
+      const input = validateInput(
+        agentReorderMessageQueueInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REORDER_MESSAGE_QUEUE
+      );
+      return reorderAgentMessageQueue(input);
+    },
+    [AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE]: async (params) => {
+      const input = validateInput(
+        agentQueuedMessageInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE
+      );
+      return removeQueuedAgentMessage(input);
+    },
+    [AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE]: async (params) => {
+      const input = validateInput(
+        agentQueuedMessageInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE
+      );
+      return promoteQueuedAgentMessageToGuidance(input);
     },
     [AGENT_IPC_CHANNELS.WRITE_LOG]: async (params) => {
       const payload = asObject(params);

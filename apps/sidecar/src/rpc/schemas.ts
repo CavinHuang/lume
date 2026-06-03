@@ -445,6 +445,16 @@ export const agentThreadIdInputSchema = z.object({
   threadId: idSchema
 });
 
+export const agentReorderMessageQueueInputSchema = z.object({
+  threadId: idSchema,
+  orderedMessageIds: z.array(idSchema)
+});
+
+export const agentQueuedMessageInputSchema = z.object({
+  threadId: idSchema,
+  queuedMessageId: idSchema
+});
+
 export const agentRecentThreadMessagesInputSchema = z.object({
   threadId: idSchema,
   limit: z.number().int().min(1).max(2000)

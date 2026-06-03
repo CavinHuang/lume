@@ -40,6 +40,7 @@ import {
   type LumeWorkflowHookExecutionResult
 } from "../../workflow-hooks/hook-effects";
 import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
+import { runGuidanceStore, type ConsumedRunGuidance } from "../guidance/run-guidance-store";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -128,7 +129,7 @@ export async function resolveWorkflowPermissionHookResult(input: {
   return null;
 }
 
-function createCanUseToolHandler(
+export function createCanUseToolHandler(
   params: AgentRuntimeRunParams,
   prepared: PreparedRuntimeCoreAttempt,
   emit: AgentRuntimeEmitter,
@@ -159,6 +160,29 @@ function createCanUseToolHandler(
       threadId: params.runtime.sessionId.slice(0, 8),
       toolUseId: metadata?.toolUseId
     });
+    const pendingGuidance = runGuidanceStore.consumePendingGuidance(params.runtime.sessionId);
+    if (pendingGuidance) {
+      emit.onRuntimeEvent?.({
+        id: `${requestRunId ?? params.runtime.sessionId}:${metadata?.toolUseId ?? toolName}:guidance.delivered`,
+        type: "guidance.delivered",
+        threadId: params.runtime.sessionId,
+        runId: requestRunId ?? params.runtime.sessionId,
+        createdAt: new Date().toISOString(),
+        guidanceIds: pendingGuidance.guidanceIds,
+        text: pendingGuidance.text
+      });
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+        reason: "guidance_delivered"
+      });
+      return {
+        behavior: "deny",
+        message: buildPendingGuidanceToolMessage(pendingGuidance)
+      };
+    }
     const descriptor = getRuntimeToolDescriptor(params.runtime.sessionId, toolName);
     if (!descriptor) {
       recordPermissionDenial({
@@ -498,6 +522,15 @@ function createCanUseToolHandler(
         : `用户拒绝执行工具: ${toolName}`
     };
   };
+}
+
+function buildPendingGuidanceToolMessage(guidance: ConsumedRunGuidance): string {
+  return [
+    "用户在工具执行前追加了引导：",
+    guidance.text,
+    "",
+    "原工具调用尚未执行。请根据这条引导重新决定下一步；如果仍需要工具，请重新发起工具调用。"
+  ].join("\n");
 }
 
 function isAutomationExecution(messageMetadata?: Record<string, unknown>): boolean {

@@ -6,9 +6,19 @@ import { Bot, Send, Square, FileText, Image, Paperclip, Plus, X } from 'lucide-r
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { agentSend, getThreadMessages, onSidecarEvent, openFileDialog, sidecarCall } from '@/lib/desktop-api'
+import {
+  agentSend,
+  getThreadMessages,
+  listAgentMessageQueue,
+  onSidecarEvent,
+  openFileDialog,
+  promoteQueuedAgentMessageToGuidance,
+  removeQueuedAgentMessage,
+  reorderAgentMessageQueue,
+  sidecarCall,
+} from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentMessageQueueAtom, agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
@@ -33,11 +43,18 @@ import { deriveLumeComposerState } from '@/components/composer/lume-composer-sta
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { cancelPendingDebouncedAgentInputSend, createDebouncedAgentInputSend } from './agent-input-send-debounce'
 import {
+  deriveAgentInputSubmitState,
   resolveAgentInputConfigWorkspaceSlug,
   shouldSendAgentInputOnEnter,
   syncPermissionModeWithDefaultConfig,
   syncPermissionModeWithPlanModePhase,
 } from './agent-input-state'
+import { AgentMessageQueueList } from './AgentMessageQueueList'
+import {
+  createEmptyAgentMessageQueueSnapshot,
+  reorderQueuedMessages,
+  upsertAgentMessageQueueSnapshot,
+} from './agent-message-queue-state'
 import { type MentionItem } from './slash-command-state'
 import { createSuggestionRenderer } from './editor-mention-suggestions'
 import { buildContextWindowProgress } from './runtime-state-projections'
@@ -176,6 +193,7 @@ export function AgentInput({
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
+  const [messageQueues, setMessageQueues] = useAtom(agentMessageQueueAtom)
   const [threadPermissionModes, setThreadPermissionModes] = useAtom(agentThreadPermissionModesAtom)
   const workspaceIdRef = useRef<string | null>(null)
   const workspaceSlugRef = useRef<string | null>(null)
@@ -202,6 +220,7 @@ export function AgentInput({
     currentWorkspaceId,
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
+  const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
 
   const applyEffectiveConfig = useCallback((config: LumeEffectiveConfig) => {
     const nextDefaultPermissionMode = config.agent?.permissionMode ?? 'default'
@@ -306,6 +325,22 @@ export function AgentInput({
     }
   }, [threadId])
 
+  useEffect(() => {
+    let cancelled = false
+    listAgentMessageQueue({ threadId })
+      .then((snapshot) => {
+        if (!cancelled) {
+          setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, snapshot))
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) console.error('[AgentInput] 加载消息队列失败:', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [setMessageQueues, threadId])
+
   const getWorkspaceSlug = () => workspaceSlugRef.current
   const setMentionSuggestionOpen = useCallback((open: boolean) => {
     mentionSuggestionOpenRef.current = open
@@ -356,9 +391,15 @@ export function AgentInput({
     },
   })
 
+  const hasComposerPayload = editorText.trim().length > 0 || pendingAttachments.length > 0
+  const submitState = deriveAgentInputSubmitState({
+    hasText: hasComposerPayload,
+    streaming,
+    localSending,
+  })
   const composerState = deriveLumeComposerState({
-    hasText: editorText.trim().length > 0 || pendingAttachments.length > 0,
-    mode: streaming ? 'streaming' : localSending ? 'busy' : 'idle',
+    hasText: hasComposerPayload,
+    mode: localSending ? 'busy' : streaming && !hasComposerPayload ? 'streaming' : 'idle',
   })
   const selectedModelSummary = useMemo(() => getThreadSelectionSummary({
     channels,
@@ -389,7 +430,7 @@ export function AgentInput({
   }, [editor])
 
   const handleSend = useCallback(async () => {
-    if (!editor || streaming || localSending) return
+    if (!editor || localSending) return
     const rawText = applyAgentRoleMentions(editor.getText()).trim()
     if (!rawText && pendingAttachments.length === 0) return
 
@@ -426,18 +467,8 @@ export function AgentInput({
     const createdAt = new Date().toISOString()
     editor.commands.clearContent()
     setEditorText('')
-    setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
-      id: `optimistic:${threadId}:${createdAt}`,
-      type: 'message.user.submitted',
-      threadId,
-      runId: `optimistic:${threadId}:${createdAt}`,
-      createdAt,
-      text,
-      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-    }))
-    setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
     try {
-      await agentSend({
+      const result = await agentSend({
         threadId,
         userMessage: text,
         thinkingLevel,
@@ -445,6 +476,28 @@ export function AgentInput({
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
+      if (result.mode === 'sent') {
+        setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
+          id: `optimistic:${threadId}:${createdAt}`,
+          type: 'message.user.submitted',
+          threadId,
+          runId: `optimistic:${threadId}:${createdAt}`,
+          createdAt,
+          text,
+          ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+        }))
+        setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
+      } else {
+        setLocalSending(false)
+        listAgentMessageQueue({ threadId })
+          .then((snapshot) => {
+            setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, snapshot))
+          })
+          .catch((error) => {
+            console.error('[AgentInput] 刷新消息队列失败:', error)
+          })
+        toast.success('已加入队列')
+      }
       if (pendingAttachments.length > 0) {
         onClearPendingAttachments()
       }
@@ -462,6 +515,7 @@ export function AgentInput({
     permissionMode,
     setRuntimeEvents,
     setStreamingStates,
+    setMessageQueues,
     streaming,
     thinkingLevel,
     threadId,
@@ -477,6 +531,47 @@ export function AgentInput({
       console.error('[AgentInput] 停止失败:', error)
     }
   }
+
+  const handleQueueReorder = useCallback((draggedId: string, targetId: string) => {
+    const previousSnapshot = messageQueueSnapshot
+    const optimisticSnapshot = reorderQueuedMessages(previousSnapshot, draggedId, targetId)
+    if (optimisticSnapshot === previousSnapshot) return
+    setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, optimisticSnapshot))
+    reorderAgentMessageQueue({
+      threadId,
+      orderedMessageIds: optimisticSnapshot.queuedMessages.map((item) => item.id),
+    })
+      .then((result) => {
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+      })
+      .catch((error) => {
+        console.error('[AgentInput] 消息队列排序失败:', error)
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, previousSnapshot))
+        toast.error('队列排序失败')
+      })
+  }, [messageQueueSnapshot, setMessageQueues, threadId])
+
+  const handleRemoveQueuedMessage = useCallback((queuedMessageId: string) => {
+    removeQueuedAgentMessage({ threadId, queuedMessageId })
+      .then((result) => {
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+      })
+      .catch((error) => {
+        console.error('[AgentInput] 删除排队消息失败:', error)
+        toast.error('删除排队消息失败')
+      })
+  }, [setMessageQueues, threadId])
+
+  const handlePromoteQueuedMessageToGuidance = useCallback((queuedMessageId: string) => {
+    promoteQueuedAgentMessageToGuidance({ threadId, queuedMessageId })
+      .then((result) => {
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+      })
+      .catch((error) => {
+        console.error('[AgentInput] 设置引导失败:', error)
+        toast.error('设置引导失败')
+      })
+  }, [setMessageQueues, threadId])
 
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
@@ -515,6 +610,12 @@ export function AgentInput({
     <div className="px-3 pb-4 pt-2">
       <div className="w-full px-14">
         <div>
+          <AgentMessageQueueList
+            snapshot={messageQueueSnapshot}
+            onReorder={handleQueueReorder}
+            onRemove={handleRemoveQueuedMessage}
+            onPromoteToGuidance={handlePromoteQueuedMessageToGuidance}
+          />
           <LumeComposer
             tone={composerState.tone}
             scale="compact"
@@ -585,7 +686,7 @@ export function AgentInput({
             }
             trailingTools={<ContextWindowIndicator progress={contextWindowProgress} />}
             actionSlot={
-              composerState.showStop ? (
+              submitState.action === 'stop' ? (
                 <button
                   type="button"
                   onClick={handleStop}
@@ -599,14 +700,14 @@ export function AgentInput({
                 <button
                   type="button"
                   onClick={debouncedSend}
-                  disabled={!composerState.canSend}
+                  disabled={!submitState.canSubmit}
                   className={getLumeComposerPrimaryActionClassName({
-                    enabled: composerState.canSend,
+                    enabled: submitState.canSubmit,
                     size: 'compact',
                   })}
-                  title="发送"
+                  title={submitState.action === 'queue' ? '加入消息队列' : '发送'}
                 >
-                  发送
+                  {submitState.label}
                   <Send size={12} />
                 </button>
               )

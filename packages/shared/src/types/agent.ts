@@ -456,6 +456,54 @@ export interface AgentThreadMessageDispatchResult {
   ok: true
   mode: 'sent' | 'queued'
   queuedCount: number
+  queuedMessage?: AgentQueuedMessage
+}
+
+export interface AgentQueuedMessage {
+  id: string
+  threadId: string
+  text: string
+  createdAt: number
+}
+
+export interface AgentPendingGuidance {
+  id: string
+  threadId: string
+  text: string
+  createdAt: number
+  promotedAt: number
+}
+
+export interface AgentMessageQueueSnapshot {
+  threadId: string
+  queuedMessages: AgentQueuedMessage[]
+  pendingGuidance: AgentPendingGuidance[]
+}
+
+export interface AgentMessageQueueInput {
+  threadId: string
+}
+
+export interface AgentReorderMessageQueueInput {
+  threadId: string
+  orderedMessageIds: string[]
+}
+
+export interface AgentRemoveQueuedMessageInput {
+  threadId: string
+  queuedMessageId: string
+}
+
+export interface AgentPromoteQueuedMessageToGuidanceInput {
+  threadId: string
+  queuedMessageId: string
+}
+
+export interface AgentMessageQueueOperationResult {
+  ok: true
+  snapshot: AgentMessageQueueSnapshot
+  removedMessage?: AgentQueuedMessage
+  promotedGuidance?: AgentPendingGuidance
 }
 
 export interface AgentGetMessageVersionsInput {
@@ -1086,6 +1134,14 @@ export const AGENT_IPC_CHANNELS = {
   SEND_THREAD_MESSAGE: 'agent:send-thread-message',
   /** 追加线程消息（忙碌时进入队列，空闲时立即发送） */
   APPEND_THREAD_MESSAGE: 'agent:append-thread-message',
+  /** 获取当前线程消息队列 */
+  LIST_MESSAGE_QUEUE: 'agent:list-message-queue',
+  /** 重排当前线程消息队列 */
+  REORDER_MESSAGE_QUEUE: 'agent:reorder-message-queue',
+  /** 删除一条排队消息 */
+  REMOVE_QUEUED_MESSAGE: 'agent:remove-queued-message',
+  /** 将排队消息提升为下一次工具调用前的引导 */
+  PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE: 'agent:promote-queued-message-to-guidance',
   /** 中止 Agent 线程执行 */
   STOP_THREAD: 'agent:stop-thread',
   // 工作区能力（MCP + Skill）
@@ -1151,6 +1207,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_PENDING_INTERACTIVE: 'agent:get-pending-interactive',
   /** runtime status 变化通知（sidecar -> web） */
   RUNTIME_STATUS_CHANGED: 'agent:runtime-status-changed',
+  /** 消息队列变化通知（sidecar -> web） */
+  MESSAGE_QUEUE_CHANGED: 'agent:message-queue-changed',
   /** 尝试恢复可恢复的 runtime run */
   RESUME_RUN: 'agent:resume-run',
   /** 列出线程 runtime run state 摘要 */

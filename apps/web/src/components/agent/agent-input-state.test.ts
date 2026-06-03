@@ -1,10 +1,61 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  deriveAgentInputSubmitState,
   resolveAgentInputConfigWorkspaceSlug,
   shouldSendAgentInputOnEnter,
   syncPermissionModeWithDefaultConfig,
   syncPermissionModeWithPlanModePhase,
 } from './agent-input-state'
+
+describe('deriveAgentInputSubmitState', () => {
+  test('idle with text sends immediately', () => {
+    expect(deriveAgentInputSubmitState({
+      hasText: true,
+      streaming: false,
+      localSending: false,
+    })).toEqual({
+      action: 'send',
+      canSubmit: true,
+      label: '发送',
+    })
+  })
+
+  test('streaming without text stops the current run', () => {
+    expect(deriveAgentInputSubmitState({
+      hasText: false,
+      streaming: true,
+      localSending: false,
+    })).toEqual({
+      action: 'stop',
+      canSubmit: true,
+      label: '停止',
+    })
+  })
+
+  test('streaming with text queues the next message', () => {
+    expect(deriveAgentInputSubmitState({
+      hasText: true,
+      streaming: true,
+      localSending: false,
+    })).toEqual({
+      action: 'queue',
+      canSubmit: true,
+      label: '排队',
+    })
+  })
+
+  test('local sending is busy', () => {
+    expect(deriveAgentInputSubmitState({
+      hasText: true,
+      streaming: true,
+      localSending: true,
+    })).toEqual({
+      action: 'busy',
+      canSubmit: false,
+      label: '发送中',
+    })
+  })
+})
 
 describe('syncPermissionModeWithPlanModePhase', () => {
   test('auto-selects plan while the thread is planning', () => {

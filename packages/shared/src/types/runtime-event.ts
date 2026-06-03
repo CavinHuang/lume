@@ -16,6 +16,7 @@ export type RuntimeEventType =
   | "tool.completed"
   | "tool.failed"
   | "tool.permission_timeout"
+  | "guidance.delivered"
   | "plan.preview"
   | "task.progress"
   | "im.delivery"
@@ -132,6 +133,12 @@ export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
   requestId: string;
   toolName: string;
   message: string;
+}
+
+export interface GuidanceDeliveredRuntimeEvent extends RuntimeEventBase {
+  type: "guidance.delivered";
+  guidanceIds: string[];
+  text: string;
 }
 
 export interface ToolPermissionResolvedRuntimeEvent extends RuntimeEventBase {
@@ -359,6 +366,7 @@ export type LumeRuntimeEvent =
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
   | ToolPermissionTimeoutRuntimeEvent
+  | GuidanceDeliveredRuntimeEvent
   | ToolPermissionResolvedRuntimeEvent
   | PlanPreviewRuntimeEvent
   | TaskProgressRuntimeEvent

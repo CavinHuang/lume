@@ -6,6 +6,7 @@ import {
   agentRuntimeStatusAtom,
   agentRuntimeEventsAtom,
   agentPendingInteractiveAtom,
+  agentMessageQueueAtom,
   agentSubagentRunsAtom,
   agentPlanModePhaseAtom,
   agentThreadsAtom,
@@ -24,6 +25,7 @@ import {
   type AgentAskUserQuestionRequest,
   type AgentToolPermissionRequest,
   type AgentSubagentCompletionEvent,
+  type AgentMessageQueueSnapshot,
   type PlanModePhaseChangedEvent,
 } from '@lume/shared'
 import {
@@ -41,6 +43,7 @@ export function useGlobalAgentListeners() {
   const setRuntimeStatus = useSetAtom(agentRuntimeStatusAtom)
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
+  const setMessageQueues = useSetAtom(agentMessageQueueAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
@@ -130,6 +133,11 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.RUNTIME_STATUS_CHANGED: {
           const { status } = params as AgentRuntimeStatusChangedEvent
           setRuntimeStatus((prev) => ({ ...prev, [status.threadId]: status }))
+          break
+        }
+        case AGENT_IPC_CHANNELS.MESSAGE_QUEUE_CHANGED: {
+          const snapshot = params as AgentMessageQueueSnapshot
+          setMessageQueues((prev) => ({ ...prev, [snapshot.threadId]: snapshot }))
           break
         }
         case AGENT_IPC_CHANNELS.MESSAGE_APPENDED: {
@@ -243,5 +251,5 @@ export function useGlobalAgentListeners() {
       }
     })
     return () => { unlisten.then((fn) => fn()) }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs])
 }

@@ -802,6 +802,10 @@ describe("agent-service", () => {
     expect(first.mode).toBe("sent");
     expect(second.mode).toBe("queued");
     expect(second.queuedCount).toBe(1);
+    expect(second.queuedMessage).toEqual(expect.objectContaining({
+      threadId: thread.id,
+      text: "second"
+    }));
     expect(getAgentRuntimeStatusManager().get(thread.id)?.queuedCount).toBe(1);
 
     await waitForQueuedRunRelease("hold:first");
@@ -811,6 +815,140 @@ describe("agent-service", () => {
     expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
       "hold:first",
       "second"
+    ]);
+  });
+
+  test("队列 API 应支持列表、重排和删除排队消息", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const {
+      appendAgentMessage,
+      listAgentMessageQueue,
+      removeQueuedAgentMessage,
+      reorderAgentMessageQueue,
+      waitForAgentRuntimeKernelIdleForTest
+    } = await import("./agent-service");
+    const thread = createAgentThread("queue operations", "channel-test");
+    const appended: AgentMessageAppendedEvent[] = [];
+    const createEmit = () => ({
+      onMessageAppended: (event: AgentMessageAppendedEvent) => {
+        appended.push(event);
+      },
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:first",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    const second = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "second",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    const third = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "third",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+
+    expect(listAgentMessageQueue(thread.id).queuedMessages.map((item) => item.text)).toEqual(["second", "third"]);
+
+    const reordered = reorderAgentMessageQueue({
+      threadId: thread.id,
+      orderedMessageIds: [
+        third.queuedMessage?.id ?? "",
+        second.queuedMessage?.id ?? ""
+      ]
+    });
+
+    expect(reordered.snapshot.queuedMessages.map((item) => item.text)).toEqual(["third", "second"]);
+
+    const removed = removeQueuedAgentMessage({
+      threadId: thread.id,
+      queuedMessageId: third.queuedMessage?.id ?? ""
+    });
+
+    expect(removed.removedMessage?.text).toBe("third");
+    expect(removed.snapshot.queuedMessages.map((item) => item.text)).toEqual(["second"]);
+
+    await waitForQueuedRunRelease("hold:first");
+    await waitForAgentRuntimeKernelIdleForTest();
+
+    expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
+      "hold:first",
+      "second"
+    ]);
+  });
+
+  test("提升为引导后若未在工具调用前消费，应恢复到普通队列队首", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const {
+      appendAgentMessage,
+      listAgentMessageQueue,
+      promoteQueuedAgentMessageToGuidance,
+      waitForAgentRuntimeKernelIdleForTest
+    } = await import("./agent-service");
+    const thread = createAgentThread("guidance fallback", "channel-test");
+    const appended: AgentMessageAppendedEvent[] = [];
+    const createEmit = () => ({
+      onMessageAppended: (event: AgentMessageAppendedEvent) => {
+        appended.push(event);
+      },
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:first",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    const guidance = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "guidance",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "normal-next",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+
+    const promoted = promoteQueuedAgentMessageToGuidance({
+      threadId: thread.id,
+      queuedMessageId: guidance.queuedMessage?.id ?? ""
+    });
+
+    expect(promoted.promotedGuidance?.text).toBe("guidance");
+    expect(promoted.snapshot.pendingGuidance.map((item) => item.text)).toEqual(["guidance"]);
+    expect(promoted.snapshot.queuedMessages.map((item) => item.text)).toEqual(["normal-next"]);
+
+    await waitForQueuedRunRelease("hold:first");
+    await waitForAgentRuntimeKernelIdleForTest();
+
+    expect(listAgentMessageQueue(thread.id)).toEqual({
+      threadId: thread.id,
+      queuedMessages: [],
+      pendingGuidance: []
+    });
+    expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
+      "hold:first",
+      "guidance",
+      "normal-next"
     ]);
   });
 
