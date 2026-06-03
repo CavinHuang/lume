@@ -139,6 +139,15 @@ export function LeftSidebar() {
     }
   }
 
+  const openReading = () => {
+    const readingId = '__reading__'
+    setActiveTabId(readingId)
+
+    if (!tabs.find((tab) => tab.id === readingId)) {
+      setTabs((previous) => [...previous, { id: readingId, type: 'reading', title: '一起读书' }])
+    }
+  }
+
   const togglePin = async (threadId: string) => {
     const thread = threads.find((item) => item.id === threadId)
     if (!thread) return
@@ -260,6 +269,9 @@ export function LeftSidebar() {
         return
       case 'search':
         setOpenCommandPalette(true)
+        return
+      case 'reading':
+        openReading()
         return
       case 'skills':
         openSkills()

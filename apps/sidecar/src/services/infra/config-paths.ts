@@ -228,3 +228,43 @@ export function getAutomationRunsDir(): string {
 export function getAutomationRunsPath(): string {
   return join(getAutomationRunsDir(), "all.jsonl");
 }
+
+export function getReadingDir(): string {
+  return ensureDir(join(getConfigDir(), "reading"), "读书目录");
+}
+
+export function getReadingLibraryPath(): string {
+  return join(getReadingDir(), "library.json");
+}
+
+export function getReadingSettingsPath(): string {
+  return join(getReadingDir(), "settings.json");
+}
+
+export function getReadingNotesDir(): string {
+  return ensureDir(join(getReadingDir(), "notes"), "读书笔记目录");
+}
+
+export function getReadingAssetsDir(): string {
+  return ensureDir(join(getReadingDir(), "assets"), "读书资源目录");
+}
+
+export function getReadingCoversDir(): string {
+  return ensureDir(join(getReadingAssetsDir(), "covers"), "读书封面目录");
+}
+
+export function getReadingShareCardsDir(): string {
+  return ensureDir(join(getReadingAssetsDir(), "share-cards"), "读书分享卡片目录");
+}
+
+export function getReadingExportsDir(): string {
+  return ensureDir(join(getReadingDir(), "exports"), "读书导出目录");
+}
+
+export function getReadingQuotesPath(): string {
+  return join(getReadingDir(), "quotes.json");
+}
+
+export function getReadingRunsDir(): string {
+  return ensureDir(join(getReadingDir(), "runs"), "读书运行记录目录");
+}

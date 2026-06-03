@@ -1,5 +1,6 @@
 import {
   Archive,
+  BookOpen,
   Box,
   Cog,
   Database,
@@ -23,6 +24,7 @@ export type SettingsViewTab =
   | 'agents'
   | 'workspaces'
   | 'memory'
+  | 'reading'
   | 'permissions'
   | 'shortcuts'
   | 'integrations'
@@ -43,6 +45,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'workspaces', label: '工作区', icon: Users },
   { id: 'memory', label: '记忆', icon: Database },
+  { id: 'reading', label: '读书', icon: BookOpen },
   { id: 'permissions', label: '权限管理', icon: ShieldCheck },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'integrations', label: 'MCP', icon: Puzzle },
@@ -60,6 +63,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   agents: 'Agents 团队',
   workspaces: '工作区设置',
   memory: '记忆',
+  reading: '读书',
   permissions: '权限管理',
   shortcuts: '快捷键',
   integrations: 'MCP',
@@ -77,6 +81,7 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   agents: '管理内置角色、推荐关键词与子代理运行时身份',
   workspaces: '管理多个本地工作区的基本信息、目录和默认行为',
   memory: '查看、搜索、蒸馏和确认工作区与全局记忆',
+  reading: '管理 Lume 的阅读节奏、微信读书连接和读书模型',
   permissions: '管理权限模式和工具调用规则',
   shortcuts: '管理键盘快捷键与常用操作',
   integrations: '管理 MCP 服务发现与连接状态',

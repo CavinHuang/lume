@@ -7,6 +7,7 @@ import { createAutomationHandlers } from "./automation-handlers";
 import { createChannelHandlers } from "./channel-handlers";
 import { createImHandlers } from "./im-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
+import { createReadingHandlers } from "./reading-handlers";
 import { createSystemHandlers } from "./system-handlers";
 import type { NotificationWriter, RpcHandler } from "./types";
 
@@ -45,6 +46,9 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     createChannelHandlers(),
     createImHandlers(),
     createMemoryHandlers(),
+    createReadingHandlers({
+      writeNotification: context.writeNotification
+    }),
     createAutomationHandlers(),
     createAgentHandlers({
       writeNotification: context.writeNotification,

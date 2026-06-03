@@ -24,6 +24,12 @@ describe('settings view state', () => {
     expect(ids.indexOf('permissions')).toBeLessThan(ids.indexOf('integrations'))
   })
 
+  test('places Reading near Memory instead of under integrations', () => {
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
+    expect(ids.indexOf('reading')).toBe(ids.indexOf('memory') + 1)
+    expect(ids.indexOf('reading')).toBeLessThan(ids.indexOf('integrations'))
+  })
+
   test('includes application logs after update settings', () => {
     const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
     expect(ids).toContain('logs')

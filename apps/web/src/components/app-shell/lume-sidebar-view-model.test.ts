@@ -41,6 +41,7 @@ describe('buildLumeSidebarViewModel', () => {
     expect(model.topActions.map((action) => action.id)).toEqual([
       'new-chat',
       'search',
+      'reading',
       'skills',
       'automations',
     ])
@@ -257,7 +258,7 @@ describe('buildLumeSidebarViewModel', () => {
     )
   })
 
-  test('marks recycle bin disabled until a real footer flow exists', () => {
+  test('keeps recycle bin available for the trash footer flow', () => {
     const model = buildLumeSidebarViewModel({
       workspaces: [createWorkspace()],
       threads: [],
@@ -271,19 +272,19 @@ describe('buildLumeSidebarViewModel', () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: 'recycle-bin',
-          disabled: true,
         }),
       ]),
     )
+    expect(model.footerActions.find((action) => action.id === 'recycle-bin')).not.toHaveProperty('disabled', true)
     expect(model.collapsedItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'recycle-bin',
           kind: 'footer-action',
-          disabled: true,
         }),
       ]),
     )
+    expect(model.collapsedItems.find((action) => action.id === 'recycle-bin')).not.toHaveProperty('disabled', true)
   })
 
   test('keeps unassigned threads discoverable in a dedicated bucket without remapping them between workspaces', () => {

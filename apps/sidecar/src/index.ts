@@ -7,6 +7,11 @@ import {
   startAutomationRunner,
   stopAutomationRunner
 } from "./services/automation/automation-runner-service";
+import {
+  setReadingCadenceNotificationWriter,
+  startReadingCadenceRunner,
+  stopReadingCadenceRunner
+} from "./services/reading/reading-cadence-runner";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
@@ -116,6 +121,12 @@ async function boot(): Promise<void> {
       console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
+  if (envAutostartEnabled("LUME_READING_RUNNER_AUTOSTART", true)) {
+    setReadingCadenceNotificationWriter(writeNotification);
+    void startReadingCadenceRunner().catch((error) => {
+      console.error(`[读书 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
   if (envAutostartEnabled("LUME_DEFAULT_SKILLS_AUTOSTART", false)) {
     seedDefaultSkills();
   }
@@ -135,6 +146,7 @@ async function boot(): Promise<void> {
     stopWorkspaceWatcher();
     void getWorkspaceMcpManager().disposeAll().catch(() => {});
     void stopAutomationRunner().catch(() => {});
+    void stopReadingCadenceRunner().catch(() => {});
     imRuntimeManager.stopAll();
   };
   process.once("exit", stopWatcher);

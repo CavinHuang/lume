@@ -8,6 +8,7 @@ export * from './automation'
 export * from './memory'
 export * from './mcp'
 export * from './im'
+export * from './reading'
 export type {
   GeneralSettings,
   ThemeMode,

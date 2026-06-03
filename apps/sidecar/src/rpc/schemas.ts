@@ -82,6 +82,216 @@ export const imWeixinLoginPollInputSchema = z.object({
   verifyCode: z.string().optional()
 });
 
+const readingSourceKindSchema = z.enum(["weread", "gutenberg", "poetry", "manual", "generated"]);
+const readingBookTrackSchema = z.enum(["lume", "co_read", "recommended"]);
+const readingBookStatusSchema = z.enum(["queued", "reading", "finished", "paused"]);
+const readingNoteDepthSchema = z.enum(["seed", "deep"]);
+
+const readingSourceRefSchema = z.object({
+  kind: readingSourceKindSchema.optional(),
+  externalId: z.string().optional(),
+  url: z.string().optional(),
+  title: z.string().optional(),
+  author: z.string().optional(),
+  location: z.string().optional(),
+  excerpt: z.string().optional()
+}).strict();
+
+const readingQuoteEvidenceSchema = z.object({
+  quote: z.string().min(1),
+  sourceKind: readingSourceKindSchema,
+  sourceId: z.string().optional(),
+  sourceTitle: z.string().optional(),
+  location: z.string().optional(),
+  excerpt: z.string().optional(),
+  url: z.string().optional(),
+  capturedAt: z.number()
+}).strict();
+
+export const readingUpdateSettingsInputSchema = z.object({
+  cadence: z.enum(["off", "weekly", "few_times_weekly", "manual"]).optional(),
+  quiet: z.boolean().optional(),
+  maxDeepNotesPerWeek: z.number().int().min(1).max(4).optional(),
+  textModelMode: z.enum(["inherit", "explicit"]).optional(),
+  textModelRef: z.string().nullable().optional(),
+  imageModelRef: z.string().nullable().optional(),
+  advanced: z.object({
+    selectionModelRef: z.string().optional(),
+    seedModelRef: z.string().optional(),
+    deepModelRef: z.string().optional(),
+    companionModelRef: z.string().optional()
+  }).strict().optional()
+}).strict();
+
+export const readingListNotesInputSchema = z.object({
+  bookId: z.string().optional(),
+  includeHidden: z.boolean().optional(),
+  includeDeleted: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional()
+}).strict().optional();
+
+export const readingAddBookInputSchema = z.object({
+  title: z.string().min(1),
+  author: z.string().optional(),
+  track: readingBookTrackSchema.optional(),
+  status: readingBookStatusSchema.optional(),
+  source: readingSourceRefSchema.optional(),
+  coverUrl: z.string().optional(),
+  progressPercent: z.number().min(0).max(100).optional(),
+  tags: z.array(z.string()).optional()
+}).strict();
+
+export const readingAddBookToAliceInputSchema = z.object({
+  title: z.string().trim().min(1),
+  reason: z.string().trim().optional()
+}).strict();
+
+export const readingUpdateBookInputSchema = z.object({
+  id: idSchema,
+  input: z.object({
+    title: z.string().min(1).optional(),
+    author: z.string().optional(),
+    track: readingBookTrackSchema.optional(),
+    status: readingBookStatusSchema.optional(),
+    source: readingSourceRefSchema.optional(),
+    coverUrl: z.string().optional(),
+    progressPercent: z.number().min(0).max(100).optional(),
+    tags: z.array(z.string()).optional()
+  }).strict()
+}).strict();
+
+export const readingNoteIdInputSchema = z.object({
+  id: idSchema
+}).strict();
+
+export const readingMarkSeenInputSchema = z.object({
+  noteIds: z.array(z.string().min(1)).optional()
+}).strict().optional();
+
+const readingUserContextSchema = z.object({
+  userHighlights: z.array(z.object({
+    quote: z.string().min(1),
+    note: z.string().optional(),
+    sourceId: z.string().optional(),
+    chapterTitle: z.string().optional()
+  }).strict()).optional(),
+  userThoughts: z.array(z.string()).optional(),
+  recentConversationSummary: z.string().optional(),
+  recentDiarySummary: z.string().optional()
+}).strict();
+
+export const readingRunTaskInputSchema = z.object({
+  trigger: z.enum(["manual", "scheduled", "progress", "conversation"]).optional(),
+  bookId: z.string().optional(),
+  depth: readingNoteDepthSchema.optional(),
+  workspaceSlug: z.string().trim().optional(),
+  userContext: readingUserContextSchema.optional(),
+  manualQuoteText: z.string().optional(),
+  manualSource: z.string().optional()
+}).strict().optional();
+
+export const readingReviseNoteInputSchema = z.object({
+  id: idSchema,
+  body: z.string().min(1),
+  summary: z.string().optional(),
+  editReason: z.string().min(1),
+  modelRef: z.string().optional()
+}).strict();
+
+export const readingBookIdInputSchema = z.object({
+  bookId: z.string().min(1)
+}).strict();
+
+export const readingConnectWereadInputSchema = z.object({
+  apiKey: z.string().trim().min(1),
+  accountName: z.string().optional()
+}).strict();
+
+export const readingSearchWereadInputSchema = z.object({
+  query: z.string().trim().min(1),
+  limit: z.number().int().min(1).max(20).optional()
+}).strict();
+
+export const wereadApiKeyInputSchema = z.object({
+  apiKey: z.string().trim().min(1)
+}).strict();
+
+export const wereadBookIdInputSchema = z.object({
+  bookId: z.string().trim().min(1)
+}).strict();
+
+export const wereadReadDataInputSchema = z.object({
+  period: z.string().trim().optional()
+}).strict().optional();
+
+export const wereadBestBookmarksInputSchema = z.object({
+  bookId: z.string().trim().min(1),
+  bookTitle: z.string().trim().optional()
+}).strict();
+
+export const wereadPublicReviewsInputSchema = z.object({
+  bookId: z.string().trim().min(1),
+  listType: z.string().trim().optional(),
+  bookTitle: z.string().trim().optional()
+}).strict();
+
+export const wereadGenerateNoteInputSchema = z.object({
+  bookTitle: z.string().trim().min(1),
+  text: z.string().trim().min(1),
+  source: z.string().trim().optional(),
+  authorName: z.string().trim().optional()
+}).strict();
+
+export const wereadSearchBooksInputSchema = z.object({
+  keyword: z.string().trim().min(1),
+  limit: z.number().int().min(1).max(20).optional()
+}).strict();
+
+export const readingGenerateShareCardInputSchema = z.object({
+  noteId: idSchema,
+  theme: z.enum(["light", "dark"]).optional()
+}).strict();
+
+export const aliceReadingNoteIdInputSchema = z.union([
+  z.string().min(1),
+  z.object({ id: z.string().min(1) }).strict(),
+  z.object({ noteId: z.string().min(1) }).strict()
+]);
+
+export const aliceReadingNoteIdsInputSchema = z.union([
+  z.array(z.string().min(1)),
+  z.object({
+    noteIds: z.array(z.string().min(1)).optional()
+  }).strict()
+]).optional();
+
+export const aliceReadingListNotesInputSchema = z.object({
+  bookId: z.string().min(1).optional(),
+  interestId: z.string().min(1).optional(),
+  wereadBookId: z.string().min(1).optional(),
+  includeHidden: z.boolean().optional(),
+  includeDeleted: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional()
+}).strict().optional();
+
+export const aliceReadingRunTaskInputSchema = z.object({
+  trigger: z.enum(["manual", "scheduled", "progress", "conversation"]).optional(),
+  bookId: z.string().optional(),
+  interestId: z.string().min(1).optional(),
+  wereadBookId: z.string().min(1).optional(),
+  depth: readingNoteDepthSchema.optional(),
+  workspaceSlug: z.string().trim().optional(),
+  userContext: readingUserContextSchema.optional(),
+  manualQuoteText: z.string().optional(),
+  manualSource: z.string().optional()
+}).strict().optional();
+
+export const aliceReadingBookInputSchema = z.object({
+  interestId: z.string().min(1).optional(),
+  bookId: z.string().min(1).optional(),
+  wereadBookId: z.string().min(1).optional()
+}).strict().optional();
+
 const memoryScopeSchema = z.enum(["global", "workspace"]);
 const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);
 const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual"]);

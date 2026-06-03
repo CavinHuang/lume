@@ -334,6 +334,90 @@ registerToolMetadata({
   allowedInPlanMode: true
 });
 
+// Reading 工具
+registerToolMetadata({
+  name: "lume_reading_snapshot",
+  category: "read",
+  riskLevel: "low",
+  description: "读取 Lume Reading 书架和笔记快照",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "lume_add_book",
+  category: "write",
+  riskLevel: "medium",
+  description: "向 Lume Reading 添加书籍",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "lume_write_reading_note",
+  category: "write",
+  riskLevel: "medium",
+  description: "写入 Lume Reading 读书笔记",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "lume_hide_reading_note",
+  category: "write",
+  riskLevel: "medium",
+  description: "隐藏 Lume Reading 读书笔记",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "lume_revise_reading_note",
+  category: "write",
+  riskLevel: "medium",
+  description: "修订 Lume Reading 读书笔记",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "lume_generate_share_card",
+  category: "write",
+  riskLevel: "medium",
+  description: "生成 Lume Reading 分享卡片本地资产",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "weread_generate_note",
+  category: "write",
+  riskLevel: "medium",
+  description: "基于微信读书内容生成 Lume Reading 本地笔记",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "weread_export_all_notes",
+  category: "write",
+  riskLevel: "medium",
+  description: "导出 Lume Reading 笔记本地文件",
+  allowedInPlanMode: false
+});
+
+for (const name of [
+  "weread_shelf",
+  "weread_notebooks",
+  "weread_bookmarks",
+  "weread_best_bookmarks",
+  "weread_reviews",
+  "weread_public_reviews",
+  "weread_readdata",
+  "weread_search"
+]) {
+  registerToolMetadata({
+    name,
+    category: "network",
+    riskLevel: "low",
+    description: "读取已授权微信读书数据",
+    allowedInPlanMode: true
+  });
+}
+
 // IM 工具
 registerToolMetadata({
   name: "send_im_message",

@@ -11,6 +11,7 @@ export * from "./agent-loop";
 export * from "./runtime-event";
 export * from "./memory";
 export * from "./im";
+export * from "./reading";
 export * from "./workspace-bootstrap";
 export * from "./heartbeat";
 export * from "./automation";

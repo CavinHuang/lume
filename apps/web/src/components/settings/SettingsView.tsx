@@ -15,6 +15,7 @@ import { ImSettings } from './ImSettings'
 import { PermissionSettings } from './PermissionSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
 import { MemorySettings } from './MemorySettings'
+import { ReadingSettings } from './ReadingSettings'
 import { VersionUpdateSettings } from './VersionUpdateSettings'
 import { LogSettings } from './LogSettings'
 import { WebSearchSettings } from './WebSearchSettings'
@@ -96,6 +97,7 @@ export function SettingsView() {
           {tab === 'agents' && <AgentsSettings />}
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
+          {tab === 'reading' && <ReadingSettings />}
           {tab === 'permissions' && <PermissionSettings />}
           {tab === 'shortcuts' && (
             <SettingsPlaceholder

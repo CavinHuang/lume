@@ -21,6 +21,49 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("automation_set")).toBeFalse();
   });
 
+  test("classifies Reading tools by read/write risk", () => {
+    expect(getToolMetadata("lume_reading_snapshot")).toMatchObject({
+      category: "read",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(getToolMetadata("weread_search")).toMatchObject({
+      category: "network",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(getToolMetadata("weread_best_bookmarks")).toMatchObject({
+      category: "network",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(getToolMetadata("lume_revise_reading_note")).toMatchObject({
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    expect(getToolMetadata("lume_write_reading_note")).toMatchObject({
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    expect(getToolMetadata("lume_generate_share_card")).toMatchObject({
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    expect(getToolMetadata("weread_generate_note")).toMatchObject({
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    expect(getToolMetadata("weread_export_all_notes")).toMatchObject({
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+  });
+
   test("allows TaskContractWrite in plan mode without treating it as a risky write", () => {
     expect(getToolMetadata("TaskContractWrite")).toMatchObject({
       category: "control",
