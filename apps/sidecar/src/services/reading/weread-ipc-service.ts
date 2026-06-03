@@ -58,8 +58,13 @@ export function createDefaultWereadIpcSource(): WereadIpcSource {
     },
     async testKey(apiKey) {
       const client = new WereadClient({ apiKey });
-      await client.shelf();
-      return { ok: true };
+      const stats = await client.shelfStats();
+      return {
+        ok: true,
+        total: stats.total,
+        bookCount: stats.bookCount,
+        albumCount: stats.albumCount
+      };
     },
     async shelf() {
       return getConnectedWereadClient().shelf();

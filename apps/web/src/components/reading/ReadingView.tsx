@@ -15,9 +15,10 @@ import {
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
-import type { ReadingLibrarySnapshot, ReadingNoteSummary, ReadingSearchResult } from '@lume/shared'
+import { WEREAD_KEY_PAGE_URL, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { openExternal } from '@/lib/desktop-api'
 import {
   addReadingBook,
   generateReadingShareCard,
@@ -184,6 +185,15 @@ export function ReadingView() {
     setActiveTabId(settingsId)
   }
 
+  const openWereadKeyPage = async () => {
+    try {
+      await openExternal(WEREAD_KEY_PAGE_URL)
+    } catch (error) {
+      console.error('[ReadingView] 打开微信读书 API Key 页面失败:', error)
+      toast.error('打开微信读书页面失败')
+    }
+  }
+
   const saveShareCard = async (note: ReadingNoteSummary) => {
     try {
       const result = await generateReadingShareCard({ noteId: note.id })
@@ -329,17 +339,17 @@ export function ReadingView() {
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <button
                   type="button"
-                  onClick={openReadingSettings}
+                  onClick={() => void openWereadKeyPage()}
                   className="h-9 rounded-[6px] bg-[var(--text-1)] text-[13px] font-medium text-[var(--surface-1)]"
                 >
-                  去设置
+                  获取 API KEY
                 </button>
                 <button
                   type="button"
                   onClick={openReadingSettings}
                   className="h-9 rounded-[6px] bg-[var(--reading-card)] text-[13px] font-medium text-[var(--text-1)]"
                 >
-                  填入 API Key
+                  去设置中填入
                 </button>
               </div>
             </section>

@@ -83,6 +83,9 @@ describe("reading-handlers", () => {
       connected: true,
       accountName: "Cavin"
     });
+    await expect(handlers[WEREAD_IPC_CHANNELS.GET_KEY]?.({})).resolves.toEqual({
+      apiKey: "secret-weread-key"
+    });
     expect(JSON.stringify(await handlers[READING_IPC_CHANNELS.GET_SNAPSHOT]?.({}))).not.toContain("secret-weread-key");
   });
 
@@ -530,6 +533,7 @@ describe("reading-handlers", () => {
 
     for (const channel of [
       WEREAD_IPC_CHANNELS.OPEN_AND_FETCH_KEY,
+      WEREAD_IPC_CHANNELS.GET_KEY,
       WEREAD_IPC_CHANNELS.TEST_KEY,
       WEREAD_IPC_CHANNELS.GET_SHELF,
       WEREAD_IPC_CHANNELS.GET_NOTEBOOKS,
@@ -545,6 +549,7 @@ describe("reading-handlers", () => {
     }
 
     await expect(handlers[WEREAD_IPC_CHANNELS.TEST_KEY]?.({ apiKey: "valid-key" })).resolves.toMatchObject({ ok: true });
+    await expect(handlers[WEREAD_IPC_CHANNELS.GET_KEY]?.({})).resolves.toMatchObject({ apiKey: null });
     await expect(handlers[WEREAD_IPC_CHANNELS.GET_SHELF]?.({})).resolves.toMatchObject({
       books: [{ title: "我在北京送快递" }]
     });

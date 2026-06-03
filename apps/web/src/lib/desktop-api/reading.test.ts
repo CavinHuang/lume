@@ -22,6 +22,7 @@ const readingApi = await import('./reading')
 describe('desktop reading API', () => {
   beforeEach(() => {
     invokeMock.mockClear()
+    invokeMock.mockImplementation(async () => ({}))
   })
 
   afterEach(() => {
@@ -79,6 +80,7 @@ describe('desktop reading API', () => {
   })
 
   test('routes Alice-like WeRead methods through the same desktop sidecar command', async () => {
+    await readingApi.getWereadApiKey()
     await readingApi.getWereadShelf()
     await readingApi.generateWereadNote({
       bookTitle: '我在北京送快递',
@@ -88,6 +90,13 @@ describe('desktop reading API', () => {
     await readingApi.searchWereadBooks('胡安焉', 5)
 
     expect(invokeMock.mock.calls).toEqual([
+      [
+        'sidecar_call',
+        {
+          method: WEREAD_IPC_CHANNELS.GET_KEY,
+          params: {},
+        },
+      ],
       [
         'sidecar_call',
         {
@@ -120,27 +129,35 @@ describe('desktop reading API', () => {
   })
 
   test('opens the desktop WeRead key page and reads a copied API key', async () => {
-    const readText = mockClipboardText(' wr_lume_test_key ')
+    invokeMock.mockImplementation(async (command) => (
+      command === 'read_clipboard_text' ? ' wrk-lume-test-key ' : {}
+    ))
 
     const result = await readingApi.openAndFetchWereadKey()
 
     expect(result).toEqual({
       ok: true,
-      key: 'wr_lume_test_key',
+      key: 'wrk-lume-test-key',
       url: WEREAD_KEY_PAGE_URL,
     })
-    expect(readText).toHaveBeenCalled()
     expect(invokeMock.mock.calls).toEqual([
       [
-        'open_external',
+        'open_weread_key_webview',
         {
           url: WEREAD_KEY_PAGE_URL,
         },
+      ],
+      [
+        'read_clipboard_text',
       ],
     ])
   })
 
   test('rejects clipboard text that is not a WeRead API key', async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === 'read_clipboard_text') throw new Error('desktop clipboard unavailable')
+      return {}
+    })
     const readText = mockClipboardText('not-a-weread-key')
 
     const result = await readingApi.readWereadKeyFromClipboard()
@@ -151,6 +168,10 @@ describe('desktop reading API', () => {
       url: WEREAD_KEY_PAGE_URL,
     })
     expect(readText).toHaveBeenCalled()
-    expect(invokeMock.mock.calls).toEqual([])
+    expect(invokeMock.mock.calls).toEqual([
+      [
+        'read_clipboard_text',
+      ],
+    ])
   })
 })

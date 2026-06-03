@@ -304,7 +304,8 @@ export type WereadOpenAndFetchKeyFailureReason =
   | "clipboard_empty"
   | "invalid_clipboard"
   | "open_failed"
-  | "desktop_required";
+  | "desktop_required"
+  | "timeout";
 
 export type WereadOpenAndFetchKeyResult =
   | {
@@ -318,6 +319,14 @@ export type WereadOpenAndFetchKeyResult =
       url: string;
       message?: string;
     };
+
+export interface WereadTestKeyResult {
+  ok: boolean;
+  total?: number;
+  bookCount?: number;
+  albumCount?: number;
+  error?: string;
+}
 
 export interface ReadingSearchWereadInput {
   query: string;
@@ -414,6 +423,7 @@ export const ALICE_READING_IPC_CHANNELS = {
 
 export const WEREAD_IPC_CHANNELS = {
   OPEN_AND_FETCH_KEY: "weread:openAndFetchKey",
+  GET_KEY: "weread:getKey",
   TEST_KEY: "weread:testKey",
   GET_SHELF: "weread:getShelf",
   GET_NOTEBOOKS: "weread:getNotebooks",

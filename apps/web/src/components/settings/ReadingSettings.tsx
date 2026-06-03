@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, ClipboardCheck, ExternalLink, PlugZap, Save } from 'lucide-react'
+import { BookOpen, Check, LogIn, MessageSquare, RefreshCw, Save, TestTube2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ReadingSettingsDraft } from './reading-settings-state'
 import {
@@ -10,25 +10,48 @@ import {
 } from './reading-settings-state'
 import {
   connectReadingWeread,
-  disconnectReadingWeread,
+  getWereadApiKey,
   getReadingSnapshot,
   openAndFetchWereadKey,
-  readWereadKeyFromClipboard,
+  testWereadKey,
   updateReadingSettings,
 } from '@/lib/desktop-api/reading'
-import { cn } from '@/lib/utils'
+
+type WereadTestStatus = 'idle' | 'testing' | 'ok' | 'fail'
+
+interface WereadConnectionDetail {
+  total?: number
+  bookCount?: number
+  albumCount?: number
+  error?: string
+}
+
+const WEREAD_FEATURES = [
+  ['查看书架', '你书架上有什么书、读到哪了'],
+  ['查看划线', '你画过的线、写过的想法'],
+  ['阅读统计', '读了多久、偏好什么类型'],
+  ['搜索书籍', '在微信读书书城找书'],
+] as const
 
 export function ReadingSettings() {
   const [draft, setDraft] = useState<ReadingSettingsDraft | null>(null)
   const [connected, setConnected] = useState(false)
   const [apiKey, setApiKey] = useState('')
+  const [savedApiKey, setSavedApiKey] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [keyFlowBusy, setKeyFlowBusy] = useState(false)
+  const [testStatus, setTestStatus] = useState<WereadTestStatus>('idle')
+  const [connectionDetail, setConnectionDetail] = useState<WereadConnectionDetail | null>(null)
 
   const load = useCallback(async () => {
-    const snapshot = await getReadingSnapshot()
+    const [snapshot, keyResult] = await Promise.all([
+      getReadingSnapshot(),
+      getWereadApiKey().catch(() => ({ apiKey: null })),
+    ])
     setDraft(getReadingSettingsDraft(snapshot.settings))
     setConnected(snapshot.wereadConnection.connected)
+    setApiKey(keyResult.apiKey ?? '')
+    setSavedApiKey(keyResult.apiKey ?? '')
   }, [])
 
   useEffect(() => {
@@ -50,60 +73,60 @@ export function ReadingSettings() {
     }
   }
 
-  const connectWithApiKey = async (key: string) => {
+  const testAndSaveApiKey = async (key: string, options: { auto?: boolean } = {}) => {
     const trimmed = key.trim()
-    if (!trimmed) return
+    if (!trimmed) {
+      toast.error('请先填入 API KEY')
+      return false
+    }
+    setTestStatus('testing')
+    setConnectionDetail(null)
     try {
+      const result = await testWereadKey(trimmed)
+      if (!result.ok) {
+        setTestStatus('fail')
+        setConnectionDetail({ error: result.error ?? '连接失败' })
+        toast.error(result.error ?? '连接失败')
+        return false
+      }
       await connectReadingWeread({ apiKey: trimmed })
-      setApiKey('')
+      setApiKey(trimmed)
+      setSavedApiKey(trimmed)
+      setConnected(true)
+      setTestStatus('ok')
+      setConnectionDetail(result)
       await load()
-      toast.success('微信读书已连接')
+      toast.success(options.auto ? 'API KEY 已自动获取并保存' : '连接成功')
+      return true
     } catch (error) {
       console.error('[ReadingSettings] 微信读书连接失败:', error)
+      setTestStatus('fail')
+      setConnectionDetail({ error: getErrorMessage(error) })
       toast.error('连接失败')
+      return false
     }
   }
 
-  const connect = () => connectWithApiKey(apiKey)
+  const testCurrentApiKey = () => {
+    void testAndSaveApiKey(apiKey)
+  }
 
   const openWereadKeyPage = async () => {
     setKeyFlowBusy(true)
     try {
       const result = await openAndFetchWereadKey()
       if (result.ok) {
-        await connectWithApiKey(result.key)
+        setApiKey(result.key)
+        await testAndSaveApiKey(result.key, { auto: true })
       } else if (result.reason === 'open_failed') {
         toast.error(result.message ?? '打开微信读书失败')
-      } else {
-        toast('已打开微信读书，复制 Key 后回到 Lume')
-      }
-    } finally {
-      setKeyFlowBusy(false)
-    }
-  }
-
-  const connectFromClipboard = async () => {
-    setKeyFlowBusy(true)
-    try {
-      const result = await readWereadKeyFromClipboard()
-      if (result.ok) {
-        await connectWithApiKey(result.key)
+      } else if (result.reason === 'timeout') {
+        toast.error('获取超时，请重试或手动输入')
       } else {
         toast.error(getWereadKeyErrorLabel(result.reason))
       }
     } finally {
       setKeyFlowBusy(false)
-    }
-  }
-
-  const disconnect = async () => {
-    try {
-      await disconnectReadingWeread()
-      await load()
-      toast.success('微信读书已断开')
-    } catch (error) {
-      console.error('[ReadingSettings] 微信读书断开失败:', error)
-      toast.error('断开失败')
     }
   }
 
@@ -115,60 +138,110 @@ export function ReadingSettings() {
     )
   }
 
+  const hasApiKey = apiKey.trim().length > 0
+  const keyChanged = apiKey.trim() !== savedApiKey.trim()
+
   return (
     <div className="space-y-4">
       <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-[15px] font-semibold text-[var(--text-1)]">微信读书</h3>
-            <p className="mt-1 text-[13px] leading-5 text-[var(--text-3)]">连接后，Lume 可以看到你的书架、划线和读书进度。</p>
+        <h3 className="text-[20px] font-semibold text-[var(--text-1)]">微信读书</h3>
+        <p className="mt-2 text-[15px] leading-6 text-[var(--text-3)]">
+          连接微信读书官方 Skill API，让 Lume 了解你的阅读世界——书架、划线、想法、阅读统计。
+        </p>
+
+        <div className="mt-5 rounded-[10px] bg-[var(--surface-2)] p-5">
+          <div className="flex items-center gap-2">
+            <BookOpen size={18} className="text-green-500" />
+            <div className="text-[17px] font-semibold text-[var(--text-1)]">API Key</div>
+            {(connected || testStatus === 'ok') && (
+              <span className="inline-flex h-6 items-center gap-1 rounded-full bg-green-50 px-2 text-[12px] text-green-600">
+                <Check size={12} />
+                已连接
+              </span>
+            )}
+            {testStatus === 'fail' && (
+              <span className="inline-flex h-6 items-center rounded-full bg-red-50 px-2 text-[12px] text-red-600">
+                连接失败
+              </span>
+            )}
           </div>
-          <span className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px]',
-            connected
-              ? 'bg-[color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] text-[var(--brand)]'
-              : 'bg-[var(--surface-2)] text-[var(--text-3)]',
-          )}>
-            {connected && <Check size={13} />}
-            {connected ? '已连接' : '未连接'}
-          </span>
-        </div>
-        <div className="mt-4 flex gap-2">
-          <input
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder="微信读书 API Key"
-            className="h-9 min-w-0 flex-1 rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-[13px] outline-none focus:border-[var(--brand)]"
-          />
-          <button type="button" onClick={connect} className="inline-flex h-9 items-center gap-2 rounded-[8px] bg-[var(--text-1)] px-3 text-[13px] font-medium text-[var(--surface-1)]">
-            <PlugZap size={15} />
-            连接
-          </button>
-          {connected && (
-            <button type="button" onClick={disconnect} className="h-9 rounded-[8px] border border-[var(--border)] px-3 text-[13px] text-[var(--text-2)]">
-              断开
-            </button>
+
+          {!hasApiKey && !connected ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void openWereadKeyPage()}
+                disabled={keyFlowBusy}
+                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-green-500 text-[15px] font-semibold text-white transition-colors hover:bg-green-600 disabled:cursor-wait disabled:opacity-70"
+              >
+                {keyFlowBusy ? <RefreshCw size={18} className="animate-spin" /> : <LogIn size={18} />}
+                {keyFlowBusy ? '等待扫码登录...' : '微信扫码登录并获取'}
+              </button>
+              <p className="mt-4 text-center text-[13px] leading-6 text-[var(--text-2)]">
+                点击后弹出微信读书页面，请关闭快捷登录弹窗，用扫码方式登录
+              </p>
+            </>
+          ) : (
+            <div className="mt-5 space-y-3">
+              <div className="flex gap-2">
+                <input
+                  value={apiKey}
+                  onChange={(event) => {
+                    setApiKey(event.target.value)
+                    setTestStatus('idle')
+                    setConnectionDetail(null)
+                  }}
+                  placeholder="wrk-xxxxxxxx"
+                  className="h-11 min-w-0 flex-1 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[15px] outline-none focus:border-[var(--brand)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => void openWereadKeyPage()}
+                  disabled={keyFlowBusy}
+                  title="重新扫码获取"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] disabled:cursor-wait disabled:opacity-60"
+                >
+                  <RefreshCw size={18} className={keyFlowBusy ? 'animate-spin' : undefined} />
+                </button>
+                <button
+                  type="button"
+                  onClick={testCurrentApiKey}
+                  disabled={!hasApiKey || testStatus === 'testing'}
+                  className="inline-flex h-11 items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] font-semibold text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  <TestTube2 size={16} />
+                  {testStatus === 'testing' ? '测试中' : keyChanged ? '保存并测试' : '测试'}
+                </button>
+              </div>
+
+              {testStatus === 'ok' && (
+                <div className="rounded-[8px] border border-green-200 bg-green-50 px-4 py-3 text-[14px] text-green-700">
+                  {formatWereadConnectionDetail(connectionDetail)}
+                </div>
+              )}
+              {testStatus === 'fail' && (
+                <div className="rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-600">
+                  {connectionDetail?.error ?? '连接失败，请检查 API KEY'}
+                </div>
+              )}
+            </div>
           )}
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={openWereadKeyPage}
-            disabled={keyFlowBusy}
-            className="inline-flex h-8 items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 text-[12px] font-medium text-[var(--text-2)] disabled:opacity-55"
-          >
-            <ExternalLink size={14} />
-            打开获取
-          </button>
-          <button
-            type="button"
-            onClick={connectFromClipboard}
-            disabled={keyFlowBusy}
-            className="inline-flex h-8 items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 text-[12px] font-medium text-[var(--text-2)] disabled:opacity-55"
-          >
-            <ClipboardCheck size={14} />
-            读取剪贴板
-          </button>
+
+        <div className="mt-5 rounded-[10px] bg-[var(--surface-2)] p-5">
+          <h4 className="text-[16px] font-semibold text-[var(--text-1)]">连接后 Lume 可以做什么</h4>
+          <div className="mt-4 grid gap-x-8 gap-y-5 md:grid-cols-2">
+            {WEREAD_FEATURES.map(([title, description]) => (
+              <div key={title} className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[14px] font-semibold text-[var(--text-1)]">{title}</div>
+                  <div className="mt-1 text-[13px] leading-5 text-[var(--text-3)]">{description}</div>
+                </div>
+                <MessageSquare size={14} className="mt-1 shrink-0 text-[var(--text-3)]" />
+              </div>
+            ))}
+          </div>
+          <p className="mt-5 text-[13px] text-[var(--text-2)]">所有数据仅在本地使用，不会上传到任何服务器。</p>
         </div>
       </section>
 
@@ -289,13 +362,37 @@ export function ReadingSettings() {
 
 function getWereadKeyErrorLabel(reason: string): string {
   switch (reason) {
+    case 'awaiting_copy':
+      return '请在微信读书页面点击获取 API KEY'
     case 'clipboard_unavailable':
       return '无法读取剪贴板'
     case 'clipboard_empty':
       return '剪贴板为空'
     case 'invalid_clipboard':
       return '剪贴板里不是微信读书 Key'
+    case 'desktop_required':
+      return '需要在桌面应用中获取微信读书 Key'
+    case 'timeout':
+      return '获取超时，请重试或手动输入'
     default:
       return '读取微信读书 Key 失败'
   }
+}
+
+function formatWereadConnectionDetail(detail: WereadConnectionDetail | null): string {
+  if (!detail || typeof detail.total !== 'number') {
+    return '连接成功！'
+  }
+
+  const bookCount = typeof detail.bookCount === 'number' ? detail.bookCount : detail.total
+  const albumSuffix =
+    typeof detail.albumCount === 'number' && detail.albumCount > 0
+      ? `，${detail.albumCount} 个有声书`
+      : ''
+
+  return `连接成功！书架共 ${detail.total} 个条目（${bookCount} 本电子书${albumSuffix}）`
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

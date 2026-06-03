@@ -28,8 +28,12 @@ import type {
   ReadingUpdateSettingsInput,
   ReadingWereadConnection,
   WereadOpenAndFetchKeyResult,
+  WereadTestKeyResult,
 } from '@lume/shared'
 import { sidecarCall } from './system'
+
+const WEREAD_KEY_POLL_INTERVAL_MS = 1500
+const WEREAD_KEY_TIMEOUT_MS = 75_000
 
 export interface ReadingGenerateCoverResult {
   ok: boolean
@@ -192,6 +196,11 @@ export const readingGetBookDebugInfo = (interestId: string, wereadBookId?: strin
   sidecarCall<ReadingBookDebugInfo>(ALICE_READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO, { interestId, wereadBookId })
 
 export async function readWereadKeyFromClipboard(): Promise<WereadOpenAndFetchKeyResult> {
+  const desktopText = await readDesktopClipboardText()
+  if (desktopText !== null) {
+    return parseWereadClipboardText(desktopText)
+  }
+
   const clipboard = globalThis.navigator?.clipboard
   if (!clipboard?.readText) {
     return {
@@ -203,7 +212,7 @@ export async function readWereadKeyFromClipboard(): Promise<WereadOpenAndFetchKe
 
   let text = ''
   try {
-    text = (await clipboard.readText()).trim()
+    text = await clipboard.readText()
   } catch (error) {
     return {
       ok: false,
@@ -213,6 +222,45 @@ export async function readWereadKeyFromClipboard(): Promise<WereadOpenAndFetchKe
     }
   }
 
+  return parseWereadClipboardText(text)
+}
+
+export async function openAndFetchWereadKey(): Promise<WereadOpenAndFetchKeyResult> {
+  try {
+    await invoke('open_weread_key_webview', { url: WEREAD_KEY_PAGE_URL })
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'open_failed',
+      url: WEREAD_KEY_PAGE_URL,
+      message: getErrorMessage(error),
+    }
+  }
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < WEREAD_KEY_TIMEOUT_MS) {
+    const clipboardResult = await readWereadKeyFromClipboard()
+    if (clipboardResult.ok || clipboardResult.reason === 'clipboard_unavailable') {
+      return clipboardResult
+    }
+    await sleep(WEREAD_KEY_POLL_INTERVAL_MS)
+  }
+
+  return {
+    ok: false,
+    reason: 'timeout',
+    url: WEREAD_KEY_PAGE_URL,
+  }
+}
+
+export const getWereadApiKey = () =>
+  sidecarCall<{ apiKey: string | null }>(WEREAD_IPC_CHANNELS.GET_KEY, {})
+
+export const testWereadKey = (apiKey: string) =>
+  sidecarCall<WereadTestKeyResult>(WEREAD_IPC_CHANNELS.TEST_KEY, { apiKey })
+
+function parseWereadClipboardText(value: string): WereadOpenAndFetchKeyResult {
+  const text = value.trim()
   if (!text) {
     return {
       ok: false,
@@ -236,32 +284,18 @@ export async function readWereadKeyFromClipboard(): Promise<WereadOpenAndFetchKe
   }
 }
 
-export async function openAndFetchWereadKey(): Promise<WereadOpenAndFetchKeyResult> {
+async function readDesktopClipboardText(): Promise<string | null> {
   try {
-    await invoke('open_external', { url: WEREAD_KEY_PAGE_URL })
-  } catch (error) {
-    return {
-      ok: false,
-      reason: 'open_failed',
-      url: WEREAD_KEY_PAGE_URL,
-      message: getErrorMessage(error),
-    }
-  }
-
-  const clipboardResult = await readWereadKeyFromClipboard()
-  if (clipboardResult.ok || clipboardResult.reason === 'clipboard_unavailable') {
-    return clipboardResult
-  }
-
-  return {
-    ok: false,
-    reason: 'awaiting_copy',
-    url: WEREAD_KEY_PAGE_URL,
+    const text = await invoke<string>('read_clipboard_text')
+    return typeof text === 'string' ? text : null
+  } catch {
+    return null
   }
 }
 
-export const testWereadKey = (apiKey: string) =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.TEST_KEY, { apiKey })
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
+}
 
 export const getWereadShelf = () =>
   sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_SHELF, {})
@@ -295,7 +329,7 @@ export const searchWereadBooks = (keyword: string, limit?: number) =>
   sidecarCall<unknown>(WEREAD_IPC_CHANNELS.SEARCH_BOOKS, { keyword, limit })
 
 function isWereadApiKey(value: string): boolean {
-  return value.startsWith('wr_') && value.length > 10
+  return /^(wrk-|wr_)[A-Za-z0-9_-]{8,}$/.test(value)
 }
 
 function getErrorMessage(error: unknown): string {

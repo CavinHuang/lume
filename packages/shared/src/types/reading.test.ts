@@ -73,6 +73,7 @@ describe("reading shared types", () => {
   test("Alice-like WeRead IPC channel names are stable", () => {
     expect(WEREAD_IPC_CHANNELS).toMatchObject({
       OPEN_AND_FETCH_KEY: "weread:openAndFetchKey",
+      GET_KEY: "weread:getKey",
       TEST_KEY: "weread:testKey",
       GET_SHELF: "weread:getShelf",
       GET_NOTEBOOKS: "weread:getNotebooks",

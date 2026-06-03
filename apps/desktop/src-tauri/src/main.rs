@@ -10,12 +10,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use log::{error, info, warn};
 use serde::Deserialize;
+use tauri::webview::PageLoadEvent;
 use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_log::{Target, TargetKind};
 
 const SIDECAR_RESPONSE_TIMEOUT_SECS: u64 = 45;
 const MAIN_WINDOW_LABEL: &str = "main";
+const WEREAD_KEY_WINDOW_LABEL: &str = "weread-key";
+const WEREAD_KEY_PAGE_URL: &str = "https://weread.qq.com/r/weread-skills";
 const TRAY_ID: &str = "main-tray";
 const TRAY_MENU_SHOW_ID: &str = "tray-show-main-window";
 const TRAY_MENU_QUIT_ID: &str = "tray-quit-app";
@@ -546,6 +549,112 @@ fn open_external(url: String) -> Result<(), String> {
     }
     webbrowser::open(&url).map_err(|e| format!("open external url failed: {e}"))?;
     Ok(())
+}
+
+#[tauri::command]
+async fn open_weread_key_webview(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let url = parse_weread_key_url(&url)?;
+    if let Some(window) = app.get_webview_window(WEREAD_KEY_WINDOW_LABEL) {
+        window
+            .navigate(url)
+            .map_err(|e| format!("navigate WeRead key window failed: {e}"))?;
+        window
+            .show()
+            .map_err(|e| format!("show WeRead key window failed: {e}"))?;
+        window
+            .set_focus()
+            .map_err(|e| format!("focus WeRead key window failed: {e}"))?;
+        return Ok(());
+    }
+
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        WEREAD_KEY_WINDOW_LABEL,
+        tauri::WebviewUrl::External(url),
+    )
+    .title("微信读书 API KEY")
+    .inner_size(1000.0, 720.0)
+    .resizable(true)
+    .on_page_load(|window, payload| {
+        if payload.event() == PageLoadEvent::Finished {
+            inject_weread_key_tip(&window);
+        }
+    })
+    .build()
+    .map_err(|e| format!("open WeRead key window failed: {e}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn read_clipboard_text() -> Result<String, String> {
+    read_system_clipboard_text()
+}
+
+fn parse_weread_key_url(value: &str) -> Result<tauri::Url, String> {
+    let url = tauri::Url::parse(value).map_err(|e| format!("invalid WeRead key url: {e}"))?;
+    if url.scheme() != "https" || url.host_str() != Some("weread.qq.com") || url.path() != "/r/weread-skills" {
+        return Err(format!("only {WEREAD_KEY_PAGE_URL} is allowed"));
+    }
+    Ok(url)
+}
+
+fn inject_weread_key_tip(window: &tauri::WebviewWindow) {
+    let message = serde_json::to_string(
+        "请关闭快捷登录弹窗，用微信扫码登录；获取 API KEY 后 Lume 会自动读取并填入。"
+    )
+    .unwrap_or_else(|_| "\"请用微信扫码登录并获取 API KEY\"".to_string());
+    let script = format!(
+        r#"(function() {{
+  if (document.getElementById('lume-weread-key-tip')) return;
+  var tip = document.createElement('div');
+  tip.id = 'lume-weread-key-tip';
+  tip.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#ecfdf3;color:#166534;font-size:14px;text-align:center;border-bottom:1px solid #bbf7d0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+  tip.textContent = {message};
+  document.body && document.body.appendChild(tip);
+}})();"#
+    );
+    if let Err(error) = window.eval(script) {
+        warn!("[desktop] failed to inject WeRead key tip: {error}");
+    }
+}
+
+fn read_system_clipboard_text() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return command_output_text("pbpaste", &[]);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return command_output_text("powershell", &["-NoProfile", "-Command", "Get-Clipboard -Raw"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return command_output_text("wl-paste", &["--no-newline"])
+            .or_else(|_| command_output_text("xclip", &["-selection", "clipboard", "-o"]))
+            .or_else(|_| command_output_text("xsel", &["--clipboard", "--output"]));
+    }
+
+    #[allow(unreachable_code)]
+    Err("clipboard is not supported on this platform".to_string())
+}
+
+fn command_output_text(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| format!("read clipboard failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "read clipboard failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 #[tauri::command]
@@ -1498,6 +1607,8 @@ fn main() {
             stat_file_paths,
             open_folder_dialog,
             open_external,
+            open_weread_key_webview,
+            read_clipboard_text,
             read_text_file,
             save_text_file_dialog,
             open_in_system

@@ -25,6 +25,7 @@ import {
   getReadingNote,
   getReadingSnapshot,
   getReadingUnreadCounts,
+  getReadingWereadApiKey,
   hideReadingNote,
   listReadingBooks,
   listReadingNotes,
@@ -292,6 +293,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
     [ALICE_READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO]: async (params) =>
       getReadingBookDebugInfo(requireAliceBookId(params, ALICE_READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO)),
     [WEREAD_IPC_CHANNELS.OPEN_AND_FETCH_KEY]: async () => weread.openAndFetchKey(),
+    [WEREAD_IPC_CHANNELS.GET_KEY]: async () => ({ apiKey: getReadingWereadApiKey() }),
     [WEREAD_IPC_CHANNELS.TEST_KEY]: async (params) => {
       const input = validateInput(wereadApiKeyInputSchema, params, WEREAD_IPC_CHANNELS.TEST_KEY) as { apiKey: string };
       return weread.testKey(input.apiKey);
