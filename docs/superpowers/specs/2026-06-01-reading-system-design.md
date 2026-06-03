@@ -1,607 +1,655 @@
-# Lume 阅读系统设计文档
-
-> 日期: 2026-06-01
-> 状态: 已确认，待实施
-> 灵感来源: Alice 阅读系统
-
----
-
-## 一、概述
-
-为 Lume 增加完整的阅读系统，采用**混合模式**：AI 角色有自己的书架和阅读偏好，同时也能作为用户的读书伙伴。
-
-核心能力：
-- **选书**：AI 角色根据品味和对话话题自主选书
-- **阅读执行**：从古腾堡/今日诗词获取内容，模拟阅读进度
-- **读书笔记生成**：种子笔记 → 深度笔记（独立 ReAct Agent）→ 封面图
-- **书架管理**：Markdown 文件存储书架和笔记
-
----
-
-## 二、整体架构
-
-```
-apps/sidecar/src/services/reading/
-├── data-sources/                  # 数据源层
-│   ├── types.ts                   # 统一接口
-│   ├── gutendex-client.ts         # 古腾堡 HTTP 客户端
-│   ├── jinrishici-client.ts       # 今日诗词 HTTP 客户端
-│   ├── weread-client.ts           # 微信读书（v2 预留，v1 空实现）
-│   └── book-data-service.ts       # 路由层：根据类型分发到对应 client
-│
-├── bookshelf/                     # 书架管理
-│   ├── book-picker.ts             # 选书 Prompt + LLM 调用
-│   └── types.ts                   # Book, BookStatus, ReadingProgress
-│
-├── note-generator/                # 笔记生成（核心）
-│   ├── seed-note.ts               # 种子笔记：单次 LLM 调用 → 200-350 字
-│   ├── deep-note-agent.ts         # 深度笔记：SDK QueryEngine ReAct 循环
-│   ├── note-tools.ts              # 注册 4 个读书专用工具
-│   ├── convergence.ts             # 流式输出 → JSON 提取
-│   ├── cover-generator.ts         # 封面图生成（图片模型）
-│   └── prompts/                   # 多语言 Prompt 模板
-│       ├── zh.ts
-│       └── en.ts
-│
-├── scheduler/                     # 阅读调度
-│   ├── reading-scheduler.ts       # 对接 automation/cron 系统
-│   └── reading-session.ts         # 一次阅读会话的状态管理
-│
-├── storage/                       # 存储层
-│   ├── note-store.ts              # 笔记 Markdown 存储
-│   └── shelf-store.ts             # 书架 Markdown 存储
-│
-├── reading-service.ts             # 门面：统一入口，协调各子模块
-└── reading-rpc.ts                 # RPC handler 注册
-```
-
-### 数据流总览
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      reading-service.ts                      │
-│                     （统一协调门面）                           │
-├──────────┬──────────┬──────────────┬────────────────────────┤
-│  选书     │  阅读     │  笔记生成     │  调度                  │
-│          │          │              │                        │
-│ book-    │ reading- │ note-        │ reading-               │
-│ picker   │ session  │ generator    │ scheduler              │
-│   ↓      │   ↓      │   ↓          │   ↓                    │
-│ shelf-   │ data-    │ seed-note    │ automation             │
-│ store    │ source   │   ↓          │ /cron                  │
-│          │          │ deep-note    │                        │
-│          │          │ -agent       │                        │
-│          │          │   ↓          │                        │
-│          │          │ note-store   │                        │
-│          │          │   ↓          │                        │
-│          │          │ cover-gen    │                        │
-└──────────┴──────────┴──────────────┴────────────────────────┘
-         ↕                  ↕                    ↕
-    Markdown 文件      SDK QueryEngine      RPC (web 前端)
-```
-
-### 关键设计决策
-
-| 决策 | 选择 | 理由 |
-|------|------|------|
-| ReAct 循环 | 复用 SDK `QueryEngine` | 已有预算控制、上下文压缩、错误重试 |
-| 数据源路由 | `BookDataService` 统一分发 | 加新数据源只需加 client，不改调用方 |
-| 存储格式 | Markdown 文件 | 可读可编辑，与 Lume 风格一致 |
-| 多语言 | Prompt 模板按语言分文件 | 方便维护和扩展 |
-| 调度 | 对接现有 automation/cron | 复用 Lume 已有的定时任务基础设施 |
-
----
-
-## 三、数据源层
-
-### 3.1 统一接口
-
-```typescript
-// data-sources/types.ts
-
-interface BookSource {
-  readonly name: string  // 'gutendex' | 'jinrishici' | 'weread'
-
-  search(query: string, limit?: number): Promise<SearchResult[]>
-  getBookDetail(bookId: string): Promise<BookDetail>
-  getContent(bookId: string, options?: ContentOptions): Promise<BookContent>
-  getChapters?(bookId: string): Promise<Chapter[]>  // 微信读书需要，古腾堡不需要
-  getHighlights?(bookId: string): Promise<Highlight[]>  // v2 微信读书热门划线
-}
-
-interface SearchResult {
-  id: string
-  title: string
-  author: string
-  source: string          // 'gutendex' | 'jinrishici' | 'weread'
-  coverUrl?: string
-  description?: string
-  language?: string       // 'zh' | 'en' | ...
-  freeContent?: boolean
-}
-
-interface BookContent {
-  bookId: string
-  title: string
-  author: string
-  text: string            // 纯文本正文
-  chapters?: Chapter[]
-  source: string
-}
-
-interface ContentOptions {
-  chapterIndex?: number   // 获取特定章节
-  maxLength?: number      // 截断长度（防止一次拉太多）
-}
-```
-
-### 3.2 路由逻辑
-
-```typescript
-// data-sources/book-data-service.ts
-
-class BookDataService {
-  private sources: Map<string, BookSource>
-
-  // 多源并发搜索，合并去重
-  async search(query: string): Promise<SearchResult[]> {
-    const allResults = await Promise.all(
-      [...this.sources.values()].map(s => s.search(query).catch(() => []))
-    )
-    return mergeAndDedup(allResults.flat())
-  }
-
-  // 指定数据源获取内容
-  async getContent(bookId: string, source: string): Promise<BookContent> {
-    const client = this.sources.get(source)
-    if (!client) throw new Error(`Unknown source: ${source}`)
-    return client.getContent(bookId)
-  }
-}
-```
-
-### 3.3 古腾堡客户端
-
-- UA: `Lume/1.0`
-- 搜索: `https://gutendex.com/books/?search={query}`
-- 全文: 下载纯文本 → 用 `*** START OF THE PROJECT GUTENBERG EBOOK` / `*** END OF` 标记截取正文
-- `maxLength` 默认 50000 字符
-- 失败时返回空数组，不抛错
-
-### 3.4 今日诗词客户端
-
-- 随机诗词: `https://v2.jinrishici.com/one.json`
-- 分类诗词: `https://v1.jinrishici.com/`
-- 返回的诗词作为短篇阅读内容，不涉及章节
-- `getContent()` 返回单首诗词的完整文本
-
----
-
-## 四、选书系统
-
-### 4.1 选书 Prompt
-
-```
-你是 {aiName}，有自己的阅读品味——偏好文艺、治愈、有深度的作品，
-也对科技人文感兴趣。
-
-请为自己选择下一本要看的书。
-
-最近在聊的话题：{recentTopics}
-你现在的心情：{moodLabel}
-
-你已经看过的（避免重复）：{readHistory}
-
-推荐过但还没看的：{wishlist}
-
-输出 JSON：
-{
-  "title": "书名",
-  "author": "作者",
-  "reason": "一句话为什么选这个",
-  "estimatedDays": 14,
-  "personalNote": "初始感受",
-  "source": "gutendex" | "jinrishici"
-}
-```
-
-### 4.2 选书流程
-
-```
-1. 从 shelf-store 读取已读书单 + 愿望单
-2. 从 memory-v2 / 最近对话提取聊天话题
-3. 从 book-data-service 搜索热门/推荐
-4. 组装 Prompt → 单次 LLM 调用
-5. 解析 JSON → 验证书是否在数据源中存在（防幻觉）
-6. 写入书架（status: "want_to_read"）
-```
-
-步骤 5 的验证很关键：LLM 可能「幻觉」出不存在的书。选完后回查数据源确认，如果不存在，用 title/author 模糊搜索，取最接近的结果或跳过不自动重选。
-
-### 4.3 书架数据模型
-
-```typescript
-// bookshelf/types.ts
-
-interface BookshelfItem {
-  id: string              // UUID
-  title: string
-  author: string
-  source: string          // 数据源标识
-  sourceId: string        // 数据源中的 bookId
-  status: 'want_to_read' | 'reading' | 'finished' | 'paused' | 'abandoned'
-  addedAt: string         // ISO date
-  startedAt?: string
-  finishedAt?: string
-  estimatedDays?: number
-  currentChapter?: number
-  totalChapters?: number
-  coverPath?: string
-  notes: string[]         // 关联的笔记 ID 列表
-}
-```
-
----
-
-## 五、笔记生成系统（核心）
-
-### 5.1 两阶段 Pipeline
-
-```
-阅读进度 + 划线内容
-        ↓
-   ┌─────────────┐
-   │  种子笔记     │  单次 LLM 调用，200-350 字
-   │  seed-note   │  从划线中选一句 → 写简短感悟
-   └──────┬──────┘
-          ↓
-   ┌─────────────┐
-   │  深度笔记     │  SDK QueryEngine ReAct 循环，最多 30 轮
-   │  deep-note   │  4 个专用工具 → 融合搜索结果 → 500 字深度笔记
-   └──────┬──────┘
-          ↓
-   ┌─────────────┐
-   │  封面图       │  图片模型生成极简封面（可选）
-   │  cover-gen   │
-   └──────┬──────┘
-          ↓
-   note-store 写入 Markdown
-```
-
-### 5.2 种子笔记
-
-```typescript
-interface SeedNoteInput {
-  bookTitle: string
-  author: string
-  progressNote: string      // "已读到第 8 章（共 36 章）"
-  highlights: string[]      // 划线句子列表
-  language: 'zh' | 'en'
-}
-
-interface SeedNoteOutput {
-  quote: string             // 选中的原文
-  reflection: string        // 200-350 字感悟
-  tags: string[]            // 主题/概念关键词
-  mood: string              // 心情
-}
-```
-
-实现：单次 LLM 调用，用 SDK 的 Provider 直接调 `createMessage()`，解析 JSON 返回。
-
-种子笔记 Prompt 要点：
-- 只从已标记的句子中选择
-- **绝对禁止引用后续章节**
-- 像「写给自己的随手感悟」，不写学术书评
-- tags 只放概念/方法论关键词，不放人名/地名
-
-### 5.3 深度笔记 Agent
-
-```typescript
-interface DeepNoteInput {
-  bookTitle: string
-  author: string
-  seedNote: SeedNoteOutput
-  highlights: string[]
-  progressNote: string
-  previousNotes?: DeepNoteOutput[]  // 之前的笔记（防重复）
-  language: 'zh' | 'en'
-}
-
-interface DeepNoteOutput {
-  quote: string
-  reflection: string             // 300-800 字，推荐 500 字
-  tags: string[]
-  mood: string
-  userContext: string | null     // 和用户的关联（没有就 null）
-  selfContext: string            // Agent 自己的心境
-  nextPlan: string               // 下次笔记的方向线索
-}
-```
-
-#### Agent 创建方式
-
-复用 SDK 的 `createAgent`，传入自定义工具和 Prompt：
-
-```typescript
-const agent = createAgent({
-  model: 'claude-sonnet-4-6',
-  systemPrompt: buildDeepNotePrompt(input),
-  tools: [
-    journalRecallTool,
-    userMemoryTool,
-    diaryRecallTool,
-    webSearchTool,
-  ],
-  maxTurns: 30,
-  maxBudgetUsd: 0.5,
-})
-```
-
-#### 4 个专用工具
-
-| 工具名 | 用途 | 实现方式 |
-|--------|------|----------|
-| `reading_journal_recall` | 搜索生活时间线 | 委托 memory-v2 retrieval |
-| `reading_user_memory` | 搜索用户画像 | 委托 memory-v2 retrieval |
-| `reading_diary_recall` | 回忆情感日记 | 委托 memory-v2 retrieval |
-| `reading_web_search` | 联网搜索外部资料 | 复用 Lume 已有 web search |
-
-### 5.4 收敛检测
-
-从 Agent 的流式输出中提取最终 JSON。两种收敛标记：
-1. 输出包含结构化 JSON（含 quote/reflection/tags 字段）
-2. 输出包含 `reading-note-gen-converge` 标记
-
-兜底：30 轮未收敛 → 返回最后内容的 500 字符，标记为未完成。
-
-### 5.5 Deep Note Prompt 核心结构
-
-四步流程写入 System Prompt：
-
-```
-【核心原则】
-1. 知识增量优先 —— 帮读者看到他可能忽略的东西
-2. 情感共鸣次之 —— 搜到真实关联才提用户，宁可不提也不硬凑
-
-【推荐流程】
-第 1 步：深读 —— 先独立思考核心论点、反直觉点、跨领域类比
-第 2 步：搜索 —— 用工具搜索和用户有没有真实交汇
-第 3 步：深挖 —— 用联网搜索补充外部知识（可选）
-第 4 步：写笔记 —— 以第 1 步为主线，融入第 2/3 步
-
-【质量自检】
-- 知识增量检验：读者能学到新视角吗？
-- 骨架检验：去掉所有提到用户的句子，内容还有独立价值吗？
-
-【进度约束】
-- 绝对禁止引用后续章节内容
-
-【输出格式】
-JSON: { quote, reflection, tags, mood, userContext, selfContext, nextPlan }
-```
-
-### 5.6 笔记修改
-
-单次 LLM 调用（不走 Agent），传入已有笔记 + 修改原因，返回修改后的 reflection + editReason。
-
-### 5.7 封面图生成
-
-Prompt 要点：极简、意象化、无文字、3:4 竖版、柔和色调、现代编辑插画风格。生成失败不影响笔记存储。
-
----
-
-## 六、存储层
-
-### 6.1 文件结构
-
-```
+# Lume Reading System Design
+
+Date: 2026-06-01
+Status: Draft, awaiting user review
+Scope: Full Alice-like Reading system for Lume, redesigned for Lume architecture
+
+## Summary
+
+Add a first-class Reading system to Lume. Reading is not a workspace tool, not a Memory V2 sub-feature, and not a generic document ingestion path. It is Lume's global reading life: Lume has its own bookshelf, reading progress, reading notes, cover images, share cards, background reading rhythm, and a concrete reading persona. When the user connects WeRead, Lume also becomes the user's reading companion.
+
+The design intentionally follows the Alice reading experience: autonomous book selection, scheduled reading, two-stage note generation, WeRead companion mode, note cards, hover navigation, generated covers, and manually generated share cards. Lume keeps Alice's product feeling, but places it behind Lume's sidecar, runtime, automation, RPC, and settings boundaries.
+
+## Goals
+
+- Make Reading a main sidebar entry with an Alice-like daily-use surface.
+- Maintain a global single-user Reading Library outside workspaces.
+- Let Lume autonomously select books, read, and write personal reading notes.
+- Support WeRead, Gutenberg, and Chinese poetry source routing.
+- Let WeRead connection unlock the user's bookshelf, highlights, reviews, reading data, and companion behavior.
+- Generate seed notes first, then deeper notes through a dedicated reading run with a 30-turn cap.
+- Preserve source and quote boundaries so Lume does not fabricate quotations, spoil future content, or overuse user-authorized WeRead content.
+- Keep Reading notes in Reading Library; Memory V2 only receives stable preferences or user-requested memories.
+- Keep background reading stable: no stuck tasks, no infinite retries, and graceful partial results.
+- Support generated cover images and manual share-card generation.
+
+## Non-Goals
+
+- Do not turn Reading into a generic PDF/EPUB/document reader in V1.
+- Do not build multi-user or workspace-scoped reading libraries in V1.
+- Do not implement QR login or cookie import for WeRead in V1.
+- Do not cache full modern copyrighted books or full WeRead chapters.
+- Do not automatically post, send, or push Reading notes.
+- Do not create a global "thoughts" or social feed outside Reading in V1.
+- Do not automatically write every Reading note into Memory V2.
+- Do not build explicit like/dislike/rating controls for Lume's notes.
+
+## Chosen Approach
+
+Build an Alice-like Reading system as its own Lume product domain.
+
+Alternatives rejected:
+
+- A generic research/document reader would be easier to reuse, but would miss the Alice-like "Lume is reading" experience.
+- A Memory V2 external-source extension would make Reading feel like ingestion, not a living bookshelf.
+- A workspace resource reader would bind reading to projects, but Reading should be Lume's global life state.
+
+## System Boundary
+
+Reading owns:
+
+- Global bookshelf and reading queue.
+- Lume's current reading state and reading profile.
+- Reading progress and `nextPlan`.
+- Reading notes and source evidence.
+- Generated covers and share cards.
+- Reading background task state.
+- WeRead reading-companion configuration.
+
+Reading collaborates with:
+
+- Automation/cron for wakeups only.
+- Agent Runtime for dedicated deep reading runs.
+- Memory V2 for optional stable long-term preferences or user-requested memories.
+- Chat for lightweight Reading note links and natural trigger tools.
+- Settings for API keys, schedule, source switches, models, persona, and share style.
+
+## Storage
+
+Reading is global and single-user. It stores data under the Lume user data directory, not inside any workspace.
+
+```text
 ~/.lume/reading/
-├── shelf.md                  # 书架
-├── books/
-│   ├── {book-id}/
-│   │   ├── meta.md           # 书籍元信息
-│   │   ├── notes/
-│   │   │   ├── {note-id}.md  # 读书笔记
-│   │   │   └── ...
-│   │   └── covers/
-│   │       └── cover.png     # 封面图
-│   └── ...
+  library.json
+  settings.json
+  notes/
+    note_<id>.md
+  assets/
+    covers/
+    share-cards/
+  runs/
+    reading-run_<id>.jsonl
 ```
 
-### 6.2 书架 Markdown 格式
+### library.json
 
-```markdown
-# 📚 书架
+`library.json` stores structured state for product behavior.
 
-## 正在读
+```ts
+interface ReadingLibrary {
+  version: 1
+  profile: LumeReadingProfile
+  books: ReadingBook[]
+  collections: ReadingCollection[]
+  tasks: ReadingTaskState
+  updatedAt: number
+}
 
-### 《三体》- 刘慈欣
-- 状态: reading
-- 进度: 第 12 章 / 共 36 章
-- 来源: gutendex
-- 开始: 2026-05-20
-- 笔记: [笔记1](./notes/santi-ch8.md), [笔记2](./notes/santi-ch12.md)
-
-## 想读
-
-### 《百年孤独》- 加西亚·马尔克斯
-- 状态: want_to_read
-- 加入: 2026-05-28
-- 推荐原因: "魔幻现实主义的巅峰之作"
-
-## 已读
-
-### 《小王子》- 圣埃克苏佩里
-- 状态: finished
-- 来源: gutendex
-- 开始: 2026-05-10
-- 完成: 2026-05-18
-- 笔记: [笔记](./notes/prince.md)
-```
-
-### 6.3 笔记 Markdown 格式
-
-```markdown
----
-id: note-abc123
-bookId: book-xyz789
-type: deep
-createdAt: 2026-06-01T14:30:00Z
-tags: [认知偏差, 决策心理学]
-mood: 豁然开朗
----
-
-## 《思考，快与慢》— 第 8 章笔记
-
-> "我们对自己认为熟知的事物，确信度远远超过了应有的水平。"
-
-第一次读到这句话时我停了很久......
-
-<!-- userContext: 用户上周聊到过做决策时过度自信的问题 -->
-<!-- selfContext: 写这段时窗外下雨，格外清醒 -->
-<!-- nextPlan: 下次可以写「锚定效应」在日常对话中的体现 -->
-```
-
-设计要点：
-- 元数据放 frontmatter，方便程序解析
-- `userContext` / `selfContext` / `nextPlan` 放 HTML 注释，不影响阅读但程序可提取
-- 笔记 ID 用时间戳 + 随机字符串
-
----
-
-## 七、调度
-
-复用 Lume 已有的 automation/cron 系统，不自己造调度器。
-
-- **每日自动阅读**：注册 cron 任务，由 automation 触发
-- **笔记生成**：阅读会话结束后自动触发，或用户手动触发
-- **选书**：书架空了（reading 状态的书为 0）时自动触发
-
-```typescript
-interface ReadingSession {
+interface ReadingBook {
   id: string
-  bookId: string
-  chapterStart: number
-  chapterEnd: number
-  highlights: string[]       // 本次划线
-  startedAt: string
-  completedAt?: string
-  noteGenerated: boolean
+  title: string
+  author?: string
+  source: "weread" | "gutenberg" | "poetry"
+  sourceRef: string
+  status: "reading" | "queued" | "finished" | "paused" | "abandoned"
+  track: "lume" | "co_read" | "recommended"
+  progress?: {
+    percent?: number
+    label?: string
+    lastPosition?: string
+    updatedAt: number
+  }
+  cover?: {
+    kind: "source" | "generated" | "placeholder"
+    path?: string
+    url?: string
+  }
+  lastNoteId?: string
+  nextPlan?: string
+  createdAt: number
+  updatedAt: number
 }
 ```
 
+`ReadingCollection` supports aggregate items that are not ordinary books, such as `poetry_notes`.
+
+### notes/*.md
+
+Notes are Markdown with frontmatter. The body is the source of the card content and share-card summary.
+
+```yaml
+---
+id: note_20260601_abcd
+bookId: book_123
+kind: deep
+source: weread
+track: lume
+status: complete
+progressLabel: "41%"
+quote:
+  text: "..."
+  sourceRef: "weread://book/123/chapter/4"
+  position: "chapter-4:para-17"
+evidence:
+  sourceKind: "weread_public_chapter"
+  excerptPolicy: "quote_only"
+tags: [自我追寻, 慢下来]
+nextPlan: "下次避免继续写顿悟，转向倾听和时间感。"
+createdAt: 2026-06-01T12:00:00Z
 ---
 
-## 八、RPC 接口
+## 不是顿悟，是慢慢变清楚
 
-```typescript
-// ---- 书架相关 ----
-reading.shelf.list          → ShelfStore.list()
-reading.shelf.add           → BookDataService.search() + ShelfStore.add()
-reading.shelf.update        → ShelfStore.update()
-reading.shelf.remove        → ShelfStore.remove()
-
-// ---- 阅读相关 ----
-reading.book.search         → BookDataService.search()
-reading.book.getContent     → BookDataService.getContent()
-reading.book.start          → 创建 ReadingSession + 更新书架状态
-reading.book.finish         → 关闭 session + 触发笔记生成
-
-// ---- 笔记相关 ----
-reading.note.generate       → SeedNote → DeepNote → Cover 完整 pipeline
-reading.note.list           → NoteStore.list(bookId?)
-reading.note.get            → NoteStore.get(noteId)
-reading.note.edit           → EditNote（单次 LLM）
-reading.note.delete         → NoteStore.delete()
-
-// ---- 选书 ----
-reading.pickBook            → BookPicker.pick()
+...
 ```
 
----
+Storage rules:
 
-## 九、错误处理
+- Do not cache full modern books or full WeRead chapters.
+- Save enough evidence to prove quotes.
+- Gutenberg and poetry may store public short excerpts.
+- WeRead stores only the actual quote, position, source reference, fetch time, and authorization boundary.
+- A summary is never treated as original quotation text.
 
-| 场景 | 策略 |
-|------|------|
-| 数据源搜索失败 | catch → 返回空数组 `[]`，不影响其他数据源 |
-| 数据源获取内容失败 | 标记该书不可读，不阻塞 |
-| 选书幻觉（书不存在） | 回查数据源确认 → 模糊搜索 → 搜不到则跳过 |
-| 笔记 Agent 30 轮未收敛 | `fallbackDeepNote()` 返回最后 500 字符 |
-| JSON 解析失败 | 尝试修复常见格式问题 → 修复不了 fallback |
-| LLM 调用失败 | SDK 已有指数退避重试 → 重试耗尽标记失败 |
-| Markdown 存储失败 | 写前保留原文件，不丢数据 |
-| 封面图生成失败 | 设为 null，不影响笔记存储 |
+### settings.json
 
----
+```ts
+interface ReadingSettings {
+  enabled: boolean
+  schedule: {
+    mode: "weekly"
+    cron?: string
+    maxDeepNotesPerWeek: number
+  }
+  weread?: {
+    apiKey?: string
+    enabled: boolean
+    lastConnectedAt?: number
+    lastError?: string
+  }
+  sources: {
+    weread: boolean
+    gutenberg: boolean
+    poetry: boolean
+  }
+  models: {
+    readingTextModelRef?: string
+    imageModelRef?: string
+    advanced?: {
+      selectionModelRef?: string
+      seedNoteModelRef?: string
+      deepNoteModelRef?: string
+      companionModelRef?: string
+    }
+  }
+  persona: LumeReadingProfile
+  shareCardStyle: "lume-default"
+}
+```
 
-## 十、测试策略
+## Data Sources And Permissions
 
-### 单元测试
+Reading uses an Alice-style `BookDataService` router.
 
-| 模块 | 测试重点 |
-|------|----------|
-| `gutendex-client` | 搜索返回结构、全文截取（START/END 标记）、网络失败返回空数组、maxLength 截断 |
-| `jinrishici-client` | 随机诗词返回结构、网络失败优雅降级 |
-| `book-data-service` | 多源搜索合并去重、指定数据源获取、未知数据源抛错 |
-| `shelf-store` | Markdown 解析/写回、空文件/损坏文件处理 |
-| `note-store` | Markdown 格式、frontmatter 解析、HTML 注释字段提取 |
-| `convergence` | JSON 提取、格式修复、兜底逻辑 |
+```text
+Chinese classical poetry -> ChineseLiteratureClient
+Western public-domain classics -> GutenbergClient
+Modern Chinese books and user reading data -> WeReadClient
+```
 
-### 集成测试
+### WeRead
 
-| 模块 | 测试重点 |
-|------|----------|
-| `book-picker` | Mock LLM 选书、幻觉验真、已读书去重 |
-| `note-generator` | 种子笔记结构正确、Mock QueryEngine 验证工具调用、30 轮未收敛 fallback |
-| `reading-service` | 完整 pipeline、部分失败不影响其他步骤 |
+WeRead has two permission layers.
 
-### Prompt 测试
+Public layer:
 
-- 验证 Prompt 模板变量替换正确
-- 验证两语言模板结构一致
-- Snapshot 测试防止 Prompt 被意外修改
+- Search books.
+- Fetch public book info.
+- Fetch public chapters when available.
+- Fetch best/highlighted public passages.
+- This layer supports Lume's autonomous reading.
 
-**测试原则**：
-- 所有外部 HTTP 调用必须 mock
-- LLM 调用必须 mock
-- 存储测试用临时目录
-- SDK QueryEngine 用 mock/spy 验证调用方式
+User-connected layer:
 
----
+- Enabled only after the user enters a WeRead API Key.
+- Exposes shelf, bookmarks, reviews, reading data, and discovery.
+- Enables reading companion mode.
 
-## 十一、分期范围
+Rules:
 
-### V1（本次实现）
+- Lume does not treat the user's WeRead account as Lume's own reading account.
+- User-authorized data enters Lume's notes only for co-reading or relevant companion context.
+- User highlights are strong attention signals, but notes must not become line-by-line commentary.
+- Modern Chinese books are discussed only within the actually read passages.
 
-| 能力 | 范围 |
-|------|------|
-| 数据源 | 古腾堡 + 今日诗词 |
-| 选书 | Prompt 选书 + 幻觉验真 |
-| 书架 | Markdown CRUD |
-| 笔记生成 | 种子笔记 + 深度笔记 Agent + 笔记修改 |
-| 存储 | 独立 Markdown 文件 |
-| 封面图 | 支持，标记为可选 |
-| 调度 | 对接 automation，手动触发 |
-| RPC | 完整的书架/阅读/笔记接口 |
-| 多语言 | 中/英 Prompt 模板 |
+### Gutenberg
 
-### V2（后续迭代）
+Gutenberg is the main autonomous long-reading source for public-domain Western classics.
 
-| 能力 | 范围 |
-|------|------|
-| 微信读书 | WeReadClient + 用户书架/划线/想法 |
-| 读书伙伴模式 | 连接微信读书后的 6 条行为准则 + 5 个专用工具 |
-| 用户划线处理 | 笔记中引用用户的划线内容 |
-| 朋友圈联动 | 读一半/读完的朋友圈分享 prompt |
-| 对话工具 | `write_reading_note` / `add_book` / `book_lookup` |
-| DayScript 集成 | 阅读作为 DayScript 的一个 category 活动 |
+- Lume may select Gutenberg books automatically.
+- Public text can be saved as bounded evidence excerpts.
+- English book notes are written in Chinese; quotations remain in English.
+- Gutenberg entries can have progress, notes, `nextPlan`, and generated covers.
 
-### V3（远期）
+### Chinese Poetry
 
-| 能力 | 范围 |
-|------|------|
-| 阅读统计 | 读书时长、完成率、标签云 |
-| 笔记搜索 | 跨书籍的笔记语义搜索 |
-| 分享导出 | 笔记导出为图片/PDF/公众号格式 |
+Poetry is a short-reading source.
+
+- Poetry appears in the left rail as `诗词札记`, not as many individual books.
+- Poetry can be triggered by Lume's state for short reading.
+- Poetry notes are Reading notes marked as short reads.
+
+### Quote Evidence
+
+Quotation policy is strict:
+
+- Quotes must come from a current read passage or a saved original excerpt.
+- If only a summary exists, the note may say "这段大意让我想到...", but must not quote it.
+- Network search and model knowledge may inform background, but must not supply quote text.
+- Each note displays a short source boundary and an AI-generated notice.
+
+## Reading Persona
+
+Lume gets a new concrete reading persona. It does not reuse Alice's identity.
+
+Default direction:
+
+- Clear, reflective, and judgment-oriented.
+- Restrained rather than sentimental.
+- Interested in technology and humanities, social observation, philosophy, and controlled literary writing.
+- Uses Chinese by default.
+- Writes notes with medium user association: first make the note independently valuable, then naturally add one or two relevant user-conversation hooks.
+- Treats recent user topics as weak signals, not as instructions to follow every trend.
+
+Learning signals:
+
+- User book recommendations.
+- Co-reading choices.
+- Natural chat feedback.
+- Hidden or deleted notes.
+- Repeated user themes.
+
+The Reading profile is semi-visible:
+
+- Show a short "最近阅读倾向 / 写作倾向 / 用户影响" summary.
+- Do not expose weights, scores, embeddings, or internal ranking data.
+
+## Background Reading
+
+Reading scheduling is a hybrid:
+
+```text
+Automation/cron wakes Reading.
+Reading service decides what to read, whether to write, and how to recover.
+```
+
+Default behavior:
+
+- Read a few times per week.
+- Do not generate a note on every run.
+- Strong resonance can produce a short note.
+- At most one deeper note per week by default.
+- Do not notify the user; new notes appear naturally on the Reading page.
+
+Task flow:
+
+```text
+1. Load settings and library.
+2. Skip if Reading is paused or quota is exhausted.
+3. Estimate Lume's current reading state.
+4. Pick reading object.
+5. Read a bounded passage from the source.
+6. Validate permissions and quote evidence.
+7. Generate seed note.
+8. If quality or progress threshold passes, start deep reading run.
+9. Save note markdown.
+10. Update book progress, nextPlan, and task state.
+```
+
+Task outcomes:
+
+```ts
+type ReadingTaskResult =
+  | "completed"
+  | "partial"
+  | "skipped"
+  | "failed"
+```
+
+Stability rules:
+
+- Every run must end in one of those states.
+- Source failures can retry a bounded number of times.
+- Deep-note failure saves the seed note as `partial`.
+- A 30-turn timeout saves the last usable version or falls back to the seed note.
+- Failures must not block the next scheduled run.
+- Only repeated failures appear on the Reading page.
+- The system must not repeatedly generate the same note.
+
+## Book Selection
+
+Lume has two reading tracks:
+
+- Lume's own reading plan.
+- Co-reading or user-recommended books.
+
+Selection inputs:
+
+- Lume's concrete persona and current state.
+- Current bookshelf and progress.
+- Past books and notes.
+- User-recommended books.
+- Recent user topics as weak signals.
+- WeRead public signals and Gutenberg availability.
+
+Rules:
+
+- Currently-reading books must not be duplicated.
+- Classics may be reread when there is a new angle.
+- User recommendation intent determines track:
+  - "你可以读读《X》" -> Lume queue.
+  - "我们一起读《X》" -> co-reading.
+  - Ambiguous recommendations may be clarified in natural chat.
+- Selected books must be verified against source data before entering the library.
+
+## Note Generation
+
+Reading notes follow Alice's two-stage design.
+
+### Seed Note
+
+Seed note:
+
+- Generated immediately after a meaningful reading passage.
+- About 200 Chinese characters.
+- Stored as fallback if deep generation fails.
+- Must cite only real source text.
+
+### Deep Note
+
+Deep note:
+
+- 500-900 Chinese characters by default.
+- Generated by a dedicated reading run.
+- Has a 30-turn cap.
+- Uses the full tool chain.
+- Produces `nextPlan`.
+
+Allowed tools:
+
+- Read current book passage.
+- Search Reading Library.
+- Search recent conversation or Memory V2 for user context.
+- Read user WeRead highlights/reviews when connected and relevant.
+- Search public web background when helpful.
+
+Quality constraints:
+
+- Knowledge gain first; user association second.
+- Skeleton test is mandatory: remove user-related sentences and the note must still be valuable.
+- Avoid spoilers beyond progress.
+- Do not write a whole-book review for modern Chinese books when only public fragments were read.
+- `nextPlan` must prevent repeated angles in later notes.
+
+## UI
+
+Reading is a main sidebar entry.
+
+The Reading home follows the approved Alice-like layout:
+
+```text
+Left rail:
+  - 全部笔记
+  - vertical list of books Lume is reading
+  - 诗词札记 collection
+  - WeRead connection prompt
+
+Main column:
+  - 一起读书
+  - 搜索书籍
+  - light "Lume 在读" stats
+  - optional WeRead connection card
+  - 读书笔记 divider
+  - large Reading note cards
+
+Right hover navigation:
+  - appears on note-card hover
+  - fades after 3 seconds
+  - navigates previous/next/top/bottom note in current filter
+```
+
+Note card content:
+
+- Book title, author, progress, date.
+- Quote.
+- 500-900 character note.
+- Tags.
+- Source boundary.
+- AI-generated notice.
+- Actions: `聊一聊`, `生成分享卡片`.
+
+Interactions:
+
+- `聊一聊` opens the current main Chat with the note context.
+- Chat messages show only a lightweight Reading note link.
+- `生成分享卡片` creates an image from the current note summary.
+- Users may hide/delete Lume notes, but not edit their body.
+- No explicit rating buttons.
+
+## Chat And Tools
+
+Core Lume-style Alice tools are always available in normal Chat:
+
+- `lume_add_book`
+- `lume_book_lookup`
+- `lume_write_reading_note`
+
+`lume_add_book`:
+
+- Detects user book recommendations.
+- Adds to Lume queue or co-reading based on expression.
+- Replies naturally with thanks and expectation.
+
+`lume_book_lookup`:
+
+- Modes: `search`, `highlights`, `my_notes`, `current_reading`.
+- Searches book info, Lume's Reading notes, or public highlights.
+
+`lume_write_reading_note`:
+
+- Triggered when chat naturally relates to a current book or the user asks about Lume's reading.
+- Saves to Reading Library.
+- Does not default-write to Memory V2.
+
+When WeRead is connected, these tools are also available:
+
+- `weread_shelf`
+- `weread_bookmarks`
+- `weread_reviews`
+- `weread_readdata`
+- `weread_search`
+
+WeRead companion rules:
+
+- Related conversations can search the user's shelf, highlights, and thoughts.
+- Build connections rather than summarize raw text.
+- Use user highlights naturally, not as a checklist.
+- User writing tasks may use highlights as material.
+- `reviews` and `best_highlights` can summarize other readers' perspectives.
+- Relevant book recommendations should look at the user's shelf preferences first.
+
+Tool injection:
+
+- Core `lume_*` tools are always injected.
+- `weread_*` tools are injected only when WeRead is configured.
+- Heavy tools such as cover/share generation are Reading page or background task tools, not normal Chat tools.
+
+## Settings
+
+Reading Settings includes:
+
+- Enable / pause Reading.
+- WeRead API Key.
+- Reading frequency.
+- Source switches.
+- Lume reading persona.
+- Model settings.
+- Share-card style.
+- Diagnostics.
+
+Model settings:
+
+- Default basic controls: reading text model and image generation model.
+- Advanced controls: selection, seed note, deep note, companion model.
+- Inheritance: advanced task model -> reading text model -> default chat model.
+
+WeRead connection:
+
+- V1 uses API Key only.
+- Show connection status, last sync, and failure reason.
+- No QR login or cookie import in V1.
+
+## Images
+
+V1 supports two image paths:
+
+- Book cover generation when a source cover is missing.
+- Manual share-card generation from a note.
+
+Cover generation:
+
+- Real source cover wins.
+- Missing covers are generated automatically.
+- Lume style: no text, 3:4 vertical, restrained, cool, abstract, technology-humanities mood.
+- Failure falls back to a stable placeholder.
+
+Share card:
+
+- Manual only.
+- Uses note title, short excerpt, Lume's "想说的话", book title, author, and date.
+- No complex editor in V1.
+
+## Error Handling
+
+| Scenario | Handling |
+| --- | --- |
+| Source search fails | Return empty results for that source; keep other sources alive |
+| Source read fails | Retry within limit; mark run failed/skipped if no evidence |
+| WeRead API invalid | Disable user-connected tools and surface setting error |
+| Book selection hallucination | Verify via source search before adding |
+| Quote lacks source evidence | Drop quote or reread source; never fabricate |
+| Deep run fails | Save seed note as partial |
+| 30-turn deep run does not converge | Save last usable note or seed fallback |
+| Cover generation fails | Use placeholder cover |
+| Share card generation fails | Show readable error; keep note intact |
+| Repeated background failures | Show lightweight Reading page prompt |
+
+## Implementation Phases
+
+### Phase 1: Reading Data And Page Skeleton
+
+- Shared Reading types.
+- Sidecar Reading store.
+- Global user-data storage.
+- Web main sidebar entry.
+- Alice-like Reading page skeleton.
+- Note Markdown load and display.
+
+### Phase 2: Data Sources And Bookshelf
+
+- WeRead public client.
+- Gutenberg/Gutendex client.
+- Chinese poetry client.
+- `BookDataService`.
+- Search books, add books, progress state.
+
+### Phase 3: Background Scheduling And Seed Notes
+
+- Reading task state.
+- Automation/cron wakeup.
+- Book selection prompt.
+- Bounded passage read.
+- Seed note save.
+- Failure status and repeated-failure prompt.
+
+### Phase 4: Deep Reading Run
+
+- Dedicated reading run.
+- 30-turn cap.
+- Tool chain.
+- Skeleton test.
+- `nextPlan`.
+- Quote evidence validation.
+
+### Phase 5: Chat Tools And WeRead Companion
+
+- `lume_add_book`.
+- `lume_book_lookup`.
+- `lume_write_reading_note`.
+- `weread_shelf`.
+- `weread_bookmarks`.
+- `weread_reviews`.
+- `weread_readdata`.
+- `weread_search`.
+- Chat Reading note lightweight links.
+
+### Phase 6: Covers And Share Cards
+
+- Missing-cover generation.
+- Share-card generation.
+- Asset persistence.
+- Placeholder and error fallback.
+
+### Phase 7: Settings And Models
+
+- Reading Settings.
+- WeRead API Key.
+- Frequency, sources, persona, models, share style.
+- Semi-visible Reading profile.
+
+## Testing
+
+Focused tests should cover behavior that can regress product guarantees:
+
+- Reading store initializes, reads, and writes global JSON/Markdown files.
+- Note frontmatter preserves source evidence, `nextPlan`, status, and progress.
+- Quote validation rejects quotes not present in source evidence.
+- Book selection verifies source existence before adding.
+- Modern Chinese books cannot create full-book notes from partial public fragments.
+- Task runner always resolves to `completed`, `partial`, `skipped`, or `failed`.
+- Deep-note failure saves seed note as partial.
+- Repeated failures produce a Reading page status, single failures do not.
+- WeRead tools only inject when configured.
+- WeRead authorized content is marked in note source boundaries.
+- Chat Reading link rendering does not inline full notes.
+- Hover navigation appears only in Reading page UI and navigates note cards.
+
+External HTTP and model calls must be mocked in unit tests.
+
+## Acceptance Criteria
+
+- Reading exists as a main sidebar entry.
+- A global Reading Library can store books, progress, notes, covers, and settings outside workspace files.
+- The Reading page shows Lume's books, note stream, WeRead connection prompt, and Alice-like note cards.
+- Weekly background Reading can advance progress without user interaction.
+- Every background run has a terminal status.
+- Seed and deep notes exist as separate states.
+- Deep notes support 30-turn generation with fallback.
+- `nextPlan` is saved and reused.
+- WeRead, Gutenberg, and poetry source boundaries exist.
+- WeRead API Key unlocks the five companion tools.
+- Quotes cannot be fabricated.
+- Modern Chinese notes stay within read fragments.
+- Chat can link to a Reading note without inlining it.
+- Manual share-card and missing-cover generation are available with fallbacks.
+- Each note displays source boundary and AI-generated notice.
