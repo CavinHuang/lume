@@ -4,7 +4,8 @@ import {
   READING_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS,
   normalizeReadingBook,
-  normalizeReadingSettings
+  normalizeReadingSettings,
+  type ReadingGenerateShareCardInput
 } from "./reading";
 
 describe("reading shared types", () => {
@@ -87,6 +88,15 @@ describe("reading shared types", () => {
       SEARCH_BOOKS: "weread:searchBooks",
       EXPORT_PROGRESS: "weread:exportProgress"
     });
+  });
+
+  test("Reading share card generation can target a user-selected output path", () => {
+    const input: ReadingGenerateShareCardInput = {
+      noteId: "note-1",
+      outputPath: "/tmp/lume-reading-card.svg"
+    };
+
+    expect(input.outputPath).toBe("/tmp/lume-reading-card.svg");
   });
 
   test("normalizes Reading settings to Alice-like V1 defaults", () => {

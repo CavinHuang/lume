@@ -214,9 +214,9 @@ function mapWereadBook(item: Record<string, unknown>): ReadingSourceBook {
 function readWereadBookStatus(
   item: Record<string, unknown>,
   bookInfo: Record<string, unknown>,
-  progressPercent?: number
+  _progressPercent?: number
 ): "reading" | "finished" {
-  if (progressPercent !== undefined && progressPercent >= 100) return "finished";
+  if (hasFinishStatus(item) || hasFinishStatus(bookInfo)) return "finished";
   if (hasFinishedDate(item) || hasFinishedDate(bookInfo)) return "finished";
   const finishSignals = [
     item.finishReading,
@@ -256,6 +256,17 @@ function hasFinishedDate(record: Record<string, unknown>): boolean {
     if (!isRecord(nested)) continue;
     const value = readNumber(nested.finishedDate);
     if (typeof value === "number" && value > 0) return true;
+  }
+  return false;
+}
+
+function hasFinishStatus(record: Record<string, unknown>): boolean {
+  const finishStatus = readNumber(record.finishStatus);
+  if (finishStatus === 1) return true;
+  for (const key of ["bookInfo", "book", "readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    if (readNumber(nested.finishStatus) === 1) return true;
   }
   return false;
 }
@@ -305,9 +316,10 @@ function readWereadTimestamp(...records: Record<string, unknown>[]): number | un
 function mergeWereadProgress(book: ReadingSourceBook, progress: Record<string, unknown>): ReadingSourceBook {
   const progressPercent = readProgressPercent(progress);
   const lastReadAt = readWereadTimestamp(progress) ?? book.lastReadAt;
+  const progressStatus = readWereadBookStatus(progress, progress, progressPercent);
   return {
     ...book,
-    status: typeof progressPercent === "number" && progressPercent >= 100 ? "finished" : book.status,
+    status: progressStatus === "finished" ? "finished" : book.status,
     ...(typeof progressPercent === "number" ? { progressPercent } : {}),
     ...(typeof lastReadAt === "number" ? { lastReadAt } : {})
   };
@@ -461,13 +473,22 @@ function readShelfStats(payload: unknown): { total: number; bookCount: number; a
 function normalizeReadDataMode(period: string): string {
   switch (period) {
     case "week":
-      return "weekly";
+    case "weekly":
+    case "本周":
+      return "本周";
     case "month":
-      return "monthly";
+    case "monthly":
+    case "本月":
+      return "本月";
     case "year":
-      return "annually";
+    case "annually":
+    case "今年":
+      return "今年";
     case "all":
-      return "overall";
+    case "overall":
+    case "total":
+    case "总计":
+      return "总计";
     default:
       return period;
   }

@@ -347,6 +347,7 @@ export interface ReadingSearchResult {
 export interface ReadingGenerateShareCardInput {
   noteId: string;
   theme?: "light" | "dark";
+  outputPath?: string;
 }
 
 export interface ReadingShareCardResult {

@@ -24,8 +24,12 @@ export const readTextFile = (path: string) =>
   invoke<{ content: string; truncated: boolean }>('read_text_file', { path })
 export const saveTextFileDialog = (filename: string, content: string) =>
   invoke<{ path: string }>('save_text_file_dialog', { filename, content })
+export const saveFilePathDialog = (filename: string) =>
+  invoke<{ path: string | null }>('save_file_path_dialog', { filename })
 export const openInSystem = (path: string) =>
   invoke<void>('open_in_system', { path })
+export const revealPathInSystem = (path: string) =>
+  invoke<void>('reveal_path_in_system', { path })
 
 let pendingDesktopUpdate: Update | null = null
 

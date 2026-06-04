@@ -268,3 +268,7 @@ export function getReadingQuotesPath(): string {
 export function getReadingRunsDir(): string {
   return ensureDir(join(getReadingDir(), "runs"), "读书运行记录目录");
 }
+
+export function getReadingWereadCachePath(): string {
+  return join(getReadingDir(), "weread-cache.json");
+}

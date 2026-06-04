@@ -837,11 +837,11 @@ function readWereadShelfBook(raw: unknown): ReadingAddBookInput | null {
 function readWereadBookStatus(
   raw: Record<string, unknown>,
   bookInfo: Record<string, unknown>,
-  progressPercent?: number
+  _progressPercent?: number
 ): ReadingBookStatus {
   const explicitStatus = readBookStatus(raw.status) ?? readBookStatus(bookInfo.status);
   if (explicitStatus === "finished") return "finished";
-  if (progressPercent !== undefined && progressPercent >= 100) return "finished";
+  if (hasFinishStatus(raw) || hasFinishStatus(bookInfo)) return "finished";
   if (hasFinishedDate(raw) || hasFinishedDate(bookInfo)) return "finished";
   const finishSignals = [
     raw.finishReading,
@@ -872,6 +872,17 @@ function readWereadBookStatus(
 
   if (readNumber(raw.markedStatus) === 1 || readNumber(bookInfo.markedStatus) === 1) return "finished";
   return explicitStatus ?? "reading";
+}
+
+function hasFinishStatus(record: Record<string, unknown>): boolean {
+  const finishStatus = readNumber(record.finishStatus);
+  if (finishStatus === 1) return true;
+  for (const key of ["bookInfo", "book", "readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    if (readNumber(nested.finishStatus) === 1) return true;
+  }
+  return false;
 }
 
 function readProgressPercent(...records: Record<string, unknown>[]): number | undefined {

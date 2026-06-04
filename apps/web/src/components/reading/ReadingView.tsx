@@ -18,7 +18,7 @@ import { toast } from 'sonner'
 import { WEREAD_KEY_PAGE_URL, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { openExternal, revealPathInSystem } from '@/lib/desktop-api'
+import { openExternal, revealPathInSystem, saveFilePathDialog } from '@/lib/desktop-api'
 import {
   addReadingBook,
   generateReadingShareCard,
@@ -40,12 +40,14 @@ import {
   buildReadingWereadConnectionPrompt,
   buildReadingNoteNavigation,
   buildReadingSearchItems,
+  buildShareCardFilename,
   buildWereadNotebookView,
   createDefaultWereadRailGroupState,
   extendReadingHoverNavUntil,
   getWereadTabForSelection,
   formatWereadNotebookBadgeLabel,
   normalizeWereadBookmarks,
+  normalizeWereadReadDataSummary,
   normalizeWereadReviews,
   shouldStartReadingRun,
   shouldShowReadingHoverNav,
@@ -53,6 +55,7 @@ import {
   type ReadingRailItem,
   type WereadNotebookBook,
   type WereadRailGroupKey,
+  type WereadReadDataSummary,
   type WereadReadingTab,
   type WereadTextItem,
 } from './reading-view-state'
@@ -64,11 +67,6 @@ interface WereadBookDetailState {
   bestBookmarks: WereadTextItem[]
   publicReviews: WereadTextItem[]
   error?: string
-}
-
-interface WereadReadDataSummary {
-  totalReadTime?: number
-  readDays?: number
 }
 
 const readingThemeVars = {
@@ -124,14 +122,14 @@ export function ReadingView() {
             console.error('[ReadingView] 微信读书笔记本加载失败:', error)
             return null
           }),
-          getWereadReadData('monthly').catch((error) => {
+          getWereadReadData('all').catch((error) => {
             console.error('[ReadingView] 微信读书统计加载失败:', error)
             return null
           }),
         ])
         setWereadShelf(shelfResult)
         setWereadNotebooks(notebooksResult)
-        setWereadReadData(readWereadReadDataSummary(readDataResult))
+        setWereadReadData(normalizeWereadReadDataSummary(readDataResult))
       } else {
         setWereadShelf(null)
         setWereadNotebooks(null)
@@ -347,7 +345,9 @@ export function ReadingView() {
 
   const saveShareCard = async (note: ReadingNoteSummary) => {
     try {
-      const result = await generateReadingShareCard({ noteId: note.id })
+      const selected = await saveFilePathDialog(buildShareCardFilename(note))
+      if (!selected.path) return
+      const result = await generateReadingShareCard({ noteId: note.id, outputPath: selected.path })
       await load()
       if (result.path) {
         try {
@@ -1026,27 +1026,6 @@ function formatWereadDate(value: number): string {
   const timestamp = value < 100_000_000_000 ? value * 1000 : value
   const date = new Date(timestamp)
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
-}
-
-function readWereadReadDataSummary(payload: unknown): WereadReadDataSummary | null {
-  if (!isRecord(payload)) return null
-  return {
-    ...(readNumber(payload.totalReadTime) ? { totalReadTime: readNumber(payload.totalReadTime) } : {}),
-    ...(readNumber(payload.readDays) ? { readDays: readNumber(payload.readDays) } : {}),
-  }
-}
-
-function readNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : undefined
-  }
-  return undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function getErrorMessage(error: unknown): string {

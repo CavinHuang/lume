@@ -6,12 +6,14 @@ import {
   buildReadingBookRail,
   buildReadingWereadConnectionPrompt,
   buildReadingNoteNavigation,
+  buildShareCardFilename,
   buildWereadNotebookView,
   createDefaultWereadRailGroupState,
   extendReadingHoverNavUntil,
   formatReadingProgress,
   formatWereadNotebookBadgeLabel,
   getWereadTabForSelection,
+  normalizeWereadReadDataSummary,
   normalizeWereadBookmarks,
   normalizeWereadReviews,
   shouldStartReadingRun,
@@ -34,6 +36,13 @@ describe('reading view state', () => {
       title: '我在北京送快递',
       progressLabel: '54%'
     })
+  })
+
+  test('builds a safe default filename for saving a share card through Tauri', () => {
+    expect(buildShareCardFilename({
+      id: 'note/1',
+      title: '普通人的日常 / 雨夜',
+    })).toBe('普通人的日常-雨夜-note-1.svg')
   })
 
   test('includes WeRead highlights in the all notes rail summary', () => {
@@ -289,9 +298,9 @@ describe('reading view state', () => {
               author: '大冰',
               cover: 'https://cover.example.com/ok.jpg',
             },
-            reviewCount: 15,
-            noteCount: 4,
-            bookmarkCount: 0,
+            reviewCount: 0,
+            noteCount: 15,
+            bookmarkCount: 4,
             readingProgress: 19,
             markedStatus: 0,
             sort: 99,
@@ -300,7 +309,8 @@ describe('reading view state', () => {
             bookId: 'wr-2',
             title: '龙族Ⅱ：悼亡者之瞳',
             author: '江南',
-            noteCount: 4,
+            bookmarkCount: 4,
+            noteCount: 0,
             reviewCount: 0,
             markedStatus: 1,
             sort: 88,
@@ -381,9 +391,9 @@ describe('reading view state', () => {
       author: '作者甲',
       coverUrl: 'https://cover.example.com/reading.jpg',
       noteCount: 6,
-      highlightCount: 2,
-      thoughtCount: 3,
-      bookmarkCount: 1,
+      highlightCount: 1,
+      thoughtCount: 5,
+      bookmarkCount: 0,
       progressLabel: '42%',
       status: 'reading',
     })
@@ -395,8 +405,8 @@ describe('reading view state', () => {
     })
     expect(view.summary).toEqual({
       localNoteCount: 0,
-      highlightCount: 3,
-      thoughtCount: 3,
+      highlightCount: 1,
+      thoughtCount: 5,
       readingCount: 1,
       finishedCount: 1,
     })
@@ -498,12 +508,64 @@ describe('reading view state', () => {
     })
   })
 
+  test('uses Alice WeRead shelf fields for reading status, counts, and recent-read ordering', () => {
+    const view = buildWereadNotebookView({
+      shelf: {
+        books: [
+          {
+            bookId: 'wr-progress-100',
+            title: '进度 100 但未标记读完',
+            readUpdateTime: 2000,
+            readingProgress: 100,
+            finishStatus: 0,
+            bookmarkCount: 4,
+            noteCount: 15,
+            reviewCount: 2,
+          },
+          {
+            bookId: 'wr-finished',
+            title: '明确已读完',
+            readUpdateTime: 1000,
+            readingProgress: 22,
+            finishStatus: 1,
+            bookmarkCount: 1,
+            noteCount: 0,
+          },
+        ],
+      },
+      notebooks: { notebooks: [] },
+      snapshot: createSnapshot({ connected: true }),
+    })
+
+    expect(view.books.map((book) => book.bookId)).toEqual(['wr-progress-100', 'wr-finished'])
+    expect(view.books[0]).toMatchObject({
+      status: 'reading',
+      highlightCount: 4,
+      thoughtCount: 17,
+      noteCount: 21,
+      progressPercent: 100,
+    })
+    expect(view.books[1]).toMatchObject({
+      status: 'finished',
+      highlightCount: 1,
+      thoughtCount: 0,
+      noteCount: 1,
+    })
+    expect(view.summary).toMatchObject({
+      readingCount: 1,
+      finishedCount: 1,
+      highlightCount: 5,
+      thoughtCount: 17,
+    })
+  })
+
   test('classifies WeRead notebooks into reading and read groups from common status fields', () => {
     const view = buildWereadNotebookView({
       notebooks: {
         notebooks: [
           { bookId: 'reading-1', title: '仍在读', readingProgress: 42 },
-          { bookId: 'done-by-progress', title: '进度读完', readingProgress: 100 },
+          { bookId: 'progress-100-without-finish', title: '100% 但仍在读', readingProgress: 100 },
+          { bookId: 'done-by-finish-status', title: '完成状态', finishStatus: 1 },
           { bookId: 'done-by-flag', title: '标记读完', book: { title: '标记读完', finished: true } },
           { bookId: 'done-by-status', title: '状态读完', readingStatus: 'finished' },
           { bookId: 'done-by-finished-date', title: '完成日期', readInfo: { finishedDate: 1717300000 } },
@@ -514,13 +576,34 @@ describe('reading view state', () => {
 
     expect(view.books.map((book) => [book.bookId, book.status])).toEqual([
       ['reading-1', 'reading'],
-      ['done-by-progress', 'finished'],
+      ['progress-100-without-finish', 'reading'],
+      ['done-by-finish-status', 'finished'],
       ['done-by-flag', 'finished'],
       ['done-by-status', 'finished'],
       ['done-by-finished-date', 'finished'],
     ])
-    expect(view.summary.readingCount).toBe(1)
+    expect(view.summary.readingCount).toBe(2)
     expect(view.summary.finishedCount).toBe(4)
+  })
+
+  test('normalizes Alice-style WeRead accumulated read data fields', () => {
+    expect(normalizeWereadReadDataSummary({
+      readTime: 2_851_200,
+      totalDays: 564,
+    })).toEqual({
+      totalReadTime: 2_851_200,
+      readDays: 564,
+    })
+
+    expect(normalizeWereadReadDataSummary({
+      data: {
+        totalReadTime: 3600,
+        readDays: 2,
+      },
+    })).toEqual({
+      totalReadTime: 3600,
+      readDays: 2,
+    })
   })
 
   test('keeps WeRead rail groups expanded by default and toggles them independently', () => {

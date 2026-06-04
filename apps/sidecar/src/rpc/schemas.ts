@@ -249,7 +249,8 @@ export const wereadSearchBooksInputSchema = z.object({
 
 export const readingGenerateShareCardInputSchema = z.object({
   noteId: idSchema,
-  theme: z.enum(["light", "dark"]).optional()
+  theme: z.enum(["light", "dark"]).optional(),
+  outputPath: z.string().trim().min(1).optional()
 }).strict();
 
 export const aliceReadingNoteIdInputSchema = z.union([

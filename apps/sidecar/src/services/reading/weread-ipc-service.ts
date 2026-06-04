@@ -16,6 +16,7 @@ import {
 } from "./reading-store";
 import { runReadingTaskAsync } from "./reading-task-runner";
 import { WereadClient } from "./sources/weread-client";
+import { cachedWereadCall } from "./weread-cache-service";
 
 export interface WereadIpcSource {
   openAndFetchKey: () => Promise<unknown>;
@@ -68,25 +69,25 @@ export function createDefaultWereadIpcSource(): WereadIpcSource {
       };
     },
     async shelf() {
-      return getConnectedWereadClient().shelf();
+      return cachedConnectedWereadCall("shelf", (client) => client.shelf());
     },
     async notebooks() {
-      return getConnectedWereadClient().notebooks();
+      return cachedConnectedWereadCall("notebooks", (client) => client.notebooks());
     },
     async bookmarks(bookId) {
-      return getConnectedWereadClient().bookmarks(bookId);
+      return cachedConnectedWereadCall(`bookmarks:${bookId}`, (client) => client.bookmarks(bookId));
     },
     async reviews(bookId) {
-      return getConnectedWereadClient().reviews(bookId);
+      return cachedConnectedWereadCall(`reviews:${bookId}`, (client) => client.reviews(bookId));
     },
     async readdata(period) {
-      return getConnectedWereadClient().readdata(period);
+      return cachedConnectedWereadCall(`readdata:${period ?? "default"}`, (client) => client.readdata(period));
     },
     async bestBookmarks(bookId) {
-      return getConnectedWereadClient().bestBookmarks(bookId);
+      return cachedConnectedWereadCall(`bestBookmarks:${bookId}`, (client) => client.bestBookmarks(bookId));
     },
     async publicReviews(bookId, listType) {
-      return getConnectedWereadClient().publicReviews(bookId, listType);
+      return cachedConnectedWereadCall(`publicReviews:${bookId}:${listType ?? "default"}`, (client) => client.publicReviews(bookId, listType));
     },
     async search(keyword, limit) {
       return getConnectedWereadClient().search(keyword, limit);
@@ -175,6 +176,11 @@ function getConnectedWereadClient(): WereadClient {
     throw new Error("尚未连接微信读书 API Key");
   }
   return new WereadClient({ apiKey });
+}
+
+function cachedConnectedWereadCall<T>(key: string, load: (client: WereadClient) => Promise<T>): Promise<T> {
+  const client = getConnectedWereadClient();
+  return cachedWereadCall(key, () => load(client));
 }
 
 function findOrAddWereadBook(input: {

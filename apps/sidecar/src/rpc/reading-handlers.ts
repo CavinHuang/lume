@@ -82,6 +82,7 @@ import {
   type WereadGenerateNoteInput,
   type WereadIpcSource
 } from "../services/reading/weread-ipc-service";
+import { clearWereadCache } from "../services/reading/weread-cache-service";
 
 const MISSING_ALICE_BOOK_ID = "__alice_missing_book__";
 
@@ -208,6 +209,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
         READING_IPC_CHANNELS.REVISE_NOTE
       ) as ReadingNoteRevisionInput),
     [READING_IPC_CHANNELS.CONNECT_WEREAD]: async (params) => {
+      clearWereadCache();
       const connection = connectReadingWeread(validateInput(
         readingConnectWereadInputSchema,
         params,
@@ -220,7 +222,10 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
       }
       return connection;
     },
-    [READING_IPC_CHANNELS.DISCONNECT_WEREAD]: async () => disconnectReadingWeread(),
+    [READING_IPC_CHANNELS.DISCONNECT_WEREAD]: async () => {
+      clearWereadCache();
+      return disconnectReadingWeread();
+    },
     [READING_IPC_CHANNELS.SEARCH_WEREAD]: async (params) => {
       const input = validateInput(
         readingSearchWereadInputSchema,

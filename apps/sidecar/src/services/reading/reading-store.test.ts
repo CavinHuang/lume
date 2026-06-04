@@ -171,6 +171,36 @@ describe("reading-store", () => {
     });
   });
 
+  test("uses WeRead finishStatus instead of progress to classify shelf books", () => {
+    const books = syncReadingWereadShelf([
+      {
+        bookInfo: {
+          bookId: "wr-progress-100",
+          title: "踏星"
+        },
+        readingProgress: 100,
+        finishStatus: 0
+      },
+      {
+        bookInfo: {
+          bookId: "wr-finished",
+          title: "已读完"
+        },
+        readingProgress: 20,
+        finishStatus: 1
+      }
+    ]);
+
+    expect(books.find((book) => book.source.externalId === "wr-progress-100")).toMatchObject({
+      progressPercent: 100,
+      status: "reading"
+    });
+    expect(books.find((book) => book.source.externalId === "wr-finished")).toMatchObject({
+      progressPercent: 20,
+      status: "finished"
+    });
+  });
+
   test("syncs official WeRead readUpdateTime into stored latest read time", () => {
     const books = syncReadingWereadShelf([
       {

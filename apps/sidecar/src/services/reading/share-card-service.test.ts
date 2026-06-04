@@ -64,4 +64,71 @@ describe("share-card-service", () => {
     expect(svg).toContain("Lume Reading");
     expect(listReadingNotes({ includeHidden: true })[0]?.shareCardPath).toBe(result.path);
   });
+
+  test("generates an SVG share card at a user-selected output path", () => {
+    const book = addReadingBook({
+      title: "人间词话",
+      author: "王国维",
+      source: {
+        kind: "manual",
+        excerpt: "词以境界为最上。"
+      }
+    });
+    const note = createReadingNote({
+      bookId: book.id,
+      title: "境界",
+      summary: "Lume 记下这句话。",
+      body: "词以境界为最上。",
+      tags: ["境界"],
+      evidence: [
+        {
+          quote: "词以境界为最上。",
+          sourceKind: "manual",
+          excerpt: "词以境界为最上。",
+          capturedAt: 1
+        }
+      ]
+    });
+    const outputPath = join(tempConfigDir, "selected-card.svg");
+
+    const result = generateReadingShareCard({ noteId: note.id, outputPath });
+
+    expect(result.path).toBe(outputPath);
+    expect(existsSync(outputPath)).toBeTrue();
+    expect(readFileSync(outputPath, "utf-8")).toContain("人间词话");
+    expect(listReadingNotes({ includeHidden: true })[0]?.shareCardPath).toBe(outputPath);
+  });
+
+  test("uses the selected reading note body as the share card content", () => {
+    const book = addReadingBook({
+      title: "好吗好的",
+      author: "大冰",
+      source: {
+        kind: "weread",
+        excerpt: "没资格谈论理想时，先好好去挣钱。"
+      }
+    });
+    const note = createReadingNote({
+      bookId: book.id,
+      title: "最后一个义工",
+      summary: "这是一段摘要，不是当前卡片正文。",
+      body: "没资格谈论理想时，先好好去挣钱。\n\n杯酒慰风尘，如是许多年。",
+      tags: ["微信读书"],
+      evidence: [
+        {
+          quote: "没资格谈论理想时，先好好去挣钱。",
+          sourceKind: "weread",
+          excerpt: "没资格谈论理想时，先好好去挣钱。",
+          capturedAt: 1
+        }
+      ]
+    });
+    const outputPath = join(tempConfigDir, "selected-note-body.svg");
+
+    generateReadingShareCard({ noteId: note.id, outputPath });
+
+    const svg = readFileSync(outputPath, "utf-8");
+    expect(svg).toContain("没资格谈论理想时，先好好去挣钱。");
+    expect(svg).not.toContain("这是一段摘要，不是当前卡片正文。");
+  });
 });

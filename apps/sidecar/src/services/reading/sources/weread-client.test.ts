@@ -45,7 +45,7 @@ describe("WereadClient", () => {
       { api_name: "/user/notebooks", count: 500, skill_version: "1.0.3" },
       { api_name: "/book/bookmarklist", bookId: "wr-1", skill_version: "1.0.3" },
       { api_name: "/review/list/mine", bookid: "wr-1", count: 50, synckey: 0, skill_version: "1.0.3" },
-      { api_name: "/readdata/detail", mode: "weekly", skill_version: "1.0.3" },
+      { api_name: "/readdata/detail", mode: "本周", skill_version: "1.0.3" },
       { api_name: "/store/search", keyword: "置身事内", scope: 10, maxIdx: 0, count: 3, skill_version: "1.0.3" }
     ]);
     expect(calls.some((call) => "params" in call.body)).toBeFalse();
@@ -73,7 +73,13 @@ describe("WereadClient", () => {
                 bookId: "wr-done",
                 title: "好吗好的",
                 author: "大冰",
-                progress: 100
+                progress: 100,
+                finishStatus: 0
+              },
+              {
+                bookId: "wr-finish-status",
+                title: "读完的书",
+                finishStatus: 1
               }
             ],
             albums: [{ albumInfo: { albumId: "album-1", name: "听书" } }],
@@ -110,12 +116,17 @@ describe("WereadClient", () => {
         title: "好吗好的",
         source: { externalId: "wr-done" },
         progressPercent: 100,
+        status: "reading"
+      },
+      {
+        title: "读完的书",
+        source: { externalId: "wr-finish-status" },
         status: "finished"
       }
     ]);
     await expect(client.shelfStats()).resolves.toEqual({
-      total: 4,
-      bookCount: 2,
+      total: 5,
+      bookCount: 3,
       albumCount: 1,
       mpCount: 1
     });
@@ -177,6 +188,27 @@ describe("WereadClient", () => {
     ]);
     expect(calls[1]).toMatchObject({
       bookId: "wr-progress"
+    });
+  });
+
+  test("requests accumulated WeRead read data with official total mode", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const client = new WereadClient({
+      apiKey: "secret-key",
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        calls.push(body);
+        return jsonResponse({ totalDays: 564, readTime: 2851200 });
+      }
+    });
+
+    await expect(client.readdata("all")).resolves.toEqual({
+      totalDays: 564,
+      readTime: 2851200
+    });
+    expect(calls[0]).toMatchObject({
+      api_name: "/readdata/detail",
+      mode: "总计"
     });
   });
 

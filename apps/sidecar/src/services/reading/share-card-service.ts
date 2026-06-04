@@ -1,5 +1,5 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ReadingGenerateShareCardInput, ReadingShareCardResult } from "@lume/shared";
 import { getReadingShareCardsDir } from "../infra/config-paths";
 import {
@@ -13,13 +13,14 @@ export function generateReadingShareCard(input: ReadingGenerateShareCardInput): 
     throw new Error(`读书笔记不存在: ${input.noteId}`);
   }
   const createdAt = Date.now();
-  const path = join(getReadingShareCardsDir(), `${safeFileSegment(note.id)}-${createdAt}.svg`);
+  const path = input.outputPath?.trim() || join(getReadingShareCardsDir(), `${safeFileSegment(note.id)}-${createdAt}.svg`);
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, buildShareCardSvg({
     noteId: note.id,
     bookTitle: note.book?.title ?? note.title,
     author: note.book?.author,
     coverUrl: note.book?.localCoverPath ?? note.book?.coverUrl,
-    summary: note.summary || note.body,
+    content: note.body,
     tags: note.tags,
     createdAt
   }), "utf-8");
@@ -36,11 +37,11 @@ function buildShareCardSvg(input: {
   bookTitle: string;
   author?: string;
   coverUrl?: string;
-  summary: string;
+  content: string;
   tags: string[];
   createdAt: number;
 }): string {
-  const summary = wrapText(input.summary, 24, 5);
+  const content = wrapText(input.content, 24, 5);
   const tags = input.tags.slice(0, 4).join(" · ");
   const cover = input.coverUrl
     ? `<image href="${escapeXml(input.coverUrl)}" x="52" y="76" width="126" height="168" preserveAspectRatio="xMidYMid slice" />`
@@ -55,7 +56,7 @@ function buildShareCardSvg(input: {
   <text x="214" y="104" fill="#25221e" font-size="30" font-weight="700">${escapeXml(truncate(input.bookTitle, 18))}</text>
   <text x="214" y="146" fill="#9b7a46" font-size="18">${escapeXml(input.author ?? "Lume 在读")}</text>
   <text x="52" y="316" fill="#9b7a46" font-size="20" font-weight="700">读书笔记</text>
-  ${summary.map((line, index) => `<text x="52" y="${374 + index * 44}" fill="#34302a" font-size="27">${escapeXml(line)}</text>`).join("\n  ")}
+  ${content.map((line, index) => `<text x="52" y="${374 + index * 44}" fill="#34302a" font-size="27">${escapeXml(line)}</text>`).join("\n  ")}
   <text x="52" y="706" fill="#9b9488" font-size="18">${escapeXml(tags || "Lume Reading")}</text>
   <line x1="52" y1="780" x2="668" y2="780" stroke="#e4d8c5"/>
   <text x="52" y="830" fill="#9b7a46" font-size="22" font-weight="700">Lume Reading</text>

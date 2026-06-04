@@ -669,6 +669,17 @@ fn save_text_file_dialog(filename: String, content: String) -> Result<serde_json
 }
 
 #[tauri::command]
+fn save_file_path_dialog(filename: String) -> Result<serde_json::Value, String> {
+    let path = rfd::FileDialog::new()
+        .add_filter("SVG 图片", &["svg"])
+        .set_file_name(&filename)
+        .save_file();
+    Ok(serde_json::json!({
+        "path": path.map(|item| item.to_string_lossy().to_string())
+    }))
+}
+
+#[tauri::command]
 fn open_in_system(path: String) -> Result<(), String> {
     let p = Path::new(&path);
     if !p.exists() {
@@ -1654,6 +1665,7 @@ fn main() {
             read_clipboard_text,
             read_text_file,
             save_text_file_dialog,
+            save_file_path_dialog,
             open_in_system,
             reveal_path_in_system
         ])

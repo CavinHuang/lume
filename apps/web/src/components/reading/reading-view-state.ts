@@ -1,4 +1,10 @@
-import type { ReadingAddBookInput, ReadingBook, ReadingLibrarySnapshot, ReadingSearchResult } from '@lume/shared'
+import type {
+  ReadingAddBookInput,
+  ReadingBook,
+  ReadingLibrarySnapshot,
+  ReadingNoteSummary,
+  ReadingSearchResult,
+} from '@lume/shared'
 
 export type ReadingRailItemKind = 'all' | 'book' | 'poetry'
 
@@ -74,6 +80,11 @@ export interface WereadNotebookView {
     readingCount: number
     finishedCount: number
   }
+}
+
+export interface WereadReadDataSummary {
+  totalReadTime?: number
+  readDays?: number
 }
 
 export interface WereadTextItem {
@@ -187,6 +198,12 @@ export function buildReadingNoteNavigation(noteIds: string[], activeId: string |
     nextId: noteIds[Math.min(noteIds.length - 1, activeIndex + 1)] ?? null,
     bottomId: noteIds[noteIds.length - 1] ?? null,
   }
+}
+
+export function buildShareCardFilename(note: Pick<ReadingNoteSummary, 'id' | 'title'>): string {
+  const title = safeFilenameSegment(note.title).slice(0, 48) || 'reading-note'
+  const id = safeFilenameSegment(note.id).slice(0, 16) || 'note'
+  return `${title}-${id}.svg`
 }
 
 export function extendReadingHoverNavUntil(now: number): number {
@@ -308,7 +325,7 @@ export function buildWereadNotebookView(input: {
     books,
     summary: {
       localNoteCount: input.snapshot.notes.length,
-      highlightCount: books.reduce((total, book) => total + book.highlightCount + book.bookmarkCount, 0),
+      highlightCount: books.reduce((total, book) => total + book.highlightCount, 0),
       thoughtCount: books.reduce((total, book) => total + book.thoughtCount, 0),
       readingCount: books.filter((book) => book.status === 'reading').length,
       finishedCount: books.filter((book) => book.status === 'finished').length,
@@ -377,6 +394,29 @@ export function normalizeWereadReviews(payload: unknown): WereadTextItem[] {
     .filter((item): item is WereadTextItem => Boolean(item))
 }
 
+export function normalizeWereadReadDataSummary(payload: unknown): WereadReadDataSummary | null {
+  const record = unwrapDataRecord(payload)
+  if (!record) return null
+  const totalReadTime = readFirstNumber(record, [
+    'totalReadTime',
+    'readTime',
+    'readingTime',
+    'totalReadingTime',
+    'totalReadSeconds',
+    'totalReadTimeSeconds',
+  ])
+  const readDays = readFirstNumber(record, [
+    'readDays',
+    'totalDays',
+    'readingDays',
+    'days',
+  ])
+  return {
+    ...(typeof totalReadTime === 'number' ? { totalReadTime } : {}),
+    ...(typeof readDays === 'number' ? { readDays } : {}),
+  }
+}
+
 function bookToRailItem(book: ReadingBook, noteCount: number): ReadingRailItem {
   return {
     id: book.id,
@@ -403,9 +443,10 @@ function notebookToBook(
   const title = readString(bookInfo.title) ?? readString(raw.title) ?? readString(source?.title)
   if (!bookId || !title) return null
   const notebookCounts = notebookCountsByBookId.get(bookId)
-  const highlightCount = notebookCounts?.highlightCount ?? readNumber(raw.noteCount) ?? readNumber(raw.highlightCount) ?? 0
-  const thoughtCount = notebookCounts?.thoughtCount ?? readNumber(raw.reviewCount) ?? 0
-  const bookmarkCount = notebookCounts?.bookmarkCount ?? readNumber(raw.bookmarkCount) ?? 0
+  const fallbackCounts = readWereadCounts(raw)
+  const highlightCount = notebookCounts?.highlightCount ?? fallbackCounts.highlightCount
+  const thoughtCount = notebookCounts?.thoughtCount ?? fallbackCounts.thoughtCount
+  const bookmarkCount = notebookCounts?.bookmarkCount ?? 0
   const progressPercent = readProgressPercent(raw, bookInfo, source) ?? notebookCounts?.progressPercent
   const lastReadAt = readWereadTimestamp(raw, bookInfo, source) ?? notebookCounts?.lastReadAt
   const localBook = localByWereadId.get(bookId)
@@ -448,9 +489,8 @@ function readWereadNotebookCounts(raw: Record<string, unknown>): WereadNotebookC
   const lastReadAt = readWereadTimestamp(raw, bookInfo, source)
   return {
     bookId,
-    highlightCount: readNumber(raw.noteCount) ?? readNumber(raw.highlightCount) ?? 0,
-    thoughtCount: readNumber(raw.reviewCount) ?? 0,
-    bookmarkCount: readNumber(raw.bookmarkCount) ?? 0,
+    ...readWereadCounts(raw),
+    bookmarkCount: 0,
     ...(typeof progressPercent === 'number' ? { progressPercent } : {}),
     ...(typeof lastReadAt === 'number' ? { lastReadAt } : {}),
     ...(readNumber(raw.sort) ?? readNumber(raw.updateTime) ? { sort: readNumber(raw.sort) ?? readNumber(raw.updateTime) } : {}),
@@ -530,9 +570,9 @@ function normalizeWereadTimestamp(value: number): number {
 function readWereadBookStatus(
   raw: Record<string, unknown>,
   bookInfo: Record<string, unknown>,
-  progressPercent?: number,
+  _progressPercent?: number,
 ): 'reading' | 'finished' {
-  if (progressPercent !== undefined && progressPercent >= 100) return 'finished'
+  if (hasFinishStatus(raw) || hasFinishStatus(bookInfo)) return 'finished'
   if (hasFinishedDate(raw) || hasFinishedDate(bookInfo)) return 'finished'
   const finishSignals = [
     raw.finishReading,
@@ -564,6 +604,30 @@ function readWereadBookStatus(
   return readNumber(raw.markedStatus) === 1 || readNumber(bookInfo.markedStatus) === 1 ? 'finished' : 'reading'
 }
 
+function readWereadCounts(raw: Record<string, unknown>): Pick<WereadNotebookCounts, 'highlightCount' | 'thoughtCount'> {
+  const highlightCount = readNumber(raw.bookmarkCount)
+    ?? readNumber(raw.highlightCount)
+    ?? readNumber(raw.markCount)
+    ?? 0
+  const noteThoughtCount = readNumber(raw.noteCount) ?? readNumber(raw.thoughtCount) ?? 0
+  const reviewThoughtCount = readNumber(raw.reviewCount) ?? 0
+  return {
+    highlightCount,
+    thoughtCount: noteThoughtCount + reviewThoughtCount,
+  }
+}
+
+function hasFinishStatus(record: Record<string, unknown>): boolean {
+  const finishStatus = readNumber(record.finishStatus)
+  if (finishStatus === 1) return true
+  for (const key of ['bookInfo', 'book', 'readInfo', 'progressInfo']) {
+    const nested = record[key]
+    if (!isRecord(nested)) continue
+    if (readNumber(nested.finishStatus) === 1) return true
+  }
+  return false
+}
+
 function hasFinishedDate(record: Record<string, unknown>): boolean {
   const direct = readNumber(record.finishedDate)
   if (typeof direct === 'number' && direct > 0) return true
@@ -574,6 +638,19 @@ function hasFinishedDate(record: Record<string, unknown>): boolean {
     if (typeof value === 'number' && value > 0) return true
   }
   return false
+}
+
+function unwrapDataRecord(payload: unknown): Record<string, unknown> | null {
+  if (!isRecord(payload)) return null
+  return isRecord(payload.data) ? payload.data : payload
+}
+
+function readFirstNumber(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = readNumber(record[key])
+    if (typeof value === 'number') return value
+  }
+  return undefined
 }
 
 function isTruthyStatus(value: unknown): boolean {
@@ -656,4 +733,13 @@ function hasPoetryNotes(snapshot: ReadingLibrarySnapshot): boolean {
 
 function normalizeBookKey(title: string, author?: string): string {
   return `${title.trim().toLowerCase()}::${author?.trim().toLowerCase() ?? ''}`
+}
+
+function safeFilenameSegment(value: string): string {
+  return value
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
 }
