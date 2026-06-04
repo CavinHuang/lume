@@ -3,6 +3,7 @@ import type { AgentMessageQueueSnapshot } from '@lume/shared'
 import {
   createEmptyAgentMessageQueueSnapshot,
   reorderQueuedMessages,
+  startEditingQueuedMessage,
   upsertAgentMessageQueueSnapshot,
 } from './agent-message-queue-state'
 
@@ -45,10 +46,44 @@ describe('agent message queue state', () => {
     ])
   })
 
+  test('moves an earlier item before a later target', () => {
+    const reordered = reorderQueuedMessages(createSnapshot(), 'queued-1', 'queued-3', 'before')
+
+    expect(reordered.queuedMessages.map((item) => item.id)).toEqual([
+      'queued-2',
+      'queued-1',
+      'queued-3',
+    ])
+  })
+
+  test('moves an item after the drop target', () => {
+    const reordered = reorderQueuedMessages(createSnapshot(), 'queued-1', 'queued-2', 'after')
+
+    expect(reordered.queuedMessages.map((item) => item.id)).toEqual([
+      'queued-2',
+      'queued-1',
+      'queued-3',
+    ])
+  })
+
   test('keeps snapshot unchanged when ids are missing', () => {
     const snapshot = createSnapshot()
 
     expect(reorderQueuedMessages(snapshot, 'missing', 'queued-1')).toBe(snapshot)
     expect(reorderQueuedMessages(snapshot, 'queued-1', 'missing')).toBe(snapshot)
+  })
+
+  test('starts editing by removing the queued message and returning its text', () => {
+    const result = startEditingQueuedMessage(createSnapshot(), 'queued-2')
+
+    expect(result?.draftText).toBe('second')
+    expect(result?.snapshot.queuedMessages.map((item) => item.id)).toEqual([
+      'queued-1',
+      'queued-3',
+    ])
+  })
+
+  test('returns null when starting edit for a missing queued message', () => {
+    expect(startEditingQueuedMessage(createSnapshot(), 'missing')).toBeNull()
   })
 })

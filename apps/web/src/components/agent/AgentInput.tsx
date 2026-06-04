@@ -45,6 +45,7 @@ import { cancelPendingDebouncedAgentInputSend, createDebouncedAgentInputSend } f
 import {
   deriveAgentInputSubmitState,
   resolveAgentInputConfigWorkspaceSlug,
+  shouldReleaseAgentInputLocalSendingAfterDispatch,
   shouldSendAgentInputOnEnter,
   syncPermissionModeWithDefaultConfig,
   syncPermissionModeWithPlanModePhase,
@@ -53,6 +54,7 @@ import { AgentMessageQueueList } from './AgentMessageQueueList'
 import {
   createEmptyAgentMessageQueueSnapshot,
   reorderQueuedMessages,
+  startEditingQueuedMessage,
   upsertAgentMessageQueueSnapshot,
 } from './agent-message-queue-state'
 import { type MentionItem } from './slash-command-state'
@@ -476,6 +478,9 @@ export function AgentInput({
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
+      if (shouldReleaseAgentInputLocalSendingAfterDispatch(result.mode)) {
+        setLocalSending(false)
+      }
       if (result.mode === 'sent') {
         setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
           id: `optimistic:${threadId}:${createdAt}`,
@@ -488,7 +493,6 @@ export function AgentInput({
         }))
         setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
       } else {
-        setLocalSending(false)
         listAgentMessageQueue({ threadId })
           .then((snapshot) => {
             setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, snapshot))
@@ -532,9 +536,9 @@ export function AgentInput({
     }
   }
 
-  const handleQueueReorder = useCallback((draggedId: string, targetId: string) => {
+  const handleQueueReorder = useCallback((draggedId: string, targetId: string, placement: 'before' | 'after') => {
     const previousSnapshot = messageQueueSnapshot
-    const optimisticSnapshot = reorderQueuedMessages(previousSnapshot, draggedId, targetId)
+    const optimisticSnapshot = reorderQueuedMessages(previousSnapshot, draggedId, targetId, placement)
     if (optimisticSnapshot === previousSnapshot) return
     setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, optimisticSnapshot))
     reorderAgentMessageQueue({
@@ -561,6 +565,22 @@ export function AgentInput({
         toast.error('删除排队消息失败')
       })
   }, [setMessageQueues, threadId])
+
+  const handleEditQueuedMessage = useCallback((queuedMessageId: string) => {
+    if (!editor) return
+    const editing = startEditingQueuedMessage(messageQueueSnapshot, queuedMessageId)
+    if (!editing) return
+    removeQueuedAgentMessage({ threadId, queuedMessageId })
+      .then((result) => {
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        setEditorPlainText(editor, result.removedMessage?.text ?? editing.draftText)
+        setEditorText(result.removedMessage?.text ?? editing.draftText)
+      })
+      .catch((error) => {
+        console.error('[AgentInput] 编辑排队消息失败:', error)
+        toast.error('编辑排队消息失败')
+      })
+  }, [editor, messageQueueSnapshot, setMessageQueues, threadId])
 
   const handlePromoteQueuedMessageToGuidance = useCallback((queuedMessageId: string) => {
     promoteQueuedAgentMessageToGuidance({ threadId, queuedMessageId })
@@ -610,21 +630,24 @@ export function AgentInput({
     <div className="px-3 pb-4 pt-2">
       <div className="w-full px-14">
         <div>
-          <AgentMessageQueueList
-            snapshot={messageQueueSnapshot}
-            onReorder={handleQueueReorder}
-            onRemove={handleRemoveQueuedMessage}
-            onPromoteToGuidance={handlePromoteQueuedMessageToGuidance}
-          />
           <LumeComposer
             tone={composerState.tone}
             scale="compact"
             className="rounded-[1.6rem]"
             editorSlot={
-              <EditorContent
-                editor={editor}
-                className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
-              />
+              <>
+                <AgentMessageQueueList
+                  snapshot={messageQueueSnapshot}
+                  onReorder={handleQueueReorder}
+                  onRemove={handleRemoveQueuedMessage}
+                  onEdit={handleEditQueuedMessage}
+                  onPromoteToGuidance={handlePromoteQueuedMessageToGuidance}
+                />
+                <EditorContent
+                  editor={editor}
+                  className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
+                />
+              </>
             }
             supportingContent={
               pendingAttachments.length > 0 || roleRecommendations.length > 0 ? (
@@ -778,6 +801,16 @@ function AgentRoleRecommendationChips({
       ))}
     </div>
   )
+}
+
+function setEditorPlainText(editor: NonNullable<ReturnType<typeof useEditor>>, text: string): void {
+  editor.commands.setContent(
+    text.split('\n').map((line) => ({
+      type: 'paragraph',
+      content: line.length > 0 ? [{ type: 'text', text: line }] : undefined,
+    })),
+  )
+  editor.commands.focus('end')
 }
 
 function createPendingAttachmentId(): string {

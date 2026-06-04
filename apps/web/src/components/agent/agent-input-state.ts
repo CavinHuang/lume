@@ -32,6 +32,7 @@ interface AgentInputEnterEvent {
 }
 
 export type AgentInputSubmitAction = 'send' | 'queue' | 'stop' | 'busy' | 'disabled'
+export type AgentInputDispatchMode = 'sent' | 'queued'
 
 export interface AgentInputSubmitState {
   action: AgentInputSubmitAction
@@ -77,6 +78,10 @@ export function deriveAgentInputSubmitState(input: {
     canSubmit: false,
     label: '发送',
   }
+}
+
+export function shouldReleaseAgentInputLocalSendingAfterDispatch(_mode: AgentInputDispatchMode): boolean {
+  return true
 }
 
 export function shouldSendAgentInputOnEnter(

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   deriveAgentInputSubmitState,
+  shouldReleaseAgentInputLocalSendingAfterDispatch,
   resolveAgentInputConfigWorkspaceSlug,
   shouldSendAgentInputOnEnter,
   syncPermissionModeWithDefaultConfig,
@@ -54,6 +55,16 @@ describe('deriveAgentInputSubmitState', () => {
       canSubmit: false,
       label: '发送中',
     })
+  })
+})
+
+describe('shouldReleaseAgentInputLocalSendingAfterDispatch', () => {
+  test('releases local sending after an immediate send dispatch returns', () => {
+    expect(shouldReleaseAgentInputLocalSendingAfterDispatch('sent')).toBe(true)
+  })
+
+  test('releases local sending after a queued dispatch returns', () => {
+    expect(shouldReleaseAgentInputLocalSendingAfterDispatch('queued')).toBe(true)
   })
 })
 
