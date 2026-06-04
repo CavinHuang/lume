@@ -699,6 +699,49 @@ fn open_in_system(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn reveal_path_in_system(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("路径不存在: {path}"));
+    }
+    let target = p
+        .canonicalize()
+        .map_err(|e| format!("解析路径失败 ({path}): {e}"))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| format!("定位失败: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", target.to_string_lossy()))
+            .spawn()
+            .map_err(|e| format!("定位失败: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let folder = if target.is_dir() {
+            target
+        } else {
+            target
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| format!("无法定位文件夹: {path}"))?
+        };
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| format!("打开所在文件夹失败: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn read_text_file(path: String) -> Result<serde_json::Value, String> {
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("read selected file failed ({}): {e}", path))?;
@@ -1611,7 +1654,8 @@ fn main() {
             read_clipboard_text,
             read_text_file,
             save_text_file_dialog,
-            open_in_system
+            open_in_system,
+            reveal_path_in_system
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
