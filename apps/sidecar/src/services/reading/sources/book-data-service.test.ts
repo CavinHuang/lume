@@ -3,15 +3,17 @@ import { BookDataService } from "./book-data-service";
 
 describe("BookDataService", () => {
   test("maps WeRead shelf and search without exposing the API Key", async () => {
-    const calls: Array<{ url: string; auth?: string }> = [];
+    const calls: Array<{ url: string; auth?: string; body: Record<string, unknown> }> = [];
     const service = new BookDataService({
       wereadApiKey: "secret-key",
       fetch: async (url, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
         calls.push({
           url: String(url),
-          auth: new Headers(init?.headers).get("authorization") ?? undefined
+          auth: new Headers(init?.headers).get("authorization") ?? undefined,
+          body
         });
-        if (String(url).includes("/shelf")) {
+        if (body.api_name === "/shelf/sync") {
           return jsonResponse({
             books: [
               {
@@ -25,13 +27,17 @@ describe("BookDataService", () => {
           });
         }
         return jsonResponse({
-          books: [
+          results: [
             {
-              bookInfo: {
-                bookId: "wr-2",
-                title: "置身事内",
-                author: "兰小欢"
-              }
+              books: [
+                {
+                  bookInfo: {
+                    bookId: "wr-2",
+                    title: "置身事内",
+                    author: "兰小欢"
+                  }
+                }
+              ]
             }
           ]
         });
@@ -62,11 +68,14 @@ describe("BookDataService", () => {
       ]
     });
     expect(calls.every((call) => call.auth === "Bearer secret-key")).toBeTrue();
-    expect(calls.some((call) => (
-      call.url.includes("/web/search/global?keyword=")
-      && call.url.includes("maxIdx=0")
-      && call.url.includes("count=3")
-    ))).toBeTrue();
+    expect(calls.every((call) => call.url === "https://i.weread.qq.com/api/agent/gateway")).toBeTrue();
+    expect(calls.map((call) => call.body.api_name)).toContain("/store/search");
+    expect(calls.find((call) => call.body.api_name === "/store/search")?.body).toMatchObject({
+      keyword: "置身事内",
+      scope: 10,
+      maxIdx: 0,
+      count: 3
+    });
     expect(JSON.stringify(await service.loadWereadShelf())).not.toContain("secret-key");
   });
 
@@ -141,15 +150,17 @@ describe("BookDataService", () => {
   });
 
   test("loads Alice-like WeRead companion data", async () => {
-    const seenUrls: string[] = [];
+    const seenApiNames: unknown[] = [];
+    const seenBodies: Record<string, unknown>[] = [];
     const service = new BookDataService({
       wereadApiKey: "secret-key",
-      fetch: async (url) => {
-        const href = String(url);
-        seenUrls.push(href);
-        if (href.includes("/notebook")) {
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        seenApiNames.push(body.api_name);
+        seenBodies.push(body);
+        if (body.api_name === "/user/notebooks") {
           return jsonResponse({
-            notebooks: [
+            books: [
               {
                 bookId: "wr-1",
                 title: "我在北京送快递",
@@ -159,7 +170,7 @@ describe("BookDataService", () => {
             ]
           });
         }
-        if (href.includes("/web/book/bestbookmarks")) {
+        if (body.api_name === "/book/bestbookmarks") {
           return jsonResponse({
             items: [
               {
@@ -174,7 +185,7 @@ describe("BookDataService", () => {
             }
           });
         }
-        if (href.includes("/review")) {
+        if (body.api_name === "/review/list") {
           return jsonResponse({
             reviews: [
               {
@@ -214,8 +225,16 @@ describe("BookDataService", () => {
         }
       ]
     });
-    expect(seenUrls.some((url) => url.includes("/web/book/bestbookmarks?bookId=wr-1"))).toBeTrue();
-    expect(seenUrls.some((url) => url.includes("listType=hot"))).toBeTrue();
+    expect(seenApiNames).toContain("/book/bestbookmarks");
+    expect(seenBodies.find((body) => body.api_name === "/book/bestbookmarks")).toMatchObject({
+      bookId: "wr-1",
+      chapterUid: 0,
+      synckey: 0
+    });
+    expect(seenBodies.find((body) => body.api_name === "/review/list")).toMatchObject({
+      bookId: "wr-1",
+      reviewListType: 1
+    });
   });
 });
 

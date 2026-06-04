@@ -310,6 +310,12 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
         bookmarks: await weread.bookmarks(input.bookId)
       };
     },
+    [WEREAD_IPC_CHANNELS.GET_REVIEWS]: async (params) => {
+      const input = validateInput(wereadBookIdInputSchema, params, WEREAD_IPC_CHANNELS.GET_REVIEWS) as { bookId: string };
+      return {
+        reviews: await weread.reviews(input.bookId)
+      };
+    },
     [WEREAD_IPC_CHANNELS.GET_READ_DATA]: async (params) => {
       const input = validateInput(wereadReadDataInputSchema, params ?? {}, WEREAD_IPC_CHANNELS.GET_READ_DATA) as { period?: string } | undefined;
       return weread.readdata(input?.period);

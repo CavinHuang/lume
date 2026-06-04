@@ -78,6 +78,7 @@ describe("reading shared types", () => {
       GET_SHELF: "weread:getShelf",
       GET_NOTEBOOKS: "weread:getNotebooks",
       GET_BOOKMARKS: "weread:getBookmarks",
+      GET_REVIEWS: "weread:getReviews",
       GET_READ_DATA: "weread:getReadData",
       GET_BEST_BOOKMARKS: "weread:getBestBookmarks",
       GET_PUBLIC_REVIEWS: "weread:getPublicReviews",

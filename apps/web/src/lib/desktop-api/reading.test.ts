@@ -23,6 +23,7 @@ describe('desktop reading API', () => {
   beforeEach(() => {
     invokeMock.mockClear()
     invokeMock.mockImplementation(async () => ({}))
+    readingApi.clearWereadApiCache()
   })
 
   afterEach(() => {
@@ -82,6 +83,7 @@ describe('desktop reading API', () => {
   test('routes Alice-like WeRead methods through the same desktop sidecar command', async () => {
     await readingApi.getWereadApiKey()
     await readingApi.getWereadShelf()
+    await readingApi.getWereadReviews('wr-1')
     await readingApi.generateWereadNote({
       bookTitle: '我在北京送快递',
       text: '把自己看作一个普通人，过普通人的生活。',
@@ -107,6 +109,15 @@ describe('desktop reading API', () => {
       [
         'sidecar_call',
         {
+          method: WEREAD_IPC_CHANNELS.GET_REVIEWS,
+          params: {
+            bookId: 'wr-1',
+          },
+        },
+      ],
+      [
+        'sidecar_call',
+        {
           method: WEREAD_IPC_CHANNELS.GENERATE_NOTE,
           params: {
             bookTitle: '我在北京送快递',
@@ -125,6 +136,26 @@ describe('desktop reading API', () => {
           },
         },
       ],
+    ])
+  })
+
+  test('caches WeRead read-only data and clears it after disconnecting', async () => {
+    invokeMock.mockImplementation(async (_command, payload) => {
+      const params = payload as { method?: string } | undefined
+      if (params?.method === WEREAD_IPC_CHANNELS.GET_SHELF) return { books: [{ title: '缓存书架' }] }
+      if (params?.method === READING_IPC_CHANNELS.DISCONNECT_WEREAD) return { connected: false }
+      return {}
+    })
+
+    await expect(readingApi.getWereadShelf()).resolves.toEqual({ books: [{ title: '缓存书架' }] })
+    await expect(readingApi.getWereadShelf()).resolves.toEqual({ books: [{ title: '缓存书架' }] })
+    await readingApi.disconnectReadingWeread()
+    await readingApi.getWereadShelf()
+
+    expect(invokeMock.mock.calls.map((call) => (call[1] as { method?: string } | undefined)?.method)).toEqual([
+      WEREAD_IPC_CHANNELS.GET_SHELF,
+      READING_IPC_CHANNELS.DISCONNECT_WEREAD,
+      WEREAD_IPC_CHANNELS.GET_SHELF,
     ])
   })
 

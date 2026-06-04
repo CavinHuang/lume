@@ -151,6 +151,7 @@ export function addReadingBook(input: ReadingAddBookInput): ReadingBook {
     status: input.status,
     source: input.source,
     progressPercent: input.progressPercent,
+    lastReadAt: input.lastReadAt,
     tags: input.tags,
     addedAt: now,
     updatedAt: now
@@ -186,6 +187,7 @@ export function syncReadingWereadShelf(rawShelf: unknown, syncedAt = Date.now())
           ...source
         },
         ...(typeof input.progressPercent === "number" ? { progressPercent: input.progressPercent } : {}),
+        ...(typeof input.lastReadAt === "number" ? { lastReadAt: input.lastReadAt } : {}),
         tags: existing.tags,
         addedAt: existing.addedAt,
         updatedAt
@@ -202,6 +204,7 @@ export function syncReadingWereadShelf(rawShelf: unknown, syncedAt = Date.now())
       status: input.status ?? "reading",
       source,
       ...(typeof input.progressPercent === "number" ? { progressPercent: input.progressPercent } : {}),
+      ...(typeof input.lastReadAt === "number" ? { lastReadAt: input.lastReadAt } : {}),
       tags: input.tags,
       addedAt: updatedAt,
       updatedAt
@@ -793,8 +796,8 @@ function readWereadShelfBooks(rawShelf: unknown): ReadingAddBookInput[] {
 
 function readWereadShelfBook(raw: unknown): ReadingAddBookInput | null {
   if (!isRecord(raw)) return null;
-  const bookInfo = isRecord(raw.bookInfo) ? raw.bookInfo : {};
-  const source = isRecord(raw.source) ? raw.source : {};
+  const bookInfo = isRecord(raw.bookInfo) ? raw.bookInfo : isRecord(raw.book) ? raw.book : {};
+  const source = isRecord(raw.source) ? raw.source : isRecord(bookInfo.source) ? bookInfo.source : {};
   const title = readString(raw.title) ?? readString(bookInfo.title) ?? readString(raw.name) ?? readString(source.title);
   if (!title) return null;
   const author = readString(raw.author) ?? readString(bookInfo.author) ?? readString(source.author);
@@ -809,17 +812,17 @@ function readWereadShelfBook(raw: unknown): ReadingAddBookInput | null {
     ?? readString(bookInfo.coverUrl)
     ?? readString(raw.cover)
     ?? readString(bookInfo.cover);
-  const progressPercent = readNumber(raw.progressPercent)
-    ?? readNumber(bookInfo.progressPercent)
-    ?? readNumber(raw.progress)
-    ?? readNumber(bookInfo.progress);
+  const progressPercent = readProgressPercent(raw, bookInfo, source);
+  const lastReadAt = readWereadTimestamp(raw, bookInfo, source);
+  const status = readWereadBookStatus(raw, bookInfo, progressPercent);
   return {
     title,
     ...(author ? { author } : {}),
     track: readBookTrack(raw.track) ?? "co_read",
-    status: readBookStatus(raw.status) ?? "reading",
+    status,
     ...(coverUrl ? { coverUrl } : {}),
     ...(typeof progressPercent === "number" ? { progressPercent } : {}),
+    ...(typeof lastReadAt === "number" ? { lastReadAt } : {}),
     tags: Array.isArray(raw.tags) ? normalizeStringList(raw.tags.filter((tag): tag is string => typeof tag === "string")) : [],
     source: {
       kind: "weread",
@@ -829,6 +832,130 @@ function readWereadShelfBook(raw: unknown): ReadingAddBookInput | null {
       ...(author ? { author } : {})
     }
   };
+}
+
+function readWereadBookStatus(
+  raw: Record<string, unknown>,
+  bookInfo: Record<string, unknown>,
+  progressPercent?: number
+): ReadingBookStatus {
+  const explicitStatus = readBookStatus(raw.status) ?? readBookStatus(bookInfo.status);
+  if (explicitStatus === "finished") return "finished";
+  if (progressPercent !== undefined && progressPercent >= 100) return "finished";
+  if (hasFinishedDate(raw) || hasFinishedDate(bookInfo)) return "finished";
+  const finishSignals = [
+    raw.finishReading,
+    raw.finished,
+    raw.isFinished,
+    raw.readFinished,
+    bookInfo.finishReading,
+    bookInfo.finished,
+    bookInfo.isFinished,
+    bookInfo.readFinished
+  ];
+  if (finishSignals.some(isTruthyStatus)) return "finished";
+
+  const textStatus = [
+    raw.status,
+    raw.readingStatus,
+    raw.bookStatus,
+    bookInfo.status,
+    bookInfo.readingStatus,
+    bookInfo.bookStatus
+  ].map(readString).find(Boolean);
+  if (textStatus) {
+    const normalized = textStatus.toLowerCase();
+    if (normalized.includes("finish") || normalized.includes("done") || normalized.includes("complete") || normalized.includes("已读")) {
+      return "finished";
+    }
+  }
+
+  if (readNumber(raw.markedStatus) === 1 || readNumber(bookInfo.markedStatus) === 1) return "finished";
+  return explicitStatus ?? "reading";
+}
+
+function readProgressPercent(...records: Record<string, unknown>[]): number | undefined {
+  for (const record of records) {
+    const nestedValue = readNestedProgressPercent(record);
+    if (typeof nestedValue === "number") return nestedValue;
+    const value = readNumber(record.readingProgress)
+      ?? readNumber(record.progressPercent)
+      ?? readNumber(record.progress)
+      ?? readNumber(record.readProgress);
+    if (typeof value === "number") return value > 0 && value < 1 ? value * 100 : value;
+  }
+  return undefined;
+}
+
+function readWereadTimestamp(...records: Record<string, unknown>[]): number | undefined {
+  for (const record of records) {
+    const nestedValue = readNestedWereadTimestamp(record);
+    if (typeof nestedValue === "number") return nestedValue;
+    const value = readNumber(record.lastReadAt)
+      ?? readNumber(record.readUpdateTime)
+      ?? readNumber(record.lectureReadUpdateTime)
+      ?? readNumber(record.lastReadTime)
+      ?? readNumber(record.readAt)
+      ?? readNumber(record.readTime)
+      ?? readNumber(record.readingTime)
+      ?? readNumber(record.updateTime)
+      ?? readNumber(record.updatedAt)
+      ?? readNumber(record.finishedDate);
+    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
+  }
+  return undefined;
+}
+
+function readNestedProgressPercent(record: Record<string, unknown>): number | undefined {
+  for (const key of ["readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    const value = readNumber(nested.readingProgress)
+      ?? readNumber(nested.progressPercent)
+      ?? readNumber(nested.progress)
+      ?? readNumber(nested.readProgress);
+    if (typeof value === "number") return value > 0 && value < 1 ? value * 100 : value;
+  }
+  return undefined;
+}
+
+function readNestedWereadTimestamp(record: Record<string, unknown>): number | undefined {
+  for (const key of ["readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    const value = readNumber(nested.lastReadAt)
+      ?? readNumber(nested.readUpdateTime)
+      ?? readNumber(nested.lectureReadUpdateTime)
+      ?? readNumber(nested.lastReadTime)
+      ?? readNumber(nested.readAt)
+      ?? readNumber(nested.readTime)
+      ?? readNumber(nested.readingTime)
+      ?? readNumber(nested.updateTime)
+      ?? readNumber(nested.updatedAt)
+      ?? readNumber(nested.finishedDate);
+    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
+  }
+  return undefined;
+}
+
+function hasFinishedDate(record: Record<string, unknown>): boolean {
+  const direct = readNumber(record.finishedDate);
+  if (typeof direct === "number" && direct > 0) return true;
+  for (const key of ["readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    const value = readNumber(nested.finishedDate);
+    if (typeof value === "number" && value > 0) return true;
+  }
+  return false;
+}
+
+function isTruthyStatus(value: unknown): boolean {
+  return value === true || value === 1 || value === "1" || value === "true" || value === "finished" || value === "done";
+}
+
+function normalizeWereadTimestamp(value: number): number {
+  return value < 100_000_000_000 ? value * 1000 : value;
 }
 
 function extractShelfArray(rawShelf: unknown): unknown[] {
@@ -877,6 +1004,10 @@ function readString(value: unknown): string | undefined {
 }
 
 function readNumber(value: unknown): number | undefined {
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 

@@ -34,6 +34,9 @@ import { sidecarCall } from './system'
 
 const WEREAD_KEY_POLL_INTERVAL_MS = 1500
 const WEREAD_KEY_TIMEOUT_MS = 75_000
+const WEREAD_API_CACHE_TTL_MS = 5 * 60_000
+
+const wereadApiCache = new Map<string, { expiresAt: number; promise: Promise<unknown> }>()
 
 export interface ReadingGenerateCoverResult {
   ok: boolean
@@ -114,11 +117,17 @@ export const manualGenerateReadingNote = (input: ReadingRunTaskInput = {}) =>
 export const reviseReadingNote = (input: ReadingNoteRevisionInput) =>
   sidecarCall<ReadingNote>(READING_IPC_CHANNELS.REVISE_NOTE, input)
 
-export const connectReadingWeread = (input: ReadingConnectWereadInput) =>
-  sidecarCall<ReadingWereadConnection>(READING_IPC_CHANNELS.CONNECT_WEREAD, input)
+export const connectReadingWeread = async (input: ReadingConnectWereadInput) => {
+  const connection = await sidecarCall<ReadingWereadConnection>(READING_IPC_CHANNELS.CONNECT_WEREAD, input)
+  clearWereadApiCache()
+  return connection
+}
 
-export const disconnectReadingWeread = () =>
-  sidecarCall<ReadingWereadConnection>(READING_IPC_CHANNELS.DISCONNECT_WEREAD, {})
+export const disconnectReadingWeread = async () => {
+  const connection = await sidecarCall<ReadingWereadConnection>(READING_IPC_CHANNELS.DISCONNECT_WEREAD, {})
+  clearWereadApiCache()
+  return connection
+}
 
 export const searchReadingWeread = (input: ReadingSearchWereadInput) =>
   sidecarCall<ReadingSearchResult[]>(READING_IPC_CHANNELS.SEARCH_WEREAD, input)
@@ -297,23 +306,46 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
 }
 
+export function clearWereadApiCache(): void {
+  wereadApiCache.clear()
+}
+
+function cachedWereadCall<T>(key: string, load: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const cached = wereadApiCache.get(key)
+  if (cached && cached.expiresAt > now) return cached.promise as Promise<T>
+
+  const promise = load().catch((error) => {
+    if (wereadApiCache.get(key)?.promise === promise) wereadApiCache.delete(key)
+    throw error
+  })
+  wereadApiCache.set(key, {
+    expiresAt: now + WEREAD_API_CACHE_TTL_MS,
+    promise,
+  })
+  return promise
+}
+
 export const getWereadShelf = () =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_SHELF, {})
+  cachedWereadCall('shelf', () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_SHELF, {}))
 
 export const getWereadNotebooks = () =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_NOTEBOOKS, {})
+  cachedWereadCall('notebooks', () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_NOTEBOOKS, {}))
 
 export const getWereadBookmarks = (bookId: string) =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_BOOKMARKS, { bookId })
+  cachedWereadCall(`bookmarks:${bookId}`, () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_BOOKMARKS, { bookId }))
+
+export const getWereadReviews = (bookId: string) =>
+  cachedWereadCall(`reviews:${bookId}`, () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_REVIEWS, { bookId }))
 
 export const getWereadReadData = (period?: string) =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_READ_DATA, period ? { period } : {})
+  cachedWereadCall(`readData:${period ?? 'default'}`, () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_READ_DATA, period ? { period } : {}))
 
 export const getWereadBestBookmarks = (bookId: string, bookTitle?: string) =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_BEST_BOOKMARKS, { bookId, bookTitle })
+  cachedWereadCall(`bestBookmarks:${bookId}:${bookTitle ?? ''}`, () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_BEST_BOOKMARKS, { bookId, bookTitle }))
 
 export const getWereadPublicReviews = (bookId: string, listType?: string, bookTitle?: string) =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_PUBLIC_REVIEWS, { bookId, listType, bookTitle })
+  cachedWereadCall(`publicReviews:${bookId}:${listType ?? ''}:${bookTitle ?? ''}`, () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_PUBLIC_REVIEWS, { bookId, listType, bookTitle }))
 
 export const generateWereadNote = (input: {
   bookTitle: string

@@ -31,7 +31,8 @@ import {
   removeReadingBlur,
   removeReadingHighlight,
   reviseReadingNote,
-  setReadingBookLocalCover
+  setReadingBookLocalCover,
+  syncReadingWereadShelf
 } from "./reading-store";
 
 describe("reading-store", () => {
@@ -146,6 +147,65 @@ describe("reading-store", () => {
     expect(listReadingNotes({ includeHidden: true, includeDeleted: true })[0]).toMatchObject({
       id: note.id,
       deleted: true
+    });
+  });
+
+  test("syncs WeRead readingProgress into stored reading progress", () => {
+    const books = syncReadingWereadShelf([
+      {
+        bookInfo: {
+          bookId: "wr-ok",
+          title: "好吗好的",
+          author: "大冰"
+        },
+        readingProgress: 59,
+        lastReadTime: 1717200000
+      }
+    ]);
+
+    expect(books.find((book) => book.source.externalId === "wr-ok")).toMatchObject({
+      title: "好吗好的",
+      progressPercent: 59,
+      lastReadAt: 1717200000000,
+      status: "reading"
+    });
+  });
+
+  test("syncs official WeRead readUpdateTime into stored latest read time", () => {
+    const books = syncReadingWereadShelf([
+      {
+        bookInfo: {
+          bookId: "wr-latest",
+          title: "踏星",
+          author: "随散飘风",
+          readUpdateTime: 1717300000
+        },
+        progress: 47
+      }
+    ]);
+
+    expect(books.find((book) => book.source.externalId === "wr-latest")).toMatchObject({
+      title: "踏星",
+      progressPercent: 47,
+      lastReadAt: 1717300000000
+    });
+  });
+
+  test("syncs official WeRead finishedDate into finished reading status", () => {
+    const books = syncReadingWereadShelf([
+      {
+        bookInfo: {
+          bookId: "wr-finished-date",
+          title: "已读完的书",
+          finishedDate: 1717300000
+        }
+      }
+    ]);
+
+    expect(books.find((book) => book.source.externalId === "wr-finished-date")).toMatchObject({
+      title: "已读完的书",
+      status: "finished",
+      lastReadAt: 1717300000000
     });
   });
 

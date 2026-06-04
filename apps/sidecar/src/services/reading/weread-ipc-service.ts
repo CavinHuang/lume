@@ -23,6 +23,7 @@ export interface WereadIpcSource {
   shelf: () => Promise<unknown>;
   notebooks: () => Promise<unknown>;
   bookmarks: (bookId: string) => Promise<unknown>;
+  reviews: (bookId: string) => Promise<unknown>;
   readdata: (period?: string) => Promise<unknown>;
   bestBookmarks: (bookId: string, bookTitle?: string) => Promise<unknown>;
   publicReviews: (bookId: string, listType?: string, bookTitle?: string) => Promise<unknown>;
@@ -74,6 +75,9 @@ export function createDefaultWereadIpcSource(): WereadIpcSource {
     },
     async bookmarks(bookId) {
       return getConnectedWereadClient().bookmarks(bookId);
+    },
+    async reviews(bookId) {
+      return getConnectedWereadClient().reviews(bookId);
     },
     async readdata(period) {
       return getConnectedWereadClient().readdata(period);

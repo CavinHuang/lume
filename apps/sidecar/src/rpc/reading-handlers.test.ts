@@ -524,6 +524,7 @@ describe("reading-handlers", () => {
         shelf: async () => [{ title: "我在北京送快递", source: { kind: "weread", externalId: "wr-1" } }],
         notebooks: async () => [{ bookId: "wr-1", title: "我在北京送快递" }],
         bookmarks: async (bookId: string) => [{ bookId, markText: "把自己看作一个普通人。" }],
+        reviews: async (bookId: string) => [{ bookId, review: { content: "这句让我停了一下。" } }],
         readdata: async (period?: string) => ({ period, readingTime: 120 }),
         bestBookmarks: async (bookId: string) => [{ bookId, markText: "过普通人的生活。" }],
         publicReviews: async (bookId: string, listType?: string) => [{ bookId, listType, content: "非常真诚。" }],
@@ -538,6 +539,7 @@ describe("reading-handlers", () => {
       WEREAD_IPC_CHANNELS.GET_SHELF,
       WEREAD_IPC_CHANNELS.GET_NOTEBOOKS,
       WEREAD_IPC_CHANNELS.GET_BOOKMARKS,
+      WEREAD_IPC_CHANNELS.GET_REVIEWS,
       WEREAD_IPC_CHANNELS.GET_READ_DATA,
       WEREAD_IPC_CHANNELS.GET_BEST_BOOKMARKS,
       WEREAD_IPC_CHANNELS.GET_PUBLIC_REVIEWS,
@@ -555,6 +557,9 @@ describe("reading-handlers", () => {
     });
     await expect(handlers[WEREAD_IPC_CHANNELS.GET_BOOKMARKS]?.({ bookId: "wr-1" })).resolves.toMatchObject({
       bookmarks: [{ markText: "把自己看作一个普通人。" }]
+    });
+    await expect(handlers[WEREAD_IPC_CHANNELS.GET_REVIEWS]?.({ bookId: "wr-1" })).resolves.toMatchObject({
+      reviews: [{ review: { content: "这句让我停了一下。" } }]
     });
     await expect(handlers[WEREAD_IPC_CHANNELS.GET_READ_DATA]?.({ period: "week" })).resolves.toMatchObject({
       period: "week",
@@ -647,6 +652,7 @@ function createTestWereadSource(overrides: Partial<WereadIpcSource> = {}): Werea
     shelf: async () => [],
     notebooks: async () => [],
     bookmarks: async () => [],
+    reviews: async () => [],
     readdata: async () => ({}),
     bestBookmarks: async () => [],
     publicReviews: async () => [],

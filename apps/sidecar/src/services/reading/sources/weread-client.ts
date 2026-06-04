@@ -5,26 +5,47 @@ interface WereadClientInput {
   apiKey: string;
   fetch?: ReadingSourceFetch;
   baseUrl?: string;
+  skillVersion?: string;
 }
+
+const WEREAD_GATEWAY_URL = "https://i.weread.qq.com/api/agent/gateway";
+const WEREAD_SKILL_VERSION = "1.0.3";
 
 export class WereadClient {
   private readonly apiKey: string;
   private readonly fetchImpl: ReadingSourceFetch;
   private readonly baseUrl: string;
+  private readonly skillVersion: string;
 
   constructor(input: WereadClientInput) {
     this.apiKey = input.apiKey.trim();
     this.fetchImpl = input.fetch ?? fetch;
-    this.baseUrl = (input.baseUrl ?? "https://weread.qq.com").replace(/\/+$/, "");
+    this.baseUrl = (input.baseUrl ?? WEREAD_GATEWAY_URL).replace(/\/+$/, "");
+    this.skillVersion = input.skillVersion ?? WEREAD_SKILL_VERSION;
   }
 
   async shelf(): Promise<ReadingSourceBook[]> {
-    const payload = await this.getJson("/shelf/sync");
-    return extractBookArray(payload).map(mapWereadBook);
+    const payload = await this.callGateway("/shelf/sync");
+    const books = extractBookArray(payload).map(mapWereadBook);
+    return Promise.all(books.map(async (book) => {
+      const bookId = book.source?.externalId;
+      if (!bookId) return book;
+      const progress = await this.bookProgress(bookId).catch(() => null);
+      return progress ? mergeWereadProgress(book, progress) : book;
+    }));
+  }
+
+  async shelfStats(): Promise<{ total: number; bookCount: number; albumCount: number; mpCount: number }> {
+    return readShelfStats(await this.callGateway("/shelf/sync"));
   }
 
   async search(query: string, limit = 10): Promise<ReadingSearchResult[]> {
-    const payload = await this.getJson(`/web/search/global?keyword=${encodeURIComponent(query)}&maxIdx=0&count=${limit}`);
+    const payload = await this.callGateway("/store/search", {
+      keyword: query,
+      scope: 10,
+      maxIdx: 0,
+      count: limit
+    });
     return extractBookArray(payload).map((item) => {
       const book = mapWereadBook(readBookInfo(item));
       return {
@@ -39,68 +60,145 @@ export class WereadClient {
   }
 
   async bookmarks(bookId: string): Promise<unknown[]> {
-    return extractArray(await this.getJson(`/book/bookmarklist?bookId=${encodeURIComponent(bookId)}`), "bookmarks");
+    const payload = await this.callGateway("/book/bookmarklist", { bookId });
+    return withChapterTitles(extractWereadBookmarkItems(payload), readWereadChapterTitles(payload));
   }
 
   async notebooks(): Promise<unknown[]> {
-    return extractArray(await this.getJson("/notebooklist"), "notebooks");
+    const notebooks: unknown[] = [];
+    let lastSort: number | undefined;
+    for (let page = 0; page < 20; page++) {
+      const payload = await this.callGateway("/user/notebooks", {
+        count: 500,
+        ...(typeof lastSort === "number" ? { lastSort } : {})
+      });
+      const pageNotebooks = extractArrayAny(payload, ["books", "notebooks"]);
+      notebooks.push(...pageNotebooks);
+      if (!hasMore(payload)) break;
+      const lastNotebook = readLastRecord(pageNotebooks);
+      const nextLastSort = lastNotebook ? readNumber(lastNotebook.sort) : undefined;
+      if (typeof nextLastSort !== "number" || nextLastSort === lastSort) break;
+      lastSort = nextLastSort;
+    }
+    return notebooks;
   }
 
   async reviews(bookId: string): Promise<unknown[]> {
-    return extractArray(await this.getJson(`/review/list/mine?bookid=${encodeURIComponent(bookId)}&count=50&synckey=0`), "reviews");
+    const reviews: unknown[] = [];
+    let synckey = 0;
+    for (let page = 0; page < 20; page++) {
+      const payload = await this.callGateway("/review/list/mine", {
+        bookid: bookId,
+        count: 50,
+        synckey
+      });
+      reviews.push(...extractArray(payload, "reviews"));
+      if (!hasMore(payload)) break;
+      const nextSynckey = readNumber(isRecord(payload) ? payload.synckey : undefined);
+      if (typeof nextSynckey !== "number" || nextSynckey === synckey) break;
+      synckey = nextSynckey;
+    }
+    return reviews;
   }
 
   async bestBookmarks(bookId: string): Promise<unknown[]> {
-    const payload = await this.getJson(`/web/book/bestbookmarks?bookId=${encodeURIComponent(bookId)}`);
+    const payload = await this.callGateway("/book/bestbookmarks", {
+      bookId,
+      chapterUid: 0,
+      synckey: 0
+    });
     const book: Record<string, unknown> = isRecord(payload) && isRecord(payload.book) ? payload.book : {};
+    const chapterTitles = readWereadChapterTitles(payload);
     return extractArrayAny(payload, ["items", "bookmarks"]).filter(isRecord).map((item) => ({
       markText: readString(item.markText) ?? readString(item.text) ?? "",
       totalCount: readNumber(item.totalCount) ?? readNumber(item.count) ?? 0,
-      chapterTitle: readString(item.chapterName) ?? readString(item.chapterTitle) ?? "",
+      chapterTitle: readString(item.chapterName)
+        ?? readString(item.chapterTitle)
+        ?? chapterTitles.get(String(readNumber(item.chapterUid) ?? readString(item.chapterUid) ?? ""))
+        ?? "",
       bookTitle: readString(book.title) ?? readString(item.bookTitle) ?? "",
       bookAuthor: readString(book.author) ?? readString(item.bookAuthor) ?? ""
     })).filter((item) => item.markText);
   }
 
   async publicReviews(bookId: string, listType = "hot"): Promise<unknown[]> {
-    const payload = await this.getJson(`/review/list?bookId=${encodeURIComponent(bookId)}&listType=${encodeURIComponent(listType)}`);
+    const payload = await this.callGateway("/review/list", {
+      bookId,
+      reviewListType: mapReviewListType(listType),
+      count: 20,
+      maxIdx: 0,
+      synckey: 0
+    });
     return extractArrayAny(payload, ["reviews", "items"]).filter(isRecord).map((item) => ({
       reviewId: readString(item.reviewId) ?? readString(item.id),
-      content: readString(item.content) ?? readString(item.review) ?? readString(item.abstract) ?? "",
+      content: readPublicReviewContent(item),
       likeCount: readNumber(item.likeCount) ?? readNumber(item.likes) ?? readNumber(item.totalCount) ?? 0,
       authorName: readString(item.authorName) ?? readString(item.nickName)
     })).filter((item) => item.content);
   }
 
   async readdata(period?: string): Promise<unknown> {
-    return this.getJson(period ? `/readdata/detail?mode=${encodeURIComponent(period)}` : "/readdata/detail");
+    return this.callGateway("/readdata/detail", period ? { mode: normalizeReadDataMode(period) } : undefined);
   }
 
-  private async getJson(path: string): Promise<unknown> {
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+  private async callGateway(apiName: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    const response = await this.fetchImpl(this.baseUrl, {
+      method: "POST",
       headers: {
-        authorization: `Bearer ${this.apiKey}`
-      }
+        authorization: `Bearer ${this.apiKey}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        api_name: apiName,
+        ...params,
+        skill_version: this.skillVersion
+      })
     });
     if (!response.ok) {
       throw new Error(`WeRead 请求失败: ${response.status}`);
     }
-    return response.json();
+    const payload = await response.json();
+    if (isRecord(payload)) {
+      const errcode = readNumber(payload.errcode);
+      if (typeof errcode === "number" && errcode !== 0) {
+        throw new Error(readString(payload.errmsg) ?? readString(payload.message) ?? `WeRead 请求失败: ${errcode}`);
+      }
+      const upgradeInfo = isRecord(payload.upgrade_info) ? payload.upgrade_info : undefined;
+      if (upgradeInfo) {
+        throw new Error(readString(upgradeInfo.message) ?? "微信读书 Skill 需要升级");
+      }
+    }
+    return payload;
+  }
+
+  private async bookProgress(bookId: string): Promise<Record<string, unknown> | null> {
+    const payload = await this.callGateway("/book/getprogress", { bookId });
+    if (!isRecord(payload)) return null;
+    if (isRecord(payload.book)) return payload.book;
+    return payload;
   }
 }
 
 function mapWereadBook(item: Record<string, unknown>): ReadingSourceBook {
-  const externalId = readString(item.bookId) ?? readString(item.id);
-  const title = readString(item.title) ?? readString(item.name) ?? "未命名微信读书书籍";
-  const author = readString(item.author);
-  const coverUrl = readString(item.cover) ?? readString(item.coverUrl);
-  const progressPercent = readNumber(item.progress) ?? readNumber(item.progressPercent);
+  const bookInfo = readBookInfo(item);
+  const source = isRecord(item.source) ? item.source : isRecord(bookInfo.source) ? bookInfo.source : {};
+  const externalId = readString(item.bookId)
+    ?? readString(bookInfo.bookId)
+    ?? readString(source.externalId)
+    ?? readString(item.id)
+    ?? readString(bookInfo.id);
+  const title = readString(item.title) ?? readString(bookInfo.title) ?? readString(source.title) ?? readString(item.name) ?? "未命名微信读书书籍";
+  const author = readString(item.author) ?? readString(bookInfo.author) ?? readString(source.author);
+  const coverUrl = readString(item.cover) ?? readString(bookInfo.cover) ?? readString(item.coverUrl) ?? readString(bookInfo.coverUrl);
+  const progressPercent = readProgressPercent(item, bookInfo, source);
+  const lastReadAt = readWereadTimestamp(item, bookInfo, source);
+  const status = readWereadBookStatus(item, bookInfo, progressPercent);
   return {
     title,
     author,
     coverUrl,
     track: "co_read",
-    status: "reading",
+    status,
     source: {
       kind: "weread",
       externalId,
@@ -108,12 +206,147 @@ function mapWereadBook(item: Record<string, unknown>): ReadingSourceBook {
       author,
       url: externalId ? `https://weread.qq.com/web/book/${externalId}` : undefined
     },
-    progressPercent
+    ...(typeof progressPercent === "number" ? { progressPercent } : {}),
+    ...(typeof lastReadAt === "number" ? { lastReadAt } : {})
   };
 }
 
+function readWereadBookStatus(
+  item: Record<string, unknown>,
+  bookInfo: Record<string, unknown>,
+  progressPercent?: number
+): "reading" | "finished" {
+  if (progressPercent !== undefined && progressPercent >= 100) return "finished";
+  if (hasFinishedDate(item) || hasFinishedDate(bookInfo)) return "finished";
+  const finishSignals = [
+    item.finishReading,
+    item.finished,
+    item.isFinished,
+    item.readFinished,
+    bookInfo.finishReading,
+    bookInfo.finished,
+    bookInfo.isFinished,
+    bookInfo.readFinished
+  ];
+  if (finishSignals.some(isTruthyStatus)) return "finished";
+
+  const textStatus = [
+    item.status,
+    item.readingStatus,
+    item.bookStatus,
+    bookInfo.status,
+    bookInfo.readingStatus,
+    bookInfo.bookStatus
+  ].map(readString).find(Boolean);
+  if (textStatus) {
+    const normalized = textStatus.toLowerCase();
+    if (normalized.includes("finish") || normalized.includes("done") || normalized.includes("complete") || normalized.includes("已读")) {
+      return "finished";
+    }
+  }
+
+  return readNumber(item.markedStatus) === 1 || readNumber(bookInfo.markedStatus) === 1 ? "finished" : "reading";
+}
+
+function hasFinishedDate(record: Record<string, unknown>): boolean {
+  const direct = readNumber(record.finishedDate);
+  if (typeof direct === "number" && direct > 0) return true;
+  for (const key of ["readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    const value = readNumber(nested.finishedDate);
+    if (typeof value === "number" && value > 0) return true;
+  }
+  return false;
+}
+
+function isTruthyStatus(value: unknown): boolean {
+  return value === true || value === 1 || value === "1" || value === "true" || value === "finished" || value === "done";
+}
+
 function readBookInfo(item: Record<string, unknown>): Record<string, unknown> {
-  return isRecord(item.bookInfo) ? item.bookInfo : item;
+  if (isRecord(item.bookInfo)) return item.bookInfo;
+  if (isRecord(item.book)) return item.book;
+  return item;
+}
+
+function readProgressPercent(...records: Record<string, unknown>[]): number | undefined {
+  for (const record of records) {
+    const nestedValue = readNestedProgressPercent(record);
+    if (typeof nestedValue === "number") return nestedValue;
+    const value = readNumber(record.readingProgress)
+      ?? readNumber(record.progressPercent)
+      ?? readNumber(record.progress)
+      ?? readNumber(record.readProgress);
+    if (typeof value === "number") return value > 0 && value < 1 ? value * 100 : value;
+  }
+  return undefined;
+}
+
+function readWereadTimestamp(...records: Record<string, unknown>[]): number | undefined {
+  for (const record of records) {
+    const nestedValue = readNestedWereadTimestamp(record);
+    if (typeof nestedValue === "number") return nestedValue;
+    const value = readNumber(record.lastReadAt)
+      ?? readNumber(record.readUpdateTime)
+      ?? readNumber(record.lectureReadUpdateTime)
+      ?? readNumber(record.lastReadTime)
+      ?? readNumber(record.readAt)
+      ?? readNumber(record.readTime)
+      ?? readNumber(record.readingTime)
+      ?? readNumber(record.updateTime)
+      ?? readNumber(record.updatedAt)
+      ?? readNumber(record.finishedDate);
+    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
+  }
+  return undefined;
+}
+
+function mergeWereadProgress(book: ReadingSourceBook, progress: Record<string, unknown>): ReadingSourceBook {
+  const progressPercent = readProgressPercent(progress);
+  const lastReadAt = readWereadTimestamp(progress) ?? book.lastReadAt;
+  return {
+    ...book,
+    status: typeof progressPercent === "number" && progressPercent >= 100 ? "finished" : book.status,
+    ...(typeof progressPercent === "number" ? { progressPercent } : {}),
+    ...(typeof lastReadAt === "number" ? { lastReadAt } : {})
+  };
+}
+
+function readNestedProgressPercent(record: Record<string, unknown>): number | undefined {
+  for (const key of ["readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    const value = readNumber(nested.readingProgress)
+      ?? readNumber(nested.progressPercent)
+      ?? readNumber(nested.progress)
+      ?? readNumber(nested.readProgress);
+    if (typeof value === "number") return value > 0 && value < 1 ? value * 100 : value;
+  }
+  return undefined;
+}
+
+function readNestedWereadTimestamp(record: Record<string, unknown>): number | undefined {
+  for (const key of ["readInfo", "progressInfo"]) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    const value = readNumber(nested.lastReadAt)
+      ?? readNumber(nested.readUpdateTime)
+      ?? readNumber(nested.lectureReadUpdateTime)
+      ?? readNumber(nested.lastReadTime)
+      ?? readNumber(nested.readAt)
+      ?? readNumber(nested.readTime)
+      ?? readNumber(nested.readingTime)
+      ?? readNumber(nested.updateTime)
+      ?? readNumber(nested.updatedAt)
+      ?? readNumber(nested.finishedDate);
+    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
+  }
+  return undefined;
+}
+
+function normalizeWereadTimestamp(value: number): number {
+  return value < 100_000_000_000 ? value * 1000 : value;
 }
 
 function extractBookArray(payload: unknown): Array<Record<string, unknown>> {
@@ -122,6 +355,10 @@ function extractBookArray(payload: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(payload.books)) return payload.books.filter(isRecord);
   if (isRecord(payload.data) && Array.isArray(payload.data.books)) return payload.data.books.filter(isRecord);
   if (Array.isArray(payload.data)) return payload.data.filter(isRecord);
+  const results = extractArrayAny(payload, ["results"]).filter(isRecord);
+  if (results.length) {
+    return results.flatMap((result) => extractArrayAny(result, ["books"]).filter(isRecord));
+  }
   return [];
 }
 
@@ -145,6 +382,129 @@ function extractArrayAny(payload: unknown, keys: string[]): unknown[] {
   return [];
 }
 
+function readLastRecord(items: unknown[]): Record<string, unknown> | undefined {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    if (isRecord(item)) return item;
+  }
+  return undefined;
+}
+
+function withChapterTitles(items: unknown[], chapterTitles: Map<string, string>): unknown[] {
+  if (chapterTitles.size === 0) return items;
+  return items.map((item) => {
+    if (!isRecord(item) || readString(item.chapterName) || readString(item.chapterTitle)) return item;
+    const chapterId = readNumber(item.chapterUid) ?? readString(item.chapterUid);
+    const chapterTitle = chapterId !== undefined ? chapterTitles.get(String(chapterId)) : undefined;
+    return chapterTitle ? { ...item, chapterTitle } : item;
+  });
+}
+
+function extractWereadBookmarkItems(payload: unknown): unknown[] {
+  if (!isRecord(payload)) return extractArrayAny(payload, ["updated", "bookmarks"]);
+  const chapterTitles = readWereadChapterTitles(payload);
+  const chapterGroups = extractArrayAny(payload, ["chapters"]).filter(isRecord);
+  const groupedItems = chapterGroups.flatMap((chapter) => {
+    const items = Array.isArray(chapter.items) ? chapter.items.filter(isRecord) : [];
+    if (items.length === 0) return [];
+    const chapterId = readNumber(chapter.chapterUid) ?? readString(chapter.chapterUid);
+    const chapterTitle = readString(chapter.chapterName)
+      ?? readString(chapter.title)
+      ?? readString(chapter.chapterTitle)
+      ?? (chapterId !== undefined ? chapterTitles.get(String(chapterId)) : undefined);
+    return items.map((item) => ({
+      ...item,
+      ...(chapterId !== undefined && !("chapterUid" in item) ? { chapterUid: chapterId } : {}),
+      ...(chapterTitle ? { chapterTitle } : {})
+    }));
+  });
+  return groupedItems.length > 0 ? groupedItems : extractArrayAny(payload, ["updated", "bookmarks"]);
+}
+
+function readWereadChapterTitles(payload: unknown): Map<string, string> {
+  const chapters = extractArrayAny(payload, ["chapters"]).filter(isRecord);
+  return new Map(chapters.flatMap((chapter) => {
+    const id = readNumber(chapter.chapterUid)
+      ?? readNumber(chapter.uid)
+      ?? readNumber(chapter.chapterId)
+      ?? readString(chapter.chapterUid)
+      ?? readString(chapter.uid)
+      ?? readString(chapter.chapterId);
+    const title = readString(chapter.title) ?? readString(chapter.chapterTitle) ?? readString(chapter.chapterName) ?? readString(chapter.name);
+    return id !== undefined && title ? [[String(id), title] as const] : [];
+  }));
+}
+
+function hasMore(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  const value = payload.hasMore;
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function readShelfStats(payload: unknown): { total: number; bookCount: number; albumCount: number; mpCount: number } {
+  const bookCount = extractArrayAny(payload, ["books"]).length;
+  const albumCount = extractArrayAny(payload, ["albums"]).length;
+  const mp = isRecord(payload) && isRecord(payload.mp)
+    ? payload.mp
+    : isRecord(payload) && isRecord(payload.data) && isRecord(payload.data.mp)
+      ? payload.data.mp
+      : undefined;
+  const mpCount = mp && Object.keys(mp).length ? 1 : 0;
+  return {
+    total: bookCount + albumCount + mpCount,
+    bookCount,
+    albumCount,
+    mpCount
+  };
+}
+
+function normalizeReadDataMode(period: string): string {
+  switch (period) {
+    case "week":
+      return "weekly";
+    case "month":
+      return "monthly";
+    case "year":
+      return "annually";
+    case "all":
+      return "overall";
+    default:
+      return period;
+  }
+}
+
+function mapReviewListType(listType: string): number {
+  switch (listType) {
+    case "hot":
+    case "recommend":
+    case "recommended":
+      return 1;
+    case "bad":
+      return 2;
+    case "latest":
+    case "recent":
+      return 3;
+    case "general":
+    case "average":
+      return 4;
+    case "all":
+    default:
+      return 0;
+  }
+}
+
+function readPublicReviewContent(item: Record<string, unknown>): string {
+  const review = isRecord(item.review) ? item.review : item;
+  const nestedReview = isRecord(review.review) ? review.review : review;
+  return readString(item.content)
+    ?? readString(item.review)
+    ?? readString(item.abstract)
+    ?? readString(review.content)
+    ?? readString(nestedReview.content)
+    ?? readString(nestedReview.htmlContent)
+    ?? "";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
@@ -154,5 +514,9 @@ function readString(value: unknown): string | undefined {
 }
 
 function readNumber(value: unknown): number | undefined {
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

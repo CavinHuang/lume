@@ -203,6 +203,7 @@ export interface ReadingAddBookInput {
   source?: Partial<ReadingSourceRef>;
   coverUrl?: string;
   progressPercent?: number;
+  lastReadAt?: number;
   tags?: string[];
 }
 
@@ -428,6 +429,7 @@ export const WEREAD_IPC_CHANNELS = {
   GET_SHELF: "weread:getShelf",
   GET_NOTEBOOKS: "weread:getNotebooks",
   GET_BOOKMARKS: "weread:getBookmarks",
+  GET_REVIEWS: "weread:getReviews",
   GET_READ_DATA: "weread:getReadData",
   GET_BEST_BOOKMARKS: "weread:getBestBookmarks",
   GET_PUBLIC_REVIEWS: "weread:getPublicReviews",

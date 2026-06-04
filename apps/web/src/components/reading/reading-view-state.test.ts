@@ -2,12 +2,21 @@ import { describe, expect, test } from 'bun:test'
 import type { ReadingLibrarySnapshot } from '@lume/shared'
 import {
   buildReadingSearchItems,
+  buildReadingOverviewStats,
   buildReadingBookRail,
   buildReadingWereadConnectionPrompt,
   buildReadingNoteNavigation,
+  buildWereadNotebookView,
+  createDefaultWereadRailGroupState,
   extendReadingHoverNavUntil,
   formatReadingProgress,
+  formatWereadNotebookBadgeLabel,
+  getWereadTabForSelection,
+  normalizeWereadBookmarks,
+  normalizeWereadReviews,
+  shouldStartReadingRun,
   shouldShowReadingHoverNav,
+  toggleWereadRailGroup,
 } from './reading-view-state'
 
 describe('reading view state', () => {
@@ -24,6 +33,107 @@ describe('reading view state', () => {
       kind: 'book',
       title: '我在北京送快递',
       progressLabel: '54%'
+    })
+  })
+
+  test('includes WeRead highlights in the all notes rail summary', () => {
+    const rail = buildReadingBookRail(createSnapshot({ connected: true }), { highlightCount: 57 })
+
+    expect(rail.items[0]).toMatchObject({
+      id: '__all__',
+      title: '全部笔记',
+      subtitle: '2 篇笔记 + 57 条划线',
+    })
+  })
+
+  test('keeps Lume overview stats separate from synced WeRead shelf books', () => {
+    const snapshot = createSnapshot({ connected: true })
+    snapshot.books.push({
+      id: 'weread-reading',
+      title: '微信在读',
+      track: 'co_read',
+      status: 'reading',
+      source: { kind: 'weread', externalId: 'wr-reading' },
+      tags: [],
+      addedAt: 1,
+      updatedAt: 1,
+    })
+    snapshot.books.push({
+      id: 'local-finished',
+      title: 'Lume 读完',
+      track: 'lume',
+      status: 'finished',
+      source: { kind: 'manual' },
+      tags: [],
+      addedAt: 1,
+      updatedAt: 1,
+    })
+    snapshot.stats = {
+      ...snapshot.stats,
+      readingCount: 999,
+      finishedCount: 999,
+      noteCount: 3,
+    }
+
+    expect(buildReadingOverviewStats(snapshot)).toEqual({
+      readingCount: 2,
+      noteCount: 3,
+      finishedCount: 1,
+    })
+  })
+
+  test('keeps synced WeRead shelf books out of the local Lume rail unless Lume has notes for them', () => {
+    const snapshot = createSnapshot({ connected: true })
+    snapshot.books.push({
+      id: 'synced-empty',
+      title: '只来自微信书架的书',
+      author: '作者丙',
+      track: 'co_read',
+      status: 'reading',
+      source: { kind: 'weread', externalId: 'wr-empty' },
+      tags: [],
+      addedAt: 1,
+      updatedAt: 1,
+    })
+    snapshot.books.push({
+      id: 'synced-noted',
+      title: 'Lume 写过笔记的微信书',
+      author: '作者丁',
+      track: 'co_read',
+      status: 'reading',
+      source: { kind: 'weread', externalId: 'wr-noted' },
+      tags: [],
+      addedAt: 1,
+      updatedAt: 1,
+    })
+    snapshot.notes.push({
+      id: 'lume-note',
+      bookId: 'synced-noted',
+      title: 'Lume 的笔记',
+      depth: 'seed',
+      noteKind: 'seed',
+      summary: '这本微信书有 Lume 笔记。',
+      body: '这本微信书有 Lume 笔记。',
+      tags: [],
+      evidence: [{ quote: '一句划线', sourceKind: 'weread', sourceId: 'wr-noted', capturedAt: 1 }],
+      aiGenerated: true,
+      hidden: false,
+      deleted: false,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+
+    const rail = buildReadingBookRail(snapshot)
+
+    expect(rail.items.map((item) => item.id)).toEqual([
+      '__all__',
+      'book-1',
+      'book-2',
+      'synced-noted',
+    ])
+    expect(rail.items[3]).toMatchObject({
+      title: 'Lume 写过笔记的微信书',
+      subtitle: '1篇笔记',
     })
   })
 
@@ -85,6 +195,17 @@ describe('reading view state', () => {
     expect(formatReadingProgress(undefined)).toBe('在读')
   })
 
+  test('formats WeRead notebook count as a visible badge only when the book has notes', () => {
+    expect(formatWereadNotebookBadgeLabel(19)).toBe('19条笔记')
+    expect(formatWereadNotebookBadgeLabel(0)).toBeNull()
+  })
+
+  test('blocks duplicate reading runs while state or a synchronous lock is active', () => {
+    expect(shouldStartReadingRun(false, false)).toBeTrue()
+    expect(shouldStartReadingRun(true, false)).toBeFalse()
+    expect(shouldStartReadingRun(false, true)).toBeFalse()
+  })
+
   test('maps WeRead search results into add-book payloads and marks existing books', () => {
     const items = buildReadingSearchItems([
       {
@@ -135,6 +256,380 @@ describe('reading view state', () => {
         }
       }
     })
+  })
+
+  test('builds Alice-like WeRead notebook rail from connected notebook data', () => {
+    const snapshot = createSnapshot({ connected: true })
+    snapshot.notes = [
+      {
+        id: 'note-1',
+        bookId: 'book-1',
+        title: '身体在场',
+        depth: 'seed',
+        noteKind: 'seed',
+        summary: '普通劳动被写得很具体。',
+        body: '普通劳动被写得很具体。',
+        tags: [],
+        evidence: [{ quote: '普通人', sourceKind: 'weread', sourceId: 'wr-1', capturedAt: 1 }],
+        aiGenerated: true,
+        hidden: false,
+        deleted: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]
+
+    const view = buildWereadNotebookView({
+      notebooks: {
+        notebooks: [
+          {
+            bookId: 'wr-1',
+            book: {
+              title: '好吗好的',
+              author: '大冰',
+              cover: 'https://cover.example.com/ok.jpg',
+            },
+            reviewCount: 15,
+            noteCount: 4,
+            bookmarkCount: 0,
+            readingProgress: 19,
+            markedStatus: 0,
+            sort: 99,
+          },
+          {
+            bookId: 'wr-2',
+            title: '龙族Ⅱ：悼亡者之瞳',
+            author: '江南',
+            noteCount: 4,
+            reviewCount: 0,
+            markedStatus: 1,
+            sort: 88,
+          },
+        ],
+      },
+      snapshot,
+    })
+
+    expect(view.books.map((book) => book.id)).toEqual(['weread:wr-1', 'weread:wr-2'])
+    expect(view.books[0]).toMatchObject({
+      bookId: 'wr-1',
+      title: '好吗好的',
+      author: '大冰',
+      coverUrl: 'https://cover.example.com/ok.jpg',
+      noteCount: 19,
+      highlightCount: 4,
+      thoughtCount: 15,
+      progressLabel: '19%',
+      status: 'reading',
+      localNoteCount: 1,
+    })
+    expect(view.summary).toEqual({
+      localNoteCount: 1,
+      highlightCount: 8,
+      thoughtCount: 15,
+      readingCount: 1,
+      finishedCount: 1,
+    })
+  })
+
+  test('uses the WeRead shelf as the book list and notebooks only as note counts', () => {
+    const view = buildWereadNotebookView({
+      shelf: {
+        books: [
+          {
+            title: '书架里的在读书',
+            author: '作者甲',
+            coverUrl: 'https://cover.example.com/reading.jpg',
+            status: 'reading',
+            progressPercent: 42,
+            lastReadAt: 1717100000000,
+            source: { kind: 'weread', externalId: 'wr-reading' },
+          },
+          {
+            title: '书架里的已读书',
+            author: '作者乙',
+            status: 'finished',
+            progressPercent: 100,
+            lastReadAt: 1717000000000,
+            source: { kind: 'weread', externalId: 'wr-finished' },
+          },
+        ],
+      },
+      notebooks: {
+        notebooks: [
+          {
+            bookId: 'wr-reading',
+            noteCount: 2,
+            reviewCount: 3,
+            bookmarkCount: 1,
+            sort: 10,
+          },
+          {
+            bookId: 'wr-notebook-only',
+            title: '只有笔记本没有书架的书',
+            noteCount: 9,
+            reviewCount: 9,
+          },
+        ],
+      },
+      snapshot: createSnapshot({ connected: true }),
+    })
+
+    expect(view.books.map((book) => book.bookId)).toEqual(['wr-reading', 'wr-finished'])
+    expect(view.books[0]).toMatchObject({
+      title: '书架里的在读书',
+      author: '作者甲',
+      coverUrl: 'https://cover.example.com/reading.jpg',
+      noteCount: 6,
+      highlightCount: 2,
+      thoughtCount: 3,
+      bookmarkCount: 1,
+      progressLabel: '42%',
+      status: 'reading',
+    })
+    expect(view.books[1]).toMatchObject({
+      title: '书架里的已读书',
+      status: 'finished',
+      noteCount: 0,
+      progressLabel: '100%',
+    })
+    expect(view.summary).toEqual({
+      localNoteCount: 0,
+      highlightCount: 3,
+      thoughtCount: 3,
+      readingCount: 1,
+      finishedCount: 1,
+    })
+  })
+
+  test('shows nested WeRead progress and sorts shelf books by latest read time', () => {
+    const view = buildWereadNotebookView({
+      shelf: {
+        books: [
+          {
+            bookInfo: {
+              bookId: 'wr-old',
+              title: '旧阅读',
+              author: '作者旧',
+            },
+            readingProgress: 22,
+            lastReadTime: 1717000000,
+          },
+          {
+            bookInfo: {
+              bookId: 'wr-new',
+              title: '最近阅读',
+              author: '作者新',
+            },
+            readingProgress: 59,
+            lastReadTime: 1717200000,
+          },
+        ],
+      },
+      notebooks: {
+        notebooks: [
+          {
+            bookId: 'wr-new',
+            noteCount: 2,
+          },
+        ],
+      },
+      snapshot: createSnapshot({ connected: true }),
+    })
+
+    expect(view.books.map((book) => book.bookId)).toEqual(['wr-new', 'wr-old'])
+    expect(view.books[0]).toMatchObject({
+      title: '最近阅读',
+      progressLabel: '59%',
+      lastReadAt: 1717200000000,
+      noteCount: 2,
+    })
+  })
+
+  test('uses official WeRead readUpdateTime and readInfo progress fields in the connected rail', () => {
+    const view = buildWereadNotebookView({
+      shelf: {
+        books: [
+          {
+            bookInfo: {
+              bookId: 'wr-old',
+              title: '旧阅读',
+              author: '作者旧',
+              readUpdateTime: 1717000000,
+            },
+            progressInfo: {
+              progress: 22,
+            },
+          },
+          {
+            bookInfo: {
+              bookId: 'wr-new',
+              title: '最近阅读',
+              author: '作者新',
+              readUpdateTime: 1717300000,
+            },
+            progressInfo: {
+              progress: 59,
+            },
+          },
+        ],
+      },
+      notebooks: {
+        notebooks: [
+          {
+            bookId: 'wr-new',
+            noteCount: 4,
+            reviewCount: 15,
+            readInfo: {
+              readingProgress: 59,
+            },
+          },
+        ],
+      },
+      snapshot: createSnapshot({ connected: true }),
+    })
+
+    expect(view.books.map((book) => book.bookId)).toEqual(['wr-new', 'wr-old'])
+    expect(view.books[0]).toMatchObject({
+      title: '最近阅读',
+      progressLabel: '59%',
+      lastReadAt: 1717300000000,
+      noteCount: 19,
+    })
+  })
+
+  test('classifies WeRead notebooks into reading and read groups from common status fields', () => {
+    const view = buildWereadNotebookView({
+      notebooks: {
+        notebooks: [
+          { bookId: 'reading-1', title: '仍在读', readingProgress: 42 },
+          { bookId: 'done-by-progress', title: '进度读完', readingProgress: 100 },
+          { bookId: 'done-by-flag', title: '标记读完', book: { title: '标记读完', finished: true } },
+          { bookId: 'done-by-status', title: '状态读完', readingStatus: 'finished' },
+          { bookId: 'done-by-finished-date', title: '完成日期', readInfo: { finishedDate: 1717300000 } },
+        ],
+      },
+      snapshot: createSnapshot({ connected: true }),
+    })
+
+    expect(view.books.map((book) => [book.bookId, book.status])).toEqual([
+      ['reading-1', 'reading'],
+      ['done-by-progress', 'finished'],
+      ['done-by-flag', 'finished'],
+      ['done-by-status', 'finished'],
+      ['done-by-finished-date', 'finished'],
+    ])
+    expect(view.summary.readingCount).toBe(1)
+    expect(view.summary.finishedCount).toBe(4)
+  })
+
+  test('keeps WeRead rail groups expanded by default and toggles them independently', () => {
+    const state = createDefaultWereadRailGroupState()
+
+    expect(state).toEqual({ reading: true, finished: true })
+    expect(toggleWereadRailGroup(state, 'reading')).toEqual({ reading: false, finished: true })
+    expect(toggleWereadRailGroup(state, 'finished')).toEqual({ reading: true, finished: false })
+  })
+
+  test('returns to My Notes when selecting a different WeRead book', () => {
+    expect(getWereadTabForSelection('notes', '__all__', 'weread:wr-1')).toBe('mine')
+    expect(getWereadTabForSelection('popular', 'weread:wr-1', 'weread:wr-2')).toBe('mine')
+    expect(getWereadTabForSelection('notes', 'weread:wr-1', 'weread:wr-1')).toBe('notes')
+    expect(getWereadTabForSelection('notes', 'weread:wr-1', '__all__')).toBe('notes')
+  })
+
+  test('normalizes WeRead highlights and thoughts for the My Notes tab', () => {
+    expect(normalizeWereadBookmarks({
+      bookmarks: [
+        {
+          bookmarkId: 'b1',
+          bookId: 'wr-1',
+          markText: '没资格谈论理想时，先好好去挣钱。',
+          chapterName: '最后一个义工',
+          createTime: 1538352000,
+        },
+        {
+          bookmarkId: 'b2',
+          markText: '  ',
+        },
+      ],
+    })).toEqual([
+      {
+        id: 'b1',
+        text: '没资格谈论理想时，先好好去挣钱。',
+        chapterTitle: '最后一个义工',
+        createdAt: 1538352000,
+      },
+    ])
+
+    expect(normalizeWereadReviews({
+      reviews: [
+        {
+          review: {
+            reviewId: 'r1',
+            content: '米饭和时间能让你酿出一首属于你自己的歌！',
+            chapterName: '我的想法',
+            createTime: 1538352000,
+          },
+        },
+      ],
+    })).toEqual([
+      {
+        id: 'r1',
+        text: '米饭和时间能让你酿出一首属于你自己的歌！',
+        chapterTitle: '我的想法',
+        createdAt: 1538352000,
+      },
+    ])
+  })
+
+  test('resolves WeRead bookmark chapter titles from the response chapter list', () => {
+    expect(normalizeWereadBookmarks({
+      chapters: [
+        { chapterUid: 1001, title: '最后一个义工' },
+      ],
+      updated: [
+        {
+          bookmarkId: 'b1',
+          chapterUid: 1001,
+          markText: '没资格谈论理想时，先好好去挣钱。',
+          createTime: 1538352000,
+        },
+      ],
+    })).toEqual([
+      {
+        id: 'b1',
+        text: '没资格谈论理想时，先好好去挣钱。',
+        chapterTitle: '最后一个义工',
+        createdAt: 1538352000,
+      },
+    ])
+  })
+
+  test('normalizes chapter-grouped WeRead bookmark responses', () => {
+    expect(normalizeWereadBookmarks({
+      chapters: [
+        {
+          chapterUid: 1001,
+          chapterName: '最后一个义工',
+          items: [
+            {
+              bookmarkId: 'b1',
+              markText: '没资格谈论理想时，先好好去挣钱。',
+              createTime: 1538352000,
+            },
+          ],
+        },
+      ],
+      items: [{ chapterUid: 1001, title: '最后一个义工' }],
+    })).toEqual([
+      {
+        id: 'b1',
+        text: '没资格谈论理想时，先好好去挣钱。',
+        chapterTitle: '最后一个义工',
+        createdAt: 1538352000,
+      },
+    ])
   })
 })
 
