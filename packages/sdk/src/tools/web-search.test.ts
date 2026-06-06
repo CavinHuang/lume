@@ -4,8 +4,10 @@ import {
   resolveEnabledWebSearchProviders,
   detectAcceptLanguage,
   isBingBlockedPage,
-  parseBingResultItem
+  parseBingResultItem,
+  ENGINE_TIMEOUT_MS
 } from "./web-search";
+import type { WebSearchProviderName } from "./web-search";
 
 describe("web-search provider config", () => {
   test("未配置 provider env 时保留默认 fallback 顺序", () => {
@@ -112,5 +114,15 @@ describe("Bing scraper helpers", () => {
   test("returns null for items without valid title/url", () => {
     const html = `<li class="b_algo"><h2>No link here</h2></li>`;
     expect(parseBingResultItem(html)).toBeNull();
+  });
+});
+
+describe("engine timeout config", () => {
+  test("each engine has an explicit timeout configured", () => {
+    const names: WebSearchProviderName[] = ["exa", "pipellm", "zhipu", "tavily", "brave", "duckduckgo", "bing", "guanlan"];
+    for (const name of names) {
+      expect(ENGINE_TIMEOUT_MS[name]).toBeGreaterThan(0);
+    }
+    expect(ENGINE_TIMEOUT_MS.tavily).toBeGreaterThan(ENGINE_TIMEOUT_MS.brave);
   });
 });

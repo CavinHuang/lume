@@ -14,7 +14,7 @@ export interface SearchResult {
   content?: string
 }
 
-type WebSearchProviderName =
+export type WebSearchProviderName =
   | 'guanlan'
   | 'exa'
   | 'pipellm'
@@ -34,6 +34,17 @@ const DEFAULT_PROVIDER_ORDER: WebSearchProviderName[] = [
   'duckduckgo',
   'bing',
 ]
+
+export const ENGINE_TIMEOUT_MS: Record<WebSearchProviderName, number> = {
+  exa: 15000,
+  pipellm: 15000,
+  zhipu: 20000,
+  tavily: 30000,
+  brave: 10000,
+  duckduckgo: 15000,
+  bing: 10000,
+  guanlan: 20000,
+}
 
 const PROVIDER_NAMES = new Set<WebSearchProviderName>(DEFAULT_PROVIDER_ORDER)
 
@@ -319,7 +330,7 @@ async function searchWithBrave(query: string, numResults: number, sandbox: unkno
   if (sandboxError) return { data: sandboxError, is_error: true } as const
   const response = await sdkFetch(url, {
     headers: { 'x-subscription-token': apiKey, accept: 'application/json' },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.brave),
   })
   if (!response.ok) throw new Error(`Brave search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -344,7 +355,7 @@ async function searchWithTavily(query: string, numResults: number, sandbox: unkn
       api_key: apiKey, query, search_depth: 'basic',
       max_results: Math.max(1, Math.min(numResults || 5, 10)),
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.tavily),
   })
   if (!response.ok) throw new Error(`Tavily search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -370,7 +381,7 @@ async function searchWithExa(query: string, numResults: number, sandbox: unknown
       numResults: Math.max(1, Math.min(numResults || 5, 10)),
       contents: { text: { maxCharacters: 1000 } },
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.exa),
   })
   if (!response.ok) throw new Error(`Exa search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -395,7 +406,7 @@ async function searchWithPipellm(query: string, numResults: number, sandbox: unk
     method: 'POST',
     headers: { 'authorization': `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({ query, max_results: Math.max(1, Math.min(numResults || 5, 10)) }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.pipellm),
   })
   if (!response.ok) throw new Error(`PipeLLM search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -417,7 +428,7 @@ async function searchWithZhipu(query: string, numResults: number, sandbox: unkno
     method: 'POST',
     headers: { 'authorization': `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({ query, count: Math.max(1, Math.min(numResults || 5, 10)) }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.zhipu),
   })
   if (!response.ok) throw new Error(`Zhipu search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -439,7 +450,7 @@ async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: 
   if (sandboxError) return { data: sandboxError, is_error: true } as const
   const response = await sdkFetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)' },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.duckduckgo),
   })
   if (!response.ok) throw new Error(`DuckDuckGo search failed: HTTP ${response.status}`)
 
