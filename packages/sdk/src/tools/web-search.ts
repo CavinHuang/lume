@@ -487,39 +487,70 @@ export function detectAcceptLanguage(query: string): string {
   return "en-US,en;q=0.9";
 }
 
-async function searchWithBing(query: string, numResults: number, sandbox: unknown) {
-  const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}`
-  const sandboxError = ensureNetworkAllowed(url, sandbox as never)
-  if (sandboxError) return { data: sandboxError, is_error: true } as const
-  const response = await sdkFetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    },
-    signal: AbortSignal.timeout(15000),
-  })
-  if (!response.ok) throw new Error(`Bing search failed: HTTP ${response.status}`)
+const BING_BLOCK_PATTERNS = ["unusual traffic", "captcha", "blocked", "<某>"];
 
-  const html = await response.text()
-  const results: SearchResult[] = []
-  const liRegex = /<li class="b_algo"[^>]*>([\s\S]*?)<\/li>/gi
-  let liMatch: RegExpExecArray | null
-  while ((liMatch = liRegex.exec(html)) !== null) {
-    if (results.length >= (numResults || 5)) break
-    const block = liMatch[1]
-    if (!block) continue
-    const hrefMatch = /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(block)
-    if (!hrefMatch) continue
-    const rawUrl = hrefMatch[1]
-    const rawTitle = hrefMatch[2]
-    if (!rawUrl || !rawTitle) continue
-    const title = rawTitle.replace(/<[^>]+>/g, '').trim()
-    if (!title) continue
-    const snippetMatch = /<div class="b_caption"[^>]*>([\s\S]*?)<\/div>/i.exec(block)
-    const snippet = snippetMatch ? snippetMatch[1]?.replace(/<[^>]+>/g, '').trim() ?? '' : ''
-    results.push({ title, url: rawUrl, snippet })
+export function isBingBlockedPage(html: string): boolean {
+  const lower = html.toLowerCase();
+  return BING_BLOCK_PATTERNS.some((p) => lower.includes(p));
+}
+
+export function parseBingResultItem(itemHtml: string): SearchResult | null {
+  const titleMatch = itemHtml.match(
+    /<h2[^>]*>[\s\S]*?<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i
+  );
+  if (!titleMatch) return null;
+  const url = titleMatch[1];
+  const title = titleMatch[2].replace(/<[^>]+>/g, "").trim();
+  if (!title || !url) return null;
+
+  let snippet = "";
+  const snipMatch =
+    itemHtml.match(/<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/i) ??
+    itemHtml.match(/<div[^>]*class="[^"]*b_caption[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/i);
+  if (snipMatch) snippet = snipMatch[1].replace(/<[^>]+>/g, "").trim();
+
+  return { title, url, snippet: snippet || undefined };
+}
+
+async function searchWithBing(query: string, numResults: number, sandbox: unknown) {
+  const lang = detectAcceptLanguage(query);
+  const hosts = ["cn.bing.com", "www.bing.com"] as const;
+  let html = "";
+
+  for (const host of hosts) {
+    const url = `https://${host}/search?q=${encodeURIComponent(query)}&count=${Math.min(numResults, 20)}`;
+    const sandboxError = ensureNetworkAllowed(url, sandbox as never);
+    if (sandboxError) return { data: sandboxError, is_error: true } as const;
+    const response = await sdkFetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": lang,
+      },
+      signal: AbortSignal.timeout(10000),
+      redirect: "follow",
+    });
+    if (response.ok) {
+      const body = await response.text();
+      if (body.includes("b_algo") && !isBingBlockedPage(body)) {
+        html = body;
+        break;
+      }
+    }
   }
-  return { data: results, is_error: false } as const
+
+  if (!html) throw new Error("Bing search failed: no results from any host");
+
+  const results: SearchResult[] = [];
+  const algoRegex = /<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = algoRegex.exec(html)) !== null) {
+    if (results.length >= numResults) break;
+    const parsed = parseBingResultItem(match[1]);
+    if (parsed) results.push(parsed);
+  }
+
+  return { data: results, is_error: false } as const;
 }
 
 // ─── Tool definition ──────────────────────────────────────────

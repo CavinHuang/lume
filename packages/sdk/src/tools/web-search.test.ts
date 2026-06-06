@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   parseGuanlanSearchOutput,
   resolveEnabledWebSearchProviders,
-  detectAcceptLanguage
+  detectAcceptLanguage,
+  isBingBlockedPage,
+  parseBingResultItem
 } from "./web-search";
 
 describe("web-search provider config", () => {
@@ -81,5 +83,34 @@ describe("detectAcceptLanguage", () => {
 
   test("returns zh-CN as default for mixed CJK", () => {
     expect(detectAcceptLanguage("test 中文混合")).toBe("zh-CN,zh;q=0.9,en;q=0.8");
+  });
+});
+
+describe("Bing scraper helpers", () => {
+  test("detects Bing anti-bot pages", () => {
+    expect(isBingBlockedPage("sorry, we detected some unusual traffic from your IP")).toBe(true);
+    expect(isBingBlockedPage("please solve this CAPTCHA to continue")).toBe(true);
+    expect(isBingBlockedPage("<html>normal search results page</html>")).toBe(false);
+  });
+
+  test("parses Bing result item with h2 structure", () => {
+    const html = `<li class="b_algo"><h2><a href="https://example.com/page">Example Title</a></h2><p class="b_lineclamp2">A good snippet here.</p></li>`;
+    const result = parseBingResultItem(html);
+    expect(result).toMatchObject({
+      title: "Example Title",
+      url: "https://example.com/page",
+      snippet: "A good snippet here."
+    });
+  });
+
+  test("falls back to b_caption when b_lineclamp is absent", () => {
+    const html = `<li class="b_algo"><h2><a href="https://example.com/page2">Title 2</a></h2><div class="b_caption"><p>Fallback snippet.</p></div></li>`;
+    const result = parseBingResultItem(html);
+    expect(result?.snippet).toBe("Fallback snippet.");
+  });
+
+  test("returns null for items without valid title/url", () => {
+    const html = `<li class="b_algo"><h2>No link here</h2></li>`;
+    expect(parseBingResultItem(html)).toBeNull();
   });
 });
