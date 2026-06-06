@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
   formatMessageAttachmentSize,
+  getAssistantCopyText,
+  getCopyTextWithoutAfterglow,
   getTaskProgressStatusText,
   getToolPermissionTitleBadgeText,
   compactMemoryCitationLabel,
@@ -57,6 +59,30 @@ describe('showTemporaryCopiedFeedback', () => {
 
     expect(copiedStates).toEqual([true, true, false])
     expect(state.resetTimeoutId).toBeNull()
+  })
+})
+
+describe('getCopyTextWithoutAfterglow', () => {
+  test('removes afterglow nodes from copied text', () => {
+    const clone = {
+      textContent: '正文⟡ 不要复制结尾',
+      querySelectorAll: () => [{
+        remove: () => {
+          clone.textContent = '正文结尾'
+        },
+      }],
+    }
+    const root = {
+      cloneNode: () => clone,
+    } as unknown as Node & ParentNode
+
+    expect(getCopyTextWithoutAfterglow(root)).toBe('正文结尾')
+  })
+})
+
+describe('getAssistantCopyText', () => {
+  test('removes afterglow lines from footer copy text', () => {
+    expect(getAssistantCopyText('正文\n⟡ 不要复制\n结尾')).toBe('正文\n结尾')
   })
 })
 
