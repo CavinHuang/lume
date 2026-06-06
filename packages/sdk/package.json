@@ -28,6 +28,7 @@
     "zod-to-json-schema": "^3.24.0"
   },
   "devDependencies": {
+    "@types/jsdom": "^28.0.3",
     "@types/node": "^22.0.0",
     "@types/turndown": "^5.0.6",
     "dotenv": "^17.4.0",

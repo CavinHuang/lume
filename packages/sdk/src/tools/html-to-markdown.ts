@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
-import TurndownService = require("turndown");
+import TurndownService from "turndown";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -19,7 +19,7 @@ export function extractArticleMarkdown(
   const article = reader.parse();
   if (!article || !article.textContent?.trim()) return null;
 
-  const markdown = turndown.turndown(article.content);
+  const markdown = turndown.turndown(article.content ?? "");
   return {
     title: article.title || "",
     content: markdown,

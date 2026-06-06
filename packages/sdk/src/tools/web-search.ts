@@ -510,15 +510,15 @@ export function parseBingResultItem(itemHtml: string): SearchResult | null {
     /<h2[^>]*>[\s\S]*?<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i
   );
   if (!titleMatch) return null;
-  const url = titleMatch[1];
-  const title = titleMatch[2].replace(/<[^>]+>/g, "").trim();
+  const url = titleMatch[1] ?? "";
+  const title = (titleMatch[2] ?? "").replace(/<[^>]+>/g, "").trim();
   if (!title || !url) return null;
 
   let snippet = "";
   const snipMatch =
     itemHtml.match(/<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/i) ??
     itemHtml.match(/<div[^>]*class="[^"]*b_caption[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/i);
-  if (snipMatch) snippet = snipMatch[1].replace(/<[^>]+>/g, "").trim();
+  if (snipMatch) snippet = (snipMatch[1] ?? "").replace(/<[^>]+>/g, "").trim();
 
   return { title, url, snippet: snippet || undefined };
 }
@@ -557,7 +557,7 @@ async function searchWithBing(query: string, numResults: number, sandbox: unknow
   let match: RegExpExecArray | null;
   while ((match = algoRegex.exec(html)) !== null) {
     if (results.length >= numResults) break;
-    const parsed = parseBingResultItem(match[1]);
+    const parsed = parseBingResultItem(match[1] ?? "");
     if (parsed) results.push(parsed);
   }
 
