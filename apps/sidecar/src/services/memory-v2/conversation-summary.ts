@@ -1,4 +1,5 @@
 import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { stripAfterglowLines } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
@@ -136,7 +137,7 @@ function uniqueToolNames(items: LumeRunItem[]): string[] {
 }
 
 function textFromContent(value: unknown): string | undefined {
-  if (typeof value === "string") return value.trim() || undefined;
+  if (typeof value === "string") return stripAfterglowLines(value).trim() || undefined;
   if (!Array.isArray(value)) return undefined;
   const text = value
     .map((block) => {
@@ -149,7 +150,8 @@ function textFromContent(value: unknown): string | undefined {
     .filter(Boolean)
     .join("\n")
     .trim();
-  return text || undefined;
+  const stripped = stripAfterglowLines(text).trim();
+  return stripped || undefined;
 }
 
 function normalizeGeneratedSummary(value: string): string | undefined {
@@ -163,7 +165,7 @@ function normalizeGeneratedSummary(value: string): string | undefined {
 }
 
 export function compactMemorySummaryText(value: string, maxLength = 260): string {
-  const compact = value.replace(/\s+/g, " ").trim();
+  const compact = stripAfterglowLines(value).replace(/\s+/g, " ").trim();
   if (compact.length <= maxLength) return compact;
   return `${compact.slice(0, maxLength - 3)}...`;
 }

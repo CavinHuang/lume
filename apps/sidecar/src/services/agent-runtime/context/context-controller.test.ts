@@ -77,6 +77,21 @@ describe("Kernel context controller", () => {
     expect(JSON.stringify(compacted[1]?.content)).toContain("...(truncated by Lume context controller)...");
   });
 
+  test("strips afterglow from assistant text blocks before compaction", () => {
+    const messages = sanitizeKernelContextMessages([{
+      role: "assistant",
+      content: [
+        { type: "text", text: "正文\n⟡ 不要进入压缩\n结尾" },
+        { type: "tool_use", id: "tool-1", name: "Read", input: {} }
+      ]
+    }]);
+
+    expect(messages[0]?.content).toEqual([
+      { type: "text", text: "正文\n结尾" },
+      { type: "tool_use", id: "tool-1", name: "Read", input: {} }
+    ]);
+  });
+
   test("triggers auto-compaction from reducible kernel session budget even when SDK message history alone is small", async () => {
     const controller = createKernelContextController({
       threadId: "thread-1",

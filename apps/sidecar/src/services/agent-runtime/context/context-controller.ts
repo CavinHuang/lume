@@ -7,6 +7,7 @@ import {
   type AgentContextController,
   type AgentContextCompactionMetadata
 } from "@lume/agent-sdk";
+import { stripAfterglowLines } from "@lume/shared";
 
 type KernelMessage = {
   id?: string;
@@ -96,6 +97,14 @@ export function sanitizeKernelContextMessages<T extends KernelMessage>(messages:
           || seenToolUseIds.has(block.tool_use_id)
         );
         if (filtered.length === 0) continue;
+        sanitized.push({ ...message, content: filtered });
+        continue;
+      }
+      if (message.role === "assistant") {
+        const filtered = message.content.map((block) => {
+          if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") return block;
+          return { ...block, text: stripAfterglowLines(block.text) };
+        });
         sanitized.push({ ...message, content: filtered });
         continue;
       }
