@@ -6,11 +6,11 @@ import type {
   GitHubSkillReviewItem,
   GitHubSkillReviewResult,
   InstallGitHubSkillToWorkspaceInput,
-  InstallGitHubSkillToWorkspaceResult,
-  SkillMeta
+  InstallGitHubSkillToWorkspaceResult
 } from "@lume/shared";
 import { getWorkspaceSkillsDir } from "../infra/config-paths";
 import { saveGitHubInstalledSkillMetadata } from "./skills-market-metadata";
+import { parseSkillFrontmatter } from "./skill-frontmatter";
 
 interface GitHubRepoTarget {
   owner: string;
@@ -43,25 +43,6 @@ interface InspectedGitHubSkill extends GitHubSkillReviewItem {
 interface InspectResult {
   review: GitHubSkillReviewResult;
   skills: InspectedGitHubSkill[];
-}
-
-function parseSkillFrontmatter(content: string, slug: string): SkillMeta {
-  const meta: SkillMeta = { slug, name: slug };
-  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) return meta;
-
-  const frontmatter = frontmatterMatch[1] ?? "";
-  for (const line of frontmatter.split("\n")) {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) continue;
-    const key = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim().replace(/^["']|["']$/g, "");
-    if (key === "name" && value) meta.name = value;
-    if (key === "description" && value) meta.description = value;
-    if (key === "version" && value) meta.version = value;
-  }
-
-  return meta;
 }
 
 function parseGitHubUrl(input: string): GitHubRepoTarget {

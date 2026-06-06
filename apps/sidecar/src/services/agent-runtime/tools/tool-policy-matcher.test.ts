@@ -16,6 +16,19 @@ describe("tool-policy-matcher", () => {
     ]);
   });
 
+  test("expands product system tool groups used by settings", () => {
+    expect(expandRuntimeToolPolicyEntries(["group:automation"])).toEqual([
+      "cron_read",
+      "automation_read",
+      "cron_set",
+      "automation_set",
+      "cron_query",
+      "automation_query"
+    ]);
+    expect(expandRuntimeToolPolicyEntries(["group:im"])).toEqual(["send_im_message"]);
+    expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_search");
+  });
+
   test("normalizes Guanlan compact aliases", () => {
     expect(normalizeRuntimeToolPolicyEntry("guanlanSearch")).toBe("guanlan_search");
     expect(normalizeRuntimeToolPolicyEntry("guanlanRead")).toBe("guanlan_read");

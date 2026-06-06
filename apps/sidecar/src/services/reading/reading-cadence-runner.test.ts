@@ -82,17 +82,17 @@ describe("reading-cadence-runner", () => {
       writeNotification: (method, params) => notifications.push({ method, params })
     });
     expect(first).toMatchObject({
-      status: "completed",
-      message: "已写下深度读书笔记"
+      status: "failed",
+      message: "读书模型未配置，无法生成读书笔记"
     });
     expect(listReadingBooks()[0]).toMatchObject({
       id: first.bookId,
       title: "人间词话"
     });
     expect(notifications).toContainEqual({
-      method: READING_IPC_CHANNELS.NOTE_GEN_DONE,
+      method: READING_IPC_CHANNELS.NOTE_GEN_FAILED,
       params: expect.objectContaining({
-        status: "completed",
+        status: "failed",
         bookTitle: "人间词话",
         trigger: "scheduled"
       })
@@ -130,13 +130,14 @@ describe("reading-cadence-runner", () => {
     });
 
     expect(result).toMatchObject({
-      status: "completed",
+      status: "failed",
+      message: "读书模型未配置，无法生成读书笔记",
       bookId: book.id
     });
     expect(notifications).toContainEqual({
-      method: READING_IPC_CHANNELS.NOTE_GEN_DONE,
+      method: READING_IPC_CHANNELS.NOTE_GEN_FAILED,
       params: expect.objectContaining({
-        status: "completed",
+        status: "failed",
         bookTitle: "我在北京送快递",
         trigger: "scheduled"
       })
@@ -176,17 +177,16 @@ describe("reading-cadence-runner", () => {
       }
     });
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("failed");
     expect(memoryCalls).toEqual([expect.objectContaining({
       workspaceSlug: workspace.slug,
       includeWorkspace: true,
       includeGlobal: true
     })]);
-    expect(listReadingNotes({ includeHidden: true })[0]).toMatchObject({
-      userContext: expect.stringContaining("制度约束和日常生活")
-    });
+    expect(listReadingNotes({ includeHidden: true })).toEqual([]);
     expect(listReadingRunRecords()[0]).toMatchObject({
       trigger: "scheduled",
+      status: "failed",
       workspaceSlug: workspace.slug
     });
   });

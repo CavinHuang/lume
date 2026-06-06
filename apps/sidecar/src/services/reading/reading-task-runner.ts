@@ -89,13 +89,33 @@ export async function runReadingTaskAsync(input: ReadingRunTaskInput = {}, optio
     const userContext = await collectTaskUserContext(prepared.book, input, options);
     const context = buildGenerationContext(prepared, { ...input, userContext }, fallbackInput);
     const llmAttempt = resolveReadingLlmAttempt(prepared, input, options);
+    if (!options.generateNote && !llmAttempt) {
+      return {
+        status: "failed",
+        bookId: prepared.book.id,
+        message: "读书模型未配置，无法生成读书笔记",
+        completedAt: prepared.completedAt
+      };
+    }
     const generatedInput = options.generateNote
       ? await options.generateNote(context)
-      : await generateReadingNoteDraft(context, {
-        ...(llmAttempt ?? {}),
-        runTool: options.runTool ?? createReadingContextToolRunner(resolveReadingContextTools(input, options))
-      });
-    return createTaskNote(prepared, fallbackInput, generatedInput ?? {});
+      : null;
+    if (generatedInput) {
+      return createTaskNote(prepared, fallbackInput, generatedInput);
+    }
+    const draftResult = await generateReadingNoteDraft(context, {
+      ...llmAttempt,
+      runTool: options.runTool ?? createReadingContextToolRunner(resolveReadingContextTools(input, options))
+    });
+    if (!draftResult.ok) {
+      return {
+        status: "failed",
+        bookId: prepared.book.id,
+        message: draftResult.reason ?? "AI 读书笔记生成失败",
+        completedAt: prepared.completedAt
+      };
+    }
+    return createTaskNote(prepared, fallbackInput, draftResult.draft);
   } catch (error) {
     return {
       status: "failed",
@@ -142,7 +162,8 @@ function resolveReadingLlmAttempt(
     }) ?? undefined;
   }
   return createReadingNoteGeneratorLlm({
-    depth: prepared.depth
+    depth: prepared.depth,
+    ...(input.workspaceSlug?.trim() ? { workspaceSlug: input.workspaceSlug.trim() } : {})
   });
 }
 
@@ -231,11 +252,21 @@ function buildGenerationContext(
     evidence: fallbackInput.evidence ?? [],
     userContext: input.userContext ?? {},
     existingNoteSummaries: listReadingNotes({ bookId: prepared.book.id, includeHidden: true })
-      .map((note) => `${note.title}: ${note.summary}`)
+      .map(formatExistingNoteForGeneration)
       .filter(Boolean),
     manualQuoteText: input.manualQuoteText,
     manualSource: input.manualSource
   };
+}
+
+function formatExistingNoteForGeneration(note: ReadingNote): string {
+  return [
+    `${note.title}: ${note.summary}`,
+    note.originalQuote ? `quote：${note.originalQuote}` : undefined,
+    note.tags.length ? `tags：${note.tags.join(", ")}` : undefined,
+    note.selfContext ? `selfContext：${note.selfContext}` : undefined,
+    note.nextPlan ? `nextPlan：${note.nextPlan}` : undefined
+  ].filter((part): part is string => Boolean(part)).join(" / ");
 }
 
 function createTaskNote(

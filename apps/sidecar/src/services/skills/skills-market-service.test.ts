@@ -15,7 +15,7 @@ function makeSource(
 }
 
 describe("skills-market-service", () => {
-  test("catalog merges built-in, workspace, and persisted local skills into one list", () => {
+  test("catalog merges market sources and installed market skills into one list", () => {
     const result = __internal.buildSkillMarketCatalog({
       sources: [
         makeSource({
@@ -36,12 +36,18 @@ describe("skills-market-service", () => {
       workspaceSkills: [
         { slug: "alpha", name: "Alpha" },
         { slug: "gamma", name: "Gamma", version: "1.0.0" }
-      ]
+      ],
+      installedSourceMetadata: {
+        gamma: {
+          sourceType: "github",
+          trustLevel: "review-required"
+        }
+      }
     });
 
     expect(result.items.map((item) => item.slug)).toEqual(["alpha", "beta", "gamma"]);
     expect(result.items.find((item) => item.slug === "alpha")?.installState).toBe("installed");
-    expect(result.items.find((item) => item.slug === "gamma")?.sourceType).toBe("local");
+    expect(result.items.find((item) => item.slug === "gamma")?.sourceType).toBe("github");
   });
 
   test("built-in skills are marked trusted by default", () => {
@@ -77,6 +83,38 @@ describe("skills-market-service", () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.installState).toBe("installed");
+  });
+
+  test("catalog excludes workspace-owned skills that do not come from a market source", () => {
+    const result = __internal.buildSkillMarketCatalog({
+      sources: [],
+      workspaceSkills: [
+        { slug: "private-helper", name: "Private Helper", version: "1.0.0" }
+      ]
+    });
+
+    expect(result.items.map((item) => item.slug)).not.toContain("private-helper");
+    expect(result.items).toHaveLength(0);
+  });
+
+  test("installed skills show update-available when the market source has a newer version", () => {
+    const result = __internal.buildSkillMarketCatalog({
+      sources: [
+        makeSource({
+          id: "built-in:alpha",
+          slug: "alpha",
+          name: "Alpha",
+          version: "1.2.0",
+          sourceType: "built-in",
+          trustLevel: "trusted"
+        })
+      ],
+      workspaceSkills: [{ slug: "alpha", name: "Alpha", version: "1.0.0" }]
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.installState).toBe("update-available");
+    expect(result.items[0]?.version).toBe("1.2.0");
   });
 
   test("catalog hides blocked subscribed-market items unless explicitly enabled", () => {

@@ -176,6 +176,9 @@ const readingUserContextSchema = z.object({
     chapterTitle: z.string().optional()
   }).strict()).optional(),
   userThoughts: z.array(z.string()).optional(),
+  memorySnippets: z.array(z.string()).optional(),
+  recentConversationSnippets: z.array(z.string()).optional(),
+  recentReadingNoteSnippets: z.array(z.string()).optional(),
   recentConversationSummary: z.string().optional(),
   recentDiarySummary: z.string().optional()
 }).strict();
@@ -756,8 +759,29 @@ export const mcpCallToolDiagnosticInputSchema = z.object({
 
 export const deleteSkillInputSchema = z.object({
   workspaceSlug: idSchema,
-  skillSlug: idSchema
+  skillSlug: idSchema,
+  storageScope: z.enum(["workspace", "user"]).optional()
 });
+
+export const editableSkillInputSchema = z.object({
+  workspaceSlug: idSchema,
+  skillSlug: idSchema,
+  storageScope: z.enum(["workspace", "user"])
+}).strict();
+
+export const saveSkillInputSchema = z.object({
+  workspaceSlug: idSchema,
+  storageScope: z.enum(["workspace", "user"]).optional(),
+  skillSlug: z.string().trim().min(1),
+  name: z.string(),
+  description: z.string().optional(),
+  whenToUse: z.string().optional(),
+  allowedTools: z.array(z.string()).optional(),
+  argumentHint: z.string().optional(),
+  disableModelInvocation: z.boolean().optional(),
+  version: z.string().optional(),
+  prompt: z.string()
+}).strict();
 
 export const skillMarketCatalogInputSchema = z.object({
   workspaceSlug: idSchema,
@@ -767,6 +791,36 @@ export const skillMarketCatalogInputSchema = z.object({
 export const skillMarketDetailInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema
+});
+
+export const skillVersionInputSchema = z.object({
+  workspaceSlug: idSchema,
+  skillSlug: idSchema,
+  storageScope: z.enum(["workspace", "user"]).optional(),
+  filename: z.string().min(1).optional()
+});
+
+export const skillImprovementAnalysisInputSchema = z.object({
+  workspaceSlug: idSchema,
+  skillSlug: idSchema,
+  storageScope: z.enum(["workspace", "user"]).optional(),
+  modelRef: z.string().trim().min(1).optional(),
+  maxSessions: z.number().int().min(1).max(20).optional(),
+  messagesPerSession: z.number().int().min(1).max(500).optional()
+});
+
+const skillImprovementUpdateSchema = z.object({
+  section: z.string().min(1),
+  change: z.string().min(1),
+  reason: z.string().min(1)
+}).strict();
+
+export const applySkillImprovementInputSchema = z.object({
+  workspaceSlug: idSchema,
+  skillSlug: idSchema,
+  storageScope: z.enum(["workspace", "user"]).optional(),
+  updates: z.array(skillImprovementUpdateSchema),
+  modelRef: z.string().trim().min(1).optional()
 });
 
 export const githubSkillReviewInputSchema = z.object({

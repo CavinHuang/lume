@@ -266,7 +266,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
     [ALICE_READING_IPC_CHANNELS.GET_STATS]: async () => getReadingSnapshot().stats,
     [ALICE_READING_IPC_CHANNELS.FORCE_GENERATE_NOTE]: async (params) => {
       const bookId = readAliceBookId(params, ALICE_READING_IPC_CHANNELS.FORCE_GENERATE_NOTE);
-      return runReadingTaskAndNotify(context, { ...(bookId ? { bookId } : {}), trigger: "manual" });
+      return runReadingTaskAndNotify(context, { ...(bookId ? { bookId } : {}), trigger: "manual", depth: "deep" });
     },
     [ALICE_READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE]: async (params) => {
       const input = readAliceRunTaskInput(params, ALICE_READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE);
@@ -353,7 +353,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
       const result = await generateWereadReadingNote(input);
       emitReadingGenerationNotification(context.writeNotification, result, {
         trigger: "manual",
-        depth: "seed"
+        depth: "deep"
       });
       return result;
     },

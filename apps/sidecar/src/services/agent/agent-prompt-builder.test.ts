@@ -10,7 +10,7 @@ import {
   resolveSystemPromptMode,
   shouldLoadLongTermMemory
 } from "./agent-prompt-builder";
-import { getAgentWorkspacePath } from "../infra/config-paths";
+import { getAgentWorkspacePath, getUserSkillsDir } from "../infra/config-paths";
 
 describe("agent-prompt-builder", () => {
   let prevConfigDir: string | undefined;
@@ -360,6 +360,35 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("- planner:");
     expect(dynamic).not.toContain(`lume-workspace-${workspaceSlug}:planner`);
     expect(dynamic).toContain("<working_directory>D:/workspace/projects/ai-projects/lume</working_directory>");
+  });
+
+  test("buildDynamicContext 应包含用户全局 skill 元数据", () => {
+    const workspaceSlug = `prompt-user-skill-workspace-${Date.now()}`;
+    const skillDir = join(getUserSkillsDir(), "global-planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        'name: "Global Planner"',
+        'description: "Breaks work into execution plans"',
+        "---",
+        "",
+        "# Global Planner",
+        ""
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const dynamic = buildDynamicContext({
+      sessionId: "agent-session-global-skill",
+      workspaceSlug,
+      availableTools: ["Skill", "read", "write"],
+      userMessage: "help me create an execution plan"
+    });
+
+    expect(dynamic).toContain("Preferred capability route: skills");
+    expect(dynamic).toContain("- global-planner:");
   });
 
   test("workspace context 应过滤空模板并默认跳过 heartbeat", () => {

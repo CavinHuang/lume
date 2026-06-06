@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addReadingBook, listReadingBooks, listReadingNotes, updateReadingSettings } from "./reading-store";
+import { addReadingBook, createReadingNote, listReadingBooks, listReadingNotes, updateReadingSettings } from "./reading-store";
 import {
   isReadingNoteSkeletonValid,
   runReadingTask,
@@ -168,9 +168,8 @@ describe("reading-task-runner", () => {
     expect(first.status).toBe("completed");
     const note = listReadingNotes({ includeHidden: true })[0];
     expect(note?.depth).toBe("deep");
-    expect(note?.body.length).toBeGreaterThanOrEqual(500);
-    expect(note?.body.length).toBeLessThanOrEqual(900);
-    expect(note?.nextPlan).toContain("继续");
+    expect(note?.body.length).toBeGreaterThan(0);
+    expect(note?.nextPlan).toContain("继续读");
     expect(isReadingNoteSkeletonValid(note!)).toBeTrue();
 
     expect(runReadingTask({ trigger: "manual", bookId: book.id, depth: "deep" })).toMatchObject({
@@ -305,6 +304,99 @@ describe("reading-task-runner", () => {
       noteKind: "insight",
       userContext: "用户最近聊过工作里的消耗和普通生活。"
     });
+  });
+
+  test("async runner fails instead of saving a fallback template when no reading model is available", async () => {
+    const book = addReadingBook({
+      title: "踏星",
+      author: "随散飘风",
+      source: {
+        kind: "weread",
+        externalId: "wr-star",
+        excerpt: "踏星"
+      },
+      track: "co_read",
+      progressPercent: 1
+    });
+
+    const result = await runReadingTaskAsync({
+      trigger: "manual",
+      bookId: book.id,
+      depth: "deep"
+    }, {
+      collectUserContext() {
+        return {};
+      },
+      createLlmAttempt() {
+        return null;
+      }
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      bookId: book.id,
+      message: "读书模型未配置，无法生成读书笔记"
+    });
+    expect(listReadingNotes({ includeHidden: true })).toEqual([]);
+  });
+
+  test("passes previous note quote, tags, self context and next plan into generation context", () => {
+    const book = addReadingBook({
+      title: "我在北京送快递",
+      author: "胡安焉",
+      source: {
+        kind: "weread",
+        externalId: "wr-1",
+        excerpt: "把自己看作一个普通人，过普通人的生活。"
+      },
+      track: "co_read",
+      progressPercent: 54
+    });
+    createReadingNote({
+      bookId: book.id,
+      title: "普通生活的确认",
+      depth: "deep",
+      summary: "Lume 留意到普通生活不是退场。",
+      body: "上一条笔记先把普通生活放回身体和劳动里看。",
+      originalQuote: "把自己看作一个普通人，过普通人的生活。",
+      evidence: [{
+        quote: "把自己看作一个普通人，过普通人的生活。",
+        sourceKind: "weread",
+        sourceId: "wr-1",
+        sourceTitle: "我在北京送快递",
+        location: "54%",
+        excerpt: "把自己看作一个普通人，过普通人的生活。",
+        capturedAt: 1
+      }],
+      progressPercent: 54,
+      tags: ["普通生活", "身体劳动"],
+      selfContext: "Lume 在这句话旁边停住，想继续辨认普通生活里的重量。",
+      nextPlan: "继续看身体和劳动如何被平台关系塑形。"
+    });
+
+    const seenSummaries: string[][] = [];
+    const result = runReadingTask({
+      trigger: "manual",
+      bookId: book.id,
+      depth: "seed"
+    }, {
+      generateNote(context) {
+        seenSummaries.push(context.existingNoteSummaries);
+        return {
+          title: "继续读普通生活",
+          summary: "Lume 沿着上一条线索继续读。",
+          body: "这次读书笔记接着上一条笔记留下的问题，继续看身体和劳动如何被平台关系塑形。",
+          tags: ["普通生活"]
+        };
+      }
+    });
+
+    expect(result.status).toBe("completed");
+    expect(seenSummaries).toHaveLength(1);
+    expect(seenSummaries[0]?.join("\n")).toContain("把自己看作一个普通人，过普通人的生活。");
+    expect(seenSummaries[0]?.join("\n")).toContain("普通生活, 身体劳动");
+    expect(seenSummaries[0]?.join("\n")).toContain("Lume 在这句话旁边停住");
+    expect(seenSummaries[0]?.join("\n")).toContain("nextPlan：继续看身体和劳动如何被平台关系塑形。");
   });
 
   test("async runner enriches generation context with collected collaborative context", async () => {

@@ -38,6 +38,47 @@ describe("capability-routing", () => {
     expect(decision.reason).toContain("loaded skill metadata");
   });
 
+  test("whenToUse 可参与 skill 路由匹配，manual-only skill 不参与", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "我需要做一次 code review",
+      availableTools: ["Skill", "Read"],
+      loadedSkills: [
+        {
+          slug: "code-review",
+          name: "代码审查",
+          description: "质量检查",
+          whenToUse: "当用户要求 code review 时使用"
+        },
+        {
+          slug: "manual-only",
+          name: "手动技能",
+          description: "code review",
+          disableModelInvocation: true
+        }
+      ]
+    });
+
+    expect(decision.preferredLane).toBe("skills");
+    expect(decision.reason).toContain("loaded skill metadata");
+  });
+
+  test("仅匹配 manual-only skill 时不应优先 skills", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "请 code review",
+      availableTools: ["Skill", "Read"],
+      loadedSkills: [
+        {
+          slug: "manual-only",
+          name: "手动技能",
+          description: "code review",
+          disableModelInvocation: true
+        }
+      ]
+    });
+
+    expect(decision.preferredLane).toBe("raw-tools");
+  });
+
   test("浏览器请求应优先 browser", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "继续在当前页面操作浏览器",

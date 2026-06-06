@@ -82,15 +82,36 @@ export async function collectReadingUserContext(input: CollectReadingUserContext
       limit: 6
     }))
   ]);
+  const readingNotes = collectRecentReadingNoteSnippets(query, 5);
+  const memorySnippets = uniqueCompactLines([
+    ...(explicit.memorySnippets ?? []),
+    ...memory.map((item) => item.snippet)
+  ], 6);
+  const conversationSnippets = uniqueCompactLines([
+    ...(explicit.recentConversationSnippets ?? []),
+    ...conversations
+  ], 8);
+  const readingNoteSnippets = uniqueCompactLines([
+    ...(explicit.recentReadingNoteSnippets ?? []),
+    ...readingNotes
+  ], 6);
   const summary = mergeSummaryParts([
     explicit.recentConversationSummary,
-    conversations.length ? `最近对话：${conversations.join(" / ")}` : undefined,
-    memory.length ? `相关记忆：${memory.map((item) => item.snippet).join(" / ")}` : undefined
+    conversationSnippets.length ? `最近对话：${conversationSnippets.join(" / ")}` : undefined,
+    memorySnippets.length ? `相关记忆：${memorySnippets.join(" / ")}` : undefined
+  ]);
+  const diarySummary = mergeSummaryParts([
+    explicit.recentDiarySummary,
+    readingNoteSnippets.length ? `Lume 最近读书记录：${readingNoteSnippets.join(" / ")}` : undefined
   ]);
 
   return {
     ...explicit,
-    ...(summary ? { recentConversationSummary: summary } : {})
+    ...(memorySnippets.length ? { memorySnippets } : {}),
+    ...(conversationSnippets.length ? { recentConversationSnippets: conversationSnippets } : {}),
+    ...(readingNoteSnippets.length ? { recentReadingNoteSnippets: readingNoteSnippets } : {}),
+    ...(summary ? { recentConversationSummary: summary } : {}),
+    ...(diarySummary ? { recentDiarySummary: diarySummary } : {})
   };
 }
 
@@ -287,6 +308,19 @@ function mergeSummaryParts(parts: Array<string | undefined>): string | undefined
     .filter((part): part is string => Boolean(part))
     .join("\n");
   return text ? compactText(text, 1200) : undefined;
+}
+
+function uniqueCompactLines(values: string[], limit: number): string[] {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const line = compactText(value, 240);
+    if (!line || seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+    if (lines.length >= limit) break;
+  }
+  return lines;
 }
 
 function compactText(value: string, maxLength: number): string {

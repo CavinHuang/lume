@@ -1,5 +1,5 @@
 
-import { getWorkspaceMcpConfig, getWorkspaceSkills } from "./agent-workspace-manager";
+import { getRuntimeSkills, getWorkspaceMcpConfig } from "./agent-workspace-manager";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
 import type { MemoryCitationsMode } from "../memory-v2/policy";
 import { BUILTIN_AGENT_ROLES, canonicalizeAgentToolName } from "@lume/shared";
@@ -441,7 +441,7 @@ export function buildDynamicContext(ctx: DynamicContext): string {
       lines.push(`Capability lanes: ${capabilityLanes.join(", ")}`);
     }
 
-    const skills = getWorkspaceSkills(ctx.workspaceSlug);
+    const skills = getRuntimeSkills(ctx.workspaceSlug, ctx.agentCwd);
     const preferredRoute = resolvePreferredCapabilityRoute({
       userMessage: ctx.userMessage,
       availableTools: ctx.availableTools,

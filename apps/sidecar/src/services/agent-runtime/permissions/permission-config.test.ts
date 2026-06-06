@@ -50,6 +50,7 @@ describe("permission config adapter", () => {
     expect(roots).toContain("/tmp/thread/artifacts");
     expect(roots).toContain("/tmp/thread/files");
     expect(roots).toContain(join(tempConfigDir, "default-skills"));
+    expect(roots).toContain(join(tempConfigDir, "skills"));
     expect(roots).toContain(join(tempConfigDir, "agent-workspaces", "demo", "skills"));
     expect(roots).toContain(join(homedir(), ".lume", "plugins"));
     expect(roots).toContain("/tmp/thread/custom-private");

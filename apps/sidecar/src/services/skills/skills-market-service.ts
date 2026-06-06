@@ -17,6 +17,7 @@ import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../infra/config-path
 import { createLogger } from "../infra/logger";
 import { seedDefaultSkills } from "./default-skills-seeder";
 import { getInstalledSkillSourceMetadata, saveLocalInstalledSkillMetadata, type InstalledSkillSourceMeta } from "./skills-market-metadata";
+import { parseSkillFrontmatter } from "./skill-frontmatter";
 
 const SOURCE_PRIORITY: Record<SkillCatalogItem["sourceType"], number> = {
   "built-in": 0,
@@ -31,26 +32,6 @@ const TRUST_PRIORITY: Record<SkillCatalogItem["trustLevel"], number> = {
   "blocked-by-default": 2
 };
 const log = createLogger("skills-market-service");
-
-function parseSkillFrontmatter(content: string, slug: string): SkillMeta {
-  const meta: SkillMeta = { slug, name: slug };
-  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) return meta;
-
-  const frontmatter = frontmatterMatch[1] ?? "";
-  for (const line of frontmatter.split("\n")) {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) continue;
-    const key = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim().replace(/^["']|["']$/g, "");
-    if (key === "name" && value) meta.name = value;
-    if (key === "description" && value) meta.description = value;
-    if (key === "icon" && value) meta.icon = value;
-    if (key === "version" && value) meta.version = value;
-  }
-
-  return meta;
-}
 
 function readSkillsFromDir(skillsDir: string): SkillMeta[] {
   if (!existsSync(skillsDir)) return [];
@@ -189,6 +170,34 @@ function compareCatalogItems(a: SkillCatalogItem, b: SkillCatalogItem): number {
   );
 }
 
+function parseVersionParts(version: string | undefined): number[] | null {
+  const normalized = version?.trim().replace(/^v/i, "");
+  if (!normalized) return null;
+  const core = normalized.split(/[+-]/)[0] ?? "";
+  const parts = core.split(".");
+  if (parts.length === 0 || parts.some((part) => !/^\d+$/.test(part))) return null;
+  return parts.map((part) => Number(part));
+}
+
+function hasNewerSourceVersion(sourceVersion: string | undefined, installedVersion: string | undefined): boolean {
+  if (!sourceVersion || !installedVersion) return false;
+
+  const sourceParts = parseVersionParts(sourceVersion);
+  const installedParts = parseVersionParts(installedVersion);
+  if (!sourceParts || !installedParts) {
+    return sourceVersion.trim() !== installedVersion.trim();
+  }
+
+  const maxLength = Math.max(sourceParts.length, installedParts.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const sourcePart = sourceParts[index] ?? 0;
+    const installedPart = installedParts[index] ?? 0;
+    if (sourcePart > installedPart) return true;
+    if (sourcePart < installedPart) return false;
+  }
+  return false;
+}
+
 function buildSkillMarketCatalog(input: {
   sources: SkillCatalogItem[];
   workspaceSkills: Array<Pick<SkillMeta, "slug" | "name" | "description" | "icon" | "version">>;
@@ -218,10 +227,16 @@ function buildSkillMarketCatalog(input: {
         existing.sourceType = installedSourceMeta.sourceType;
         existing.trustLevel = installedSourceMeta.trustLevel;
       }
-      existing.installState = "installed";
+      existing.installState = hasNewerSourceVersion(existing.version, workspaceSkill.version)
+        ? "update-available"
+        : "installed";
       if (!existing.version && workspaceSkill.version) {
         existing.version = workspaceSkill.version;
       }
+      continue;
+    }
+
+    if (!installedSourceMeta) {
       continue;
     }
 

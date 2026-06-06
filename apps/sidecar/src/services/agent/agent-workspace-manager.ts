@@ -23,6 +23,7 @@ import {
   getAgentWorkspacePath,
   getAgentWorkspacesIndexPath,
   getDefaultSkillsDir,
+  getUserSkillsDir,
   getWorkspaceMetaPath,
   getWorkspaceMcpPath,
   getWorkspaceResourcesPath,
@@ -32,6 +33,7 @@ import { seedDefaultSkills } from "../skills/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger } from "../infra/logger";
+import { parseSkillFrontmatter } from "../skills/skill-frontmatter";
 
 interface AgentWorkspacesIndex {
   version: number;
@@ -455,13 +457,50 @@ export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceM
 export function getWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
   const skillsDir = getWorkspaceSkillsDir(workspaceSlug);
   const skillOverrides = getWorkspaceSkillOverrides(workspaceSlug);
+  return readSkillsFromDir(skillsDir, {
+    workspaceSlug,
+    shouldKeep: (skillSlug) => shouldKeepSkill(skillSlug, skillOverrides)
+  });
+}
+
+export function getRuntimeSkills(workspaceSlug: string, cwd?: string): SkillMeta[] {
+  const roots = [
+    getUserSkillsDir(),
+    ...(cwd ? [join(cwd, ".lume", "skills")] : []),
+    getWorkspaceSkillsDir(workspaceSlug)
+  ];
+  const workspaceSkillOverrides = getWorkspaceSkillOverrides(workspaceSlug);
+  const bySlug = new Map<string, SkillMeta>();
+
+  for (const root of roots) {
+    const isWorkspaceRoot = root === getWorkspaceSkillsDir(workspaceSlug);
+    for (const skill of readSkillsFromDir(root, {
+      workspaceSlug,
+      shouldKeep: isWorkspaceRoot
+        ? (skillSlug) => shouldKeepSkill(skillSlug, workspaceSkillOverrides)
+        : undefined
+    })) {
+      bySlug.set(skill.slug, skill);
+    }
+  }
+
+  return sortSkills(Array.from(bySlug.values()));
+}
+
+function readSkillsFromDir(
+  skillsDir: string,
+  options: {
+    workspaceSlug?: string;
+    shouldKeep?: (skillSlug: string) => boolean;
+  } = {}
+): SkillMeta[] {
   const skills: SkillMeta[] = [];
 
   try {
     const entries = readdirSync(skillsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      if (!shouldKeepSkill(entry.name, skillOverrides)) continue;
+      if (options.shouldKeep && !options.shouldKeep(entry.name)) continue;
 
       const skillMdPath = join(skillsDir, entry.name, "SKILL.md");
       if (!existsSync(skillMdPath)) continue;
@@ -470,38 +509,21 @@ export function getWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
         const content = readFileSync(skillMdPath, "utf-8");
         skills.push(parseSkillFrontmatter(content, entry.name));
       } catch (error) {
-        log.warn("workspace skill parse failed", { workspaceSlug, skillSlug: entry.name, error });
+        log.warn("skill parse failed", { workspaceSlug: options.workspaceSlug, skillsDir, skillSlug: entry.name, error });
       }
     }
   } catch {
     // skills 目录不存在时返回空数组
   }
 
-  return skills;
+  return sortSkills(skills);
 }
 
-function parseSkillFrontmatter(content: string, slug: string): SkillMeta {
-  const meta: SkillMeta = { slug, name: slug };
-  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) {
-    return meta;
-  }
-
-  const frontmatter = frontmatterMatch[1] as string;
-  for (const line of frontmatter.split("\n")) {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) continue;
-
-    const key = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim().replace(/^["']|["']$/g, "");
-
-    if (key === "name" && value) meta.name = value;
-    if (key === "description" && value) meta.description = value;
-    if (key === "icon" && value) meta.icon = value;
-    if (key === "version" && value) meta.version = value;
-  }
-
-  return meta;
+function sortSkills(skills: SkillMeta[]): SkillMeta[] {
+  return skills.sort((left, right) => {
+    const byName = left.name.localeCompare(right.name, "zh-CN");
+    return byName || left.slug.localeCompare(right.slug, "zh-CN");
+  });
 }
 
 export function getWorkspaceCapabilities(workspaceSlug: string): WorkspaceCapabilities {

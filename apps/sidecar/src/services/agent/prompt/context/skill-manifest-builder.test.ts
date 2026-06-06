@@ -26,4 +26,27 @@ describe("skill-manifest-builder", () => {
     expect(lines.join("\n")).not.toContain("Additional details");
     expect(lines.join("\n").match(/lume-workspace-demo:/g)).toHaveLength(1);
   });
+
+  test("renders trigger and argument hints but skips model-disabled skills", () => {
+    const lines = renderSkillManifestLines({
+      workspaceSlug: "demo",
+      skills: [
+        {
+          slug: "planner",
+          description: "Breaks work into clear execution plans.",
+          whenToUse: "when the user asks for a plan",
+          argumentHint: "pass the target feature"
+        },
+        {
+          slug: "manual-only",
+          description: "Only for explicit slash usage.",
+          disableModelInvocation: true
+        }
+      ]
+    });
+
+    const rendered = lines.join("\n");
+    expect(rendered).toContain("- planner: Breaks work into clear execution plans. Trigger: when the user asks for a plan Args: pass the target feature");
+    expect(rendered).not.toContain("manual-only");
+  });
 });

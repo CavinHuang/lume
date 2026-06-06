@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   getDefaultSkillsDir,
+  getUserSkillsDir,
   getWorkspaceSkillsDir
 } from "../../infra/config-paths";
 import type { PermissionRule } from "./permission-types";
@@ -28,6 +29,7 @@ export function resolveConfiguredPrivateWriteRoots(input: {
     join(input.agentCwd, "files"),
     join(homedir(), ".lume", "plugins"),
     getDefaultSkillsDir(),
+    getUserSkillsDir(),
     ...(input.workspaceSlug ? [getWorkspaceSkillsDir(input.workspaceSlug)] : []),
     ...(input.configuredRoots ?? []).map((root) => resolvePrivateRoot(root, input.agentCwd))
   ];

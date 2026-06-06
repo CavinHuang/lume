@@ -34,12 +34,12 @@ import type {
   AgentToolPermissionRequest
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   buildBuiltinAgents,
   loadCustomAgents
 } from "../../agent/agent-prompt-builder";
-import { getDefaultSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
+import { getDefaultSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
 import { getWorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
@@ -799,8 +799,8 @@ function isAutomationExecution(messageMetadata?: Record<string, unknown>): boole
     || typeof messageMetadata.automationTrigger === "string";
 }
 
-function resolveSkillDirectories(workspaceSlug?: string): string[] {
-  const roots = [getDefaultSkillsDir()];
+function resolveSkillDirectories(cwd: string, workspaceSlug?: string): string[] {
+  const roots = [getDefaultSkillsDir(), getUserSkillsDir(), join(cwd, ".lume", "skills")];
   if (workspaceSlug) {
     roots.push(getWorkspaceSkillsDir(workspaceSlug));
   }
@@ -954,7 +954,7 @@ export async function createRuntimeCoreSession(
     agents,
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
-    skillsDirectories: resolveSkillDirectories(input.workspaceSlug),
+    skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     resolveRuntimeTools: (tools) => ToolRuntime.resolveDynamicTools({
       tools,
       cwd: input.cwd,

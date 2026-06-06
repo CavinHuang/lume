@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::{engine::general_purpose, Engine as _};
 use log::{error, info, warn};
 use serde::Deserialize;
 use tauri::webview::PageLoadEvent;
@@ -68,6 +69,12 @@ struct WindowBehavior {
     minimize_to_tray: bool,
     #[serde(default, rename = "closeToTray")]
     close_to_tray: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileDialogFilter {
+    name: String,
+    extensions: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -527,12 +534,20 @@ fn file_metadata_json(file_path: &Path) -> Result<serde_json::Value, String> {
         "ods" => "application/vnd.oasis.opendocument.spreadsheet",
         _ => "application/octet-stream",
     };
-    Ok(serde_json::json!({
+    let mut payload = serde_json::json!({
         "filename": filename,
         "mediaType": media_type,
         "size": metadata.len() as usize,
         "sourcePath": file_path.to_string_lossy().to_string()
-    }))
+    });
+
+    if media_type.starts_with("image/") {
+        let bytes = std::fs::read(file_path)
+            .map_err(|e| format!("read image file failed ({}): {e}", file_path.display()))?;
+        payload["data"] = serde_json::Value::String(general_purpose::STANDARD.encode(bytes));
+    }
+
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -669,14 +684,36 @@ fn save_text_file_dialog(filename: String, content: String) -> Result<serde_json
 }
 
 #[tauri::command]
-fn save_file_path_dialog(filename: String) -> Result<serde_json::Value, String> {
-    let path = rfd::FileDialog::new()
-        .add_filter("SVG 图片", &["svg"])
-        .set_file_name(&filename)
-        .save_file();
+fn save_file_path_dialog(
+    filename: String,
+    filters: Option<Vec<FileDialogFilter>>,
+) -> Result<serde_json::Value, String> {
+    let mut dialog = rfd::FileDialog::new().set_file_name(&filename);
+    if let Some(filters) = filters {
+        for filter in filters {
+            if filter.extensions.is_empty() {
+                continue;
+            }
+            let extensions: Vec<&str> = filter.extensions.iter().map(String::as_str).collect();
+            dialog = dialog.add_filter(&filter.name, &extensions);
+        }
+    } else {
+        dialog = dialog.add_filter("SVG 图片", &["svg"]);
+    }
+    let path = dialog.save_file();
     Ok(serde_json::json!({
         "path": path.map(|item| item.to_string_lossy().to_string())
     }))
+}
+
+#[tauri::command]
+fn write_binary_file(path: String, base64_content: String) -> Result<serde_json::Value, String> {
+    let bytes = general_purpose::STANDARD
+        .decode(base64_content)
+        .map_err(|e| format!("图片数据解析失败: {e}"))?;
+    std::fs::write(&path, bytes)
+        .map_err(|e| format!("保存文件失败 ({}): {e}", path))?;
+    Ok(serde_json::json!({ "path": path }))
 }
 
 #[tauri::command]
@@ -1666,6 +1703,7 @@ fn main() {
             read_text_file,
             save_text_file_dialog,
             save_file_path_dialog,
+            write_binary_file,
             open_in_system,
             reveal_path_in_system
         ])

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getLumeConfigYamlPath,
+  getUserSkillsDir,
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
@@ -12,6 +13,7 @@ import {
   getAgentWorkspaceBySlug,
   listAgentWorkspaces,
   getWorkspaceMcpConfig,
+  getRuntimeSkills,
   saveWorkspaceMcpConfig,
   getWorkspaceSkills
 } from "./agent-workspace-manager";
@@ -183,6 +185,99 @@ describe("agent-workspace-manager lume.yaml integration", () => {
 
     const skills = getWorkspaceSkills(workspaceSlug);
     expect(skills.map((item) => item.slug)).toEqual(["alpha"]);
+  });
+
+  test("getWorkspaceSkills 应解析 Alice 风格 skill 字段", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+    const skillDir = join(getWorkspaceSkillsDir(workspaceSlug), "code-review");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        'name: "代码审查"',
+        'description: "审查代码质量"',
+        'when_to_use: "当用户要求 code review 时使用"',
+        'allowed_tools: ["read_file", "bash"]',
+        'argument_hint: "请提供文件路径"',
+        "disable_model_invocation: true",
+        'icon: "search"',
+        'version: "1.2.3"',
+        "---",
+        "# Code Review",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const [skill] = getWorkspaceSkills(workspaceSlug);
+
+    expect(skill).toMatchObject({
+      slug: "code-review",
+      name: "代码审查",
+      description: "审查代码质量",
+      whenToUse: "当用户要求 code review 时使用",
+      allowedTools: ["read_file", "bash"],
+      argumentHint: "请提供文件路径",
+      disableModelInvocation: true,
+      icon: "search",
+      version: "1.2.3"
+    });
+  });
+
+  test("getWorkspaceSkills 应按展示名稳定排序", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+
+    const betaDir = join(getWorkspaceSkillsDir(workspaceSlug), "beta-slug");
+    const alphaDir = join(getWorkspaceSkillsDir(workspaceSlug), "alpha-slug");
+    mkdirSync(betaDir, { recursive: true });
+    mkdirSync(alphaDir, { recursive: true });
+    writeFileSync(
+      join(betaDir, "SKILL.md"),
+      "---\nname: Beta Skill\ndescription: second\n---\n# Beta\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(alphaDir, "SKILL.md"),
+      "---\nname: Alpha Skill\ndescription: first\n---\n# Alpha\n",
+      "utf-8"
+    );
+
+    expect(getWorkspaceSkills(workspaceSlug).map((skill) => skill.slug)).toEqual(["alpha-slug", "beta-slug"]);
+  });
+
+  test("getRuntimeSkills 应合并用户全局与工作区技能，且不污染 getWorkspaceSkills", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+
+    const globalOnlyDir = join(getUserSkillsDir(), "global-planner");
+    const userSharedDir = join(getUserSkillsDir(), "shared-planner");
+    const workspaceSharedDir = join(getWorkspaceSkillsDir(workspaceSlug), "shared-planner");
+    mkdirSync(globalOnlyDir, { recursive: true });
+    mkdirSync(userSharedDir, { recursive: true });
+    mkdirSync(workspaceSharedDir, { recursive: true });
+    writeFileSync(
+      join(globalOnlyDir, "SKILL.md"),
+      "---\nname: Global Planner\ndescription: global only\n---\n# Global\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(userSharedDir, "SKILL.md"),
+      "---\nname: User Shared\ndescription: user copy\n---\n# User\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(workspaceSharedDir, "SKILL.md"),
+      "---\nname: Workspace Shared\ndescription: workspace copy\n---\n# Workspace\n",
+      "utf-8"
+    );
+
+    expect(getWorkspaceSkills(workspaceSlug).map((skill) => skill.slug)).toEqual(["shared-planner"]);
+    expect(getRuntimeSkills(workspaceSlug).map((skill) => [skill.slug, skill.name])).toEqual([
+      ["global-planner", "Global Planner"],
+      ["shared-planner", "Workspace Shared"]
+    ]);
   });
 });
 

@@ -71,7 +71,14 @@ export function inferCapabilityLanes(inputTools?: string[]): CapabilityLane[] {
 
 function buildSkillText(skills: SkillMeta[]): string {
   return skills
-    .flatMap((skill) => [skill.slug, skill.name, skill.description ?? ""])
+    .filter((skill) => skill.disableModelInvocation !== true)
+    .flatMap((skill) => [
+      skill.slug,
+      skill.name,
+      skill.description ?? "",
+      skill.whenToUse ?? "",
+      skill.argumentHint ?? ""
+    ])
     .join(" ")
     .toLowerCase();
 }

@@ -176,6 +176,35 @@ describe("reading-llm-adapter", () => {
       "openai/fallback-chat"
     ]);
   });
+
+  test("falls back from chat model to agent default model when inheriting", () => {
+    const attempt = createReadingNoteGeneratorLlm({
+      depth: "seed",
+      settings: normalizeReadingSettings({ textModelMode: "inherit" }),
+      resolveBinding(ref) {
+        expect(ref).toBe("zai/glm-5.1");
+        return {
+          channel: { id: "ch-1", provider: "zai", baseUrl: "https://api.zai.com" },
+          modelId: "glm-5.1"
+        };
+      },
+      decryptApiKey: () => "key",
+      createProvider: (options) => ({
+        apiType: options.apiType,
+        async createMessage() {
+          return { content: [], stopReason: "end_turn", usage: { input_tokens: 0, output_tokens: 0 } };
+        }
+      }),
+      getEffectiveConfig: () => ({
+        models: {
+          chat: {},
+          agent: { defaultModelRef: "zai/glm-5.1" }
+        }
+      })
+    });
+
+    expect(attempt?.modelRef).toBe("zai/glm-5.1");
+  });
 });
 
 function buildRequest(): ReadingNoteGeneratorStreamRequest {

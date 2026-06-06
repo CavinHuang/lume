@@ -1,6 +1,6 @@
 import type { AgentSendInput } from "@lume/shared";
 import { getAgentThreadMeta } from "./agent-thread-manager";
-import { getWorkspaceSkills } from "./agent-workspace-manager";
+import { getRuntimeSkills } from "./agent-workspace-manager";
 import type { DynamicContext } from "./agent-prompt-builder";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute, type CapabilityLane } from "./capability-routing";
 
@@ -50,7 +50,7 @@ export function resolveAgentRuntimeRoutingTrace(input: {
   userMessage?: string;
   availableTools?: string[];
 }): AgentRuntimeRoutingTrace {
-  const loadedSkills = input.workspaceSlug ? getWorkspaceSkills(input.workspaceSlug) : [];
+  const loadedSkills = input.workspaceSlug ? getRuntimeSkills(input.workspaceSlug) : [];
   const availableTools = [...(input.availableTools ?? [])];
   if (loadedSkills.length > 0 && !availableTools.some((tool) => tool.trim().toLowerCase() === "skill")) {
     availableTools.push("Skill");

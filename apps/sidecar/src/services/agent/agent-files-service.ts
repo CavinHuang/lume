@@ -662,6 +662,22 @@ export function readAgentPath(
   return readPreviewableText(resolved);
 }
 
+export function readAgentFileData(
+  workspaceSlug: string,
+  sessionId: string,
+  targetPath: string
+): { data: string; size: number } {
+  const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new Error("目标不存在");
+  }
+  const bytes = readFileSync(resolved);
+  return {
+    data: bytes.toString("base64"),
+    size: bytes.byteLength
+  };
+}
+
 export function readWorkspacePath(
   workspaceSlug: string,
   targetPath: string

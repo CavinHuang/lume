@@ -39,6 +39,9 @@ interface ReadingEffectiveConfigLike {
     chat?: {
       defaultModelRef?: string;
     };
+    agent?: {
+      defaultModelRef?: string;
+    };
   };
 }
 
@@ -102,8 +105,10 @@ function resolveReadingModelRef(input: {
     return input.settings.textModelRef.trim();
   }
   const effective = (input.getEffectiveConfig ?? getEffectiveLumeConfig)(input.workspaceSlug);
-  const inherited = effective.models?.chat?.defaultModelRef;
-  return isNonEmptyString(inherited) ? inherited.trim() : undefined;
+  const chatModel = effective.models?.chat?.defaultModelRef;
+  if (isNonEmptyString(chatModel)) return chatModel.trim();
+  const agentModel = effective.models?.agent?.defaultModelRef;
+  return isNonEmptyString(agentModel) ? agentModel.trim() : undefined;
 }
 
 function defaultResolveBinding(modelRef: string): ReadingModelBinding | null {

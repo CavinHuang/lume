@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { getReadingShareCardsDir } from "../infra/config-paths";
-import { addReadingBook, createReadingNote, listReadingNotes } from "./reading-store";
+import { addReadingBook, createReadingNote, listReadingNotes, setReadingBookLocalCover } from "./reading-store";
 import { generateReadingShareCard } from "./share-card-service";
 
 describe("share-card-service", () => {
@@ -130,5 +131,106 @@ describe("share-card-service", () => {
     const svg = readFileSync(outputPath, "utf-8");
     expect(svg).toContain("没资格谈论理想时，先好好去挣钱。");
     expect(svg).not.toContain("这是一段摘要，不是当前卡片正文。");
+  });
+
+  test("uses the book title initial as the cover fallback like the Lume shelf", () => {
+    const book = addReadingBook({
+      title: "人间词话",
+      author: "王国维",
+      source: {
+        kind: "manual",
+        excerpt: "词以境界为最上。"
+      }
+    });
+    const note = createReadingNote({
+      bookId: book.id,
+      title: "境界",
+      body: "词以境界为最上。",
+      tags: ["境界"],
+      evidence: [
+        {
+          quote: "词以境界为最上。",
+          sourceKind: "manual",
+          excerpt: "词以境界为最上。",
+          capturedAt: 1
+        }
+      ]
+    });
+    const outputPath = join(tempConfigDir, "fallback-cover.svg");
+
+    generateReadingShareCard({ noteId: note.id, outputPath });
+
+    const svg = readFileSync(outputPath, "utf-8");
+    expect(svg).toContain(">人</text>");
+    expect(svg).not.toContain(">Lume</text>");
+  });
+
+  test("uses the shelf local cover as a file URL for the share card image", () => {
+    const book = addReadingBook({
+      title: "我在北京送快递",
+      author: "胡安焉",
+      source: {
+        kind: "manual",
+        excerpt: "把自己看作一个普通人。"
+      }
+    });
+    const coverPath = join(tempConfigDir, "covers", "book cover.svg");
+    setReadingBookLocalCover(book.id, coverPath);
+    const note = createReadingNote({
+      bookId: book.id,
+      title: "普通人的日常",
+      body: "普通人的生活有自己的重量。",
+      tags: ["具体生活"],
+      evidence: [
+        {
+          quote: "把自己看作一个普通人。",
+          sourceKind: "manual",
+          excerpt: "把自己看作一个普通人。",
+          capturedAt: 1
+        }
+      ]
+    });
+    const outputPath = join(tempConfigDir, "local-cover.svg");
+
+    generateReadingShareCard({ noteId: note.id, outputPath });
+
+    expect(readFileSync(outputPath, "utf-8")).toContain(`href="${pathToFileURL(coverPath).toString()}"`);
+  });
+
+  test("keeps long reading note content inside a clipped compact text area", () => {
+    const book = addReadingBook({
+      title: "人间词话",
+      author: "王国维",
+      source: {
+        kind: "manual",
+        excerpt: "词以境界为最上。"
+      }
+    });
+    const note = createReadingNote({
+      bookId: book.id,
+      title: "境界",
+      body: [
+        "Lume 今天读《人间词话》时，先停在这句话旁边：词以境界为最上。",
+        "它不像一个结论，更像一个入口：把人的处境、身体和选择放回具体生活里看。",
+        "这条札记先记下这个位置，等下一次继续读时，再把它和更大的结构连起来。"
+      ].join("\n"),
+      tags: ["境界"],
+      evidence: [
+        {
+          quote: "词以境界为最上。",
+          sourceKind: "manual",
+          excerpt: "词以境界为最上。",
+          capturedAt: 1
+        }
+      ]
+    });
+    const outputPath = join(tempConfigDir, "long-note.svg");
+
+    generateReadingShareCard({ noteId: note.id, outputPath });
+
+    const svg = readFileSync(outputPath, "utf-8");
+    expect(svg).toContain('clip-path="url(#reading-share-card-content-clip)"');
+    expect(svg).toContain('font-size="22"');
+    expect(svg).not.toContain('font-size="27"');
   });
 });

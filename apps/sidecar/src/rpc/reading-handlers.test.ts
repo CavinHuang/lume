@@ -354,7 +354,8 @@ describe("reading-handlers", () => {
       interestId: wereadBook.id,
       depth: "seed"
     })).resolves.toMatchObject({
-      status: "completed",
+      status: "failed",
+      message: "读书模型未配置，无法生成读书笔记",
       bookId: wereadBook.id
     });
   });
@@ -473,16 +474,17 @@ describe("reading-handlers", () => {
       bookId: book.id,
       depth: "seed"
     })).resolves.toMatchObject({
-      status: "completed",
+      status: "failed",
+      message: "读书模型未配置，无法生成读书笔记",
       bookId: book.id
     });
 
     expect(notifications).toContainEqual({
-      method: READING_IPC_CHANNELS.NOTE_GEN_DONE,
+      method: READING_IPC_CHANNELS.NOTE_GEN_FAILED,
       params: expect.objectContaining({
         bookId: book.id,
         bookTitle: "我在北京送快递",
-        status: "completed"
+        status: "failed"
       })
     });
   });
@@ -498,14 +500,14 @@ describe("reading-handlers", () => {
     await expect(handlers[READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE]?.({
       depth: "seed"
     })).resolves.toMatchObject({
-      status: "completed",
-      message: "已写下读书种子札记"
+      status: "failed",
+      message: "读书模型未配置，无法生成读书笔记"
     });
 
     expect(notifications).toContainEqual({
-      method: READING_IPC_CHANNELS.NOTE_GEN_DONE,
+      method: READING_IPC_CHANNELS.NOTE_GEN_FAILED,
       params: expect.objectContaining({
-        status: "completed",
+        status: "failed",
         bookTitle: "人间词话"
       })
     });
@@ -574,19 +576,32 @@ describe("reading-handlers", () => {
       text: "把自己看作一个普通人，过普通人的生活。",
       source: "第 1 章",
       authorName: "胡安焉"
-    }) as { status: string; noteId?: string };
+    }) as { status: string; noteId?: string; bookId?: string };
     expect(generated).toMatchObject({
-      status: "completed"
+      status: "failed",
+      message: "读书模型未配置，无法生成读书笔记"
     });
-    expect(generated.noteId).toBeString();
+    expect(generated.noteId).toBeUndefined();
     expect(notifications).toContainEqual({
-      method: READING_IPC_CHANNELS.NOTE_GEN_DONE,
+      method: READING_IPC_CHANNELS.NOTE_GEN_FAILED,
       params: expect.objectContaining({
         bookTitle: "我在北京送快递",
         trigger: "manual"
       })
     });
 
+    createReadingNote({
+      bookId: generated.bookId ?? "manual-export-book",
+      body: "普通人的生活在重复劳动里显出重量。",
+      evidence: [
+        {
+          quote: "把自己看作一个普通人，过普通人的生活。",
+          sourceKind: "manual",
+          excerpt: "把自己看作一个普通人，过普通人的生活。",
+          capturedAt: 1
+        }
+      ]
+    });
     const exported = await handlers[WEREAD_IPC_CHANNELS.EXPORT_ALL_NOTES]?.({}) as { ok: boolean; path: string; count: number };
     expect(exported).toMatchObject({
       ok: true,

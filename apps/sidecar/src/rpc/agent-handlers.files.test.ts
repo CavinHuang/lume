@@ -82,6 +82,54 @@ describe("agent-handlers file operations", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
+  test("READ_THREAD_FILE_DATA 应读取线程文件的 base64 数据", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-read-file-data-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspace = createAgentWorkspace("Default");
+    const thread = createAgentThread("read file data thread", undefined, workspace.id);
+    const threadDir = getAgentSessionWorkspacePath(workspace.slug, thread.id);
+    writeFileSync(join(threadDir, "screen.png"), "fake-image");
+
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA]!({
+      threadId: thread.id,
+      path: "screen.png",
+    }) as { data: string; size: number };
+
+    expect(result).toEqual({
+      data: Buffer.from("fake-image").toString("base64"),
+      size: Buffer.byteLength("fake-image"),
+    });
+
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("READ_THREAD_FILE_DATA 应拒绝线程目录外路径", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-read-file-data-safe-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspace = createAgentWorkspace("Default");
+    const thread = createAgentThread("read file data safe thread", undefined, workspace.id);
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
+    });
+
+    await expect(handlers[AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA]!({
+      threadId: thread.id,
+      path: "../secret.png",
+    })).rejects.toThrow();
+
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
   test("LIST_DIRECTORY 和 LIST_WORKSPACE_DIRECTORY 应返回 externalAttachment 元信息", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-list-meta-"));
     process.env.LUME_CONFIG_DIR = configDir;

@@ -131,6 +131,26 @@ describe("reading-context-tools", () => {
   });
 
   test("collects collaborative reading context from explicit input, memory, and recent conversations", async () => {
+    const readingBook = addReadingBook({
+      title: "我在北京送快递",
+      author: "胡安焉",
+      source: {
+        kind: "manual",
+        excerpt: "把自己看作一个普通人，过普通人的生活。"
+      },
+      progressPercent: 54
+    });
+    createReadingNote({
+      bookId: readingBook.id,
+      title: "普通生活的确认",
+      summary: "Lume 把普通生活读成一种需要继续确认的位置。",
+      body: "这条笔记记录了 Lume 对普通生活和劳动经验的理解。",
+      selfContext: "Lume 之前已经把这句话和劳动里的身体感连起来。",
+      nextPlan: "继续看普通生活如何进入具体关系。",
+      tags: ["普通生活"],
+      evidence: []
+    });
+
     const context = await collectReadingUserContext({
       book: book(),
       input: {
@@ -160,6 +180,10 @@ describe("reading-context-tools", () => {
     expect(context).toMatchObject({
       userThoughts: ["这句让我想到普通生活不是失败。"]
     });
+    expect(context.memorySnippets).toEqual(["用户关注工作消耗和日常尊严。"]);
+    expect(context.recentConversationSnippets?.join("\n")).toContain("用户：我想把这本书里的普通人和自己的工作感受放在一起看。");
+    expect(context.recentReadingNoteSnippets?.join("\n")).toContain("普通生活的确认");
+    expect(context.recentDiarySummary).toContain("Lume 之前已经把这句话和劳动里的身体感连起来。");
     expect(context.recentConversationSummary).toContain("普通人和自己的工作感受");
     expect(context.recentConversationSummary).toContain("用户关注工作消耗和日常尊严");
   });

@@ -21,6 +21,34 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
   guanlanresearch: "guanlan_research"
 };
 
+const AUTOMATION_TOOL_NAMES = [
+  "cron_read",
+  "automation_read",
+  "cron_set",
+  "automation_set",
+  "cron_query",
+  "automation_query"
+] as const;
+
+const READING_TOOL_NAMES = [
+  "lume_reading_snapshot",
+  "lume_add_book",
+  "lume_write_reading_note",
+  "lume_hide_reading_note",
+  "lume_revise_reading_note",
+  "lume_generate_share_card",
+  "weread_generate_note",
+  "weread_export_all_notes",
+  "weread_shelf",
+  "weread_notebooks",
+  "weread_bookmarks",
+  "weread_best_bookmarks",
+  "weread_reviews",
+  "weread_public_reviews",
+  "weread_readdata",
+  "weread_search"
+] as const;
+
 const TOOL_GROUPS: Record<string, string[]> = {
   "group:fs": ["read", "write", "edit"],
   "group:runtime": ["bash"],
@@ -28,7 +56,10 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory.search", "memory.read"],
   "group:memory-write": ["memory.remember"],
   "group:web": ["web_search", "web_fetch", ...GUANLAN_TOOL_NAMES],
-  "group:planning": ["askuserquestion", "taskcontractwrite"]
+  "group:planning": ["askuserquestion", "taskcontractwrite"],
+  "group:automation": [...AUTOMATION_TOOL_NAMES],
+  "group:im": ["send_im_message"],
+  "group:reading": [...READING_TOOL_NAMES]
 };
 
 export function normalizeRuntimeToolPolicyEntry(value: string): string {

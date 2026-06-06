@@ -66,6 +66,7 @@ import {
   openWorkspacePath,
   openWorkspaceRootPath,
   previewAgentPath,
+  readAgentFileData,
   readAgentPath,
   previewWorkspacePath,
   readWorkspacePath,
@@ -108,6 +109,19 @@ import {
   installSkillMarketItemToWorkspace,
   importLocalSkillDirectoryToWorkspace
 } from "../services/skills/skills-market-service";
+import {
+  analyzeThreadWorkspaceSkillImprovements,
+  analyzeWorkspaceSkillImprovement,
+  applyWorkspaceSkillImprovement,
+  listWorkspaceSkillVersions,
+  restoreWorkspaceSkillVersion
+} from "../services/skills/skill-evolution-service";
+import {
+  deleteEditableSkill,
+  getEditableSkill,
+  listEditableSkills,
+  saveWorkspaceSkill
+} from "../services/skills/workspace-skill-editor-service";
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
@@ -153,11 +167,13 @@ import {
   agentTruncateThreadInputSchema,
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
+  applySkillImprovementInputSchema,
   executeTaskContractInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
   deleteSkillInputSchema,
+  editableSkillInputSchema,
   githubSkillReviewInputSchema,
   importLocalSkillDirectoryInputSchema,
   installGitHubSkillInputSchema,
@@ -180,11 +196,14 @@ import {
   renameFileInputSchema,
   resumeRunInputSchema,
   runTraceInputSchema,
+  saveSkillInputSchema,
   saveFilesToWorkspaceInputSchema,
   saveFilesToThreadInputSchema,
   searchWorkspaceFilesInputSchema,
   skillMarketCatalogInputSchema,
   skillMarketDetailInputSchema,
+  skillImprovementAnalysisInputSchema,
+  skillVersionInputSchema,
   threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
@@ -213,9 +232,15 @@ interface AgentHandlersContext {
     threadId: string,
     phase: "idle" | "planning" | "awaiting_approval" | "executing" | "completed"
   ) => void;
+  appendAgentMessage?: typeof appendAgentMessage;
+  analyzeThreadWorkspaceSkillImprovements?: typeof analyzeThreadWorkspaceSkillImprovements;
 }
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
+  const appendAgentMessageForContext = context.appendAgentMessage ?? appendAgentMessage;
+  const analyzeThreadWorkspaceSkillImprovementsForContext =
+    context.analyzeThreadWorkspaceSkillImprovements ?? analyzeThreadWorkspaceSkillImprovements;
+
   const resolveRequiredWorkspaceSlug = (threadId: string, workspaceSlug?: string) => {
     const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugByThreadId(threadId);
     if (!resolvedWorkspaceSlug) {
@@ -318,7 +343,45 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     context.notifyPlanModePhaseChange(input.threadId, "executing");
   };
 
-  const createAgentStreamEmitter = (threadId: string, options?: { contractId?: string; taskRunId?: string }) => {
+  const resolveWorkspaceSlugForThread = (threadId: string, workspaceId?: string): string | undefined => {
+    const explicitWorkspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined;
+    if (explicitWorkspace) return explicitWorkspace.slug;
+    const threadWorkspaceId = getAgentThreadMeta(threadId)?.workspaceId;
+    return threadWorkspaceId ? getAgentWorkspace(threadWorkspaceId)?.slug : undefined;
+  };
+
+  const scheduleSkillImprovementSuggestionScan = (threadId: string, workspaceSlug?: string): void => {
+    const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugForThread(threadId);
+    if (!resolvedWorkspaceSlug) return;
+
+    setTimeout(() => {
+      void analyzeThreadWorkspaceSkillImprovementsForContext({
+        workspaceSlug: resolvedWorkspaceSlug,
+        threadId,
+        getRecentMessages: (targetThreadId, limit) => getRecentAgentThreadMessages(targetThreadId, limit).messages
+      })
+        .then((suggestions) => {
+          if (suggestions.length === 0) return;
+          context.writeNotification(AGENT_IPC_CHANNELS.SKILL_IMPROVEMENT_SUGGESTED, {
+            threadId,
+            workspaceSlug: resolvedWorkspaceSlug,
+            suggestions
+          });
+        })
+        .catch((error) => {
+          log.warn("Skill improvement scan failed", {
+            threadId,
+            workspaceSlug: resolvedWorkspaceSlug,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+    }, 0);
+  };
+
+  const createAgentStreamEmitter = (
+    threadId: string,
+    options?: { contractId?: string; taskRunId?: string; workspaceSlug?: string }
+  ) => {
     return {
       onRuntimeEvent: (event: unknown) => {
         context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
@@ -370,6 +433,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           });
           return;
         }
+        scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
         if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
           context.notifyPlanModePhaseChange(threadId, "completed");
         }
@@ -811,8 +875,28 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(workspaceSlugInputSchema, params, AGENT_IPC_CHANNELS.GET_SKILLS);
       return getWorkspaceSkills(input.workspaceSlug);
     },
+    [AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS]: async (params) => {
+      const input = validateInput(workspaceSlugInputSchema, params, AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS);
+      return listEditableSkills(input);
+    },
+    [AGENT_IPC_CHANNELS.GET_EDITABLE_SKILL]: async (params) => {
+      const input = validateInput(editableSkillInputSchema, params, AGENT_IPC_CHANNELS.GET_EDITABLE_SKILL);
+      return getEditableSkill(input);
+    },
+    [AGENT_IPC_CHANNELS.SAVE_SKILL]: async (params) => {
+      const input = validateInput(saveSkillInputSchema, params, AGENT_IPC_CHANNELS.SAVE_SKILL);
+      return saveWorkspaceSkill(input);
+    },
     [AGENT_IPC_CHANNELS.DELETE_SKILL]: async (params) => {
       const input = validateInput(deleteSkillInputSchema, params, AGENT_IPC_CHANNELS.DELETE_SKILL);
+      if (input.storageScope) {
+        deleteEditableSkill({
+          storageScope: input.storageScope,
+          workspaceSlug: input.workspaceSlug,
+          skillSlug: input.skillSlug
+        });
+        return { ok: true };
+      }
       deleteWorkspaceSkill(input.workspaceSlug, input.skillSlug);
       return { ok: true };
     },
@@ -831,6 +915,41 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.GET_SKILL_MARKET_DETAIL
       );
       return getSkillMarketDetail(input);
+    },
+    [AGENT_IPC_CHANNELS.LIST_SKILL_VERSIONS]: async (params) => {
+      const input = validateInput(
+        skillVersionInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.LIST_SKILL_VERSIONS
+      );
+      return listWorkspaceSkillVersions(input);
+    },
+    [AGENT_IPC_CHANNELS.RESTORE_SKILL_VERSION]: async (params) => {
+      const input = validateInput(
+        skillVersionInputSchema.required({ filename: true }),
+        params,
+        AGENT_IPC_CHANNELS.RESTORE_SKILL_VERSION
+      );
+      return restoreWorkspaceSkillVersion(input);
+    },
+    [AGENT_IPC_CHANNELS.ANALYZE_SKILL_IMPROVEMENT]: async (params) => {
+      const input = validateInput(
+        skillImprovementAnalysisInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.ANALYZE_SKILL_IMPROVEMENT
+      );
+      return analyzeWorkspaceSkillImprovement({
+        ...input,
+        getRecentMessages: (threadId, limit) => getRecentAgentThreadMessages(threadId, limit).messages
+      });
+    },
+    [AGENT_IPC_CHANNELS.APPLY_SKILL_IMPROVEMENT]: async (params) => {
+      const input = validateInput(
+        applySkillImprovementInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.APPLY_SKILL_IMPROVEMENT
+      );
+      return applyWorkspaceSkillImprovement(input);
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(
@@ -972,6 +1091,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.READ_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.READ_FILE);
       return readAgentPath(
+        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
+        input.threadId,
+        input.path
+      );
+    },
+    [AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA]: async (params) => {
+      const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA);
+      return readAgentFileData(
         resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
         input.threadId,
         input.path
@@ -1213,13 +1340,17 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       if (sendInput.permissionMode === "plan") {
         context.notifyPlanModePhaseChange(sendInput.threadId, "planning");
       }
-      return appendAgentMessage(sendInput, createAgentStreamEmitter(sendInput.threadId), {
+      return appendAgentMessageForContext(sendInput, createAgentStreamEmitter(sendInput.threadId, {
+        workspaceSlug: resolveWorkspaceSlugForThread(sendInput.threadId, sendInput.workspaceId)
+      }), {
         onExecutionStarted: createExecutionStartCallback(sendInput)
       });
     },
     [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentAppendInputSchema, params, AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE);
-      return appendAgentMessage(input, createAgentStreamEmitter(input.threadId), {
+      return appendAgentMessageForContext(input, createAgentStreamEmitter(input.threadId, {
+        workspaceSlug: resolveWorkspaceSlugForThread(input.threadId, input.workspaceId)
+      }), {
         onExecutionStarted: createExecutionStartCallback(input)
       });
     },

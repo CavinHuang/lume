@@ -110,7 +110,7 @@ export async function generateWereadReadingNote(input: WereadGenerateNoteInput):
   const taskInput: ReadingRunTaskInput = {
     trigger: "manual",
     bookId: book.id,
-    depth: "seed",
+    depth: "deep",
     manualQuoteText: text,
     manualSource: input.source ?? bookTitle
   };

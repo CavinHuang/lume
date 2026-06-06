@@ -989,6 +989,93 @@ describe("runtime-core run", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
+  test("Lume runtime 应加载用户全局 ~/.lume/skills", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-global-skills-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const skillDir = join(configDir, "skills", "global-planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: global-planner",
+        "description: global planning skill",
+        "---",
+        "# Global Planner",
+        "",
+        "Use this skill for reusable planning.",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-global-skills-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "global-skill-runtime-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug: "global-skill-workspace",
+      workspaceName: "Global Skills Workspace"
+    });
+
+    const init = await result.agent.getInitializationResult();
+    expect(init.skills).toContain("global-planner");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("Lume runtime 应加载工作目录 .lume/skills", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-workdir-skills-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-workdir-skills-"));
+    const skillDir = join(cwd, ".lume", "skills", "project-planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: project-planner",
+        "description: project planning skill",
+        "---",
+        "# Project Planner",
+        "",
+        "Use this project-local skill for planning.",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "workdir-skill-runtime-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug: "workdir-skill-workspace",
+      workspaceName: "Workdir Skills Workspace"
+    });
+
+    const init = await result.agent.getInitializationResult();
+    expect(init.skills).toContain("project-planner");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
   test("buildSidecarSubagentRunContext 应统一 registry 与 SDK 使用的 subagent_run_id", () => {
     const result = buildSidecarSubagentRunContext({
       parentThreadId: "parent-thread",

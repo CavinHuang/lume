@@ -156,6 +156,10 @@ export function getDefaultSkillsDir(): string {
   return ensureDir(join(getConfigDir(), "default-skills"));
 }
 
+export function getUserSkillsDir(): string {
+  return ensureDir(join(getConfigDir(), "skills"));
+}
+
 export function getAgentThreadRootPath(workspaceSlug: string, threadId: string): string {
   const safeThreadId = assertSafeSegment(threadId, "agent thread id");
   return ensureDir(join(getAgentWorkspacePath(workspaceSlug), "threads", safeThreadId), "Agent 线程根目录");

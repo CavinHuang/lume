@@ -357,7 +357,7 @@ export function createReadingNote(input: ReadingNoteInput): ReadingNote {
     ...(typeof input.cost === "number" && Number.isFinite(input.cost) ? { cost: Math.max(0, input.cost) } : {}),
     ...(input.modelUsage ? { modelUsage: input.modelUsage } : {}),
     revisions: [],
-    aiGenerated: true,
+    aiGenerated: Boolean(input.modelUsage),
     hidden: false,
     deleted: false,
     createdAt: now,

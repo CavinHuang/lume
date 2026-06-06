@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentThread } from "./agent-thread-manager";
 import { resolveAgentDynamicContextInput, resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
-import { getAgentWorkspacePath } from "../infra/config-paths";
+import { getAgentWorkspacePath, getUserSkillsDir } from "../infra/config-paths";
 
 describe("agent-runtime-context", () => {
   let prevConfigDir: string | undefined;
@@ -74,6 +74,25 @@ describe("agent-runtime-context", () => {
     expect(trace.capabilityLanes).toEqual(["skills", "browser", "raw-tools"]);
     expect(trace.preferredCapabilityRoute).toBe("skills");
     expect(trace.reason).toContain("loaded skill metadata");
+  });
+
+  test("runtime routing trace 应包含用户全局 skill 元数据", () => {
+    const skillDir = join(getUserSkillsDir(), "global-planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      ['---', 'name: "Global Planner"', 'description: "Breaks work into execution plans"', '---', '', '# Planner'].join("\n"),
+      "utf-8"
+    );
+
+    const trace = resolveAgentRuntimeRoutingTrace({
+      workspaceSlug: "routing-trace-global-skill",
+      userMessage: "help me create an execution plan",
+      availableTools: ["read", "write"]
+    });
+
+    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools"]);
+    expect(trace.preferredCapabilityRoute).toBe("skills");
   });
 
   test("存在 workspace skills 时，即使未显式传入 Skill 工具也应补出 skills lane", () => {
