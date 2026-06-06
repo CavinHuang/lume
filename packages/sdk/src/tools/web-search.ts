@@ -473,6 +473,20 @@ async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: 
   return { data: results, is_error: false } as const
 }
 
+export function detectAcceptLanguage(query: string): string {
+  if (/[가-힣ᄀ-ᇿ㄰-㆏]/.test(query))
+    return "ko-KR,ko;q=0.9,en;q=0.8";
+  if (/[぀-ヿㇰ-ㇿ]/.test(query))
+    return "ja-JP,ja;q=0.9,en;q=0.8";
+  if (/[؀-ۿ]/.test(query))
+    return "ar-SA,ar;q=0.9,en;q=0.8";
+  if (/[Ѐ-ӿ]/.test(query))
+    return "ru-RU,ru;q=0.9,en;q=0.8";
+  if (/[一-鿿㐀-䶿]/.test(query))
+    return "zh-CN,zh;q=0.9,en;q=0.8";
+  return "en-US,en;q=0.9";
+}
+
 async function searchWithBing(query: string, numResults: number, sandbox: unknown) {
   const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}`
   const sandboxError = ensureNetworkAllowed(url, sandbox as never)

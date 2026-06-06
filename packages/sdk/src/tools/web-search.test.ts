@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   parseGuanlanSearchOutput,
-  resolveEnabledWebSearchProviders
+  resolveEnabledWebSearchProviders,
+  detectAcceptLanguage
 } from "./web-search";
 
 describe("web-search provider config", () => {
@@ -58,5 +59,27 @@ describe("guanlan result parsing", () => {
     ]))).toEqual([
       { title: "有效", url: "https://example.com/ok" }
     ]);
+  });
+});
+
+describe("detectAcceptLanguage", () => {
+  test("returns zh-CN for Chinese queries", () => {
+    expect(detectAcceptLanguage("中国经济政策")).toBe("zh-CN,zh;q=0.9,en;q=0.8");
+  });
+
+  test("returns ko-KR for Korean queries", () => {
+    expect(detectAcceptLanguage("한국 경제")).toBe("ko-KR,ko;q=0.9,en;q=0.8");
+  });
+
+  test("returns ja-JP for Japanese queries", () => {
+    expect(detectAcceptLanguage("日本の経済")).toBe("ja-JP,ja;q=0.9,en;q=0.8");
+  });
+
+  test("returns en-US for plain ASCII queries", () => {
+    expect(detectAcceptLanguage("hello world")).toBe("en-US,en;q=0.9");
+  });
+
+  test("returns zh-CN as default for mixed CJK", () => {
+    expect(detectAcceptLanguage("test 中文混合")).toBe("zh-CN,zh;q=0.9,en;q=0.8");
   });
 });
