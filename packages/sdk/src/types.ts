@@ -1000,7 +1000,7 @@ export interface SDKAccountInfo {
 }
 
 export interface InitializationResult {
-  commands: Array<{ name: string; description: string }>
+  commands: SlashCommand[]
   agents: Array<{ name: string; description: string }>
   output_style: string
   available_output_styles: string[]
@@ -1113,7 +1113,7 @@ export interface RewindFilesResult {
 }
 
 export interface ReloadPluginsResult {
-  commands: Array<{ name: string; description: string }>
+  commands: SlashCommand[]
   agents: Array<{ name: string; description: string }>
   plugins: Array<{ name: string; path: string; source?: string }>
   mcpServers: MCPServerStatus[]

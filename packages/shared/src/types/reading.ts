@@ -263,6 +263,9 @@ export interface ReadingUserHighlightContext {
 export interface ReadingUserReadingContext {
   userHighlights?: ReadingUserHighlightContext[];
   userThoughts?: string[];
+  memorySnippets?: string[];
+  recentConversationSnippets?: string[];
+  recentReadingNoteSnippets?: string[];
   recentConversationSummary?: string;
   recentDiarySummary?: string;
 }

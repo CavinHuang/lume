@@ -32,7 +32,33 @@ export function parseMarkdownFrontmatter(
     const key = line.slice(0, separatorIndex).trim()
     const value = line.slice(separatorIndex + 1).trim()
     if (key) {
-      frontmatter[key] = value
+      if (value.startsWith('|') || value.startsWith('>')) {
+        const block = readIndentedFrontmatterBlock(lines, index + 1)
+        frontmatter[key] = value.startsWith('|')
+          ? block.lines.join('\n').trim()
+          : block.lines.join(' ').replace(/\s+/g, ' ').trim()
+        index = block.nextIndex - 1
+      } else if (!value) {
+        const items: string[] = []
+        let nextIndex = index + 1
+        for (; nextIndex < lines.length; nextIndex++) {
+          const nextLine = lines[nextIndex]
+          if (nextLine === undefined) continue
+          if (nextLine === '---') break
+          const trimmed = nextLine.trim()
+          if (!trimmed) continue
+          if (!nextLine.startsWith(' ') && !nextLine.startsWith('\t')) break
+          if (!trimmed.startsWith('- ')) break
+          const item = trimmed.slice(2).trim()
+          if (item) items.push(item)
+        }
+        frontmatter[key] = items.join(',')
+        if (items.length > 0) {
+          index = nextIndex - 1
+        }
+      } else {
+        frontmatter[key] = value
+      }
     }
   }
 
@@ -43,6 +69,37 @@ export function parseMarkdownFrontmatter(
   return {
     frontmatter,
     content: lines.slice(endIndex + 1).join('\n').trim(),
+  }
+}
+
+function readIndentedFrontmatterBlock(
+  lines: string[],
+  startIndex: number,
+): { lines: string[]; nextIndex: number } {
+  const rawLines: string[] = []
+  let nextIndex = startIndex
+
+  for (; nextIndex < lines.length; nextIndex++) {
+    const line = lines[nextIndex]
+    if (line === undefined) continue
+    if (line === '---') break
+    if (!line.trim()) {
+      rawLines.push('')
+      continue
+    }
+    if (!line.startsWith(' ') && !line.startsWith('\t')) break
+    rawLines.push(line)
+  }
+
+  const indents = rawLines
+    .filter((line) => line.trim())
+    .map((line) => line.match(/^[ \t]*/)?.[0]?.length ?? 0)
+    .filter((length) => length > 0)
+  const indent = indents.length > 0 ? Math.min(...indents) : 0
+
+  return {
+    lines: rawLines.map((line) => line.trim() ? line.slice(indent) : ''),
+    nextIndex,
   }
 }
 

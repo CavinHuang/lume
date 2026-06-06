@@ -1,3 +1,49 @@
+const TOOL_ALIASES: Record<string, string | string[]> = {
+  agent: 'Agent',
+  askuser: 'AskUserQuestion',
+  askuserquestion: 'AskUserQuestion',
+  bash: 'Bash',
+  config: 'Config',
+  edit: 'Edit',
+  editfile: 'Edit',
+  glob: 'Glob',
+  grep: 'Grep',
+  listdirectory: ['Glob', 'ls'],
+  listdir: ['Glob', 'ls'],
+  listmcpresources: 'ListMcpResourcesTool',
+  listmcpresourcestool: 'ListMcpResourcesTool',
+  lsp: 'LSP',
+  notebookedit: 'NotebookEdit',
+  read: 'Read',
+  readfile: 'Read',
+  readmcpresource: 'ReadMcpResourceTool',
+  readmcpresourcetool: 'ReadMcpResourceTool',
+  skill: 'Skill',
+  taskcreate: 'TaskCreate',
+  taskget: 'TaskGet',
+  tasklist: 'TaskList',
+  taskoutput: 'TaskOutput',
+  taskstop: 'TaskStop',
+  taskupdate: 'TaskUpdate',
+  todo: 'TodoWrite',
+  todowrite: 'TodoWrite',
+  toolsearch: 'ToolSearch',
+  webfetch: 'WebFetch',
+  websearch: 'WebSearch',
+  write: 'Write',
+  writefile: 'Write',
+}
+
+function normalizeToolKey(value: string): string {
+  return value.trim().replace(/[-_\s]/g, '').toLowerCase()
+}
+
+function canonicalToolNames(value: string): string[] {
+  const resolved = TOOL_ALIASES[normalizeToolKey(value)]
+  if (Array.isArray(resolved)) return resolved
+  return [resolved ?? value]
+}
+
 export function matchesToolPattern(
   toolName: string,
   pattern: string,
@@ -6,7 +52,10 @@ export function matchesToolPattern(
   if (pattern.endsWith('*')) {
     return toolName.startsWith(pattern.slice(0, -1))
   }
-  return toolName === pattern
+  if (toolName === pattern) return true
+  const toolNames = canonicalToolNames(toolName)
+  const patternNames = canonicalToolNames(pattern)
+  return toolNames.some((name) => patternNames.includes(name))
 }
 
 export function matchesAnyToolPattern(

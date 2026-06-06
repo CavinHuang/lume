@@ -82,8 +82,6 @@ function commandResult(content: string, maxChars: number): { data: string } {
 export function buildGuanlanSearchArgs(input: Record<string, unknown>): string[] {
   const query = asNonEmptyString(input.query) ?? ''
   const args = [
-    '-m',
-    'guanlan',
     'search',
     query,
     '--profile',
@@ -101,8 +99,6 @@ export function buildGuanlanSearchArgs(input: Record<string, unknown>): string[]
 
 export function buildGuanlanReadArgs(input: Record<string, unknown>): string[] {
   const args = [
-    '-m',
-    'guanlan',
     'read',
     asNonEmptyString(input.url) ?? '',
     '--max-chars',
@@ -114,8 +110,6 @@ export function buildGuanlanReadArgs(input: Record<string, unknown>): string[] {
 
 export function buildGuanlanHotnewsArgs(input: Record<string, unknown>): string[] {
   const args = [
-    '-m',
-    'guanlan',
     'hotnews',
     asNonEmptyString(input.source) ?? 'today',
     '--limit',
@@ -128,8 +122,6 @@ export function buildGuanlanHotnewsArgs(input: Record<string, unknown>): string[
 
 export function buildGuanlanResearchArgs(input: Record<string, unknown>): string[] {
   const args = [
-    '-m',
-    'guanlan',
     'research',
     asNonEmptyString(input.query) ?? '',
     '--profile',

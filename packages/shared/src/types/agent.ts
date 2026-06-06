@@ -205,8 +205,18 @@ export interface SkillMeta {
   slug: string
   name: string
   description?: string
+  whenToUse?: string
+  allowedTools?: string[]
+  argumentHint?: string
+  disableModelInvocation?: boolean
   icon?: string
   version?: string
+}
+
+export interface EditableSkillMeta extends SkillMeta {
+  storageScope: SkillStorageScope
+  managementSurface?: SkillManagementSurface
+  sourceType?: SkillSourceType
 }
 
 /** 工作区能力摘要（MCP + Skill 计数） */
@@ -329,9 +339,13 @@ export interface GlobalImportResult {
 
 export type SkillSourceType = 'built-in' | 'local' | 'github' | 'subscribed-market'
 
+export type SkillManagementSurface = 'settings' | 'market'
+
 export type SkillTrustLevel = 'trusted' | 'review-required' | 'blocked-by-default'
 
 export type SkillInstallState = 'not-installed' | 'installed' | 'update-available'
+
+export type SkillStorageScope = 'workspace' | 'user'
 
 export interface SkillCatalogItem {
   id: string
@@ -372,6 +386,97 @@ export interface SkillMarketDetailResult {
   item: SkillCatalogItem
   rootPath: string
   files: SkillFileTreeNode[]
+}
+
+export interface WorkspaceSkillInput {
+  workspaceSlug: string
+  skillSlug: string
+  storageScope?: SkillStorageScope
+}
+
+export interface SaveWorkspaceSkillInput extends WorkspaceSkillInput {
+  storageScope?: SkillStorageScope
+  name: string
+  description?: string
+  whenToUse?: string
+  allowedTools?: string[]
+  argumentHint?: string
+  disableModelInvocation?: boolean
+  version?: string
+  prompt: string
+}
+
+export interface SaveWorkspaceSkillResult {
+  ok: true
+  skill: SkillMeta
+  versionPath?: string
+}
+
+export interface ListEditableSkillsInput {
+  workspaceSlug: string
+}
+
+export interface GetEditableSkillInput extends WorkspaceSkillInput {
+  storageScope: SkillStorageScope
+}
+
+export interface EditableSkillDetailResult {
+  skill: EditableSkillMeta
+  content: string
+  path: string
+}
+
+export interface SkillVersionInfo {
+  path: string
+  filename: string
+  timestamp: string
+}
+
+export interface ListSkillVersionsInput extends WorkspaceSkillInput {}
+
+export interface RestoreSkillVersionInput extends WorkspaceSkillInput {
+  filename: string
+}
+
+export interface AnalyzeSkillImprovementInput extends WorkspaceSkillInput {
+  modelRef?: string
+  maxSessions?: number
+  messagesPerSession?: number
+}
+
+export interface SkillImprovementUpdate {
+  section: string
+  change: string
+  reason: string
+}
+
+export interface SkillImprovementAnalysisResult {
+  skillSlug: string
+  usageCount: number
+  analyzedSessionIds: string[]
+  updates: SkillImprovementUpdate[]
+}
+
+export interface ThreadSkillImprovementSuggestion extends SkillImprovementAnalysisResult {
+  workspaceSlug: string
+}
+
+export interface SkillImprovementSuggestedEvent {
+  threadId: string
+  workspaceSlug: string
+  suggestions: ThreadSkillImprovementSuggestion[]
+}
+
+export interface ApplySkillImprovementInput extends WorkspaceSkillInput {
+  updates: SkillImprovementUpdate[]
+  modelRef?: string
+}
+
+export interface SkillEvolutionResult {
+  success: boolean
+  error?: string
+  versionPath?: string
+  warning?: string
 }
 
 export interface GitHubSkillReviewItem {
@@ -986,6 +1091,19 @@ export interface AgentSavedFile {
   threadPath?: string
 }
 
+/** 读取线程文件二进制数据的输入 */
+export interface AgentReadThreadFileDataInput {
+  workspaceSlug?: string
+  threadId: string
+  path: string
+}
+
+/** 线程文件二进制数据读取结果 */
+export interface AgentThreadFileDataResult {
+  data: string
+  size: number
+}
+
 /** 文件树展示用的外部附加来源信息 */
 export interface ExternalAttachmentMeta {
   label: "外部附加"
@@ -1167,6 +1285,12 @@ export const AGENT_IPC_CHANNELS = {
   SAVE_PROXY_SETTINGS: 'agent:save-proxy-settings',
   /** 获取工作区 Skill 列表 */
   GET_SKILLS: 'agent:get-skills',
+  /** 获取可在设置页编辑的 Skill 列表 */
+  LIST_EDITABLE_SKILLS: 'agent:list-editable-skills',
+  /** 获取可在设置页编辑的单个 Skill 内容 */
+  GET_EDITABLE_SKILL: 'agent:get-editable-skill',
+  /** 保存工作区 Skill */
+  SAVE_SKILL: 'agent:save-skill',
   /** 删除工作区 Skill */
   DELETE_SKILL: 'agent:delete-skill',
   /** 从本地目录导入 Skill 到工作区 */
@@ -1177,6 +1301,16 @@ export const AGENT_IPC_CHANNELS = {
   GET_SKILL_MARKET_CATALOG: 'agent:get-skill-market-catalog',
   /** 获取技能详情与文件树 */
   GET_SKILL_MARKET_DETAIL: 'agent:get-skill-market-detail',
+  /** 列出工作区 Skill 的历史版本 */
+  LIST_SKILL_VERSIONS: 'agent:list-skill-versions',
+  /** 恢复工作区 Skill 的历史版本 */
+  RESTORE_SKILL_VERSION: 'agent:restore-skill-version',
+  /** 分析工作区 Skill 的改进建议 */
+  ANALYZE_SKILL_IMPROVEMENT: 'agent:analyze-skill-improvement',
+  /** 应用工作区 Skill 的改进建议 */
+  APPLY_SKILL_IMPROVEMENT: 'agent:apply-skill-improvement',
+  /** 工作区 Skill 有可确认的改进建议 */
+  SKILL_IMPROVEMENT_SUGGESTED: 'agent:skill-improvement-suggested',
   /** 获取 GitHub 技能安装前审查摘要 */
   GET_GITHUB_SKILL_REVIEW: 'agent:get-github-skill-review',
   /** 从 GitHub 安装技能到工作区 */
@@ -1240,6 +1374,8 @@ export const AGENT_IPC_CHANNELS = {
   PREVIEW_FILE: 'agent:preview-file',
   /** 读取 thread 文件内容用于内嵌预览 */
   READ_FILE: 'agent:read-file',
+  /** 读取 thread 文件二进制数据用于图片预览 */
+  READ_THREAD_FILE_DATA: 'agent:read-thread-file-data',
   /** 重命名文件/目录 */
   RENAME_FILE: 'agent:rename-file',
   /** 移动文件/目录到目标目录 */

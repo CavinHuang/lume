@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { getAllBaseTools } from "./index.js";
+import type { ToolDefinition } from "../types";
+import { filterTools, getAllBaseTools } from "./index.js";
+
+function tool(name: string): ToolDefinition {
+  return {
+    name,
+    description: name,
+    inputSchema: { type: "object", properties: {} },
+    call: async () => ({ type: "tool_result", tool_use_id: "", content: name }),
+  };
+}
 
 describe("SDK tool registry", () => {
   test("does not expose legacy plan mode state tools", () => {
@@ -26,5 +36,18 @@ describe("SDK tool registry", () => {
     expect(names).toContain("guanlan_read");
     expect(names).toContain("guanlan_hotnews");
     expect(names).toContain("guanlan_research");
+  });
+
+  test("filterTools accepts Alice-style allowed and disallowed aliases", () => {
+    const tools = [tool("Read"), tool("Bash"), tool("Write")];
+
+    expect(filterTools(tools, ["read_file", "bash"]).map((item) => item.name)).toEqual([
+      "Read",
+      "Bash",
+    ]);
+    expect(filterTools(tools, undefined, ["write_file"]).map((item) => item.name)).toEqual([
+      "Read",
+      "Bash",
+    ]);
   });
 });

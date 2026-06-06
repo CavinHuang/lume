@@ -6,6 +6,7 @@ import { createAgent } from "./agent.js"
 import type { ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import { getSessionMessages, saveSession } from "./session.js"
+import { clearSkills } from "./skills/registry.js"
 
 function tool(name: string): ToolDefinition {
   return {
@@ -68,6 +69,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
   }
   delete process.env.OPEN_AGENT_SDK_HOME
+  clearSkills()
 })
 
 describe("Agent runtime tool resolver", () => {
@@ -117,6 +119,188 @@ describe("Agent compact command", () => {
     expect(agent.getMessages().some((message) =>
       message.type === "user" && message.message.content === "/compact"
     )).toBe(false)
+    await agent.close()
+  })
+})
+
+describe("Agent skill slash commands", () => {
+  test("preserves skill argument hints in initialization commands", async () => {
+    const agent = createAgent({
+      persistSession: false,
+      skills: [{
+        name: "code-review",
+        description: "Review code changes",
+        argumentHint: "path to review",
+        async getPrompt() {
+          return [{ type: "text", text: "review prompt" }]
+        },
+      }],
+    })
+
+    const init = await agent.getInitializationResult()
+
+    expect(init.commands.find((command) => command.name === "/code-review")).toMatchObject({
+      name: "/code-review",
+      description: "Review code changes",
+      argumentHint: "path to review",
+    })
+    await agent.close()
+  })
+
+  test("expands /skill manual invocations before the provider turn", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      skills: [{
+        name: "code-review",
+        description: "Review code changes",
+        async getPrompt(args) {
+          return [{ type: "text", text: `Review target: ${args}` }]
+        },
+      }],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("/skill code-review src/index.ts")) {
+      // drain query
+    }
+
+    expect(provider.requests[0]?.messages[0]?.content).toBe("Review target: src/index.ts")
+    await agent.close()
+  })
+
+  test("expands $skill manual invocations before the provider turn", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      skills: [{
+        name: "code-review",
+        description: "Review code changes",
+        async getPrompt(args) {
+          return [{ type: "text", text: `Review target: ${args}` }]
+        },
+      }],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("$code-review src/index.ts")) {
+      // drain query
+    }
+
+    expect(provider.requests[0]?.messages[0]?.content).toBe("Review target: src/index.ts")
+    await agent.close()
+  })
+
+  test("applies manual skill allowed tools from the first provider turn", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Read"), tool("Write")],
+      skills: [{
+        name: "code-review",
+        description: "Review code changes",
+        allowedTools: ["read_file"],
+        async getPrompt(args) {
+          return [{ type: "text", text: `Review target: ${args}` }]
+        },
+      }],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("/code-review src/index.ts")) {
+      // drain query
+    }
+
+    expect(provider.requests[0]?.tools?.map((item) => item.name)).toEqual(["Read"])
+    await agent.close()
+  })
+
+  test("asks for argumentHint when a manual skill invocation omits args", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      skills: [{
+        name: "code-review",
+        description: "Review code changes",
+        argumentHint: "path to review",
+        async getPrompt(args) {
+          return [{ type: "text", text: `Review target: ${args}` }]
+        },
+      }],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    const askEvents = []
+    for await (const event of agent.query("/code-review")) {
+      askEvents.push(event)
+    }
+
+    expect(provider.requests).toHaveLength(0)
+    expect(askEvents).toContainEqual(expect.objectContaining({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [expect.objectContaining({
+          type: "text",
+          text: expect.stringContaining("path to review"),
+        })],
+      },
+    }))
+
+    for await (const _event of agent.query("src/index.ts")) {
+      // drain query
+    }
+
+    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("Review target: src/index.ts")
+    await agent.close()
+  })
+
+  test("asks for argumentHint when a $skill invocation omits args", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      skills: [{
+        name: "code-review",
+        description: "Review code changes",
+        argumentHint: "path to review",
+        async getPrompt(args) {
+          return [{ type: "text", text: `Review target: ${args}` }]
+        },
+      }],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    const askEvents = []
+    for await (const event of agent.query("$code-review")) {
+      askEvents.push(event)
+    }
+
+    expect(provider.requests).toHaveLength(0)
+    expect(askEvents).toContainEqual(expect.objectContaining({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [expect.objectContaining({
+          type: "text",
+          text: expect.stringContaining("path to review"),
+        })],
+      },
+    }))
+
+    for await (const _event of agent.query("src/index.ts")) {
+      // drain query
+    }
+
+    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("Review target: src/index.ts")
     await agent.close()
   })
 })

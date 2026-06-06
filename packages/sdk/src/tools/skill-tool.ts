@@ -6,7 +6,8 @@
  */
 
 import type { ToolDefinition, ToolResult, ToolContext } from '../types.js'
-import { getSkill, getUserInvocableSkills } from '../skills/registry.js'
+import { recordSkillUsage } from '../skills/evolution.js'
+import { getModelInvocableSkills, getSkill, getUserInvocableSkills } from '../skills/registry.js'
 
 export const SkillTool: ToolDefinition = {
   name: 'Skill',
@@ -35,7 +36,7 @@ export const SkillTool: ToolDefinition = {
   isEnabled: () => getUserInvocableSkills().length > 0,
 
   async prompt(): Promise<string> {
-    const skills = getUserInvocableSkills()
+    const skills = getModelInvocableSkills()
     if (skills.length === 0) return ''
 
     const lines = skills.map((s) => {
@@ -43,7 +44,9 @@ export const SkillTool: ToolDefinition = {
         s.description.length > 200
           ? s.description.slice(0, 200) + '...'
           : s.description
-      return `- ${s.name}: ${desc}`
+      const trigger = s.whenToUse ? ` Trigger: ${s.whenToUse}` : ''
+      const args = s.argumentHint ? ` Args: ${s.argumentHint}` : ''
+      return `- ${s.name}: ${desc}${trigger}${args}`
     })
 
     return (
@@ -115,6 +118,12 @@ export const SkillTool: ToolDefinition = {
       if (skill.model) {
         result.model = skill.model
       }
+
+      await recordSkillUsage({
+        skillName: skill.name,
+        skillPath: skill.sourcePath,
+        sessionId: context.sessionId,
+      }).catch(() => undefined)
 
       return {
         type: 'tool_result',

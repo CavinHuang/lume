@@ -20,6 +20,7 @@ import type {
   SDKMessage,
   SDKUserMessage,
   SessionMessage,
+  SlashCommand,
   ToolDefinition,
   CanUseToolFn,
   McpServerConfig,
@@ -51,6 +52,8 @@ import {
   registerSkill,
   unregisterSkill,
 } from './skills/index.js'
+import { recordSkillUsage } from './skills/evolution.js'
+import type { SkillDefinition } from './skills/types.js'
 import { createProvider, type LLMProvider, type ApiType } from './providers/index.js'
 import type { NormalizedMessageParam } from './providers/types.js'
 import {
@@ -72,6 +75,20 @@ import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
+
+interface ManualSkillInvocation {
+  skill: SkillDefinition
+  args: string
+}
+
+interface ResolvedManualSkillInvocation {
+  prompt: string
+  allowedTools?: string[]
+}
+
+interface PendingManualSkillInvocation {
+  skill: SkillDefinition
+}
 
 function toSessionMessage(
   role: SessionMessage['role'],
@@ -95,6 +112,49 @@ function normalizePromptInput(prompt: QueryInput): string | ContentBlockParam[] 
     return prompt.message.content as string | ContentBlockParam[]
   }
   return prompt as string | ContentBlockParam[]
+}
+
+function findManualSkillInvocation(prompt: string): ManualSkillInvocation | null {
+  const trimmed = prompt.trim()
+  if (!trimmed.startsWith('/') && !trimmed.startsWith('$')) return null
+
+  let commandText = trimmed.slice(1).trim()
+  if (!commandText) return null
+
+  const lowerPrefix = commandText.toLowerCase()
+  if (lowerPrefix === 'skill') return null
+  if (lowerPrefix.startsWith('skill ')) {
+    commandText = commandText.slice('skill'.length).trimStart()
+  }
+  if (!commandText) return null
+
+  const candidates = getUserInvocableSkills()
+    .flatMap((skill) => [skill.name, ...(skill.aliases || [])].map((name) => ({
+      name: name.trim(),
+      skill,
+    })))
+    .filter((candidate) => candidate.name.length > 0)
+    .sort((a, b) => b.name.length - a.name.length)
+
+  const lowerCommandText = commandText.toLowerCase()
+  for (const candidate of candidates) {
+    const lowerName = candidate.name.toLowerCase()
+    if (lowerCommandText === lowerName || lowerCommandText.startsWith(`${lowerName} `)) {
+      return {
+        skill: candidate.skill,
+        args: commandText.slice(candidate.name.length).trim(),
+      }
+    }
+  }
+
+  return null
+}
+
+function buildMissingSkillArgumentPrompt(skill: SkillDefinition): string {
+  const hint = skill.argumentHint?.trim()
+  return hint
+    ? `请提供 /${skill.name} 需要的参数：${hint}`
+    : `请提供 /${skill.name} 需要的参数。`
 }
 
 function createDisconnectedMcpConnection(
@@ -202,6 +262,7 @@ export class Agent {
   private lastContextUsage: ContextUsageResult | null = null
   private disabledMcpServers = new Set<string>()
   private queuedSdkEvents: SDKMessage[] = []
+  private pendingManualSkillInvocation: PendingManualSkillInvocation | null = null
 
   constructor(options: AgentOptions = {}) {
     this.baseOptions = { ...options }
@@ -815,6 +876,43 @@ export class Agent {
     }
 
     const normalizedPrompt = normalizePromptInput(prompt)
+    const parsedManualSkillInvocation = typeof normalizedPrompt === 'string'
+      ? findManualSkillInvocation(normalizedPrompt)
+      : null
+    const pendingManualSkillInvocation = typeof normalizedPrompt === 'string' && !parsedManualSkillInvocation
+      ? this.pendingManualSkillInvocation
+      : null
+    const manualSkillInput = pendingManualSkillInvocation && typeof normalizedPrompt === 'string' && normalizedPrompt.trim()
+      ? {
+        skill: pendingManualSkillInvocation.skill,
+        args: normalizedPrompt.trim(),
+      }
+      : parsedManualSkillInvocation
+    const missingSkillArgumentInvocation =
+      parsedManualSkillInvocation
+      && !parsedManualSkillInvocation.args
+      && parsedManualSkillInvocation.skill.argumentHint?.trim()
+        ? parsedManualSkillInvocation
+        : null
+    const missingSkillArgumentPrompt = missingSkillArgumentInvocation
+      ? buildMissingSkillArgumentPrompt(missingSkillArgumentInvocation.skill)
+      : null
+    if (missingSkillArgumentInvocation) {
+      this.pendingManualSkillInvocation = { skill: missingSkillArgumentInvocation.skill }
+    } else if (pendingManualSkillInvocation && manualSkillInput) {
+      this.pendingManualSkillInvocation = null
+    } else if (parsedManualSkillInvocation) {
+      this.pendingManualSkillInvocation = null
+    }
+    const manualSkillInvocation = manualSkillInput && !missingSkillArgumentPrompt
+      ? await this.resolveManualSkillInvocation(manualSkillInput, {
+        cwd,
+        provider,
+        model: opts.model || this.modelId,
+        options: opts,
+      })
+      : null
+    const modelFacingPrompt = manualSkillInvocation?.prompt ?? normalizedPrompt
     const isManualCompactCommand = typeof normalizedPrompt === 'string' && normalizedPrompt.trim() === '/compact'
     const userMessage = isManualCompactCommand ? null : toSessionMessage('user', normalizedPrompt)
     if (userMessage) {
@@ -826,6 +924,37 @@ export class Agent {
         timestamp: userMessage.timestamp,
       })
       await this.persistCurrentSession(cwd, opts)
+    }
+    if (missingSkillArgumentPrompt) {
+      const uuid = crypto.randomUUID()
+      const timestamp = new Date().toISOString()
+      const assistantMessage = {
+        role: 'assistant' as const,
+        content: [{ type: 'text' as const, text: missingSkillArgumentPrompt }],
+      }
+      this.sessionMessages.push(toSessionMessage('assistant', assistantMessage))
+      this.messageLog.push({
+        type: 'assistant',
+        message: assistantMessage,
+        uuid,
+        timestamp,
+      })
+      this.history = normalizeHistoryFromSessionMessages(this.sessionMessages)
+      const persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
+      yield {
+        type: 'assistant',
+        uuid,
+        session_id: this.sid,
+        parent_tool_use_id: null,
+        message: assistantMessage,
+      } as SDKMessage
+      if (persistedSessionEvent) {
+        yield persistedSessionEvent
+      }
+      return
+    }
+    if (manualSkillInvocation?.allowedTools?.length) {
+      tools = filterTools(tools, manualSkillInvocation.allowedTools)
     }
 
     const engine = new QueryEngine({
@@ -899,7 +1028,7 @@ export class Agent {
     let persistedSessionEvent: SDKMessage | null = null
     let compactionBoundarySeen = false
     try {
-      for await (const event of engine.submitMessage(normalizedPrompt)) {
+      for await (const event of engine.submitMessage(modelFacingPrompt)) {
         if (event.type === 'assistant') {
           const assistantMessage = toSessionMessage('assistant', event.message)
           this.sessionMessages.push(assistantMessage)
@@ -1038,6 +1167,7 @@ export class Agent {
     this.messageLog = []
     this.sessionMessages = []
     this.fileCheckpointState = {}
+    this.pendingManualSkillInvocation = null
   }
 
   async interrupt(): Promise<void> {
@@ -1079,6 +1209,43 @@ export class Agent {
     return this.apiType
   }
 
+  private async resolveManualSkillInvocation(
+    invocation: ManualSkillInvocation,
+    context: {
+      cwd: string
+      provider: LLMProvider
+      model: string
+      options: AgentOptions
+    },
+  ): Promise<ResolvedManualSkillInvocation | null> {
+    const contentBlocks = await invocation.skill.getPrompt(invocation.args, {
+      cwd: context.cwd,
+      provider: context.provider,
+      model: context.model,
+      apiType: this.apiType,
+      sessionId: this.sid,
+      additionalDirectories: context.options.additionalDirectories,
+      sandbox: context.options.sandbox,
+      toolConfig: context.options.toolConfig,
+      permissionMode: context.options.permissionMode,
+    })
+    const promptText = contentBlocks
+      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n\n')
+
+    await recordSkillUsage({
+      skillName: invocation.skill.name,
+      skillPath: invocation.skill.sourcePath,
+      sessionId: this.sid,
+    }).catch(() => undefined)
+
+    return {
+      prompt: promptText,
+      allowedTools: invocation.skill.allowedTools,
+    }
+  }
+
   async stopTask(taskId: string): Promise<void> {
     const { getTask } = await import('./tools/task-tools.js')
     const task = getTask(taskId)
@@ -1087,8 +1254,8 @@ export class Agent {
     }
   }
 
-  private getInitializationCommands(): Array<{ name: string; description: string }> {
-    const builtins = [
+  private getInitializationCommands(): SlashCommand[] {
+    const builtins: SlashCommand[] = [
       { name: '/clear', description: 'Clear the current conversation context' },
       { name: '/compact', description: 'Compact the current conversation history' },
       { name: '/resume', description: 'Resume a prior session' },
@@ -1101,9 +1268,13 @@ export class Agent {
       description: skill.description,
       argumentHint: skill.argumentHint,
     }))
-    const byName = new Map<string, { name: string; description: string }>()
+    const byName = new Map<string, SlashCommand>()
     for (const command of [...builtins, ...fileAndPluginCommands, ...skills]) {
-      byName.set(command.name, { name: command.name, description: command.description })
+      byName.set(command.name, {
+        name: command.name,
+        description: command.description,
+        ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+      })
     }
     return Array.from(byName.values())
   }

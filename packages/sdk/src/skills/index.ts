@@ -8,6 +8,14 @@ export type {
   SkillContentBlock,
   SkillResult,
 } from './types.js'
+export type {
+  ApplySkillImprovementResult,
+  SkillImprovementMessage,
+  SkillImprovementUpdate,
+  SkillModelCallInput,
+  SkillUsageInput,
+  SkillVersionInfo,
+} from './evolution.js'
 
 // Registry
 export {
@@ -15,11 +23,19 @@ export {
   getSkill,
   getAllSkills,
   getUserInvocableSkills,
+  getModelInvocableSkills,
   hasSkill,
   unregisterSkill,
   clearSkills,
   formatSkillsForPrompt,
 } from './registry.js'
+export {
+  analyzeSkillImprovement,
+  applySkillImprovement,
+  listSkillVersions,
+  recordSkillUsage,
+  restoreSkillVersion,
+} from './evolution.js'
 
 // Bundled skills
 export { initBundledSkills } from './bundled/index.js'

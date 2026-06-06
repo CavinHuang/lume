@@ -195,6 +195,19 @@ function createStreamlinedToolUseSummaryMessage(
   }
 }
 
+function createDeferredSiblingToolResult(
+  block: ToolUseBlock,
+): ToolResult & { tool_name: string } {
+  return {
+    type: 'tool_result',
+    tool_use_id: block.id,
+    tool_name: block.name,
+    content:
+      'Tool call skipped: a Skill activation in the same assistant turn must be applied before other tools can run. Retry after the skill prompt is loaded.',
+    is_error: true,
+  }
+}
+
 function compactMetadataContextWindow(metadata?: AgentContextCompactionMetadata): number | undefined {
   if (typeof metadata?.contextWindow === 'number' && Number.isFinite(metadata.contextWindow)) {
     return metadata.contextWindow
@@ -1288,6 +1301,29 @@ export class QueryEngine {
     const MAX_CONCURRENCY = parseInt(
       process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY || '10',
     )
+
+    const hasSkillActivation = toolUseBlocks.some((block) => block.name === 'Skill')
+    if (hasSkillActivation && toolUseBlocks.length > 1) {
+      const resultsById = new Map<string, ToolResult & { tool_name?: string }>()
+
+      for (const block of toolUseBlocks.filter((item) => item.name === 'Skill')) {
+        const tool = this.config.tools.find((t) => t.name === block.name)
+        const result = await this.executeSingleTool(block, tool, context)
+        resultsById.set(block.id, result.result)
+        events.push(...result.events)
+        toolsUsed.push(...result.toolsUsed)
+      }
+
+      for (const block of toolUseBlocks.filter((item) => item.name !== 'Skill')) {
+        resultsById.set(block.id, createDeferredSiblingToolResult(block))
+      }
+
+      return {
+        results: toolUseBlocks.map((block) => resultsById.get(block.id) ?? createDeferredSiblingToolResult(block)),
+        events,
+        toolsUsed,
+      }
+    }
 
     // Partition into concurrent (read-only or concurrency-safe) and serial (mutations)
     const concurrent: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []

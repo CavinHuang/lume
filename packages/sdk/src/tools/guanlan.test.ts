@@ -19,7 +19,7 @@ describe("Guanlan tools", () => {
       scope: "news",
       site: "example.com"
     })).toEqual([
-      "-m", "guanlan", "search", "中文搜索",
+      "search", "中文搜索",
       "--profile", "china",
       "--limit", "50",
       "--json",
@@ -32,13 +32,13 @@ describe("Guanlan tools", () => {
       max_chars: 60000,
       strict: true
     })).toEqual([
-      "-m", "guanlan", "read", "https://example.com",
+      "read", "https://example.com",
       "--max-chars", "50000",
       "--strict"
     ]);
 
     expect(buildGuanlanHotnewsArgs({ source: "weibo", limit: 2, trends: true })).toEqual([
-      "-m", "guanlan", "hotnews", "weibo",
+      "hotnews", "weibo",
       "--limit", "2",
       "--brief",
       "--trends"
@@ -50,7 +50,7 @@ describe("Guanlan tools", () => {
       read_top: 9,
       preset: "deep"
     })).toEqual([
-      "-m", "guanlan", "research", "AI Agent 中文互联网",
+      "research", "AI Agent 中文互联网",
       "--profile", "global",
       "--read-top", "5",
       "--format", "markdown",

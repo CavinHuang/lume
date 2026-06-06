@@ -159,13 +159,11 @@ export function filterTools(
   let filtered = tools
 
   if (allowedTools && allowedTools.length > 0) {
-    const allowed = new Set(allowedTools)
-    filtered = filtered.filter((t) => allowed.has(t.name))
+    filtered = filtered.filter((tool) => matchesAnyToolPattern(tool.name, allowedTools))
   }
 
   if (disallowedTools && disallowedTools.length > 0) {
-    const disallowed = new Set(disallowedTools)
-    filtered = filtered.filter((t) => !disallowed.has(t.name))
+    filtered = filtered.filter((tool) => !matchesAnyToolPattern(tool.name, disallowedTools))
   }
 
   return filtered

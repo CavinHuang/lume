@@ -192,16 +192,28 @@ export {
   getSkill,
   getAllSkills,
   getUserInvocableSkills,
+  getModelInvocableSkills,
   hasSkill,
   unregisterSkill,
   clearSkills,
   formatSkillsForPrompt,
   initBundledSkills,
+  analyzeSkillImprovement,
+  applySkillImprovement,
+  listSkillVersions,
+  recordSkillUsage,
+  restoreSkillVersion,
 } from './skills/index.js'
 export type {
   SkillDefinition,
   SkillContentBlock,
   SkillResult,
+  ApplySkillImprovementResult,
+  SkillImprovementMessage,
+  SkillImprovementUpdate,
+  SkillModelCallInput,
+  SkillUsageInput,
+  SkillVersionInfo,
 } from './skills/index.js'
 
 // --------------------------------------------------------------------------

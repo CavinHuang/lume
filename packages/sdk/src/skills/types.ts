@@ -32,11 +32,17 @@ export interface SkillDefinition {
   /** Alternative names for the skill */
   aliases?: string[]
 
+  /** Absolute path to the source SKILL.md when loaded from the filesystem */
+  sourcePath?: string
+
   /** When the model should invoke this skill (used in system prompt) */
   whenToUse?: string
 
   /** Hint for expected arguments */
   argumentHint?: string
+
+  /** Semantic version from SKILL.md frontmatter */
+  version?: string
 
   /** Tools the skill is allowed to use (empty = all tools) */
   allowedTools?: string[]
@@ -46,6 +52,9 @@ export interface SkillDefinition {
 
   /** Whether the skill can be invoked by users via /command */
   userInvocable?: boolean
+
+  /** Whether the model should be prevented from auto-invoking this skill */
+  disableModelInvocation?: boolean
 
   /** Runtime check for availability */
   isEnabled?: () => boolean

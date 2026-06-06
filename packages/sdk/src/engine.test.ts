@@ -548,6 +548,165 @@ describe("QueryEngine skill allowed tools", () => {
     expect(observedTools[0]).toEqual(["Read", "Skill", "Write"]);
     expect(observedTools[1]).toEqual(["Read", "Skill"]);
   });
+
+  test("applies Alice-style Skill.allowedTools aliases to SDK tool names", async () => {
+    const observedTools: string[][] = [];
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "skill-1", name: "Skill", input: { skill: "demo" } }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    const originalCreateMessage = provider.createMessage.bind(provider);
+    provider.createMessage = async (params) => {
+      observedTools.push((params.tools ?? []).map((tool) => tool.name).sort());
+      return originalCreateMessage(params);
+    };
+    const skillTool = {
+      name: "Skill",
+      description: "load skill",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return {
+          type: "tool_result" as const,
+          tool_use_id: "",
+          content: JSON.stringify({ success: true, allowedTools: ["read_file", "bash"] })
+        };
+      }
+    };
+    const bashTool = {
+      name: "Bash",
+      description: "bash",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "bash" };
+      }
+    };
+    const readTool = {
+      name: "Read",
+      description: "read",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "read" };
+      }
+    };
+    const writeTool = {
+      name: "Write",
+      description: "write",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "write" };
+      }
+    };
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [skillTool, bashTool, readTool, writeTool],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    expect(observedTools[0]).toEqual(["Bash", "Read", "Skill", "Write"]);
+    expect(observedTools[1]).toEqual(["Bash", "Read", "Skill"]);
+  });
+
+  test("does not execute sibling tool calls in the same turn as a Skill activation", async () => {
+    const observedTools: string[][] = [];
+    const calledTools: string[] = [];
+    const provider = new StaticProvider([
+      {
+        content: [
+          { type: "tool_use", id: "skill-1", name: "Skill", input: { skill: "demo" } },
+          { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "secret.txt" } },
+          { type: "tool_use", id: "write-1", name: "Write", input: { file_path: "secret.txt", content: "leak" } }
+        ],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    const originalCreateMessage = provider.createMessage.bind(provider);
+    provider.createMessage = async (params) => {
+      observedTools.push((params.tools ?? []).map((tool) => tool.name).sort());
+      return originalCreateMessage(params);
+    };
+    const skillTool = {
+      name: "Skill",
+      description: "load skill",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        calledTools.push("Skill");
+        return {
+          type: "tool_result" as const,
+          tool_use_id: "",
+          content: JSON.stringify({ success: true, allowedTools: ["Bash"] })
+        };
+      }
+    };
+    const bashTool = {
+      name: "Bash",
+      description: "bash",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        calledTools.push("Bash");
+        return { type: "tool_result" as const, tool_use_id: "", content: "bash" };
+      }
+    };
+    const readTool = {
+      name: "Read",
+      description: "read",
+      inputSchema: { type: "object" as const, properties: {} },
+      isReadOnly: () => true,
+      async call() {
+        calledTools.push("Read");
+        return { type: "tool_result" as const, tool_use_id: "", content: "read" };
+      }
+    };
+    const writeTool = {
+      name: "Write",
+      description: "write",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        calledTools.push("Write");
+        return { type: "tool_result" as const, tool_use_id: "", content: "write" };
+      }
+    };
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [skillTool, bashTool, readTool, writeTool],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    expect(calledTools).toEqual(["Skill"]);
+    expect(observedTools[0]).toEqual(["Bash", "Read", "Skill", "Write"]);
+    expect(observedTools[1]).toEqual(["Bash", "Skill"]);
+  });
 });
 
 describe("QueryEngine usage records", () => {

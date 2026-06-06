@@ -1,9 +1,9 @@
 import { readdir, readFile } from 'fs/promises'
-import { join } from 'path'
+import { homedir } from 'os'
+import { isAbsolute, join, resolve } from 'path'
 import type { SkillDefinition } from './types.js'
 import {
   parseBooleanFrontmatter,
-  parseListFrontmatter,
   parseMarkdownFrontmatter,
 } from '../utils/markdown-frontmatter.js'
 
@@ -13,6 +13,73 @@ async function tryReadDir(path: string) {
   } catch {
     return []
   }
+}
+
+function cleanFrontmatterString(value?: string): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) return undefined
+  return trimmed.replace(/^["']|["']$/g, '')
+}
+
+function pickFrontmatterString(
+  frontmatter: Record<string, string>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = cleanFrontmatterString(frontmatter[key])
+    if (value) return value
+  }
+  return undefined
+}
+
+function pickFrontmatterBoolean(
+  frontmatter: Record<string, string>,
+  defaultValue: boolean,
+  ...keys: string[]
+): boolean {
+  for (const key of keys) {
+    if (frontmatter[key] !== undefined) {
+      return parseBooleanFrontmatter(cleanFrontmatterString(frontmatter[key]), defaultValue)
+    }
+  }
+  return defaultValue
+}
+
+function parseFrontmatterList(value?: string): string[] {
+  const cleaned = cleanFrontmatterString(value)
+  if (!cleaned) return []
+
+  const inlineList = cleaned.startsWith('[') && cleaned.endsWith(']')
+    ? cleaned.slice(1, -1)
+    : cleaned
+
+  return inlineList
+    .split(',')
+    .map((item) => cleanFrontmatterString(item))
+    .filter((item): item is string => Boolean(item))
+}
+
+function pickFrontmatterList(
+  frontmatter: Record<string, string>,
+  ...keys: string[]
+): string[] {
+  for (const key of keys) {
+    const parsed = parseFrontmatterList(frontmatter[key])
+    if (parsed.length > 0) return parsed
+  }
+  return []
+}
+
+function getSkillSortLabel(skill: SkillDefinition): string {
+  return skill.aliases?.[0] ?? skill.name
+}
+
+function getDefaultUserSkillsRoot(): string {
+  const configDir = process.env.LUME_CONFIG_DIR?.trim()
+  const resolvedConfigDir = configDir
+    ? isAbsolute(configDir) ? configDir : resolve(process.cwd(), configDir)
+    : join(homedir(), '.lume')
+  return join(resolvedConfigDir, 'skills')
 }
 
 export interface LoadFilesystemSkillsInput {
@@ -31,7 +98,10 @@ export async function loadFilesystemSkills(
   const explicitRoots = Array.isArray(resolvedInput.roots)
     ? resolvedInput.roots.filter((root): root is string => typeof root === 'string' && root.trim().length > 0)
     : []
-  const roots = Array.from(new Set([...explicitRoots]))
+  const defaultRoots = explicitRoots.length === 0
+    ? [getDefaultUserSkillsRoot(), join(resolvedInput.cwd, '.lume', 'skills')]
+    : []
+  const roots = Array.from(new Set([...defaultRoots, ...explicitRoots]))
 
   const skills: SkillDefinition[] = []
 
@@ -47,26 +117,44 @@ export async function loadFilesystemSkills(
         const parsed = parseMarkdownFrontmatter(raw)
         const body = parsed.content
         if (!body) continue
+        const displayName = pickFrontmatterString(parsed.frontmatter, 'name')
+        const aliases = displayName && displayName !== skillName ? [displayName] : undefined
 
         skills.push({
-          name: parsed.frontmatter.name || skillName,
+          name: skillName,
+          sourcePath: skillFile,
           description:
-            parsed.frontmatter.description ||
+            pickFrontmatterString(parsed.frontmatter, 'description') ||
             body.split(/\r?\n/).find(Boolean) ||
             `Skill ${skillName}`,
-          whenToUse: parsed.frontmatter.when_to_use,
-          argumentHint: parsed.frontmatter['argument-hint'],
-          allowedTools: parseListFrontmatter(
-            parsed.frontmatter['allowed-tools'],
+          ...(aliases ? { aliases } : {}),
+          whenToUse: pickFrontmatterString(parsed.frontmatter, 'when_to_use', 'whenToUse', 'when-to-use'),
+          argumentHint: pickFrontmatterString(parsed.frontmatter, 'argument_hint', 'argumentHint', 'argument-hint'),
+          version: pickFrontmatterString(parsed.frontmatter, 'version'),
+          allowedTools: pickFrontmatterList(
+            parsed.frontmatter,
+            'allowed_tools',
+            'allowedTools',
+            'allowed-tools',
           ),
-          model: parsed.frontmatter.model,
-          userInvocable: parseBooleanFrontmatter(
-            parsed.frontmatter['user-invocable'],
+          model: pickFrontmatterString(parsed.frontmatter, 'model'),
+          userInvocable: pickFrontmatterBoolean(
+            parsed.frontmatter,
             true,
+            'user_invocable',
+            'userInvocable',
+            'user-invocable',
+          ),
+          disableModelInvocation: pickFrontmatterBoolean(
+            parsed.frontmatter,
+            false,
+            'disable_model_invocation',
+            'disableModelInvocation',
+            'disable-model-invocation',
           ),
           context: parsed.frontmatter.context === 'fork' ? 'fork' : 'inline',
-          agent: parsed.frontmatter.agent,
-          getPrompt: async () => [{ type: 'text', text: body }],
+          agent: pickFrontmatterString(parsed.frontmatter, 'agent'),
+          getPrompt: async (args) => [{ type: 'text', text: body.replaceAll('${ARG}', args) }],
         })
       } catch {
         // Ignore unreadable or invalid skill files.
@@ -79,5 +167,8 @@ export async function loadFilesystemSkills(
     byName.set(skill.name, skill)
   }
 
-  return Array.from(byName.values())
+  return Array.from(byName.values()).sort((a, b) => {
+    const byLabel = getSkillSortLabel(a).localeCompare(getSkillSortLabel(b))
+    return byLabel || a.name.localeCompare(b.name)
+  })
 }
