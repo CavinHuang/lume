@@ -3,6 +3,8 @@
  */
 
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { defineTool } from './types.js'
 import { ensureNetworkAllowed } from '../utils/pathing.js'
 import { sdkFetch } from './web-request.js'
@@ -175,7 +177,7 @@ async function enrichResultsWithContent(
 
 // ─── Result formatting ────────────────────────────────────────
 
-function formatResults(results: SearchResult[], query: string): string {
+export function formatResults(results: SearchResult[], query: string): string {
   if (results.length === 0) return `No results found for "${query}".`
   const parts = results.map((r, i) => {
     const parts = [`[${i + 1}] ${r.title}`, `    URL: ${r.url}`]
@@ -283,19 +285,31 @@ function clampProviderLimit(numResults: number): number {
 }
 
 export async function runGuanlanPython(args: string[], timeoutMs = GUANLAN_TIMEOUT_MS): Promise<CommandResult> {
-  const configuredPython = process.env.LUME_GUANLAN_PYTHON?.trim()
-  if (configuredPython) return runCommand(configuredPython, args, timeoutMs)
+  const guanlanPath = await resolveGuanlanCLI()
+  if (guanlanPath) return runCommand(guanlanPath, args, timeoutMs)
 
-  const first = await runCommand('python3', args, timeoutMs)
-  if (first.code !== 127) return first
-  return runCommand('python', args, timeoutMs)
+  const direct = await runCommand('guanlan', args, timeoutMs)
+  if (direct.code !== 127) return direct
+
+  return { code: 127, stdout: '', stderr: 'guanlan CLI not found. Install with: pip install guanlan' }
+}
+
+async function resolveGuanlanCLI(): Promise<string | null> {
+  const configuredPython = process.env.LUME_GUANLAN_PYTHON?.trim()
+  const candidates = configuredPython ? [configuredPython] : ['python3', 'python']
+
+  for (const python of candidates) {
+    const result = await runCommand(python, ['-c', 'import sys; print(sys.executable)'], 5000)
+    if (result.code !== 0 || !result.stdout.trim()) continue
+    const guanlanPath = join(dirname(result.stdout.trim()), 'guanlan')
+    if (existsSync(guanlanPath)) return guanlanPath
+  }
+  return null
 }
 
 async function searchWithGuanlan(query: string, numResults: number) {
   if (process.env.LUME_GUANLAN_ENABLED !== '1') return null
   const result = await runGuanlanPython([
-    '-m',
-    'guanlan',
     'search',
     query,
     '--profile',
@@ -628,7 +642,7 @@ export const WebSearchTool = defineTool({
         ? await enrichResultsWithContent(rawResults.slice(0, numResults), context.sandbox)
         : rawResults
 
-      return { data: formatResults(enriched, query) }
+      return { data: enriched }
     } catch (err: any) {
       return { data: `Search error: ${err.message}`, is_error: true }
     }

@@ -62,7 +62,7 @@ function formatCommandError(command: string, stderr: string, stdout: string): st
   return `${command} failed: ${truncateRawText(stderr || stdout || 'unknown error', 2000)}`
 }
 
-function formatSearchResults(results: SearchResult[], query: string): string {
+export function formatSearchResults(results: SearchResult[], query: string): string {
   if (results.length === 0) return `No Guanlan results found for "${query}".`
   return [
     `Guanlan search results for "${query}":`,
@@ -163,7 +163,7 @@ export const GuanlanSearchTool = withGuanlanRuntimeMetadata(defineTool({
     if (result.code !== 0) {
       return { data: formatCommandError('guanlan_search', result.stderr, result.stdout), is_error: true }
     }
-    return commandResult(formatSearchResults(parseGuanlanSearchOutput(result.stdout), query), GUANLAN_SEARCH_RESULT_CHARS)
+    return { data: parseGuanlanSearchOutput(result.stdout) }
   },
 }), GUANLAN_SEARCH_RESULT_CHARS, 8)
 
