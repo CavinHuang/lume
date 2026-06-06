@@ -30,6 +30,7 @@
     "clsx": "^2.1.1",
     "jotai": "^2.12.0",
     "lucide-react": "^1.8.0",
+    "modern-screenshot": "^4.7.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shadcn": "^4.2.0",

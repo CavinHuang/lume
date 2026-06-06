@@ -24,16 +24,33 @@ import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
-import { AGENT_IPC_CHANNELS, type AgentThreadMeta, type LumeConfigThinkingLevel } from '@lume/shared'
+import {
+  AGENT_IPC_CHANNELS,
+  type AgentMessageAttachmentInput,
+  type AgentSavedFile,
+  type AgentThreadMeta,
+  type LumeConfigThinkingLevel,
+} from '@lume/shared'
 import { LUME_CONFIG_IPC_CHANNELS } from '@lume/shared'
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
+import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAttachmentGrid'
 
 interface WelcomeViewProps {
   workspaceId?: string
+}
+
+interface WelcomePendingFile {
+  id: string
+  filename: string
+  mediaType: string
+  size: number
+  sourcePath?: string
+  data?: string
+  previewUrl?: string
 }
 
 export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProps) {
@@ -59,7 +76,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
   const [sending, setSending] = useState(false)
   const [editorText, setEditorText] = useState('')
-  const [pendingFiles, setPendingFiles] = useState<Array<{ filename: string; sourcePath: string }>>([])
+  const [pendingFiles, setPendingFiles] = useState<WelcomePendingFile[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
   useEffect(() => {
@@ -175,8 +192,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
 
   const handleSend = async () => {
     if (!editor || sending) return
-    const text = editor.getText().trim()
-    if (!text) return
+    const rawText = editor.getText().trim()
+    if (!rawText && pendingFiles.length === 0) return
+    const text = rawText || '请解读这些附件。'
 
     setSending(true)
     try {
@@ -187,11 +205,26 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         modelId,
       })
 
+      let messageAttachments: AgentMessageAttachmentInput[] = []
       if (pendingFiles.length > 0) {
-        await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
+        const savedFiles = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
           threadId: meta.id,
-          files: pendingFiles,
           workspaceSlug,
+          files: pendingFiles.map((file) => ({
+            filename: file.filename,
+            ...(file.sourcePath ? { sourcePath: file.sourcePath } : {}),
+            ...(file.data ? { data: file.data } : {}),
+          })),
+        })
+        messageAttachments = pendingFiles.map((file, index) => {
+          const saved = savedFiles.find((savedFile) => savedFile.filename === file.filename) ?? savedFiles[index]
+          return {
+            id: file.id,
+            filename: file.filename,
+            mediaType: file.mediaType,
+            size: file.size,
+            threadPath: saved?.threadPath ?? file.filename,
+          }
         })
       }
 
@@ -217,6 +250,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         runId: `optimistic:${meta.id}:${createdAt}`,
         createdAt,
         text,
+        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
       }))
 
       await agentSend({
@@ -224,6 +258,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         userMessage: text,
         thinkingLevel,
         permissionMode,
+        ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
         ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
       } as any)
       editor.commands.clearContent()
@@ -243,7 +278,20 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       if (result.files.length === 0) return
       setPendingFiles((prev) => [
         ...prev,
-        ...result.files.map((f) => ({ filename: f.filename, sourcePath: f.sourcePath })),
+        ...result.files.map((file) => {
+          const mediaType = file.mediaType || 'application/octet-stream'
+          return {
+            id: createWelcomePendingFileId(),
+            filename: file.filename,
+            mediaType,
+            size: file.size,
+            sourcePath: file.sourcePath,
+            ...(file.data ? { data: file.data } : {}),
+            ...(isImageAttachment({ filename: file.filename, mediaType })
+              ? { previewUrl: attachmentDataUrl(mediaType, file.data) }
+              : {}),
+          }
+        }),
       ])
       toast.success(`已添加 ${result.files.length} 个文件`)
     } catch (err) {
@@ -276,7 +324,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     setPermissionMode(value)
   }
 
-  const hasText = editorText.trim().length > 0
+  const hasText = editorText.trim().length > 0 || pendingFiles.length > 0
 
   const folderBar = (
     <div className="flex items-center gap-1.5 overflow-x-auto">
@@ -361,4 +409,10 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
       />
     </>
   )
+}
+
+function createWelcomePendingFileId(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `welcome-attachment:${Date.now()}:${Math.random().toString(36).slice(2)}`
 }

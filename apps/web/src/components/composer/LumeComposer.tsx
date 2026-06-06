@@ -11,6 +11,7 @@ interface LumeComposerProps {
   shellStyle?: CSSProperties
   editorClassName?: string
   footerClassName?: string
+  topContent?: ReactNode
   editorSlot: ReactNode
   supportingContent?: ReactNode
   leadingTools?: ReactNode
@@ -125,6 +126,7 @@ export function LumeComposer({
   shellStyle,
   editorClassName,
   footerClassName,
+  topContent,
   editorSlot,
   supportingContent,
   leadingTools,
@@ -152,6 +154,8 @@ export function LumeComposer({
       />
 
       <div className="relative">
+        {topContent}
+
         <div className={cn(sizing.editor, editorClassName)}>{editorSlot}</div>
 
         {supportingContent}

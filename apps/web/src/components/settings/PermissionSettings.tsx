@@ -4,7 +4,6 @@ import { Check, Loader2, Map, Pencil, Plus, Save, Shield, ShieldCheck, ShieldOff
 import { toast } from 'sonner'
 import type {
   LumeConfigPermissionRuleAction,
-  LumeConfigPermissionsSection,
   LumeEffectiveConfig,
 } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
@@ -23,11 +22,11 @@ import {
 } from '@/components/settings/agent-settings-state'
 import {
   buildPermissionScopeOptions,
+  buildPermissionsSectionFromRuleDrafts,
   buildPermissionSettingsDraft,
   createPermissionRuleDraft,
   formatPermissionScopeLabel,
   GLOBAL_PERMISSION_SCOPE_VALUE,
-  normalizePermissionRuleDrafts,
   type PermissionRuleDraft,
   type PermissionSettingsDraft,
 } from './permission-settings-state'
@@ -155,11 +154,7 @@ export function PermissionSettings() {
     setSaving('rules')
     try {
       const basePermissions = config.permissions ?? {}
-      const nextPermissions: LumeConfigPermissionsSection = {
-        ...basePermissions,
-        toolPolicy: { allow: [], deny: [] },
-        rules: normalizePermissionRuleDrafts(draft.rules),
-      }
+      const nextPermissions = buildPermissionsSectionFromRuleDrafts(basePermissions, draft.rules)
       const nextConfig = await updatePermissionsSection(nextPermissions, selectedWorkspaceSlug)
       setConfig(nextConfig)
       setDraft(buildPermissionSettingsDraft(nextConfig))

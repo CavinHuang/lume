@@ -18,6 +18,13 @@ mock.restore()
 
 let latestAgentMessagesProps: {
   onOpenThreadFile?: (path: string) => void
+  onOpenThreadImage?: (attachment: {
+    id: string
+    filename: string
+    mediaType: string
+    size: number
+    threadPath: string
+  }) => void
 } | null = null
 
 const sidecarCallMock = mock(async (channel: string, payload?: Record<string, unknown>) => {
@@ -25,6 +32,12 @@ const sidecarCallMock = mock(async (channel: string, payload?: Record<string, un
     return {
       content: '# Plan\n\nReview this plan before execution.',
       truncated: false,
+    }
+  }
+  if (channel === AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA) {
+    return {
+      data: Buffer.from('fake-image').toString('base64'),
+      size: Buffer.byteLength('fake-image'),
     }
   }
   if (channel === AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD) {
@@ -47,6 +60,9 @@ mock.module('@/lib/desktop-api', () => ({
     (globalThis as any).__lumeDesktopAgentSend?.(...args) ?? Promise.resolve(undefined),
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
+  localFilePreviewUrl: (path: string) => `asset://${path}`,
+  openInSystem: () => Promise.resolve(undefined),
+  saveTextFileDialog: () => Promise.resolve({ path: '/tmp/lume.txt' }),
   statFilePaths: () =>
     (globalThis as any).__lumeDesktopStatFilePaths?.() ?? Promise.resolve({ files: [] }),
   openExternal: () => Promise.resolve(undefined),
@@ -79,7 +95,7 @@ mock.module('./AgentHeader', () => ({
 }))
 
 mock.module('./AgentMessages', () => ({
-  AgentMessages: (props: { onOpenThreadFile?: (path: string) => void }) => {
+  AgentMessages: (props: NonNullable<typeof latestAgentMessagesProps>) => {
     latestAgentMessagesProps = props
     return <div>agent-messages</div>
   },
@@ -422,6 +438,83 @@ describe('AgentView plan approval tab behavior', () => {
         channel === AGENT_IPC_CHANNELS.READ_FILE &&
         (payload as Record<string, unknown>).threadId === 'thread-1' &&
         (payload as Record<string, unknown>).path === 'files/research-notes.md'
+      ))).toBe(true)
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('opens a global image preview from message image attachments', async () => {
+    const { container, cleanup } = installFakeDom()
+    const store = createStore()
+    store.set(tabsAtom, [
+      {
+        id: 'thread-1',
+        type: 'agent',
+        title: 'Image thread',
+        threadId: 'thread-1',
+      },
+    ])
+    store.set(activeTabIdAtom, 'thread-1')
+    store.set(agentThreadsAtom, [
+      {
+        id: 'thread-1',
+        title: 'Image thread',
+        workspaceId: 'workspace-1',
+        pinned: false,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ])
+    store.set(agentWorkspacesAtom, [
+      {
+        id: 'workspace-1',
+        name: 'Workspace',
+        slug: 'workspace',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
+    store.set(agentSidePanelViewAtom, {})
+    store.set(agentPendingInteractiveAtom, {})
+
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <AgentView threadId="thread-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      expect(latestAgentMessagesProps?.onOpenThreadImage).toBeDefined()
+
+      await act(async () => {
+        latestAgentMessagesProps?.onOpenThreadImage?.({
+          id: 'att-image',
+          filename: 'screen.png',
+          mediaType: 'image/png',
+          size: 10,
+          threadPath: 'screen.png',
+        })
+        await flush()
+      })
+
+      expect(container.textContent).toContain('screen.png')
+      expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
+        channel === AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA &&
+        (payload as Record<string, unknown>).threadId === 'thread-1' &&
+        (payload as Record<string, unknown>).path === 'screen.png'
       ))).toBe(true)
     } finally {
       await act(async () => {

@@ -1,4 +1,4 @@
-import type { SkillMeta } from '@lume/shared'
+import type { SkillMeta, SkillStorageScope } from '@lume/shared'
 
 export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent'
 export type MentionSection = 'capability' | 'skill' | 'agent' | 'file'
@@ -15,6 +15,10 @@ export interface MentionItem {
 
 type CommonSlashCommand = Pick<MentionItem, 'id' | 'label' | 'type' | 'title' | 'subtitle' | 'section'> & {
   keywords: string[]
+}
+
+type SuggestionSkill = SkillMeta & {
+  storageScope?: SkillStorageScope
 }
 
 const COMMON_SLASH_COMMANDS: CommonSlashCommand[] = [
@@ -65,7 +69,13 @@ function includesQuery(values: Array<string | undefined>, normalizedQuery: strin
   return values.some((value) => value?.toLowerCase().includes(normalizedQuery))
 }
 
-export function buildSlashSuggestionItems(skills: SkillMeta[], query: string): MentionItem[] {
+export function formatSkillSuggestionMeta(skill: SuggestionSkill) {
+  if (!skill.storageScope) return skill.version ?? '个人'
+  const scopeLabel = skill.storageScope === 'user' ? '用户全局' : '项目级'
+  return skill.version ? `${scopeLabel} · ${skill.version}` : scopeLabel
+}
+
+export function buildSlashSuggestionItems(skills: SuggestionSkill[], query: string): MentionItem[] {
   const normalizedQuery = query.trim().toLowerCase()
 
   const commonCommands = COMMON_SLASH_COMMANDS
@@ -75,7 +85,7 @@ export function buildSlashSuggestionItems(skills: SkillMeta[], query: string): M
   const skillItems = skills
     .filter((skill) => {
       return includesQuery(
-        [skill.slug, skill.name, skill.description, skill.version, skill.icon],
+        [skill.slug, skill.name, skill.description, skill.whenToUse, skill.version, skill.icon],
         normalizedQuery,
       )
     })
@@ -87,7 +97,7 @@ export function buildSlashSuggestionItems(skills: SkillMeta[], query: string): M
       title: `/${skill.slug}`,
       subtitle: skill.description ?? (skill.name && skill.name !== skill.slug ? skill.name : '工作区技能'),
       section: 'skill' as const,
-      meta: skill.version ?? '个人',
+      meta: formatSkillSuggestionMeta(skill),
     }))
 
   return [...commonCommands, ...skillItems]

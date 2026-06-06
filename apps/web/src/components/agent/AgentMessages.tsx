@@ -6,6 +6,7 @@ import { getThreadMessages, getThreadRuntimeEvents, sidecarCall } from '@/lib/de
 import {
   AGENT_IPC_CHANNELS,
   type AgentListSubagentRunsResult,
+  type AgentMessageAttachmentInput,
   type AgentMessage,
 } from '@lume/shared'
 import { cn } from '@/lib/utils'
@@ -28,10 +29,11 @@ interface AgentMessagesProps {
   threadId: string
   streaming: boolean
   onOpenThreadFile?: (path: string) => void
+  onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
   onOpenMemorySource?: (path: string) => void
 }
 
-export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMemorySource }: AgentMessagesProps) {
+export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThreadImage, onOpenMemorySource }: AgentMessagesProps) {
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -304,6 +306,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenMem
         streaming={activeStreamingMessage}
         threadId={threadId}
         onOpenThreadFile={onOpenThreadFile}
+        onOpenThreadImage={onOpenThreadImage}
         onOpenMemorySource={onOpenMemorySource}
         onUserResizeStart={suspendScrollCompensationForUserResize}
       />

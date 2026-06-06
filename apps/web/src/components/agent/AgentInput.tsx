@@ -2,7 +2,7 @@ import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
-import { Bot, Send, Square, FileText, Image, Paperclip, Plus, X } from 'lucide-react'
+import { Bot, Send, Square, FileText, Image, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -69,6 +69,7 @@ import {
   buildAgentInputRoleRecommendations,
   type AgentInputRoleRecommendation,
 } from './agent-input-role-recommendations'
+import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
 
 interface AgentInputProps {
   threadId: string
@@ -86,6 +87,7 @@ export interface PendingMessageAttachment {
   size: number
   sourcePath?: string
   data?: string
+  previewUrl?: string
 }
 
 /** 占位：AgentInput 中 @ 文件 + @agent 的建议逻辑仍保留在此 */
@@ -612,13 +614,20 @@ export function AgentInput({
       const result = await openFileDialog()
       if (result.files.length === 0) return
 
-      onAddPendingAttachments(result.files.map((file) => ({
-        id: createPendingAttachmentId(),
-        filename: file.filename,
-        mediaType: file.mediaType || 'application/octet-stream',
-        size: file.size,
-        sourcePath: file.sourcePath,
-      })))
+      onAddPendingAttachments(result.files.map((file) => {
+        const mediaType = file.mediaType || 'application/octet-stream'
+        return {
+          id: createPendingAttachmentId(),
+          filename: file.filename,
+          mediaType,
+          size: file.size,
+          sourcePath: file.sourcePath,
+          ...(file.data ? { data: file.data } : {}),
+          ...(isImageAttachment({ filename: file.filename, mediaType })
+            ? { previewUrl: attachmentDataUrl(mediaType, file.data) }
+            : {}),
+        }
+      }))
       toast.success(`已添加 ${result.files.length} 个文件`)
     } catch (error) {
       console.error('[AgentInput] 文件选择失败:', error)
@@ -649,21 +658,24 @@ export function AgentInput({
                 />
               </>
             }
+            topContent={
+              pendingAttachments.length > 0 ? (
+                <div className="px-3 pb-2 pt-3">
+                  <AgentAttachmentGrid
+                    attachments={pendingAttachments}
+                    removable
+                    onRemove={onRemovePendingAttachment}
+                  />
+                </div>
+              ) : undefined
+            }
             supportingContent={
-              pendingAttachments.length > 0 || roleRecommendations.length > 0 ? (
+              roleRecommendations.length > 0 ? (
                 <div className="space-y-2 px-3 pb-2">
-                  {pendingAttachments.length > 0 && (
-                    <PendingAttachmentChips
-                      attachments={pendingAttachments}
-                      onRemove={onRemovePendingAttachment}
-                    />
-                  )}
-                  {roleRecommendations.length > 0 && (
-                    <AgentRoleRecommendationChips
-                      recommendations={roleRecommendations}
-                      onSelect={applyRoleRecommendation}
-                    />
-                  )}
+                  <AgentRoleRecommendationChips
+                    recommendations={roleRecommendations}
+                    onSelect={applyRoleRecommendation}
+                  />
                 </div>
               ) : undefined
             }
@@ -742,38 +754,6 @@ export function AgentInput({
   )
 }
 
-function PendingAttachmentChips({
-  attachments,
-  onRemove,
-}: {
-  attachments: PendingMessageAttachment[]
-  onRemove: (id: string) => void
-}) {
-  return (
-    <div className="relative flex flex-wrap gap-1.5">
-      {attachments.map((attachment) => (
-        <div
-          key={attachment.id}
-          className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_44%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_82%,transparent)] px-2 py-1 text-[11px] text-[var(--text-2)]"
-          title={attachment.filename}
-        >
-          <Paperclip size={11} className="shrink-0 text-[var(--text-3)]" />
-          <span className="min-w-0 truncate">{attachment.filename}</span>
-          <span className="shrink-0 text-[var(--text-3)]">{formatAttachmentSize(attachment.size)}</span>
-          <button
-            type="button"
-            onClick={() => onRemove(attachment.id)}
-            className="ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_90%,transparent)] hover:text-[var(--text-1)]"
-            title="移除附件"
-          >
-            <X size={10} />
-          </button>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function AgentRoleRecommendationChips({
   recommendations,
   onSelect,
@@ -817,11 +797,4 @@ function createPendingAttachmentId(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `attachment:${Date.now()}:${Math.random().toString(36).slice(2)}`
-}
-
-function formatAttachmentSize(size: number): string {
-  if (size < 1024) return `${size} B`
-  const kb = size / 1024
-  if (kb < 1024) return `${Math.round(kb)} KB`
-  return `${Math.round(kb / 1024)} MB`
 }

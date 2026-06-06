@@ -5,6 +5,7 @@ import { Provider, createStore } from 'jotai'
 import {
   activeTabIdAtom,
   agentPlanModePhaseAtom,
+  agentRuntimeEventsAtom,
   agentSidePanelViewAtom,
   agentStreamingStatesAtom,
   agentThreadsAtom,
@@ -56,6 +57,11 @@ const agentSendMock = mock(async () => undefined)
 
 mock.module('@tiptap/react', () => ({
   useEditor: () => mockEditor,
+  ReactRenderer: class ReactRenderer {
+    element = null
+    updateProps() {}
+    destroy() {}
+  },
 }))
 
 mock.module('@tiptap/starter-kit', () => ({
@@ -84,12 +90,22 @@ mock.module('@/lib/desktop-api', () => ({
     ((globalThis as any).__lumeDesktopAgentSend ?? agentSendMock)(...args),
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
+  onSidecarEvent: async () => () => {},
   executeTaskContract: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopExecuteTaskContract?.(...args) ?? Promise.resolve({ ok: true }),
   getAgentRunTrace: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopGetAgentRunTrace?.(...args) ?? Promise.resolve({ trace: null }),
   listAgentRunStates: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopListAgentRunStates?.(...args) ?? Promise.resolve({ runs: [] }),
+  getMcpConfig: async () => ({ mcpServers: {} }),
+  saveMcpConfig: async () => ({ mcpServers: {} }),
+  getMcpStatus: async () => ({ servers: [] }),
+  testMcpServer: async () => ({ ok: true }),
+  listMcpResources: async () => ({ resources: [] }),
+  readMcpResource: async () => ({ contents: [] }),
+  callMcpToolDiagnostic: async () => ({ content: [] }),
+  getSkillMarketCatalog: async () => ({ skills: [] }),
+  updateSkillsConfig: async () => ({}),
 }))
 
 mock.module('@/lib/desktop-api/lume-config', () => ({
@@ -371,7 +387,7 @@ describe('WelcomeView', () => {
     delete (globalThis as any).__lumeDesktopOpenFileDialog
   })
 
-  test('resyncs hero copy, recent threads, and the next send when workspaceId changes on a mounted welcome tab', async () => {
+  test('resyncs hero copy and the next send when workspaceId changes on a mounted welcome tab', async () => {
     const store = createStore()
     store.set(agentWorkspacesAtom, [
       {
@@ -438,11 +454,6 @@ describe('WelcomeView', () => {
 
       expect(latestSurfaceProps?.workspaceSelector.props.selectedId).toBe('workspace-2')
       expect(latestSurfaceProps?.model.hero.subtitle).toContain('自动化工作区')
-      expect(
-        latestSurfaceProps?.model.lowerPanels
-          .find((panel: any) => panel.id === 'recent-threads')
-          ?.items.map((item: any) => item.id),
-      ).toEqual(['thread-2'])
 
       editorText = '重新定位后的欢迎消息'
 
@@ -657,6 +668,208 @@ describe('WelcomeView', () => {
         phase: 'planning',
       })
       expect(store.get(agentSidePanelViewAtom)['created-thread']).toBeUndefined()
+    } finally {
+      if (root) {
+        await act(async () => {
+          root!.unmount()
+          await flush()
+        })
+        root = null
+      }
+      cleanup()
+    }
+  })
+
+  test('saves welcome attachments to the created thread and sends them with the first message', async () => {
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      {
+        id: 'workspace-1',
+        name: '默认工作区',
+        slug: 'default-workspace',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
+    store.set(activeTabIdAtom, '__welcome__')
+
+    ;(globalThis as any).__lumeDesktopOpenFileDialog = async () => ({
+      files: [
+        {
+          filename: 'screen.png',
+          mediaType: 'image/png',
+          size: 12,
+          sourcePath: '/tmp/screen.png',
+          data: 'abc123',
+        },
+      ],
+    })
+    ;(globalThis as any).__lumeDesktopSidecarCall = mock(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === AGENT_IPC_CHANNELS.CREATE_THREAD) {
+        return {
+          id: 'created-thread',
+          title: '新会话',
+          workspaceId: payload?.workspaceId,
+          pinned: false,
+          createdAt: 100,
+          updatedAt: 100,
+        }
+      }
+      if (command === AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD) {
+        return [{ filename: 'screen.png', targetPath: '/thread/screen.png', threadPath: 'screen.png' }]
+      }
+      throw new Error(`Unexpected sidecarCall: ${command}`)
+    })
+
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <WelcomeView workspaceId="workspace-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      await act(async () => {
+        await latestSurfaceProps.onAttach()
+        await flush()
+      })
+
+      expect(latestSurfaceProps.pendingFiles).toEqual([
+        expect.objectContaining({
+          filename: 'screen.png',
+          mediaType: 'image/png',
+          size: 12,
+          sourcePath: '/tmp/screen.png',
+          data: 'abc123',
+          previewUrl: 'data:image/png;base64,abc123',
+        }),
+      ])
+
+      editorText = '分析这张图'
+
+      await act(async () => {
+        await latestSurfaceProps.onSend()
+        await flush()
+      })
+
+      const saveCall = ((globalThis as any).__lumeDesktopSidecarCall as ReturnType<typeof mock>).mock.calls
+        .find((call) => call[0] === AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD)
+      expect(saveCall?.[1]).toEqual({
+        threadId: 'created-thread',
+        workspaceSlug: 'default-workspace',
+        files: [{ filename: 'screen.png', sourcePath: '/tmp/screen.png', data: 'abc123' }],
+      })
+
+      expect(agentSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: 'created-thread',
+        userMessage: '分析这张图',
+        messageAttachments: [
+          expect.objectContaining({
+            filename: 'screen.png',
+            mediaType: 'image/png',
+            size: 12,
+            threadPath: 'screen.png',
+          }),
+        ],
+      }))
+      expect(store.get(agentRuntimeEventsAtom)['created-thread']?.events[0]).toEqual(expect.objectContaining({
+        type: 'message.user.submitted',
+        attachments: [
+          expect.objectContaining({
+            filename: 'screen.png',
+            threadPath: 'screen.png',
+          }),
+        ],
+      }))
+    } finally {
+      if (root) {
+        await act(async () => {
+          root!.unmount()
+          await flush()
+        })
+        root = null
+      }
+      cleanup()
+    }
+  })
+
+  test('allows starting a thread with welcome attachments even when the editor is empty', async () => {
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      {
+        id: 'workspace-1',
+        name: '默认工作区',
+        slug: 'default-workspace',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
+    store.set(activeTabIdAtom, '__welcome__')
+
+    ;(globalThis as any).__lumeDesktopOpenFileDialog = async () => ({
+      files: [{ filename: 'brief.pdf', mediaType: 'application/pdf', size: 20, sourcePath: '/tmp/brief.pdf' }],
+    })
+    ;(globalThis as any).__lumeDesktopSidecarCall = mock(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === AGENT_IPC_CHANNELS.CREATE_THREAD) {
+        return {
+          id: 'created-thread',
+          title: '新会话',
+          workspaceId: payload?.workspaceId,
+          pinned: false,
+          createdAt: 100,
+          updatedAt: 100,
+        }
+      }
+      if (command === AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD) {
+        return [{ filename: 'brief.pdf', targetPath: '/thread/brief.pdf', threadPath: 'brief.pdf' }]
+      }
+      throw new Error(`Unexpected sidecarCall: ${command}`)
+    })
+
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <WelcomeView workspaceId="workspace-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      await act(async () => {
+        await latestSurfaceProps.onAttach()
+        await flush()
+      })
+
+      expect(latestSurfaceProps.hasText).toBe(true)
+
+      await act(async () => {
+        await latestSurfaceProps.onSend()
+        await flush()
+      })
+
+      expect(agentSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: 'created-thread',
+        userMessage: '请解读这些附件。',
+        messageAttachments: [
+          expect.objectContaining({
+            filename: 'brief.pdf',
+            threadPath: 'brief.pdf',
+          }),
+        ],
+      }))
     } finally {
       if (root) {
         await act(async () => {

@@ -11,10 +11,11 @@ import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
-import { AGENT_IPC_CHANNELS, getAgentRole, type AgentMessage, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, type AgentMessage, type AgentMessageAttachmentInput, type AgentThreadFileDataResult, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
+import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
 
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
@@ -24,6 +25,7 @@ interface RuntimeEventContentBlockProps {
   streaming?: boolean
   threadId: string
   onOpenThreadFile?: (path: string) => void
+  onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
   onOpenMemorySource?: (path: string) => void
   onUserResizeStart?: () => void
 }
@@ -59,13 +61,22 @@ export function RuntimeEventContentBlock({
   streaming,
   threadId,
   onOpenThreadFile,
+  onOpenThreadImage,
   onOpenMemorySource,
   onUserResizeStart,
 }: RuntimeEventContentBlockProps) {
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
 
   if (message.type === 'user') {
-    return <UserMessageBlock message={message} threadId={threadId} className={cls} onOpenThreadFile={onOpenThreadFile} />
+    return (
+      <UserMessageBlock
+        message={message}
+        threadId={threadId}
+        className={cls}
+        onOpenThreadFile={onOpenThreadFile}
+        onOpenThreadImage={onOpenThreadImage}
+      />
+    )
   }
 
   if (message.type === 'system') {
@@ -212,11 +223,13 @@ function UserMessageBlock({
   threadId,
   className,
   onOpenThreadFile,
+  onOpenThreadImage,
 }: {
   message: Extract<RuntimeMessageView, { type: 'user' }>
   threadId: string
   className: string
   onOpenThreadFile?: (path: string) => void
+  onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(message.text)
@@ -228,6 +241,7 @@ function UserMessageBlock({
   const canShowVersions = Boolean(message.versionGroupId && (message.versionCount ?? 0) > 1)
   const agentInvocation = parseAgentRoleInstructionMessage(message.text)
   const visibleMessageText = agentInvocation?.task || message.text
+  const imageSrcById = useThreadImageAttachmentSrcs(threadId, message.attachments)
 
   const loadVersions = async () => {
     if (!message.versionGroupId) return
@@ -269,6 +283,15 @@ function UserMessageBlock({
   return (
     <div className={cn('group/user-message ml-auto flex w-full max-w-[920px] justify-end gap-2', className)}>
       <div className="flex max-w-[560px] flex-col items-end gap-1.5">
+        {message.attachments && message.attachments.length > 0 && (
+          <AgentAttachmentGrid
+            attachments={message.attachments}
+            align="right"
+            imageSrcById={imageSrcById}
+            onOpenFile={(attachment) => onOpenThreadFile?.(attachment.threadPath)}
+            onOpenImage={(attachment) => onOpenThreadImage?.(attachment)}
+          />
+        )}
         <div className="rounded-[12px] rounded-tr-[10px] bg-[#e4ddff] px-3 py-2 text-[15px] font-medium leading-[22px] text-[#34384c] shadow-[0_1px_0_rgba(101,91,255,0.08)]">
           {editing ? (
             <textarea
@@ -281,23 +304,6 @@ function UserMessageBlock({
             <UserAgentRoleInvocationContent text={message.text} />
           )}
         </div>
-        {message.attachments && message.attachments.length > 0 && (
-          <div className="flex max-w-[560px] flex-wrap justify-end gap-1.5">
-            {message.attachments.map((attachment) => (
-              <button
-                key={attachment.id}
-                type="button"
-                onClick={() => onOpenThreadFile?.(attachment.threadPath)}
-                className="inline-flex max-w-[240px] items-center gap-1.5 rounded-full border border-[#ded6ff] bg-white/82 px-2 py-1 text-[11px] font-medium text-[#5f6477] shadow-[0_1px_0_rgba(101,91,255,0.06)] transition-colors hover:border-[#bdb3ff] hover:text-[#675cff]"
-                title={attachment.filename}
-              >
-                <FileTypeIcon filename={attachment.filename} size={12} className="text-[#8b7df1]" />
-                <span className="min-w-0 truncate">{attachment.filename}</span>
-                <span className="shrink-0 text-[#9aa0b4]">{formatMessageAttachmentSize(attachment.size)}</span>
-              </button>
-            ))}
-          </div>
-        )}
         <div className="pointer-events-none flex -translate-y-1 items-center gap-1 text-[#8b8fa3] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:translate-y-0 group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:translate-y-0 group-focus-within/user-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
           {canShowVersions && (
             <button
@@ -397,6 +403,45 @@ export function parseAgentRoleInstructionMessage(text: string): AgentRoleInstruc
     role,
     task: (match[2] ?? '').trim(),
   }
+}
+
+function useThreadImageAttachmentSrcs(
+  threadId: string,
+  attachments: AgentMessageAttachmentInput[] | undefined,
+): Record<string, string | undefined> {
+  const [srcById, setSrcById] = useState<Record<string, string | undefined>>({})
+
+  useEffect(() => {
+    const imageAttachments = (attachments ?? []).filter(isImageAttachment)
+    if (imageAttachments.length === 0) {
+      setSrcById({})
+      return
+    }
+
+    let cancelled = false
+    setSrcById({})
+    void Promise.all(imageAttachments.map(async (attachment) => {
+      try {
+        const result = await sidecarCall<AgentThreadFileDataResult>(AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA, {
+          threadId,
+          path: attachment.threadPath,
+        })
+        return [attachment.id, `data:${attachment.mediaType};base64,${result.data}`] as const
+      } catch (error) {
+        console.error('[RuntimeEventContentBlock] 加载附件图片失败:', error)
+        return [attachment.id, undefined] as const
+      }
+    })).then((entries) => {
+      if (cancelled) return
+      setSrcById(Object.fromEntries(entries))
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [attachments, threadId])
+
+  return srcById
 }
 
 export function UserAgentRoleInvocationContent({ text }: { text: string }) {

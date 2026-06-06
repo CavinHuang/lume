@@ -3,6 +3,8 @@ import type {
   ReadingBook,
   ReadingLibrarySnapshot,
   ReadingNoteSummary,
+  ReadingRunTaskInput,
+  ReadingTaskResult,
   ReadingSearchResult,
 } from '@lume/shared'
 
@@ -51,6 +53,14 @@ export interface ReadingWereadConnectionPrompt {
   body: string
   actionLabel: string
 }
+
+export interface ManualReadingRunInputOptions {
+  selectedId: string
+  selectedWereadLocalBookId?: string
+  currentWorkspaceSlug?: string | null
+}
+
+export type ReadingTaskToastKind = 'success' | 'warning' | 'error'
 
 export interface WereadNotebookBook {
   id: string
@@ -203,7 +213,7 @@ export function buildReadingNoteNavigation(noteIds: string[], activeId: string |
 export function buildShareCardFilename(note: Pick<ReadingNoteSummary, 'id' | 'title'>): string {
   const title = safeFilenameSegment(note.title).slice(0, 48) || 'reading-note'
   const id = safeFilenameSegment(note.id).slice(0, 16) || 'note'
-  return `${title}-${id}.svg`
+  return `${title}-${id}.png`
 }
 
 export function extendReadingHoverNavUntil(now: number): number {
@@ -224,6 +234,24 @@ export function formatWereadNotebookBadgeLabel(noteCount: number): string | null
 
 export function shouldStartReadingRun(running: boolean, inFlight: boolean): boolean {
   return !running && !inFlight
+}
+
+export function buildManualReadingRunInput(input: ManualReadingRunInputOptions): ReadingRunTaskInput {
+  const workspaceSlug = input.currentWorkspaceSlug?.trim()
+  const bookId = input.selectedWereadLocalBookId
+    ?? (input.selectedId.startsWith('__') || input.selectedId.startsWith('weread:') ? undefined : input.selectedId)
+  return {
+    trigger: 'manual',
+    depth: 'deep',
+    ...(bookId ? { bookId } : {}),
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+  }
+}
+
+export function getReadingTaskToastKind(status: ReadingTaskResult['status']): ReadingTaskToastKind {
+  if (status === 'failed') return 'error'
+  if (status === 'skipped' || status === 'partial') return 'warning'
+  return 'success'
 }
 
 export function buildReadingWereadConnectionPrompt(snapshot: ReadingLibrarySnapshot): ReadingWereadConnectionPrompt | null {

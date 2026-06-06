@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { LumeEffectiveConfig } from '@lume/shared'
 import {
+  buildPermissionsSectionFromRuleDrafts,
   buildPermissionScopeOptions,
   buildPermissionSettingsDraft,
   createPermissionRuleDraft,
@@ -45,9 +46,6 @@ describe('permission settings state', () => {
     expect(draft.permissionMode).toBe('plan')
     expect(draft.rules).toEqual([
       { id: 'ask-bash', action: 'ask', tool: 'Bash', commandPattern: 'npm\\s+install', pathPattern: '', scope: undefined },
-      { action: 'allow', tool: 'Read', commandPattern: '', pathPattern: '', scope: undefined },
-      { action: 'allow', tool: 'Bash', commandPattern: '', pathPattern: '', scope: undefined },
-      { action: 'deny', tool: 'Write', commandPattern: '', pathPattern: '', scope: undefined },
     ])
   })
 
@@ -60,5 +58,26 @@ describe('permission settings state', () => {
       { action: 'allow', tool: 'Bash', commandPattern: 'git\\s+status' },
       { action: 'deny', tool: 'Write', pathPattern: 'src/**' },
     ])
+  })
+
+  test('builds saved permissions without overwriting tool visibility policy', () => {
+    expect(buildPermissionsSectionFromRuleDrafts({
+      toolPolicy: {
+        allow: ['Read'],
+        deny: ['group:web'],
+      },
+      classifier: { enabled: true },
+    }, [
+      { action: 'ask', tool: ' Bash ', commandPattern: ' npm\\s+install ', pathPattern: '', scope: undefined },
+    ])).toEqual({
+      toolPolicy: {
+        allow: ['Read'],
+        deny: ['group:web'],
+      },
+      classifier: { enabled: true },
+      rules: [
+        { action: 'ask', tool: 'Bash', commandPattern: 'npm\\s+install' },
+      ],
+    })
   })
 })

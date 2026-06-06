@@ -4,6 +4,7 @@ import {
   buildReadingSearchItems,
   buildReadingOverviewStats,
   buildReadingBookRail,
+  buildManualReadingRunInput,
   buildReadingWereadConnectionPrompt,
   buildReadingNoteNavigation,
   buildShareCardFilename,
@@ -12,6 +13,7 @@ import {
   extendReadingHoverNavUntil,
   formatReadingProgress,
   formatWereadNotebookBadgeLabel,
+  getReadingTaskToastKind,
   getWereadTabForSelection,
   normalizeWereadReadDataSummary,
   normalizeWereadBookmarks,
@@ -42,7 +44,7 @@ describe('reading view state', () => {
     expect(buildShareCardFilename({
       id: 'note/1',
       title: '普通人的日常 / 雨夜',
-    })).toBe('普通人的日常-雨夜-note-1.svg')
+    })).toBe('普通人的日常-雨夜-note-1.png')
   })
 
   test('includes WeRead highlights in the all notes rail summary', () => {
@@ -213,6 +215,34 @@ describe('reading view state', () => {
     expect(shouldStartReadingRun(false, false)).toBeTrue()
     expect(shouldStartReadingRun(true, false)).toBeFalse()
     expect(shouldStartReadingRun(false, true)).toBeFalse()
+  })
+
+  test('builds manual write input as a deep reading note request', () => {
+    expect(buildManualReadingRunInput({
+      selectedId: 'book-1',
+      currentWorkspaceSlug: 'demo-workspace',
+    })).toEqual({
+      trigger: 'manual',
+      bookId: 'book-1',
+      depth: 'deep',
+      workspaceSlug: 'demo-workspace',
+    })
+
+    expect(buildManualReadingRunInput({
+      selectedId: 'weread:wr-1',
+      selectedWereadLocalBookId: 'local-wr-1',
+    })).toEqual({
+      trigger: 'manual',
+      bookId: 'local-wr-1',
+      depth: 'deep',
+    })
+  })
+
+  test('maps reading task statuses to honest toast variants', () => {
+    expect(getReadingTaskToastKind('completed')).toBe('success')
+    expect(getReadingTaskToastKind('failed')).toBe('error')
+    expect(getReadingTaskToastKind('skipped')).toBe('warning')
+    expect(getReadingTaskToastKind('partial')).toBe('warning')
   })
 
   test('maps WeRead search results into add-book payloads and marks existing books', () => {

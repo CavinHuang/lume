@@ -66,4 +66,26 @@ describe('LumeComposer contract', () => {
     expect(html).toContain('data-composer-right-tools="true"')
     expect(html.indexOf('context')).toBeLessThan(html.indexOf('send'))
   })
+
+  test('renders top content above the editor while preserving supporting content below it', () => {
+    const html = renderToStaticMarkup(
+      <LumeComposer
+        tone="idle"
+        topContent={<div>attachments</div>}
+        editorSlot={<div>editor</div>}
+        supportingContent={<div>recommendations</div>}
+        actionSlot={<button type="button">send</button>}
+      />,
+    )
+
+    const attachmentsIndex = html.indexOf('attachments')
+    const editorIndex = html.indexOf('editor')
+    const recommendationsIndex = html.indexOf('recommendations')
+
+    expect(attachmentsIndex).toBeGreaterThanOrEqual(0)
+    expect(editorIndex).toBeGreaterThanOrEqual(0)
+    expect(recommendationsIndex).toBeGreaterThanOrEqual(0)
+    expect(attachmentsIndex).toBeLessThan(editorIndex)
+    expect(editorIndex).toBeLessThan(recommendationsIndex)
+  })
 })

@@ -9,6 +9,8 @@ export * from './memory'
 export * from './mcp'
 export * from './im'
 export * from './reading'
+export { localFilePreviewUrl, openInSystem } from './native'
+export { sidecarCall } from './system'
 export type {
   GeneralSettings,
   ThemeMode,

@@ -4,6 +4,7 @@ import type {
   LumeConfigPermissionRule,
   LumeConfigPermissionRuleAction,
   LumeConfigPermissionRuleScope,
+  LumeConfigPermissionsSection,
   LumeEffectiveConfig,
 } from '@lume/shared'
 
@@ -84,24 +85,10 @@ function toPermissionRuleDraft(rule: LumeConfigPermissionRule): PermissionRuleDr
   })
 }
 
-function toolPolicyToPermissionRuleDrafts(config: LumeEffectiveConfig): PermissionRuleDraft[] {
-  const allowRules = (config.permissions?.toolPolicy?.allow ?? []).map((tool) =>
-    createPermissionRuleDraft({ action: 'allow', tool })
-  )
-  const denyRules = (config.permissions?.toolPolicy?.deny ?? []).map((tool) =>
-    createPermissionRuleDraft({ action: 'deny', tool })
-  )
-
-  return [...allowRules, ...denyRules]
-}
-
 export function buildPermissionSettingsDraft(config: LumeEffectiveConfig): PermissionSettingsDraft {
   return {
     permissionMode: config.agent?.permissionMode ?? 'default',
-    rules: [
-      ...(config.permissions?.rules ?? []).map(toPermissionRuleDraft),
-      ...toolPolicyToPermissionRuleDrafts(config),
-    ],
+    rules: (config.permissions?.rules ?? []).map(toPermissionRuleDraft),
   }
 }
 
@@ -131,4 +118,14 @@ export function normalizePermissionRuleDrafts(
   }
 
   return normalized
+}
+
+export function buildPermissionsSectionFromRuleDrafts(
+  basePermissions: LumeConfigPermissionsSection = {},
+  rules: PermissionRuleDraft[],
+): LumeConfigPermissionsSection {
+  return {
+    ...basePermissions,
+    rules: normalizePermissionRuleDrafts(rules),
+  }
 }

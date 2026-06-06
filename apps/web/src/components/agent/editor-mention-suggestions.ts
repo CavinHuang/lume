@@ -1,11 +1,11 @@
 import { ReactRenderer } from '@tiptap/react'
 import { sidecarCall } from '@/lib/desktop-api'
 import { MentionList } from './MentionList'
-import { buildSlashSuggestionItems } from './slash-command-state'
+import { buildSlashSuggestionItems, formatSkillSuggestionMeta } from './slash-command-state'
 import type { MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { MentionItem } from './slash-command-state'
-import type { SkillMeta, WorkspaceMcpConfig } from '@lume/shared'
+import type { EditableSkillMeta, WorkspaceMcpConfig } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 
 export { type MentionItem } from './slash-command-state'
@@ -21,7 +21,7 @@ export async function fetchSuggestions(
     if (trigger === '/') {
       if (!workspaceSlug) return []
       const [skillsResult, mcpResult] = await Promise.all([
-        sidecarCall<SkillMeta[]>(AGENT_IPC_CHANNELS.GET_SKILLS, { workspaceSlug }),
+        sidecarCall<EditableSkillMeta[]>(AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS, { workspaceSlug }),
         sidecarCall<WorkspaceMcpConfig>(AGENT_IPC_CHANNELS.GET_MCP_CONFIG, { workspaceSlug }),
       ])
       const skills = Array.isArray(skillsResult) ? skillsResult : []
@@ -36,13 +36,16 @@ export async function fetchSuggestions(
 
     if (trigger === '$') {
       if (!workspaceSlug) return []
-      const skillsResult = await sidecarCall<SkillMeta[]>(AGENT_IPC_CHANNELS.GET_SKILLS, { workspaceSlug })
+      const skillsResult = await sidecarCall<EditableSkillMeta[]>(
+        AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
+        { workspaceSlug },
+      )
       const skills = Array.isArray(skillsResult) ? skillsResult : []
       const normalizedQuery = query.trim().toLowerCase()
       return skills
         .filter((skill) => {
           if (!normalizedQuery) return true
-          return [skill.slug, skill.name, skill.description].some(
+          return [skill.slug, skill.name, skill.description, skill.whenToUse, skill.version].some(
             (v) => v?.toLowerCase().includes(normalizedQuery),
           )
         })
@@ -51,10 +54,10 @@ export async function fetchSuggestions(
           id: skill.slug,
           label: skill.slug,
           type: 'skill' as const,
-          title: `/${skill.slug}`,
-          subtitle: skill.description ?? '工作区技能',
+          title: `$${skill.slug}`,
+          subtitle: skill.description ?? skill.whenToUse ?? skill.name,
           section: 'skill' as const,
-          meta: skill.version ?? '个人',
+          meta: formatSkillSuggestionMeta(skill),
         }))
     }
   } catch {

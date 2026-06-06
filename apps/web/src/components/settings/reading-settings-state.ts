@@ -1,4 +1,4 @@
-import type { ReadingAdvancedModelSettings, ReadingSettings, ReadingUpdateSettingsInput } from '@lume/shared'
+import type { Channel, ReadingAdvancedModelSettings, ReadingSettings, ReadingUpdateSettingsInput } from '@lume/shared'
 
 export interface ReadingSettingsDraft {
   cadence: ReadingSettings['cadence']
@@ -64,4 +64,47 @@ export function buildReadingSettingsSavePayload(draft: ReadingSettingsDraft): Re
 function trimOrUndefined(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
   return trimmed || undefined
+}
+
+export interface ReadingModelOption {
+  modelRef: string
+  label: string
+}
+
+const INHERIT_OPTION: ReadingModelOption = {
+  modelRef: '',
+  label: '继承默认模型',
+}
+
+function buildChannelModelRef(channel: Channel, modelId: string): string {
+  return modelId.startsWith(`${channel.provider}/`) ? modelId : `${channel.provider}/${modelId}`
+}
+
+export function buildReadingChatModelOptions(channels: Channel[]): ReadingModelOption[] {
+  const models = channels
+    .filter((channel) => channel.enabled)
+    .flatMap((channel) =>
+      channel.models
+        .filter((model) => model.enabled && model.capabilities?.chat !== false)
+        .map((model) => ({
+          modelRef: buildChannelModelRef(channel, model.id),
+          label: `${model.name || model.id} · ${channel.name}`,
+        }))
+    )
+  return [INHERIT_OPTION, ...models]
+}
+
+export function resolveReadingModelSelectValue(draft: ReadingSettingsDraft): string {
+  if (draft.textModelMode === 'inherit') return ''
+  return draft.textModelRef.trim()
+}
+
+export function applyReadingModelSelectChange(
+  draft: ReadingSettingsDraft,
+  selectedValue: string
+): ReadingSettingsDraft {
+  if (!selectedValue) {
+    return { ...draft, textModelMode: 'inherit', textModelRef: '' }
+  }
+  return { ...draft, textModelMode: 'explicit', textModelRef: selectedValue }
 }

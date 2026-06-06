@@ -4,25 +4,14 @@ import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
 
 describe('LumeWelcomeSurface', () => {
-  test('renders lower panels by panel id instead of array position', () => {
+  test('renders the welcome hero for the selected workspace', () => {
     const model = buildWelcomeSurfaceViewModel({
       workspaceName: 'Lume 主路径',
-      recentThreads: [],
-      recentFiles: [],
     })
-
-    const reorderedModel = {
-      ...model,
-      lowerPanels: [
-        model.lowerPanels[2],
-        model.lowerPanels[0],
-        model.lowerPanels[1],
-      ],
-    }
 
     const html = renderToStaticMarkup(
       <LumeWelcomeSurface
-        model={reorderedModel}
+        model={model}
         workspaceSelector={<span>workspace-pill</span>}
         modelPicker={<span>model-pill</span>}
         composerModelPicker={<span>composer-model-pill</span>}
@@ -34,52 +23,41 @@ describe('LumeWelcomeSurface', () => {
         hasText={false}
         onSend={() => {}}
         onAttach={() => {}}
-        onOpenThread={() => {}}
-        onChoosePromptSeed={() => {}}
         onRemovePendingFile={() => {}}
       />,
     )
 
-    expect(html).toContain('最近会话')
-    expect(html).toContain('还没有最近会话，从下方输入区开始一次新的协作。')
-    expect(html).toContain('推荐工作流')
-    expect(html).toContain('最近文件')
+    expect(html).toContain('今天想一起完成什么？')
+    expect(html).toContain('在「Lume 主路径」中开始新的工作流')
   })
 
   test('locks workflow and composer interactions while sending', () => {
     const model = buildWelcomeSurfaceViewModel({
       workspaceName: 'Lume 主路径',
-      recentThreads: [],
-      recentFiles: [{ filename: 'spec.md', sourcePath: 'C:/tmp/spec.md' }],
     })
 
-    const html = renderToStaticMarkup(LumeWelcomeSurface({
-      model,
-      workspaceSelector: <span>workspace-pill</span>,
-      modelPicker: <span>model-pill</span>,
-      composerModelPicker: <span>composer-model-pill</span>,
-      permissionModePicker: <span>permission-pill</span>,
-      thinkingLevelPicker: <span>thinking-pill</span>,
-      editor: null,
-      pendingFiles: [{ filename: 'spec.md', sourcePath: 'C:/tmp/spec.md' }],
-      sending: true,
-      hasText: true,
-      onSend() {},
-      onAttach() {},
-      onOpenThread() {},
-      onChoosePromptSeed() {},
-      onRemovePendingFile() {},
-    }))
-    const workflowItems = model.lowerPanels.find((panel) => panel.id === 'recommended-workflows')?.items ?? []
-    const disabledWorkflowButtons = workflowItems.filter((item) =>
-      new RegExp(`<button type="button" disabled=""[^>]*>[\\s\\S]*?${item.title}[\\s\\S]*?<\\/button>`).test(html),
+    const html = renderToStaticMarkup(
+      <LumeWelcomeSurface
+        model={model}
+        workspaceSelector={<span>workspace-pill</span>}
+        modelPicker={<span>model-pill</span>}
+        composerModelPicker={<span>composer-model-pill</span>}
+        permissionModePicker={<span>permission-pill</span>}
+        thinkingLevelPicker={<span>thinking-pill</span>}
+        editor={null}
+        pendingFiles={[{ id: 'pending-1', filename: 'spec.md', mediaType: 'text/markdown', size: 7, sourcePath: 'C:/tmp/spec.md' }]}
+        sending={true}
+        hasText={true}
+        onSend={() => {}}
+        onAttach={() => {}}
+        onRemovePendingFile={() => {}}
+      />,
     )
 
     expect(html).toContain('data-welcome-lock="hero-controls"')
     expect(html).toContain('data-welcome-lock="composer"')
     expect(html).toContain('inert=""')
-    expect(html).toMatch(/<button type="button" aria-label="添加文件" title="添加文件" disabled=""/)
-    expect(html).toMatch(/<button type="button" disabled=""[^>]*>×<\/button>/)
-    expect(disabledWorkflowButtons).toHaveLength(workflowItems.length)
+    expect(html).toMatch(/<button type="button" aria-label="添加" title="添加" disabled=""/)
+    expect(html).toMatch(/<button type="button" disabled=""[^>]*title="移除附件"/)
   })
 })

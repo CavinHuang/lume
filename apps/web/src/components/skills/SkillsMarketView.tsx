@@ -34,6 +34,8 @@ import {
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import type { SkillCatalogItem, SkillFileTreeNode, SkillMarketDetailResult, SkillSourceType } from '@lume/shared'
+import { SkillSettingsView } from './SkillSettingsView'
+import { buildSkillActionLabel, buildSkillInstallRequest, isInstallableSkillMarketItem } from './skill-market-state'
 
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
@@ -75,6 +77,7 @@ export function SkillsMarketView() {
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
+  const [activeSection, setActiveSection] = useState<'market' | 'settings'>('market')
   const [items, setItems] = useState<SkillCatalogItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -145,11 +148,7 @@ export function SkillsMarketView() {
       }
 
       if (isInstallableSkillMarketItem(item)) {
-        await installSkillMarketItemToWorkspace({
-          workspaceSlug,
-          skillId: item.id,
-          overwrite: false,
-        })
+        await installSkillMarketItemToWorkspace(buildSkillInstallRequest(workspaceSlug, item))
         await loadCatalog()
       }
     } catch (err) {
@@ -210,52 +209,76 @@ export function SkillsMarketView() {
     <div className="min-h-0 flex-1 overflow-hidden bg-white px-7 pb-8 pt-8 text-[#121832]">
       <div className="mx-auto flex h-full max-w-[1230px] flex-col">
         <header className="mb-6">
-          <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">技能市场</h1>
+          <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">技能</h1>
           <p className="mt-2 text-[14px] leading-6 text-[#60698d]">
-            统一管理和筛选内置技能、本地发现技能与外部市场源技能。
+            市场用于发现和安装技能，设置用于管理工作区内的自有技能。
           </p>
+          <div className="mt-5 inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
+            {([
+              { id: 'market', label: '技能市场' },
+              { id: 'settings', label: '技能设置' },
+            ] as const).map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                onClick={() => setActiveSection(section.id)}
+                className={cn(
+                  'h-9 rounded-[6px] px-4 text-[13px] font-semibold transition-colors',
+                  activeSection === section.id
+                    ? 'bg-white text-[#121832] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]'
+                    : 'text-[#687196] hover:text-[#121832]',
+                )}
+              >
+                {section.label}
+              </button>
+            ))}
+          </div>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_338px] gap-5">
-          <main className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
-            <SkillFilterBar
-              query={query}
-              category={category}
-              source={source}
-              onQueryChange={setQuery}
-              onCategoryChange={setCategory}
-              onSourceChange={setSource}
-            />
-
-            {loading ? (
-              <div className="mt-6 flex h-[180px] items-center justify-center gap-2 rounded-[8px] border border-[#e4e7f1] text-[13px] text-[#626b8f]">
-                <Loader2 size={16} className="animate-spin" />
-                正在同步技能...
-              </div>
-            ) : error ? (
-              <div className="mt-6 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
-                {error}
-              </div>
-            ) : (
-              <SkillCardGrid
-                cards={cards}
-                busySkillSlug={busySkillSlug}
-                onSkillAction={(item) => void handleSkillAction(item)}
-                onOpenDetail={(item) => void handleOpenSkillDetail(item)}
+        {activeSection === 'market' ? (
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_338px] gap-5">
+            <main className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
+              <SkillFilterBar
+                query={query}
+                category={category}
+                source={source}
+                onQueryChange={setQuery}
+                onCategoryChange={setCategory}
+                onSourceChange={setSource}
               />
-            )}
-          </main>
 
-          <SkillSourcePanel
-            loading={loading}
-            sources={sourceViews}
-            totalSkills={items.length}
-            installedCount={items.filter((item) => item.installState === 'installed').length}
-            lastSyncedAt={lastSyncedAt}
-            onAddSource={() => setSourceDialogOpen(true)}
-            onSync={() => void loadCatalog()}
-          />
-        </div>
+              {loading ? (
+                <div className="mt-6 flex h-[180px] items-center justify-center gap-2 rounded-[8px] border border-[#e4e7f1] text-[13px] text-[#626b8f]">
+                  <Loader2 size={16} className="animate-spin" />
+                  正在同步技能...
+                </div>
+              ) : error ? (
+                <div className="mt-6 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
+                  {error}
+                </div>
+              ) : (
+                <SkillCardGrid
+                  cards={cards}
+                  busySkillSlug={busySkillSlug}
+                  onSkillAction={(item) => void handleSkillAction(item)}
+                  onOpenDetail={(item) => void handleOpenSkillDetail(item)}
+                />
+              )}
+            </main>
+
+            <SkillSourcePanel
+              loading={loading}
+              sources={sourceViews}
+              totalSkills={items.length}
+              installedCount={items.filter((item) => item.installState === 'installed').length}
+              lastSyncedAt={lastSyncedAt}
+              onAddSource={() => setSourceDialogOpen(true)}
+              onSync={() => void loadCatalog()}
+            />
+          </div>
+        ) : (
+          <SkillSettingsView workspaceSlug={workspaceSlug} onOpenMarket={() => setActiveSection('market')} />
+        )}
       </div>
 
       <AddSkillSourceDialog
@@ -1052,23 +1075,6 @@ function toSkillMarketCard(item: SkillCatalogItem): SkillMarketCard {
     category: SOURCE_LABELS[item.sourceType],
     actionLabel: buildSkillActionLabel(item),
   }
-}
-
-function buildSkillActionLabel(item: SkillCatalogItem): string {
-  if (item.installState === 'installed') return '移除'
-  if (isInstallableSkillMarketItem(item)) return '安装'
-  return '已同步'
-}
-
-function isInstallableSkillMarketItem(item: SkillCatalogItem): boolean {
-  return (
-    item.installState !== 'installed' &&
-    (
-      item.sourceType === 'built-in' ||
-      item.sourceId?.startsWith('claude:skill:') === true ||
-      item.sourceId?.startsWith('local:skill:') === true
-    )
-  )
 }
 
 function inferSkillVisual(item: SkillCatalogItem): Pick<SkillMarketCard, 'category' | 'actionLabel' | 'icon' | 'tone'> {

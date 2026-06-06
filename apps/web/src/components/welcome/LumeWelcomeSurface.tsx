@@ -6,11 +6,16 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
+import { AgentAttachmentGrid } from '@/components/agent/AgentAttachmentGrid'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
 
 interface PendingFile {
+  id: string
   filename: string
-  sourcePath: string
+  mediaType: string
+  size: number
+  sourcePath?: string
+  previewUrl?: string
 }
 
 interface LumeWelcomeSurfaceProps {
@@ -116,25 +121,19 @@ export function LumeWelcomeSurface({
                   className="[&_.ProseMirror]:min-h-[64px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-6 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:float-left [&_.ProseMirror_p.is-editor-empty:first-child::before]:h-0 [&_.ProseMirror_p.is-editor-empty:first-child::before]:text-[var(--text-3)] [&_.ProseMirror_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]"
                 />
               }
-              supportingContent={
+              topContent={
                 pendingFiles.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 px-4 pb-3">
-                    {pendingFiles.map((file, index) => (
-                      <span
-                        key={`${file.sourcePath}:${index}`}
-                        className="inline-flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_60%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-1.5 text-[12px] text-[var(--text-2)]"
-                      >
-                        <span className="max-w-[180px] truncate">{file.filename}</span>
-                        <button
-                          type="button"
-                          disabled={sending}
-                          onClick={() => onRemovePendingFile(index)}
-                          className="text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
+                  <div className="px-4 pb-3 pt-4">
+                    <AgentAttachmentGrid
+                      attachments={pendingFiles}
+                      removable
+                      removeDisabled={sending}
+                      onRemove={(id) => {
+                        if (sending) return
+                        const index = pendingFiles.findIndex((file) => file.id === id)
+                        if (index >= 0) onRemovePendingFile(index)
+                      }}
+                    />
                   </div>
                 ) : null
               }
@@ -236,4 +235,3 @@ function HeroMark() {
     </div>
   )
 }
-

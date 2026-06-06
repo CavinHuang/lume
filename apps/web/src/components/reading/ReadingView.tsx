@@ -18,10 +18,9 @@ import { toast } from 'sonner'
 import { WEREAD_KEY_PAGE_URL, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { openExternal, revealPathInSystem, saveFilePathDialog } from '@/lib/desktop-api'
+import { openExternal, revealPathInSystem, saveFilePathDialog, writeBinaryFile } from '@/lib/desktop-api'
 import {
   addReadingBook,
-  generateReadingShareCard,
   getReadingSnapshot,
   getWereadBestBookmarks,
   getWereadBookmarks,
@@ -36,6 +35,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   buildReadingBookRail,
+  buildManualReadingRunInput,
   buildReadingOverviewStats,
   buildReadingWereadConnectionPrompt,
   buildReadingNoteNavigation,
@@ -46,6 +46,7 @@ import {
   extendReadingHoverNavUntil,
   getWereadTabForSelection,
   formatWereadNotebookBadgeLabel,
+  getReadingTaskToastKind,
   normalizeWereadBookmarks,
   normalizeWereadReadDataSummary,
   normalizeWereadReviews,
@@ -59,6 +60,7 @@ import {
   type WereadReadingTab,
   type WereadTextItem,
 } from './reading-view-state'
+import { renderReadingCardElementToPngBase64 } from './reading-card-export'
 
 interface WereadBookDetailState {
   loading: boolean
@@ -292,15 +294,20 @@ export function ReadingView() {
     runningReadingRef.current = true
     setRunningReading(true)
     try {
-      const targetBookId = selectedWereadBook?.localBookId ?? (selectedId.startsWith('__') || selectedId.startsWith('weread:') ? undefined : selectedId)
-      const result = await manualGenerateReadingNote({
-        trigger: 'manual',
-        ...(targetBookId ? { bookId: targetBookId } : {}),
-        depth: 'seed',
-        ...(currentWorkspaceSlug ? { workspaceSlug: currentWorkspaceSlug } : {}),
-      })
+      const result = await manualGenerateReadingNote(buildManualReadingRunInput({
+        selectedId,
+        selectedWereadLocalBookId: selectedWereadBook?.localBookId,
+        currentWorkspaceSlug,
+      }))
       await load()
-      toast.success(result.message)
+      const toastKind = getReadingTaskToastKind(result.status)
+      if (toastKind === 'error') {
+        toast.error(result.message)
+      } else if (toastKind === 'warning') {
+        toast.warning(result.message)
+      } else {
+        toast.success(result.message)
+      }
     } catch (error) {
       console.error('[ReadingView] 读书任务失败:', error)
       toast.error('读书任务失败')
@@ -343,25 +350,30 @@ export function ReadingView() {
     }
   }
 
-  const saveShareCard = async (note: ReadingNoteSummary) => {
+  const saveShareCard = async (note: ReadingNoteSummary, cardElement?: HTMLElement | null) => {
     try {
-      const selected = await saveFilePathDialog(buildShareCardFilename(note))
-      if (!selected.path) return
-      const result = await generateReadingShareCard({ noteId: note.id, outputPath: selected.path })
-      await load()
-      if (result.path) {
-        try {
-          await revealPathInSystem(result.path)
-        } catch (error) {
-          console.error('[ReadingView] 定位分享卡片失败:', error)
-          toast.warning('分享卡片已生成，但定位文件失败')
-          return
-        }
+      if (!cardElement) {
+        toast.error('没有找到要保存的读书卡片')
+        return
       }
-      toast.success(result.path ? '分享卡片已生成' : '已准备分享卡片')
+      const selected = await saveFilePathDialog(buildShareCardFilename(note), [
+        { name: 'PNG 图片', extensions: ['png'] },
+      ])
+      if (!selected.path) return
+      const outputPath = ensurePngPath(selected.path)
+      const pngBase64 = await renderReadingCardElementToPngBase64(cardElement)
+      const result = await writeBinaryFile(outputPath, pngBase64)
+      try {
+        await revealPathInSystem(result.path)
+      } catch (error) {
+        console.error('[ReadingView] 定位分享卡片失败:', error)
+        toast.warning('读书卡片已保存，但定位文件失败')
+        return
+      }
+      toast.success('读书卡片已保存')
     } catch (error) {
-      console.error('[ReadingView] 分享卡片生成失败:', error)
-      toast.error('分享卡片生成失败')
+      console.error('[ReadingView] 读书卡片保存失败:', error)
+      toast.error(`读书卡片保存失败：${getErrorMessage(error)}`)
     }
   }
 
@@ -501,7 +513,7 @@ export function ReadingView() {
                 onTabChange={setWereadTab}
                 onRunReading={() => void handleRunReading()}
                 onChatWithNote={openChatWithNote}
-                onSaveShareCard={(note) => void saveShareCard(note)}
+                onSaveShareCard={(note, cardElement) => void saveShareCard(note, cardElement)}
               />
             ) : (
               <>
@@ -565,61 +577,59 @@ export function ReadingView() {
                     </div>
                   )}
                   {visibleNotes.map((note) => (
-                    <article
+                    <div
                       key={note.id}
-                      ref={(element) => { noteRefs.current[note.id] = element }}
                       onMouseEnter={() => {
                         setHoverNoteId(note.id)
                         setNavVisibleUntil(extendReadingHoverNavUntil(Date.now()))
                         setClock(Date.now())
                       }}
-                      className="rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-5 shadow-[0_10px_28px_-24px_rgba(18,22,32,0.32)]"
+                      className="space-y-2"
                     >
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h2 className="[font-family:var(--reading-serif)] text-[16px] font-medium leading-6">{note.book ? `《${note.book.title}》` : note.title}</h2>
-                          <div className="mt-1 text-[12px] text-[var(--text-3)]">
-                            {[note.book?.author, typeof note.progressPercent === 'number' ? `${Math.round(note.progressPercent)}%` : undefined].filter(Boolean).join(' · ')}
+                      <article
+                        ref={(element) => { noteRefs.current[note.id] = element }}
+                        className="rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-5 shadow-[0_10px_28px_-24px_rgba(18,22,32,0.32)]"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <h2 className="[font-family:var(--reading-serif)] text-[16px] font-medium leading-6">{note.book ? `《${note.book.title}》` : note.title}</h2>
+                            <div className="mt-1 text-[12px] text-[var(--text-3)]">
+                              {[note.book?.author, typeof note.progressPercent === 'number' ? `${Math.round(note.progressPercent)}%` : undefined].filter(Boolean).join(' · ')}
+                            </div>
+                          </div>
+                          <div className="text-[12px] text-[var(--text-3)]">{formatNoteDate(note.createdAt)}</div>
+                        </div>
+
+                        {note.excerpt && (
+                          <blockquote className="mt-4 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-[13px] italic leading-6 text-[var(--text-2)]">
+                            “{note.excerpt}”
+                          </blockquote>
+                        )}
+
+                        <div className="mt-4 whitespace-pre-wrap [font-family:var(--reading-serif)] text-[13.5px] leading-[1.85] text-[var(--text-1)]">{note.body}</div>
+
+                        {note.tags.length > 0 && (
+                          <div className="mt-4 flex flex-wrap gap-1.5">
+                            {note.tags.map((tag) => (
+                              <span key={tag} className="rounded-full bg-[var(--surface-2)] px-2.5 py-0.5 text-[11px] text-[var(--text-3)]">{tag}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="mt-4 text-[11px] text-[var(--text-3)]">
+                          <div className="min-w-0 truncate">
+                            {note.evidence[0]?.location ? `来源位置 ${note.evidence[0].location}` : '来源已记录'}
                           </div>
                         </div>
-                        <div className="text-[12px] text-[var(--text-3)]">{formatNoteDate(note.createdAt)}</div>
-                      </div>
-
-                      {note.excerpt && (
-                        <blockquote className="mt-4 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-[13px] italic leading-6 text-[var(--text-2)]">
-                          “{note.excerpt}”
-                        </blockquote>
-                      )}
-
-                      <div className="mt-4 whitespace-pre-wrap [font-family:var(--reading-serif)] text-[13.5px] leading-[1.85] text-[var(--text-1)]">{note.body}</div>
-
-                      {note.tags.length > 0 && (
-                        <div className="mt-4 flex flex-wrap gap-1.5">
-                          {note.tags.map((tag) => (
-                            <span key={tag} className="rounded-full bg-[var(--surface-2)] px-2.5 py-0.5 text-[11px] text-[var(--text-3)]">{tag}</span>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-3)]">
-                        <div className="min-w-0 flex-1 truncate">
-                          {note.evidence[0]?.location ? `来源位置 ${note.evidence[0].location}` : '来源已记录'}
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <button type="button" onClick={() => openChatWithNote(note)} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
-                            <MessageSquare size={14} />
-                            聊一聊
-                          </button>
-                          <button type="button" onClick={() => void saveShareCard(note)} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
-                            <ImageDown size={14} />
-                            存为图片
-                          </button>
-                        </div>
-                      </div>
-                      {note.aiGenerated && (
-                        <div className="mt-1.5 text-right text-[11px] italic text-[var(--text-3)]">以上内容均由 AI 生成，纯属虚构，请注意甄别</div>
-                      )}
-                    </article>
+                        {note.aiGenerated && (
+                          <div className="mt-1.5 text-right text-[11px] italic text-[var(--text-3)]">以上内容均由 AI 生成，纯属虚构，请注意甄别</div>
+                        )}
+                      </article>
+                      <ReadingNoteActions
+                        onChat={() => openChatWithNote(note)}
+                        onSave={() => void saveShareCard(note, noteRefs.current[note.id])}
+                      />
+                    </div>
                   ))}
                 </div>
               </>
@@ -785,8 +795,9 @@ function WereadBookPanel({
   onTabChange: (tab: WereadReadingTab) => void
   onRunReading: () => void
   onChatWithNote: (note: ReadingNoteSummary) => void
-  onSaveShareCard: (note: ReadingNoteSummary) => void
+  onSaveShareCard: (note: ReadingNoteSummary, cardElement?: HTMLElement | null) => void
 }) {
+  const localNoteRefs = useRef<Record<string, HTMLElement | null>>({})
   const loading = detail?.loading
   const bookmarks = detail?.bookmarks ?? []
   const reviews = detail?.reviews ?? []
@@ -861,32 +872,31 @@ function WereadBookPanel({
                 )}
               </div>
             ) : localNotes.map((note) => (
-              <article key={note.id} className="rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 className="[font-family:var(--reading-serif)] text-[15px] font-medium leading-6">{note.title}</h3>
-                    <div className="mt-1 text-[12px] text-[var(--text-3)]">
-                      {[note.book?.author ?? book.author, formatNoteDate(note.createdAt)].filter(Boolean).join(' · ')}
+              <div key={note.id} className="space-y-2">
+                <article
+                  ref={(element) => { localNoteRefs.current[note.id] = element }}
+                  className="rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-4"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="[font-family:var(--reading-serif)] text-[15px] font-medium leading-6">{note.title}</h3>
+                      <div className="mt-1 text-[12px] text-[var(--text-3)]">
+                        {[note.book?.author ?? book.author, formatNoteDate(note.createdAt)].filter(Boolean).join(' · ')}
+                      </div>
                     </div>
                   </div>
-                </div>
-                {note.excerpt && (
-                  <blockquote className="mt-3 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-[12.5px] italic leading-6 text-[var(--text-2)]">
-                    “{note.excerpt}”
-                  </blockquote>
-                )}
-                <div className="mt-3 whitespace-pre-wrap [font-family:var(--reading-serif)] text-[13px] leading-[1.85]">{note.body}</div>
-                <div className="mt-3 flex justify-end gap-3 text-[11px] text-[var(--text-3)]">
-                  <button type="button" onClick={() => onChatWithNote(note)} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
-                    <MessageSquare size={14} />
-                    聊一聊
-                  </button>
-                  <button type="button" onClick={() => onSaveShareCard(note)} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
-                    <ImageDown size={14} />
-                    存为图片
-                  </button>
-                </div>
-              </article>
+                  {note.excerpt && (
+                    <blockquote className="mt-3 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-[12.5px] italic leading-6 text-[var(--text-2)]">
+                      “{note.excerpt}”
+                    </blockquote>
+                  )}
+                  <div className="mt-3 whitespace-pre-wrap [font-family:var(--reading-serif)] text-[13px] leading-[1.85]">{note.body}</div>
+                </article>
+                <ReadingNoteActions
+                  onChat={() => onChatWithNote(note)}
+                  onSave={() => onSaveShareCard(note, localNoteRefs.current[note.id])}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -1017,6 +1027,21 @@ function NavButton({ title, icon, onClick }: { title: string; icon: ReactNode; o
   )
 }
 
+function ReadingNoteActions({ onChat, onSave }: { onChat: () => void; onSave: () => void }) {
+  return (
+    <div className="flex justify-end gap-3 px-1 text-[11px] text-[var(--text-3)]">
+      <button type="button" onClick={onChat} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
+        <MessageSquare size={14} />
+        聊一聊
+      </button>
+      <button type="button" onClick={onSave} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
+        <ImageDown size={14} />
+        存为图片
+      </button>
+    </div>
+  )
+}
+
 function formatNoteDate(value: number): string {
   const date = new Date(value)
   return `${date.getMonth() + 1}/${date.getDate()}`
@@ -1026,6 +1051,10 @@ function formatWereadDate(value: number): string {
   const timestamp = value < 100_000_000_000 ? value * 1000 : value
   const date = new Date(timestamp)
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function ensurePngPath(path: string): string {
+  return path.toLowerCase().endsWith('.png') ? path : `${path}.png`
 }
 
 function getErrorMessage(error: unknown): string {

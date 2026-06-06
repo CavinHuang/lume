@@ -1,4 +1,5 @@
 import { statFilePaths } from '@/lib/desktop-api'
+import { attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
 import type { PendingMessageAttachment } from './AgentInput'
 
 export interface DesktopDroppedFile {
@@ -6,6 +7,7 @@ export interface DesktopDroppedFile {
   mediaType: string
   size: number
   sourcePath: string
+  data?: string
 }
 
 export type DragDropPayload =
@@ -29,13 +31,20 @@ export async function createPendingAttachmentsFromSourcePaths(
   const statPaths = options.statPaths ?? statFilePaths
   const createId = options.createId ?? createPendingAttachmentId
   const result = await statPaths(paths)
-  return result.files.map((file) => ({
-    id: createId(),
-    filename: file.filename,
-    mediaType: file.mediaType || 'application/octet-stream',
-    size: file.size,
-    sourcePath: file.sourcePath,
-  }))
+  return result.files.map((file) => {
+    const mediaType = file.mediaType || 'application/octet-stream'
+    return {
+      id: createId(),
+      filename: file.filename,
+      mediaType,
+      size: file.size,
+      sourcePath: file.sourcePath,
+      ...(file.data ? { data: file.data } : {}),
+      ...(isImageAttachment({ filename: file.filename, mediaType })
+        ? { previewUrl: attachmentDataUrl(mediaType, file.data) }
+        : {}),
+    }
+  })
 }
 
 function createPendingAttachmentId(): string {

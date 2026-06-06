@@ -1,6 +1,7 @@
 import { AppShell } from '@/components/app-shell/AppShell'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useReadingListeners } from '@/hooks/useReadingListeners'
+import { useSkillListeners } from '@/hooks/useSkillListeners'
 import { useWorkspaceBootstrap } from '@/hooks/useWorkspaceBootstrap'
 import { healthcheck } from '@/lib/desktop-api'
 import { Provider } from 'jotai'
@@ -11,6 +12,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 function AppInner() {
   useGlobalAgentListeners()
   useReadingListeners()
+  useSkillListeners()
   useWorkspaceBootstrap()
   return <AppShell />
 }

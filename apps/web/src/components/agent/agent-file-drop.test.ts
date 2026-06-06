@@ -35,4 +35,29 @@ describe('agent file drop helpers', () => {
       sourcePath: '/tmp/brief.md',
     }])
   })
+
+  test('uses desktop image base64 data for pending image previews', async () => {
+    const attachments = await createPendingAttachmentsFromSourcePaths(['/tmp/screen.png'], {
+      createId: () => 'att-1',
+      statPaths: async (paths) => ({
+        files: paths.map((path) => ({
+          filename: 'screen.png',
+          mediaType: 'image/png',
+          size: 7,
+          sourcePath: path,
+          data: 'abc123',
+        })),
+      }),
+    })
+
+    expect(attachments).toEqual([{
+      id: 'att-1',
+      filename: 'screen.png',
+      mediaType: 'image/png',
+      size: 7,
+      sourcePath: '/tmp/screen.png',
+      data: 'abc123',
+      previewUrl: 'data:image/png;base64,abc123',
+    }])
+  })
 })

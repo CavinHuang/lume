@@ -16,6 +16,11 @@ mock.module('@ant-design/x-markdown', () => ({
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
+  localFilePreviewUrl: (path: string) => `asset://${path}`,
+  openInSystem: async () => undefined,
+  saveTextFileDialog: async () => undefined,
+  sidecarCall: async () => undefined,
+  statFilePaths: async () => ({ files: [] }),
 }))
 
 mock.module('./tool-result-renderers', () => ({
@@ -58,5 +63,46 @@ describe('RuntimeEventContentBlock tool results', () => {
     expect(markup).toContain('Bash')
     expect(markup).toContain('已完成')
     expect(markup).not.toContain('data-tool-result-renderer="true"')
+  })
+})
+
+describe('RuntimeEventContentBlock user attachments', () => {
+  test('renders message attachments above text and routes image clicks separately from file cards', () => {
+    const message: RuntimeMessageView = {
+      id: 'user-1',
+      type: 'user',
+      text: '请看附件',
+      createdAt: '2026-06-01T00:00:00.000Z',
+      attachments: [
+        {
+          id: 'att-image',
+          filename: 'screen.png',
+          mediaType: 'image/png',
+          size: 1024,
+          threadPath: 'screen.png',
+        },
+        {
+          id: 'att-file',
+          filename: 'brief.md',
+          mediaType: 'text/markdown',
+          size: 2048,
+          threadPath: 'brief.md',
+        },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        threadId="thread-1"
+        onOpenThreadFile={() => undefined}
+        onOpenThreadImage={() => undefined}
+      />,
+    )
+
+    expect(markup.indexOf('data-agent-attachment-grid="true"')).toBeGreaterThan(-1)
+    expect(markup.indexOf('data-agent-attachment-grid="true"')).toBeLessThan(markup.indexOf('请看附件'))
+    expect(markup).toContain('data-agent-attachment-kind="image"')
+    expect(markup).toContain('data-agent-attachment-kind="file"')
   })
 })

@@ -9,9 +9,11 @@ import { AskUserBanner } from './AskUserBanner'
 import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { SidePanel } from './SidePanel'
-import { Upload } from 'lucide-react'
+import { Loader2, Upload, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { sidecarCall } from '@/lib/desktop-api'
+import { AGENT_IPC_CHANNELS, type AgentMessageAttachmentInput, type AgentThreadFileDataResult } from '@lume/shared'
 import {
   createPendingAttachmentsFromSourcePaths,
   isFileDragPayload,
@@ -57,6 +59,12 @@ export function AgentView({ threadId }: AgentViewProps) {
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([])
   const [threadFilePreview, setThreadFilePreview] = useState<{ path: string; key: number } | null>(null)
   const [memoryFilePreview, setMemoryFilePreview] = useState<{ path: string; key: number } | null>(null)
+  const [imagePreview, setImagePreview] = useState<{
+    attachment: AgentMessageAttachmentInput
+    src?: string
+    loading: boolean
+    error?: string
+  } | null>(null)
   const threadFilePathToPreview = threadFilePreview?.path
   const threadFilePreviewKey = threadFilePreview?.key ?? 0
   const memoryFilePathToPreview = memoryFilePreview?.path
@@ -101,9 +109,41 @@ export function AgentView({ threadId }: AgentViewProps) {
     ))
   }, [setSidePanelViews, threadId])
 
+  const openThreadImagePreview = useCallback((attachment: AgentMessageAttachmentInput) => {
+    setImagePreview({ attachment, loading: true })
+    sidecarCall<AgentThreadFileDataResult>(AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA, {
+      threadId,
+      path: attachment.threadPath,
+    })
+      .then((result) => {
+        setImagePreview((current) => (
+          current?.attachment.id === attachment.id
+            ? {
+                attachment,
+                src: `data:${attachment.mediaType};base64,${result.data}`,
+                loading: false,
+              }
+            : current
+        ))
+      })
+      .catch((error) => {
+        console.error('[AgentView] 加载图片预览失败:', error)
+        setImagePreview((current) => (
+          current?.attachment.id === attachment.id
+            ? {
+                attachment,
+                loading: false,
+                error: error instanceof Error ? error.message : '图片预览失败',
+              }
+            : current
+        ))
+      })
+  }, [threadId])
+
   useEffect(() => {
     setThreadFilePreview(null)
     setMemoryFilePreview(null)
+    setImagePreview(null)
     setPendingAttachments([])
   }, [threadId])
 
@@ -195,6 +235,7 @@ export function AgentView({ threadId }: AgentViewProps) {
           threadId={threadId}
           streaming={streamingState === 'streaming'}
           onOpenThreadFile={openThreadFilePreview}
+          onOpenThreadImage={openThreadImagePreview}
           onOpenMemorySource={openMemoryFilePreview}
         />
         {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
@@ -266,6 +307,73 @@ export function AgentView({ threadId }: AgentViewProps) {
           </div>
         </div>
       )}
+
+      {imagePreview && (
+        <ThreadImagePreviewDialog
+          preview={imagePreview}
+          onClose={() => setImagePreview(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function ThreadImagePreviewDialog({
+  preview,
+  onClose,
+}: {
+  preview: {
+    attachment: AgentMessageAttachmentInput
+    src?: string
+    loading: boolean
+    error?: string
+  }
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/72 px-6 py-8 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={preview.attachment.filename}
+      onClick={onClose}
+    >
+      <div
+        className="relative flex max-h-full max-w-[min(1080px,92vw)] flex-col overflow-hidden rounded-[10px] bg-[#111318] text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
+          <div className="min-w-0 truncate text-[13px] font-medium text-white/82">
+            {preview.attachment.filename}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex size-7 items-center justify-center rounded-md text-white/65 transition-colors hover:bg-white/10 hover:text-white"
+            title="关闭预览"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="flex min-h-[320px] min-w-[320px] items-center justify-center bg-black/24 p-4">
+          {preview.loading ? (
+            <div className="flex items-center gap-2 text-[13px] text-white/70">
+              <Loader2 size={16} className="animate-spin" />
+              正在加载图片
+            </div>
+          ) : preview.error ? (
+            <div className="max-w-[420px] rounded-[8px] border border-white/10 bg-white/6 px-4 py-3 text-center text-[13px] leading-6 text-white/72">
+              {preview.error}
+            </div>
+          ) : preview.src ? (
+            <img
+              src={preview.src}
+              alt={preview.attachment.filename}
+              className="max-h-[calc(100vh-160px)] max-w-[calc(92vw-32px)] object-contain"
+            />
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }

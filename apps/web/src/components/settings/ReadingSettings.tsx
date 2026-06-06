@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BookOpen, Check, LogIn, MessageSquare, RefreshCw, Save, TestTube2 } from 'lucide-react'
 import { toast } from 'sonner'
+import type { Channel } from '@lume/shared'
 import type { ReadingSettingsDraft } from './reading-settings-state'
 import {
   READING_ADVANCED_STAGE_OPTIONS,
   READING_CADENCE_OPTIONS,
+  applyReadingModelSelectChange,
+  buildReadingChatModelOptions,
   buildReadingSettingsSavePayload,
   getReadingSettingsDraft,
+  resolveReadingModelSelectValue,
 } from './reading-settings-state'
 import {
   connectReadingWeread,
@@ -16,6 +20,7 @@ import {
   testWereadKey,
   updateReadingSettings,
 } from '@/lib/desktop-api/reading'
+import { listChannels } from '@/lib/desktop-api/channel'
 
 type WereadTestStatus = 'idle' | 'testing' | 'ok' | 'fail'
 
@@ -35,6 +40,7 @@ const WEREAD_FEATURES = [
 
 export function ReadingSettings() {
   const [draft, setDraft] = useState<ReadingSettingsDraft | null>(null)
+  const [channels, setChannels] = useState<Channel[]>([])
   const [connected, setConnected] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [savedApiKey, setSavedApiKey] = useState('')
@@ -44,11 +50,13 @@ export function ReadingSettings() {
   const [connectionDetail, setConnectionDetail] = useState<WereadConnectionDetail | null>(null)
 
   const load = useCallback(async () => {
-    const [snapshot, keyResult] = await Promise.all([
+    const [snapshot, keyResult, channelList] = await Promise.all([
       getReadingSnapshot(),
       getWereadApiKey().catch(() => ({ apiKey: null })),
+      listChannels().catch(() => []),
     ])
     setDraft(getReadingSettingsDraft(snapshot.settings))
+    setChannels(channelList)
     setConnected(snapshot.wereadConnection.connected)
     setApiKey(keyResult.apiKey ?? '')
     setSavedApiKey(keyResult.apiKey ?? '')
@@ -288,23 +296,14 @@ export function ReadingSettings() {
           <label className="text-[13px] text-[var(--text-2)]">
             <span className="mb-2 block">文本模型</span>
             <select
-              value={draft.textModelMode}
-              onChange={(event) => setDraft((current) => current ? { ...current, textModelMode: event.target.value as ReadingSettingsDraft['textModelMode'] } : current)}
+              value={resolveReadingModelSelectValue(draft)}
+              onChange={(event) => setDraft((current) => current ? applyReadingModelSelectChange(current, event.target.value) : current)}
               className="h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 outline-none"
             >
-              <option value="inherit">继承当前聊天</option>
-              <option value="explicit">指定模型</option>
+              {buildReadingChatModelOptions(channels).map((option) => (
+                <option key={option.modelRef || '__inherit__'} value={option.modelRef}>{option.label}</option>
+              ))}
             </select>
-          </label>
-          <label className="text-[13px] text-[var(--text-2)]">
-            <span className="mb-2 block">文本模型引用</span>
-            <input
-              value={draft.textModelRef}
-              disabled={draft.textModelMode === 'inherit'}
-              onChange={(event) => setDraft((current) => current ? { ...current, textModelRef: event.target.value } : current)}
-              placeholder="provider/model"
-              className="h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 outline-none disabled:opacity-55"
-            />
           </label>
           <label className="text-[13px] text-[var(--text-2)]">
             <span className="mb-2 block">图像模型</span>
