@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   formatMessageAttachmentSize,
   getAssistantCopyText,
+  getAssistantDownloadPayload,
   getCopyTextWithoutAfterglow,
   getTaskProgressStatusText,
   getToolPermissionTitleBadgeText,
@@ -83,6 +84,20 @@ describe('getCopyTextWithoutAfterglow', () => {
 describe('getAssistantCopyText', () => {
   test('removes afterglow lines from footer copy text', () => {
     expect(getAssistantCopyText('正文\n⟡ 不要复制\n结尾')).toBe('正文\n结尾')
+  })
+})
+
+describe('getAssistantDownloadPayload', () => {
+  test('removes afterglow lines from txt downloads', () => {
+    expect(getAssistantDownloadPayload('正文\n⟡ 不要导出\n结尾', 'txt')).toBe('正文\n结尾')
+  })
+
+  test('removes afterglow lines from html downloads', () => {
+    const payload = getAssistantDownloadPayload('正文\n⟡ 不要导出\n结尾', 'html')
+
+    expect(payload).toContain('<pre>正文\n结尾</pre>')
+    expect(payload).not.toContain('不要导出')
+    expect(payload).not.toContain('⟡')
   })
 })
 

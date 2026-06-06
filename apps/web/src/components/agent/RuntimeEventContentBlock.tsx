@@ -1471,10 +1471,15 @@ function percentInteger(value: unknown): number | undefined {
 
 type AssistantDownloadFormat = 'html' | 'txt'
 
+export function getAssistantDownloadPayload(text: string, format: AssistantDownloadFormat): string {
+  const cleanText = getAssistantCopyText(text)
+  return format === 'html' ? buildAssistantMessageHtml(cleanText) : cleanText
+}
+
 async function downloadAssistantMessage(text: string, messageId: string | undefined, format: AssistantDownloadFormat): Promise<string | null> {
   const filenameBase = messageId ?? `assistant-${Date.now()}`
   const filename = `${filenameBase}.${format}`
-  const payload = format === 'html' ? buildAssistantMessageHtml(text) : text
+  const payload = getAssistantDownloadPayload(text, format)
   try {
     const result = await saveTextFileDialog(filename, payload)
     return result.path
