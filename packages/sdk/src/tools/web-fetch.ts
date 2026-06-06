@@ -1,78 +1,92 @@
 /**
- * WebFetchTool - Fetch web content
+ * WebFetchTool - Fetch web content with Readability + Markdown conversion
  */
 
-import { defineTool } from './types.js'
-import { ensureNetworkAllowed } from '../utils/pathing.js'
-import { sdkFetch } from './web-request.js'
+import { defineTool } from "./types.js";
+import { ensureNetworkAllowed } from "../utils/pathing.js";
+import { sdkFetch } from "./web-request.js";
+import { extractArticleMarkdown } from "./html-to-markdown.js";
+
+const MAX_FETCH_CHARS = 100000;
 
 export const WebFetchTool = defineTool({
-  name: 'WebFetch',
-  description: 'Fetch content from a URL and return it as text. Supports HTML pages, JSON APIs, and plain text. Strips HTML tags for readability.',
+  name: "WebFetch",
+  description:
+    "Fetch content from a URL and return it as Markdown. Strips boilerplate using Mozilla Readability for clean article extraction.",
   inputSchema: {
-    type: 'object',
+    type: "object",
     properties: {
       url: {
-        type: 'string',
-        description: 'The URL to fetch content from',
+        type: "string",
+        description: "The URL to fetch content from",
       },
-      headers: {
-        type: 'object',
-        description: 'Optional HTTP headers',
+      format: {
+        type: "string",
+        enum: ["markdown", "text", "html"],
+        description: "Output format. Default: markdown",
       },
     },
-    required: ['url'],
+    required: ["url"],
   },
   isReadOnly: true,
   isConcurrencySafe: true,
   async call(input, context) {
-    const { url, headers } = input
-    const sandboxError = ensureNetworkAllowed(url, context.sandbox)
+    const { url } = input;
+    const format = input.format === "text" || input.format === "html" ? input.format : "markdown";
+
+    const sandboxError = ensureNetworkAllowed(url, context.sandbox);
     if (sandboxError) {
-      return { data: sandboxError, is_error: true }
+      return { data: sandboxError, is_error: true };
     }
 
     try {
       const response = await sdkFetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)',
-          ...headers,
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         },
         signal: AbortSignal.timeout(30000),
-      })
+      });
 
       if (!response.ok) {
-        return { data: `HTTP ${response.status}: ${response.statusText}`, is_error: true }
+        return { data: `HTTP ${response.status}: ${response.statusText}`, is_error: true };
       }
 
-      const contentType = response.headers.get('content-type') || ''
-      let text = await response.text()
+      const contentType = response.headers.get("content-type") || "";
+      let text = await response.text();
 
-      // Strip HTML tags for readability
-      if (contentType.includes('text/html')) {
-        // Remove script and style blocks
-        text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        // Remove HTML tags
-        text = text.replace(/<[^>]+>/g, ' ')
-        // Clean up whitespace
-        text = text.replace(/\s+/g, ' ').trim()
+      if (text.length > MAX_FETCH_CHARS) {
+        text = text.slice(0, MAX_FETCH_CHARS);
       }
 
-      // Truncate very large responses
-      if (text.length > 100000) {
-        text = text.slice(0, 100000) + '\n...(truncated)'
+      if (contentType.includes("text/html") || text.trimStart().startsWith("<")) {
+        if (format === "html") {
+          return { data: text };
+        }
+
+        const article = extractArticleMarkdown(text, url);
+        if (article) {
+          if (format === "text") {
+            return { data: `# ${article.title}\n\n${article.content.replace(/[#*_`>\[\]()!-]/g, "")}` };
+          }
+          return { data: `# ${article.title}\n\n${article.content}` };
+        }
+
+        // Readability failed — strip tags as fallback
+        const stripped = text
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        return { data: stripped || "(empty response)" };
       }
 
-      return {
-        data: {
-          url,
-          contentType,
-          content: text || '(empty response)',
-        },
-      }
+      return { data: text || "(empty response)" };
     } catch (err: any) {
-      return { data: `Error fetching ${url}: ${err.message}`, is_error: true }
+      return { data: `Error fetching ${url}: ${err.message}`, is_error: true };
     }
   },
-})
+});
