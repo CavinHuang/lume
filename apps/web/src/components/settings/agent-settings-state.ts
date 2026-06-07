@@ -90,6 +90,8 @@ export interface ModelProviderRow {
   label: string
   channel: Channel | null
   tone: string
+  /** 自定义 Channel 的唯一标识（用于区分多个 custom channel） */
+  channelId?: string
 }
 
 const PROVIDER_TONES: Partial<Record<ProviderType, string>> = {
@@ -102,30 +104,84 @@ const PROVIDER_TONES: Partial<Record<ProviderType, string>> = {
   zai: 'bg-[#eee7ff] text-[#7557ff]',
   'zai-coding-plan': 'bg-[#eee7ff] text-[#7557ff]',
   moonshot: 'bg-[#111827] text-white',
+  'aliyun-coding-plan': 'bg-[#ff6a00]/10 text-[#ff6a00]',
+  'volcengine-coding-plan': 'bg-[#3370ff]/10 text-[#3370ff]',
+  'minimax-token-plan': 'bg-[#3d5afe]/10 text-[#3d5afe]',
+  'xiaomi-token-plan': 'bg-[#ff6900]/10 text-[#ff6900]',
 }
 
 export function buildModelProviderRows(channels: Channel[]): ModelProviderRow[] {
-  return (Object.entries(PROVIDER_LABELS) as [ProviderType, string][])
+  // 内置 Provider
+  const builtInRows = (Object.entries(PROVIDER_LABELS) as [ProviderType, string][])
+    .filter(([provider]) => provider !== 'custom')
     .map(([provider, label], index) => ({
       provider,
       label,
       channel: channels.find((channel) => channel.provider === provider) ?? null,
       tone: PROVIDER_TONES[provider] ?? 'bg-[#eef2f7] text-[#4d566f]',
+      channelId: undefined as string | undefined,
       index,
     }))
+
+  // 自定义 Channel（每个生成独立行）
+  const customRows = channels
+    .filter((channel) => channel.provider === 'custom')
+    .map((channel, index) => ({
+      provider: 'custom' as ProviderType,
+      label: channel.name || '自定义供应商',
+      channel,
+      tone: PROVIDER_TONES['custom'] ?? 'bg-[#eadcff] text-[#7a52e8]',
+      channelId: channel.id as string,
+      index: builtInRows.length + index,
+    }))
+
+  return [...builtInRows, ...customRows]
     .sort((a, b) => {
       const aRank = a.channel?.enabled ? 0 : a.channel ? 1 : 2
       const bRank = b.channel?.enabled ? 0 : b.channel ? 1 : 2
       return aRank - bRank || a.index - b.index
     })
-    .map(({ provider, label, channel, tone }) => ({ provider, label, channel, tone }))
+    .map(({ provider, label, channel, tone, channelId }) => ({
+      provider, label, channel, tone, channelId,
+    }))
 }
 
 export function getModelProviderFormInitialValue(
   provider: ProviderType,
   channels: Channel[],
-  apiKey: string
+  apiKey: string,
+  channelId?: string,
 ): ChannelCreateInput {
+  // 自定义 Channel：通过 channelId 查找
+  if (provider === 'custom' && channelId) {
+    const existing = channels.find((c) => c.id === channelId)
+    if (existing) {
+      return {
+        name: existing.name,
+        provider: existing.provider,
+        baseUrl: existing.baseUrl,
+        apiKey,
+        apiFamily: existing.apiFamily,
+        models: existing.models,
+        defaultModelId: existing.defaultModelId,
+        fallbackModelIds: existing.fallbackModelIds,
+        enabled: existing.enabled,
+      }
+    }
+    // 新建自定义 Channel
+    return {
+      name: '',
+      provider: 'custom',
+      baseUrl: '',
+      apiKey,
+      apiFamily: 'openai',
+      models: [],
+      defaultModelId: undefined,
+      fallbackModelIds: undefined,
+      enabled: false,
+    }
+  }
+  // 内置 Provider（原有逻辑不变）
   const existing = channels.find((channel) => channel.provider === provider)
   if (!existing) {
     return {
@@ -139,7 +195,6 @@ export function getModelProviderFormInitialValue(
       enabled: false,
     }
   }
-
   return {
     name: existing.name,
     provider: existing.provider,
