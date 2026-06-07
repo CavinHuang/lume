@@ -1,10 +1,11 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { getDefaultStore } from 'jotai'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 mock.restore()
 
-const listEditableSkillsMock = mock(async () => [
+const defaultEditableSkills = () => [
   {
     slug: 'skill-creator',
     name: 'Skill 生成器',
@@ -21,7 +22,9 @@ const listEditableSkillsMock = mock(async () => [
     sourceType: 'built-in' as const,
     description: 'Installed from skill market',
   },
-])
+]
+
+const listEditableSkillsMock = mock(async () => defaultEditableSkills())
 
 const getEditableSkillMock = mock(async () => ({
   skill: {
@@ -100,6 +103,7 @@ mock.module('@/lib/desktop-api/lume-config', () => ({
 }))
 
 const { SkillSettingsView } = await import('./SkillSettingsView')
+const { pendingSkillImprovementSuggestionsAtom } = await import('@/atoms')
 
 class FakeEventTarget {
   parentNode: FakeEventTarget | null = null
@@ -327,6 +331,17 @@ function findElementByAttribute(node: FakeEventTarget, name: string, value: stri
   return null
 }
 
+function findElementByText(node: FakeEventTarget, text: string): FakeElement | null {
+  if (node instanceof FakeElement && node.textContent === text) {
+    return node
+  }
+  for (const child of node.childNodes) {
+    const result = findElementByText(child, text)
+    if (result) return result
+  }
+  return null
+}
+
 describe('SkillSettingsView', () => {
   afterAll(() => {
     mock.restore()
@@ -347,10 +362,12 @@ describe('SkillSettingsView', () => {
       sidecarCall: mock(async () => undefined),
     }
     listEditableSkillsMock.mockClear()
+    listEditableSkillsMock.mockImplementation(async () => defaultEditableSkills())
     getEditableSkillMock.mockClear()
     listSkillVersionsMock.mockClear()
     analyzeSkillImprovementMock.mockClear()
     getEffectiveLumeConfigMock.mockClear()
+    getDefaultStore().set(pendingSkillImprovementSuggestionsAtom, [])
   })
 
   test('keeps system tools visible while editing a skill', async () => {
@@ -379,6 +396,113 @@ describe('SkillSettingsView', () => {
       expect(container.textContent).toContain('系统工具')
       expect(container.textContent).toContain('read_file')
       expect(container.textContent).toContain('agent_spawn')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('passes cwd when loading Alice-compatible project skills', async () => {
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(<SkillSettingsView workspaceSlug="demo" cwd="/tmp/current-project" onOpenMarket={() => {}} />)
+        await flush()
+      })
+
+      expect(listEditableSkillsMock).toHaveBeenCalledWith('demo', '/tmp/current-project')
+      expect(container.textContent).toContain('当前项目')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('defaults to the current project skill scope when cwd is available', async () => {
+    listEditableSkillsMock.mockImplementation(async () => [
+      {
+        slug: 'project-planner',
+        name: 'Project Planner',
+        storageScope: 'project' as const,
+        managementSurface: 'settings' as const,
+        description: 'Project-local Alice skill',
+      },
+      {
+        slug: 'workspace-helper',
+        name: 'Workspace Helper',
+        storageScope: 'workspace' as const,
+        managementSurface: 'settings' as const,
+        description: 'Workspace-local Lume skill',
+      },
+    ])
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(<SkillSettingsView workspaceSlug="demo" cwd="/tmp/current-project" onOpenMarket={() => {}} />)
+        await flush()
+      })
+
+      expect(container.textContent).toContain('当前项目 (.alice/skills/)技能')
+      expect(container.textContent).toContain('Project Planner')
+      expect(container.textContent).not.toContain('Workspace Helper')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('switches to the current project scope when cwd resolves after settings opens', async () => {
+    listEditableSkillsMock.mockImplementation(async () => [
+      {
+        slug: 'project-planner',
+        name: 'Project Planner',
+        storageScope: 'project' as const,
+        managementSurface: 'settings' as const,
+        description: 'Project-local Alice skill',
+      },
+      {
+        slug: 'workspace-helper',
+        name: 'Workspace Helper',
+        storageScope: 'workspace' as const,
+        managementSurface: 'settings' as const,
+        description: 'Workspace-local Lume skill',
+      },
+    ])
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(<SkillSettingsView workspaceSlug="demo" cwd={null} onOpenMarket={() => {}} />)
+        await flush()
+      })
+
+      expect(container.textContent).toContain('Lume 工作区技能')
+
+      await act(async () => {
+        root!.render(<SkillSettingsView workspaceSlug="demo" cwd="/tmp/current-project" onOpenMarket={() => {}} />)
+        await flush()
+      })
+
+      expect(container.textContent).toContain('当前项目 (.alice/skills/)技能')
+      expect(container.textContent).toContain('Project Planner')
+      expect(container.textContent).not.toContain('Workspace Helper')
     } finally {
       await act(async () => {
         root?.unmount()
@@ -430,6 +554,133 @@ describe('SkillSettingsView', () => {
         storageScope: 'workspace',
       })
       expect(container.textContent).toContain('收窄到创建或优化 skill 的请求')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('shows pending thread skill improvement suggestions in the matching settings editor', async () => {
+    getDefaultStore().set(pendingSkillImprovementSuggestionsAtom, [{
+      key: 'demo:workspace:skill-creator',
+      workspaceSlug: 'demo',
+      storageScope: 'workspace',
+      skillSlug: 'skill-creator',
+      usageCount: 1,
+      analyzedSessionIds: ['thread-1'],
+      updates: [
+        { section: '触发条件', change: '来自最近会话的建议', reason: '最近使用记录发现误触发' },
+      ],
+    }])
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(<SkillSettingsView workspaceSlug="demo" onOpenMarket={() => {}} />)
+        await flush()
+      })
+
+      const editButton = findElementByAttribute(container, 'title', '编辑技能')
+      expect(editButton).not.toBeNull()
+
+      await act(async () => {
+        editButton!.dispatchEvent(new Event('click', { bubbles: true }))
+        await flush()
+      })
+
+      expect(container.textContent).toContain('来自最近会话的建议')
+      expect(container.textContent).toContain('最近使用记录发现误触发')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('matches pending project skill improvement suggestions by cwd', async () => {
+    ;(globalThis as any).__lumeDesktopApiMocks = {
+      ...(globalThis as any).__lumeDesktopApiMocks,
+      listEditableSkills: mock(async () => [
+        {
+          slug: 'planner',
+          name: 'Project Planner',
+          storageScope: 'project' as const,
+          managementSurface: 'settings' as const,
+          description: 'Project planning skill',
+        },
+      ]),
+      getEditableSkill: mock(async () => ({
+        skill: {
+          slug: 'planner',
+          name: 'Project Planner',
+          storageScope: 'project' as const,
+          description: 'Project planning skill',
+        },
+        content: '---\nname: Project Planner\n---\n\nPrompt body.',
+      })),
+    }
+    getDefaultStore().set(pendingSkillImprovementSuggestionsAtom, [
+      {
+        key: 'demo:project:/tmp/other-project:planner',
+        workspaceSlug: 'demo',
+        storageScope: 'project',
+        cwd: '/tmp/other-project',
+        skillSlug: 'planner',
+        usageCount: 1,
+        analyzedSessionIds: ['thread-1'],
+        updates: [
+          { section: '触发条件', change: '错误项目建议', reason: '不应显示' },
+        ],
+      },
+      {
+        key: 'demo:project:/tmp/current-project:planner',
+        workspaceSlug: 'demo',
+        storageScope: 'project',
+        cwd: '/tmp/current-project',
+        skillSlug: 'planner',
+        usageCount: 1,
+        analyzedSessionIds: ['thread-2'],
+        updates: [
+          { section: '触发条件', change: '当前项目建议', reason: 'cwd 匹配' },
+        ],
+      },
+    ])
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(<SkillSettingsView workspaceSlug="demo" cwd="/tmp/current-project" onOpenMarket={() => {}} />)
+        await flush()
+      })
+
+      const projectTab = findElementByText(container, '当前项目 (.alice/skills/)')
+      expect(projectTab).not.toBeNull()
+
+      await act(async () => {
+        projectTab!.dispatchEvent(new Event('click', { bubbles: true }))
+        await flush()
+      })
+
+      const editButton = findElementByAttribute(container, 'title', '编辑技能')
+      expect(editButton).not.toBeNull()
+
+      await act(async () => {
+        editButton!.dispatchEvent(new Event('click', { bubbles: true }))
+        await flush()
+      })
+
+      expect(container.textContent).toContain('当前项目建议')
+      expect(container.textContent).toContain('cwd 匹配')
+      expect(container.textContent).not.toContain('错误项目建议')
     } finally {
       await act(async () => {
         root?.unmount()

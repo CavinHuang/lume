@@ -31,6 +31,9 @@ const sidecarCallMock = mock(async (channel: string, _payload?: Record<string, u
       },
     ]
   }
+  if (channel === AGENT_IPC_CHANNELS.GET_THREAD_PATH) {
+    return '/tmp/thread-1'
+  }
   if (channel === AGENT_IPC_CHANNELS.GET_MCP_CONFIG) {
     return { servers: {} }
   }
@@ -50,11 +53,15 @@ function getDesktopApiMocks() {
 }
 
 mock.module('@/lib/desktop-api', () => ({
+  analyzeSkillImprovement: (...args: unknown[]) => getDesktopApiMocks().analyzeSkillImprovement?.(...args),
+  applySkillImprovement: (...args: unknown[]) => getDesktopApiMocks().applySkillImprovement?.(...args),
   deleteWorkspaceSkill: (...args: unknown[]) => getDesktopApiMocks().deleteWorkspaceSkill?.(...args),
   getEditableSkill: (...args: unknown[]) => getDesktopApiMocks().getEditableSkill?.(...args),
   getMcpConfig: (...args: unknown[]) => getDesktopApiMocks().getMcpConfig?.(...args),
   getMcpStatus: (...args: unknown[]) => getDesktopApiMocks().getMcpStatus?.(...args),
+  listSkillVersions: (...args: unknown[]) => getDesktopApiMocks().listSkillVersions?.(...args),
   listEditableSkills: (...args: unknown[]) => getDesktopApiMocks().listEditableSkills?.(...args),
+  restoreSkillVersion: (...args: unknown[]) => getDesktopApiMocks().restoreSkillVersion?.(...args),
   saveWorkspaceSkill: (...args: unknown[]) => getDesktopApiMocks().saveWorkspaceSkill?.(...args),
   sidecarCall: (...args: Parameters<typeof sidecarCallMock>) => getDesktopApiMocks().sidecarCall?.(...args),
 }))
@@ -78,7 +85,7 @@ describe('fetchSuggestions', () => {
 
     expect(sidecarCallMock).toHaveBeenCalledWith(
       AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
-      { workspaceSlug: 'workspace-1' },
+      { workspaceSlug: 'workspace-1', cwd: '/tmp/thread-1' },
     )
     expect(items).toEqual([
       expect.objectContaining({
@@ -96,7 +103,7 @@ describe('fetchSuggestions', () => {
 
     expect(sidecarCallMock).toHaveBeenCalledWith(
       AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
-      { workspaceSlug: 'workspace-1' },
+      { workspaceSlug: 'workspace-1', cwd: '/tmp/thread-1' },
     )
     expect(items).toEqual([
       expect.objectContaining({

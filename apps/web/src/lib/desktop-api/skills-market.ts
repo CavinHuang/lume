@@ -39,8 +39,17 @@ export const getSkillMarketDetail = (input: GetSkillMarketDetailInput) =>
 export const getWorkspaceSkills = (workspaceSlug: string) =>
   sidecarCall<SkillMeta[]>(AGENT_CHANNELS.GET_SKILLS, { workspaceSlug })
 
-export const listEditableSkills = (workspaceSlug: string) =>
-  sidecarCall<EditableSkillMeta[]>(AGENT_CHANNELS.LIST_EDITABLE_SKILLS, { workspaceSlug })
+export const getAgentThreadPath = (threadId: string, workspaceSlug?: string) =>
+  sidecarCall<string>(AGENT_CHANNELS.GET_THREAD_PATH, {
+    threadId,
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+  })
+
+export const listEditableSkills = (workspaceSlug: string, cwd?: string) =>
+  sidecarCall<EditableSkillMeta[]>(AGENT_CHANNELS.LIST_EDITABLE_SKILLS, {
+    workspaceSlug,
+    ...(cwd ? { cwd } : {}),
+  })
 
 export const getEditableSkill = (input: GetEditableSkillInput) =>
   sidecarCall<EditableSkillDetailResult>(AGENT_CHANNELS.GET_EDITABLE_SKILL, input)
@@ -76,9 +85,11 @@ export const deleteWorkspaceSkill = (
   workspaceSlug: string,
   skillSlug: string,
   storageScope?: SkillStorageScope,
+  cwd?: string,
 ) =>
   sidecarCall<{ ok: true }>('agent:delete-skill', {
     workspaceSlug,
     skillSlug,
     ...(storageScope ? { storageScope } : {}),
+    ...(cwd ? { cwd } : {}),
   })

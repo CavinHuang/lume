@@ -3,11 +3,17 @@ export type SkillSystemToolGroupId =
   | 'file-read'
   | 'file-write'
   | 'search'
+  | 'code-intelligence'
   | 'web'
+  | 'data'
   | 'memory'
   | 'agent'
+  | 'task'
   | 'automation'
+  | 'user-interaction'
   | 'channel'
+  | 'evolution'
+  | 'office'
   | 'reading'
 
 export interface SkillToolDefinition {
@@ -27,6 +33,11 @@ export const SKILL_TOOL_DEFINITIONS: SkillToolDefinition[] = [
   { value: 'list_dir', label: 'list_dir', systemGroupId: 'search' },
   { value: 'web_search', label: 'web_search', systemGroupId: 'web' },
   { value: 'web_fetch', label: 'web_fetch', systemGroupId: 'web' },
+  { value: 'personalize_ui', label: 'personalize_ui', systemGroupId: 'evolution' },
+  { value: 'lume_reading_snapshot', label: 'lume_reading_snapshot', systemGroupId: 'reading' },
+  { value: 'lume_generate_share_card', label: 'lume_generate_share_card', systemGroupId: 'reading' },
+  { value: 'office_validate', label: 'office_validate', systemGroupId: 'office' },
+  { value: 'office_unpack', label: 'office_unpack', systemGroupId: 'office' },
   { value: 'agent_spawn', label: 'agent_spawn', systemGroupId: 'agent', disabled: true },
 ]
 

@@ -10,18 +10,42 @@ import { AGENT_IPC_CHANNELS } from '@lume/shared'
 
 export { type MentionItem } from './slash-command-state'
 
+async function fetchThreadCwd(threadId: string, workspaceSlug: string): Promise<string | null> {
+  try {
+    const threadPath = await sidecarCall<string>(AGENT_IPC_CHANNELS.GET_THREAD_PATH, {
+      threadId,
+      workspaceSlug,
+    })
+    const cwd = threadPath?.trim()
+    return cwd ? cwd : null
+  } catch {
+    return null
+  }
+}
+
+function buildListEditableSkillsPayload(workspaceSlug: string, cwd: string | null) {
+  return {
+    workspaceSlug,
+    ...(cwd ? { cwd } : {}),
+  }
+}
+
 /** 获取各类 mention 的建议列表 */
 export async function fetchSuggestions(
   trigger: string,
   query: string,
-  _threadId: string,
+  threadId: string,
   workspaceSlug: string | null,
 ): Promise<MentionItem[]> {
   try {
     if (trigger === '/') {
       if (!workspaceSlug) return []
+      const cwd = await fetchThreadCwd(threadId, workspaceSlug)
       const [skillsResult, mcpResult] = await Promise.all([
-        sidecarCall<EditableSkillMeta[]>(AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS, { workspaceSlug }),
+        sidecarCall<EditableSkillMeta[]>(
+          AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
+          buildListEditableSkillsPayload(workspaceSlug, cwd),
+        ),
         sidecarCall<WorkspaceMcpConfig>(AGENT_IPC_CHANNELS.GET_MCP_CONFIG, { workspaceSlug }),
       ])
       const skills = Array.isArray(skillsResult) ? skillsResult : []
@@ -36,9 +60,10 @@ export async function fetchSuggestions(
 
     if (trigger === '$') {
       if (!workspaceSlug) return []
+      const cwd = await fetchThreadCwd(threadId, workspaceSlug)
       const skillsResult = await sidecarCall<EditableSkillMeta[]>(
         AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
-        { workspaceSlug },
+        buildListEditableSkillsPayload(workspaceSlug, cwd),
       )
       const skills = Array.isArray(skillsResult) ? skillsResult : []
       const normalizedQuery = query.trim().toLowerCase()

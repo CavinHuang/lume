@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
 import {
   ArrowLeft,
   ChevronRight,
@@ -13,6 +14,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
+import { pendingSkillImprovementSuggestionsAtom } from '@/atoms'
 import {
   analyzeSkillImprovement,
   applySkillImprovement,
@@ -55,21 +57,31 @@ import {
   type SystemToolGroup,
   type SystemToolRow,
 } from './system-tools-state'
+import {
+  skillImprovementSuggestionKey,
+  type PendingSkillImprovementSuggestion,
+} from '@/hooks/skill-listeners-state'
 
 const STORAGE_SCOPES: Array<{ value: SkillStorageScope; label: string; emptyLabel: string }> = [
-  { value: 'workspace', label: '工作区级', emptyLabel: '当前工作区没有匹配的自有技能。' },
+  { value: 'project', label: '当前项目 (.alice/skills/)', emptyLabel: '当前项目没有匹配的自有技能。' },
+  { value: 'workspace', label: 'Lume 工作区', emptyLabel: '当前 Lume 工作区没有匹配的自有技能。' },
   { value: 'user', label: '用户全局', emptyLabel: '当前用户全局没有匹配的自有技能。' },
 ]
 
 export function SkillSettingsView({
   workspaceSlug,
+  cwd,
   onOpenMarket,
 }: {
   workspaceSlug: string | null
+  cwd?: string | null
   onOpenMarket: () => void
 }) {
   const [skills, setSkills] = useState<EditableSkillMeta[]>([])
-  const [activeStorageScope, setActiveStorageScope] = useState<SkillStorageScope>('workspace')
+  const [activeStorageScope, setActiveStorageScope] = useState<SkillStorageScope>(
+    () => (cwd?.trim() ? 'project' : 'workspace'),
+  )
+  const [scopeTouched, setScopeTouched] = useState(false)
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -82,6 +94,23 @@ export function SkillSettingsView({
   const [toolLoading, setToolLoading] = useState(true)
   const [toolError, setToolError] = useState<string | null>(null)
   const [savingToolId, setSavingToolId] = useState<string | null>(null)
+  const pendingSkillImprovementSuggestions = useAtomValue(pendingSkillImprovementSuggestionsAtom)
+  const setPendingSkillImprovementSuggestions = useSetAtom(pendingSkillImprovementSuggestionsAtom)
+  const projectCwd = cwd?.trim() || undefined
+  const storageScopes = useMemo(
+    () => STORAGE_SCOPES.filter((scope) => scope.value !== 'project' || projectCwd),
+    [projectCwd],
+  )
+
+  useEffect(() => {
+    if (projectCwd && !scopeTouched && activeStorageScope === 'workspace') {
+      setActiveStorageScope('project')
+      return
+    }
+    if (!projectCwd && activeStorageScope === 'project') {
+      setActiveStorageScope('workspace')
+    }
+  }, [activeStorageScope, projectCwd, scopeTouched])
 
   const loadSkills = useCallback(async () => {
     if (!workspaceSlug) {
@@ -93,14 +122,14 @@ export function SkillSettingsView({
     setLoading(true)
     setError(null)
     try {
-      setSkills(await listEditableSkills(workspaceSlug))
+      setSkills(await listEditableSkills(workspaceSlug, projectCwd))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setSkills([])
     } finally {
       setLoading(false)
     }
-  }, [workspaceSlug])
+  }, [projectCwd, workspaceSlug])
 
   const loadSystemTools = useCallback(async () => {
     setToolLoading(true)
@@ -140,7 +169,17 @@ export function SkillSettingsView({
       .map((row) => row.id),
     [systemToolRows],
   )
-  const activeScopeMeta = STORAGE_SCOPES.find((scope) => scope.value === activeStorageScope) ?? STORAGE_SCOPES[0]!
+  const activeScopeMeta = storageScopes.find((scope) => scope.value === activeStorageScope) ?? storageScopes[0]!
+  const activePendingSuggestion = useMemo(() => {
+    if (!workspaceSlug || !draft || draft.mode !== 'edit') return null
+    const key = skillImprovementSuggestionKey({
+      workspaceSlug,
+      storageScope: draft.storageScope,
+      skillSlug: draft.skillSlug,
+      cwd: draft.storageScope === 'project' ? projectCwd : undefined,
+    })
+    return pendingSkillImprovementSuggestions.find((suggestion) => suggestion.key === key) ?? null
+  }, [draft, pendingSkillImprovementSuggestions, projectCwd, workspaceSlug])
 
   const handleCreate = () => {
     setEditorError(null)
@@ -156,6 +195,7 @@ export function SkillSettingsView({
         workspaceSlug,
         skillSlug: skill.slug,
         storageScope: skill.storageScope,
+        ...(skill.storageScope === 'project' && projectCwd ? { cwd: projectCwd } : {}),
       })
       setDraft(buildSkillDraftFromMeta(detail.skill, extractSkillPrompt(detail.content)))
     } catch (err) {
@@ -173,7 +213,12 @@ export function SkillSettingsView({
     setDeletingSlug(skillSettingsKey(skill))
     setError(null)
     try {
-      await deleteWorkspaceSkill(workspaceSlug, skill.slug, skill.storageScope)
+      await deleteWorkspaceSkill(
+        workspaceSlug,
+        skill.slug,
+        skill.storageScope,
+        skill.storageScope === 'project' ? projectCwd : undefined,
+      )
       await loadSkills()
       if (draft?.skillSlug === skill.slug && draft.storageScope === skill.storageScope) {
         setDraft(null)
@@ -202,6 +247,7 @@ export function SkillSettingsView({
         workspaceSlug,
         skillSlug,
         storageScope: draft.storageScope,
+        ...(draft.storageScope === 'project' && projectCwd ? { cwd: projectCwd } : {}),
         name,
         description: draft.description,
         whenToUse: draft.whenToUse,
@@ -244,10 +290,18 @@ export function SkillSettingsView({
       workspaceSlug,
       skillSlug: draft.skillSlug,
       storageScope: draft.storageScope,
+      ...(draft.storageScope === 'project' && projectCwd ? { cwd: projectCwd } : {}),
     })
     setDraft(buildSkillDraftFromMeta(detail.skill, extractSkillPrompt(detail.content)))
     await loadSkills()
-  }, [draft, loadSkills, workspaceSlug])
+  }, [draft, loadSkills, projectCwd, workspaceSlug])
+
+  const consumeActivePendingSuggestion = useCallback(() => {
+    if (!activePendingSuggestion) return
+    setPendingSkillImprovementSuggestions((current) => (
+      current.filter((suggestion) => suggestion.key !== activePendingSuggestion.key)
+    ))
+  }, [activePendingSuggestion, setPendingSkillImprovementSuggestions])
 
   const systemToolsPanel = (
     <SystemToolsPanel
@@ -268,8 +322,12 @@ export function SkillSettingsView({
           saving={saving}
           error={editorError}
           disabledSystemGroupIds={disabledSystemGroupIds}
+          storageScopes={storageScopes}
+          projectCwd={projectCwd}
+          pendingSuggestion={activePendingSuggestion}
           onDraftChange={setDraft}
           onSkillContentChanged={() => reloadActiveDraft()}
+          onPendingSuggestionConsumed={consumeActivePendingSuggestion}
           onCancel={() => {
             setDraft(null)
             setEditorError(null)
@@ -285,11 +343,14 @@ export function SkillSettingsView({
     <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
-          {STORAGE_SCOPES.map((scope) => (
+          {storageScopes.map((scope) => (
             <button
               key={scope.value}
               type="button"
-              onClick={() => setActiveStorageScope(scope.value)}
+              onClick={() => {
+                setScopeTouched(true)
+                setActiveStorageScope(scope.value)
+              }}
               className={cn(
                 'h-8 rounded-[6px] px-3 text-[13px] font-semibold transition-colors',
                 activeStorageScope === scope.value
@@ -384,7 +445,7 @@ function SkillSettingsRow({
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
           <h2 className="truncate text-[15px] font-semibold text-[#20232d]" title={skill.name}>{skill.name}</h2>
           <span className="font-mono text-[12px] text-[#4f566d]">/{skill.slug}</span>
-          <span className="text-[12px] text-[#8a91a8]">{skill.storageScope === 'user' ? '用户全局' : '工作区级'}</span>
+          <span className="text-[12px] text-[#8a91a8]">{formatSkillStorageScopeLabel(skill.storageScope)}</span>
           {skill.version && <span className="text-[12px] text-[#8a91a8]">v{skill.version}</span>}
         </div>
         {skill.description && (
@@ -431,8 +492,12 @@ function SkillEditor({
   saving,
   error,
   disabledSystemGroupIds,
+  storageScopes,
+  projectCwd,
+  pendingSuggestion,
   onDraftChange,
   onSkillContentChanged,
+  onPendingSuggestionConsumed,
   onCancel,
   onSave,
 }: {
@@ -441,8 +506,12 @@ function SkillEditor({
   saving: boolean
   error: string | null
   disabledSystemGroupIds: SkillSystemToolGroupId[]
+  storageScopes: typeof STORAGE_SCOPES
+  projectCwd?: string
+  pendingSuggestion: PendingSkillImprovementSuggestion | null
   onDraftChange: (draft: SkillSettingsDraft) => void
   onSkillContentChanged: () => Promise<void>
+  onPendingSuggestionConsumed: () => void
   onCancel: () => void
   onSave: () => void
 }) {
@@ -494,7 +563,7 @@ function SkillEditor({
         <div>
           <div className="mb-2 text-[13px] font-semibold text-[#6b7286]">存储位置</div>
           <div className="flex flex-wrap gap-3">
-            {STORAGE_SCOPES.map((scope) => (
+            {storageScopes.map((scope) => (
               <button
                 key={scope.value}
                 type="button"
@@ -648,8 +717,11 @@ function SkillEditor({
         {workspaceSlug && draft.mode === 'edit' && (
           <SkillEvolutionPanel
             workspaceSlug={workspaceSlug}
+            cwd={draft.storageScope === 'project' ? projectCwd : undefined}
             draft={draft}
+            pendingSuggestion={pendingSuggestion}
             onSkillContentChanged={onSkillContentChanged}
+            onPendingSuggestionConsumed={onPendingSuggestionConsumed}
           />
         )}
 
@@ -680,12 +752,18 @@ function SkillEditorField({
 
 function SkillEvolutionPanel({
   workspaceSlug,
+  cwd,
   draft,
+  pendingSuggestion,
   onSkillContentChanged,
+  onPendingSuggestionConsumed,
 }: {
   workspaceSlug: string
+  cwd?: string
   draft: SkillSettingsDraft
+  pendingSuggestion: PendingSkillImprovementSuggestion | null
   onSkillContentChanged: () => Promise<void>
+  onPendingSuggestionConsumed: () => void
 }) {
   const [versions, setVersions] = useState<SkillVersionInfo[]>([])
   const [versionsLoading, setVersionsLoading] = useState(true)
@@ -700,7 +778,8 @@ function SkillEvolutionPanel({
     workspaceSlug,
     skillSlug: draft.skillSlug,
     storageScope: draft.storageScope,
-  }), [draft.skillSlug, draft.storageScope, workspaceSlug])
+    ...(draft.storageScope === 'project' && cwd ? { cwd } : {}),
+  }), [cwd, draft.skillSlug, draft.storageScope, workspaceSlug])
 
   const loadVersions = useCallback(async () => {
     setVersionsLoading(true)
@@ -718,6 +797,12 @@ function SkillEvolutionPanel({
   useEffect(() => {
     void loadVersions()
   }, [loadVersions])
+
+  useEffect(() => {
+    if (!pendingSuggestion) return
+    setAnalysis(pendingSuggestion)
+    setNotice('已载入来自最近会话的改进建议。')
+  }, [pendingSuggestion])
 
   const handleAnalyze = async () => {
     setAnalyzing(true)
@@ -752,6 +837,7 @@ function SkillEvolutionPanel({
       setAnalysis(null)
       await onSkillContentChanged()
       await loadVersions()
+      onPendingSuggestionConsumed()
       setNotice(result.warning ?? '已应用改进，并备份旧版本。')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -974,6 +1060,12 @@ function SystemToolsPanel({
       </p>
     </section>
   )
+}
+
+function formatSkillStorageScopeLabel(scope: SkillStorageScope): string {
+  if (scope === 'user') return '用户全局'
+  if (scope === 'project') return '当前项目'
+  return 'Lume 工作区'
 }
 
 function SystemToolRowItem({

@@ -71,7 +71,11 @@ function includesQuery(values: Array<string | undefined>, normalizedQuery: strin
 
 export function formatSkillSuggestionMeta(skill: SuggestionSkill) {
   if (!skill.storageScope) return skill.version ?? '个人'
-  const scopeLabel = skill.storageScope === 'user' ? '用户全局' : '项目级'
+  const scopeLabel = skill.storageScope === 'user'
+    ? '用户全局'
+    : skill.storageScope === 'project'
+      ? '当前项目'
+      : 'Lume 工作区'
   return skill.version ? `${scopeLabel} · ${skill.version}` : scopeLabel
 }
 

@@ -22,9 +22,10 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentWorkspacesAtom, currentThreadIdAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   deleteWorkspaceSkill,
+  getAgentThreadPath,
   getGitHubSkillReview,
   getSkillMarketDetail,
   getSkillMarketCatalog,
@@ -35,7 +36,13 @@ import {
 import { cn } from '@/lib/utils'
 import type { SkillCatalogItem, SkillFileTreeNode, SkillMarketDetailResult, SkillSourceType } from '@lume/shared'
 import { SkillSettingsView } from './SkillSettingsView'
-import { buildSkillActionLabel, buildSkillInstallRequest, isInstallableSkillMarketItem } from './skill-market-state'
+import {
+  buildSkillActionLabel,
+  buildSkillInstallRequest,
+  isInstallableSkillMarketItem,
+  resolveSkillSettingsCwd,
+  type SkillMarketSection,
+} from './skill-market-state'
 
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
@@ -75,9 +82,11 @@ const SOURCE_LABELS: Record<SkillSourceType, string> = {
 export function SkillsMarketView() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const currentThreadId = useAtomValue(currentThreadIdAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
-  const [activeSection, setActiveSection] = useState<'market' | 'settings'>('market')
+  const [activeSection, setActiveSection] = useState<SkillMarketSection>('market')
+  const [settingsCwd, setSettingsCwd] = useState<string | null>(null)
   const [items, setItems] = useState<SkillCatalogItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -116,6 +125,33 @@ export function SkillsMarketView() {
   useEffect(() => {
     void loadCatalog()
   }, [loadCatalog])
+
+  useEffect(() => {
+    let cancelled = false
+    setSettingsCwd(null)
+
+    if (activeSection !== 'settings' || !currentThreadId) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    void resolveSkillSettingsCwd({
+      activeSection,
+      currentThreadId,
+      getThreadPath: (threadId) => getAgentThreadPath(threadId, workspaceSlug ?? undefined),
+    })
+      .then((cwd) => {
+        if (!cancelled) setSettingsCwd(cwd)
+      })
+      .catch(() => {
+        if (!cancelled) setSettingsCwd(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeSection, currentThreadId, workspaceSlug])
 
   const cards = useMemo(() => {
     const queryText = query.trim().toLowerCase()
@@ -277,7 +313,7 @@ export function SkillsMarketView() {
             />
           </div>
         ) : (
-          <SkillSettingsView workspaceSlug={workspaceSlug} onOpenMarket={() => setActiveSection('market')} />
+          <SkillSettingsView workspaceSlug={workspaceSlug} cwd={settingsCwd} onOpenMarket={() => setActiveSection('market')} />
         )}
       </div>
 
