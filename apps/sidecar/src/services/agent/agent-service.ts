@@ -1001,9 +1001,10 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
     const modelSelection = resolveChannelModelSelection({
       channelProvider: channel.provider,
       baseUrl: channel.baseUrl,
-      modelId: boundModel?.modelId ?? input.modelId
+      modelId: boundModel?.modelId ?? input.modelId,
+      openaiApiMode: channel.openaiApiMode,
     });
-    const adapter = getAdapter(modelSelection.adapterProvider);
+    const adapter = getAdapter(modelSelection.adapterProvider, modelSelection.openaiApiMode);
     const request = adapter.buildTitleRequest({
       baseUrl: channel.baseUrl,
       apiKey,

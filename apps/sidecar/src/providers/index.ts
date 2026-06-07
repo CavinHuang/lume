@@ -12,6 +12,7 @@ import { AnthropicAdapter } from './anthropic-adapter'
 import { OpenAIAdapter } from './openai-adapter'
 import { DeepSeekAdapter } from './deepseek-adapter'
 import { GoogleAdapter } from './google-adapter'
+import { OpenAIResponsesAdapter } from './openai-responses-adapter'
 
 // 导出所有类型和工具
 export * from './types'
@@ -23,6 +24,7 @@ export { AnthropicAdapter } from './anthropic-adapter'
 export { OpenAIAdapter } from './openai-adapter'
 export { DeepSeekAdapter } from './deepseek-adapter'
 export { GoogleAdapter } from './google-adapter'
+export { OpenAIResponsesAdapter } from './openai-responses-adapter'
 
 /** 供应商适配器注册表 */
 const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
@@ -49,14 +51,21 @@ const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
   ['xiaomi-token-plan', new OpenAIAdapter()],
 ])
 
+/** OpenAI Responses API 适配器实例（按需使用） */
+const responsesAdapter = new OpenAIResponsesAdapter()
+
 /**
  * 根据供应商类型获取适配器
  *
  * @param provider 供应商类型
+ * @param openaiApiMode OpenAI API 模式（仅当 provider 为 'openai' 时有效）
  * @returns 对应的适配器实例
  * @throws Error 如果供应商类型不支持
  */
-export function getAdapter(provider: ProviderType): ProviderAdapter {
+export function getAdapter(provider: ProviderType, openaiApiMode?: 'chat-completions' | 'responses'): ProviderAdapter {
+  if (provider === 'openai' && openaiApiMode === 'responses') {
+    return responsesAdapter
+  }
   const adapter = adapterRegistry.get(provider)
   if (!adapter) {
     throw new Error(`不支持的供应商: ${provider}`)
