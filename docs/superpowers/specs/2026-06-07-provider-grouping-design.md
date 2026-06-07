@@ -92,17 +92,14 @@ export interface Channel {
 
 ### 5. 自定义协议选项
 
-自定义 Provider 支持选择以下协议：
+自定义 Provider 支持选择以下两种协议（已确认：OpenAI 和 OpenAI Compatible 在代码层面无差异，共用 `OpenAIAdapter`，无需区分）：
 
 ```typescript
 export const CUSTOM_API_FAMILIES: Array<{ value: ProviderApiFamily; label: string }> = [
   { value: 'openai', label: 'OpenAI' },
-  { value: 'openai', label: 'OpenAI Compatible' },
   { value: 'anthropic', label: 'Anthropic' },
 ]
 ```
-
-> 注：OpenAI 和 OpenAI Compatible 在协议层都是 `openai`，区别可能在于默认 URL 或请求头的细微差异。需要确认是否需要区分。
 
 ## UI 变更
 
@@ -123,7 +120,7 @@ export const CUSTOM_API_FAMILIES: Array<{ value: ProviderApiFamily; label: strin
   - 选中已有自定义 Channel 时：显示编辑表单（含协议选择器）
   - 点击"+ 添加"时：显示创建表单，包含：
     - 供应商名称（必填）
-    - 协议类型（下拉选择：OpenAI / OpenAI Compatible / Anthropic）
+    - 协议类型（下拉选择：OpenAI / Anthropic）
     - Base URL
     - API Key
     - 模型列表（拉取按钮）
@@ -135,8 +132,7 @@ export const CUSTOM_API_FAMILIES: Array<{ value: ProviderApiFamily; label: strin
 - "自定义"标签中，每个自定义 Channel 作为独立列表项显示
 - 切换分组标签不清除搜索文本
 - 自定义 Channel 的显示名称使用 `channel.name`
-
-## 状态管理变更
+- 自定义 Channel 支持删除（列表项右键或滑动显示删除按钮，确认后删除）
 
 ### agent-settings-state.ts
 
@@ -196,10 +192,10 @@ const filteredProviderRows = providerRows.filter((row) => {
 | `apps/web/src/components/settings/agent-settings-state.ts` | 修改 | buildModelProviderRows 支持分组和自定义 |
 | `apps/web/src/components/settings/ChannelForm.tsx` | 修改 | 自定义 Provider 的协议选择器 |
 | `apps/web/src/components/model-selection/provider-icon-map.tsx` | 修改 | 新增 Provider 图标映射 |
-| `packages/shared/src/data/model-meta.ts` | 修改 | 新增 Provider 的模型元数据（如有） |
+| `apps/web/src/components/settings/ChannelForm.tsx` | 修改 | 自定义 Provider 的协议选择器、删除按钮 |
 
-## 待确认
+## 已确认
 
-- [ ] OpenAI 和 OpenAI Compatible 是否需要作为两个不同的协议选项？（协议值相同，差异是什么？）
-- [ ] 自定义 Channel 是否需要支持删除功能？
-- [ ] `minimax-token-plan` 的协议家族是 `anthropic` 还是 `openai`？
+- [x] OpenAI 和 OpenAI Compatible → 协议值相同（`openai`），代码层面无差异，合并为一个选项
+- [x] 自定义 Channel 需要支持删除功能
+- [x] `minimax-token-plan` 协议家族为 `anthropic`（URL 路径含 `/anthropic/v1`，使用 `x-api-key` 认证头）
