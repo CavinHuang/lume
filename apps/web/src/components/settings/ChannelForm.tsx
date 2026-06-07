@@ -146,7 +146,7 @@ export function ChannelForm({
         baseUrl,
         apiKey,
         apiFamily: provider === 'custom' ? apiFamily : undefined,
-        openaiApiMode: provider === 'openai' ? openaiApiMode : undefined,
+        openaiApiMode: (provider === 'openai' || (provider === 'custom' && apiFamily === 'openai')) ? openaiApiMode : undefined,
         models,
         enabled: true,
       })
@@ -189,13 +189,33 @@ export function ChannelForm({
           <Label>协议类型</Label>
           <Select
             value={apiFamily}
-            onValueChange={(v) => setApiFamily(v as ProviderApiFamily)}
+            onValueChange={(v) => {
+              setApiFamily(v as ProviderApiFamily)
+              if (v !== 'openai') setOpenaiApiMode('chat-completions')
+            }}
             disabled={disabled}
           >
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="openai">OpenAI</SelectItem>
+              <SelectItem value="openai">OpenAI Compatible</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {provider === 'custom' && apiFamily === 'openai' && (
+        <div className="space-y-1.5">
+          <Label>API 模式</Label>
+          <Select
+            value={openaiApiMode}
+            onValueChange={(v) => setOpenaiApiMode(v as OpenAiApiMode)}
+            disabled={disabled}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="chat-completions">Chat Completions</SelectItem>
+              <SelectItem value="responses">Responses</SelectItem>
             </SelectContent>
           </Select>
         </div>
