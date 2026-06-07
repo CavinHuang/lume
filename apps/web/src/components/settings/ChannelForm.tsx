@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { ChannelCreateInput, ProviderType, ChannelModel } from '@lume/shared'
+import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily } from '@lume/shared'
 import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS } from '@lume/shared'
 import { fetchChannelModels } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
@@ -76,6 +76,9 @@ export function ChannelForm({
   const [fetching, setFetching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [fetchMsg, setFetchMsg] = useState('')
+  const [apiFamily, setApiFamily] = useState<ProviderApiFamily>(
+    initialValue?.apiFamily ?? 'openai'
+  )
 
   useEffect(() => {
     if (!initialValue) {
@@ -86,6 +89,7 @@ export function ChannelForm({
       setModels([])
       setModelSearch('')
       setFetchMsg('')
+      setApiFamily('openai')
       return
     }
 
@@ -96,6 +100,7 @@ export function ChannelForm({
     setModels(initialValue.models)
     setModelSearch('')
     setFetchMsg('')
+    setApiFamily(initialValue.apiFamily ?? 'openai')
   }, [initialValue])
 
   const handleProviderChange = (p: ProviderType) => {
@@ -128,7 +133,15 @@ export function ChannelForm({
     e.preventDefault()
     setSaving(true)
     try {
-      await onSubmit({ name: name || PROVIDER_LABELS[provider], provider, baseUrl, apiKey, models, enabled: true })
+      await onSubmit({
+        name: name || PROVIDER_LABELS[provider],
+        provider,
+        baseUrl,
+        apiKey,
+        apiFamily: provider === 'custom' ? apiFamily : undefined,
+        models,
+        enabled: true,
+      })
     } finally {
       setSaving(false)
     }
@@ -162,6 +175,23 @@ export function ChannelForm({
           </SelectContent>
         </Select>
       </div>
+
+      {provider === 'custom' && (
+        <div className="space-y-1.5">
+          <Label>协议类型</Label>
+          <Select
+            value={apiFamily}
+            onValueChange={(v) => setApiFamily(v as ProviderApiFamily)}
+            disabled={disabled}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai">OpenAI</SelectItem>
+              <SelectItem value="anthropic">Anthropic</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <Label>名称</Label>
