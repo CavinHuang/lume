@@ -83,7 +83,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   doubao: 'https://ark.cn-beijing.volces.com/api/v3',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   'qwen-portal': 'https://portal.qwen.ai/v1',
-  'kimi-coding': 'https://api.moonshot.cn/v1',
+  'kimi-coding': 'https://api.kimi.com/coding/v1',
   ollama: 'http://127.0.0.1:11434/v1',
   lmstudio: 'http://127.0.0.1:1234/v1',
   opencode: '',
