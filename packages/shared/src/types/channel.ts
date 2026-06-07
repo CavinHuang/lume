@@ -31,9 +31,32 @@ export type ProviderType =
   | 'lmstudio'
   | 'opencode'
   | 'custom'
+  | 'aliyun-coding-plan'
+  | 'volcengine-coding-plan'
+  | 'minimax-token-plan'
+  | 'xiaomi-token-plan'
 
 /** Provider 协议家族（决定请求格式） */
 export type ProviderApiFamily = 'anthropic' | 'openai' | 'google'
+
+/** 供应商分组 */
+export type ProviderGroup = 'all' | 'coding-plan' | 'domestic' | 'overseas' | 'transit' | 'local' | 'custom'
+
+export interface ProviderGroupInfo {
+  key: ProviderGroup
+  label: string
+  providers: ProviderType[]
+}
+
+export const PROVIDER_GROUPS: ProviderGroupInfo[] = [
+  { key: 'all', label: '全部', providers: [] },
+  { key: 'coding-plan', label: '编程套餐', providers: ['kimi-coding', 'zai-coding-plan', 'aliyun-coding-plan', 'volcengine-coding-plan', 'minimax-token-plan', 'xiaomi-token-plan'] },
+  { key: 'domestic', label: '国内平台', providers: ['deepseek', 'moonshot', 'minimax', 'minimax-cn', 'doubao', 'qwen', 'qwen-portal', 'zai'] },
+  { key: 'overseas', label: '海外平台', providers: ['anthropic', 'anthropic-compatible', 'openai', 'google', 'jina'] },
+  { key: 'transit', label: '中转/聚合', providers: ['openrouter', 'siliconflow', 'opencode'] },
+  { key: 'local', label: '本地/其他', providers: ['ollama', 'lmstudio'] },
+  { key: 'custom', label: '自定义', providers: ['custom'] },
+]
 
 export interface ChannelModelCapabilities {
   chat?: boolean
@@ -65,6 +88,10 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   lmstudio: 'http://127.0.0.1:1234/v1',
   opencode: '',
   custom: '',
+  'aliyun-coding-plan': 'https://coding.dashscope.aliyuncs.com/v1',
+  'volcengine-coding-plan': 'https://ark.cn-beijing.volces.com/api/coding/v3',
+  'minimax-token-plan': 'https://api.minimaxi.com/anthropic/v1',
+  'xiaomi-token-plan': 'https://token-plan-cn.xiaomimimo.com/v1',
 }
 
 /**
@@ -80,18 +107,22 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   deepseek: 'DeepSeek',
   google: 'Google',
   zai: 'Z.ai',
-  'zai-coding-plan': 'Zai Coding Plan',
+  'zai-coding-plan': '智谱 GLM Coding Plan',
   moonshot: 'Moonshot / Kimi',
   minimax: 'MiniMax',
   'minimax-cn': 'MiniMax CN',
   doubao: '豆包',
   qwen: '通义千问',
   'qwen-portal': '通义千问 Portal',
-  'kimi-coding': 'Kimi Coding',
+  'kimi-coding': 'Kimi Code Plan',
   ollama: 'Ollama',
   lmstudio: 'LM Studio',
   opencode: 'OpenCode',
   custom: 'OpenAI 兼容格式',
+  'aliyun-coding-plan': '阿里云 Coding Plan',
+  'volcengine-coding-plan': '火山方舟 Coding Plan',
+  'minimax-token-plan': 'MiniMax Token Plan',
+  'xiaomi-token-plan': '小米 MiMo Token Plan',
 }
 
 /** Provider 对应协议家族 */
@@ -117,6 +148,10 @@ export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   lmstudio: 'openai',
   opencode: 'openai',
   custom: 'openai',
+  'aliyun-coding-plan': 'openai',
+  'volcengine-coding-plan': 'openai',
+  'minimax-token-plan': 'anthropic',
+  'xiaomi-token-plan': 'openai',
 }
 
 /** 协议家族显示名 */
