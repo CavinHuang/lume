@@ -76,7 +76,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   deepseek: 'https://api.deepseek.com/v1',
   google: 'https://generativelanguage.googleapis.com',
   zai: 'https://open.bigmodel.cn/api/paas/v4',
-  'zai-coding-plan': 'https://open.bigmodel.cn/api/paas/v4',
+  'zai-coding-plan': 'https://open.bigmodel.cn/api/coding/paas/v4',
   moonshot: 'https://api.moonshot.cn/v1',
   minimax: 'https://api.minimax.chat/v1',
   'minimax-cn': 'https://api.minimax.chat/v1',
