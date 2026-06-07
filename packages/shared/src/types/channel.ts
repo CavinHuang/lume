@@ -39,6 +39,9 @@ export type ProviderType =
 /** Provider 协议家族（决定请求格式） */
 export type ProviderApiFamily = 'anthropic' | 'openai' | 'google'
 
+/** OpenAI API 模式（仅 provider 为 'openai' 时使用） */
+export type OpenAiApiMode = 'chat-completions' | 'responses'
+
 /** 供应商分组 */
 export type ProviderGroup = 'all' | 'coding-plan' | 'domestic' | 'overseas' | 'transit' | 'local' | 'custom'
 
@@ -300,6 +303,8 @@ export interface Channel {
   updatedAt: number
   /** 自定义渠道的协议家族（仅 provider='custom' 时使用） */
   apiFamily?: ProviderApiFamily
+  /** OpenAI API 模式（仅 provider='openai' 时使用，默认 chat-completions） */
+  openaiApiMode?: OpenAiApiMode
 }
 
 /**
@@ -316,6 +321,8 @@ export interface ChannelCreateInput {
   fallbackModelIds?: string[]
   /** 自定义渠道的协议家族（仅 provider='custom' 时使用） */
   apiFamily?: ProviderApiFamily
+  /** OpenAI API 模式（仅 provider='openai' 时使用） */
+  openaiApiMode?: OpenAiApiMode
   enabled: boolean
 }
 
@@ -333,6 +340,8 @@ export interface ChannelUpdateInput {
   fallbackModelIds?: string[]
   /** 自定义渠道的协议家族（仅 provider='custom' 时使用） */
   apiFamily?: ProviderApiFamily
+  /** OpenAI API 模式（仅 provider='openai' 时使用） */
+  openaiApiMode?: OpenAiApiMode
   enabled?: boolean
 }
 
@@ -366,6 +375,8 @@ export interface FetchModelsInput {
   apiKey: string
   /** 自定义渠道的协议家族（可选，仅 custom provider 使用） */
   apiFamily?: ProviderApiFamily
+  /** OpenAI API 模式（可选，仅 openai provider 使用） */
+  openaiApiMode?: OpenAiApiMode
 }
 
 /**
