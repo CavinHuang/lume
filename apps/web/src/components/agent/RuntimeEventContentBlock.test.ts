@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import {
   formatMessageAttachmentSize,
+  getAssistantCopyText,
+  getAssistantDownloadPayload,
+  getCopyTextWithoutAfterglow,
   getTaskProgressStatusText,
   getToolPermissionTitleBadgeText,
   compactMemoryCitationLabel,
@@ -57,6 +60,44 @@ describe('showTemporaryCopiedFeedback', () => {
 
     expect(copiedStates).toEqual([true, true, false])
     expect(state.resetTimeoutId).toBeNull()
+  })
+})
+
+describe('getCopyTextWithoutAfterglow', () => {
+  test('removes afterglow nodes from copied text', () => {
+    const clone = {
+      textContent: '正文⟡ 不要复制结尾',
+      querySelectorAll: () => [{
+        remove: () => {
+          clone.textContent = '正文结尾'
+        },
+      }],
+    }
+    const root = {
+      cloneNode: () => clone,
+    } as unknown as Node & ParentNode
+
+    expect(getCopyTextWithoutAfterglow(root)).toBe('正文结尾')
+  })
+})
+
+describe('getAssistantCopyText', () => {
+  test('removes afterglow lines from footer copy text', () => {
+    expect(getAssistantCopyText('正文\n⟡ 不要复制\n结尾')).toBe('正文\n结尾')
+  })
+})
+
+describe('getAssistantDownloadPayload', () => {
+  test('removes afterglow lines from txt downloads', () => {
+    expect(getAssistantDownloadPayload('正文\n⟡ 不要导出\n结尾', 'txt')).toBe('正文\n结尾')
+  })
+
+  test('removes afterglow lines from html downloads', () => {
+    const payload = getAssistantDownloadPayload('正文\n⟡ 不要导出\n结尾', 'html')
+
+    expect(payload).toContain('<pre>正文\n结尾</pre>')
+    expect(payload).not.toContain('不要导出')
+    expect(payload).not.toContain('⟡')
   })
 })
 

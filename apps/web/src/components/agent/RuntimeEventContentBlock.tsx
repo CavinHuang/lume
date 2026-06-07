@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
@@ -11,7 +11,7 @@ import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
-import { AGENT_IPC_CHANNELS, getAgentRole, type AgentMessage, type AgentMessageAttachmentInput, type AgentThreadFileDataResult, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentThreadFileDataResult, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
@@ -53,6 +53,16 @@ export function showTemporaryCopiedFeedback(
     state.resetTimeoutId = null
     setCopied(false)
   }, delayMs)
+}
+
+export function getCopyTextWithoutAfterglow(container: Node & ParentNode): string {
+  const clone = container.cloneNode(true) as Node & ParentNode
+  clone.querySelectorAll('[data-afterglow]').forEach((node) => node.remove())
+  return (clone.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+export function getAssistantCopyText(text: string): string {
+  return stripAfterglowLines(text)
 }
 
 export function RuntimeEventContentBlock({
@@ -763,6 +773,20 @@ const MARKDOWN_INCOMPLETE_COMPONENTS = {
   table: 'incomplete-table',
 } as const
 
+const AfterglowLine = memo(function AfterglowLine({ text }: { text: string }) {
+  return (
+    <p
+      className="my-1.5 select-none text-[13px] italic leading-6 text-[#6b7280]/70"
+      aria-hidden="true"
+      data-afterglow="true"
+      data-afterglow-text={`⟡ ${text}`}
+    >
+      <span className="opacity-70">⟡</span>
+      <span className="ml-1.5">{text}</span>
+    </p>
+  )
+})
+
 const SmoothText = memo(function SmoothText({
   text,
   isStreaming,
@@ -795,17 +819,42 @@ const SmoothText = memo(function SmoothText({
     'incomplete-image': IncompleteImage,
     'incomplete-table': IncompleteTable,
   }), [onOpenThreadFile])
+  const afterglowBlocks = useMemo(
+    () => displayedContent.includes('⟡') ? parseAfterglowBlocks(displayedContent) : null,
+    [displayedContent],
+  )
+  const handleCopy = useMemo(() => (event: ClipboardEvent<HTMLDivElement>) => {
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed) return
+    const fragment = selection.getRangeAt(0).cloneContents()
+    const text = getCopyTextWithoutAfterglow(fragment)
+    if (!text) return
+    event.preventDefault()
+    event.clipboardData.setData('text/plain', text)
+  }, [])
+  const renderMarkdown = (content: string, key?: string) => (
+    <XMarkdown
+      key={key}
+      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
+      rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
+      streaming={markdownStreaming}
+      components={markdownComponents}
+    >
+      {content}
+    </XMarkdown>
+  )
 
   return (
-    <div className="min-w-0 w-full">
-      <XMarkdown
-        className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
-        rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
-        streaming={markdownStreaming}
-        components={markdownComponents}
-      >
-        {displayedContent}
-      </XMarkdown>
+    <div className="min-w-0 w-full" onCopy={handleCopy}>
+      {afterglowBlocks === null
+        ? renderMarkdown(displayedContent)
+        : afterglowBlocks.map((block, index) => (
+          block.type === 'afterglow'
+            ? <AfterglowLine key={`afterglow:${index}`} text={block.text} />
+            : block.text.trim()
+              ? renderMarkdown(block.text, `markdown:${index}`)
+              : null
+        ))}
     </div>
   )
 })
@@ -1172,7 +1221,8 @@ function AssistantMessageFooter({
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const downloadTriggerRef = useRef<HTMLButtonElement>(null)
-  const canCopy = text.trim().length > 0 && !isStreaming
+  const copyText = getAssistantCopyText(text)
+  const canCopy = copyText.trim().length > 0 && !isStreaming
   const canFork = Boolean(messageId) && !isStreaming
   const canDownload = text.trim().length > 0 && !isStreaming
   const footerTokenUsage = getFooterTokenUsage(tokenUsage, tokenCount, tokenCountSource)
@@ -1256,7 +1306,7 @@ function AssistantMessageFooter({
       <div className="flex min-w-0 items-center gap-4">
         {canCopy && (
           <CopyMessageButton
-            text={text}
+            text={copyText}
             label="复制"
             copiedLabel="已复制"
             className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[#6770ff] data-[state=copied]:text-emerald-600"
@@ -1421,10 +1471,15 @@ function percentInteger(value: unknown): number | undefined {
 
 type AssistantDownloadFormat = 'html' | 'txt'
 
+export function getAssistantDownloadPayload(text: string, format: AssistantDownloadFormat): string {
+  const cleanText = getAssistantCopyText(text)
+  return format === 'html' ? buildAssistantMessageHtml(cleanText) : cleanText
+}
+
 async function downloadAssistantMessage(text: string, messageId: string | undefined, format: AssistantDownloadFormat): Promise<string | null> {
   const filenameBase = messageId ?? `assistant-${Date.now()}`
   const filename = `${filenameBase}.${format}`
-  const payload = format === 'html' ? buildAssistantMessageHtml(text) : text
+  const payload = getAssistantDownloadPayload(text, format)
   try {
     const result = await saveTextFileDialog(filename, payload)
     return result.path
