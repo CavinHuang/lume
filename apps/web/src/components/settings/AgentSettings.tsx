@@ -18,12 +18,13 @@ import type {
   LumeConfigThinkingLevel,
   LumeEffectiveConfig,
   ProviderType,
+  ProviderGroup,
 } from '@lume/shared'
-import { PROVIDER_LABELS } from '@lume/shared'
+import { PROVIDER_LABELS, PROVIDER_GROUPS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
-import { createChannel, decryptChannelKey, listChannels, updateChannel } from '@/lib/desktop-api/channel'
+import { createChannel, decryptChannelKey, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
 import { getEffectiveLumeConfig, updateAgentModelStrategy, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
@@ -39,23 +40,15 @@ import {
   type ModelProviderRow,
 } from './agent-settings-state'
 
-type ProviderFilter = 'all' | 'configured' | 'unconfigured'
-
-const MODEL_PROVIDER_QUICK_FILTERS: Array<[ProviderFilter, string]> = [
-  ['all', '全部'],
-  ['configured', '已配置'],
-  ['unconfigured', '未配置'],
-]
-
 export function AgentSettings() {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [config, setConfig] = React.useState<LumeEffectiveConfig | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [savingModel, setSavingModel] = React.useState(false)
   const [thinkingLevel, setThinkingLevel] = React.useState<LumeConfigThinkingLevel>('medium')
-  const [providerFilter, setProviderFilter] = React.useState<ProviderFilter>('all')
+  const [activeGroup, setActiveGroup] = React.useState<ProviderGroup>('all')
   const [providerSearch, setProviderSearch] = React.useState('')
-  const [activeProvider, setActiveProvider] = React.useState<ProviderType>('anthropic')
+  const [activeProvider, setActiveProvider] = React.useState<string>('anthropic')
   const [selectedApiKey, setSelectedApiKey] = React.useState('')
   const [apiKeyLoading, setApiKeyLoading] = React.useState(false)
   const [providerEnabled, setProviderEnabled] = React.useState(false)
@@ -115,36 +108,62 @@ export function AgentSettings() {
   const defaultProviderLabel = activeDefault.channel?.name ?? activeDefault.option?.channelLabel ?? '未设置'
   const filteredProviderRows = React.useMemo(
     () => providerRows.filter((row) => {
-      const matchesFilter = providerFilter === 'all'
-        || (providerFilter === 'configured' && row.channel)
-        || (providerFilter === 'unconfigured' && !row.channel)
+      // 分组过滤
+      if (activeGroup !== 'all') {
+        const groupInfo = PROVIDER_GROUPS.find(g => g.key === activeGroup)
+        if (groupInfo && !groupInfo.providers.includes(row.provider)) return false
+      }
+      // 搜索过滤
       const query = providerSearch.trim().toLowerCase()
       const matchesSearch = !query
         || row.label.toLowerCase().includes(query)
         || row.provider.toLowerCase().includes(query)
-      return matchesFilter && matchesSearch
+      return matchesSearch
     }),
-    [providerFilter, providerRows, providerSearch]
+    [activeGroup, providerRows, providerSearch]
   )
-  const activeProviderRow = providerRows.find((row) => row.provider === activeProvider) ?? providerRows[0]
+  const activeProviderRow = React.useMemo(() => {
+    // 自定义分组：通过 channelId 查找
+    if (activeGroup === 'custom') {
+      return providerRows.find((row) => row.channelId === activeProvider) ?? providerRows[0]
+    }
+    // 其他分组：通过 provider type 查找
+    return providerRows.find((row) => row.provider === activeProvider && !row.channelId) ?? providerRows[0]
+  }, [activeGroup, activeProvider, providerRows])
   const activeChannel = activeProviderRow?.channel ?? null
   const providerFormInitialValue = React.useMemo(
-    () => getModelProviderFormInitialValue(activeProvider, channels, activeChannel ? selectedApiKey : ''),
-    [activeChannel, activeProvider, channels, selectedApiKey]
+    () => getModelProviderFormInitialValue(
+      activeProvider as ProviderType,
+      channels,
+      activeChannel ? selectedApiKey : '',
+      activeProviderRow?.channelId
+    ),
+    [activeChannel, activeProvider, channels, selectedApiKey, activeProviderRow?.channelId]
   )
 
   React.useEffect(() => {
     const defaultProvider = activeDefault.channel?.provider
-    if (defaultProvider && providerRows.some((row) => row.provider === defaultProvider)) {
+    if (defaultProvider && providerRows.some((row) => row.provider === defaultProvider && !row.channelId)) {
       setActiveProvider(defaultProvider)
       return
     }
-    if (!providerRows.some((row) => row.provider === activeProvider)) {
-      setActiveProvider(providerRows[0]?.provider ?? 'anthropic')
+    // 如果当前 activeProvider 不在当前分组的列表中，设置为第一个
+    const groupInfo = PROVIDER_GROUPS.find(g => g.key === activeGroup)
+    const firstInGroup = providerRows.find((row) => {
+      if (activeGroup === 'custom') {
+        return row.provider === 'custom' && row.channelId
+      }
+      if (activeGroup === 'all') {
+        return !row.channelId
+      }
+      return groupInfo?.providers.includes(row.provider) && !row.channelId
+    })
+    if (firstInGroup && !providerRows.some((row) => (row.channelId ?? row.provider) === activeProvider)) {
+      setActiveProvider(firstInGroup.channelId ?? firstInGroup.provider)
     }
     // activeProvider 故意不加入依赖——用户手动切换 provider 时不应被默认值覆盖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDefault.channel?.provider, providerRows])
+  }, [activeDefault.channel?.provider, providerRows, activeGroup])
 
   React.useEffect(() => {
     if (!activeChannel) {
@@ -340,15 +359,16 @@ export function AgentSettings() {
           apiKeyLoading={apiKeyLoading}
           filteredProviderRows={filteredProviderRows}
           initialValue={providerFormInitialValue}
-          providerFilter={providerFilter}
+          activeGroup={activeGroup}
           providerEnabled={providerEnabled}
           providerSearch={providerSearch}
           savingProvider={savingProvider}
           onActiveProviderChange={setActiveProvider}
-          onProviderFilterChange={setProviderFilter}
+          onActiveGroupChange={setActiveGroup}
           onProviderSearchChange={setProviderSearch}
           onProviderEnabledChange={(checked) => void handleProviderEnabledChange(checked)}
           onProviderSubmit={persistProvider}
+          onReload={reload}
         />
       </SettingsCard>
 
@@ -418,39 +438,60 @@ function ProviderConfigurationWorkbench({
   apiKeyLoading,
   filteredProviderRows,
   initialValue,
-  providerFilter,
+  activeGroup,
   providerEnabled,
   providerSearch,
   savingProvider,
   onActiveProviderChange,
-  onProviderFilterChange,
+  onActiveGroupChange,
   onProviderEnabledChange,
   onProviderSearchChange,
   onProviderSubmit,
+  onReload,
 }: {
-  activeProvider: ProviderType
-  activeProviderRow?: ProviderRowModel
+  activeProvider: string
+  activeProviderRow?: ModelProviderRow
   apiKeyLoading: boolean
-  filteredProviderRows: ProviderRowModel[]
+  filteredProviderRows: ModelProviderRow[]
   initialValue: ChannelCreateInput
-  providerFilter: ProviderFilter
+  activeGroup: ProviderGroup
   providerEnabled: boolean
   providerSearch: string
   savingProvider: boolean
-  onActiveProviderChange: (provider: ProviderType) => void
-  onProviderFilterChange: (filter: ProviderFilter) => void
+  onActiveProviderChange: (id: string) => void
+  onActiveGroupChange: (group: ProviderGroup) => void
   onProviderEnabledChange: (checked: boolean) => void
   onProviderSearchChange: (value: string) => void
   onProviderSubmit: (input: ChannelCreateInput) => Promise<void>
+  onReload: () => void
 }) {
   const activeChannel = activeProviderRow?.channel ?? null
-  const activeLabel = activeProviderRow?.label ?? PROVIDER_LABELS[activeProvider]
+  const activeLabel = activeProviderRow?.label ?? PROVIDER_LABELS[activeProvider as ProviderType]
 
   return (
     <div className="grid min-h-[365px] grid-cols-[282px_minmax(0,1fr)] items-stretch overflow-hidden rounded-[9px] border border-[var(--border)] bg-[var(--surface-1)]">
       <div className="relative min-h-0 rounded-l-[9px] border-r border-[var(--border)] bg-[var(--surface-1)]">
         <div className="absolute inset-0 flex min-h-0 flex-col p-4">
-          <div className="relative">
+          {/* 分组标签栏 */}
+          <div className="flex flex-wrap gap-1">
+            {PROVIDER_GROUPS.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                onClick={() => onActiveGroupChange(group.key)}
+                className={cn(
+                  'rounded-[5px] px-2 py-1 text-[11px] font-medium transition-colors',
+                  activeGroup === group.key
+                    ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                    : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
+                )}
+              >
+                {group.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative mt-2">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]" />
             <input
               value={providerSearch}
@@ -460,34 +501,36 @@ function ProviderConfigurationWorkbench({
             />
           </div>
 
-          <div className="mt-2 grid h-7 shrink-0 grid-cols-3 rounded-[7px] border border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] bg-[var(--surface-1)] p-0.5">
-            {MODEL_PROVIDER_QUICK_FILTERS.map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => onProviderFilterChange(value)}
-                className={cn(
-                  'rounded-[5px] text-[12px] font-medium transition-colors',
-                  providerFilter === value
-                    ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                    : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
           <div className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto">
             {filteredProviderRows.map((row) => (
               <ProviderListItem
-                key={row.provider}
+                key={row.channelId ?? row.provider}
                 row={row}
-                selected={row.provider === activeProvider}
-                onClick={() => onActiveProviderChange(row.provider)}
+                selected={activeProvider === (row.channelId ?? row.provider)}
+                onClick={() => onActiveProviderChange(row.channelId ?? row.provider)}
+                showDelete={activeGroup === 'custom'}
+                onDelete={row.channel ? () => {
+                  if (confirm(`确定删除 "${row.label}"？`)) {
+                    deleteChannel(row.channel!.id).then(() => onReload())
+                  }
+                } : undefined}
               />
             ))}
           </div>
+
+          {/* 自定义分组：添加按钮 */}
+          {activeGroup === 'custom' && (
+            <button
+              type="button"
+              onClick={() => {
+                onActiveProviderChange('__new_custom__')
+              }}
+              className="mt-1 flex h-9 w-full items-center justify-center gap-1.5 rounded-[7px] border border-dashed border-[var(--border)] text-[12px] font-medium text-[var(--text-3)] hover:border-[var(--brand)] hover:text-[var(--brand)]"
+            >
+              <span className="text-[14px]">＋</span>
+              添加自定义供应商
+            </button>
+          )}
         </div>
       </div>
 
@@ -518,10 +561,10 @@ function ProviderConfigurationWorkbench({
         ) : (
           <div className="rounded-[9px] border border-[var(--border)] p-4">
             <ChannelForm
-              key={activeProvider}
+              key={activeProviderRow?.channelId ?? activeProvider}
               mode={activeChannel ? 'edit' : 'create'}
               initialValue={initialValue}
-              providerLocked
+              providerLocked={activeGroup !== 'custom'}
               disabled={!providerEnabled || savingProvider}
               onSubmit={onProviderSubmit}
             />
@@ -532,15 +575,17 @@ function ProviderConfigurationWorkbench({
   )
 }
 
-type ProviderRowModel = ModelProviderRow
-
 function ProviderListItem({
   row,
   selected,
+  showDelete,
+  onDelete,
   onClick,
 }: {
-  row: ProviderRowModel
+  row: ModelProviderRow
   selected: boolean
+  showDelete?: boolean
+  onDelete?: () => void
   onClick: () => void
 }) {
   const configured = Boolean(row.channel)
@@ -565,7 +610,19 @@ function ProviderListItem({
         <span className={cn('size-1.5 rounded-full', connected ? 'bg-[#22c76f]' : configured ? 'bg-[var(--text-3)]' : 'bg-[#b8c0cf]')} />
         {configured ? '已配置' : '未配置'}
       </span>
-      <ChevronDown size={14} className="-rotate-90 text-[var(--text-3)]" />
+      {showDelete && onDelete ? (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onDelete() } }}
+          className="text-[var(--text-3)] hover:text-[#ff4d57] cursor-pointer"
+        >
+          <Trash2 size={14} />
+        </span>
+      ) : (
+        <ChevronDown size={14} className="-rotate-90 text-[var(--text-3)]" />
+      )}
     </button>
   )
 }
