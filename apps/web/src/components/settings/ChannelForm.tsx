@@ -168,23 +168,7 @@ export function ChannelForm({
         </p>
       </div>
 
-      <div className="space-y-1.5">
-        <Label>供应商</Label>
-        <Select
-          value={provider}
-          onValueChange={(v) => handleProviderChange(v as ProviderType)}
-          disabled={providerLocked || disabled}
-        >
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {PROVIDERS.map(([id, label]) => (
-              <SelectItem key={id} value={id}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {provider === 'custom' && (
+      {provider === 'custom' ? (
         <div className="space-y-1.5">
           <Label>协议类型</Label>
           <Select
@@ -208,6 +192,22 @@ export function ChannelForm({
               <SelectItem value="openai-chat-completions">OpenAI Compatible (Chat Completions)</SelectItem>
               <SelectItem value="openai-responses">OpenAI Compatible (Responses)</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <Label>供应商</Label>
+          <Select
+            value={provider}
+            onValueChange={(v) => handleProviderChange(v as ProviderType)}
+            disabled={providerLocked || disabled}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {PROVIDERS.map(([id, label]) => (
+                <SelectItem key={id} value={id}>{label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
