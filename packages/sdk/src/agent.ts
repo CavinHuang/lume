@@ -303,7 +303,8 @@ export class Agent {
     if (
       envType === 'openai-completions' ||
       envType === 'anthropic-messages' ||
-      envType === 'deepseek-chat-completions'
+      envType === 'deepseek-chat-completions' ||
+      envType === 'openai-responses'
     ) {
       return envType
     }
@@ -324,6 +325,9 @@ export class Agent {
       }
       if (baseUrl.includes('/chat/completions')) {
         return 'openai-completions'
+      }
+      if (baseUrl.includes('/responses')) {
+        return 'openai-responses'
       }
     }
 
