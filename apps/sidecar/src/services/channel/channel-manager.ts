@@ -132,7 +132,8 @@ export function createChannel(input: ChannelCreateInput): Channel {
     fallbackModelIds: normalizedFallbackModelIds,
     enabled: input.enabled,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    ...(input.apiFamily ? { apiFamily: input.apiFamily } : {}),
   };
   config.channels.push(channel);
   writeConfig(config);
@@ -168,6 +169,7 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
             .filter((id) => id.length > 0)
         }
       : {}),
+    ...(input.apiFamily !== undefined ? { apiFamily: input.apiFamily } : {}),
     updatedAt: Date.now()
   };
   config.channels[idx] = updated;
@@ -277,7 +279,15 @@ function authorizationHeaders(apiKey: string): Record<string, string> {
   return trimmed ? { Authorization: `Bearer ${trimmed}` } : {};
 }
 
-function resolveProviderApiFamily(provider: Channel["provider"], baseUrl: string): ProviderApiFamily {
+function resolveProviderApiFamily(
+  provider: Channel["provider"],
+  baseUrl: string,
+  apiFamily?: ProviderApiFamily
+): ProviderApiFamily {
+  // 自定义渠道优先使用显式声明的 apiFamily
+  if (provider === "custom" && apiFamily) {
+    return apiFamily;
+  }
   const normalizedBaseUrl = baseUrl.trim().toLowerCase();
   const byProvider = PROVIDER_API_FAMILIES[provider];
   if (normalizedBaseUrl.includes("/anthropic")) {
@@ -379,7 +389,7 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
   if (!channel) return { success: false, message: "渠道不存在" };
   const apiKey = decryptSecret(channel.apiKey);
   if (channel.provider === "jina") return testJina(channel.baseUrl, apiKey);
-  const family = resolveProviderApiFamily(channel.provider, channel.baseUrl);
+  const family = resolveProviderApiFamily(channel.provider, channel.baseUrl, channel.apiFamily);
   if (family === "anthropic") return testAnthropic(channel.baseUrl, apiKey);
   if (family === "google") return testGoogle(channel.baseUrl, apiKey);
   return testOpenAICompatible(channel.baseUrl, apiKey);
@@ -387,7 +397,7 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
 
 export async function testChannelDirect(input: FetchModelsInput): Promise<ChannelTestResult> {
   if (input.provider === "jina") return testJina(input.baseUrl, input.apiKey);
-  const family = resolveProviderApiFamily(input.provider, input.baseUrl);
+  const family = resolveProviderApiFamily(input.provider, input.baseUrl, input.apiFamily);
   if (family === "anthropic") return testAnthropic(input.baseUrl, input.apiKey);
   if (family === "google") return testGoogle(input.baseUrl, input.apiKey);
   return testOpenAICompatible(input.baseUrl, input.apiKey);
@@ -488,7 +498,7 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<Fetch
 }
 
 export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsResult> {
-  const family = resolveProviderApiFamily(input.provider, input.baseUrl);
+  const family = resolveProviderApiFamily(input.provider, input.baseUrl, input.apiFamily);
   if (family === "anthropic") return fetchAnthropicModels(input.baseUrl, input.apiKey);
   if (family === "google") return fetchGoogleModels(input.baseUrl, input.apiKey);
   return fetchOpenAICompatibleModels(input.provider, input.baseUrl, input.apiKey);

@@ -97,7 +97,11 @@ function coerceKnownProvider(provider: string): ProviderType {
     "ollama",
     "lmstudio",
     "opencode",
-    "custom"
+    "custom",
+    "aliyun-coding-plan",
+    "volcengine-coding-plan",
+    "minimax-token-plan",
+    "xiaomi-token-plan",
   ] as const).includes(provider as ProviderType)
     ? (provider as ProviderType)
     : "custom";
@@ -107,6 +111,7 @@ export function resolveChannelModelSelection(input: {
   channelProvider: ProviderType;
   baseUrl: string;
   modelId: string;
+  apiFamily?: string;
 }): {
   adapterProvider: ProviderType;
   resolvedModelId: string;
@@ -122,8 +127,12 @@ export function resolveChannelModelSelection(input: {
   }
 
   const baseUrlFamily = resolveProviderApiFamilyFromBaseUrl(input.baseUrl);
-  const providerFamily = resolveProviderApiFamilyFromId(parsed.provider);
-  const resolvedFamily = baseUrlFamily ?? providerFamily;
+  const providerFamily = input.channelProvider === "custom" && input.apiFamily
+    ? input.apiFamily as ProviderApiFamily
+    : resolveProviderApiFamilyFromId(parsed.provider);
+  const resolvedFamily = input.channelProvider === "custom" && input.apiFamily
+    ? input.apiFamily as ProviderApiFamily
+    : (baseUrlFamily ?? providerFamily);
   const adapterProvider = resolvedFamily === "openai"
     ? resolveOpenAICompatibleAdapterProvider(parsed.provider)
     : resolveAdapterProviderByFamily(resolvedFamily);

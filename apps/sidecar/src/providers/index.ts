@@ -43,6 +43,10 @@ const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
   ['opencode', new OpenAIAdapter()],      // OpenCode 统一走 OpenAI 兼容协议
   ['custom', new OpenAIAdapter()],        // 自定义也使用 OpenAI 兼容协议
   ['google', new GoogleAdapter()],
+  ['aliyun-coding-plan', new OpenAIAdapter()],
+  ['volcengine-coding-plan', new OpenAIAdapter()],
+  ['minimax-token-plan', new AnthropicAdapter()],
+  ['xiaomi-token-plan', new OpenAIAdapter()],
 ])
 
 /**
