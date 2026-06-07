@@ -9,11 +9,13 @@ export type { ApiType, LLMProvider, CreateMessageParams, CreateMessageResponse, 
 export { AnthropicProvider } from './anthropic.js'
 export { OpenAIProvider } from './openai.js'
 export { DeepSeekProvider } from './deepseek.js'
+export { OpenAIResponsesProvider } from './openai-responses.js'
 
 import type { ApiType, LLMProvider } from './types.js'
 import { AnthropicProvider } from './anthropic.js'
 import { OpenAIProvider } from './openai.js'
 import { DeepSeekProvider } from './deepseek.js'
+import { OpenAIResponsesProvider } from './openai-responses.js'
 
 /**
  * Create an LLM provider based on the API type.
@@ -32,7 +34,9 @@ export function createProvider(
       return new OpenAIProvider(opts)
     case 'deepseek-chat-completions':
       return new DeepSeekProvider(opts)
+    case 'openai-responses':
+      return new OpenAIResponsesProvider(opts)
     default:
-      throw new Error(`Unsupported API type: ${apiType}. Use 'anthropic-messages', 'openai-completions', or 'deepseek-chat-completions'.`)
+      throw new Error(`Unsupported API type: ${apiType}. Use 'anthropic-messages', 'openai-completions', 'deepseek-chat-completions', or 'openai-responses'.`)
   }
 }
