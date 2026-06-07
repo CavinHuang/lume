@@ -107,6 +107,7 @@ describe("agent-prompt-builder", () => {
       "developer"
     ]);
     expect(agents.explorer?.model).toBe("inherit");
+    expect(agents.explorer?.defaultSkillName).toBe("agent-explorer");
     expect(agents.explorer?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
     expect(agents.explorer?.prompt).toContain("高效的代码库探索员");
     expect(agents.planner?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
@@ -119,7 +120,11 @@ describe("agent-prompt-builder", () => {
     expect(agents.researcher?.tools).toContain("WebSearch");
     expect(agents.researcher?.tools).toContain("WebFetch");
     expect(agents["code-reviewer"]?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
+    expect(agents["code-reviewer"]?.defaultSkillName).toBe("agent-code-reviewer");
     expect(agents["code-reviewer"]?.prompt).toContain("专注于代码质量的审查员");
+    for (const [roleId, agent] of Object.entries(agents)) {
+      expect(agent.defaultSkillName, `${roleId} default skill`).toBeTruthy();
+    }
   });
 
   test("buildSystemPromptAppend 应说明子 Agent 默认模型可继承当前对话模型", () => {
@@ -357,7 +362,7 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("Use a loaded Skill only when it clearly matches the user's request");
     expect(dynamic).toContain("Only fall back to raw tool composition when no suitable Skill fits");
     expect(dynamic).toContain(`Skill call prefix: lume-workspace-${workspaceSlug}:`);
-    expect(dynamic).toContain("- planner:");
+    expect(dynamic).toContain("- planner (Planner):");
     expect(dynamic).not.toContain(`lume-workspace-${workspaceSlug}:planner`);
     expect(dynamic).toContain("<working_directory>D:/workspace/projects/ai-projects/lume</working_directory>");
   });
@@ -388,7 +393,7 @@ describe("agent-prompt-builder", () => {
     });
 
     expect(dynamic).toContain("Preferred capability route: skills");
-    expect(dynamic).toContain("- global-planner:");
+    expect(dynamic).toContain("- global-planner (Global Planner):");
   });
 
   test("workspace context 应过滤空模板并默认跳过 heartbeat", () => {

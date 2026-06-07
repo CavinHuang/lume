@@ -86,6 +86,24 @@ describe("ToolResolver", () => {
     }).map((item) => item.name)).toEqual(["Read", "WebSearch", "WebFetch"]);
   });
 
+  test("keeps web and data-query policy groups independent", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany([
+      tool({ name: "web_search", category: "network", allowedInPlanMode: true, isReadOnly: true }),
+      tool({ name: "web_fetch", category: "network", allowedInPlanMode: true, isReadOnly: true }),
+      tool({ name: "guanlan_search", category: "network", allowedInPlanMode: true, isReadOnly: true }),
+      tool({ name: "guanlan_research", category: "network", allowedInPlanMode: true, isReadOnly: true })
+    ]);
+    const resolver = new ToolResolver(registry);
+
+    expect(resolver.resolve({
+      policies: [{ deny: ["group:web"] }]
+    }).map((item) => item.name)).toEqual(["guanlan_search", "guanlan_research"]);
+    expect(resolver.resolve({
+      policies: [{ deny: ["group:data"] }]
+    }).map((item) => item.name)).toEqual(["web_search", "web_fetch"]);
+  });
+
   test("planning group keeps clarification and plan submission tools together", () => {
     const registry = new ToolRegistry();
     registry.registerMany([
@@ -100,5 +118,32 @@ describe("ToolResolver", () => {
       permissionMode: "plan",
       policies: [{ allow: ["group:planning"] }]
     }).map((item) => item.name)).toEqual(["AskUserQuestion", "TaskContractWrite"]);
+  });
+
+  test("evolution group controls UI personalization tools", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany([
+      tool({ name: "personalize_ui", category: "write", allowedInPlanMode: false, isReadOnly: false }),
+      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true })
+    ]);
+    const resolver = new ToolResolver(registry);
+
+    expect(resolver.resolve({
+      policies: [{ deny: ["group:evolution"] }]
+    }).map((item) => item.name)).toEqual(["Read"]);
+  });
+
+  test("office group controls Office document tools", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany([
+      tool({ name: "office_validate", category: "read", allowedInPlanMode: true, isReadOnly: true }),
+      tool({ name: "office_unpack", category: "write", allowedInPlanMode: false, isReadOnly: false }),
+      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true })
+    ]);
+    const resolver = new ToolResolver(registry);
+
+    expect(resolver.resolve({
+      policies: [{ deny: ["group:office"] }]
+    }).map((item) => item.name)).toEqual(["Read"]);
   });
 });

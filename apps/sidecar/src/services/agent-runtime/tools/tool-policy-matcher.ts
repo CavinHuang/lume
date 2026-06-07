@@ -22,12 +22,8 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
 };
 
 const AUTOMATION_TOOL_NAMES = [
-  "cron_read",
-  "automation_read",
   "cron_set",
-  "automation_set",
-  "cron_query",
-  "automation_query"
+  "automation_set"
 ] as const;
 
 const READING_TOOL_NAMES = [
@@ -49,16 +45,24 @@ const READING_TOOL_NAMES = [
   "weread_search"
 ] as const;
 
+const OFFICE_TOOL_NAMES = [
+  "office_validate",
+  "office_unpack"
+] as const;
+
 const TOOL_GROUPS: Record<string, string[]> = {
   "group:fs": ["read", "write", "edit"],
   "group:runtime": ["bash"],
   "group:search": ["find", "grep", "ls"],
   "group:memory": ["memory.search", "memory.read"],
   "group:memory-write": ["memory.remember"],
-  "group:web": ["web_search", "web_fetch", ...GUANLAN_TOOL_NAMES],
+  "group:web": ["web_search", "web_fetch"],
+  "group:data": [...GUANLAN_TOOL_NAMES],
   "group:planning": ["askuserquestion", "taskcontractwrite"],
   "group:automation": [...AUTOMATION_TOOL_NAMES],
   "group:im": ["send_im_message"],
+  "group:evolution": ["personalize_ui"],
+  "group:office": [...OFFICE_TOOL_NAMES],
   "group:reading": [...READING_TOOL_NAMES]
 };
 

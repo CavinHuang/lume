@@ -5,10 +5,12 @@ import {
 } from "./tool-policy-matcher";
 
 describe("tool-policy-matcher", () => {
-  test("keeps Guanlan tools in the web policy group", () => {
+  test("keeps plain web tools separate from Guanlan data-query tools", () => {
     expect(expandRuntimeToolPolicyEntries(["group:web"])).toEqual([
       "web_search",
-      "web_fetch",
+      "web_fetch"
+    ]);
+    expect(expandRuntimeToolPolicyEntries(["group:data"])).toEqual([
       "guanlan_search",
       "guanlan_read",
       "guanlan_hotnews",
@@ -18,12 +20,8 @@ describe("tool-policy-matcher", () => {
 
   test("expands product system tool groups used by settings", () => {
     expect(expandRuntimeToolPolicyEntries(["group:automation"])).toEqual([
-      "cron_read",
-      "automation_read",
       "cron_set",
-      "automation_set",
-      "cron_query",
-      "automation_query"
+      "automation_set"
     ]);
     expect(expandRuntimeToolPolicyEntries(["group:im"])).toEqual(["send_im_message"]);
     expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_search");

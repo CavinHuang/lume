@@ -1,5 +1,6 @@
 export interface SkillManifestItem {
   slug: string;
+  name?: string;
   description?: string;
   whenToUse?: string;
   argumentHint?: string;
@@ -18,6 +19,13 @@ export function compactSkillDescription(slug: string, description?: string): str
     return "ambiguous product/design exploration when requirements are unclear";
   }
   return compactText(description);
+}
+
+function formatSkillManifestName(skill: Pick<SkillManifestItem, "slug" | "name">): string {
+  const displayName = skill.name?.trim();
+  return displayName && displayName !== skill.slug
+    ? `${skill.slug} (${displayName})`
+    : skill.slug;
 }
 
 export function renderSkillManifestLines(ctx: {
@@ -39,9 +47,8 @@ export function renderSkillManifestLines(ctx: {
   for (const skill of modelInvocableSkills) {
     const compactDescription = compactSkillDescription(skill.slug, skill.description);
     const desc = compactDescription ? `: ${compactDescription}` : "";
-    const trigger = compactText(skill.whenToUse);
     const args = compactText(skill.argumentHint, 72);
-    lines.push(`- ${skill.slug}${desc}${trigger ? ` Trigger: ${trigger}` : ""}${args ? ` Args: ${args}` : ""}`);
+    lines.push(`- ${formatSkillManifestName(skill)}${desc}${args ? ` Args: ${args}` : ""}`);
   }
 
   return lines;

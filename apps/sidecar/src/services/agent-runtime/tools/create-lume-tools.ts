@@ -7,6 +7,8 @@ import { createSdkCronTools } from "./cron/create-cron-tools";
 import { createSdkImTools } from "./im/create-im-tools";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";
 import { createSdkReadingTools } from "./reading/create-reading-tools";
+import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
+import { createSdkOfficeTools } from "./office/create-office-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -54,7 +56,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     threadId: input.threadId
   });
   const readingTools = createSdkReadingTools();
-  const customTools = [...memoryTools, ...cronTools, ...imTools, ...readingTools];
+  const uiTools = [createPersonalizeUiTool({ threadId: input.threadId })];
+  const officeTools = createSdkOfficeTools();
+  const customTools = [...memoryTools, ...cronTools, ...imTools, ...readingTools, ...uiTools, ...officeTools];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {

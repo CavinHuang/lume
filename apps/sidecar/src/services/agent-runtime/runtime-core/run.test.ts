@@ -15,7 +15,7 @@ import {
 } from "./run";
 import { runRuntimeCoreAttempt } from "./attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { getAgentSessionWorkspacePath, getAgentWorkspacePath } from "../../infra/config-paths";
+import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
@@ -28,6 +28,7 @@ import {
 
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
+  const prevAliceConfigDir = process.env.ALICE_CONFIG_DIR;
 
   function createHookRuntimeSessionInput(
     overrides: Partial<CreateRuntimeCoreSessionInput> = {}
@@ -54,6 +55,11 @@ describe("runtime-core run", () => {
       delete process.env.LUME_CONFIG_DIR;
     } else {
       process.env.LUME_CONFIG_DIR = prevConfigDir;
+    }
+    if (prevAliceConfigDir === undefined) {
+      delete process.env.ALICE_CONFIG_DIR;
+    } else {
+      process.env.ALICE_CONFIG_DIR = prevAliceConfigDir;
     }
   });
 
@@ -1030,6 +1036,51 @@ describe("runtime-core run", () => {
 
     result.session.dispose();
     rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("Lume runtime 应加载 Alice 兼容用户全局 ~/.alice/skills", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-alice-global-skills-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    process.env.ALICE_CONFIG_DIR = join(configDir, "alice");
+
+    const skillDir = join(getAliceUserSkillsDir(), "alice-global-planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: alice-global-planner",
+        "description: Alice global planning skill",
+        "---",
+        "# Alice Global Planner",
+        "",
+        "Use this Alice-compatible global skill for reusable planning.",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-alice-global-skills-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "alice-global-skill-runtime-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug: "alice-global-skill-workspace",
+      workspaceName: "Alice Global Skills Workspace"
+    });
+
+    const init = await result.agent.getInitializationResult();
+    expect(init.skills).toContain("alice-global-planner");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
   });
 
   test("Lume runtime 应加载工作目录 .lume/skills", async () => {

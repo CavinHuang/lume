@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { copyFile, mkdir, readdir, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type {
   EditableSkillDetailResult,
@@ -13,7 +13,7 @@ import type {
   SkillStorageScope
 } from "@lume/shared";
 import YAML from "yaml";
-import { getDefaultSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { getAliceUserSkillsDir, getDefaultSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { parseSkillFrontmatter } from "./skill-frontmatter";
 import { getInstalledSkillSourceMetadata, type InstalledSkillSourceMeta } from "./skills-market-metadata";
 
@@ -41,7 +41,19 @@ function resolveWorkspaceSkillPath(workspaceSlug: string, skillSlug: string): st
 }
 
 function resolveUserSkillPath(skillSlug: string): string {
-  return resolveSkillPath(getUserSkillsDir(), skillSlug);
+  return resolveSkillPath(getAliceUserSkillsDir(), skillSlug);
+}
+
+function resolveProjectSkillsDir(cwd: string | undefined): string {
+  const trimmed = cwd?.trim();
+  if (!trimmed) {
+    throw new Error("项目目录不能为空");
+  }
+  return join(resolve(trimmed), ".alice", "skills");
+}
+
+function resolveProjectSkillPath(cwd: string | undefined, skillSlug: string): string {
+  return resolveSkillPath(resolveProjectSkillsDir(cwd), skillSlug);
 }
 
 function resolveSkillPath(rootDir: string, skillSlug: string): string {
@@ -64,9 +76,13 @@ function resolveSkillPath(rootDir: string, skillSlug: string): string {
 function resolveEditableSkillPath(input: {
   storageScope?: SkillStorageScope;
   workspaceSlug: string;
+  cwd?: string;
 }, skillSlug: string): string {
   if (input.storageScope === "user") {
     return resolveUserSkillPath(skillSlug);
+  }
+  if (input.storageScope === "project") {
+    return resolveProjectSkillPath(input.cwd, skillSlug);
   }
   return resolveWorkspaceSkillPath(input.workspaceSlug, skillSlug);
 }
@@ -111,7 +127,7 @@ function assertSettingsManagedSkill(input: {
   storageScope?: SkillStorageScope;
   workspaceSlug: string;
 }, skillSlug: string): void {
-  if (input.storageScope === "user") return;
+  if (input.storageScope && input.storageScope !== "workspace") return;
   if (!isMarketManagedWorkspaceSkill(input.workspaceSlug, skillSlug)) return;
   throw new Error("市场管理的 Skill 请在技能市场中管理");
 }
@@ -202,18 +218,25 @@ function toVersionTimestamp(date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, "0");
   return [
     date.getFullYear(),
+    "-",
     pad(date.getMonth() + 1),
-    pad(date.getDate())
-  ].join("") + "_" + [
+    "-",
+    pad(date.getDate()),
+    "_",
     pad(date.getHours()),
     pad(date.getMinutes()),
     pad(date.getSeconds())
   ].join("");
 }
 
+function isVersionFilename(filename: string): boolean {
+  return /^SKILL_\d{8}_\d{6}_[a-f0-9-]+\.md$/i.test(filename)
+    || /^\d{4}-\d{2}-\d{2}_\d{6}_[a-f0-9]{8}\.md$/i.test(filename);
+}
+
 async function pruneVersions(versionsDir: string): Promise<void> {
   const versions = (await readdir(versionsDir))
-    .filter((filename) => /^SKILL_\d{8}_\d{6}_[a-f0-9-]+\.md$/i.test(filename))
+    .filter(isVersionFilename)
     .sort();
 
   for (const filename of versions.slice(0, Math.max(0, versions.length - MAX_VERSIONS))) {
@@ -226,10 +249,21 @@ async function backupExistingSkill(skillPath: string): Promise<string | undefine
 
   const versionsDir = join(dirname(skillPath), "versions");
   await mkdir(versionsDir, { recursive: true });
-  const versionPath = join(versionsDir, `SKILL_${toVersionTimestamp()}_${randomUUID().slice(0, 4)}.md`);
+  const versionPath = join(versionsDir, `${toVersionTimestamp()}_${randomUUID().replace(/-/g, "").slice(0, 8)}.md`);
   await copyFile(skillPath, versionPath);
   await pruneVersions(versionsDir).catch(() => undefined);
   return versionPath;
+}
+
+async function writeSkillFileAtomically(skillPath: string, content: string): Promise<void> {
+  const tempPath = `${skillPath}.${randomUUID().slice(0, 8)}.tmp`;
+  try {
+    await writeFile(tempPath, content, "utf-8");
+    await rename(tempPath, skillPath);
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function saveWorkspaceSkill(input: SaveWorkspaceSkillInput): Promise<SaveWorkspaceSkillResult> {
@@ -241,7 +275,7 @@ export async function saveWorkspaceSkill(input: SaveWorkspaceSkillInput): Promis
 
   const content = buildSkillContent(input, skillSlug);
   const versionPath = await backupExistingSkill(skillPath);
-  await writeFile(skillPath, content, "utf-8");
+  await writeSkillFileAtomically(skillPath, content);
 
   return {
     ok: true,
@@ -255,7 +289,8 @@ export function listEditableSkills(input: ListEditableSkillsInput): EditableSkil
   const builtInSkillSlugs = readBuiltInSkillSlugs();
 
   return [
-    ...readEditableSkillsFromDir(getUserSkillsDir(), "user"),
+    ...readEditableSkillsFromDir(getAliceUserSkillsDir(), "user"),
+    ...(input.cwd ? readEditableSkillsFromDir(resolveProjectSkillsDir(input.cwd), "project") : []),
     ...readEditableSkillsFromDir(getWorkspaceSkillsDir(input.workspaceSlug), "workspace", {
       installedSources,
       builtInSkillSlugs
@@ -296,5 +331,6 @@ export function deleteEditableSkill(input: GetEditableSkillInput): void {
 export const __internal = {
   buildSkillContent,
   normalizeAllowedTools,
-  normalizeSkillSlug
+  normalizeSkillSlug,
+  writeSkillFileAtomically
 };

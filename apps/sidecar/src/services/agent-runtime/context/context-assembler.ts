@@ -114,6 +114,7 @@ export class ContextAssembler {
 
     const routingTrace = resolveAgentRuntimeRoutingTrace({
       workspaceSlug: input.workspaceSlug,
+      agentCwd: input.cwd ?? process.cwd(),
       userMessage: input.userMessage,
       availableTools: input.availableTools
     });

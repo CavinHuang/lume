@@ -384,6 +384,22 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
+  name: "office_validate",
+  category: "read",
+  riskLevel: "low",
+  description: "只读校验 Office OOXML 文档结构",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "office_unpack",
+  category: "write",
+  riskLevel: "medium",
+  description: "安全解包 Office OOXML 文档到本地目录",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
   name: "weread_generate_note",
   category: "write",
   riskLevel: "medium",
@@ -424,6 +440,15 @@ registerToolMetadata({
   category: "execute",
   riskLevel: "medium",
   description: "向当前线程绑定的 IM 会话发送消息",
+  allowedInPlanMode: false
+});
+
+// UI 个性化工具
+registerToolMetadata({
+  name: "personalize_ui",
+  category: "write",
+  riskLevel: "medium",
+  description: "读取或更新 Lume 支持的界面状态",
   allowedInPlanMode: false
 });
 

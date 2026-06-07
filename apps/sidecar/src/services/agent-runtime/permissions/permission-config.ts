@@ -2,6 +2,7 @@ import type { LumeConfigPermissionsSection } from "@lume/shared";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  getAliceUserSkillsDir,
   getDefaultSkillsDir,
   getUserSkillsDir,
   getWorkspaceSkillsDir
@@ -30,6 +31,7 @@ export function resolveConfiguredPrivateWriteRoots(input: {
     join(homedir(), ".lume", "plugins"),
     getDefaultSkillsDir(),
     getUserSkillsDir(),
+    getAliceUserSkillsDir(),
     ...(input.workspaceSlug ? [getWorkspaceSkillsDir(input.workspaceSlug)] : []),
     ...(input.configuredRoots ?? []).map((root) => resolvePrivateRoot(root, input.agentCwd))
   ];

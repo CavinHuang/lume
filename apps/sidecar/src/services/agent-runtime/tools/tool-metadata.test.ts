@@ -91,6 +91,30 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("TaskReport")).toBeFalse();
   });
 
+  test("describes UI personalization as a local write tool", () => {
+    expect(getToolMetadata("personalize_ui")).toMatchObject({
+      name: "personalize_ui",
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+  });
+
+  test("classifies Office validation as a low-risk read tool", () => {
+    expect(getToolMetadata("office_validate")).toMatchObject({
+      name: "office_validate",
+      category: "read",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(getToolMetadata("office_unpack")).toMatchObject({
+      name: "office_unpack",
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+  });
+
   test("classifies Guanlan tools as low-risk plan-safe network reads", () => {
     for (const name of [
       "guanlan_search",

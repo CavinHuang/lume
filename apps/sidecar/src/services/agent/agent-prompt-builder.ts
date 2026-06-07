@@ -50,6 +50,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
   const lumeBuiltins: Record<string, AgentDefinition> = {
     explorer: {
       description: "代码库探索子代理。快速搜索文件、理解项目结构、收集相关上下文，适合在修改前先摸清代码。",
+      defaultSkillName: "agent-explorer",
       prompt: `你是一个高效的代码库探索员。你的职责是快速搜索和收集信息，然后返回结构化结果。
 
 工作方式：
@@ -64,6 +65,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
     },
     planner: {
       description: "只读计划子代理。用于设计实现方案、识别关键文件和权衡架构取舍。",
+      defaultSkillName: "agent-planner",
       prompt: `You are a software architect and planning specialist for Lume. Your role is to explore the codebase and design implementation plans.
 
 === CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
@@ -104,6 +106,7 @@ List 3-5 files most critical for implementing this plan:
     },
     researcher: {
       description: "技术调研子代理。用于方案对比、依赖评估和架构分析，输出结构化结论与风险提示。",
+      defaultSkillName: "agent-researcher",
       prompt: `你是一个技术调研员。你的职责是围绕特定技术问题收集信息并输出结构化分析。
 
 输出格式：
@@ -119,6 +122,7 @@ List 3-5 files most critical for implementing this plan:
     },
     "code-reviewer": {
       description: "代码审查子代理。用于在变更完成后复核逻辑、边界、命名与规范一致性。",
+      defaultSkillName: "agent-code-reviewer",
       prompt: `你是一个专注于代码质量的审查员。你的职责是审查变更结果并指出真实风险。
 
 审查重点：
@@ -146,6 +150,7 @@ List 3-5 files most critical for implementing this plan:
         role.id,
         {
           description: `${role.title}。${role.description}`,
+          defaultSkillName: role.defaultSkillName,
           prompt: [
             role.systemPrompt,
             "",

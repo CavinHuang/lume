@@ -22,6 +22,7 @@ import { normalizeMcpTransport } from "@lume/shared";
 import {
   getAgentWorkspacePath,
   getAgentWorkspacesIndexPath,
+  getAliceUserSkillsDir,
   getDefaultSkillsDir,
   getUserSkillsDir,
   getWorkspaceMetaPath,
@@ -466,7 +467,8 @@ export function getWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
 export function getRuntimeSkills(workspaceSlug: string, cwd?: string): SkillMeta[] {
   const roots = [
     getUserSkillsDir(),
-    ...(cwd ? [join(cwd, ".lume", "skills")] : []),
+    getAliceUserSkillsDir(),
+    ...(cwd ? [join(cwd, ".lume", "skills"), join(cwd, ".alice", "skills")] : []),
     getWorkspaceSkillsDir(workspaceSlug)
   ];
   const workspaceSkillOverrides = getWorkspaceSkillOverrides(workspaceSlug);

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 const CONFIG_DIR_NAME = ".lume";
+const ALICE_CONFIG_DIR_NAME = ".alice";
 
 function ensureDir(path: string, logLabel?: string): string {
   if (!existsSync(path)) {
@@ -39,6 +40,18 @@ export function getConfigDir(): string {
     return ensureDir(resolved, "配置目录");
   }
   return ensureDir(join(homedir(), CONFIG_DIR_NAME), "配置目录");
+}
+
+export function getAliceConfigDir(): string {
+  const fromEnv = process.env.ALICE_CONFIG_DIR?.trim();
+  if (fromEnv) {
+    const resolved = isAbsolute(fromEnv) ? fromEnv : resolve(process.cwd(), fromEnv);
+    return ensureDir(resolved, "Alice 兼容配置目录");
+  }
+  if (process.env.LUME_CONFIG_DIR?.trim()) {
+    return ensureDir(join(getConfigDir(), ALICE_CONFIG_DIR_NAME), "Alice 兼容配置目录");
+  }
+  return ensureDir(join(homedir(), ALICE_CONFIG_DIR_NAME), "Alice 兼容配置目录");
 }
 
 export function getChannelsPath(): string {
@@ -158,6 +171,10 @@ export function getDefaultSkillsDir(): string {
 
 export function getUserSkillsDir(): string {
   return ensureDir(join(getConfigDir(), "skills"));
+}
+
+export function getAliceUserSkillsDir(): string {
+  return ensureDir(join(getAliceConfigDir(), "skills"));
 }
 
 export function getAgentThreadRootPath(workspaceSlug: string, threadId: string): string {

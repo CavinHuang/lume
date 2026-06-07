@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  getAliceUserSkillsDir,
   getLumeConfigYamlPath,
   getUserSkillsDir,
   getWorkspaceMcpPath,
@@ -20,13 +21,20 @@ import {
 
 function withTempConfigDir(): () => void {
   const previous = process.env.LUME_CONFIG_DIR;
+  const previousAlice = process.env.ALICE_CONFIG_DIR;
   const next = join(tmpdir(), `lume-workspace-manager-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   process.env.LUME_CONFIG_DIR = next;
+  process.env.ALICE_CONFIG_DIR = join(next, "alice");
   return () => {
     if (previous === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
       process.env.LUME_CONFIG_DIR = previous;
+    }
+    if (previousAlice === undefined) {
+      delete process.env.ALICE_CONFIG_DIR;
+    } else {
+      process.env.ALICE_CONFIG_DIR = previousAlice;
     }
     rmSync(next, { recursive: true, force: true });
   };
@@ -277,6 +285,94 @@ describe("agent-workspace-manager lume.yaml integration", () => {
     expect(getRuntimeSkills(workspaceSlug).map((skill) => [skill.slug, skill.name])).toEqual([
       ["global-planner", "Global Planner"],
       ["shared-planner", "Workspace Shared"]
+    ]);
+  });
+
+  test("getRuntimeSkills 应加载 Alice 兼容项目 skill 并覆盖同名用户全局 skill", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+    const projectDir = join(
+      tmpdir(),
+      `lume-alice-project-skills-test-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+
+    try {
+      const userSkillDir = join(getUserSkillsDir(), "code-review");
+      const aliceProjectSkillDir = join(projectDir, ".alice", "skills", "code-review");
+      mkdirSync(userSkillDir, { recursive: true });
+      mkdirSync(aliceProjectSkillDir, { recursive: true });
+      writeFileSync(
+        join(userSkillDir, "SKILL.md"),
+        "---\nname: User Code Review\ndescription: user copy\n---\n# User\n",
+        "utf-8"
+      );
+      writeFileSync(
+        join(aliceProjectSkillDir, "SKILL.md"),
+        "---\nname: Project Code Review\ndescription: project copy\n---\n# Project\n",
+        "utf-8"
+      );
+
+      expect(getRuntimeSkills(workspaceSlug, projectDir).map((skill) => [skill.slug, skill.name])).toEqual([
+        ["code-review", "Project Code Review"]
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("getRuntimeSkills 应让 Alice 项目 skill 覆盖旧 Lume 项目 skill", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+    const projectDir = join(
+      tmpdir(),
+      `lume-alice-project-over-legacy-test-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+
+    try {
+      const legacyProjectSkillDir = join(projectDir, ".lume", "skills", "code-review");
+      const aliceProjectSkillDir = join(projectDir, ".alice", "skills", "code-review");
+      mkdirSync(legacyProjectSkillDir, { recursive: true });
+      mkdirSync(aliceProjectSkillDir, { recursive: true });
+      writeFileSync(
+        join(legacyProjectSkillDir, "SKILL.md"),
+        "---\nname: Legacy Project Code Review\ndescription: legacy project copy\n---\n# Legacy\n",
+        "utf-8"
+      );
+      writeFileSync(
+        join(aliceProjectSkillDir, "SKILL.md"),
+        "---\nname: Alice Project Code Review\ndescription: alice project copy\n---\n# Alice\n",
+        "utf-8"
+      );
+
+      expect(getRuntimeSkills(workspaceSlug, projectDir).map((skill) => [skill.slug, skill.name])).toEqual([
+        ["code-review", "Alice Project Code Review"]
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("getRuntimeSkills 应加载 Alice 兼容用户全局 skill 并覆盖旧 Lume 全局 skill", () => {
+    restoreEnv = withTempConfigDir();
+    const workspaceSlug = "demo";
+    const legacyUserSkillDir = join(getUserSkillsDir(), "global-planner");
+    const aliceUserSkillDir = join(getAliceUserSkillsDir(), "global-planner");
+
+    mkdirSync(legacyUserSkillDir, { recursive: true });
+    mkdirSync(aliceUserSkillDir, { recursive: true });
+    writeFileSync(
+      join(legacyUserSkillDir, "SKILL.md"),
+      "---\nname: Legacy Global Planner\ndescription: lume legacy\n---\n# Legacy\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(aliceUserSkillDir, "SKILL.md"),
+      "---\nname: Alice Global Planner\ndescription: alice global\n---\n# Alice\n",
+      "utf-8"
+    );
+
+    expect(getRuntimeSkills(workspaceSlug).map((skill) => [skill.slug, skill.name])).toEqual([
+      ["global-planner", "Alice Global Planner"]
     ]);
   });
 });

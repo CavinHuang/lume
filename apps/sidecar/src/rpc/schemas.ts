@@ -757,21 +757,31 @@ export const mcpCallToolDiagnosticInputSchema = z.object({
   timeoutMs: z.number().int().positive().optional()
 });
 
+const skillStorageScopeSchema = z.enum(["workspace", "project", "user"]);
+
 export const deleteSkillInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema,
-  storageScope: z.enum(["workspace", "user"]).optional()
+  storageScope: skillStorageScopeSchema.optional(),
+  cwd: z.string().optional()
 });
+
+export const listEditableSkillsInputSchema = z.object({
+  workspaceSlug: idSchema,
+  cwd: z.string().optional()
+}).strict();
 
 export const editableSkillInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema,
-  storageScope: z.enum(["workspace", "user"])
+  storageScope: skillStorageScopeSchema,
+  cwd: z.string().optional()
 }).strict();
 
 export const saveSkillInputSchema = z.object({
   workspaceSlug: idSchema,
-  storageScope: z.enum(["workspace", "user"]).optional(),
+  storageScope: skillStorageScopeSchema.optional(),
+  cwd: z.string().optional(),
   skillSlug: z.string().trim().min(1),
   name: z.string(),
   description: z.string().optional(),
@@ -796,14 +806,16 @@ export const skillMarketDetailInputSchema = z.object({
 export const skillVersionInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema,
-  storageScope: z.enum(["workspace", "user"]).optional(),
+  storageScope: skillStorageScopeSchema.optional(),
+  cwd: z.string().optional(),
   filename: z.string().min(1).optional()
 });
 
 export const skillImprovementAnalysisInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema,
-  storageScope: z.enum(["workspace", "user"]).optional(),
+  storageScope: skillStorageScopeSchema.optional(),
+  cwd: z.string().optional(),
   modelRef: z.string().trim().min(1).optional(),
   maxSessions: z.number().int().min(1).max(20).optional(),
   messagesPerSession: z.number().int().min(1).max(500).optional()
@@ -818,7 +830,8 @@ const skillImprovementUpdateSchema = z.object({
 export const applySkillImprovementInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema,
-  storageScope: z.enum(["workspace", "user"]).optional(),
+  storageScope: skillStorageScopeSchema.optional(),
+  cwd: z.string().optional(),
   updates: z.array(skillImprovementUpdateSchema),
   modelRef: z.string().trim().min(1).optional()
 });

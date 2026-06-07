@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { getDefaultSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { basename, join } from "node:path";
+import { getAliceUserSkillsDir, getDefaultSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { listWorkspaceSkillVersions } from "./skill-evolution-service";
 import { saveLocalInstalledSkillMetadata } from "./skills-market-metadata";
 import { parseSkillFrontmatter } from "./skill-frontmatter";
@@ -15,13 +15,20 @@ import {
 
 function withTempConfigDir(): () => void {
   const previous = process.env.LUME_CONFIG_DIR;
+  const previousAlice = process.env.ALICE_CONFIG_DIR;
   const next = join(tmpdir(), `lume-workspace-skill-editor-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   process.env.LUME_CONFIG_DIR = next;
+  process.env.ALICE_CONFIG_DIR = join(next, "alice");
   return () => {
     if (previous === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
       process.env.LUME_CONFIG_DIR = previous;
+    }
+    if (previousAlice === undefined) {
+      delete process.env.ALICE_CONFIG_DIR;
+    } else {
+      process.env.ALICE_CONFIG_DIR = previousAlice;
     }
     rmSync(next, { recursive: true, force: true });
   };
@@ -83,11 +90,65 @@ describe("workspace-skill-editor-service", () => {
       prompt: "Global guidance."
     });
 
-    const userSkillPath = join(getUserSkillsDir(), "global-planner", "SKILL.md");
+    const userSkillPath = join(getAliceUserSkillsDir(), "global-planner", "SKILL.md");
+    const legacyUserSkillPath = join(getUserSkillsDir(), "global-planner", "SKILL.md");
     const workspaceSkillPath = join(getWorkspaceSkillsDir("demo"), "global-planner", "SKILL.md");
 
     expect(readFileSync(userSkillPath, "utf-8")).toContain("Global guidance.\n");
+    expect(existsSync(legacyUserSkillPath)).toBe(false);
     expect(existsSync(workspaceSkillPath)).toBe(false);
+  });
+
+  test("manages Alice-compatible project skills under cwd .alice/skills", async () => {
+    cleanup = withTempConfigDir();
+    const projectDir = join(tmpdir(), `lume-project-skill-editor-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+    try {
+      await saveWorkspaceSkill({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-planner",
+        name: "Project Planner",
+        description: "Plans work for this project.",
+        whenToUse: "When this project needs a plan.",
+        prompt: "Project guidance."
+      });
+
+      const projectSkillPath = join(projectDir, ".alice", "skills", "project-planner", "SKILL.md");
+      const workspaceSkillPath = join(getWorkspaceSkillsDir("demo"), "project-planner", "SKILL.md");
+      expect(readFileSync(projectSkillPath, "utf-8")).toContain("Project guidance.\n");
+      expect(existsSync(workspaceSkillPath)).toBe(false);
+
+      expect(listEditableSkills({ workspaceSlug: "demo", cwd: projectDir })).toContainEqual({
+        storageScope: "project",
+        managementSurface: "settings",
+        slug: "project-planner",
+        name: "Project Planner",
+        description: "Plans work for this project.",
+        whenToUse: "When this project needs a plan.",
+        disableModelInvocation: false
+      });
+
+      const detail = getEditableSkill({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-planner"
+      });
+      expect(detail.path).toBe(projectSkillPath);
+      expect(detail.content).toContain("Project guidance.");
+
+      deleteEditableSkill({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-planner"
+      });
+      expect(existsSync(projectSkillPath)).toBe(false);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 
   test("rejects saves missing Alice core skill fields", async () => {
@@ -107,7 +168,7 @@ describe("workspace-skill-editor-service", () => {
 
   test("lists user-global and workspace skills with their storage scopes", async () => {
     cleanup = withTempConfigDir();
-    const userSkillDir = join(getUserSkillsDir(), "global-planner");
+    const userSkillDir = join(getAliceUserSkillsDir(), "global-planner");
     const workspaceSkillDir = join(getWorkspaceSkillsDir("demo"), "local-review");
     mkdirSync(userSkillDir, { recursive: true });
     mkdirSync(workspaceSkillDir, { recursive: true });
@@ -207,7 +268,7 @@ describe("workspace-skill-editor-service", () => {
 
   test("reads and deletes user-global skills by storage scope", async () => {
     cleanup = withTempConfigDir();
-    const skillDir = join(getUserSkillsDir(), "global-planner");
+    const skillDir = join(getAliceUserSkillsDir(), "global-planner");
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), "---\nname: Global Planner\n---\n\nGlobal prompt.", "utf-8");
 
@@ -262,6 +323,7 @@ describe("workspace-skill-editor-service", () => {
     const versions = await listWorkspaceSkillVersions({ workspaceSlug: "demo", skillSlug: "planner" });
     expect(versions).toHaveLength(1);
     expect(readFileSync(versions[0]!.path, "utf-8")).toBe("# Planner\n\nOld guidance.");
+    expect(basename(versions[0]!.path)).toMatch(/^\d{4}-\d{2}-\d{2}_\d{6}_[a-f0-9]{8}\.md$/);
   });
 
   test("rejects unsafe skill slugs before writing", async () => {

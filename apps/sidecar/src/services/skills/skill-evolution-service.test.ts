@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@lume/shared";
-import { getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { getAliceUserSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { saveLocalInstalledSkillMetadata } from "./skills-market-metadata";
 import {
   analyzeWorkspaceSkillImprovement,
@@ -16,13 +16,20 @@ import {
 
 function withTempConfigDir(): () => void {
   const previous = process.env.LUME_CONFIG_DIR;
+  const previousAlice = process.env.ALICE_CONFIG_DIR;
   const next = join(tmpdir(), `lume-skill-evolution-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   process.env.LUME_CONFIG_DIR = next;
+  process.env.ALICE_CONFIG_DIR = join(next, "alice");
   return () => {
     if (previous === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
       process.env.LUME_CONFIG_DIR = previous;
+    }
+    if (previousAlice === undefined) {
+      delete process.env.ALICE_CONFIG_DIR;
+    } else {
+      process.env.ALICE_CONFIG_DIR = previousAlice;
     }
     rmSync(next, { recursive: true, force: true });
   };
@@ -37,7 +44,15 @@ function writeWorkspaceSkill(workspaceSlug: string, skillSlug: string, content: 
 }
 
 function writeUserSkill(skillSlug: string, content: string): string {
-  const skillDir = join(getUserSkillsDir(), skillSlug);
+  const skillDir = join(getAliceUserSkillsDir(), skillSlug);
+  mkdirSync(skillDir, { recursive: true });
+  const skillPath = join(skillDir, "SKILL.md");
+  writeFileSync(skillPath, content, "utf-8");
+  return skillPath;
+}
+
+function writeProjectSkill(projectDir: string, skillSlug: string, content: string): string {
+  const skillDir = join(projectDir, ".alice", "skills", skillSlug);
   mkdirSync(skillDir, { recursive: true });
   const skillPath = join(skillDir, "SKILL.md");
   writeFileSync(skillPath, content, "utf-8");
@@ -92,7 +107,7 @@ describe("skill-evolution-service", () => {
     cleanup = withTempConfigDir();
     const skillPath = writeUserSkill("global-planner", "# Global Planner\n\nOld rule.");
     writeFileSync(
-      join(getUserSkillsDir(), "global-planner", "usage.jsonl"),
+      join(getAliceUserSkillsDir(), "global-planner", "usage.jsonl"),
       JSON.stringify({ ts: 2000, sessionId: "thread-user" }) + "\n",
       "utf-8"
     );
@@ -416,6 +431,7 @@ describe("skill-evolution-service", () => {
     expect(requestedThreadIds).toEqual(["thread-1"]);
     expect(result).toEqual([{
       workspaceSlug: "demo",
+      storageScope: "workspace",
       skillSlug: "planner",
       usageCount: 1,
       analyzedSessionIds: ["thread-1"],
@@ -425,6 +441,98 @@ describe("skill-evolution-service", () => {
         reason: "Thread feedback showed missing constraints"
       }]
     }]);
+  });
+
+  test("thread-level improvement analysis includes user-global skills with storage scope", async () => {
+    cleanup = withTempConfigDir();
+    writeWorkspaceSkill("demo", "planner", "# Planner\n\nWorkspace guidance.");
+    writeUserSkill("global-planner", "# Global Planner\n\nUser guidance.");
+    writeFileSync(
+      join(getWorkspaceSkillsDir("demo"), "planner", "usage.jsonl"),
+      JSON.stringify({ ts: 2000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(getAliceUserSkillsDir(), "global-planner", "usage.jsonl"),
+      JSON.stringify({ ts: 3000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+
+    const analyzedSkillPrompts: string[] = [];
+    const result = await analyzeThreadWorkspaceSkillImprovements({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      getRecentMessages: () => [
+        message("user", "planner missed constraints", 1),
+        message("assistant", "I should ask for constraints first", 2)
+      ],
+      callModel: async ({ userPrompt }) => {
+        analyzedSkillPrompts.push(userPrompt);
+        return "<updates>[" +
+          "{\"section\":\"Rules\",\"change\":\"Ask for constraints first\",\"reason\":\"Thread feedback showed missing constraints\"}" +
+          "]</updates>";
+      }
+    });
+
+    expect(analyzedSkillPrompts[0]).toContain("User guidance");
+    expect(analyzedSkillPrompts[1]).toContain("Workspace guidance");
+    expect(result.map((item) => ({
+      storageScope: item.storageScope,
+      skillSlug: item.skillSlug,
+      workspaceSlug: item.workspaceSlug
+    }))).toEqual([
+      { storageScope: "user", skillSlug: "global-planner", workspaceSlug: "demo" },
+      { storageScope: "workspace", skillSlug: "planner", workspaceSlug: "demo" }
+    ]);
+  });
+
+  test("thread-level improvement analysis includes Alice project skills when cwd is available", async () => {
+    cleanup = withTempConfigDir();
+    const projectDir = join(tmpdir(), `lume-project-skill-evolution-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const projectSkillPath = writeProjectSkill(projectDir, "project-planner", "# Project Planner\n\nProject guidance.");
+    writeFileSync(
+      join(projectDir, ".alice", "skills", "project-planner", "usage.jsonl"),
+      JSON.stringify({ ts: 4000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+
+    try {
+      const analyzedSkillPrompts: string[] = [];
+      const result = await analyzeThreadWorkspaceSkillImprovements({
+        workspaceSlug: "demo",
+        cwd: projectDir,
+        threadId: "thread-1",
+        getRecentMessages: () => [
+          message("user", "project planner missed constraints", 1),
+          message("assistant", "I should ask for project constraints first", 2)
+        ],
+        callModel: async ({ userPrompt }) => {
+          analyzedSkillPrompts.push(userPrompt);
+          expect(userPrompt).toContain("Project guidance");
+          return "<updates>[" +
+            "{\"section\":\"Rules\",\"change\":\"Ask for project constraints first\",\"reason\":\"Thread feedback showed missing project constraints\"}" +
+            "]</updates>";
+        }
+      });
+
+      expect(projectSkillPath).toBe(join(projectDir, ".alice", "skills", "project-planner", "SKILL.md"));
+      expect(analyzedSkillPrompts).toHaveLength(1);
+      expect(result).toEqual([{
+        workspaceSlug: "demo",
+        storageScope: "project",
+        cwd: projectDir,
+        skillSlug: "project-planner",
+        usageCount: 1,
+        analyzedSessionIds: ["thread-1"],
+        updates: [{
+          section: "Rules",
+          change: "Ask for project constraints first",
+          reason: "Thread feedback showed missing project constraints"
+        }]
+      }]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 
   test("thread-level improvement analysis skips market-managed skills", async () => {

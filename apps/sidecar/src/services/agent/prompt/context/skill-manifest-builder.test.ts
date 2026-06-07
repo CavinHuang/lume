@@ -27,7 +27,22 @@ describe("skill-manifest-builder", () => {
     expect(lines.join("\n").match(/lume-workspace-demo:/g)).toHaveLength(1);
   });
 
-  test("renders trigger and argument hints but skips model-disabled skills", () => {
+  test("renders display names alongside skill ids", () => {
+    const lines = renderSkillManifestLines({
+      workspaceSlug: "demo",
+      skills: [
+        {
+          slug: "skill-creator",
+          name: "Skill 生成器",
+          description: "创建和优化技能"
+        }
+      ]
+    });
+
+    expect(lines).toContain("- skill-creator (Skill 生成器): 创建和优化技能");
+  });
+
+  test("renders argument hints but keeps trigger details out of model-visible manifest", () => {
     const lines = renderSkillManifestLines({
       workspaceSlug: "demo",
       skills: [
@@ -46,7 +61,9 @@ describe("skill-manifest-builder", () => {
     });
 
     const rendered = lines.join("\n");
-    expect(rendered).toContain("- planner: Breaks work into clear execution plans. Trigger: when the user asks for a plan Args: pass the target feature");
+    expect(rendered).toContain("- planner: Breaks work into clear execution plans. Args: pass the target feature");
+    expect(rendered).not.toContain("when the user asks for a plan");
+    expect(rendered).not.toContain("Trigger:");
     expect(rendered).not.toContain("manual-only");
   });
 });

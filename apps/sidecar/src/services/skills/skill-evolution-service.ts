@@ -17,7 +17,7 @@ import {
 } from "@lume/agent-sdk";
 import type { AgentMessage, SkillStorageScope } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
-import { getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { getAliceUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { isMarketManagedWorkspaceSkill } from "./workspace-skill-editor-service";
 
@@ -25,6 +25,7 @@ export interface WorkspaceSkillInput {
   workspaceSlug: string;
   skillSlug: string;
   storageScope?: SkillStorageScope;
+  cwd?: string;
 }
 
 export interface ApplyWorkspaceSkillImprovementInput extends WorkspaceSkillInput {
@@ -58,6 +59,7 @@ export interface AnalyzeWorkspaceSkillImprovementResult {
 
 export interface AnalyzeThreadWorkspaceSkillImprovementsInput {
   workspaceSlug: string;
+  cwd?: string;
   threadId: string;
   getRecentMessages: (threadId: string, limit: number) => AgentMessage[] | Promise<AgentMessage[]>;
   callModel?: (input: SkillModelCallInput) => Promise<string>;
@@ -72,6 +74,8 @@ export interface AnalyzeThreadWorkspaceSkillImprovementsInput {
 
 export interface AnalyzeThreadWorkspaceSkillImprovementResult extends AnalyzeWorkspaceSkillImprovementResult {
   workspaceSlug: string;
+  storageScope: SkillStorageScope;
+  cwd?: string;
 }
 
 export interface WorkspaceSkillImprovementModelCallAttempt {
@@ -113,9 +117,13 @@ export interface RestoreWorkspaceSkillVersionInput extends WorkspaceSkillInput {
 }
 
 function resolveSkillRoot(input: WorkspaceSkillInput): string {
-  return input.storageScope === "user"
-    ? getUserSkillsDir()
-    : getWorkspaceSkillsDir(input.workspaceSlug);
+  if (input.storageScope === "user") return getAliceUserSkillsDir();
+  if (input.storageScope === "project") {
+    const cwd = input.cwd?.trim();
+    if (!cwd) throw new Error("项目目录不能为空");
+    return join(resolve(cwd), ".alice", "skills");
+  }
+  return getWorkspaceSkillsDir(input.workspaceSlug);
 }
 
 export function resolveWorkspaceSkillFile(input: WorkspaceSkillInput): string {
@@ -140,7 +148,7 @@ export function resolveWorkspaceSkillFile(input: WorkspaceSkillInput): string {
 }
 
 function assertSettingsManagedWorkspaceSkill(input: WorkspaceSkillInput): void {
-  if (input.storageScope === "user") return;
+  if (input.storageScope && input.storageScope !== "workspace") return;
   if (!isMarketManagedWorkspaceSkill(input.workspaceSlug, input.skillSlug)) return;
   throw new Error("市场管理的 Skill 请在技能市场中管理");
 }
@@ -222,6 +230,8 @@ export async function analyzeThreadWorkspaceSkillImprovements(
 
     results.push({
       workspaceSlug: input.workspaceSlug,
+      storageScope: skill.storageScope,
+      ...(skill.cwd ? { cwd: skill.cwd } : {}),
       skillSlug: skill.skillSlug,
       usageCount: skill.usageCount,
       analyzedSessionIds: [input.threadId],
@@ -285,7 +295,7 @@ export async function applyWorkspaceSkillImprovement(
   if (input.updates.length === 0) {
     return { success: false, error: "没有改进建议" };
   }
-  if (input.storageScope !== "user" && isMarketManagedWorkspaceSkill(input.workspaceSlug, input.skillSlug)) {
+  if ((!input.storageScope || input.storageScope === "workspace") && isMarketManagedWorkspaceSkill(input.workspaceSlug, input.skillSlug)) {
     return { success: false, error: "市场管理的 Skill 请在技能市场中管理" };
   }
 
@@ -307,7 +317,7 @@ export async function applyWorkspaceSkillImprovement(
 export async function restoreWorkspaceSkillVersion(
   input: RestoreWorkspaceSkillVersionInput
 ): Promise<ApplySkillImprovementResult> {
-  if (input.storageScope !== "user" && isMarketManagedWorkspaceSkill(input.workspaceSlug, input.skillSlug)) {
+  if ((!input.storageScope || input.storageScope === "workspace") && isMarketManagedWorkspaceSkill(input.workspaceSlug, input.skillSlug)) {
     return { success: false, error: "市场管理的 Skill 请在技能市场中管理" };
   }
   return restoreSkillVersion({
@@ -376,26 +386,83 @@ function toSkillImprovementMessages(messages: AgentMessage[]): SkillImprovementM
 
 async function listThreadUsedWorkspaceSkills(input: {
   workspaceSlug: string;
+  cwd?: string;
   threadId: string;
-}): Promise<Array<{ skillSlug: string; skillPath: string; usageCount: number; lastUsedAt: number }>> {
-  const skillsDir = getWorkspaceSkillsDir(input.workspaceSlug);
+}): Promise<Array<{
+  storageScope: SkillStorageScope;
+  cwd?: string;
+  skillSlug: string;
+  skillPath: string;
+  usageCount: number;
+  lastUsedAt: number;
+}>> {
+  const projectCwd = input.cwd?.trim() ? resolve(input.cwd) : undefined;
+  const roots: Array<{ storageScope: SkillStorageScope; skillsDir: string; cwd?: string }> = [
+    { storageScope: "user", skillsDir: getAliceUserSkillsDir() },
+    ...(projectCwd
+      ? [{ storageScope: "project" as const, skillsDir: join(projectCwd, ".alice", "skills"), cwd: projectCwd }]
+      : []),
+    { storageScope: "workspace", skillsDir: getWorkspaceSkillsDir(input.workspaceSlug) }
+  ];
+  const used: Array<{
+    storageScope: SkillStorageScope;
+    cwd?: string;
+    skillSlug: string;
+    skillPath: string;
+    usageCount: number;
+    lastUsedAt: number;
+  }> = [];
+
+  for (const root of roots) {
+    used.push(...await listThreadUsedSkillsFromDir({
+      ...input,
+      ...root
+    }));
+  }
+
+  return used.sort((a, b) => b.lastUsedAt - a.lastUsedAt || a.skillSlug.localeCompare(b.skillSlug));
+}
+
+async function listThreadUsedSkillsFromDir(input: {
+  workspaceSlug: string;
+  threadId: string;
+  cwd?: string;
+  storageScope: SkillStorageScope;
+  skillsDir: string;
+}): Promise<Array<{
+  storageScope: SkillStorageScope;
+  cwd?: string;
+  skillSlug: string;
+  skillPath: string;
+  usageCount: number;
+  lastUsedAt: number;
+}>> {
   let entries: Array<{ name: string; isDirectory: () => boolean }>;
   try {
-    entries = await readdir(skillsDir, { withFileTypes: true });
+    entries = await readdir(input.skillsDir, { withFileTypes: true });
   } catch {
     return [];
   }
 
-  const used: Array<{ skillSlug: string; skillPath: string; usageCount: number; lastUsedAt: number }> = [];
+  const used: Array<{
+    storageScope: SkillStorageScope;
+    cwd?: string;
+    skillSlug: string;
+    skillPath: string;
+    usageCount: number;
+    lastUsedAt: number;
+  }> = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    if (isMarketManagedWorkspaceSkill(input.workspaceSlug, entry.name)) continue;
+    if (input.storageScope === "workspace" && isMarketManagedWorkspaceSkill(input.workspaceSlug, entry.name)) continue;
 
     let skillPath: string;
     try {
       skillPath = resolveWorkspaceSkillFile({
         workspaceSlug: input.workspaceSlug,
-        skillSlug: entry.name
+        skillSlug: entry.name,
+        storageScope: input.storageScope,
+        cwd: input.cwd
       });
     } catch {
       continue;
@@ -405,6 +472,8 @@ async function listThreadUsedWorkspaceSkills(input: {
     const threadRecords = usageRecords.filter((record) => record.sessionId === input.threadId);
     if (threadRecords.length === 0) continue;
     used.push({
+      storageScope: input.storageScope,
+      ...(input.storageScope === "project" && input.cwd ? { cwd: resolve(input.cwd) } : {}),
       skillSlug: entry.name,
       skillPath,
       usageCount: threadRecords.length,
@@ -412,7 +481,7 @@ async function listThreadUsedWorkspaceSkills(input: {
     });
   }
 
-  return used.sort((a, b) => b.lastUsedAt - a.lastUsedAt || a.skillSlug.localeCompare(b.skillSlug));
+  return used;
 }
 
 function resolveSkillImprovementModelRef(input: {

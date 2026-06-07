@@ -47,10 +47,11 @@ export function resolveAgentDynamicContextInput(
 
 export function resolveAgentRuntimeRoutingTrace(input: {
   workspaceSlug?: string;
+  agentCwd?: string;
   userMessage?: string;
   availableTools?: string[];
 }): AgentRuntimeRoutingTrace {
-  const loadedSkills = input.workspaceSlug ? getRuntimeSkills(input.workspaceSlug) : [];
+  const loadedSkills = input.workspaceSlug ? getRuntimeSkills(input.workspaceSlug, input.agentCwd) : [];
   const availableTools = [...(input.availableTools ?? [])];
   if (loadedSkills.length > 0 && !availableTools.some((tool) => tool.trim().toLowerCase() === "skill")) {
     availableTools.push("Skill");

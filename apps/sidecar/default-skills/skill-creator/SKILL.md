@@ -13,8 +13,8 @@ version: "1.0"
 每个 skill 是一个独立目录，包含 `SKILL.md`：
 
 ```
-~/.lume/skills/<skill-name>/SKILL.md   # 用户全局 skill
-{workdir}/.lume/skills/<skill-name>/SKILL.md  # 项目级 skill
+~/.alice/skills/<skill-name>/SKILL.md   # 用户全局 skill
+{workdir}/.alice/skills/<skill-name>/SKILL.md  # 项目级 skill
 ```
 
 ### SKILL.md 结构
@@ -44,6 +44,11 @@ argument_hint: "请告诉我要分析的文件路径"  # 可选，提示用户�
 - `glob` — 文件路径匹配
 - `web_fetch` — 抓取网页
 - `web_search` — 网络搜索
+- `personalize_ui` — 读取或调整已支持的 Lume 界面状态
+- `lume_reading_snapshot` — 读取 Lume Reading 书架与笔记摘要
+- `lume_generate_share_card` — 为 Reading 笔记生成本地分享卡
+- `office_validate` — 只读校验 docx/pptx/xlsx 的 OOXML 包结构
+- `office_unpack` — 安全解包 docx/pptx/xlsx 到本地目录
 - `agent` — 启动子 Agent
 
 ## Skill 评测 Schema 参考
@@ -51,7 +56,7 @@ argument_hint: "请告诉我要分析的文件路径"  # 可选，提示用户�
 如需生成评测数据（evals.json / grading.json 等），读取参考文档：
 
 ```
-~/.lume/skills/references/schemas.md
+~/.alice/skills/references/schemas.md
 ```
 
 ## 工作流程
@@ -61,7 +66,7 @@ argument_hint: "请告诉我要分析的文件路径"  # 可选，提示用户�
 1. **明确用途**：询问用户这个 skill 的使用场景、触发条件、期望输出
 2. **确定 allowed_tools**：根据 skill 需要做什么操作选择工具
 3. **撰写提示词正文**：清晰的角色定位、分步骤操作流程、期望输出格式、边界情况处理
-4. **写入文件**：用 `write_file` 创建 `~/.lume/skills/<name>/SKILL.md`
+4. **写入文件**：用 `write_file` 创建 `~/.alice/skills/<name>/SKILL.md`
 5. **告知用户**：说明 skill 已创建，触发条件是什么
 
 ### 优化已有 Skill

@@ -39,7 +39,12 @@ import {
   buildBuiltinAgents,
   loadCustomAgents
 } from "../../agent/agent-prompt-builder";
-import { getDefaultSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../../infra/config-paths";
+import {
+  getAliceUserSkillsDir,
+  getDefaultSkillsDir,
+  getUserSkillsDir,
+  getWorkspaceSkillsDir
+} from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
 import { getWorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
@@ -800,7 +805,13 @@ function isAutomationExecution(messageMetadata?: Record<string, unknown>): boole
 }
 
 function resolveSkillDirectories(cwd: string, workspaceSlug?: string): string[] {
-  const roots = [getDefaultSkillsDir(), getUserSkillsDir(), join(cwd, ".lume", "skills")];
+  const roots = [
+    getDefaultSkillsDir(),
+    getUserSkillsDir(),
+    getAliceUserSkillsDir(),
+    join(cwd, ".alice", "skills"),
+    join(cwd, ".lume", "skills")
+  ];
   if (workspaceSlug) {
     roots.push(getWorkspaceSkillsDir(workspaceSlug));
   }

@@ -178,6 +178,7 @@ import {
   importLocalSkillDirectoryInputSchema,
   installGitHubSkillInputSchema,
   installSkillMarketItemInputSchema,
+  listEditableSkillsInputSchema,
   listDirectoryInputSchema,
   moveAttachedFileInputSchema,
   moveFileInputSchema,
@@ -357,6 +358,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     setTimeout(() => {
       void analyzeThreadWorkspaceSkillImprovementsForContext({
         workspaceSlug: resolvedWorkspaceSlug,
+        cwd: getAgentThreadPath(resolvedWorkspaceSlug, threadId),
         threadId,
         getRecentMessages: (targetThreadId, limit) => getRecentAgentThreadMessages(targetThreadId, limit).messages
       })
@@ -876,7 +878,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return getWorkspaceSkills(input.workspaceSlug);
     },
     [AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS]: async (params) => {
-      const input = validateInput(workspaceSlugInputSchema, params, AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS);
+      const input = validateInput(listEditableSkillsInputSchema, params, AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS);
       return listEditableSkills(input);
     },
     [AGENT_IPC_CHANNELS.GET_EDITABLE_SKILL]: async (params) => {

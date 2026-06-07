@@ -9,6 +9,7 @@ import { createAgentHandlers } from "./agent-handlers";
 
 const analyzeThreadWorkspaceSkillImprovementsMock = mock(async (_input: unknown) => [{
   workspaceSlug: "demo",
+  storageScope: "workspace" as const,
   skillSlug: "planner",
   usageCount: 1,
   analyzedSessionIds: ["thread-1"],
@@ -76,7 +77,8 @@ describe("agent-handlers skill improvement notifications", () => {
     expect(analyzeThreadWorkspaceSkillImprovementsMock).toHaveBeenCalledTimes(1);
     expect(analyzeThreadWorkspaceSkillImprovementsMock.mock.calls[0]?.[0]).toMatchObject({
       workspaceSlug: "demo",
-      threadId: "thread-1"
+      threadId: "thread-1",
+      cwd: expect.stringContaining(join("agent-workspaces", "demo", "threads", "thread-1"))
     });
     expect(notifications).toContainEqual({
       method: AGENT_IPC_CHANNELS.SKILL_IMPROVEMENT_SUGGESTED,
@@ -85,6 +87,7 @@ describe("agent-handlers skill improvement notifications", () => {
         workspaceSlug: "demo",
         suggestions: [{
           workspaceSlug: "demo",
+          storageScope: "workspace",
           skillSlug: "planner",
           usageCount: 1,
           analyzedSessionIds: ["thread-1"],

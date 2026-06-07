@@ -95,6 +95,27 @@ describe("agent-runtime-context", () => {
     expect(trace.preferredCapabilityRoute).toBe("skills");
   });
 
+  test("runtime routing trace 应包含当前项目 .lume/skills 元数据", () => {
+    const projectDir = join(tempConfigDir, "project");
+    const skillDir = join(projectDir, ".lume", "skills", "local-planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      ['---', 'name: "Local Planner"', 'description: "Breaks local work into execution plans"', '---', '', '# Planner'].join("\n"),
+      "utf-8"
+    );
+
+    const trace = resolveAgentRuntimeRoutingTrace({
+      workspaceSlug: "routing-trace-local-skill",
+      agentCwd: projectDir,
+      userMessage: "help me create an execution plan for this project",
+      availableTools: ["read", "write"]
+    });
+
+    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools"]);
+    expect(trace.preferredCapabilityRoute).toBe("skills");
+  });
+
   test("存在 workspace skills 时，即使未显式传入 Skill 工具也应补出 skills lane", () => {
     const workspaceSlug = "routing-trace-workspace-no-skill-tool";
     const workspacePath = getAgentWorkspacePath(workspaceSlug);

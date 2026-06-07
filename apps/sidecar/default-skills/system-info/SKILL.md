@@ -2,7 +2,7 @@
 name: "系统信息速查手册"
 description: "通过 bash 命令获取系统信息：硬件、网络、磁盘、进程、电池等。不是工具，而是 bash 命令参考。"
 when_to_use: "当需要查看系统信息、硬件配置、网络状态、磁盘空间、进程占用、电池状态、系统版本等"
-allowed_tools: ["bash", "ip_location"]
+allowed_tools: ["bash"]
 version: "1.0"
 ---
 
@@ -34,7 +34,7 @@ version: "1.0"
 | 需求 | 命令 |
 |------|------|
 | 局域网 IP | `ipconfig getifaddr en0` |
-| 公网 IP + 归属地 | **用 ip_location 工具**（更准确，含经纬度） |
+| 公网 IP | `curl -s https://ifconfig.me` |
 | DNS 配置 | `scutil --dns \| head -20` |
 | 活跃网络连接 | `netstat -an \| grep ESTABLISHED \| head -20` |
 | 端口监听 | `lsof -i -P \| grep LISTEN` |
@@ -76,6 +76,5 @@ version: "1.0"
 
 ### 注意事项
 - 以上全是 macOS 命令，Linux 稍有不同
-- 公网 IP 和归属地优先用 `ip_location` 工具（更准确，含经纬度和 ISP 信息）
-- 需要精确天气数据时用 `weather` 工具，不要 curl 第三方网页
+- 公网 IP、天气、地理归属等外部数据可能受网络服务可用性影响；当前仅使用 `bash`，不要声称调用了独立地理位置或天气工具
 - 杀进程等破坏性命令需先确认
