@@ -161,6 +161,12 @@ export const PROVIDER_API_FAMILY_LABELS: Record<ProviderApiFamily, string> = {
   google: 'Google Generative AI',
 }
 
+/** 自定义 Provider 可选的协议家族 */
+export const CUSTOM_API_FAMILIES: Array<{ value: ProviderApiFamily; label: string }> = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+]
+
 /**
  * 渠道中的模型配置
  */
@@ -292,6 +298,8 @@ export interface Channel {
   createdAt: number
   /** 更新时间戳 */
   updatedAt: number
+  /** 自定义渠道的协议家族（仅 provider='custom' 时使用） */
+  apiFamily?: ProviderApiFamily
 }
 
 /**
@@ -306,6 +314,8 @@ export interface ChannelCreateInput {
   models: ChannelModel[]
   defaultModelId?: string
   fallbackModelIds?: string[]
+  /** 自定义渠道的协议家族（仅 provider='custom' 时使用） */
+  apiFamily?: ProviderApiFamily
   enabled: boolean
 }
 
@@ -321,6 +331,8 @@ export interface ChannelUpdateInput {
   models?: ChannelModel[]
   defaultModelId?: string
   fallbackModelIds?: string[]
+  /** 自定义渠道的协议家族（仅 provider='custom' 时使用） */
+  apiFamily?: ProviderApiFamily
   enabled?: boolean
 }
 
@@ -352,6 +364,8 @@ export interface FetchModelsInput {
   baseUrl: string
   /** 明文 API Key */
   apiKey: string
+  /** 自定义渠道的协议家族（可选，仅 custom provider 使用） */
+  apiFamily?: ProviderApiFamily
 }
 
 /**
