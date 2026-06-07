@@ -134,6 +134,7 @@ export function createChannel(input: ChannelCreateInput): Channel {
     createdAt: now,
     updatedAt: now,
     ...(input.apiFamily ? { apiFamily: input.apiFamily } : {}),
+    ...(input.openaiApiMode ? { openaiApiMode: input.openaiApiMode } : {}),
   };
   config.channels.push(channel);
   writeConfig(config);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
-import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily } from '@lume/shared'
+import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily, OpenAiApiMode } from '@lume/shared'
 import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS } from '@lume/shared'
 import { fetchChannelModels } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
@@ -79,6 +79,9 @@ export function ChannelForm({
   const [apiFamily, setApiFamily] = useState<ProviderApiFamily>(
     initialValue?.apiFamily ?? 'openai'
   )
+  const [openaiApiMode, setOpenaiApiMode] = useState<OpenAiApiMode>(
+    initialValue?.openaiApiMode ?? 'chat-completions'
+  )
   const [showApiKey, setShowApiKey] = useState(false)
 
   useEffect(() => {
@@ -91,6 +94,7 @@ export function ChannelForm({
       setModelSearch('')
       setFetchMsg('')
       setApiFamily('openai')
+    setOpenaiApiMode('chat-completions')
       return
     }
 
@@ -102,6 +106,7 @@ export function ChannelForm({
     setModelSearch('')
     setFetchMsg('')
     setApiFamily(initialValue.apiFamily ?? 'openai')
+    setOpenaiApiMode(initialValue.openaiApiMode ?? 'chat-completions')
   }, [initialValue])
 
   const handleProviderChange = (p: ProviderType) => {
@@ -110,6 +115,7 @@ export function ChannelForm({
     setModels([])
     setModelSearch('')
     setFetchMsg('')
+    setOpenaiApiMode('chat-completions')
   }
 
   const handleFetchModels = async () => {
@@ -140,6 +146,7 @@ export function ChannelForm({
         baseUrl,
         apiKey,
         apiFamily: provider === 'custom' ? apiFamily : undefined,
+        openaiApiMode: provider === 'openai' ? openaiApiMode : undefined,
         models,
         enabled: true,
       })
@@ -189,6 +196,23 @@ export function ChannelForm({
             <SelectContent>
               <SelectItem value="openai">OpenAI</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {provider === 'openai' && (
+        <div className="space-y-1.5">
+          <Label>API 模式</Label>
+          <Select
+            value={openaiApiMode}
+            onValueChange={(v) => setOpenaiApiMode(v as OpenAiApiMode)}
+            disabled={disabled}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="chat-completions">Chat Completions</SelectItem>
+              <SelectItem value="responses">Responses</SelectItem>
             </SelectContent>
           </Select>
         </div>
