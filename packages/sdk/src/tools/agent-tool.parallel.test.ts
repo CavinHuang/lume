@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { QueryEngine } from "../engine.js"
 import { AgentTool, clearAgents, registerAgents } from "./agent-tool.js"
+import { clearSkills, registerSkill } from "../skills/registry.js"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { LLMProvider, CreateMessageParams, CreateMessageResponse, NormalizedTool } from "../providers/types.js"
 import type { SDKMessage, ToolDefinition } from "../types.js"
 
@@ -26,6 +30,7 @@ class StaticProvider implements LLMProvider {
 describe("AgentTool parallel execution", () => {
   afterEach(() => {
     clearAgents()
+    clearSkills()
   })
 
   test("AgentTool 应声明为 concurrency-safe，与并行文案保持一致", () => {
@@ -138,6 +143,71 @@ describe("AgentTool parallel execution", () => {
     expect(observedToolNames[0]).not.toContain("Write")
     expect(observedToolNames[0]).not.toContain("Edit")
     expect(observedToolNames[0]).not.toContain("Agent")
+  })
+
+  test("AgentTool auto-loads an agent default skill and applies its allowed tools", async () => {
+    const observed: { system?: string; tools?: string[] } = {}
+    const tempDir = join(tmpdir(), `lume-agent-default-skill-usage-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+    const skillDir = join(tempDir, "agent-writer")
+    const skillPath = join(skillDir, "SKILL.md")
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
+        observed.system = params.system
+        observed.tools = (params.tools ?? []).map((tool: NormalizedTool) => tool.name).sort()
+        return {
+          content: [{ type: "text", text: "child done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      }
+    }
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(skillPath, "# Agent Writer\n", "utf-8")
+    registerSkill({
+      name: "agent-writer",
+      description: "Writer workflow",
+      sourcePath: skillPath,
+      allowedTools: ["read_file"],
+      getPrompt: async () => [{ type: "text", text: "AUTO-LOADED WRITER SOP" }]
+    })
+    registerAgents({
+      "writer-test": {
+        description: "writer",
+        prompt: "BASE WRITER ROLE",
+        defaultSkillName: "agent-writer",
+        tools: ["Read", "Write", "Skill"]
+      }
+    })
+
+    try {
+      const result = await AgentTool.call({
+        prompt: "write this",
+        description: "write",
+        subagent_type: "writer-test",
+        mode: "bypassPermissions"
+      }, {
+        cwd: process.cwd(),
+        provider,
+        model: "test-model",
+        apiType: "anthropic-messages",
+        sessionId: "parent-thread"
+      })
+
+      expect(result.is_error).toBeFalsy()
+      expect(observed.system).toContain("BASE WRITER ROLE")
+      expect(observed.system).toContain("AUTO-LOADED WRITER SOP")
+      expect(observed.tools).toContain("Read")
+      expect(observed.tools).not.toContain("Write")
+      expect(observed.tools).not.toContain("Skill")
+      const usageRecords = readFileSync(join(skillDir, "usage.jsonl"), "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+      expect(usageRecords).toEqual([{ ts: expect.any(Number), sessionId: "parent-thread" }])
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 
   test("AgentTool annotates subagent result usage for parent runtime projection", async () => {

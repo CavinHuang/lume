@@ -345,7 +345,7 @@ export type SkillTrustLevel = 'trusted' | 'review-required' | 'blocked-by-defaul
 
 export type SkillInstallState = 'not-installed' | 'installed' | 'update-available'
 
-export type SkillStorageScope = 'workspace' | 'user'
+export type SkillStorageScope = 'workspace' | 'project' | 'user'
 
 export interface SkillCatalogItem {
   id: string
@@ -392,6 +392,7 @@ export interface WorkspaceSkillInput {
   workspaceSlug: string
   skillSlug: string
   storageScope?: SkillStorageScope
+  cwd?: string
 }
 
 export interface SaveWorkspaceSkillInput extends WorkspaceSkillInput {
@@ -414,6 +415,7 @@ export interface SaveWorkspaceSkillResult {
 
 export interface ListEditableSkillsInput {
   workspaceSlug: string
+  cwd?: string
 }
 
 export interface GetEditableSkillInput extends WorkspaceSkillInput {
@@ -459,6 +461,8 @@ export interface SkillImprovementAnalysisResult {
 
 export interface ThreadSkillImprovementSuggestion extends SkillImprovementAnalysisResult {
   workspaceSlug: string
+  storageScope: SkillStorageScope
+  cwd?: string
 }
 
 export interface SkillImprovementSuggestedEvent {

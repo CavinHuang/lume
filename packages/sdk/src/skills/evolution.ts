@@ -261,7 +261,7 @@ async function ensureVersionsDir(skillPath: string): Promise<string> {
 async function createVersionPath(skillPath: string): Promise<string> {
   const versionsDir = await ensureVersionsDir(skillPath)
   const timestamp = formatBackupTimestamp(new Date())
-  return join(versionsDir, `SKILL_${timestamp}_${randomUUID().slice(0, 4)}.md`)
+  return join(versionsDir, `${timestamp}_${randomUUID().replace(/-/g, '').slice(0, 8)}.md`)
 }
 
 async function pruneVersions(versionsDir: string): Promise<void> {
@@ -334,7 +334,9 @@ function formatVersionTimestamp(filename: string): string {
 function formatBackupTimestamp(date: Date): string {
   const parts = [
     date.getFullYear(),
+    '-',
     String(date.getMonth() + 1).padStart(2, '0'),
+    '-',
     String(date.getDate()).padStart(2, '0'),
     '_',
     String(date.getHours()).padStart(2, '0'),

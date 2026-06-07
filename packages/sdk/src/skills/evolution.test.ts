@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { readdir } from "fs/promises";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import { tmpdir } from "os";
 import {
   analyzeSkillImprovement,
@@ -86,7 +86,8 @@ describe("skill evolution", () => {
 
     expect(result.success).toBe(true);
     expect(readFileSync(skillPath, "utf-8")).toBe("# Demo Skill\n\nNew rule.");
-    expect(result.versionPath).toContain(join(dirname(skillPath), "versions", "SKILL_"));
+    expect(dirname(result.versionPath!)).toBe(join(dirname(skillPath), "versions"));
+    expect(basename(result.versionPath!)).toMatch(/^\d{4}-\d{2}-\d{2}_\d{6}_[a-f0-9]{8}\.md$/);
     expect(existsSync(result.versionPath!)).toBe(true);
 
     const versions = await listSkillVersions(skillPath);
@@ -111,7 +112,7 @@ describe("skill evolution", () => {
     expect(restored.success).toBe(true);
     expect(readFileSync(skillPath, "utf-8")).toBe("# Demo Skill\n\nOriginal.");
     const versionFiles = await readdir(join(dirname(skillPath), "versions"));
-    expect(versionFiles.filter((file) => file.startsWith("SKILL_"))).toHaveLength(2);
+    expect(versionFiles.filter((file) => /^\d{4}-\d{2}-\d{2}_\d{6}_[a-f0-9]{8}\.md$/.test(file))).toHaveLength(2);
   });
 
   test("listSkillVersions also reads legacy .versions backups", async () => {

@@ -916,6 +916,8 @@ export type McpResourceUpdateHandler = (
 export interface AgentDefinition {
   description: string
   prompt: string
+  /** Default skill to auto-load when this agent type is spawned. */
+  defaultSkillName?: string
   tools?: string[]
   disallowedTools?: string[]
   model?: 'sonnet' | 'opus' | 'haiku' | 'inherit' | string

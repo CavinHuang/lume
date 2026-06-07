@@ -6,8 +6,16 @@
  */
 
 import type { ToolDefinition, ToolResult, ToolContext } from '../types.js'
+import type { SkillDefinition } from '../skills/types.js'
 import { recordSkillUsage } from '../skills/evolution.js'
 import { getModelInvocableSkills, getSkill, getUserInvocableSkills } from '../skills/registry.js'
+
+function formatSkillPromptName(skill: SkillDefinition): string {
+  const displayName = skill.aliases
+    ?.map((alias) => alias.trim())
+    .find((alias) => alias && alias !== skill.name)
+  return displayName ? `${skill.name} (${displayName})` : skill.name
+}
 
 export const SkillTool: ToolDefinition = {
   name: 'Skill',
@@ -44,9 +52,8 @@ export const SkillTool: ToolDefinition = {
         s.description.length > 200
           ? s.description.slice(0, 200) + '...'
           : s.description
-      const trigger = s.whenToUse ? ` Trigger: ${s.whenToUse}` : ''
       const args = s.argumentHint ? ` Args: ${s.argumentHint}` : ''
-      return `- ${s.name}: ${desc}${trigger}${args}`
+      return `- ${formatSkillPromptName(s)}: ${desc}${args}`
     })
 
     return (

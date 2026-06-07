@@ -69,7 +69,7 @@ test("registerSkill replaces existing skills that differ only by case", () => {
   expect(prompt).not.toContain("- Planner: Old planner");
 });
 
-test("formatSkillsForPrompt exposes trigger and argument hints for model-invocable skills", () => {
+test("formatSkillsForPrompt exposes argument hints but not trigger details for model-invocable skills", () => {
   registerSkill({
     name: "code-review",
     description: "Review code",
@@ -88,7 +88,8 @@ test("formatSkillsForPrompt exposes trigger and argument hints for model-invocab
   const prompt = formatSkillsForPrompt();
 
   expect(prompt).toContain("code-review");
-  expect(prompt).toContain("when the user asks for code review");
+  expect(prompt).not.toContain("when the user asks for code review");
+  expect(prompt).not.toContain("TRIGGER");
   expect(prompt).toContain("path to review");
   expect(prompt).not.toContain("manual-secret");
   expect(prompt).not.toContain("secret args");

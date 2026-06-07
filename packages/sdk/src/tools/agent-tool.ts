@@ -13,6 +13,8 @@ import { loadSession } from '../session.js'
 import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from './subagent-output.js'
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
 import { createAgentProgressTracker } from '../utils/usage.js'
+import { getSkill } from '../skills/registry.js'
+import { recordSkillUsage } from '../skills/evolution.js'
 
 // Store for registered agent definitions
 let registeredAgents: Record<string, AgentDefinition> = {}
@@ -124,6 +126,8 @@ export const AgentTool: ToolDefinition = {
     // Find agent definition
     const agentDef = registeredAgents[agentType] || BUILTIN_AGENTS[agentType]
 
+    const defaultSkill = agentDef?.defaultSkillName ? getSkill(agentDef.defaultSkillName) : undefined
+
     // Determine tools for subagent
     let tools = getAllBaseTools()
     if (agentDef?.tools) {
@@ -132,13 +136,39 @@ export const AgentTool: ToolDefinition = {
     if (agentDef?.disallowedTools) {
       tools = filterTools(tools, undefined, agentDef.disallowedTools)
     }
+    if (defaultSkill?.allowedTools?.length) {
+      tools = filterTools(tools, defaultSkill.allowedTools)
+    }
 
     // Remove AgentTool from subagent to prevent infinite recursion
     tools = tools.filter(t => t.name !== 'Agent')
 
     // Build system prompt
-    const systemPrompt = agentDef?.prompt ||
+    let systemPrompt = agentDef?.prompt ||
       'You are a helpful assistant. Complete the given task using the available tools.'
+    if (defaultSkill) {
+      const contentBlocks = await defaultSkill.getPrompt('', {
+        ...context,
+        cwd: effectiveCwd,
+      })
+      const skillPrompt = contentBlocks
+        .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+        .map((block) => block.text.trim())
+        .filter(Boolean)
+        .join('\n\n')
+      if (skillPrompt) {
+        systemPrompt = [
+          systemPrompt,
+          `Default Skill (${defaultSkill.name})`,
+          skillPrompt,
+        ].join('\n\n')
+      }
+      await recordSkillUsage({
+        skillName: defaultSkill.name,
+        skillPath: defaultSkill.sourcePath,
+        sessionId: context.sessionId,
+      }).catch(() => undefined)
+    }
 
     // Inherit provider and model from parent agent context, fall back to env vars
     const subModel = input.model || context.model || process.env.CODEANY_MODEL || 'claude-sonnet-4-6'

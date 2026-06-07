@@ -163,14 +163,11 @@ export function formatSkillsForPrompt(
       ? skill.description.slice(0, MAX_DESC_CHARS) + '...'
       : skill.description
 
-    const trigger = skill.whenToUse
-      ? ` TRIGGER when: ${skill.whenToUse}`
-      : ''
     const args = skill.argumentHint
       ? ` ARGS: ${skill.argumentHint}`
       : ''
 
-    const line = `- ${skill.name}: ${desc}${trigger}${args}`
+    const line = `- ${skill.name}: ${desc}${args}`
 
     if (used + line.length > budget) break
     lines.push(line)

@@ -646,11 +646,11 @@ export class Agent {
     this.refreshResolvedConfig()
     this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins)
     this.registerPluginSkills()
-    this.registerExplicitSkills()
     await this.registerFilesystemSkills({
       cwd,
       roots: this.cfg.skillsDirectories,
     })
+    this.registerExplicitSkills()
     this.loadedCommands = [
       ...(await loadCommandDefinitions(cwd)),
       ...this.getPluginCommands(),
@@ -1446,11 +1446,11 @@ export class Agent {
 
     this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins)
     this.registerPluginSkills()
-    this.registerExplicitSkills()
     await this.registerFilesystemSkills({
       cwd: this.cfg.cwd || process.cwd(),
       roots: this.cfg.skillsDirectories,
     })
+    this.registerExplicitSkills()
     this.loadedCommands = [
       ...(await loadCommandDefinitions(this.cfg.cwd || process.cwd())),
       ...this.getPluginCommands(),

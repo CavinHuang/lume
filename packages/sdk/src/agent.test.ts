@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent } from "./agent.js"
@@ -63,12 +63,29 @@ class CapturingProvider implements LLMProvider {
 }
 
 const tempDirs: string[] = []
+const originalLumeConfigDir = process.env.LUME_CONFIG_DIR
+const originalAliceConfigDir = process.env.ALICE_CONFIG_DIR
+const originalOpenAgentSdkHome = process.env.OPEN_AGENT_SDK_HOME
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  delete process.env.OPEN_AGENT_SDK_HOME
+  if (originalLumeConfigDir === undefined) {
+    delete process.env.LUME_CONFIG_DIR
+  } else {
+    process.env.LUME_CONFIG_DIR = originalLumeConfigDir
+  }
+  if (originalAliceConfigDir === undefined) {
+    delete process.env.ALICE_CONFIG_DIR
+  } else {
+    process.env.ALICE_CONFIG_DIR = originalAliceConfigDir
+  }
+  if (originalOpenAgentSdkHome === undefined) {
+    delete process.env.OPEN_AGENT_SDK_HOME
+  } else {
+    process.env.OPEN_AGENT_SDK_HOME = originalOpenAgentSdkHome
+  }
   clearSkills()
 })
 
@@ -168,6 +185,51 @@ describe("Agent skill slash commands", () => {
     }
 
     expect(provider.requests[0]?.messages[0]?.content).toBe("Review target: src/index.ts")
+    await agent.close()
+  })
+
+  test("explicit skills override filesystem skills with the same name", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-explicit-skill-"))
+    tempDirs.push(tempDir)
+    process.env.LUME_CONFIG_DIR = join(tempDir, "lume")
+    process.env.ALICE_CONFIG_DIR = join(tempDir, "alice")
+    const fileSkillDir = join(process.env.ALICE_CONFIG_DIR, "skills", "code-review")
+    mkdirSync(fileSkillDir, { recursive: true })
+    writeFileSync(
+      join(fileSkillDir, "SKILL.md"),
+      [
+        "---",
+        'name: "文件代码审查"',
+        'description: "Filesystem code review"',
+        'when_to_use: "When reviewing code from disk"',
+        "---",
+        "",
+        "Filesystem prompt."
+      ].join("\n"),
+      "utf-8"
+    )
+
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      cwd: tempDir,
+      persistSession: false,
+      tools: [],
+      skills: [{
+        name: "code-review",
+        description: "Explicit code review",
+        async getPrompt(args) {
+          return [{ type: "text", text: `Explicit target: ${args}` }]
+        },
+      }],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("/skill code-review src/index.ts")) {
+      // drain query
+    }
+
+    expect(provider.requests[0]?.messages[0]?.content).toBe("Explicit target: src/index.ts")
     await agent.close()
   })
 

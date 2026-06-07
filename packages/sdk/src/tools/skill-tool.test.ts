@@ -28,7 +28,7 @@ test("SkillTool prompt hides skills with disableModelInvocation", async () => {
   expect(prompt).not.toContain("manual-skill");
 });
 
-test("SkillTool prompt exposes Alice trigger and argument hint fields", async () => {
+test("SkillTool prompt exposes argument hints but not trigger details", async () => {
   registerSkill({
     name: "code-review",
     description: "Review code quality",
@@ -41,8 +41,24 @@ test("SkillTool prompt exposes Alice trigger and argument hint fields", async ()
 
   expect(prompt).toContain("code-review");
   expect(prompt).toContain("Review code quality");
-  expect(prompt).toContain("when the user asks for code review");
+  expect(prompt).not.toContain("when the user asks for code review");
+  expect(prompt).not.toContain("Trigger:");
   expect(prompt).toContain("path to review");
+});
+
+test("SkillTool prompt includes display name aliases alongside skill ids", async () => {
+  registerSkill({
+    name: "code-review",
+    aliases: ["代码审查"],
+    description: "Review code quality",
+    getPrompt: async () => [{ type: "text", text: "review" }]
+  });
+
+  const prompt = await SkillTool.prompt?.({ cwd: process.cwd() } as any);
+
+  expect(prompt).toContain("code-review");
+  expect(prompt).toContain("代码审查");
+  expect(prompt).toContain("- code-review (代码审查): Review code quality");
 });
 
 test("SkillTool stays enabled when only manual skills are registered", () => {

@@ -74,12 +74,30 @@ function getSkillSortLabel(skill: SkillDefinition): string {
   return skill.aliases?.[0] ?? skill.name
 }
 
+function resolveMaybeRelativePath(path: string): string {
+  return isAbsolute(path) ? path : resolve(process.cwd(), path)
+}
+
 function getDefaultUserSkillsRoot(): string {
   const configDir = process.env.LUME_CONFIG_DIR?.trim()
   const resolvedConfigDir = configDir
-    ? isAbsolute(configDir) ? configDir : resolve(process.cwd(), configDir)
+    ? resolveMaybeRelativePath(configDir)
     : join(homedir(), '.lume')
   return join(resolvedConfigDir, 'skills')
+}
+
+function getDefaultAliceUserSkillsRoot(): string {
+  const aliceConfigDir = process.env.ALICE_CONFIG_DIR?.trim()
+  if (aliceConfigDir) {
+    return join(resolveMaybeRelativePath(aliceConfigDir), 'skills')
+  }
+
+  const lumeConfigDir = process.env.LUME_CONFIG_DIR?.trim()
+  if (lumeConfigDir) {
+    return join(resolveMaybeRelativePath(lumeConfigDir), '.alice', 'skills')
+  }
+
+  return join(homedir(), '.alice', 'skills')
 }
 
 export interface LoadFilesystemSkillsInput {
@@ -99,7 +117,12 @@ export async function loadFilesystemSkills(
     ? resolvedInput.roots.filter((root): root is string => typeof root === 'string' && root.trim().length > 0)
     : []
   const defaultRoots = explicitRoots.length === 0
-    ? [getDefaultUserSkillsRoot(), join(resolvedInput.cwd, '.lume', 'skills')]
+    ? [
+        getDefaultUserSkillsRoot(),
+        getDefaultAliceUserSkillsRoot(),
+        join(resolvedInput.cwd, '.lume', 'skills'),
+        join(resolvedInput.cwd, '.alice', 'skills'),
+      ]
     : []
   const roots = Array.from(new Set([...defaultRoots, ...explicitRoots]))
 

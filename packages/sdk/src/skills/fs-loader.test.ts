@@ -90,6 +90,113 @@ test("未传 roots 时应先加载全局 skills 再加载项目级 .lume skills"
   }
 });
 
+test("未传 roots 时应加载 Alice 兼容项目级 .alice skills 并覆盖全局 skills", async () => {
+  const root = join(tmpdir(), `sdk-alice-project-roots-${Date.now()}`);
+  const configDir = join(root, "config");
+  const cwd = join(root, "workspace");
+  const previousConfigDir = process.env.LUME_CONFIG_DIR;
+
+  process.env.LUME_CONFIG_DIR = configDir;
+  mkdirSync(join(configDir, "skills", "reviewer"), { recursive: true });
+  mkdirSync(join(cwd, ".alice", "skills", "reviewer"), { recursive: true });
+
+  writeFileSync(
+    join(configDir, "skills", "reviewer", "SKILL.md"),
+    "---\nname: Global Reviewer\ndescription: global reviewer\n---\nGlobal review.",
+    "utf-8"
+  );
+  writeFileSync(
+    join(cwd, ".alice", "skills", "reviewer", "SKILL.md"),
+    "---\nname: Project Reviewer\ndescription: alice project reviewer\n---\nProject review.",
+    "utf-8"
+  );
+
+  try {
+    const skills = await loadFilesystemSkills({ cwd });
+
+    expect(skills.find((item) => item.name === "reviewer")?.description).toBe("alice project reviewer");
+  } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = previousConfigDir;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("未传 roots 时 Alice 项目级 .alice skills 应覆盖旧 Lume 项目级 .lume skills", async () => {
+  const root = join(tmpdir(), `sdk-alice-over-legacy-project-${Date.now()}`);
+  const cwd = join(root, "workspace");
+
+  mkdirSync(join(cwd, ".lume", "skills", "reviewer"), { recursive: true });
+  mkdirSync(join(cwd, ".alice", "skills", "reviewer"), { recursive: true });
+
+  writeFileSync(
+    join(cwd, ".lume", "skills", "reviewer", "SKILL.md"),
+    "---\nname: Legacy Project Reviewer\ndescription: legacy project reviewer\n---\nLegacy project review.",
+    "utf-8"
+  );
+  writeFileSync(
+    join(cwd, ".alice", "skills", "reviewer", "SKILL.md"),
+    "---\nname: Alice Project Reviewer\ndescription: alice project reviewer\n---\nAlice project review.",
+    "utf-8"
+  );
+
+  try {
+    const skills = await loadFilesystemSkills({ cwd });
+
+    const reviewer = skills.find((item) => item.name === "reviewer");
+    expect(reviewer?.description).toBe("alice project reviewer");
+    expect(reviewer?.sourcePath).toBe(join(cwd, ".alice", "skills", "reviewer", "SKILL.md"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("未传 roots 时应加载 Alice 兼容用户全局 skills 并覆盖旧 Lume 全局 skills", async () => {
+  const root = join(tmpdir(), `sdk-alice-user-roots-${Date.now()}`);
+  const configDir = join(root, "config");
+  const aliceConfigDir = join(root, "alice");
+  const cwd = join(root, "workspace");
+  const previousConfigDir = process.env.LUME_CONFIG_DIR;
+  const previousAliceConfigDir = process.env.ALICE_CONFIG_DIR;
+
+  process.env.LUME_CONFIG_DIR = configDir;
+  process.env.ALICE_CONFIG_DIR = aliceConfigDir;
+  mkdirSync(join(configDir, "skills", "reviewer"), { recursive: true });
+  mkdirSync(join(aliceConfigDir, "skills", "reviewer"), { recursive: true });
+
+  writeFileSync(
+    join(configDir, "skills", "reviewer", "SKILL.md"),
+    "---\nname: Legacy Global Reviewer\ndescription: lume legacy reviewer\n---\nLegacy review.",
+    "utf-8"
+  );
+  writeFileSync(
+    join(aliceConfigDir, "skills", "reviewer", "SKILL.md"),
+    "---\nname: Alice Global Reviewer\ndescription: alice global reviewer\n---\nAlice review.",
+    "utf-8"
+  );
+
+  try {
+    const skills = await loadFilesystemSkills({ cwd });
+
+    expect(skills.find((item) => item.name === "reviewer")?.description).toBe("alice global reviewer");
+  } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = previousConfigDir;
+    }
+    if (previousAliceConfigDir === undefined) {
+      delete process.env.ALICE_CONFIG_DIR;
+    } else {
+      process.env.ALICE_CONFIG_DIR = previousAliceConfigDir;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("应按 slug 注册 Alice 风格 SKILL.md 字段并保留展示名别名", async () => {
   const root = join(tmpdir(), `sdk-alice-skills-${Date.now()}`);
   const skillDir = join(root, "code-review");
