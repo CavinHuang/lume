@@ -4,15 +4,21 @@
  */
 import { Cpu } from 'lucide-react'
 import {
+  AlibabaCloud,
   Anthropic,
   DeepSeek,
   Doubao,
   Google,
+  Jina,
+  Kimi,
   Minimax,
   Moonshot,
   OpenAI,
   OpenRouter,
   Qwen,
+  SiliconCloud,
+  Volcengine,
+  XiaomiMiMo,
   ZAI,
 } from '@lobehub/icons'
 import type { ProviderType } from '@lume/shared'
@@ -35,6 +41,15 @@ const PROVIDER_ICON_MAP: Partial<Record<ProviderType, BrandIcon>> = {
   qwen: Qwen as BrandIcon,
   'qwen-portal': Qwen as BrandIcon,
   doubao: Doubao as BrandIcon,
+  // 新增编程套餐
+  'kimi-coding': Kimi as BrandIcon,
+  'aliyun-coding-plan': AlibabaCloud as BrandIcon,
+  'volcengine-coding-plan': Volcengine as BrandIcon,
+  'minimax-token-plan': Minimax as BrandIcon,
+  'xiaomi-token-plan': XiaomiMiMo as BrandIcon,
+  // 补充其他缺失的
+  jina: Jina as BrandIcon,
+  siliconflow: SiliconCloud as BrandIcon,
 }
 
 interface ChannelProviderIconProps {
