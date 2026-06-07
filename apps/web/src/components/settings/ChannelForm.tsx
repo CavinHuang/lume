@@ -188,34 +188,26 @@ export function ChannelForm({
         <div className="space-y-1.5">
           <Label>协议类型</Label>
           <Select
-            value={apiFamily}
+            value={apiFamily === 'openai' ? `openai-${openaiApiMode}` : apiFamily}
             onValueChange={(v) => {
-              setApiFamily(v as ProviderApiFamily)
-              if (v !== 'openai') setOpenaiApiMode('chat-completions')
+              if (v === 'openai-chat-completions') {
+                setApiFamily('openai')
+                setOpenaiApiMode('chat-completions')
+              } else if (v === 'openai-responses') {
+                setApiFamily('openai')
+                setOpenaiApiMode('responses')
+              } else {
+                setApiFamily(v as ProviderApiFamily)
+                setOpenaiApiMode('chat-completions')
+              }
             }}
             disabled={disabled}
           >
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="openai">OpenAI Compatible</SelectItem>
+              <SelectItem value="openai-chat-completions">OpenAI Compatible (Chat Completions)</SelectItem>
+              <SelectItem value="openai-responses">OpenAI Compatible (Responses)</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {provider === 'custom' && apiFamily === 'openai' && (
-        <div className="space-y-1.5">
-          <Label>API 模式</Label>
-          <Select
-            value={openaiApiMode}
-            onValueChange={(v) => setOpenaiApiMode(v as OpenAiApiMode)}
-            disabled={disabled}
-          >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="chat-completions">Chat Completions</SelectItem>
-              <SelectItem value="responses">Responses</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -223,16 +215,16 @@ export function ChannelForm({
 
       {provider === 'openai' && (
         <div className="space-y-1.5">
-          <Label>API 模式</Label>
+          <Label>协议类型</Label>
           <Select
-            value={openaiApiMode}
-            onValueChange={(v) => setOpenaiApiMode(v as OpenAiApiMode)}
+            value={`openai-${openaiApiMode}`}
+            onValueChange={(v) => setOpenaiApiMode(v.replace('openai-', '') as OpenAiApiMode)}
             disabled={disabled}
           >
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="chat-completions">Chat Completions</SelectItem>
-              <SelectItem value="responses">Responses</SelectItem>
+              <SelectItem value="openai-chat-completions">Chat Completions</SelectItem>
+              <SelectItem value="openai-responses">Responses</SelectItem>
             </SelectContent>
           </Select>
         </div>
