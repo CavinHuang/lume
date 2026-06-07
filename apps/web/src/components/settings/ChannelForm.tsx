@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily } from '@lume/shared'
 import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS } from '@lume/shared'
 import { fetchChannelModels } from '@/lib/desktop-api'
@@ -79,6 +79,7 @@ export function ChannelForm({
   const [apiFamily, setApiFamily] = useState<ProviderApiFamily>(
     initialValue?.apiFamily ?? 'openai'
   )
+  const [showApiKey, setShowApiKey] = useState(false)
 
   useEffect(() => {
     if (!initialValue) {
@@ -205,14 +206,24 @@ export function ChannelForm({
 
       <div className="space-y-1.5">
         <Label>API Key</Label>
-        <Input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={apiKeyRequired ? 'sk-...' : '本地服务通常可留空'}
-          className="font-mono text-[12px]"
-          disabled={disabled}
-        />
+        <div className="relative">
+          <Input
+            type={showApiKey ? 'text' : 'password'}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={apiKeyRequired ? 'sk-...' : '本地服务通常可留空'}
+            className="font-mono text-[12px] pr-9"
+            disabled={disabled}
+          />
+          <button
+            type="button"
+            onClick={() => setShowApiKey((v) => !v)}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-1)]"
+            tabIndex={-1}
+          >
+            {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
       </div>
 
       <div className="space-y-2">
