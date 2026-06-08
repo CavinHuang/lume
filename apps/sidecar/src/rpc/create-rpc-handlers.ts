@@ -8,6 +8,7 @@ import { createChannelHandlers } from "./channel-handlers";
 import { createImHandlers } from "./im-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
 import { createReadingHandlers } from "./reading-handlers";
+import { createRoutineHandlers } from "./routine-handlers";
 import { createSystemHandlers } from "./system-handlers";
 import type { NotificationWriter, RpcHandler } from "./types";
 
@@ -50,6 +51,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       writeNotification: context.writeNotification
     }),
     createAutomationHandlers(),
+    createRoutineHandlers(),
     createAgentHandlers({
       writeNotification: context.writeNotification,
       planModePhaseTracker,
