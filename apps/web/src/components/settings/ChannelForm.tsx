@@ -173,7 +173,7 @@ export function ChannelForm({
         </p>
       </div>
 
-      {provider === 'custom' ? (
+      {provider === 'custom' && (
         <div className="space-y-1.5">
           <Label>协议类型</Label>
           <Select
