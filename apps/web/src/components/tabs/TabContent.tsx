@@ -2,6 +2,7 @@ import { useAtomValue } from 'jotai'
 import { tabsAtom, activeTabIdAtom } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
 import { AutomationManagementView } from '@/components/automation/AutomationManagementView'
+import { LumeView } from '@/components/lume/LumeView'
 import { ReadingView } from '@/components/reading/ReadingView'
 import { SettingsView } from '@/components/settings/SettingsView'
 import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
@@ -42,6 +43,10 @@ export function TabContent() {
 
   if (activeTab.type === 'reading') {
     return <ReadingView />
+  }
+
+  if (activeTab.type === 'lume') {
+    return <LumeView />
   }
 
   return null

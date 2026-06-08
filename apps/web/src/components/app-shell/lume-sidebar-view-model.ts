@@ -1,6 +1,6 @@
 import type { AgentRuntimePhase, AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 
-export type LumeSidebarTopActionId = 'new-chat' | 'search' | 'reading' | 'skills' | 'automations'
+export type LumeSidebarTopActionId = 'new-chat' | 'search' | 'lume' | 'skills' | 'automations'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
 const UNASSIGNED_THREADS_WORKSPACE_NAME = '未分配'
@@ -121,7 +121,7 @@ export function buildLumeSidebarViewModel({
   const topActions: LumeSidebarTopAction[] = [
     { id: 'new-chat', label: '新建聊天', icon: 'square-pen', kind: 'button', shortcut: 'Ctrl N' },
     { id: 'search', label: '搜索', icon: 'search', kind: 'search', shortcut: 'Ctrl K' },
-    { id: 'reading', label: '一起读书', icon: 'book-open', kind: 'button', active: activeTabId === '__reading__' },
+    { id: 'lume', label: 'Lume', icon: 'sparkles', kind: 'button', active: activeTabId === '__lume__' },
     { id: 'skills', label: '技能', icon: 'box', kind: 'button', active: activeTabId === '__skills__' },
     {
       id: 'automations',

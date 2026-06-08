@@ -139,12 +139,12 @@ export function LeftSidebar() {
     }
   }
 
-  const openReading = () => {
-    const readingId = '__reading__'
-    setActiveTabId(readingId)
+  const openLume = () => {
+    const lumeId = '__lume__'
+    setActiveTabId(lumeId)
 
-    if (!tabs.find((tab) => tab.id === readingId)) {
-      setTabs((previous) => [...previous, { id: readingId, type: 'reading', title: '一起读书' }])
+    if (!tabs.find((tab) => tab.id === lumeId)) {
+      setTabs((previous) => [...previous, { id: lumeId, type: 'lume', title: 'Lume' }])
     }
   }
 
@@ -270,8 +270,8 @@ export function LeftSidebar() {
       case 'search':
         setOpenCommandPalette(true)
         return
-      case 'reading':
-        openReading()
+      case 'lume':
+        openLume()
         return
       case 'skills':
         openSkills()

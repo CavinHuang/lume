@@ -86,7 +86,7 @@ const readingThemeVars = {
   '--reading-serif': '"Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", STSong, SimSun, serif',
 } as CSSProperties
 
-export function ReadingView() {
+export function ReadingView({ embedded }: { embedded?: boolean } = {}) {
   const [snapshot, setSnapshot] = useState<ReadingLibrarySnapshot | null>(null)
   const [selectedId, setSelectedId] = useState('__all__')
   const [loading, setLoading] = useState(true)
@@ -400,6 +400,7 @@ export function ReadingView() {
       className="relative flex min-h-0 flex-1 overflow-hidden bg-[var(--reading-bg)] text-[var(--text-1)]"
       style={readingThemeVars}
     >
+      {!embedded && (
       <aside className="hidden h-full min-h-0 w-[212px] shrink-0 overflow-hidden border-r border-[var(--reading-border)] bg-[var(--reading-rail)] px-3 py-4 lg:block">
         <div className="flex h-full min-h-0 flex-col gap-4">
           <div className="shrink-0 space-y-2">
@@ -462,6 +463,7 @@ export function ReadingView() {
           ) : null}
         </div>
       </aside>
+      )}
 
       <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
         <div className="flex min-h-full w-full justify-center">
