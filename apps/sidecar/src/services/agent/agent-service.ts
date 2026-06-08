@@ -608,7 +608,8 @@ export async function sendAgentMessage(
     ? resolveChannelModelSelection({
       channelProvider: resolvedChannel.provider,
       baseUrl: resolvedChannel.baseUrl,
-      modelId: boundModel?.modelId ?? input.modelId ?? threadMeta?.modelId ?? resolvedModelId
+      modelId: boundModel?.modelId ?? input.modelId ?? threadMeta?.modelId ?? resolvedModelId,
+      channelProviderId: resolvedChannel.providerId
     }).modelRef
     : effectiveSelection.modelRef;
   const hasExplicitSendSelection = input.modelRef !== undefined || input.channelId !== undefined || input.modelId !== undefined;
@@ -1003,6 +1004,7 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
       baseUrl: channel.baseUrl,
       modelId: boundModel?.modelId ?? input.modelId,
       openaiApiMode: channel.openaiApiMode,
+      channelProviderId: channel.providerId,
     });
     const adapter = getAdapter(modelSelection.adapterProvider, modelSelection.openaiApiMode);
     const request = adapter.buildTitleRequest({

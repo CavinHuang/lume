@@ -135,6 +135,7 @@ export function createChannel(input: ChannelCreateInput): Channel {
     updatedAt: now,
     ...(input.apiFamily ? { apiFamily: input.apiFamily } : {}),
     ...(input.openaiApiMode ? { openaiApiMode: input.openaiApiMode } : {}),
+    ...(input.providerId ? { providerId: input.providerId } : {}),
   };
   config.channels.push(channel);
   writeConfig(config);
@@ -204,7 +205,8 @@ export function resolveChannelEmbeddingBinding(modelRef: string): {
   }
 
   const channel = listChannels().find((item) => {
-    if (!item.enabled || item.provider !== parsed.provider) {
+    const effectiveProvider = item.providerId ?? item.provider;
+    if (!item.enabled || effectiveProvider !== parsed.provider) {
       return false;
     }
     return item.models.some((model) =>
@@ -240,7 +242,8 @@ export function resolveChannelModelBinding(
   }
 
   const channel = listChannels().find((item) => {
-    if (!item.enabled || item.provider !== parsed.provider) {
+    const effectiveProvider = item.providerId ?? item.provider;
+    if (!item.enabled || effectiveProvider !== parsed.provider) {
       return false;
     }
     return item.models.some((model) => {

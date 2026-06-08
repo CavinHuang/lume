@@ -82,6 +82,7 @@ export function ChannelForm({
   const [openaiApiMode, setOpenaiApiMode] = useState<OpenAiApiMode>(
     initialValue?.openaiApiMode ?? 'chat-completions'
   )
+  const [providerId, setProviderId] = useState(initialValue?.providerId ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
 
   useEffect(() => {
@@ -95,6 +96,7 @@ export function ChannelForm({
       setFetchMsg('')
       setApiFamily('openai')
     setOpenaiApiMode('chat-completions')
+    setProviderId('')
       return
     }
 
@@ -107,6 +109,7 @@ export function ChannelForm({
     setFetchMsg('')
     setApiFamily(initialValue.apiFamily ?? 'openai')
     setOpenaiApiMode(initialValue.openaiApiMode ?? 'chat-completions')
+    setProviderId(initialValue.providerId ?? '')
   }, [initialValue])
 
   const handleProviderChange = (p: ProviderType) => {
@@ -116,6 +119,7 @@ export function ChannelForm({
     setModelSearch('')
     setFetchMsg('')
     setOpenaiApiMode('chat-completions')
+    setProviderId('')
   }
 
   const handleFetchModels = async () => {
@@ -147,6 +151,7 @@ export function ChannelForm({
         apiKey,
         apiFamily: provider === 'custom' ? apiFamily : undefined,
         openaiApiMode: (provider === 'openai' || (provider === 'custom' && apiFamily === 'openai')) ? openaiApiMode : undefined,
+        providerId: provider === 'custom' ? providerId || undefined : undefined,
         models,
         enabled: true,
       })
@@ -195,7 +200,23 @@ export function ChannelForm({
             </SelectContent>
           </Select>
         </div>
-      ) : (
+      )}
+
+      {provider === 'custom' && (
+        <div className="space-y-1.5">
+          <Label>标识符</Label>
+          <Input
+            value={providerId}
+            onChange={(e) => setProviderId(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+            placeholder="my-openai"
+            className="font-mono text-[12px]"
+            disabled={disabled}
+          />
+          <p className="text-[11px] text-muted-foreground">用于 modelRef 格式：标识符/模型ID</p>
+        </div>
+      )}
+
+      {provider !== 'custom' && (
         <div className="space-y-1.5">
           <Label>供应商</Label>
           <Select

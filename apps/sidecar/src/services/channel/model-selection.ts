@@ -113,18 +113,20 @@ export function resolveChannelModelSelection(input: {
   modelId: string;
   apiFamily?: string;
   openaiApiMode?: 'chat-completions' | 'responses';
+  channelProviderId?: string;
 }): {
   adapterProvider: ProviderType;
   resolvedModelId: string;
   modelRef: string;
   openaiApiMode?: 'chat-completions' | 'responses';
 } {
-  const parsed = parseModelRef(input.modelId, input.channelProvider);
+  const effectiveProvider = input.channelProviderId ?? input.channelProvider;
+  const parsed = parseModelRef(input.modelId, effectiveProvider);
   if (!parsed) {
     return {
       adapterProvider: input.channelProvider,
       resolvedModelId: input.modelId,
-      modelRef: `${input.channelProvider}/${input.modelId}`
+      modelRef: `${effectiveProvider}/${input.modelId}`
     };
   }
 

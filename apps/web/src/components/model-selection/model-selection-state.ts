@@ -42,13 +42,13 @@ function isCanonicalModelRef(modelId: string): boolean {
   return slashIndex > 0 && slashIndex < trimmed.length - 1
 }
 
-function buildModelRef(channel: Pick<Channel, 'provider'>, modelId: string): string {
-  return isCanonicalModelRef(modelId)
-    ? modelId
-    : `${channel.provider}/${modelId}`
+function buildModelRef(channel: Pick<Channel, 'provider' | 'providerId'>, modelId: string): string {
+  if (isCanonicalModelRef(modelId)) return modelId
+  const effectiveProvider = channel.providerId || channel.provider
+  return `${effectiveProvider}/${modelId}`
 }
 
-function getModelRefVariants(channel: Pick<Channel, 'id' | 'provider'>, model: Pick<ChannelModel, 'id'>): string[] {
+function getModelRefVariants(channel: Pick<Channel, 'id' | 'provider' | 'providerId'>, model: Pick<ChannelModel, 'id'>): string[] {
   const providerModelRef = buildModelRef(channel, model.id)
   const channelScopedModelRef = `${channel.id}/${model.id}`
 
@@ -60,7 +60,7 @@ function getModelRefVariants(channel: Pick<Channel, 'id' | 'provider'>, model: P
 }
 
 function matchesSelection(input: {
-  channel: Pick<Channel, 'id' | 'provider'>
+  channel: Pick<Channel, 'id' | 'provider' | 'providerId'>
   model: Pick<ChannelModel, 'id'>
   activeChannelId?: string
   activeModelRef?: string

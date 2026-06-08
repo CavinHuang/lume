@@ -305,6 +305,8 @@ export interface Channel {
   apiFamily?: ProviderApiFamily
   /** OpenAI API 模式（仅 provider='openai' 时使用，默认 chat-completions） */
   openaiApiMode?: OpenAiApiMode
+  /** 自定义渠道唯一标识（仅 provider='custom' 时使用，用于 modelRef 生成） */
+  providerId?: string
 }
 
 /**
@@ -323,6 +325,8 @@ export interface ChannelCreateInput {
   apiFamily?: ProviderApiFamily
   /** OpenAI API 模式（仅 provider='openai' 时使用） */
   openaiApiMode?: OpenAiApiMode
+  /** 自定义渠道唯一标识（仅 provider='custom' 时使用） */
+  providerId?: string
   enabled: boolean
 }
 
@@ -342,6 +346,8 @@ export interface ChannelUpdateInput {
   apiFamily?: ProviderApiFamily
   /** OpenAI API 模式（仅 provider='openai' 时使用） */
   openaiApiMode?: OpenAiApiMode
+  /** 自定义渠道唯一标识（仅 provider='custom' 时使用） */
+  providerId?: string
   enabled?: boolean
 }
 
