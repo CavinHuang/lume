@@ -21,6 +21,7 @@ import {
   Trash2,
   Archive,
   BookOpen,
+  Bot,
   X,
 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -849,6 +850,8 @@ function renderIcon(icon: string, size: number) {
       return <Box size={size} />
     case 'book-open':
       return <BookOpen size={size} />
+    case 'bot':
+      return <Bot size={size} />
     case 'clock':
       return <Clock3 size={size} />
     case 'folder':
