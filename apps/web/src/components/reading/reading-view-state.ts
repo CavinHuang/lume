@@ -6,6 +6,7 @@ import type {
   ReadingRunTaskInput,
   ReadingTaskResult,
   ReadingSearchResult,
+  ReadingSourceKind,
 } from '@lume/shared'
 
 export type ReadingRailItemKind = 'all' | 'book' | 'poetry'
@@ -44,8 +45,13 @@ export interface ReadingSearchItem {
   author?: string
   summary?: string
   coverUrl?: string
+  source: ReadingSourceKind
+  sourceLabel: string
   alreadyAdded: boolean
   addBookInput: ReadingAddBookInput
+  rating?: number
+  ratingCount?: number
+  readingCount?: number
 }
 
 export interface ReadingWereadConnectionPrompt {
@@ -280,6 +286,11 @@ export function buildReadingSearchItems(results: ReadingSearchResult[], existing
         ...(result.author ? { author: result.author } : {}),
         ...(result.summary ? { summary: result.summary } : {}),
         ...(result.coverUrl ? { coverUrl: result.coverUrl } : {}),
+        ...(typeof result.rating === 'number' ? { rating: result.rating } : {}),
+        ...(typeof result.ratingCount === 'number' ? { ratingCount: result.ratingCount } : {}),
+        ...(typeof result.readingCount === 'number' ? { readingCount: result.readingCount } : {}),
+        source: result.source,
+        sourceLabel: getSourceLabel(result.source),
         alreadyAdded: Boolean((sourceKey && existingKeys.has(sourceKey)) || existingKeys.has(titleKey)),
         addBookInput: {
           title: result.title,
@@ -770,4 +781,13 @@ function safeFilenameSegment(value: string): string {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
+}
+
+function getSourceLabel(source: ReadingSourceKind): string {
+  switch (source) {
+    case 'weread': return '微信读书'
+    case 'gutenberg': return 'Gutenberg'
+    case 'poetry': return '诗词'
+    default: return source
+  }
 }

@@ -47,14 +47,19 @@ export class WereadClient {
       count: limit
     });
     return extractBookArray(payload).map((item) => {
-      const book = mapWereadBook(readBookInfo(item));
+      const bookInfo = readBookInfo(item);
+      const book = mapWereadBook(bookInfo);
       return {
         source: "weread",
         externalId: book.source?.externalId,
         title: book.title,
         author: book.author,
         coverUrl: book.coverUrl,
-        url: book.source?.url
+        url: book.source?.url,
+        summary: readString(bookInfo.intro) ?? readString(item.intro),
+        rating: readNumber(item.newRating) ?? readNumber(bookInfo.newRating),
+        ratingCount: readNumber(item.newRatingCount) ?? readNumber(bookInfo.newRatingCount),
+        readingCount: readNumber(item.readingCount) ?? readNumber(bookInfo.readingCount)
       };
     });
   }

@@ -3,6 +3,7 @@ import { GutenbergClient } from "./gutenberg-client";
 import { PoetryClient } from "./poetry-client";
 import type { ReadingSourceBook, ReadingSourceFetch, ReadingSourceResult } from "./types";
 import { WereadClient } from "./weread-client";
+import { WereadPublicClient } from "./weread-public-client";
 
 interface BookDataServiceInput {
   wereadApiKey?: string | null;
@@ -44,6 +45,10 @@ export class BookDataService {
 
   async searchGutenberg(query: string, limit = 10): Promise<ReadingSourceResult<ReadingSearchResult[]>> {
     return this.trySource(async () => new GutenbergClient({ fetch: this.fetchImpl }).search(query, limit), []);
+  }
+
+  async searchWereadPublic(query: string, limit = 10): Promise<ReadingSourceResult<ReadingSearchResult[]>> {
+    return this.trySource(async () => new WereadPublicClient({ fetch: this.fetchImpl }).search(query, limit), []);
   }
 
   async fetchPoem(): Promise<ReadingSourceResult<ReadingSearchResult | null>> {

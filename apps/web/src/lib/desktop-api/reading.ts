@@ -18,6 +18,7 @@ import type {
   ReadingNoteRevisionInput,
   ReadingNoteSummary,
   ReadingRunTaskInput,
+  ReadingSearchBooksInput,
   ReadingSearchResult,
   ReadingSearchWereadInput,
   ReadingSettings,
@@ -131,6 +132,9 @@ export const disconnectReadingWeread = async () => {
 
 export const searchReadingWeread = (input: ReadingSearchWereadInput) =>
   sidecarCall<ReadingSearchResult[]>(READING_IPC_CHANNELS.SEARCH_WEREAD, input)
+
+export const searchReadingBooks = (input: ReadingSearchBooksInput) =>
+  sidecarCall<ReadingSearchResult[]>(READING_IPC_CHANNELS.SEARCH_BOOKS, input)
 
 export const generateReadingShareCard = (input: ReadingGenerateShareCardInput) =>
   sidecarCall<ReadingShareCardResult>(READING_IPC_CHANNELS.GENERATE_SHARE_CARD, input)

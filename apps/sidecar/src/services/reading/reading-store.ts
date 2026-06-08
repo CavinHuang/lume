@@ -597,6 +597,26 @@ export async function searchReadingWeread(query: string, limit = 10): Promise<Re
   return result.data;
 }
 
+const SEARCH_SOURCE_TIMEOUT_MS = 8_000;
+
+export async function searchReadingBooks(query: string, limit = 10): Promise<ReadingSearchResult[]> {
+  const apiKey = getReadingWereadApiKey();
+  if (apiKey) {
+    const result = await new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit);
+    return result.ok ? result.data : [];
+  }
+  return withSearchTimeout(
+    new BookDataService({}).searchWereadPublic(query, limit).then((r) => r.data), []
+  );
+}
+
+function withSearchTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), SEARCH_SOURCE_TIMEOUT_MS)),
+  ]);
+}
+
 function readLibrary(): ReadingLibraryIndex {
   initBaseDirs();
   if (!existsSync(getReadingLibraryPath())) {

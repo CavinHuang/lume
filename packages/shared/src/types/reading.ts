@@ -337,6 +337,11 @@ export interface ReadingSearchWereadInput {
   limit?: number;
 }
 
+export interface ReadingSearchBooksInput {
+  query: string;
+  limit?: number;
+}
+
 export interface ReadingSearchResult {
   source: ReadingSourceKind;
   externalId?: string;
@@ -345,6 +350,9 @@ export interface ReadingSearchResult {
   coverUrl?: string;
   url?: string;
   summary?: string;
+  rating?: number;
+  ratingCount?: number;
+  readingCount?: number;
 }
 
 export interface ReadingGenerateShareCardInput {
@@ -394,6 +402,7 @@ export const READING_IPC_CHANNELS = {
   CONNECT_WEREAD: "reading:connect-weread",
   DISCONNECT_WEREAD: "reading:disconnect-weread",
   SEARCH_WEREAD: "reading:search-weread",
+  SEARCH_BOOKS: "reading:search-books",
   GENERATE_COVER: "reading:generate-cover",
   DELETE_COVER: "reading:delete-cover",
   REFRESH_QUOTES: "reading:refresh-quotes",

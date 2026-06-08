@@ -12,10 +12,11 @@ import {
   Plus,
   RefreshCw,
   Search,
+  X,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
-import { WEREAD_KEY_PAGE_URL, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult } from '@lume/shared'
+import { WEREAD_KEY_PAGE_URL, type ReadingAddBookInput, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult, type ReadingSourceKind } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { openExternal, revealPathInSystem, saveFilePathDialog, writeBinaryFile } from '@/lib/desktop-api'
@@ -29,7 +30,7 @@ import {
   getWereadReadData,
   getWereadReviews,
   manualGenerateReadingNote,
-  searchReadingWeread,
+  searchReadingBooks,
   getWereadShelf,
 } from '@/lib/desktop-api/reading'
 import { cn } from '@/lib/utils'
@@ -91,6 +92,7 @@ export function ReadingView() {
   const [searchDraft, setSearchDraft] = useState('')
   const [searchResults, setSearchResults] = useState<ReadingSearchResult[]>([])
   const [addingSearchItemId, setAddingSearchItemId] = useState<string | null>(null)
+  const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [runningReading, setRunningReading] = useState(false)
   const [wereadShelf, setWereadShelf] = useState<unknown>(null)
   const [wereadNotebooks, setWereadNotebooks] = useState<unknown>(null)
@@ -261,7 +263,7 @@ export function ReadingView() {
     const query = searchDraft.trim()
     if (!query) return
     try {
-      const results = await searchReadingWeread({ query, limit: 5 })
+      const results = await searchReadingBooks({ query, limit: 10 })
       setSearchResults(results)
       toast.success(results.length > 0 ? `找到 ${results.length} 本书` : '没有找到匹配书籍')
     } catch (error) {
@@ -453,40 +455,14 @@ export function ReadingView() {
               <div className="flex items-center justify-between gap-4">
                 <h1 className="text-[21px] font-semibold tracking-normal">一起读书</h1>
                 <div className="flex items-center gap-2">
-                  <div className="relative hidden md:block">
-                    <div className="flex h-9 items-center gap-2 rounded-[8px] bg-[var(--reading-card)] px-3">
-                      <Search size={15} className="text-[var(--text-3)]" />
-                      <input
-                        value={searchDraft}
-                        onChange={(event) => setSearchDraft(event.target.value)}
-                        onKeyDown={(event) => { if (event.key === 'Enter') void handleSearch() }}
-                        placeholder="搜索书籍"
-                        className="w-[132px] bg-transparent text-[13px] outline-none placeholder:text-[var(--text-3)]"
-                      />
-                    </div>
-                    {searchItems.length > 0 && (
-                      <div className="absolute right-0 top-11 z-40 w-[360px] overflow-hidden rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_18px_42px_-26px_rgba(18,22,32,0.42)]">
-                        {searchItems.map((item) => (
-                          <div key={item.id} className="flex items-center gap-3 border-b border-[var(--border)] px-3 py-2.5 last:border-b-0">
-                            <BookThumb title={item.title} coverUrl={item.coverUrl} />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-[13px] font-semibold text-[var(--text-1)]">{item.title}</div>
-                              <div className="mt-0.5 truncate text-[11px] text-[var(--text-3)]">{item.author ?? '未知作者'}</div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => void handleAddSearchItem(item.id)}
-                              disabled={item.alreadyAdded || addingSearchItemId === item.id}
-                              className="flex size-8 shrink-0 items-center justify-center rounded-[6px] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] disabled:cursor-default disabled:opacity-60"
-                              title={item.alreadyAdded ? '已在书架' : '加入书架'}
-                            >
-                              {item.alreadyAdded ? <Check size={15} /> : <Plus size={15} />}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSearchModalOpen(true)}
+                    className="flex h-9 items-center gap-2 rounded-[8px] bg-[var(--reading-card)] px-3 text-[13px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+                  >
+                    <Search size={15} />
+                    搜索书籍
+                  </button>
                   {canRunReading && (
                     <button
                       type="button"
@@ -645,6 +621,22 @@ export function ReadingView() {
           <NavButton title="下一条" onClick={() => scrollToNote(navigation.nextId)} icon={<ChevronDown size={17} />} />
           <NavButton title="底部" onClick={() => scrollToNote(navigation.bottomId)} icon={<ChevronsDown size={17} />} />
         </div>
+      )}
+
+      {searchModalOpen && (
+        <BookSearchModal
+          searchDraft={searchDraft}
+          searchItems={searchItems}
+          addingSearchItemId={addingSearchItemId}
+          onSearchDraftChange={setSearchDraft}
+          onSearch={handleSearch}
+          onAdd={(itemId) => void handleAddSearchItem(itemId)}
+          onClose={() => {
+            setSearchModalOpen(false)
+            setSearchResults([])
+            setSearchDraft('')
+          }}
+        />
       )}
     </div>
   )
@@ -1063,4 +1055,198 @@ function getErrorMessage(error: unknown): string {
 
 function readSettledPayload(result: PromiseSettledResult<unknown>): unknown {
   return result.status === 'fulfilled' ? result.value : null
+}
+
+function BookSearchModal({
+  searchDraft,
+  searchItems,
+  addingSearchItemId,
+  onSearchDraftChange,
+  onSearch,
+  onAdd,
+  onClose,
+}: {
+  searchDraft: string
+  searchItems: Array<{ id: string; title: string; author?: string; summary?: string; coverUrl?: string; source: ReadingSourceKind; sourceLabel: string; alreadyAdded: boolean; addBookInput: ReadingAddBookInput; rating?: number; ratingCount?: number; readingCount?: number }>
+  addingSearchItemId: string | null
+  onSearchDraftChange: (value: string) => void
+  onSearch: () => void
+  onAdd: (itemId: string) => void
+  onClose: () => void
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [expandingId, setExpandingId] = useState<string | null>(null)
+  const [expandedReviews, setExpandedReviews] = useState<Record<string, WereadTextItem[]>>({})
+
+  const handleToggleExpand = async (item: typeof searchItems[number]) => {
+    if (expandedId === item.id) {
+      setExpandedId(null)
+      return
+    }
+    const bookId = item.addBookInput.source?.externalId
+    if (!bookId || item.source !== 'weread') return
+    setExpandedId(item.id)
+    if (expandedReviews[item.id]) return
+    setExpandingId(item.id)
+    try {
+      const payload = await getWereadPublicReviews(bookId, 'hot', item.title)
+      const reviews = normalizeWereadReviews(payload).slice(0, 3)
+      setExpandedReviews((prev) => ({ ...prev, [item.id]: reviews }))
+    } catch (error) {
+      console.error('[BookSearchModal] 加载书评失败:', error)
+      setExpandedReviews((prev) => ({ ...prev, [item.id]: [] }))
+    } finally {
+      setExpandingId(null)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="flex max-h-[80vh] w-[520px] flex-col overflow-hidden rounded-[12px] border border-[var(--reading-border)] bg-[var(--reading-panel)] shadow-[0_24px_64px_-16px_rgba(18,22,32,0.5)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-[var(--reading-border)] px-5 py-4">
+          <h2 className="text-[16px] font-semibold text-[var(--text-1)]">搜索书籍</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex size-7 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Search bar */}
+        <div className="flex items-center gap-2 border-b border-[var(--reading-border)] px-5 py-3">
+          <div className="flex flex-1 items-center gap-2 rounded-[8px] bg-[var(--reading-card)] px-3 py-2">
+            <Search size={14} className="shrink-0 text-[var(--text-3)]" />
+            <input
+              value={searchDraft}
+              onChange={(e) => onSearchDraftChange(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSearch() }}
+              placeholder="搜索书名或作者..."
+              className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--text-3)]"
+              autoFocus
+            />
+          </div>
+          <button
+            type="button"
+            onClick={onSearch}
+            className="h-9 shrink-0 rounded-[8px] bg-[var(--reading-accent)] px-4 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+          >
+            搜索
+          </button>
+        </div>
+
+        {/* Results */}
+        <div className="flex-1 overflow-y-auto px-5 py-3">
+          {searchItems.length === 0 ? (
+            <div className="py-16 text-center text-[14px] text-[var(--text-3)]">输入书名或作者搜索</div>
+          ) : (
+            <div className="space-y-2">
+              {searchItems.map((item) => {
+                const canExpand = item.source === 'weread' && Boolean(item.addBookInput.source?.externalId)
+                const isExpanded = expandedId === item.id
+                const reviews = expandedReviews[item.id]
+                const isLoading = expandingId === item.id
+                return (
+                  <div key={item.id} className="rounded-[8px] bg-[var(--reading-card)]">
+                    <div className="group flex items-center gap-3 px-3 py-3">
+                      {/* Cover */}
+                      <BookThumb title={item.title} coverUrl={item.coverUrl} size="large" />
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[14px] font-semibold leading-5 text-[var(--text-1)]">{item.title}</div>
+                        <div className="mt-0.5 text-[12px] text-[var(--text-3)]">{item.author ?? '未知作者'}</div>
+                        {(typeof item.rating === 'number' || typeof item.readingCount === 'number') && (
+                          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--text-3)]">
+                            {typeof item.rating === 'number' && (
+                              <>
+                                <span className="text-[#ffc107]">{renderStars(item.rating)}</span>
+                                <span className="font-medium text-[var(--text-2)]">{(item.rating / 10).toFixed(1)}</span>
+                              </>
+                            )}
+                            {typeof item.ratingCount === 'number' && item.ratingCount > 0 && (
+                              <span>({item.ratingCount}人)</span>
+                            )}
+                            {typeof item.readingCount === 'number' && item.readingCount > 0 && (
+                              <span>· {item.readingCount}人在读</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex shrink-0 items-center gap-1.5 invisible group-hover:visible">
+                        <button
+                          type="button"
+                          onClick={() => onAdd(item.id)}
+                          disabled={item.alreadyAdded || addingSearchItemId === item.id}
+                          className="flex h-6 items-center gap-1 rounded-[4px] border border-[var(--reading-border)] bg-[var(--reading-card)] px-2 text-[10px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] disabled:cursor-default disabled:opacity-50"
+                        >
+                          {item.alreadyAdded ? <Check size={10} /> : <Plus size={10} />}
+                          {item.alreadyAdded ? '已添加' : '推荐'}
+                        </button>
+                        {!item.alreadyAdded && (
+                          <button
+                            type="button"
+                            onClick={() => onAdd(item.id)}
+                            disabled={addingSearchItemId === item.id}
+                            className="flex h-6 items-center gap-1 rounded-[4px] border border-[var(--reading-accent)] bg-[var(--reading-card)] px-2 text-[10px] font-medium text-[var(--reading-accent)] transition-colors hover:bg-[var(--reading-accent)] hover:text-white disabled:cursor-default disabled:opacity-50"
+                          >
+                            Lume 评价
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Expand toggle */}
+                      {canExpand && (
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleExpand(item)}
+                          className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+                        >
+                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Expanded reviews */}
+                    {isExpanded && (
+                      <div className="border-t border-[var(--reading-border)] px-3 py-2">
+                        {isLoading ? (
+                          <div className="py-3 text-center text-[12px] text-[var(--text-3)]">加载书评中...</div>
+                        ) : reviews && reviews.length > 0 ? (
+                          <div className="space-y-2">
+                            {reviews.map((review) => (
+                              <div key={review.id} className="rounded-[6px] bg-[var(--reading-panel)] px-3 py-2 [font-family:var(--reading-serif)] text-[12px] leading-[1.8] text-[var(--text-2)]">
+                                <div>{review.text}</div>
+                                <div className="mt-1 text-[10px] text-[var(--text-3)]">
+                                  {[review.authorName, review.totalCount ? `${review.totalCount}人赞同` : undefined].filter(Boolean).join(' · ')}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="py-3 text-center text-[12px] text-[var(--text-3)]">暂无书评</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function renderStars(rating: number): string {
+  const full = Math.max(0, Math.min(5, Math.round(rating / 20)))
+  return '★'.repeat(full) + '☆'.repeat(5 - full)
 }
