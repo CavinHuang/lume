@@ -34,6 +34,7 @@ import {
   getWereadShelf,
 } from '@/lib/desktop-api/reading'
 import { cn } from '@/lib/utils'
+import { RoutinePanel } from '../routine/RoutinePanel'
 import {
   buildReadingBookRail,
   buildManualReadingRunInput,
@@ -423,6 +424,20 @@ export function ReadingView() {
             ))}
           </div>
 
+          <button
+            type="button"
+            onClick={() => setSelectedId("__routine__")}
+            className={cn(
+              "flex w-full items-center gap-2.5 rounded-[8px] px-2 py-1.5 text-left transition-colors",
+              selectedId === "__routine__"
+                ? "bg-[var(--reading-active)] text-[var(--text-1)]"
+                : "text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]",
+            )}
+          >
+            <span className="text-[14px]">📅</span>
+            <span className="truncate text-[12px] font-normal">今日日程</span>
+          </button>
+
           {rail?.showWereadPrompt && wereadPrompt && (
             <div className="shrink-0 rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-3">
               <div className="text-[13px] font-semibold text-[var(--text-1)]">{wereadPrompt.title}</div>
@@ -451,7 +466,8 @@ export function ReadingView() {
       <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
         <div className="flex min-h-full w-full justify-center">
           <main className="w-full max-w-[980px] px-5 py-7 lg:px-8">
-            {!selectedWereadBook && (
+            {selectedId === "__routine__" && <RoutinePanel />}
+            {!selectedWereadBook && selectedId !== "__routine__" && (
               <div className="flex items-center justify-between gap-4">
                 <h1 className="text-[21px] font-semibold tracking-normal">一起读书</h1>
                 <div className="flex items-center gap-2">
