@@ -152,22 +152,27 @@ export function getModelProviderFormInitialValue(
   apiKey: string,
   channelId?: string,
 ): ChannelCreateInput {
-  // 自定义 Channel：通过 channelId 查找
-  if (provider === 'custom' && channelId) {
-    const existing = channels.find((c) => c.id === channelId)
-    if (existing) {
+  // 自定义 Channel：通过 channelId 查找（activeProvider 可能是 UUID）
+  const resolvedChannelId = channelId ?? (provider !== 'custom' && provider.includes('-') ? provider : undefined)
+  if (resolvedChannelId) {
+    const existing = channels.find((c) => c.id === resolvedChannelId)
+    if (existing && existing.provider === 'custom') {
       return {
         name: existing.name,
         provider: existing.provider,
         baseUrl: existing.baseUrl,
         apiKey,
         apiFamily: existing.apiFamily,
+        openaiApiMode: existing.openaiApiMode,
+        providerId: existing.providerId,
         models: existing.models,
         defaultModelId: existing.defaultModelId,
         fallbackModelIds: existing.fallbackModelIds,
         enabled: existing.enabled,
       }
     }
+  }
+  if (provider === 'custom') {
     // 新建自定义 Channel
     return {
       name: '',
