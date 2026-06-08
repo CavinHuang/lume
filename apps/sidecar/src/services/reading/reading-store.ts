@@ -264,6 +264,70 @@ export function recordReadingBookProgress(input: {
   return updated;
 }
 
+export function autoAdvanceProgress(): { bookId: string; title: string; oldProgress: number; newProgress: number }[] {
+  initReadingStorage();
+  const library = readLibrary();
+  const now = Date.now();
+  const results: { bookId: string; title: string; oldProgress: number; newProgress: number }[] = [];
+
+  for (const book of library.books) {
+    if (book.status === "finished") continue;
+
+    const currentProgress = typeof book.progressPercent === "number" ? book.progressPercent : 0;
+    const dailyIncrement = 100 / 14;
+    const newProgress = Math.min(100, Math.round((currentProgress + dailyIncrement) * 10) / 10);
+
+    book.progressPercent = newProgress;
+    book.updatedAt = now;
+
+    if (newProgress >= 100) {
+      book.status = "finished";
+    }
+
+    results.push({
+      bookId: book.id,
+      title: book.title,
+      oldProgress: currentProgress,
+      newProgress,
+    });
+  }
+
+  if (results.length > 0) {
+    writeLibrary(library);
+  }
+  return results;
+}
+
+export function autoPickNextBook(): ReadingBook | null {
+  initReadingStorage();
+  const library = readLibrary();
+  const activeBooks = library.books.filter((b) => b.status !== "finished");
+
+  if (activeBooks.length > 0) return null;
+
+  const finishedBooks = library.books
+    .filter((b) => b.status === "finished" && b.updatedAt)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+
+  const lastFinished = finishedBooks[0];
+  const daysSinceFinish = lastFinished
+    ? (Date.now() - lastFinished.updatedAt) / (24 * 3600_000)
+    : Infinity;
+
+  if (daysSinceFinish < 2) return null;
+
+  const queuedBook = library.books.find((b) => b.status === "queued");
+  if (queuedBook) {
+    queuedBook.status = "reading";
+    queuedBook.progressPercent = 0;
+    queuedBook.updatedAt = Date.now();
+    writeLibrary(library);
+    return normalizeReadingBook(queuedBook);
+  }
+
+  return null;
+}
+
 export function setReadingBookLocalCover(bookId: string, localCoverPath: string): ReadingBook {
   initReadingStorage();
   const library = readLibrary();
