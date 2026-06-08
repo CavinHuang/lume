@@ -293,3 +293,19 @@ export function getReadingRunsDir(): string {
 export function getReadingWereadCachePath(): string {
   return join(getReadingDir(), "weread-cache.json");
 }
+
+export function getRoutineDir(): string {
+  return ensureDir(join(getConfigDir(), "routine"), "日程数据目录");
+}
+
+export function getRoutineSchedulesDir(): string {
+  return ensureDir(join(getRoutineDir(), "schedules"), "日程表目录");
+}
+
+export function getRoutineSchedulePath(date: string): string {
+  return join(getRoutineSchedulesDir(), `${date}.json`);
+}
+
+export function getRoutineRunsPath(): string {
+  return join(getRoutineDir(), "runs.jsonl");
+}
