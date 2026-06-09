@@ -23,7 +23,7 @@ export function createRoutineHandlers(): Record<string, RpcHandler> {
 
     [ROUTINE_IPC_CHANNELS.REGENERATE]: async () => {
       const date = today()
-      const routine = generateDailyRoutine(date)
+      const routine = await generateDailyRoutine(date, true)
       return routine
     },
   }

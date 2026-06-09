@@ -1,5 +1,6 @@
 import type { DailyRoutine } from "@lume/shared"
-import { createAutomationJob, listAutomationJobs } from "../automation/automation-manager"
+import { createAutomationJob } from "../automation/automation-manager"
+import { listAutomationJobs } from "../automation/automation-manager"
 import { startAutomationRunner, refreshAutomationRunnerJobs } from "../automation/automation-runner-service"
 import { getActivityExecutor } from "./routine-activities"
 import { readRoutine, writeRoutine, appendRoutineRun } from "./routine-store"
@@ -14,19 +15,37 @@ export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<Dai
   for (const entry of routine.entries) {
     if (entry.status !== "pending" || entry.automationJobId) continue
 
+    // Try predefined executor first
     const executor = getActivityExecutor(entry.activity)
-    if (!executor) {
-      entry.status = "skipped"
+    if (executor) {
+      try {
+        const jobInput = executor.buildJobInput(entry, routine.context)
+        const job = createAutomationJob(jobInput)
+        entry.automationJobId = job.id
+      } catch {
+        entry.status = "failed"
+      }
       continue
     }
 
-    try {
-      const jobInput = executor.buildJobInput(entry, routine.context)
-      const job = createAutomationJob(jobInput)
-      entry.automationJobId = job.id
-    } catch {
-      entry.status = "failed"
+    // Custom activity: use customPrompt from the entry
+    if (entry.customPrompt) {
+      try {
+        const job = createAutomationJob({
+          name: entry.customName ?? entry.activity,
+          prompt: entry.customPrompt,
+          schedule: { type: "once", runAt: entry.scheduledAt },
+          enabled: true,
+        })
+        entry.automationJobId = job.id
+      } catch {
+        entry.status = "failed"
+      }
+      continue
     }
+
+    // No executor and no custom prompt — skip
+    entry.status = "skipped"
   }
 
   await refreshAutomationRunnerJobs()
@@ -42,12 +61,24 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
   const entry = routine.entries.find((e) => e.id === entryId)
   if (!entry) return null
 
+  // Try predefined executor first
   const executor = getActivityExecutor(entry.activity)
-  if (!executor) return null
-
-  const jobInput = executor.buildJobInput({ ...entry, scheduledAt: Date.now() }, routine.context)
-  const job = createAutomationJob(jobInput)
-  entry.automationJobId = job.id
+  if (executor) {
+    const jobInput = executor.buildJobInput({ ...entry, scheduledAt: Date.now() }, routine.context)
+    const job = createAutomationJob(jobInput)
+    entry.automationJobId = job.id
+  } else if (entry.customPrompt) {
+    // Custom activity: use customPrompt
+    const job = createAutomationJob({
+      name: entry.customName ?? entry.activity,
+      prompt: entry.customPrompt,
+      schedule: { type: "once", runAt: Date.now() },
+      enabled: true,
+    })
+    entry.automationJobId = job.id
+  } else {
+    return null
+  }
 
   await refreshAutomationRunnerJobs()
   writeRoutine(routine)

@@ -278,3 +278,39 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Routine entry tooltip */
+.routine-tooltip-wrapper .routine-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+  z-index: 50;
+  white-space: normal;
+  width: max-content;
+  max-width: 240px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.routine-tooltip-wrapper .routine-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--foreground);
+}
+
+.routine-tooltip-wrapper:hover .routine-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}

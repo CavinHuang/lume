@@ -1,4 +1,4 @@
-export type RoutineActivity =
+export type PredefinedRoutineActivity =
   | "reading_note"
   | "reading_progress"
   | "memory_organize"
@@ -8,6 +8,8 @@ export type RoutineActivity =
   | "todo_review"
   | "interest_digest"
   | "work_overview"
+
+export type RoutineActivity = PredefinedRoutineActivity | (string & {})
 
 export type RoutineEntryStatus = "pending" | "running" | "completed" | "skipped" | "failed"
 export type RoutineStatus = "planned" | "running" | "completed"
@@ -24,6 +26,9 @@ export interface RoutineEntry {
   status: RoutineEntryStatus
   automationJobId?: string
   result?: RoutineResult
+  description?: string
+  customName?: string
+  customPrompt?: string
 }
 
 export interface RoutineContext {
@@ -42,6 +47,7 @@ export interface DailyRoutine {
   status: RoutineStatus
   entries: RoutineEntry[]
   context: RoutineContext
+  generationSource?: "llm" | "rules"
 }
 
 export const ROUTINE_IPC_CHANNELS = {

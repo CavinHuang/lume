@@ -427,7 +427,7 @@ export function ReadingView() {
                 : "text-[var(--text-3)] hover:text-[var(--text-1)]",
             )}
           >
-            📅 今日日程
+            今日日程
           </button>
         </div>
         <div className="flex min-h-0 flex-1">

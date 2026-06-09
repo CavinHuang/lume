@@ -42,7 +42,7 @@ function scheduleNextGeneration(): void {
 
 async function runDailyGeneration(): Promise<void> {
   console.log("[日程] 开始生成今日日程")
-  const routine = generateDailyRoutine()
+  const routine = await generateDailyRoutine()
   await scheduleRoutineEntries(routine)
   console.log(`[日程] 已生成 ${routine.entries.length} 个活动`)
 }

@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto"
 import type { DailyRoutine, RoutineContext, RoutineEntry, RoutineActivity } from "@lume/shared"
 import { listReadingBooks, getReadingSettings, listReadingNotes } from "../reading/reading-store"
 import { getApplicableActivities } from "./routine-activities"
 import { writeRoutine, readRoutine } from "./routine-store"
+import { generateRoutinePlanWithLlm, type LlmRoutinePlan } from "./routine-llm-adapter"
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -48,13 +48,64 @@ const PRIORITY_ORDER: RoutineActivity[] = [
   "daily_summary",
 ]
 
-export function generateDailyRoutine(overrideDate?: string): DailyRoutine {
+export async function generateDailyRoutine(overrideDate?: string, force?: boolean): Promise<DailyRoutine> {
   const date = overrideDate ?? today()
 
-  const existing = readRoutine(date)
-  if (existing) return existing
+  if (!force) {
+    const existing = readRoutine(date)
+    if (existing) return existing
+  }
 
   const context = collectRoutineContext()
+
+  // Try LLM generation first
+  try {
+    const llmPlan = await generateRoutinePlanWithLlm(context, date)
+    if (llmPlan && llmPlan.entries.length > 0) {
+      const routine = buildRoutineFromLlmPlan(llmPlan, context, date)
+      writeRoutine(routine)
+      return routine
+    }
+  } catch (error) {
+    console.warn("[日程] LLM 生成失败，回退到规则引擎:", error instanceof Error ? error.message : String(error))
+  }
+
+  // Fallback: rule-based generation
+  const routine = generateRuleBasedRoutine(context, date)
+  writeRoutine(routine)
+  return routine
+}
+
+function buildRoutineFromLlmPlan(plan: LlmRoutinePlan, context: RoutineContext, date: string): DailyRoutine {
+  const slots = buildTimeSlots(date)
+
+  const entries: RoutineEntry[] = plan.entries.map((item, index) => {
+    const hour = Math.max(8, Math.min(21, item.scheduledHour))
+    const scheduledAt = slots[hour - 8] ?? slots[0]!
+
+    return {
+      id: `entry-${item.activity}-${index}`,
+      activity: item.activity as RoutineActivity,
+      scheduledAt,
+      status: "pending" as const,
+      description: item.description || undefined,
+      ...(item.customName ? { customName: item.customName } : {}),
+      ...(item.customPrompt ? { customPrompt: item.customPrompt } : {}),
+    }
+  })
+
+  return {
+    id: `routine-${date}`,
+    date,
+    generatedAt: Date.now(),
+    status: "planned",
+    entries,
+    context,
+    generationSource: "llm",
+  }
+}
+
+function generateRuleBasedRoutine(context: RoutineContext, date: string): DailyRoutine {
   const applicable = getApplicableActivities(context)
 
   let entries: RoutineEntry[] = applicable.map((executor, index) => ({
@@ -77,15 +128,13 @@ export function generateDailyRoutine(overrideDate?: string): DailyRoutine {
     return entry
   })
 
-  const routine: DailyRoutine = {
+  return {
     id: `routine-${date}`,
     date,
     generatedAt: Date.now(),
     status: "planned",
     entries,
     context,
+    generationSource: "rules",
   }
-
-  writeRoutine(routine)
-  return routine
 }
