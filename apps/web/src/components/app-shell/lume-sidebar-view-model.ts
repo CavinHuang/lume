@@ -119,7 +119,7 @@ export function buildLumeSidebarViewModel({
     { id: 'settings', label: '设置', icon: 'settings', kind: 'button' },
   ]
 
-  const workspaceItems = workspaces.map((workspace) => {
+  const workspaceItems: LumeSidebarWorkspaceItem[] = workspaces.map((workspace) => {
     const workspaceThreads = sortThreadsByUpdatedAt(
       threads.filter((thread) => getThreadWorkspaceId(thread) === workspace.id),
     )

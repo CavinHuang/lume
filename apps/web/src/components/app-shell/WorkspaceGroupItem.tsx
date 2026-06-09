@@ -157,32 +157,36 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
         )}
 
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={`在「${name}」中新建会话`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onNewThread(id)
-              }}
-              className="absolute right-5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-3)] opacity-0 transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] group-hover/workspace:opacity-100"
-            >
-              <Plus size={13} />
-            </button>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`在「${name}」中新建会话`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onNewThread(id)
+                }}
+                className="absolute right-5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-3)] opacity-0 transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] group-hover/workspace:opacity-100"
+              >
+                <Plus size={13} />
+              </button>
+            }
+          />
           <TooltipContent side="top">在此工作区新建会话</TooltipContent>
         </Tooltip>
 
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="工作区菜单"
-              className="absolute right-0 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-3)] opacity-0 transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-2)] group-hover/workspace:opacity-100"
-            >
-              <MoreHorizontal size={13} />
-            </button>
-          </DropdownMenuTrigger>
+          <DropdownMenuTrigger
+            render={
+              <button
+                type="button"
+                aria-label="工作区菜单"
+                className="absolute right-0 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-3)] opacity-0 transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-2)] group-hover/workspace:opacity-100"
+              >
+                <MoreHorizontal size={13} />
+              </button>
+            }
+          />
           <DropdownMenuContent>
             <DropdownMenuItem onSelect={() => onToggleWorkspacePin(id)}>
               {pinned ? <Box size={14} /> : <Box size={14} />}

@@ -51,7 +51,7 @@ export function LumeSidebar({
   onTopAction,
   onFooterAction,
   onSelectWorkspace,
-  onToggleWorkspace,
+  onToggleWorkspace: _onToggleWorkspace,
   onToggleAllWorkspaces,
   onCreateWorkspace,
   onOpenThread,

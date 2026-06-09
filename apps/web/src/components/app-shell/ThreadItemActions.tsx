@@ -109,45 +109,51 @@ export function ThreadItemActions({
         )}
       >
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              className={cn(
-                'p-0.5 rounded transition-colors',
-                pinned
-                  ? 'text-[var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)] hover:text-[var(--brand)]'
-                  : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
-              )}
-              onClick={onTogglePin}
-            >
-              {pinned ? <PinOff size={14} /> : <Pin size={14} />}
-            </button>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <button
+                className={cn(
+                  'p-0.5 rounded transition-colors',
+                  pinned
+                    ? 'text-[var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)] hover:text-[var(--brand)]'
+                    : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                )}
+                onClick={onTogglePin}
+              >
+                {pinned ? <PinOff size={14} /> : <Pin size={14} />}
+              </button>
+            }
+          />
           <TooltipContent side="top">{pinned ? '取消置顶' : '置顶'}</TooltipContent>
         </Tooltip>
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              className={cn(
-                'p-0.5 rounded transition-colors',
-                archiveConfirming
-                  ? 'text-red-500 bg-red-500/10'
-                  : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
-              )}
-              onClick={handleArchiveClick}
-            >
-              <Archive size={14} />
-            </button>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <button
+                className={cn(
+                  'p-0.5 rounded transition-colors',
+                  archiveConfirming
+                    ? 'text-red-500 bg-red-500/10'
+                    : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                )}
+                onClick={handleArchiveClick}
+              >
+                <Archive size={14} />
+              </button>
+            }
+          />
           <TooltipContent side="top">
             {archiveConfirming ? '再次点击确认归档' : '归档'}
           </TooltipContent>
         </Tooltip>
         <DropdownMenu onOpenChange={handleMenuOpenChange}>
-          <DropdownMenuTrigger asChild>
-            <button className="p-0.5 rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)] transition-colors">
-              <MoreHorizontal size={14} />
-            </button>
-          </DropdownMenuTrigger>
+          <DropdownMenuTrigger
+            render={
+              <button className="p-0.5 rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)] transition-colors">
+                <MoreHorizontal size={14} />
+              </button>
+            }
+          />
           <DropdownMenuContent>
             {menuItems(DropdownMenuItem, DropdownMenuSeparator)}
           </DropdownMenuContent>
