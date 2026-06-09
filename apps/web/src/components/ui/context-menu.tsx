@@ -16,11 +16,11 @@ function ContextMenuContent({
 }: Menu.Popup.Props & { className?: string }) {
   return (
     <Menu.Portal>
-      <Menu.Positioner sideOffset={4} className="isolate z-50">
+      <Menu.Positioner sideOffset={4} className="z-[9999]">
         <Menu.Popup
           data-slot="context-menu-content"
           className={cn(
-            "z-50 min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95",
+            "min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95",
             className
           )}
           {...props}
