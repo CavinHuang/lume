@@ -1,0 +1,267 @@
+<h2>线程列表布局方案对比</h2>
+<p class="subtitle">两种设计方案，聚焦于工作区线程列表部分的重新设计</p>
+
+<div class="split">
+  <!-- 方案 A -->
+  <div class="mockup">
+    <div class="mockup-header">方案 A：紧凑分组式</div>
+    <div class="mockup-body" style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; background: #f8f8f8; color: #333; padding: 0; min-height: 520px; display: flex; flex-direction: column;">
+      <!-- 顶部搜索区 -->
+      <div style="padding: 12px 12px 8px; border-bottom: 1px solid #e5e5e5;">
+        <div style="display: flex; align-items: center; gap: 8px; background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 6px 10px;">
+          <span style="color: #999;">🔍</span>
+          <span style="color: #999; font-size: 12px;">搜索会话...</span>
+          <span style="margin-left: auto; font-size: 10px; color: #aaa; background: #f0f0f0; padding: 2px 6px; border-radius: 4px;">⌘K</span>
+        </div>
+      </div>
+
+      <!-- 工作区 1 - Personal -->
+      <div style="flex: 1; overflow-y: auto;">
+        <div style="padding: 8px 12px 2px;">
+          <div style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+            <span style="font-size: 10px; color: #999;">▶</span>
+            <span style="font-size: 11px; font-weight: 600; color: #666;">🏠 Personal</span>
+            <span style="margin-left: auto; font-size: 10px; color: #aaa; background: #eee; padding: 1px 6px; border-radius: 10px;">5</span>
+          </div>
+        </div>
+
+        <!-- 线程列表 - 紧凑单行 -->
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: rgba(99,102,241,0.08); border-left: 2px solid #6366f1;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #6366f1; animation: pulse 2s infinite; flex-shrink: 0;"></div>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">用 Rust 实现日志系统的重构</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">2分钟前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0;"></div>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">分析 React 19 新特性对项目的影响</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">1小时前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;">
+            <span style="font-size: 10px; color: #999; flex-shrink: 0;">📌</span>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">学习 Tauri v2 插件机制</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">昨天</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0;"></div>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #888;">讨论数据库迁移策略</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">3天前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0;"></div>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #888;">优化前端打包配置</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">1周前</span>
+          </div>
+        </div>
+
+        <!-- 工作区 2 - Lume Project -->
+        <div style="padding: 10px 12px 2px;">
+          <div style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+            <span style="font-size: 10px; color: #999;">▼</span>
+            <span style="font-size: 11px; font-weight: 600; color: #333;">📦 Lume Project</span>
+            <span style="margin-left: auto; font-size: 10px; color: #aaa; background: #eee; padding: 1px 6px; border-radius: 10px;">3</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0;"></div>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">侧边栏重新设计方案讨论</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">30分钟前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0;"></div>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">日志模块架构设计</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">2天前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0;"></div>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #888;">自动化测试覆盖率提升</span>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">5天前</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding: 4px 12px; text-align: center;">
+        <span style="font-size: 10px; color: #bbb; border-top: 1px solid #e5e5e5; padding-top: 4px; display: block;">右键菜单 · 悬浮预览</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 方案 B -->
+  <div class="mockup">
+    <div class="mockup-header">方案 B：卡片分隔式</div>
+    <div class="mockup-body" style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; background: #f0f0f0; color: #333; padding: 12px; min-height: 520px; display: flex; flex-direction: column; gap: 8px;">
+      <!-- 搜索 -->
+      <div style="background: white; border-radius: 10px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; border: 1px solid #e0e0e0;">
+        <span style="color: #999;">🔍</span>
+        <span style="color: #999; font-size: 12px;">搜索会话...</span>
+        <span style="margin-left: auto; font-size: 10px; color: #aaa;">⌘K</span>
+      </div>
+
+      <!-- 工作区 1 - 卡片 -->
+      <div style="background: white; border-radius: 12px; overflow: hidden; flex: 1;">
+        <div style="padding: 8px 12px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #f0f0f0;">
+          <span style="font-size: 12px;">🏠</span>
+          <span style="font-size: 12px; font-weight: 600; color: #555;">Personal</span>
+          <span style="margin-left: auto; font-size: 10px; color: #aaa;">5 个会话</span>
+          <span style="color: #ccc;">⋯</span>
+        </div>
+
+        <div style="padding: 4px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; background: #f5f3ff; border-left: 3px solid #6366f1;">
+            <div style="position: relative; flex-shrink: 0;">
+              <div style="width: 8px; height: 8px; border-radius: 50%; background: #6366f1;"></div>
+              <div style="position: absolute; inset: 0; border-radius: 50%; background: #6366f1; opacity: 0.4; animation: pulse 2s infinite;"></div>
+            </div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">用 Rust 实现日志系统的重构</div>
+            </div>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">2分钟前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: #e0e0e0; flex-shrink: 0;"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">分析 React 19 新特性对项目的影响</div>
+            </div>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">1小时前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;">
+            <span style="font-size: 10px; flex-shrink: 0;">📌</span>
+            <div style="flex: 1; min-width: 0;">
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">学习 Tauri v2 插件机制</div>
+            </div>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">昨天</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: #e0e0e0; flex-shrink: 0;"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #999;">讨论数据库迁移策略</div>
+            </div>
+            <span style="font-size: 10px; color: #bbb; flex-shrink: 0;">3天前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: #e0e0e0; flex-shrink: 0;"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #999;">优化前端打包配置</div>
+            </div>
+            <span style="font-size: 10px; color: #bbb; flex-shrink: 0;">1周前</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 工作区 2 - 卡片 -->
+      <div style="background: white; border-radius: 12px; overflow: hidden;">
+        <div style="padding: 8px 12px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #f0f0f0;">
+          <span style="font-size: 12px;">📦</span>
+          <span style="font-size: 12px; font-weight: 600; color: #555;">Lume Project</span>
+          <span style="margin-left: auto; font-size: 10px; color: #aaa;">3 个会话</span>
+          <span style="color: #ccc;">⋯</span>
+        </div>
+
+        <div style="padding: 4px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: #e0e0e0; flex-shrink: 0;"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">侧边栏重新设计方案讨论</div>
+            </div>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">30分钟前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: #e0e0e0; flex-shrink: 0;"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">日志模块架构设计</div>
+            </div>
+            <span style="font-size: 10px; color: #aaa; flex-shrink: 0;">2天前</span>
+          </div>
+        </div>
+
+        <div style="padding: 2px 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: #e0e0e0; flex-shrink: 0;"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #999;">自动化测试覆盖率提升</div>
+            </div>
+            <span style="font-size: 10px; color: #bbb; flex-shrink: 0;">5天前</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align: center;">
+        <span style="font-size: 10px; color: #bbb;">右键菜单 · 悬浮预览</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 20px;">两种方案的区别</h3>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;">
+  <div style="background: #f0fdf4; border-radius: 8px; padding: 12px;">
+    <strong>方案 A：紧凑分组式</strong>
+    <ul style="margin: 8px 0 0; padding-left: 16px; font-size: 13px; line-height: 1.8;">
+      <li>工作区是一行可折叠的标题</li>
+      <li>线程紧贴工作区标题下方</li>
+      <li>统一背景色，靠左侧边框标识活跃项</li>
+      <li><strong>更省空间，同屏显示更多线程</strong></li>
+    </ul>
+  </div>
+  <div style="background: #eff6ff; border-radius: 8px; padding: 12px;">
+    <strong>方案 B：卡片分隔式</strong>
+    <ul style="margin: 8px 0 0; padding-left: 16px; font-size: 13px; line-height: 1.8;">
+      <li>每个工作区是独立的白色卡片</li>
+      <li>卡片间有灰色间距分隔</li>
+      <li>视觉层次更明显，工作区边界清晰</li>
+      <li><strong>视觉区分度更高，但占用更多空间</strong></li>
+    </ul>
+  </div>
+</div>
+
+<div class="options" style="margin-top: 20px;">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>紧凑分组式</h3>
+      <p>统一背景 + 行内工作区标题，空间利用率最高，信息密度大</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>卡片分隔式</h3>
+      <p>独立卡片分隔工作区，视觉层次更清晰，但空间开销稍大</p>
+    </div>
+  </div>
+</div>

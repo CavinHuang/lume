@@ -9,6 +9,7 @@ pub mod writer;
 
 // Re-exports
 pub use config::LumeLoggerConfig;
+pub use event::LumeLogEvent;
 pub use level::LumeLogLevel;
 pub use logger::{logger, LogBuilder};
 pub use reader::{list_log_files, read_log_file, LogFileSummary, LogLineEntry, LogQuery};
@@ -63,4 +64,24 @@ pub fn init(config: LumeLoggerConfig) -> Result<(), log::SetLoggerError> {
     log::set_boxed_logger(Box::new(LogBridge))?;
     log::set_max_level(max_level);
     Ok(())
+}
+
+/// Emit a structured log event directly.
+///
+/// Used by the napi layer and other external callers that construct
+/// `LumeLogEvent` themselves (e.g. webview logging via Tauri command).
+pub fn emit_log_event(event: LumeLogEvent) {
+    if let Some(backend) = BACKEND.get() {
+        backend.emit_event(event);
+    }
+}
+
+/// Flush pending log writes to disk.
+///
+/// Important for napi consumers where the host runtime (Bun)
+/// may not invoke Rust `Drop` on exit.
+pub fn flush() {
+    if let Some(backend) = BACKEND.get() {
+        backend.flush();
+    }
 }

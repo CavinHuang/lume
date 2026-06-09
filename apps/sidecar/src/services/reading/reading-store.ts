@@ -144,6 +144,28 @@ export function listReadingBooks(): ReadingBook[] {
 export function addReadingBook(input: ReadingAddBookInput): ReadingBook {
   initReadingStorage();
   const library = readLibrary();
+
+  // Dedup: update existing book if already on shelf
+  const existingIndex = findShelfBookIndex(library.books, input);
+  if (existingIndex >= 0) {
+    const existing = library.books[existingIndex] as ReadingBook;
+    const updated = normalizeReadingBook({
+      ...existing,
+      title: input.title,
+      ...(input.author ? { author: input.author } : {}),
+      ...(input.coverUrl ? { coverUrl: input.coverUrl } : {}),
+      track: input.track ?? existing.track,
+      status: input.status ?? existing.status,
+      source: { ...existing.source, ...(input.source ?? {}) },
+      ...(typeof input.progressPercent === "number" ? { progressPercent: input.progressPercent } : {}),
+      tags: input.tags ?? existing.tags,
+      updatedAt: Date.now()
+    });
+    library.books[existingIndex] = updated;
+    writeLibrary(library);
+    return updated;
+  }
+
   const now = Date.now();
   const book = normalizeReadingBook({
     id: randomUUID(),
@@ -399,6 +421,13 @@ export function createReadingNote(input: ReadingNoteInput): ReadingNote {
   const body = input.body.trim();
   if (!body) {
     throw new Error("读书笔记正文不能为空");
+  }
+
+  // Dedup: skip if a note with the same bookId and body already exists
+  const existingNote = readAllNotes()
+    .find((n) => n.bookId === input.bookId && n.body.trim() === body && !n.deleted);
+  if (existingNote) {
+    return existingNote;
   }
   const evidence = input.evidence ?? [];
   const evidenceValidation = validateReadingQuoteEvidence(evidence);

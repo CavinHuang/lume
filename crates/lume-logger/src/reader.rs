@@ -6,6 +6,7 @@ use crate::level::LumeLogLevel;
 
 /// Metadata for a single log file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LogFileSummary {
     pub name: String,
     pub size_bytes: u64,
@@ -14,6 +15,7 @@ pub struct LogFileSummary {
 
 /// A parsed log line ready for display.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LogLineEntry {
     pub line_number: usize,
     pub level: LumeLogLevel,

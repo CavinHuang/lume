@@ -18,6 +18,7 @@ base64 = "0.22"
 rfd = "0.15"
 webbrowser = "1"
 log = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 lume-logger = { path = "../../../crates/lume-logger" }
 

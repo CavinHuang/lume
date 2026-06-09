@@ -1,0 +1,153 @@
+<h2>Provider 分组 UI 方案</h2>
+<p class="subtitle">选择左侧 Provider 列表中如何展示分组</p>
+
+<div class="cards">
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">方案 A：分类标签栏（推荐）</div>
+        <div class="mockup-body" style="font-size: 12px; padding: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <!-- 标签栏 -->
+            <div style="display: flex; gap: 4px; flex-wrap: wrap; padding: 6px; background: #f0f2f5; border-radius: 6px;">
+              <span style="padding: 3px 10px; border-radius: 4px; background: #6366f1; color: white; font-size: 11px; font-weight: 600;">全部</span>
+              <span style="padding: 3px 10px; border-radius: 4px; background: white; font-size: 11px;">编程套餐</span>
+              <span style="padding: 3px 10px; border-radius: 4px; background: white; font-size: 11px;">国内平台</span>
+              <span style="padding: 3px 10px; border-radius: 4px; background: white; font-size: 11px;">海外平台</span>
+              <span style="padding: 3px 10px; border-radius: 4px; background: white; font-size: 11px;">中转/聚合</span>
+              <span style="padding: 3px 10px; border-radius: 4px; background: white; font-size: 11px;">本地/其他</span>
+            </div>
+            <!-- 搜索 -->
+            <div style="padding: 4px 8px; background: #f5f6f8; border-radius: 5px; color: #999; font-size: 11px;">🔍 搜索供应商</div>
+            <!-- Provider 列表 -->
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <div style="display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #eef2ff; border-radius: 5px; border: 1px solid #c7d2fe;">
+                <span style="width: 20px; height: 20px; background: #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 9px;">🟢</span>
+                <span style="flex: 1; font-weight: 600; font-size: 11px;">Kimi Code Plan</span>
+                <span style="font-size: 10px; color: #888;">已配置</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px;">
+                <span style="width: 20px; height: 20px; background: #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 9px;">⚪</span>
+                <span style="flex: 1; font-weight: 600; font-size: 11px;">阿里云 Coding Plan</span>
+                <span style="font-size: 10px; color: #bbb;">未配置</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px;">
+                <span style="width: 20px; height: 20px; background: #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 9px;">⚪</span>
+                <span style="flex: 1; font-weight: 600; font-size: 11px;">智谱 GLM Coding Plan</span>
+                <span style="font-size: 10px; color: #bbb;">未配置</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A：分类标签栏</h3>
+      <p>用标签栏替换当前的"全部/已配置/未配置"筛选，点击不同标签切换分组。搜索框在标签下方。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>操作直观，一键切换</li><li>视觉清晰，占用空间少</li><li>可与搜索组合使用</li></ul></div>
+        <div class="cons"><h4>缺点</h4><ul><li>标签多时可能换行</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">方案 B：可折叠分组列表</div>
+        <div class="mockup-body" style="font-size: 12px; padding: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <!-- 搜索 -->
+            <div style="padding: 4px 8px; background: #f5f6f8; border-radius: 5px; color: #999; font-size: 11px;">🔍 搜索供应商</div>
+            <!-- 分组1 -->
+            <div style="border-radius: 6px; overflow: hidden;">
+              <div style="background: #f0f2f5; padding: 5px 8px; font-weight: 700; font-size: 11px; display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 9px;">▼</span> 国内编程套餐
+                <span style="margin-left: auto; background: #e0e0e0; border-radius: 3px; padding: 1px 6px; font-size: 9px; font-weight: 500;">2/6</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 2px; padding: 3px 0;">
+                <div style="display: flex; align-items: center; gap: 6px; padding: 3px 6px; background: #eef2ff; border-radius: 5px; border: 1px solid #c7d2fe;">
+                  <span style="width: 18px; height: 18px; background: #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 8px;">🟢</span>
+                  <span style="flex: 1; font-weight: 600; font-size: 10px;">Kimi Code Plan</span>
+                  <span style="font-size: 9px; color: #888;">已配置</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px;">
+                  <span style="width: 18px; height: 18px; background: #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 8px;">⚪</span>
+                  <span style="flex: 1; font-weight: 600; font-size: 10px;">阿里云 Coding Plan</span>
+                  <span style="font-size: 9px; color: #bbb;">未配置</span>
+                </div>
+              </div>
+            </div>
+            <!-- 分组2（折叠） -->
+            <div style="border-radius: 6px; overflow: hidden;">
+              <div style="background: #f0f2f5; padding: 5px 8px; font-weight: 700; font-size: 11px; display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 9px;">▶</span> 国内平台
+                <span style="margin-left: auto; background: #e0e0e0; border-radius: 3px; padding: 1px 6px; font-size: 9px; font-weight: 500;">1/8</span>
+              </div>
+            </div>
+            <!-- 分组3（折叠） -->
+            <div style="border-radius: 6px; overflow: hidden;">
+              <div style="background: #f0f2f5; padding: 5px 8px; font-weight: 700; font-size: 11px; display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 9px;">▶</span> 海外平台
+                <span style="margin-left: auto; background: #e0e0e0; border-radius: 3px; padding: 1px 6px; font-size: 9px; font-weight: 500;">0/4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B：可折叠分组列表</h3>
+      <p>保留完整的 Provider 列表，用可折叠的分组标题组织。每个分组显示"已配置/总数"。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>一览全局</li><li>分组信息始终可见</li><li>支持展开/折叠按需查看</li></ul></div>
+        <div class="cons"><h4>缺点</h4><ul><li>列表较长时需要滚动</li><li>分组标题占用纵向空间</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">方案 C：下拉选择分组 + 分段标签</div>
+        <div class="mockup-body" style="font-size: 12px; padding: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <!-- 下拉 + 分段 -->
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <div style="flex: 1; padding: 4px 8px; background: #f5f6f8; border: 1px solid #ddd; border-radius: 5px; font-size: 11px; display: flex; align-items: center; justify-content: space-between;">
+                <span style="font-weight: 600;">全部分组</span>
+                <span style="font-size: 9px;">▼</span>
+              </div>
+            </div>
+            <div style="display: flex; gap: 2px; background: #f0f2f5; border-radius: 5px; padding: 2px;">
+              <span style="padding: 2px 8px; border-radius: 3px; background: #6366f1; color: white; font-size: 10px; font-weight: 600;">全部</span>
+              <span style="padding: 2px 8px; border-radius: 3px; font-size: 10px;">已配置</span>
+              <span style="padding: 2px 8px; border-radius: 3px; font-size: 10px;">未配置</span>
+            </div>
+            <!-- 搜索 -->
+            <div style="padding: 4px 8px; background: #f5f6f8; border-radius: 5px; color: #999; font-size: 11px;">🔍 搜索供应商</div>
+            <!-- Provider 列表 -->
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <div style="display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px;">
+                <span style="width: 20px; height: 20px; background: #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 9px;">🟢</span>
+                <span style="flex: 1; font-weight: 600; font-size: 11px;">Kimi Code Plan</span>
+                <span style="font-size: 10px; color: #888;">已配置</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C：下拉选择 + 保留原筛选</h3>
+      <p>新增分组下拉选择器，保留原有的"全部/已配置/未配置"筛选。两个维度独立叠加。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>保留现有交互习惯</li><li>分组+状态可叠加筛选</li></ul></div>
+        <div class="cons"><h4>缺点</h4><ul><li>两层筛选增加认知成本</li><li>下拉选择需要额外点击</li><li>左侧面板更拥挤</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

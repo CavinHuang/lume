@@ -552,6 +552,94 @@ fn read_clipboard_text() -> Result<String, String> {
     read_system_clipboard_text()
 }
 
+// ── Logging commands ──────────────────────────────────────
+
+#[tauri::command]
+fn write_web_log(
+    level: String,
+    context: String,
+    message: String,
+    data: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let level = level
+        .parse::<ll::LumeLogLevel>()
+        .map_err(|e| format!("invalid log level: {e}"))?;
+    let event = ll::LumeLogEvent {
+        ts: chrono::Utc::now()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        level,
+        source: "webview".into(),
+        context,
+        message,
+        data,
+    };
+    ll::emit_log_event(event);
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_list_log_files() -> Result<serde_json::Value, String> {
+    let logs_dir = ll::config::resolve_logs_dir();
+    let files = ll::list_log_files(&logs_dir);
+    let total_files = files.len();
+    let total_bytes: u64 = files.iter().map(|f| f.size_bytes).sum();
+
+    // Match the shape of LogFileListResult from @lume/shared
+    let result = serde_json::json!({
+        "directory": logs_dir.to_string_lossy(),
+        "files": files,
+        "totalFiles": total_files,
+        "totalBytes": total_bytes,
+    });
+    Ok(result)
+}
+
+#[tauri::command]
+fn desktop_read_log_file(
+    file_name: String,
+    levels: Option<Vec<String>>,
+    keyword: Option<String>,
+    max_lines: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    let parsed_levels: Option<Vec<ll::LumeLogLevel>> = levels
+        .map(|ls| {
+            ls.iter()
+                .map(|l| l.parse::<ll::LumeLogLevel>().map_err(|e| format!("{e}")))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+
+    let query = ll::LogQuery {
+        file_name: Some(file_name.clone()),
+        levels: parsed_levels,
+        keyword,
+        max_lines,
+    };
+    let logs_dir = ll::config::resolve_logs_dir();
+
+    // Read all raw lines first for totalLines count
+    let raw_path = logs_dir.join(&file_name);
+    let total_lines = if raw_path.exists() {
+        std::fs::read_to_string(&raw_path)
+            .map(|text| text.lines().filter(|l| !l.is_empty()).count())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let entries = ll::read_log_file(&logs_dir, &query);
+    let matched_lines = entries.len();
+
+    // Match the shape of ReadLogFileResult from @lume/shared
+    let result = serde_json::json!({
+        "fileName": file_name,
+        "totalLines": total_lines,
+        "matchedLines": matched_lines,
+        "lines": entries,
+    });
+    Ok(result)
+}
+
 fn parse_weread_key_url(value: &str) -> Result<tauri::Url, String> {
     let url = tauri::Url::parse(value).map_err(|e| format!("invalid WeRead key url: {e}"))?;
     if url.scheme() != "https" || url.host_str() != Some("weread.qq.com") || url.path() != "/r/weread-skills" {
@@ -1170,7 +1258,8 @@ fn apply_default_skills_env(
 }
 
 fn apply_sidecar_logging_env(process: &mut Command) {
-    process.env("LUME_LOG_FILE", "false");
+    // native logger now writes directly to shared log files;
+    // keep stderr enabled as fallback for native init failures
     process.env("LUME_LOG_CONSOLE", "true");
 }
 
@@ -1400,7 +1489,7 @@ mod tests {
             })
             .collect::<std::collections::HashMap<_, _>>();
 
-        assert_eq!(envs.get("LUME_LOG_FILE"), Some(&Some("false".to_string())));
+        assert_eq!(envs.get("LUME_LOG_FILE"), None);
         assert_eq!(envs.get("LUME_LOG_CONSOLE"), Some(&Some("true".to_string())));
     }
 
@@ -1589,6 +1678,9 @@ fn main() {
             open_external,
             open_weread_key_webview,
             read_clipboard_text,
+            write_web_log,
+            desktop_list_log_files,
+            desktop_read_log_file,
             read_text_file,
             save_text_file_dialog,
             save_file_path_dialog,

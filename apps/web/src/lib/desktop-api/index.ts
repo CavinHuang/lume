@@ -1,4 +1,5 @@
 export * from './agent'
+export * from './logger'
 export * from './native'
 export * from './system'
 export * from './channel'

@@ -15,7 +15,7 @@ use crate::level::LumeLogLevel;
 pub fn logger(context: impl Into<String>) -> LogBuilder {
     LogBuilder {
         context: context.into(),
-        source: "desktop",
+        source: "desktop".into(),
         data: serde_json::Map::new(),
     }
 }
@@ -26,7 +26,7 @@ pub fn logger(context: impl Into<String>) -> LogBuilder {
 /// to emit the entry. The level method consumes `self`.
 pub struct LogBuilder {
     context: String,
-    source: &'static str,
+    source: String,
     data: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -41,8 +41,8 @@ impl LogBuilder {
     }
 
     /// Override the source (default: "desktop").
-    pub fn source(mut self, source: &'static str) -> Self {
-        self.source = source;
+    pub fn source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
         self
     }
 

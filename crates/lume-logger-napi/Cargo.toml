@@ -1,0 +1,22 @@
+[package]
+name = "lume-logger-napi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+lume-logger = { path = "../lume-logger" }
+napi = { version = "3", features = ["napi9", "error_anyhow"] }
+napi-derive = "3"
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = true

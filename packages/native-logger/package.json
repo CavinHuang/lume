@@ -1,0 +1,12 @@
+{
+  "name": "@lume/native-logger",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "build:macos": "cargo build --release --manifest-path ../../crates/lume-logger-napi/Cargo.toml && mkdir -p ./dist && cp ../../crates/lume-logger-napi/target/release/liblume_logger_napi.dylib ./dist/lume-logger-napi.darwin-arm64.node",
+    "build:linux": "cargo build --release --manifest-path ../../crates/lume-logger-napi/Cargo.toml && mkdir -p ./dist && cp ../../crates/lume-logger-napi/target/release/liblume_logger_napi.so ./dist/lume-logger-napi.linux-x64-gnu.node",
+    "build:dev": "cargo build --manifest-path ../../crates/lume-logger-napi/Cargo.toml && mkdir -p ./dist && cp ../../crates/lume-logger-napi/target/debug/liblume_logger_napi.dylib ./dist/lume-logger-napi.darwin-arm64.node"
+  }
+}

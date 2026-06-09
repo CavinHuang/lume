@@ -97,6 +97,9 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
     return null
   }
 
+  // Reset status so syncRoutineStatus picks up the new job
+  entry.status = "pending"
+
   await refreshAutomationRunnerJobs()
   writeRoutine(routine)
   return routine
