@@ -277,6 +277,23 @@ function appendContextCompactionNotice(
   messages: RuntimeMessageView[],
   event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>,
 ): void {
+  if (event.type === 'context.compaction.completed') {
+    const activeNotice = [...messages]
+      .reverse()
+      .find((m): m is Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }> =>
+        m.type === 'system' && m.variant === 'context_compaction' && m.status === 'active',
+      )
+    if (activeNotice) {
+      activeNotice.status = 'completed'
+      activeNotice.text = formatContextCompactionNoticeText(event)
+      return
+    }
+  }
+  const existing = messages.at(-1)
+  if (existing?.type === 'system' && existing.variant === 'context_compaction' && existing.status === 'active') {
+    existing.text = formatContextCompactionNoticeText(event)
+    return
+  }
   messages.push({
     id: event.id,
     type: 'system',

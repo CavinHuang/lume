@@ -1,12 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useSetAtom } from 'jotai'
 import { activeTabIdAtom, agentThreadsAtom, tabsAtom } from '@/atoms'
-import type { PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
@@ -118,21 +118,22 @@ export function RuntimeEventContentBlock({
         <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
       </div>
       <div className="min-w-0 flex-1 space-y-4 pt-2">
-        {contentBlocks.map((block, index) => (
-          <RuntimeEventAssistantBlockItem
-            key={block.id}
-            block={block}
-            threadId={threadId}
-            onOpenThreadFile={onOpenThreadFile}
-            onOpenMemorySource={onOpenMemorySource}
-            onUserResizeStart={onUserResizeStart}
-            isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
-            isActiveThinking={block.type === 'thinking'
-              && streaming === true
-              && message.status === 'streaming'
-              && index === contentBlocks.length - 1}
-          />
-        ))}
+        {contentBlocks
+          .filter(block => block.type !== 'memory_context_used')
+          .map((block, index) => (
+            <RuntimeEventAssistantBlockItem
+              key={block.id}
+              block={block}
+              threadId={threadId}
+              onOpenThreadFile={onOpenThreadFile}
+              onUserResizeStart={onUserResizeStart}
+              isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
+              isActiveThinking={block.type === 'thinking'
+                && streaming === true
+                && message.status === 'streaming'
+                && index === contentBlocks.length - 1}
+            />
+          ))}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
         )}
@@ -151,6 +152,10 @@ export function RuntimeEventContentBlock({
           tokenCountSource={message.tokenCountSource}
           tokenUsage={message.tokenUsage}
           completedAt={message.completedAt}
+          memoryEvents={contentBlocks
+            .filter((b): b is Extract<typeof b, { type: 'memory_context_used' }> => b.type === 'memory_context_used')
+            .map(b => b.event)}
+          onOpenMemorySource={onOpenMemorySource}
         />
         {message.imDelivery && <ImDeliveryStatusLine delivery={message.imDelivery} />}
       </div>
@@ -494,7 +499,6 @@ function RuntimeEventAssistantBlockItem({
   block,
   threadId,
   onOpenThreadFile,
-  onOpenMemorySource,
   isStreaming,
   isActiveThinking,
   onUserResizeStart,
@@ -502,7 +506,6 @@ function RuntimeEventAssistantBlockItem({
   block: RuntimeAssistantBlock
   threadId: string
   onOpenThreadFile?: (path: string) => void
-  onOpenMemorySource?: (path: string) => void
   isStreaming: boolean
   isActiveThinking: boolean
   onUserResizeStart?: () => void
@@ -524,7 +527,7 @@ function RuntimeEventAssistantBlockItem({
   }
 
   if (block.type === 'memory_context_used') {
-    return <MemoryContextUsedNotice event={block.event} onOpenMemorySource={onOpenMemorySource} />
+    return null
   }
 
   return (
@@ -533,73 +536,6 @@ function RuntimeEventAssistantBlockItem({
       threadId={threadId}
       onUserResizeStart={onUserResizeStart}
     />
-  )
-}
-
-function MemoryContextUsedNotice({
-  event,
-  onOpenMemorySource,
-}: {
-  event: Extract<RuntimeAssistantBlock, { type: 'memory_context_used' }>['event']
-  onOpenMemorySource?: (path: string) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const count = event.items.length
-  const groups = groupMemoryCitationItems(event.items)
-  return (
-    <div className="mt-2 max-w-full text-[11px] leading-5 text-[#8a92a6]">
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-        className="inline-flex min-h-6 max-w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-[#f5f6fb] hover:text-[#6f778d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/25"
-      >
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa3b8]" />
-        <span className="shrink-0 font-medium">引用了 {count} 条记忆</span>
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-      </button>
-
-      {expanded && (
-        <div className="mt-1.5 space-y-2 border-l border-[#d9deea] pl-3">
-          {groups.map((group) => (
-            <div key={group.key} className="min-w-0">
-              <div className="mb-0.5 text-[#9aa3b8]">{group.label}</div>
-              <ol className="min-w-0 space-y-1">
-                {group.items.map((item, index) => {
-                  const sourcePath = normalizeMemoryCitationPath(item.citation)
-                  const label = compactMemoryCitationLabel(item.citation)
-                  const content = (
-                    <>
-                      <span className="shrink-0 tabular-nums">{index + 1}.</span>
-                      <span className="truncate">{label}</span>
-                    </>
-                  )
-                  if (!sourcePath || !onOpenMemorySource) {
-                    return (
-                      <li key={item.id} className="flex min-w-0 items-center gap-1.5 font-mono text-[#7b849c]" title={item.citation}>
-                        {content}
-                      </li>
-                    )
-                  }
-                  return (
-                    <li key={item.id} className="min-w-0">
-                      <button
-                        type="button"
-                        onClick={() => onOpenMemorySource(sourcePath)}
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[#7b849c] transition-colors hover:bg-[#f1f3f8] hover:text-[#4f46e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/30"
-                        title={item.citation}
-                      >
-                        {content}
-                      </button>
-                    </li>
-                  )
-                })}
-              </ol>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -848,13 +784,23 @@ const SmoothText = memo(function SmoothText({
     <div className="min-w-0 w-full" onCopy={handleCopy}>
       {afterglowBlocks === null
         ? renderMarkdown(displayedContent)
-        : afterglowBlocks.map((block, index) => (
-          block.type === 'afterglow'
-            ? <AfterglowLine key={`afterglow:${index}`} text={block.text} />
-            : block.text.trim()
-              ? renderMarkdown(block.text, `markdown:${index}`)
-              : null
-        ))}
+        : (() => {
+            const afterglowItems = afterglowBlocks.filter((b): b is Extract<typeof b, { type: 'afterglow' }> => b.type === 'afterglow')
+            return (
+              <>
+                {afterglowBlocks.map((block, index) =>
+                  block.type === 'afterglow'
+                    ? null
+                    : block.text.trim()
+                      ? renderMarkdown(block.text, `markdown:${index}`)
+                      : null,
+                )}
+                {afterglowItems.map((block, index) => (
+                  <AfterglowLine key={`afterglow:${index}`} text={block.text} />
+                ))}
+              </>
+            )
+          })()}
     </div>
   )
 })
@@ -1194,6 +1140,73 @@ export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): 
   if (toolCall.permissionState === 'timeout') return '权限超时'
   return null
 }
+function FooterMemoryNotice({
+  events,
+  onOpenMemorySource,
+}: {
+  events: MemoryContextUsedViewEvent[]
+  onOpenMemorySource?: (path: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const totalCount = events.reduce((sum, e) => sum + e.items.length, 0)
+  const groups = groupMemoryCitationItems(events.flatMap(e => e.items))
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        aria-expanded={expanded}
+        className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[#8a92a6] transition-colors hover:text-[#6770ff]"
+      >
+        <Database size={13} strokeWidth={1.8} />
+        <span>引用了 {totalCount} 条记忆</span>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+      {expanded && (
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] overflow-y-auto rounded-lg border border-[#e3e5ee] bg-white p-2 shadow-[0_16px_40px_-24px_rgba(30,34,60,0.45)]">
+          <div className="space-y-2 text-[11px] leading-5 text-[#8a92a6]">
+            {groups.map(group => (
+              <div key={group.key}>
+                <div className="mb-0.5 text-[#9aa3b8]">{group.label}</div>
+                <ol className="space-y-1">
+                  {group.items.map((item, index) => {
+                    const sourcePath = normalizeMemoryCitationPath(item.citation)
+                    const label = compactMemoryCitationLabel(item.citation)
+                    const content = (
+                      <>
+                        <span className="shrink-0 tabular-nums">{index + 1}.</span>
+                        <span className="truncate">{label}</span>
+                      </>
+                    )
+                    if (!sourcePath || !onOpenMemorySource) {
+                      return (
+                        <li key={item.id} className="flex items-center gap-1.5 font-mono text-[#7b849c]" title={item.citation}>
+                          {content}
+                        </li>
+                      )
+                    }
+                    return (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenMemorySource(sourcePath)}
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[#7b849c] transition-colors hover:bg-[#f1f3f8] hover:text-[#4f46e5]"
+                          title={item.citation}
+                        >
+                          {content}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ol>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function AssistantMessageFooter({
   threadId,
@@ -1204,6 +1217,8 @@ function AssistantMessageFooter({
   tokenCountSource,
   tokenUsage,
   completedAt,
+  memoryEvents,
+  onOpenMemorySource,
 }: {
   threadId: string
   messageId?: string
@@ -1213,6 +1228,8 @@ function AssistantMessageFooter({
   tokenCountSource?: 'provider'
   tokenUsage?: RuntimeAssistantTokenUsageView
   completedAt?: string
+  memoryEvents?: MemoryContextUsedViewEvent[]
+  onOpenMemorySource?: (path: string) => void
 }) {
   const setThreads = useSetAtom(agentThreadsAtom)
   const setTabs = useSetAtom(tabsAtom)
@@ -1240,7 +1257,9 @@ function AssistantMessageFooter({
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [downloadMenuOpen])
 
-  if (!canCopy && !canFork && !canDownload && !showTokens && !completedTimeLabel) return null
+  const hasMemory = memoryEvents && memoryEvents.length > 0
+
+  if (!canCopy && !canFork && !canDownload && !showTokens && !completedTimeLabel && !hasMemory) return null
 
   const handleFork = async () => {
     if (!messageId || forking) return
@@ -1359,6 +1378,12 @@ function AssistantMessageFooter({
           <span className="inline-flex shrink-0 items-center rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[#9aa1b3]">
             {completedTimeLabel}
           </span>
+        )}
+        {hasMemory && (
+          <FooterMemoryNotice
+            events={memoryEvents!}
+            onOpenMemorySource={onOpenMemorySource}
+          />
         )}
       </div>
       {showTokens && (

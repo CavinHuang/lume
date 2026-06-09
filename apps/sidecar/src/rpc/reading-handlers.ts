@@ -8,6 +8,7 @@ import type {
   ReadingNoteRevisionInput,
   ReadingRunTaskInput,
   ReadingTaskResult,
+  ReadingSearchBooksInput,
   ReadingSearchWereadInput,
   ReadingUpdateBookInput,
   ReadingUpdateSettingsInput
@@ -36,6 +37,7 @@ import {
   removeReadingHighlight,
   reviseReadingNote,
   searchReadingWeread,
+  searchReadingBooks,
   syncReadingWereadShelf,
   updateReadingBook,
   updateReadingSettings
@@ -61,6 +63,7 @@ import {
   readingReviseNoteInputSchema,
   readingRunTaskInputSchema,
   readingSearchWereadInputSchema,
+  readingSearchBooksInputSchema,
   readingUpdateBookInputSchema,
   readingUpdateSettingsInputSchema,
   wereadApiKeyInputSchema,
@@ -233,6 +236,14 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
         READING_IPC_CHANNELS.SEARCH_WEREAD
       ) as ReadingSearchWereadInput;
       return searchReadingWeread(input.query, input.limit);
+    },
+    [READING_IPC_CHANNELS.SEARCH_BOOKS]: async (params) => {
+      const input = validateInput(
+        readingSearchBooksInputSchema,
+        params,
+        READING_IPC_CHANNELS.SEARCH_BOOKS
+      ) as ReadingSearchBooksInput;
+      return searchReadingBooks(input.query, input.limit);
     },
     [READING_IPC_CHANNELS.GENERATE_COVER]: async (params) => {
       const input = validateInput(readingBookIdInputSchema, params, READING_IPC_CHANNELS.GENERATE_COVER) as { bookId: string };

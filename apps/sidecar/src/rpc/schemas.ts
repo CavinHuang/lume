@@ -215,6 +215,11 @@ export const readingSearchWereadInputSchema = z.object({
   limit: z.number().int().min(1).max(20).optional()
 }).strict();
 
+export const readingSearchBooksInputSchema = z.object({
+  query: z.string().trim().min(1),
+  limit: z.number().int().min(1).max(20).optional()
+}).strict();
+
 export const wereadApiKeyInputSchema = z.object({
   apiKey: z.string().trim().min(1)
 }).strict();

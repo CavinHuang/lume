@@ -159,6 +159,7 @@ export function buildReadingBookRail(
   const currentBookId = snapshot.activity.currentBook?.id
   const localBooks = snapshot.books.filter((book) =>
     book.source.kind !== 'weread'
+    || book.track === 'lume'
     || book.id === currentBookId
     || (noteCountsByBookId.get(book.id) ?? 0) > 0
   )
@@ -186,6 +187,7 @@ export function buildReadingOverviewStats(snapshot: ReadingLibrarySnapshot): Rea
   const localBookIds = new Set(snapshot.books
     .filter((book) =>
       book.source.kind !== 'weread'
+      || book.track === 'lume'
       || book.id === snapshot.activity.currentBook?.id
       || snapshot.notes.some((note) => note.bookId === book.id)
     )
@@ -295,7 +297,7 @@ export function buildReadingSearchItems(results: ReadingSearchResult[], existing
         addBookInput: {
           title: result.title,
           ...(result.author ? { author: result.author } : {}),
-          track: result.source === 'weread' ? 'co_read' : 'lume',
+          track: 'lume',
           status: 'reading',
           ...(result.coverUrl ? { coverUrl: result.coverUrl } : {}),
           source: {
