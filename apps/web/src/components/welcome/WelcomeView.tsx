@@ -5,7 +5,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
-import { Plus } from 'lucide-react'
+import { Plus, X, Folder } from 'lucide-react'
 import {
   agentThreadsAtom,
   agentWorkspacesAtom,
@@ -17,7 +17,7 @@ import {
   agentPlanModePhaseAtom,
   welcomePromptSeedAtom,
 } from '@/atoms'
-import { sidecarCall, agentSend, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
+import { sidecarCall, agentSend, openFileDialog, openFolderDialog, onSidecarEvent } from '@/lib/desktop-api'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
@@ -77,6 +77,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [sending, setSending] = useState(false)
   const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<WelcomePendingFile[]>([])
+  const [pendingFolders, setPendingFolders] = useState<{ id: string; path: string; name: string }[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
   useEffect(() => {
@@ -193,7 +194,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const handleSend = async () => {
     if (!editor || sending) return
     const rawText = editor.getText().trim()
-    if (!rawText && pendingFiles.length === 0) return
+    if (!rawText && pendingFiles.length === 0 && pendingFolders.length === 0) return
     const text = rawText || '请解读这些附件。'
 
     setSending(true)
@@ -259,11 +260,13 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(pendingFolders.length > 0 ? { attachedDirectories: pendingFolders.map((f) => f.path) } : {}),
         ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
       } as any)
       editor.commands.clearContent()
       setEditorText('')
       setPendingFiles([])
+      setPendingFolders([])
     } catch (err) {
       console.error('[WelcomeView] 发送失败:', err)
       toast.error('发送失败，请重试')
@@ -324,13 +327,46 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     setPermissionMode(value)
   }
 
-  const hasText = editorText.trim().length > 0 || pendingFiles.length > 0
+  const hasText = editorText.trim().length > 0 || pendingFiles.length > 0 || pendingFolders.length > 0
+
+  const handleAttachFolder = async () => {
+    try {
+      const selection = await openFolderDialog()
+      if (!selection.path) return
+      const folderName = selection.path.split('/').filter(Boolean).pop() ?? 'folder'
+      setPendingFolders((prev) => [
+        ...prev,
+        { id: createWelcomePendingFileId(), path: selection.path!, name: folderName },
+      ])
+      toast.success(`已添加文件夹 ${folderName}`)
+    } catch (err) {
+      console.error('[WelcomeView] 文件夹选择失败:', err)
+      toast.error('文件夹选择失败')
+    }
+  }
 
   const folderBar = (
     <div className="flex items-center gap-1.5 overflow-x-auto">
+      {pendingFolders.map((folder) => (
+        <span
+          key={folder.id}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--surface-3)] px-2.5 py-1 text-[12px] text-[var(--text-2)]"
+        >
+          <Folder size={13} />
+          {folder.name}
+          <button
+            type="button"
+            className="ml-0.5 text-[var(--text-3)] hover:text-[var(--text-1)]"
+            onClick={() => setPendingFolders((prev) => prev.filter((f) => f.id !== folder.id))}
+          >
+            <X size={12} />
+          </button>
+        </span>
+      ))}
       <button
         type="button"
         className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-3)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_50%,transparent)] hover:text-[var(--text-2)]"
+        onClick={handleAttachFolder}
       >
         <Plus size={13} />
         选择附加的项目文件夹

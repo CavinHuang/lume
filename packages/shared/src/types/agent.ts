@@ -546,6 +546,8 @@ export interface AgentSendInput {
   thinkingLevel?: AgentThinkingLevel
   /** 已保存到线程文件区、并绑定到本轮用户消息的附件引用 */
   messageAttachments?: AgentMessageAttachmentInput[]
+  /** 用户附加的外部目录路径（不拷贝，agent 按需从原始位置读取） */
+  attachedDirectories?: string[]
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */

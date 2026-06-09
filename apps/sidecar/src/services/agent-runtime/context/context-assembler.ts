@@ -18,7 +18,7 @@ import type { CollectedAppendContextEffect } from "../../workflow-hooks/hook-eff
 import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
-import { buildMessageAttachmentBrief } from "./message-attachments";
+import { buildMessageAttachmentBrief, buildAttachedDirectoriesBrief } from "./message-attachments";
 
 export interface ContextAssemblyInput {
   threadId: string;
@@ -34,6 +34,7 @@ export interface ContextAssemblyInput {
   permissionMode?: AgentSendInput["permissionMode"];
   agentSystemPrompt?: string;
   messageAttachments?: AgentMessageAttachmentInput[];
+  attachedDirectories?: string[];
   availableTools: string[];
   tokenBudget: number;
   workflowContext?: {
@@ -195,7 +196,8 @@ export class ContextAssembler {
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
     const attachmentBrief = buildMessageAttachmentBrief(input.messageAttachments);
-    const userMessageForModel = [memoryContext.userMessageForModel, attachmentBrief]
+    const directoryBrief = buildAttachedDirectoriesBrief(input.attachedDirectories);
+    const userMessageForModel = [memoryContext.userMessageForModel, attachmentBrief, directoryBrief]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
 
