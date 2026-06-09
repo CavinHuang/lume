@@ -86,7 +86,10 @@ const readingThemeVars = {
   '--reading-serif': '"Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", STSong, SimSun, serif',
 } as CSSProperties
 
+type ReadingViewTab = "reading" | "routine"
+
 export function ReadingView({ embedded }: { embedded?: boolean } = {}) {
+  const [viewTab, setViewTab] = useState<ReadingViewTab>("reading")
   const [snapshot, setSnapshot] = useState<ReadingLibrarySnapshot | null>(null)
   const [selectedId, setSelectedId] = useState('__all__')
   const [loading, setLoading] = useState(true)
@@ -400,76 +403,100 @@ export function ReadingView({ embedded }: { embedded?: boolean } = {}) {
       className="relative flex min-h-0 flex-1 overflow-hidden bg-[var(--reading-bg)] text-[var(--text-1)]"
       style={readingThemeVars}
     >
-      {!embedded && (
-      <aside className="hidden h-full min-h-0 w-[212px] shrink-0 overflow-hidden border-r border-[var(--reading-border)] bg-[var(--reading-rail)] px-3 py-4 lg:block">
-        <div className="flex h-full min-h-0 flex-col gap-4">
-          <div className="shrink-0 space-y-2">
-            {rail?.items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => selectReadingItem(item.id)}
-                className={cn(
-                  'flex w-full items-center gap-2.5 rounded-[8px] px-2 py-1.5 text-left transition-colors',
-                  selectedId === item.id
-                    ? 'bg-[var(--reading-active)] text-[var(--text-1)]'
-                    : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-                )}
-              >
-                <BookThumb title={item.title} coverUrl={item.coverUrl} muted={item.kind !== 'book'} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12px] font-normal">{item.title}</span>
-                  <ReadingRailItemMeta item={item} />
-                </span>
-              </button>
-            ))}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {!embedded && (
+          <div className="flex shrink-0 items-center gap-1 border-b border-[var(--reading-border)] bg-[var(--reading-rail)] px-4 py-2">
+            <button
+              type="button"
+              onClick={() => { setViewTab("reading"); setSelectedId("__all__") }}
+              className={cn(
+                "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
+                viewTab === "reading"
+                  ? "bg-[var(--reading-active)] text-[var(--text-1)]"
+                  : "text-[var(--text-3)] hover:text-[var(--text-1)]",
+              )}
+            >
+              一起读书
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab("routine")}
+              className={cn(
+                "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
+                viewTab === "routine"
+                  ? "bg-[var(--reading-active)] text-[var(--text-1)]"
+                  : "text-[var(--text-3)] hover:text-[var(--text-1)]",
+              )}
+            >
+              📅 今日日程
+            </button>
           </div>
+        )}
+        <div className="flex min-h-0 flex-1">
+          {!embedded && viewTab === "reading" && (
+          <aside className="hidden h-full min-h-0 w-[212px] shrink-0 overflow-hidden border-r border-[var(--reading-border)] bg-[var(--reading-rail)] px-3 py-4 lg:block">
+            <div className="flex h-full min-h-0 flex-col gap-4">
+              <div className="shrink-0 space-y-2">
+                {rail?.items.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => selectReadingItem(item.id)}
+                    className={cn(
+                      'flex w-full items-center gap-2.5 rounded-[8px] px-2 py-1.5 text-left transition-colors',
+                      selectedId === item.id
+                        ? 'bg-[var(--reading-active)] text-[var(--text-1)]'
+                        : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+                    )}
+                  >
+                    <BookThumb title={item.title} coverUrl={item.coverUrl} muted={item.kind !== 'book'} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-normal">{item.title}</span>
+                      <ReadingRailItemMeta item={item} />
+                    </span>
+                  </button>
+                ))}
+              </div>
 
-          <button
-            type="button"
-            onClick={() => setSelectedId("__routine__")}
-            className={cn(
-              "flex w-full items-center gap-2.5 rounded-[8px] px-2 py-1.5 text-left transition-colors",
-              selectedId === "__routine__"
-                ? "bg-[var(--reading-active)] text-[var(--text-1)]"
-                : "text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]",
-            )}
-          >
-            <span className="text-[14px]">📅</span>
-            <span className="truncate text-[12px] font-normal">今日日程</span>
-          </button>
+              {rail?.showWereadPrompt && wereadPrompt && (
+                <div className="shrink-0 rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-3">
+                  <div className="text-[13px] font-semibold text-[var(--text-1)]">{wereadPrompt.title}</div>
+                  <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{wereadPrompt.body}</p>
+                  <button
+                    type="button"
+                    onClick={openReadingSettings}
+                    className="mt-2 h-8 w-full rounded-[6px] bg-[var(--text-1)] text-[12px] font-medium text-[var(--surface-1)]"
+                  >
+                    {wereadPrompt.actionLabel}
+                  </button>
+                </div>
+              )}
 
-          {rail?.showWereadPrompt && wereadPrompt && (
-            <div className="shrink-0 rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-3">
-              <div className="text-[13px] font-semibold text-[var(--text-1)]">{wereadPrompt.title}</div>
-              <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{wereadPrompt.body}</p>
-              <button
-                type="button"
-                onClick={openReadingSettings}
-                className="mt-2 h-8 w-full rounded-[6px] bg-[var(--text-1)] text-[12px] font-medium text-[var(--surface-1)]"
-              >
-                {wereadPrompt.actionLabel}
-              </button>
+              {wereadView?.books.length ? (
+                <WereadRail
+                  books={wereadView.books}
+                  selectedId={selectedId}
+                  summary={wereadView.summary}
+                  onSelect={selectReadingItem}
+                />
+              ) : null}
             </div>
+          </aside>
           )}
 
-          {wereadView?.books.length ? (
-            <WereadRail
-              books={wereadView.books}
-              selectedId={selectedId}
-              summary={wereadView.summary}
-              onSelect={selectReadingItem}
-            />
-          ) : null}
-        </div>
-      </aside>
-      )}
-
-      <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
-        <div className="flex min-h-full w-full justify-center">
-          <main className="w-full max-w-[980px] px-5 py-7 lg:px-8">
-            {selectedId === "__routine__" && <RoutinePanel />}
-            {!selectedWereadBook && selectedId !== "__routine__" && (
+          {viewTab === "routine" ? (
+            <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
+              <div className="flex min-h-full w-full justify-center">
+                <main className="w-full max-w-[980px] px-5 py-7 lg:px-8">
+                  <RoutinePanel />
+                </main>
+              </div>
+            </ScrollArea>
+          ) : (
+            <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
+              <div className="flex min-h-full w-full justify-center">
+                <main className="w-full max-w-[980px] px-5 py-7 lg:px-8">
+                  {!selectedWereadBook && (
               <div className="flex items-center justify-between gap-4">
                 <h1 className="text-[21px] font-semibold tracking-normal">一起读书</h1>
                 <div className="flex items-center gap-2">
@@ -631,6 +658,9 @@ export function ReadingView({ embedded }: { embedded?: boolean } = {}) {
           </main>
         </div>
       </ScrollArea>
+          )}
+        </div>
+      </div>
 
       {showNav && (
         <div className="fixed right-6 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-1 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-1 shadow-[0_18px_40px_-28px_rgba(18,22,32,0.42)]">
