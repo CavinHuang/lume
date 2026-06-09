@@ -1,20 +1,29 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs"
 import type { DailyRoutine, RoutineEntryStatus, RoutineStatus } from "@lume/shared"
 import { getRoutineSchedulePath, getRoutineRunsPath } from "../infra/config-paths"
+import { createLogger } from "../infra/logger"
+
+const log = createLogger("routine")
 
 export function readRoutine(date: string): DailyRoutine | null {
   const path = getRoutineSchedulePath(date)
   if (!existsSync(path)) return null
   try {
     return JSON.parse(readFileSync(path, "utf-8")) as DailyRoutine
-  } catch {
+  } catch (error) {
+    log.warn("读取日程文件失败", { date, error: error instanceof Error ? error.message : String(error) })
     return null
   }
 }
 
 export function writeRoutine(routine: DailyRoutine): void {
   const path = getRoutineSchedulePath(routine.date)
-  writeFileSync(path, JSON.stringify(routine, null, 2), "utf-8")
+  try {
+    writeFileSync(path, JSON.stringify(routine, null, 2), "utf-8")
+  } catch (error) {
+    log.error("写入日程文件失败", { date: routine.date, error: error instanceof Error ? error.message : String(error) })
+    throw error
+  }
 }
 
 export function updateEntryStatus(
@@ -32,6 +41,7 @@ export function updateEntryStatus(
     entry.result = result
   }
   routine.status = deriveRoutineStatus(routine.entries)
+  log.info("更新条目状态", { date, entryId, activity: entry.activity, status })
   writeRoutine(routine)
   return routine
 }

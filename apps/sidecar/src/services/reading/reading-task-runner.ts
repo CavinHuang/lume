@@ -33,6 +33,9 @@ import {
   collectReadingEvidence,
   mergeReadingEvidence
 } from "./reading-evidence";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("reading");
 
 export interface ReadingNoteGenerationContext {
   book: ReadingBook;
@@ -65,12 +68,19 @@ interface PreparedReadingTask {
 
 export function runReadingTask(input: ReadingRunTaskInput = {}, options: RunReadingTaskOptions = {}): ReadingTaskResult {
   const prepared = prepareReadingTask(input);
-  if ("result" in prepared) return prepared.result;
+  if ("result" in prepared) {
+    log.info("读书任务跳过", { status: prepared.result.status, message: prepared.result.message });
+    return prepared.result;
+  }
+  log.info("开始同步读书任务", { bookId: prepared.book.id, title: prepared.book.title, depth: prepared.depth });
   try {
     const fallbackInput = buildFallbackNoteInput(prepared);
     const generatedInput = options.generateNote?.(buildGenerationContext(prepared, input, fallbackInput)) ?? {};
-    return createTaskNote(prepared, fallbackInput, generatedInput);
+    const result = createTaskNote(prepared, fallbackInput, generatedInput);
+    log.info("同步读书任务完成", { status: result.status, bookId: result.bookId, noteId: result.noteId });
+    return result;
   } catch (error) {
+    log.error("同步读书任务失败", { bookId: prepared.book.id, error: error instanceof Error ? error.message : String(error) });
     return {
       status: "failed",
       bookId: prepared.book.id,
@@ -82,7 +92,11 @@ export function runReadingTask(input: ReadingRunTaskInput = {}, options: RunRead
 
 export async function runReadingTaskAsync(input: ReadingRunTaskInput = {}, options: RunReadingTaskAsyncOptions = {}): Promise<ReadingTaskResult> {
   const prepared = prepareReadingTask(input);
-  if ("result" in prepared) return prepared.result;
+  if ("result" in prepared) {
+    log.info("读书任务跳过", { status: prepared.result.status, message: prepared.result.message });
+    return prepared.result;
+  }
+  log.info("开始异步读书任务", { bookId: prepared.book.id, title: prepared.book.title, depth: prepared.depth });
   try {
     let fallbackInput = buildFallbackNoteInput(prepared);
     fallbackInput = await enrichFallbackEvidence(prepared.book, input, fallbackInput, options);
@@ -90,6 +104,7 @@ export async function runReadingTaskAsync(input: ReadingRunTaskInput = {}, optio
     const context = buildGenerationContext(prepared, { ...input, userContext }, fallbackInput);
     const llmAttempt = resolveReadingLlmAttempt(prepared, input, options);
     if (!options.generateNote && !llmAttempt) {
+      log.warn("读书模型未配置", { bookId: prepared.book.id });
       return {
         status: "failed",
         bookId: prepared.book.id,
@@ -101,13 +116,16 @@ export async function runReadingTaskAsync(input: ReadingRunTaskInput = {}, optio
       ? await options.generateNote(context)
       : null;
     if (generatedInput) {
-      return createTaskNote(prepared, fallbackInput, generatedInput);
+      const result = createTaskNote(prepared, fallbackInput, generatedInput);
+      log.info("异步读书任务完成(自定义生成)", { status: result.status, bookId: result.bookId, noteId: result.noteId });
+      return result;
     }
     const draftResult = await generateReadingNoteDraft(context, {
       ...llmAttempt,
       runTool: options.runTool ?? createReadingContextToolRunner(resolveReadingContextTools(input, options))
     });
     if (!draftResult.ok) {
+      log.warn("AI 读书笔记生成失败", { bookId: prepared.book.id, reason: draftResult.reason });
       return {
         status: "failed",
         bookId: prepared.book.id,
@@ -115,8 +133,11 @@ export async function runReadingTaskAsync(input: ReadingRunTaskInput = {}, optio
         completedAt: prepared.completedAt
       };
     }
-    return createTaskNote(prepared, fallbackInput, draftResult.draft);
+    const result = createTaskNote(prepared, fallbackInput, draftResult.draft);
+    log.info("异步读书任务完成", { status: result.status, bookId: result.bookId, noteId: result.noteId });
+    return result;
   } catch (error) {
+    log.error("异步读书任务失败", { bookId: prepared.book.id, error: error instanceof Error ? error.message : String(error) });
     return {
       status: "failed",
       bookId: prepared.book.id,

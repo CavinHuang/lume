@@ -2,6 +2,9 @@ import { generateDailyRoutine } from "./routine-generator"
 import { scheduleRoutineEntries } from "./routine-executor"
 import { syncRoutineStatus } from "./routine-executor"
 import { readRoutine } from "./routine-store"
+import { createLogger } from "../infra/logger"
+
+const log = createLogger("routine")
 
 const ROUTINE_GENERATE_HOUR = 8
 const SYNC_INTERVAL_MS = 5 * 60 * 1000
@@ -32,24 +35,26 @@ function scheduleNextGeneration(): void {
     try {
       await runDailyGeneration()
     } catch (error) {
-      console.error("[日程] 日程生成失败:", error instanceof Error ? error.message : String(error))
+      log.error("日程生成失败", { error: error instanceof Error ? error.message : String(error) })
     }
     scheduleNextGeneration()
   }, delay)
 
-  console.log(`[日程] 下次生成时间: ${target.toLocaleString("zh-CN")}`)
+  log.info("已调度下次生成", { target: target.toLocaleString("zh-CN") })
 }
 
 async function runDailyGeneration(): Promise<void> {
-  console.log("[日程] 开始生成今日日程")
+  log.info("开始生成今日日程")
   const routine = await generateDailyRoutine()
   await scheduleRoutineEntries(routine)
-  console.log(`[日程] 已生成 ${routine.entries.length} 个活动`)
+  log.info("今日日程已生成并调度", { totalEntries: routine.entries.length })
 }
 
 export async function startRoutineRunner(): Promise<void> {
   if (runnerStarted) return
   runnerStarted = true
+
+  log.info("日程运行器启动")
 
   const date = today()
   const existing = readRoutine(date)
@@ -65,13 +70,14 @@ export async function startRoutineRunner(): Promise<void> {
     try {
       syncRoutineStatus()
     } catch (error) {
-      console.error("[日程] 状态同步失败:", error instanceof Error ? error.message : String(error))
+      log.error("状态同步失败", { error: error instanceof Error ? error.message : String(error) })
     }
   }, SYNC_INTERVAL_MS)
 }
 
 export function stopRoutineRunner(): void {
   runnerStarted = false
+  log.info("日程运行器停止")
   if (generateTimer) {
     clearTimeout(generateTimer)
     generateTimer = null

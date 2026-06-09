@@ -52,6 +52,9 @@ import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
 import { parseReadingNoteMarkdown, serializeReadingNoteMarkdown } from "./note-markdown";
 import { validateReadingQuoteEvidence } from "./quote-evidence";
 import { BookDataService } from "./sources/book-data-service";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("reading");
 
 const LIBRARY_VERSION = 1;
 const WEREAD_BOOK_TRACKS = new Set<ReadingBookTrack>(["lume", "co_read", "recommended"]);
@@ -166,6 +169,8 @@ export function syncReadingWereadShelf(rawShelf: unknown, syncedAt = Date.now())
   const incomingBooks = readWereadShelfBooks(rawShelf);
   if (incomingBooks.length === 0) return listReadingBooks();
 
+  log.info("开始同步微信读书书架", { incomingCount: incomingBooks.length });
+
   const library = readLibrary();
   const books = [...library.books];
 
@@ -215,6 +220,7 @@ export function syncReadingWereadShelf(rawShelf: unknown, syncedAt = Date.now())
     ...library,
     books
   });
+  log.info("微信读书书架同步完成", { totalBooks: books.length, incoming: incomingBooks.length });
   return listReadingBooks();
 }
 
@@ -294,6 +300,7 @@ export function autoAdvanceProgress(): { bookId: string; title: string; oldProgr
 
   if (results.length > 0) {
     writeLibrary(library);
+    log.info("自动推进阅读进度", { count: results.length });
   }
   return results;
 }
@@ -697,7 +704,7 @@ function readLibrary(): ReadingLibraryIndex {
       reactionCounts: normalizeReactionCounts(parsed.reactionCounts)
     };
   } catch (error) {
-    console.error("[读书] 读取书架失败:", error);
+    log.warn("读取书架文件失败", { error: error instanceof Error ? error.message : String(error) });
     return createEmptyLibrary();
   }
 }
@@ -731,7 +738,7 @@ function readSettings(): Partial<StoredReadingSettings> | null {
   try {
     return JSON.parse(readFileSync(getReadingSettingsPath(), "utf-8")) as Partial<StoredReadingSettings>;
   } catch (error) {
-    console.error("[读书] 读取设置失败:", error);
+    log.warn("读取设置文件失败", { error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 }
@@ -749,7 +756,7 @@ function readAllNotes(): ReadingNote[] {
       try {
         return parseReadingNoteMarkdown(readFileSync(join(getReadingNotesDir(), name), "utf-8"));
       } catch (error) {
-        console.error(`[读书] 读取笔记失败: ${name}`, error);
+        log.warn("读取笔记文件失败", { name, error: error instanceof Error ? error.message : String(error) });
         return null;
       }
     })

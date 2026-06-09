@@ -816,32 +816,103 @@ fn describe_sidecar_method(method: &str) -> &'static str {
         "agent:get-proxy-settings" => "读取 sidecar 网络代理配置",
         "agent:save-proxy-settings" => "保存 sidecar 网络代理配置",
         "healthcheck" => "检查 sidecar 进程健康状态",
+        // 日程
+        "routine:get-today" => "获取今日日程",
+        "routine:trigger-entry" => "手动触发日程条目",
+        "routine:regenerate" => "重新生成今日日程",
+        // 读书
+        "reading:get-snapshot" => "获取读书快照",
+        "reading:list-books" => "获取书架列表",
+        "reading:list-notes" => "获取读书笔记列表",
+        "reading:get-note" => "获取单条读书笔记",
+        "reading:add-book" => "添加书籍",
+        "reading:update-book" => "更新书籍信息",
+        "reading:run-task" => "执行读书任务",
+        "reading:force-generate-note" => "强制生成读书笔记",
+        "reading:manual-generate-note" => "手动生成读书笔记",
+        "reading:revise-note" => "修订读书笔记",
+        "reading:connect-weread" => "连接微信读书",
+        "reading:disconnect-weread" => "断开微信读书",
+        "reading:search-weread" => "搜索微信读书",
+        "reading:search-books" => "搜索书籍",
+        "reading:generate-cover" => "生成书籍封面",
+        "reading:generate-share-card" => "生成分享卡片",
+        "reading:refresh-quotes" => "刷新引用",
         _ => "执行前端与 sidecar 后端之间的数据请求",
     }
 }
 
 fn summarize_sidecar_result(value: &serde_json::Value) -> String {
+    let summary = summarize_json_value(value, 0);
+    let max_len = 500;
+    if summary.len() <= max_len {
+        summary
+    } else {
+        format!(
+            "{}...(truncated)",
+            &summary[..summary.ceil_char_boundary(max_len)]
+        )
+    }
+}
+
+fn summarize_json_value(value: &serde_json::Value, depth: usize) -> String {
     match value {
         serde_json::Value::Null => "null".to_string(),
-        serde_json::Value::Bool(value) => format!("bool({value})"),
-        serde_json::Value::Number(_) => "number".to_string(),
-        serde_json::Value::String(value) => format!("string(len={})", value.chars().count()),
-        serde_json::Value::Array(items) => format!("array(len={})", items.len()),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => {
+            if s.len() <= 80 {
+                format!("\"{}\"", s)
+            } else {
+                format!("\"{}...\"(len={})", &s[..s.ceil_char_boundary(60)], s.len())
+            }
+        }
+        serde_json::Value::Array(items) => {
+            if items.is_empty() {
+                return "[]".to_string();
+            }
+            if depth >= 2 {
+                return format!("[...len={}]", items.len());
+            }
+            let max_items = 5;
+            let summaries: Vec<String> = items
+                .iter()
+                .take(max_items)
+                .map(|v| summarize_json_value(v, depth + 1))
+                .collect();
+            if items.len() <= max_items {
+                format!("[{}]", summaries.join(", "))
+            } else {
+                format!("[{}, ...len={}]", summaries.join(", "), items.len())
+            }
+        }
         serde_json::Value::Object(object) => {
             if object.is_empty() {
-                return "object(empty)".to_string();
+                return "{}".to_string();
             }
-            let mut keys = object.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-            keys.truncate(6);
-            format!("object(keys={})", keys.join(","))
+            if depth >= 2 {
+                let keys: Vec<&str> = object.keys().take(6).map(String::as_str).collect();
+                return format!("{{...{}}}", keys.join(","));
+            }
+            let max_keys = 8;
+            let entries: Vec<String> = object
+                .iter()
+                .take(max_keys)
+                .map(|(k, v)| format!("{}: {}", k, summarize_json_value(v, depth + 1)))
+                .collect();
+            if object.len() <= max_keys {
+                format!("{{{}}}", entries.join(", "))
+            } else {
+                format!("{{{}}}", entries.join(", "))
+            }
         }
     }
 }
 
-fn format_sidecar_call_started(request_id: u64, method: &str) -> String {
+fn format_sidecar_call_started(request_id: u64, method: &str, params: &serde_json::Value) -> String {
+    let params_summary = summarize_sidecar_result(params);
     format!(
-        "[desktop] 调用 sidecar 接口: id={request_id} method={method} 用途={}",
+        "[desktop] 调用 sidecar 接口: id={request_id} method={method} 用途={} 参数={params_summary}",
         describe_sidecar_method(method)
     )
 }
@@ -873,7 +944,7 @@ async fn sidecar_call_internal(
 ) -> Result<serde_json::Value, String> {
     ensure_sidecar_running(state, app)?;
     let request_id = NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed);
-    info!("{}", format_sidecar_call_started(request_id, method));
+    info!("{}", format_sidecar_call_started(request_id, method, &params));
 
     let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
     {
@@ -1462,8 +1533,8 @@ mod tests {
     #[test]
     fn sidecar_rpc_log_messages_are_human_readable() {
         assert_eq!(
-            format_sidecar_call_started(12, "general-settings:list-log-files"),
-            "[desktop] 调用 sidecar 接口: id=12 method=general-settings:list-log-files 用途=读取本地日志文件列表"
+            format_sidecar_call_started(12, "general-settings:list-log-files", &serde_json::Value::Null),
+            "[desktop] 调用 sidecar 接口: id=12 method=general-settings:list-log-files 用途=读取本地日志文件列表 参数=null"
         );
         assert_eq!(
             format_sidecar_request_sent(12, "general-settings:list-log-files"),
