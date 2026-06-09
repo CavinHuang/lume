@@ -88,7 +88,7 @@ const readingThemeVars = {
 
 type ReadingViewTab = "reading" | "routine"
 
-export function ReadingView({ embedded }: { embedded?: boolean } = {}) {
+export function ReadingView() {
   const [viewTab, setViewTab] = useState<ReadingViewTab>("reading")
   const [snapshot, setSnapshot] = useState<ReadingLibrarySnapshot | null>(null)
   const [selectedId, setSelectedId] = useState('__all__')
@@ -404,36 +404,34 @@ export function ReadingView({ embedded }: { embedded?: boolean } = {}) {
       style={readingThemeVars}
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        {!embedded && (
-          <div className="flex shrink-0 items-center gap-1 border-b border-[var(--reading-border)] bg-[var(--reading-rail)] px-4 py-2">
-            <button
-              type="button"
-              onClick={() => { setViewTab("reading"); setSelectedId("__all__") }}
-              className={cn(
-                "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
-                viewTab === "reading"
-                  ? "bg-[var(--reading-active)] text-[var(--text-1)]"
-                  : "text-[var(--text-3)] hover:text-[var(--text-1)]",
-              )}
-            >
-              一起读书
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewTab("routine")}
-              className={cn(
-                "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
-                viewTab === "routine"
-                  ? "bg-[var(--reading-active)] text-[var(--text-1)]"
-                  : "text-[var(--text-3)] hover:text-[var(--text-1)]",
-              )}
-            >
-              📅 今日日程
-            </button>
-          </div>
-        )}
+        <div className="flex shrink-0 items-center gap-1 border-b border-[var(--reading-border)] bg-[var(--reading-rail)] px-4 py-2">
+          <button
+            type="button"
+            onClick={() => { setViewTab("reading"); setSelectedId("__all__") }}
+            className={cn(
+              "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
+              viewTab === "reading"
+                ? "bg-[var(--reading-active)] text-[var(--text-1)]"
+                : "text-[var(--text-3)] hover:text-[var(--text-1)]",
+            )}
+          >
+            一起读书
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewTab("routine")}
+            className={cn(
+              "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
+              viewTab === "routine"
+                ? "bg-[var(--reading-active)] text-[var(--text-1)]"
+                : "text-[var(--text-3)] hover:text-[var(--text-1)]",
+            )}
+          >
+            📅 今日日程
+          </button>
+        </div>
         <div className="flex min-h-0 flex-1">
-          {!embedded && viewTab === "reading" && (
+          {viewTab === "reading" && (
           <aside className="hidden h-full min-h-0 w-[212px] shrink-0 overflow-hidden border-r border-[var(--reading-border)] bg-[var(--reading-rail)] px-3 py-4 lg:block">
             <div className="flex h-full min-h-0 flex-col gap-4">
               <div className="shrink-0 space-y-2">
