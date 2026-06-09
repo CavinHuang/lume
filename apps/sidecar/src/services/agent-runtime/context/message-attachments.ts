@@ -13,6 +13,15 @@ export function buildMessageAttachmentBrief(attachments?: AgentMessageAttachment
   ].join("\n");
 }
 
+export function buildAttachedDirectoriesBrief(directories?: string[]): string {
+  if (!directories?.length) return "";
+  const lines = directories.map((dir) => `- ${dir}`);
+  return [
+    "本轮用户附加了以下目录，你可以直接使用文件读取工具访问其中的文件：",
+    ...lines
+  ].join("\n");
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const kb = bytes / 1024;

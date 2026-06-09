@@ -6,15 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use base64::{engine::general_purpose, Engine as _};
 use log::{error, info, warn};
+use lume_logger as ll;
 use serde::Deserialize;
 use tauri::webview::PageLoadEvent;
 use tauri::Emitter;
 use tauri::Manager;
-use tauri_plugin_log::{Target, TargetKind};
 
 const SIDECAR_RESPONSE_TIMEOUT_SECS: u64 = 45;
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -150,64 +150,6 @@ fn current_settings_path() -> PathBuf {
     }
 
     resolve_settings_path(None, dirs::home_dir().as_deref())
-}
-
-fn resolve_logs_dir(config_dir: Option<&Path>, home_dir: Option<&Path>) -> PathBuf {
-    if let Some(config_dir) = config_dir {
-        return config_dir.join("logs");
-    }
-
-    if let Some(home_dir) = home_dir {
-        return home_dir.join(".lume").join("logs");
-    }
-
-    PathBuf::from(".lume").join("logs")
-}
-
-fn current_config_dir_from_env() -> Option<PathBuf> {
-    let config_dir = std::env::var("LUME_CONFIG_DIR").ok()?;
-    let trimmed = config_dir.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let path = PathBuf::from(trimmed);
-    Some(if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    })
-}
-
-fn civil_date_from_unix_days(days_since_epoch: i64) -> (i64, u32, u32) {
-    let z = days_since_epoch + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let mut year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    if month <= 2 {
-        year += 1;
-    }
-    (year, month as u32, day as u32)
-}
-
-fn current_utc_date_str() -> String {
-    let days_since_epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / 86_400;
-    let (year, month, day) = civil_date_from_unix_days(days_since_epoch as i64);
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
-fn current_log_file_name(date: &str) -> String {
-    format!("lume-{date}.log")
 }
 
 fn parse_window_behavior_from_settings_str(raw: &str) -> WindowBehavior {
@@ -379,12 +321,12 @@ fn spawn_managed_sidecar(
     if let Some(stdout) = child.stdout.take() {
         spawn_sidecar_stdout_reader(stdout, Arc::clone(&state.pending), app.clone());
     } else {
-        warn!("[desktop] sidecar stdout unavailable after spawn");
+        ll::logger("desktop.sidecar.lifecycle").warn("sidecar stdout unavailable after spawn");
     }
     if let Some(stderr) = child.stderr.take() {
         spawn_sidecar_stderr_reader(stderr);
     } else {
-        warn!("[desktop] sidecar stderr unavailable after spawn");
+        ll::logger("desktop.sidecar.lifecycle").warn("sidecar stderr unavailable after spawn");
     }
 
     let mut slot = state
@@ -408,13 +350,17 @@ fn ensure_sidecar_running(
         match slot.as_mut() {
             Some(child) => match child.try_wait() {
                 Ok(Some(status)) => {
-                    warn!("[desktop] sidecar exited before request: {status}");
+                    ll::logger("desktop.sidecar.lifecycle")
+                        .field("status", format!("{status}"))
+                        .warn("sidecar exited before request");
                     *slot = None;
                     should_respawn = true;
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    warn!("[desktop] sidecar try_wait failed: {error}");
+                    ll::logger("desktop.sidecar.lifecycle")
+                        .field("error", format!("{error}"))
+                        .warn("sidecar try_wait failed");
                     *slot = None;
                     should_respawn = true;
                 }
@@ -426,7 +372,7 @@ fn ensure_sidecar_running(
     }
 
     if should_respawn {
-        info!("[desktop] respawning sidecar");
+        ll::logger("desktop.sidecar.lifecycle").info("respawning sidecar");
         spawn_managed_sidecar(state, app)?;
     }
 
@@ -816,53 +762,30 @@ fn describe_sidecar_method(method: &str) -> &'static str {
         "agent:get-proxy-settings" => "读取 sidecar 网络代理配置",
         "agent:save-proxy-settings" => "保存 sidecar 网络代理配置",
         "healthcheck" => "检查 sidecar 进程健康状态",
+        // 日程
+        "routine:get-today" => "获取今日日程",
+        "routine:trigger-entry" => "手动触发日程条目",
+        "routine:regenerate" => "重新生成今日日程",
+        // 读书
+        "reading:get-snapshot" => "获取读书快照",
+        "reading:list-books" => "获取书架列表",
+        "reading:list-notes" => "获取读书笔记列表",
+        "reading:get-note" => "获取单条读书笔记",
+        "reading:add-book" => "添加书籍",
+        "reading:update-book" => "更新书籍信息",
+        "reading:run-task" => "执行读书任务",
+        "reading:force-generate-note" => "强制生成读书笔记",
+        "reading:manual-generate-note" => "手动生成读书笔记",
+        "reading:revise-note" => "修订读书笔记",
+        "reading:connect-weread" => "连接微信读书",
+        "reading:disconnect-weread" => "断开微信读书",
+        "reading:search-weread" => "搜索微信读书",
+        "reading:search-books" => "搜索书籍",
+        "reading:generate-cover" => "生成书籍封面",
+        "reading:generate-share-card" => "生成分享卡片",
+        "reading:refresh-quotes" => "刷新引用",
         _ => "执行前端与 sidecar 后端之间的数据请求",
     }
-}
-
-fn summarize_sidecar_result(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::Null => "null".to_string(),
-        serde_json::Value::Bool(value) => format!("bool({value})"),
-        serde_json::Value::Number(_) => "number".to_string(),
-        serde_json::Value::String(value) => format!("string(len={})", value.chars().count()),
-        serde_json::Value::Array(items) => format!("array(len={})", items.len()),
-        serde_json::Value::Object(object) => {
-            if object.is_empty() {
-                return "object(empty)".to_string();
-            }
-            let mut keys = object.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-            keys.truncate(6);
-            format!("object(keys={})", keys.join(","))
-        }
-    }
-}
-
-fn format_sidecar_call_started(request_id: u64, method: &str) -> String {
-    format!(
-        "[desktop] 调用 sidecar 接口: id={request_id} method={method} 用途={}",
-        describe_sidecar_method(method)
-    )
-}
-
-fn format_sidecar_request_sent(request_id: u64, method: &str) -> String {
-    format!("[desktop] sidecar 请求已发送: id={request_id} method={method} 状态=等待响应")
-}
-
-fn format_sidecar_call_succeeded(
-    request_id: u64,
-    method: &str,
-    result: &serde_json::Value,
-) -> String {
-    format!(
-        "[desktop] sidecar 调用成功: id={request_id} method={method} 结果={}",
-        summarize_sidecar_result(result)
-    )
-}
-
-fn format_sidecar_call_failed(request_id: u64, method: &str, error: &str) -> String {
-    format!("[desktop] sidecar 调用失败: id={request_id} method={method} 错误={error}")
 }
 
 async fn sidecar_call_internal(
@@ -873,7 +796,10 @@ async fn sidecar_call_internal(
 ) -> Result<serde_json::Value, String> {
     ensure_sidecar_running(state, app)?;
     let request_id = NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed);
-    info!("{}", format_sidecar_call_started(request_id, method));
+    ll::logger("desktop.sidecar.rpc")
+        .field("request_id", request_id)
+        .field("method", method)
+        .info(format!("调用 sidecar 接口: {}", describe_sidecar_method(method)));
 
     let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
     {
@@ -917,14 +843,11 @@ async fn sidecar_call_internal(
                     *slot = None;
                 }
             }
-            warn!(
-                "{}",
-                format_sidecar_call_failed(
-                    request_id,
-                    method,
-                    &format!("写入请求失败: {error}")
-                )
-            );
+            ll::logger("desktop.sidecar.rpc")
+                .field("request_id", request_id)
+                .field("method", method)
+                .field("error", format!("写入请求失败: {error}"))
+                .error("sidecar 调用失败");
             return Err(format!("write sidecar request failed: {error}"));
         }
 
@@ -935,18 +858,18 @@ async fn sidecar_call_internal(
                     *slot = None;
                 }
             }
-            warn!(
-                "{}",
-                format_sidecar_call_failed(
-                    request_id,
-                    method,
-                    &format!("刷新请求失败: {error}")
-                )
-            );
+            ll::logger("desktop.sidecar.rpc")
+                .field("request_id", request_id)
+                .field("method", method)
+                .field("error", format!("刷新请求失败: {error}"))
+                .error("sidecar 调用失败");
             return Err(format!("flush sidecar request failed: {error}"));
         }
     }
-    info!("{}", format_sidecar_request_sent(request_id, method));
+    ll::logger("desktop.sidecar.rpc")
+        .field("request_id", request_id)
+        .field("method", method)
+        .debug("sidecar 请求已发送，等待响应");
 
     let recv_result = tauri::async_runtime::spawn_blocking(move || {
         rx.recv_timeout(Duration::from_secs(SIDECAR_RESPONSE_TIMEOUT_SECS))
@@ -958,17 +881,17 @@ async fn sidecar_call_internal(
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             remove_pending_request(state, request_id);
-            warn!(
-                "{}",
-                format_sidecar_call_failed(request_id, method, "等待 sidecar 响应超时")
-            );
+            ll::logger("desktop.sidecar.rpc")
+                .field("request_id", request_id)
+                .field("method", method)
+                .warn("等待 sidecar 响应超时");
             Err(format!("sidecar response timeout for method: {method}"))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            warn!(
-                "{}",
-                format_sidecar_call_failed(request_id, method, "sidecar 响应通道已断开")
-            );
+            ll::logger("desktop.sidecar.rpc")
+                .field("request_id", request_id)
+                .field("method", method)
+                .error("sidecar 响应通道已断开");
             Err("sidecar response channel disconnected".to_string())
         }
     }
@@ -1027,20 +950,21 @@ fn spawn_sidecar_stdout_reader(
                             .get("message")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("unknown sidecar error");
-                        warn!(
-                            "{}",
-                            format_sidecar_call_failed(response_id, &request.method, message)
-                        );
+                        ll::logger("desktop.sidecar.rpc")
+                            .field("request_id", response_id)
+                            .field("method", &request.method)
+                            .field("error", message)
+                            .error("sidecar 调用失败");
                         let _ = request.tx.send(Err(message.to_string()));
                     } else {
                         let result = parsed
                             .get("result")
                             .cloned()
                             .unwrap_or(serde_json::Value::Null);
-                        info!(
-                            "{}",
-                            format_sidecar_call_succeeded(response_id, &request.method, &result)
-                        );
+                        ll::logger("desktop.sidecar.rpc")
+                            .field("request_id", response_id)
+                            .field("method", &request.method)
+                            .debug("sidecar 调用成功");
                         let _ = request.tx.send(Ok(result));
                     }
                 } else {
@@ -1063,14 +987,17 @@ fn spawn_sidecar_stdout_reader(
 
         if let Ok(mut waiters) = pending.lock() {
             for (request_id, request) in waiters.drain() {
-                warn!(
-                    "{}",
-                    format_sidecar_call_failed(request_id, &request.method, &close_reason)
-                );
+                ll::logger("desktop.sidecar.rpc")
+                    .field("request_id", request_id)
+                    .field("method", &request.method)
+                    .field("error", &close_reason)
+                    .error("sidecar 调用失败");
                 let _ = request.tx.send(Err(close_reason.clone()));
             }
         }
-        warn!("[desktop] sidecar stdout reader stopped: {close_reason}");
+        ll::logger("desktop.sidecar.lifecycle")
+            .field("reason", &close_reason)
+            .warn("sidecar stdout reader stopped");
     });
 }
 
@@ -1083,12 +1010,12 @@ fn spawn_sidecar_stderr_reader(stderr: ChildStderr) {
             line.clear();
             match reader.read_line(&mut line) {
                 Ok(0) => {
-                    info!("[desktop] sidecar stderr reader stopped: EOF");
+                    ll::logger("sidecar.runtime.stderr").source("sidecar.stderr").debug("stderr reader stopped: EOF");
                     break;
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    warn!("[desktop] read sidecar stderr failed: {error}");
+                    ll::logger("sidecar.runtime.stderr").source("sidecar.stderr").error(format!("read stderr failed: {error}"));
                     break;
                 }
             }
@@ -1097,7 +1024,10 @@ fn spawn_sidecar_stderr_reader(stderr: ChildStderr) {
             if trimmed.is_empty() {
                 continue;
             }
-            info!("[sidecar] {trimmed}");
+            ll::logger("sidecar.runtime.stderr")
+                .source("sidecar.stderr")
+                .field("line", trimmed)
+                .warn(trimmed);
         }
     });
 }
@@ -1427,13 +1357,11 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_sidecar_logging_env, build_mac_sidecar_bridge_args, current_log_file_name,
-        format_sidecar_call_failed, format_sidecar_call_started, format_sidecar_call_succeeded,
-        format_sidecar_request_sent, next_window_action,
+        apply_sidecar_logging_env, build_mac_sidecar_bridge_args,
+        next_window_action,
         parse_window_behavior_from_settings_str, resolve_runtime_window_action,
         resolve_settings_path, WindowAction, WindowBehavior, WindowBehaviorEvent,
     };
-    use std::path::PathBuf;
     use std::process::Command;
 
     #[test]
@@ -1460,38 +1388,7 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_rpc_log_messages_are_human_readable() {
-        assert_eq!(
-            format_sidecar_call_started(12, "general-settings:list-log-files"),
-            "[desktop] 调用 sidecar 接口: id=12 method=general-settings:list-log-files 用途=读取本地日志文件列表"
-        );
-        assert_eq!(
-            format_sidecar_request_sent(12, "general-settings:list-log-files"),
-            "[desktop] sidecar 请求已发送: id=12 method=general-settings:list-log-files 状态=等待响应"
-        );
-        assert_eq!(
-            format_sidecar_call_succeeded(
-                12,
-                "general-settings:list-log-files",
-                &serde_json::json!({
-                    "files": [],
-                    "totalFiles": 0,
-                    "totalBytes": 0
-                })
-            ),
-            "[desktop] sidecar 调用成功: id=12 method=general-settings:list-log-files 结果=object(keys=files,totalBytes,totalFiles)"
-        );
-        assert_eq!(
-            format_sidecar_call_failed(12, "general-settings:list-log-files", "boom"),
-            "[desktop] sidecar 调用失败: id=12 method=general-settings:list-log-files 错误=boom"
-        );
-    }
-
-    #[test]
-    fn desktop_and_sidecar_share_single_daily_log_file() {
-        assert_eq!(current_log_file_name("2026-05-29"), "lume-2026-05-29.log");
-
-        let mut command = Command::new("sidecar");
+    fn sidecar_logging_env_overrides() {
         apply_sidecar_logging_env(&mut command);
         let envs = command
             .get_envs()
@@ -1618,19 +1515,14 @@ mod tests {
     }
 }
 
-fn get_logs_dir() -> PathBuf {
-    let env_config_dir = current_config_dir_from_env();
-    let logs_dir = resolve_logs_dir(env_config_dir.as_deref(), dirs::home_dir().as_deref());
-    if !logs_dir.exists() {
-        let _ = std::fs::create_dir_all(&logs_dir);
-    }
-    logs_dir
-}
-
 fn main() {
-    // 获取日志目录
-    let logs_dir = get_logs_dir();
-    let log_file_name = current_log_file_name(&current_utc_date_str());
+    // 初始化统一日志系统
+    ll::init(ll::LumeLoggerConfig {
+        level: ll::LumeLogLevel::Debug,
+        console_enabled: true,
+        ..ll::LumeLoggerConfig::default()
+    }).expect("failed to initialize lume-logger");
+
     let updater_pubkey = option_env!("LUME_UPDATER_PUBLIC_KEY")
         .unwrap_or("__LUME_UPDATER_PUBLIC_KEY__")
         .to_string();
@@ -1638,15 +1530,6 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().pubkey(updater_pubkey).build())
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .targets([
-                    Target::new(TargetKind::Stderr),  // 控制台输出
-                    Target::new(TargetKind::Folder { path: logs_dir.clone(), file_name: Some(log_file_name.into()) }),  // 文件输出
-                ])
-                .level(log::LevelFilter::Info)
-                .build(),
-        )
         .manage(SidecarProcess::new())
         .manage(DesktopShellState::new())
         .setup(|app| {
@@ -1660,6 +1543,12 @@ fn main() {
                     );
                 } else {
                     error!("[desktop] sidecar stdout unavailable after spawn");
+                }
+
+                if let Some(stderr) = child.stderr.take() {
+                    spawn_sidecar_stderr_reader(stderr);
+                } else {
+                    ll::logger("desktop.sidecar.lifecycle").warn("sidecar stderr unavailable after spawn");
                 }
 
                 if let Ok(mut slot) = state.child.lock() {

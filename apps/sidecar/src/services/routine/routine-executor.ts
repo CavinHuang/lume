@@ -4,6 +4,9 @@ import { listAutomationJobs } from "../automation/automation-manager"
 import { startAutomationRunner, refreshAutomationRunnerJobs } from "../automation/automation-runner-service"
 import { getActivityExecutor } from "./routine-activities"
 import { readRoutine, writeRoutine, appendRoutineRun } from "./routine-store"
+import { createLogger } from "../infra/logger"
+
+const log = createLogger("routine")
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -11,6 +14,10 @@ function today(): string {
 
 export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<DailyRoutine> {
   await startAutomationRunner()
+
+  let scheduled = 0
+  let failed = 0
+  let skipped = 0
 
   for (const entry of routine.entries) {
     if (entry.status !== "pending" || entry.automationJobId) continue
@@ -22,8 +29,11 @@ export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<Dai
         const jobInput = executor.buildJobInput(entry, routine.context)
         const job = createAutomationJob(jobInput)
         entry.automationJobId = job.id
-      } catch {
+        scheduled++
+      } catch (error) {
         entry.status = "failed"
+        failed++
+        log.warn("调度条目失败", { entryId: entry.id, activity: entry.activity, error: error instanceof Error ? error.message : String(error) })
       }
       continue
     }
@@ -38,18 +48,23 @@ export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<Dai
           enabled: true,
         })
         entry.automationJobId = job.id
-      } catch {
+        scheduled++
+      } catch (error) {
         entry.status = "failed"
+        failed++
+        log.warn("调度自定义条目失败", { entryId: entry.id, activity: entry.activity, error: error instanceof Error ? error.message : String(error) })
       }
       continue
     }
 
     // No executor and no custom prompt — skip
     entry.status = "skipped"
+    skipped++
   }
 
   await refreshAutomationRunnerJobs()
   writeRoutine(routine)
+  log.info("条目调度完成", { date: routine.date, scheduled, failed, skipped })
   return routine
 }
 
@@ -60,6 +75,8 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
 
   const entry = routine.entries.find((e) => e.id === entryId)
   if (!entry) return null
+
+  log.info("手动触发条目", { date, entryId, activity: entry.activity })
 
   // Try predefined executor first
   const executor = getActivityExecutor(entry.activity)
@@ -91,6 +108,7 @@ export function syncRoutineStatus(): void {
   if (!routine || routine.status === "completed") return
 
   const jobs = listAutomationJobs()
+  let changed = 0
 
   for (const entry of routine.entries) {
     if (!entry.automationJobId || entry.status === "completed" || entry.status === "failed") continue
@@ -100,6 +118,8 @@ export function syncRoutineStatus(): void {
 
     if (!job.enabled && job.lastRunAt) {
       entry.status = "completed"
+      changed++
+      log.info("条目执行完成", { date, entryId: entry.id, activity: entry.activity })
       appendRoutineRun({
         entryId: entry.id,
         activity: entry.activity,
@@ -114,9 +134,12 @@ export function syncRoutineStatus(): void {
   )
   if (allDone) {
     routine.status = "completed"
+    log.info("日程全部完成", { date, totalEntries: routine.entries.length })
   } else if (routine.entries.some((e) => e.status === "running")) {
     routine.status = "running"
   }
 
-  writeRoutine(routine)
+  if (changed > 0 || allDone) {
+    writeRoutine(routine)
+  }
 }

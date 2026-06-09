@@ -3,6 +3,9 @@ import { listReadingBooks, getReadingSettings, listReadingNotes } from "../readi
 import { getApplicableActivities } from "./routine-activities"
 import { writeRoutine, readRoutine } from "./routine-store"
 import { generateRoutinePlanWithLlm, type LlmRoutinePlan } from "./routine-llm-adapter"
+import { createLogger } from "../infra/logger"
+
+const log = createLogger("routine")
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -26,14 +29,30 @@ function collectRoutineContext(): RoutineContext {
   }
 }
 
-function buildTimeSlots(date: string): number[] {
+function buildTimeSlots(date: string, futureOnly = false): number[] {
   const parts = date.split("-")
   const base = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getTime()
+  const now = Date.now()
   const slots: number[] = []
   for (let hour = 8; hour <= 21; hour++) {
-    slots.push(base + hour * 3600_000)
+    const slot = base + hour * 3600_000
+    if (!futureOnly || slot > now) {
+      slots.push(slot)
+    }
   }
   return slots
+}
+
+/** 将 N 个活动均匀分布到 totalSlots 个时间槽中，返回每个活动对应的槽位索引 */
+function distributeEvenly(count: number, totalSlots: number): number[] {
+  if (count <= 0) return []
+  if (count === 1) return [Math.floor(totalSlots / 2)]
+  if (count >= totalSlots) return Array.from({ length: totalSlots }, (_, i) => i)
+  const indices: number[] = []
+  for (let i = 0; i < count; i++) {
+    indices.push(Math.round((i * (totalSlots - 1)) / (count - 1)))
+  }
+  return indices
 }
 
 const PRIORITY_ORDER: RoutineActivity[] = [
@@ -58,26 +77,62 @@ export async function generateDailyRoutine(overrideDate?: string, force?: boolea
 
   const context = collectRoutineContext()
 
+  // force 重新生成时，保留已完成/进行中的条目
+  let preservedEntries: RoutineEntry[] = []
+  let preservedActivities = new Set<string>()
+  if (force) {
+    const existing = readRoutine(date)
+    if (existing) {
+      preservedEntries = existing.entries.filter(
+        (e) => e.status === "completed" || e.status === "running",
+      )
+      preservedActivities = new Set(preservedEntries.map((e) => e.activity))
+      log.info("重新生成日程，保留已完成条目", {
+        date,
+        preservedCount: preservedEntries.length,
+        preservedActivities: [...preservedActivities],
+      })
+    }
+  }
+
   // Try LLM generation first
   try {
     const llmPlan = await generateRoutinePlanWithLlm(context, date)
     if (llmPlan && llmPlan.entries.length > 0) {
-      const routine = buildRoutineFromLlmPlan(llmPlan, context, date)
-      writeRoutine(routine)
-      return routine
+      // 过滤掉已保留的活动
+      llmPlan.entries = llmPlan.entries.filter((e) => !preservedActivities.has(e.activity))
+      if (llmPlan.entries.length > 0) {
+        const routine = buildRoutineFromLlmPlan(llmPlan, context, date, preservedEntries, force)
+        writeRoutine(routine)
+        return routine
+      }
     }
   } catch (error) {
-    console.warn("[日程] LLM 生成失败，回退到规则引擎:", error instanceof Error ? error.message : String(error))
+    log.warn("LLM 生成失败，回退到规则引擎", { error: error instanceof Error ? error.message : String(error) })
   }
 
   // Fallback: rule-based generation
-  const routine = generateRuleBasedRoutine(context, date)
+  const routine = generateRuleBasedRoutine(context, date, preservedEntries, preservedActivities, force)
   writeRoutine(routine)
+  log.info("日程生成完成", {
+    date,
+    source: routine.generationSource,
+    totalEntries: routine.entries.length,
+    newEntries: routine.entries.filter((e) => e.status === "pending").length,
+    preservedEntries: preservedEntries.length,
+    activities: routine.entries.map((e) => `${e.activity}@${new Date(e.scheduledAt).getHours()}:00`),
+  })
   return routine
 }
 
-function buildRoutineFromLlmPlan(plan: LlmRoutinePlan, context: RoutineContext, date: string): DailyRoutine {
-  const slots = buildTimeSlots(date)
+function buildRoutineFromLlmPlan(
+  plan: LlmRoutinePlan,
+  context: RoutineContext,
+  date: string,
+  preservedEntries: RoutineEntry[] = [],
+  futureOnly = false,
+): DailyRoutine {
+  const slots = buildTimeSlots(date, futureOnly)
 
   const entries: RoutineEntry[] = plan.entries.map((item, index) => {
     const hour = Math.max(8, Math.min(21, item.scheduledHour))
@@ -99,14 +154,23 @@ function buildRoutineFromLlmPlan(plan: LlmRoutinePlan, context: RoutineContext, 
     date,
     generatedAt: Date.now(),
     status: "planned",
-    entries,
+    entries: [...preservedEntries, ...entries],
     context,
     generationSource: "llm",
   }
 }
 
-function generateRuleBasedRoutine(context: RoutineContext, date: string): DailyRoutine {
+function generateRuleBasedRoutine(
+  context: RoutineContext,
+  date: string,
+  preservedEntries: RoutineEntry[] = [],
+  preservedActivities: Set<string> = new Set(),
+  futureOnly = false,
+): DailyRoutine {
   const applicable = getApplicableActivities(context)
+    .filter((e) => !preservedActivities.has(e.activity))
+
+  const slots = buildTimeSlots(date, futureOnly)
 
   let entries: RoutineEntry[] = applicable.map((executor, index) => ({
     id: `entry-${executor.activity}-${index}`,
@@ -115,25 +179,41 @@ function generateRuleBasedRoutine(context: RoutineContext, date: string): DailyR
     status: "pending" as const,
   }))
 
-  const slots = buildTimeSlots(date)
+  // 按优先级排序
   entries = [...entries].sort((a, b) => {
     const aIndex = PRIORITY_ORDER.indexOf(a.activity)
     const bIndex = PRIORITY_ORDER.indexOf(b.activity)
     const aPriority = aIndex === -1 ? 999 : aIndex
     const bPriority = bIndex === -1 ? 999 : bIndex
     return aPriority - bPriority
-  }).map((entry, index) => {
-    const slotIndex = Math.min(index, slots.length - 1)
-    entry.scheduledAt = slots[slotIndex]!
-    return entry
   })
 
+  // 均匀分配到可用时间槽，覆盖全天
+  if (slots.length === 0) {
+    // 没有可用时间槽时（已过 21:00），按当前时间依次延迟 1 分钟
+    const now = Date.now()
+    entries.forEach((entry, index) => {
+      entry.scheduledAt = now + index * 60_000
+    })
+  } else {
+    const slotIndices = distributeEvenly(entries.length, slots.length)
+    entries.forEach((entry, index) => {
+      const slotIndex = slotIndices[index] ?? slots.length - 1
+      entry.scheduledAt = slots[slotIndex]!
+    })
+  }
+
+  const allEntries = [...preservedEntries, ...entries]
   return {
     id: `routine-${date}`,
     date,
     generatedAt: Date.now(),
-    status: "planned",
-    entries,
+    status: allEntries.every((e) => e.status === "completed" || e.status === "skipped" || e.status === "failed")
+      ? "completed"
+      : allEntries.some((e) => e.status === "running")
+        ? "running"
+        : "planned",
+    entries: allEntries,
     context,
     generationSource: "rules",
   }

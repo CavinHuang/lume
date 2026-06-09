@@ -1,5 +1,8 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { getReadingWereadCachePath } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("reading");
 
 const WEREAD_CACHE_VERSION = 1;
 const DEFAULT_WEREAD_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -35,11 +38,13 @@ export async function cachedWereadCall<T>(
     return entry.value as T;
   }
   if (entry) {
+    log.debug("微信读书缓存过期，后台刷新", { key });
     refreshWereadCacheEntry(key, load, options);
     return entry.value as T;
   }
 
   const value = await load();
+  log.debug("微信读书缓存未命中，已加载", { key });
   writeWereadCacheEntry(key, {
     updatedAt: now,
     expiresAt: now + ttlMs,
@@ -76,8 +81,9 @@ function refreshWereadCacheEntry<T>(
         expiresAt: now + ttlMs,
         value
       });
-    } catch {
+    } catch (error) {
       // Stale cache keeps the UI usable; failed refreshes can retry on the next call.
+      log.warn("微信读书缓存刷新失败", { key, error: error instanceof Error ? error.message : String(error) });
     } finally {
       refreshingKeys.delete(key);
     }

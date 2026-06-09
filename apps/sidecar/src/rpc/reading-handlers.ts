@@ -46,6 +46,9 @@ import { runReadingTaskAsync } from "../services/reading/reading-task-runner";
 import { generateReadingCover } from "../services/reading/cover-generator";
 import { refreshReadingQuotes } from "../services/reading/quote-provider";
 import { generateReadingShareCard } from "../services/reading/share-card-service";
+import { createLogger } from "../services/infra/logger";
+
+const log = createLogger("reading-rpc");
 import {
   aliceReadingBookInputSchema,
   aliceReadingListNotesInputSchema,
@@ -187,6 +190,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
         params ?? {},
         READING_IPC_CHANNELS.RUN_TASK
       ) as ReadingRunTaskInput | undefined;
+      log.info("RPC: 执行读书任务", { bookId: input?.bookId, depth: input?.depth });
       return runReadingTaskAndNotify(context, input ?? {});
     },
     [READING_IPC_CHANNELS.FORCE_GENERATE_NOTE]: async (params) => {
@@ -195,6 +199,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
         params ?? {},
         READING_IPC_CHANNELS.FORCE_GENERATE_NOTE
       ) as ReadingRunTaskInput | undefined;
+      log.info("RPC: 强制生成读书笔记", { bookId: input?.bookId, depth: input?.depth });
       return runReadingTaskAndNotify(context, { ...input, trigger: "manual" });
     },
     [READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE]: async (params) => {
@@ -203,6 +208,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
         params ?? {},
         READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE
       ) as ReadingRunTaskInput | undefined;
+      log.info("RPC: 手动生成读书笔记", { bookId: input?.bookId, depth: input?.depth, trigger: input?.trigger ?? "conversation" });
       return runReadingTaskAndNotify(context, { ...input, trigger: input?.trigger ?? "conversation" });
     },
     [READING_IPC_CHANNELS.REVISE_NOTE]: async (params) =>
@@ -213,6 +219,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
       ) as ReadingNoteRevisionInput),
     [READING_IPC_CHANNELS.CONNECT_WEREAD]: async (params) => {
       clearWereadCache();
+      log.info("RPC: 连接微信读书");
       const connection = connectReadingWeread(validateInput(
         readingConnectWereadInputSchema,
         params,
@@ -221,7 +228,7 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
       try {
         syncReadingWereadShelf(await weread.shelf());
       } catch (error) {
-        console.warn("[读书] 微信读书书架同步失败:", error);
+        log.warn("微信读书书架同步失败", { error: error instanceof Error ? error.message : String(error) });
       }
       return connection;
     },

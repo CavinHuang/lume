@@ -2,7 +2,10 @@ import { ROUTINE_IPC_CHANNELS } from "@lume/shared"
 import type { RpcHandler } from "./types"
 import { readRoutine } from "../services/routine/routine-store"
 import { generateDailyRoutine } from "../services/routine/routine-generator"
-import { triggerRoutineEntry, syncRoutineStatus } from "../services/routine/routine-executor"
+import { triggerRoutineEntry, scheduleRoutineEntries, syncRoutineStatus } from "../services/routine/routine-executor"
+import { createLogger } from "../services/infra/logger"
+
+const log = createLogger("routine-rpc")
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -18,12 +21,15 @@ export function createRoutineHandlers(): Record<string, RpcHandler> {
     [ROUTINE_IPC_CHANNELS.TRIGGER_ENTRY]: async (params) => {
       const { entryId } = params as { entryId: string }
       if (!entryId) throw new Error("entryId 不能为空")
+      log.info("RPC: 手动触发条目", { entryId })
       return triggerRoutineEntry(entryId)
     },
 
     [ROUTINE_IPC_CHANNELS.REGENERATE]: async () => {
       const date = today()
+      log.info("RPC: 重新生成日程", { date })
       const routine = await generateDailyRoutine(date, true)
+      await scheduleRoutineEntries(routine)
       return routine
     },
   }

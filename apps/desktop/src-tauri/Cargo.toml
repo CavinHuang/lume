@@ -10,7 +10,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-log = "2"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = "2.10.1"
 serde = { version = "1", features = ["derive"] }
@@ -20,6 +19,7 @@ rfd = "0.15"
 webbrowser = "1"
 log = "0.4"
 dirs = "5"
+lume-logger = { path = "../../../crates/lume-logger" }
 
 [[bin]]
 name = "Lume"

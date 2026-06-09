@@ -112,6 +112,7 @@ export interface CreateRuntimeCoreSessionInput {
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   messageAttachments?: AgentSendInput["messageAttachments"];
+  attachedDirectories?: string[];
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
@@ -955,6 +956,7 @@ export async function createRuntimeCoreSession(
     agentSystemPrompt: subagentDefinition?.prompt,
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
+    attachedDirectories: input.attachedDirectories,
     availableTools: toolset.availableToolNames,
     tokenBudget: contextTokenBudget,
     workflowContext,
@@ -1012,7 +1014,7 @@ export async function createRuntimeCoreSession(
         messageMetadata: input.messageMetadata
       }
     }),
-    additionalDirectories: input.workspaceSlug ? [input.cwd] : undefined,
+    additionalDirectories: input.workspaceSlug ? [input.cwd, ...(input.attachedDirectories ?? [])] : input.attachedDirectories,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,

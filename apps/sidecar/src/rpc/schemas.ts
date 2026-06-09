@@ -31,6 +31,7 @@ export const agentSendInputSchema = z.object({
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).optional(),
   thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
+  attachedDirectories: z.array(z.string()).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
   resendFromMessageId: z.string().optional(),
   editFromMessageId: z.string().optional()

@@ -6,6 +6,9 @@ import type {
 } from "@lume/shared";
 import { buildDeepReadingNoteInput, buildSeedReadingNoteInput } from "./reading-prompts";
 import type { ReadingNoteGenerationContext } from "./reading-task-runner";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("reading");
 
 export const READING_NOTE_GENERATOR_MAX_TURNS = 30;
 
@@ -247,6 +250,14 @@ export async function generateReadingNoteDraft(
   const messages = buildInitialMessages(context);
   let usage: ReadingModelUsage = { modelRef };
 
+  log.info("开始生成读书笔记草稿", {
+    book: context.book.title,
+    depth: context.depth,
+    modelRef,
+    maxTurns,
+    evidenceCount: context.evidence.length,
+  });
+
   for (let turn = 0; turn < maxTurns; turn += 1) {
     const result = await collectStream(deps.llm.stream({
       modelRef,
@@ -262,9 +273,16 @@ export async function generateReadingNoteDraft(
     });
 
     const parsed = readNoteInputFromText(result.text, context, fallback, usage);
-    if (parsed) return { ok: true, draft: parsed };
+    if (parsed) {
+      log.info("读书笔记草稿生成成功", { book: context.book.title, depth: context.depth, turn: turn + 1, tokens: usage.totalTokens });
+      return { ok: true, draft: parsed };
+    }
 
-    if (result.toolCalls.length === 0) break;
+    if (result.toolCalls.length === 0) {
+      log.debug("LLM 未输出 JSON 也未调用工具，轮次结束", { turn: turn + 1, textLength: result.text.length });
+      break;
+    }
+    log.debug("读书笔记生成工具调用", { turn: turn + 1, tools: result.toolCalls.map((tc) => tc.name) });
     for (const toolCall of result.toolCalls) {
       const args = parseToolArguments(toolCall.arguments);
       const output = await runTool(deps.runTool, toolCall.name, args);
@@ -278,10 +296,17 @@ export async function generateReadingNoteDraft(
   }
 
   const fromHistory = readNoteInputFromMessages(messages, context, fallback, usage);
-  if (fromHistory) return { ok: true, draft: fromHistory };
+  if (fromHistory) {
+    log.info("从历史消息中提取到读书笔记", { book: context.book.title, depth: context.depth });
+    return { ok: true, draft: fromHistory };
+  }
 
   const converged = await tryConvergeJson({ llm: deps.llm, modelRef, messages, context, fallback, usage });
-  if (converged) return { ok: true, draft: converged };
+  if (converged) {
+    log.info("通过收敛提示提取到读书笔记", { book: context.book.title, depth: context.depth });
+    return { ok: true, draft: converged };
+  }
+  log.warn("AI 未能生成有效的读书笔记", { book: context.book.title, depth: context.depth, modelRef });
   return { ok: false, reason: "AI 未能生成有效的读书笔记", usage: normalizeUsage(usage) };
 }
 

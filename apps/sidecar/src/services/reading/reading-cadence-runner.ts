@@ -7,6 +7,9 @@ import { getReadingSettings, listReadingNotes } from "./reading-store";
 import { runReadingTaskAsync } from "./reading-task-runner";
 import { emitReadingGenerationNotification, type ReadingNotificationWriter } from "./reading-notifications";
 import type { ReadingContextToolsDeps } from "./reading-context-tools";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("reading");
 
 export const READING_CADENCE_TICK_MS = 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -90,12 +93,15 @@ export async function runReadingCadenceTick(input: RunReadingCadenceTickInput = 
   });
 
   if (!decision.due) {
+    log.debug("读书节奏未到", { reason: decision.reason });
     return {
       status: "skipped",
       message: "读书节奏未到",
       completedAt: now
     };
   }
+
+  log.info("读书节奏到期，开始生成", { depth: decision.depth, reason: decision.reason });
 
   const workspaceSlug = resolveReadingCadenceWorkspaceSlug(input);
   const taskInput = {
@@ -119,6 +125,7 @@ export async function runReadingCadenceTick(input: RunReadingCadenceTickInput = 
     ...(workspaceSlug ? { workspaceSlug } : {}),
     completedAt: result.completedAt
   });
+  log.info("读书节奏执行完成", { status: result.status, bookId: result.bookId, noteId: result.noteId, depth: decision.depth });
   emitReadingGenerationNotification(input.writeNotification ?? notificationWriter, result, taskInput);
   return result;
 }
@@ -130,12 +137,13 @@ export function setReadingCadenceNotificationWriter(writer: ReadingNotificationW
 export async function startReadingCadenceRunner(input: { intervalMs?: number } = {}): Promise<void> {
   if (runnerTimer) return;
   const intervalMs = Math.max(1_000, input.intervalMs ?? READING_CADENCE_TICK_MS);
+  log.info("读书节奏运行器启动", { intervalMs });
   runnerTimer = setInterval(() => {
     if (runnerTickInFlight) return;
     runnerTickInFlight = true;
     void runReadingCadenceTick()
       .catch((error) => {
-        console.error(`[读书] 后台读书节奏执行失败: ${error instanceof Error ? error.message : String(error)}`);
+        log.error("后台读书节奏执行失败", { error: error instanceof Error ? error.message : String(error) });
       })
       .finally(() => {
         runnerTickInFlight = false;
