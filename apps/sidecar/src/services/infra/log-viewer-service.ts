@@ -49,9 +49,9 @@ function getLogFiles(): string[] {
 
 function isSafeLogFileName(fileName: string): boolean {
   return basename(fileName) === fileName
-    && fileName.endsWith(".log")
+    && (fileName.endsWith(".log") || fileName.endsWith(".ndjson"))
     && !fileName.includes("..")
-    && /^[a-zA-Z0-9._-]+\.log$/.test(fileName);
+    && /^[a-zA-Z0-9._-]+\.(log|ndjson)$/.test(fileName);
 }
 
 function resolveLogPath(fileName: string): string {
@@ -137,12 +137,50 @@ export function exportAllLogFiles(): ExportLogsResult {
 }
 
 function parseLogLine(raw: string): { level: LogViewerLevel; text: string } {
+  // Try lume-logger NDJSON first, then pino JSON, then plain text
+  const ndjson = parseNdjsonLine(raw);
+  if (ndjson) return ndjson;
   const parsed = parsePinoLine(raw);
   if (parsed) return parsed;
   return {
     level: inferPlainLogLevel(raw),
     text: raw
   };
+}
+
+/**
+ * Parse a lume-logger NDJSON line.
+ * lume-logger has `level` as a string (not a number like pino) and uses `ts`/`source`/`context`/`message`.
+ */
+function parseNdjsonLine(raw: string): { level: LogViewerLevel; text: string } | null {
+  if (!raw.trim().startsWith("{")) return null;
+  try {
+    const record = JSON.parse(raw) as Record<string, unknown>;
+    // lume-logger uses string level; pino uses numeric level
+    if (typeof record.level !== "string") return null;
+    const level = record.level as LogViewerLevel;
+    const time = formatLogTime(record.ts);
+    const source = typeof record.source === "string" ? record.source : "unknown";
+    const context = typeof record.context === "string" ? record.context : "app";
+    const message = typeof record.message === "string" ? record.message : "";
+
+    // Collect extra fields (data + any other top-level keys)
+    const skipKeys = new Set(["ts", "level", "source", "context", "message"]);
+    const extra: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (!skipKeys.has(key)) {
+        extra[key] = value;
+      }
+    }
+    const suffix = Object.keys(extra).length > 0 ? ` ${JSON.stringify(extra)}` : "";
+
+    return {
+      level,
+      text: `[${time}] [${LEVEL_LABELS[level]}] [${source}/${context}] ${message}${suffix}`.trim()
+    };
+  } catch {
+    return null;
+  }
 }
 
 function parsePinoLine(raw: string): { level: LogViewerLevel; text: string } | null {

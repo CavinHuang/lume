@@ -1,0 +1,14 @@
+{
+  "name": "bun-napi-verify",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cargo build --release --manifest-path native/Cargo.toml && cp native/target/release/liblume_native_logger_verify.dylib ./lume-native-logger-verify.darwin-arm64.node 2>/dev/null || cp native/target/release/liblume_native_logger_verify.so ./lume-native-logger-verify.linux-x64-gnu.node 2>/dev/null || echo 'Build failed or platform not supported'",
+    "build:macos": "cargo build --release --manifest-path native/Cargo.toml && cp native/target/release/liblume_native_logger_verify.dylib ./lume-native-logger-verify.darwin-arm64.node",
+    "test": "bun run test.ts",
+    "test:dev": "bun --hot test.ts",
+    "test:compile": "bun build --compile test.ts --outfile ./test-compiled && ./test-compiled",
+    "test:perf": "bun run test-perf.ts"
+  }
+}
