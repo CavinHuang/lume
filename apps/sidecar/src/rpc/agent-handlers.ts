@@ -895,7 +895,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         deleteEditableSkill({
           storageScope: input.storageScope,
           workspaceSlug: input.workspaceSlug,
-          skillSlug: input.skillSlug
+          skillSlug: input.skillSlug,
+          cwd: input.cwd
         });
         return { ok: true };
       }

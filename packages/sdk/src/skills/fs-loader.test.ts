@@ -285,6 +285,45 @@ test("应按 Alice 规则用后加载目录覆盖同名 skill 并按展示名稳
   }
 });
 
+test("root-aware 过滤跳过后加载目录时应保留前面目录的同名 skill", async () => {
+  const root = join(tmpdir(), `sdk-filtered-skill-roots-${Date.now()}`);
+  const globalRoot = join(root, "global");
+  const workspaceRoot = join(root, "workspace");
+
+  mkdirSync(join(globalRoot, "reviewer"), { recursive: true });
+  mkdirSync(join(workspaceRoot, "reviewer"), { recursive: true });
+  mkdirSync(join(workspaceRoot, "planner"), { recursive: true });
+
+  writeFileSync(
+    join(globalRoot, "reviewer", "SKILL.md"),
+    "---\nname: Global Reviewer\ndescription: global copy\n---\nGlobal review.",
+    "utf-8"
+  );
+  writeFileSync(
+    join(workspaceRoot, "reviewer", "SKILL.md"),
+    "---\nname: Workspace Reviewer\ndescription: workspace copy\n---\nWorkspace review.",
+    "utf-8"
+  );
+  writeFileSync(
+    join(workspaceRoot, "planner", "SKILL.md"),
+    "---\nname: Planner\ndescription: workspace planner\n---\nPlan.",
+    "utf-8"
+  );
+
+  try {
+    const skills = await loadFilesystemSkills({
+      cwd: process.cwd(),
+      roots: [globalRoot, workspaceRoot],
+      shouldLoadSkill: ({ root, skillName }) => root !== workspaceRoot || skillName !== "reviewer"
+    });
+
+    expect(skills.find((item) => item.name === "reviewer")?.description).toBe("global copy");
+    expect(skills.find((item) => item.name === "planner")?.description).toBe("workspace planner");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("应解析 Alice SKILL.md 中的 YAML 多行工具白名单", async () => {
   const root = join(tmpdir(), `sdk-alice-skill-yaml-list-${Date.now()}`);
   const skillDir = join(root, "code-review");

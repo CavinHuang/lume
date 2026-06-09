@@ -113,6 +113,12 @@ describe("tool-metadata", () => {
       riskLevel: "medium",
       allowedInPlanMode: false
     });
+    expect(getToolMetadata("office_pack")).toMatchObject({
+      name: "office_pack",
+      category: "write",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
   });
 
   test("classifies Guanlan tools as low-risk plan-safe network reads", () => {

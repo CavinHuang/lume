@@ -38,6 +38,7 @@ export const SKILL_TOOL_DEFINITIONS: SkillToolDefinition[] = [
   { value: 'lume_generate_share_card', label: 'lume_generate_share_card', systemGroupId: 'reading' },
   { value: 'office_validate', label: 'office_validate', systemGroupId: 'office' },
   { value: 'office_unpack', label: 'office_unpack', systemGroupId: 'office' },
+  { value: 'office_pack', label: 'office_pack', systemGroupId: 'office' },
   { value: 'agent_spawn', label: 'agent_spawn', systemGroupId: 'agent', disabled: true },
 ]
 

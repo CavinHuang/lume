@@ -185,4 +185,28 @@ describe("agent-handlers skill evolution RPC", () => {
     });
     expect(detail.content).toContain("Global prompt.");
   });
+
+  test("deletes editable project skills through RPC with cwd preserved", async () => {
+    cleanup = withTempConfigDir();
+    const projectDir = join(tmpdir(), `lume-agent-handlers-project-skill-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const skillDir = join(projectDir, ".alice", "skills", "project-planner");
+    const skillPath = join(skillDir, "SKILL.md");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(skillPath, "---\nname: Project Planner\n---\n\nProject prompt.", "utf-8");
+
+    try {
+      const handlers = await createHandlers();
+      const result = await handlers[AGENT_IPC_CHANNELS.DELETE_SKILL]!({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-planner"
+      }) as { ok: true };
+
+      expect(result).toEqual({ ok: true });
+      expect(() => readFileSync(skillPath, "utf-8")).toThrow();
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });

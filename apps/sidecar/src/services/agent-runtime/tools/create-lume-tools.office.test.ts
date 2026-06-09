@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@lume/agent-sdk";
@@ -139,6 +139,70 @@ describe("createLumeRuntimeTools office_unpack", () => {
     });
     expect(existsSync(join(tempDir, "evil.txt"))).toBe(false);
     expect(readFileSync(join(tempDir, "safe", "word", "document.xml"), "utf-8")).toBe("<w:document/>");
+  });
+});
+
+describe("createLumeRuntimeTools office_pack", () => {
+  let tempDir = "";
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "lume-office-pack-tool-"));
+  });
+
+  afterEach(() => {
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = "";
+    }
+  });
+
+  test("packs an unpacked OOXML directory into a valid Office package", async () => {
+    mkdirSync(join(tempDir, "unpacked", "_rels"), { recursive: true });
+    mkdirSync(join(tempDir, "unpacked", "word"), { recursive: true });
+    writeFileSync(join(tempDir, "unpacked", "[Content_Types].xml"), "<Types/>");
+    writeFileSync(join(tempDir, "unpacked", "_rels", ".rels"), "<Relationships/>");
+    writeFileSync(join(tempDir, "unpacked", "word", "document.xml"), "<w:document/>");
+
+    const packTool = resolveTool(createTools(), "office_pack");
+    const packResult = await callTool(packTool, {
+      inputDir: "unpacked",
+      outputPath: "rebuilt.docx"
+    }, tempDir);
+
+    expect(packResult).toMatchObject({
+      ok: true,
+      kind: "docx",
+      entryCount: 3,
+      outputPath: join(tempDir, "rebuilt.docx")
+    });
+    expect(packResult.entries).toEqual(expect.arrayContaining([
+      "[Content_Types].xml",
+      "_rels/.rels",
+      "word/document.xml"
+    ]));
+
+    const validateTool = resolveTool(createTools(), "office_validate");
+    const validateResult = await callTool(validateTool, { path: "rebuilt.docx" }, tempDir);
+    expect(validateResult).toMatchObject({
+      ok: true,
+      kind: "docx",
+      missingRequiredEntries: []
+    });
+  });
+
+  test("rejects output paths inside the input directory", async () => {
+    mkdirSync(join(tempDir, "unpacked"), { recursive: true });
+    writeFileSync(join(tempDir, "unpacked", "[Content_Types].xml"), "<Types/>");
+
+    const tool = resolveTool(createTools(), "office_pack");
+    const result = await tool.call({
+      inputDir: "unpacked",
+      outputPath: "unpacked/rebuilt.docx"
+    }, { cwd: tempDir, abortSignal: new AbortController().signal });
+
+    expect(String((result as { content?: unknown }).content)).toContain(
+      "office_pack outputPath must be outside inputDir"
+    );
   });
 });
 

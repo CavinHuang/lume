@@ -159,6 +159,88 @@ describe("skill-evolution-service", () => {
     expect(readFileSync(skillPath, "utf-8")).toBe("# Global Planner\n\nOld rule.");
   });
 
+  test("applies and restores legacy Lume user-global skill improvements when no Alice copy exists", async () => {
+    cleanup = withTempConfigDir();
+    const skillDir = join(getUserSkillsDir(), "legacy-planner");
+    mkdirSync(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    const aliceSkillPath = join(getAliceUserSkillsDir(), "legacy-planner", "SKILL.md");
+    writeFileSync(skillPath, "# Legacy Planner\n\nOld legacy rule.", "utf-8");
+
+    const applied = await applyWorkspaceSkillImprovement({
+      storageScope: "user",
+      workspaceSlug: "demo",
+      skillSlug: "legacy-planner",
+      updates: [{ section: "Rules", change: "Use legacy rule", reason: "Observed miss" }],
+      callModel: async () => "<updated_file># Legacy Planner\n\nNew legacy rule.</updated_file>"
+    });
+
+    expect(applied.success).toBe(true);
+    expect(readFileSync(skillPath, "utf-8")).toBe("# Legacy Planner\n\nNew legacy rule.");
+    expect(() => readFileSync(aliceSkillPath, "utf-8")).toThrow();
+    const versions = await listWorkspaceSkillVersions({
+      storageScope: "user",
+      workspaceSlug: "demo",
+      skillSlug: "legacy-planner"
+    });
+    expect(versions).toHaveLength(1);
+
+    const restored = await restoreWorkspaceSkillVersion({
+      storageScope: "user",
+      workspaceSlug: "demo",
+      skillSlug: "legacy-planner",
+      filename: versions[0]!.filename
+    });
+
+    expect(restored.success).toBe(true);
+    expect(readFileSync(skillPath, "utf-8")).toBe("# Legacy Planner\n\nOld legacy rule.");
+  });
+
+  test("applies and restores legacy Lume project skill improvements when no Alice project copy exists", async () => {
+    cleanup = withTempConfigDir();
+    const projectDir = join(tmpdir(), `lume-legacy-project-skill-evolution-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const skillDir = join(projectDir, ".lume", "skills", "project-legacy");
+    mkdirSync(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    const aliceSkillPath = join(projectDir, ".alice", "skills", "project-legacy", "SKILL.md");
+    writeFileSync(skillPath, "# Project Legacy\n\nOld legacy rule.", "utf-8");
+
+    try {
+      const applied = await applyWorkspaceSkillImprovement({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-legacy",
+        updates: [{ section: "Rules", change: "Use legacy project rule", reason: "Observed miss" }],
+        callModel: async () => "<updated_file># Project Legacy\n\nNew legacy rule.</updated_file>"
+      });
+
+      expect(applied.success).toBe(true);
+      expect(readFileSync(skillPath, "utf-8")).toBe("# Project Legacy\n\nNew legacy rule.");
+      expect(() => readFileSync(aliceSkillPath, "utf-8")).toThrow();
+      const versions = await listWorkspaceSkillVersions({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-legacy"
+      });
+      expect(versions).toHaveLength(1);
+
+      const restored = await restoreWorkspaceSkillVersion({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-legacy",
+        filename: versions[0]!.filename
+      });
+
+      expect(restored.success).toBe(true);
+      expect(readFileSync(skillPath, "utf-8")).toBe("# Project Legacy\n\nOld legacy rule.");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects skill slugs that escape the workspace skills directory", async () => {
     cleanup = withTempConfigDir();
 
@@ -486,6 +568,84 @@ describe("skill-evolution-service", () => {
     ]);
   });
 
+  test("thread-level improvement analysis includes legacy Lume user-global skills when no Alice copy exists", async () => {
+    cleanup = withTempConfigDir();
+    const legacySkillDir = join(getUserSkillsDir(), "legacy-planner");
+    mkdirSync(legacySkillDir, { recursive: true });
+    writeFileSync(join(legacySkillDir, "SKILL.md"), "# Legacy Planner\n\nLegacy guidance.", "utf-8");
+    writeFileSync(
+      join(legacySkillDir, "usage.jsonl"),
+      JSON.stringify({ ts: 3000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+
+    const analyzedSkillPrompts: string[] = [];
+    const result = await analyzeThreadWorkspaceSkillImprovements({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      getRecentMessages: () => [
+        message("user", "legacy planner missed constraints", 1),
+        message("assistant", "I should ask for constraints first", 2)
+      ],
+      callModel: async ({ userPrompt }) => {
+        analyzedSkillPrompts.push(userPrompt);
+        return "<updates>[" +
+          "{\"section\":\"Rules\",\"change\":\"Ask for constraints first\",\"reason\":\"Thread feedback showed missing constraints\"}" +
+          "]</updates>";
+      }
+    });
+
+    expect(analyzedSkillPrompts[0]).toContain("Legacy guidance");
+    expect(result.map((item) => ({
+      storageScope: item.storageScope,
+      skillSlug: item.skillSlug,
+      workspaceSlug: item.workspaceSlug
+    }))).toEqual([
+      { storageScope: "user", skillSlug: "legacy-planner", workspaceSlug: "demo" }
+    ]);
+  });
+
+  test("thread-level improvement analysis prefers Alice user-global skills over same-slug legacy skills", async () => {
+    cleanup = withTempConfigDir();
+    const legacySkillDir = join(getUserSkillsDir(), "planner");
+    const aliceSkillDir = join(getAliceUserSkillsDir(), "planner");
+    mkdirSync(legacySkillDir, { recursive: true });
+    mkdirSync(aliceSkillDir, { recursive: true });
+    writeFileSync(join(legacySkillDir, "SKILL.md"), "# Legacy Planner\n\nLegacy guidance.", "utf-8");
+    writeFileSync(join(aliceSkillDir, "SKILL.md"), "# Alice Planner\n\nAlice guidance.", "utf-8");
+    writeFileSync(
+      join(legacySkillDir, "usage.jsonl"),
+      JSON.stringify({ ts: 4000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(aliceSkillDir, "usage.jsonl"),
+      JSON.stringify({ ts: 3000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+
+    const analyzedSkillPrompts: string[] = [];
+    const result = await analyzeThreadWorkspaceSkillImprovements({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      getRecentMessages: () => [
+        message("user", "planner missed constraints", 1),
+        message("assistant", "I should ask for constraints first", 2)
+      ],
+      callModel: async ({ userPrompt }) => {
+        analyzedSkillPrompts.push(userPrompt);
+        return "<updates>[" +
+          "{\"section\":\"Rules\",\"change\":\"Ask for constraints first\",\"reason\":\"Thread feedback showed missing constraints\"}" +
+          "]</updates>";
+      }
+    });
+
+    expect(analyzedSkillPrompts).toHaveLength(1);
+    expect(analyzedSkillPrompts[0]).toContain("Alice guidance");
+    expect(analyzedSkillPrompts[0]).not.toContain("Legacy guidance");
+    expect(result.map((item) => item.skillSlug)).toEqual(["planner"]);
+  });
+
   test("thread-level improvement analysis includes Alice project skills when cwd is available", async () => {
     cleanup = withTempConfigDir();
     const projectDir = join(tmpdir(), `lume-project-skill-evolution-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -530,6 +690,97 @@ describe("skill-evolution-service", () => {
           reason: "Thread feedback showed missing project constraints"
         }]
       }]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("thread-level improvement analysis includes legacy Lume project skills when no Alice copy exists", async () => {
+    cleanup = withTempConfigDir();
+    const projectDir = join(tmpdir(), `lume-legacy-project-thread-evolution-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const legacySkillDir = join(projectDir, ".lume", "skills", "project-legacy");
+    mkdirSync(legacySkillDir, { recursive: true });
+    writeFileSync(join(legacySkillDir, "SKILL.md"), "# Project Legacy\n\nLegacy project guidance.", "utf-8");
+    writeFileSync(
+      join(legacySkillDir, "usage.jsonl"),
+      JSON.stringify({ ts: 3000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+
+    try {
+      const analyzedSkillPrompts: string[] = [];
+      const result = await analyzeThreadWorkspaceSkillImprovements({
+        workspaceSlug: "demo",
+        cwd: projectDir,
+        threadId: "thread-1",
+        getRecentMessages: () => [
+          message("user", "project legacy planner missed constraints", 1),
+          message("assistant", "I should ask for constraints first", 2)
+        ],
+        callModel: async ({ userPrompt }) => {
+          analyzedSkillPrompts.push(userPrompt);
+          return "<updates>[" +
+            "{\"section\":\"Rules\",\"change\":\"Ask for constraints first\",\"reason\":\"Thread feedback showed missing constraints\"}" +
+            "]</updates>";
+        }
+      });
+
+      expect(analyzedSkillPrompts[0]).toContain("Legacy project guidance");
+      expect(result.map((item) => ({
+        storageScope: item.storageScope,
+        cwd: item.cwd,
+        skillSlug: item.skillSlug,
+        workspaceSlug: item.workspaceSlug
+      }))).toEqual([
+        { storageScope: "project", cwd: projectDir, skillSlug: "project-legacy", workspaceSlug: "demo" }
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("thread-level improvement analysis prefers Alice project skills over same-slug legacy project skills", async () => {
+    cleanup = withTempConfigDir();
+    const projectDir = join(tmpdir(), `lume-project-skill-override-evolution-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const legacySkillDir = join(projectDir, ".lume", "skills", "planner");
+    const aliceSkillDir = join(projectDir, ".alice", "skills", "planner");
+    mkdirSync(legacySkillDir, { recursive: true });
+    mkdirSync(aliceSkillDir, { recursive: true });
+    writeFileSync(join(legacySkillDir, "SKILL.md"), "# Legacy Project Planner\n\nLegacy project guidance.", "utf-8");
+    writeFileSync(join(aliceSkillDir, "SKILL.md"), "# Alice Project Planner\n\nAlice project guidance.", "utf-8");
+    writeFileSync(
+      join(legacySkillDir, "usage.jsonl"),
+      JSON.stringify({ ts: 4000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(aliceSkillDir, "usage.jsonl"),
+      JSON.stringify({ ts: 3000, sessionId: "thread-1" }) + "\n",
+      "utf-8"
+    );
+
+    try {
+      const analyzedSkillPrompts: string[] = [];
+      const result = await analyzeThreadWorkspaceSkillImprovements({
+        workspaceSlug: "demo",
+        cwd: projectDir,
+        threadId: "thread-1",
+        getRecentMessages: () => [
+          message("user", "project planner missed constraints", 1),
+          message("assistant", "I should ask for constraints first", 2)
+        ],
+        callModel: async ({ userPrompt }) => {
+          analyzedSkillPrompts.push(userPrompt);
+          return "<updates>[" +
+            "{\"section\":\"Rules\",\"change\":\"Ask for constraints first\",\"reason\":\"Thread feedback showed missing constraints\"}" +
+            "]</updates>";
+        }
+      });
+
+      expect(analyzedSkillPrompts).toHaveLength(1);
+      expect(analyzedSkillPrompts[0]).toContain("Alice project guidance");
+      expect(analyzedSkillPrompts[0]).not.toContain("Legacy project guidance");
+      expect(result.map((item) => item.skillSlug)).toEqual(["planner"]);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

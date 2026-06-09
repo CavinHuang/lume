@@ -15,7 +15,7 @@ import {
 } from "./run";
 import { runRuntimeCoreAttempt } from "./attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir } from "../../infra/config-paths";
+import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
@@ -990,6 +990,150 @@ describe("runtime-core run", () => {
 
     const init = await result.agent.getInitializationResult();
     expect(init.skills).toContain("planner");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("Lume runtime 不应把工作区配置禁用的 skill 注册到 SDK", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-disabled-skills-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspaceSlug = "runtime-disabled-skill-registration";
+    const workspacePath = getAgentWorkspacePath(workspaceSlug);
+    const skillDir = join(workspacePath, "skills", "planner");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: planner",
+        "description: planning skill",
+        "---",
+        "# Planner",
+        "",
+        "Use this skill for structured planning.",
+      ].join("\n"),
+      "utf-8"
+    );
+    updateLumeConfigSection({
+      workspaceSlug,
+      source: "user",
+      path: "skills.disabled",
+      value: ["planner"]
+    });
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-disabled-skills-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "disabled-skill-runtime-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug,
+      workspaceName: "Disabled Skill Workspace"
+    });
+
+    const init = await result.agent.getInitializationResult();
+    expect(init.skills).not.toContain("planner");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("Lume runtime 禁用 workspace skill 时不应误伤同名用户全局 skill", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-disabled-skills-user-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    process.env.ALICE_CONFIG_DIR = join(configDir, "alice");
+
+    const workspaceSlug = "runtime-disabled-skill-user-fallback";
+    const workspacePath = getAgentWorkspacePath(workspaceSlug);
+    const workspaceSkillDir = join(workspacePath, "skills", "planner");
+    const userSkillDir = join(getAliceUserSkillsDir(), "planner");
+    mkdirSync(workspaceSkillDir, { recursive: true });
+    mkdirSync(userSkillDir, { recursive: true });
+    writeFileSync(
+      join(workspaceSkillDir, "SKILL.md"),
+      "---\nname: Workspace Planner\ndescription: workspace planning skill\n---\nWorkspace plan.",
+      "utf-8"
+    );
+    writeFileSync(
+      join(userSkillDir, "SKILL.md"),
+      "---\nname: User Planner\ndescription: user planning skill\n---\nUser plan.",
+      "utf-8"
+    );
+    updateLumeConfigSection({
+      workspaceSlug,
+      source: "user",
+      path: "skills.disabled",
+      value: ["planner"]
+    });
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-disabled-skills-user-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "disabled-skill-user-runtime-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug,
+      workspaceName: "Disabled Skill User Workspace"
+    });
+
+    const init = await result.agent.getInitializationResult();
+    expect(init.skills).toContain("planner");
+
+    result.session.dispose();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("Lume runtime 不应让默认 skill 目录绕过工作区禁用配置", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-disabled-default-skills-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspaceSlug = "runtime-disabled-default-skill";
+    const defaultSkillDir = join(getDefaultSkillsDir(), "default-review");
+    mkdirSync(defaultSkillDir, { recursive: true });
+    writeFileSync(
+      join(defaultSkillDir, "SKILL.md"),
+      "---\nname: Default Review\ndescription: default review skill\n---\nReview.",
+      "utf-8"
+    );
+    updateLumeConfigSection({
+      workspaceSlug,
+      source: "user",
+      path: "skills.disabled",
+      value: ["default-review"]
+    });
+
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-disabled-default-skills-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "disabled-default-skill-runtime-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+      workspaceSlug,
+      workspaceName: "Disabled Default Skill Workspace"
+    });
+
+    const init = await result.agent.getInitializationResult();
+    expect(init.skills).not.toContain("default-review");
 
     result.session.dispose();
     rmSync(configDir, { recursive: true, force: true });

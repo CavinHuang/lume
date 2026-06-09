@@ -138,6 +138,7 @@ describe("ToolResolver", () => {
     registry.registerMany([
       tool({ name: "office_validate", category: "read", allowedInPlanMode: true, isReadOnly: true }),
       tool({ name: "office_unpack", category: "write", allowedInPlanMode: false, isReadOnly: false }),
+      tool({ name: "office_pack", category: "write", allowedInPlanMode: false, isReadOnly: false }),
       tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true })
     ]);
     const resolver = new ToolResolver(registry);

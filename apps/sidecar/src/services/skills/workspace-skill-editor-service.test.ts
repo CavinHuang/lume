@@ -151,6 +151,64 @@ describe("workspace-skill-editor-service", () => {
     }
   });
 
+  test("manages legacy Lume project skills when no Alice project copy exists", async () => {
+    cleanup = withTempConfigDir();
+    const projectDir = join(tmpdir(), `lume-legacy-project-skill-editor-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const legacySkillDir = join(projectDir, ".lume", "skills", "project-legacy");
+    const legacySkillPath = join(legacySkillDir, "SKILL.md");
+    const aliceSkillPath = join(projectDir, ".alice", "skills", "project-legacy", "SKILL.md");
+    mkdirSync(legacySkillDir, { recursive: true });
+    writeFileSync(
+      legacySkillPath,
+      "---\nname: Project Legacy\ndescription: Legacy project skill.\nwhen_to_use: When legacy project work needs help.\n---\n\nLegacy project prompt.",
+      "utf-8"
+    );
+
+    try {
+      expect(listEditableSkills({ workspaceSlug: "demo", cwd: projectDir })).toContainEqual({
+        storageScope: "project",
+        managementSurface: "settings",
+        slug: "project-legacy",
+        name: "Project Legacy",
+        description: "Legacy project skill.",
+        whenToUse: "When legacy project work needs help."
+      });
+
+      const detail = getEditableSkill({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-legacy"
+      });
+      expect(detail.path).toBe(legacySkillPath);
+      expect(detail.content).toContain("Legacy project prompt.");
+
+      await saveWorkspaceSkill({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-legacy",
+        name: "Project Legacy",
+        description: "Updated legacy project skill.",
+        whenToUse: "When updated legacy project work needs help.",
+        prompt: "Updated legacy project prompt."
+      });
+
+      expect(readFileSync(legacySkillPath, "utf-8")).toContain("Updated legacy project prompt.\n");
+      expect(existsSync(aliceSkillPath)).toBe(false);
+
+      deleteEditableSkill({
+        storageScope: "project",
+        cwd: projectDir,
+        workspaceSlug: "demo",
+        skillSlug: "project-legacy"
+      });
+      expect(existsSync(legacySkillPath)).toBe(false);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects saves missing Alice core skill fields", async () => {
     cleanup = withTempConfigDir();
 
@@ -189,6 +247,56 @@ describe("workspace-skill-editor-service", () => {
         name: "Local Review"
       }
     ]);
+  });
+
+  test("manages legacy Lume user-global skills when no Alice copy exists", async () => {
+    cleanup = withTempConfigDir();
+    const legacySkillDir = join(getUserSkillsDir(), "legacy-planner");
+    const legacySkillPath = join(legacySkillDir, "SKILL.md");
+    const aliceSkillPath = join(getAliceUserSkillsDir(), "legacy-planner", "SKILL.md");
+    mkdirSync(legacySkillDir, { recursive: true });
+    writeFileSync(
+      legacySkillPath,
+      "---\nname: Legacy Planner\ndescription: Legacy global skill.\nwhen_to_use: When legacy work needs a plan.\n---\n\nLegacy prompt.",
+      "utf-8"
+    );
+
+    expect(listEditableSkills({ workspaceSlug: "demo" })).toContainEqual({
+      storageScope: "user",
+      managementSurface: "settings",
+      slug: "legacy-planner",
+      name: "Legacy Planner",
+      description: "Legacy global skill.",
+      whenToUse: "When legacy work needs a plan."
+    });
+
+    const detail = getEditableSkill({
+      storageScope: "user",
+      workspaceSlug: "demo",
+      skillSlug: "legacy-planner"
+    });
+    expect(detail.path).toBe(legacySkillPath);
+    expect(detail.content).toContain("Legacy prompt.");
+
+    await saveWorkspaceSkill({
+      storageScope: "user",
+      workspaceSlug: "demo",
+      skillSlug: "legacy-planner",
+      name: "Legacy Planner",
+      description: "Updated legacy global skill.",
+      whenToUse: "When updated legacy work needs a plan.",
+      prompt: "Updated legacy prompt."
+    });
+
+    expect(readFileSync(legacySkillPath, "utf-8")).toContain("Updated legacy prompt.\n");
+    expect(existsSync(aliceSkillPath)).toBe(false);
+
+    deleteEditableSkill({
+      storageScope: "user",
+      workspaceSlug: "demo",
+      skillSlug: "legacy-planner"
+    });
+    expect(existsSync(legacySkillPath)).toBe(false);
   });
 
   test("marks workspace skills installed from the market as market-managed", async () => {

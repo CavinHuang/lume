@@ -17,7 +17,7 @@ import {
 } from "@lume/agent-sdk";
 import type { AgentMessage, SkillStorageScope } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
-import { getAliceUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { getAliceUserSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { isMarketManagedWorkspaceSkill } from "./workspace-skill-editor-service";
 
@@ -116,19 +116,23 @@ export interface RestoreWorkspaceSkillVersionInput extends WorkspaceSkillInput {
   filename: string;
 }
 
-function resolveSkillRoot(input: WorkspaceSkillInput): string {
-  if (input.storageScope === "user") return getAliceUserSkillsDir();
-  if (input.storageScope === "project") {
-    const cwd = input.cwd?.trim();
-    if (!cwd) throw new Error("项目目录不能为空");
-    return join(resolve(cwd), ".alice", "skills");
-  }
-  return getWorkspaceSkillsDir(input.workspaceSlug);
+function resolveProjectCwd(cwd: string | undefined): string {
+  const trimmed = cwd?.trim();
+  if (!trimmed) throw new Error("项目目录不能为空");
+  return resolve(trimmed);
 }
 
-export function resolveWorkspaceSkillFile(input: WorkspaceSkillInput): string {
-  const skillsDir = resolve(resolveSkillRoot(input));
-  const skillDir = resolve(skillsDir, input.skillSlug);
+function resolveAliceProjectSkillsDir(cwd: string | undefined): string {
+  return join(resolveProjectCwd(cwd), ".alice", "skills");
+}
+
+function resolveLegacyProjectSkillsDir(cwd: string | undefined): string {
+  return join(resolveProjectCwd(cwd), ".lume", "skills");
+}
+
+function resolveSkillFileFromRoot(rootDir: string, skillSlug: string): string {
+  const skillsDir = resolve(rootDir);
+  const skillDir = resolve(skillsDir, skillSlug);
   const relativePath = relative(skillsDir, skillDir);
 
   if (
@@ -140,7 +144,25 @@ export function resolveWorkspaceSkillFile(input: WorkspaceSkillInput): string {
     throw new Error("非法 Skill 路径");
   }
 
-  const skillPath = resolve(skillDir, "SKILL.md");
+  return resolve(skillDir, "SKILL.md");
+}
+
+export function resolveWorkspaceSkillFile(input: WorkspaceSkillInput): string {
+  let skillPath: string;
+  if (input.storageScope === "user") {
+    const aliceSkillPath = resolveSkillFileFromRoot(getAliceUserSkillsDir(), input.skillSlug);
+    if (existsSync(aliceSkillPath)) return aliceSkillPath;
+    const legacySkillPath = resolveSkillFileFromRoot(getUserSkillsDir(), input.skillSlug);
+    skillPath = existsSync(legacySkillPath) ? legacySkillPath : aliceSkillPath;
+  } else if (input.storageScope === "project") {
+    const aliceSkillPath = resolveSkillFileFromRoot(resolveAliceProjectSkillsDir(input.cwd), input.skillSlug);
+    if (existsSync(aliceSkillPath)) return aliceSkillPath;
+    const legacySkillPath = resolveSkillFileFromRoot(resolveLegacyProjectSkillsDir(input.cwd), input.skillSlug);
+    skillPath = existsSync(legacySkillPath) ? legacySkillPath : aliceSkillPath;
+  } else {
+    skillPath = resolveSkillFileFromRoot(getWorkspaceSkillsDir(input.workspaceSlug), input.skillSlug);
+  }
+
   if (!existsSync(skillPath)) {
     throw new Error(`Skill 不存在: ${input.skillSlug}`);
   }
@@ -398,9 +420,13 @@ async function listThreadUsedWorkspaceSkills(input: {
 }>> {
   const projectCwd = input.cwd?.trim() ? resolve(input.cwd) : undefined;
   const roots: Array<{ storageScope: SkillStorageScope; skillsDir: string; cwd?: string }> = [
+    { storageScope: "user", skillsDir: getUserSkillsDir() },
     { storageScope: "user", skillsDir: getAliceUserSkillsDir() },
     ...(projectCwd
-      ? [{ storageScope: "project" as const, skillsDir: join(projectCwd, ".alice", "skills"), cwd: projectCwd }]
+      ? [
+        { storageScope: "project" as const, skillsDir: join(projectCwd, ".lume", "skills"), cwd: projectCwd },
+        { storageScope: "project" as const, skillsDir: join(projectCwd, ".alice", "skills"), cwd: projectCwd }
+      ]
       : []),
     { storageScope: "workspace", skillsDir: getWorkspaceSkillsDir(input.workspaceSlug) }
   ];
@@ -420,7 +446,13 @@ async function listThreadUsedWorkspaceSkills(input: {
     }));
   }
 
-  return used.sort((a, b) => b.lastUsedAt - a.lastUsedAt || a.skillSlug.localeCompare(b.skillSlug));
+  const byScopeSlug = new Map<string, (typeof used)[number]>();
+  for (const item of used) {
+    byScopeSlug.set(`${item.storageScope}:${item.skillSlug}`, item);
+  }
+
+  return Array.from(byScopeSlug.values())
+    .sort((a, b) => b.lastUsedAt - a.lastUsedAt || a.skillSlug.localeCompare(b.skillSlug));
 }
 
 async function listThreadUsedSkillsFromDir(input: {

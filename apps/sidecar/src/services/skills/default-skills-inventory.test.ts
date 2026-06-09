@@ -83,13 +83,14 @@ describe("default skills inventory", () => {
     expect(content).toContain("只支持 themeMode、activeView、promptSidebarOpen、sidePanelOpen");
   });
 
-  test("docsmith can use the real Office validator while guarding unavailable Office tools", () => {
+  test("docsmith can use the real Office package tools while guarding unavailable Office tools", () => {
     const { content, meta } = readDefaultSkill("agent-docsmith");
 
     expect(meta.allowedTools).toContain("office_validate");
     expect(meta.allowedTools).toContain("office_unpack");
-    expect(content).toContain("当前 Lume 已接入 `office_validate` 和 `office_unpack`");
-    expect(content).toContain("尚未接入 `office_pack`");
+    expect(meta.allowedTools).toContain("office_pack");
+    expect(content).toContain("当前 Lume 已接入 `office_validate`、`office_unpack` 和 `office_pack`");
+    expect(content).not.toContain("尚未接入 `office_pack`");
     expect(content).not.toContain("尚未接入 `office_unpack`");
   });
 
@@ -114,6 +115,7 @@ describe("default skills inventory", () => {
 
     expect(content).toContain("`office_validate`");
     expect(content).toContain("`office_unpack`");
+    expect(content).toContain("`office_pack`");
     expect(content).toContain("`personalize_ui`");
     expect(content).toContain("`lume_reading_snapshot`");
     expect(content).toContain("`lume_generate_share_card`");
@@ -164,6 +166,7 @@ const RUNTIME_BACKED_SKILL_TOOLS = new Set([
   "list_directory",
   "lume_generate_share_card",
   "lume_reading_snapshot",
+  "office_pack",
   "office_unpack",
   "office_validate",
   "personalize_ui",

@@ -103,6 +103,11 @@ function getDefaultAliceUserSkillsRoot(): string {
 export interface LoadFilesystemSkillsInput {
   cwd: string
   roots?: string[]
+  shouldLoadSkill?: (input: {
+    root: string
+    skillName: string
+    skillFile: string
+  }) => boolean
 }
 
 export async function loadFilesystemSkills(
@@ -135,6 +140,9 @@ export async function loadFilesystemSkills(
 
       const skillName = entry.name
       const skillFile = join(root, skillName, 'SKILL.md')
+      if (resolvedInput.shouldLoadSkill && !resolvedInput.shouldLoadSkill({ root, skillName, skillFile })) {
+        continue
+      }
       try {
         const raw = await readFile(skillFile, 'utf-8')
         const parsed = parseMarkdownFrontmatter(raw)

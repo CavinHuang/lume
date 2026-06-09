@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, extname, isAbsolute, normalize, resolve, sep } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, extname, isAbsolute, normalize, relative, resolve, sep } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 
@@ -12,6 +12,12 @@ interface ZipEntrySummary {
   uncompressedSize: number;
   compressionMethod: number;
   localHeaderOffset: number;
+}
+
+interface ZipPackEntry {
+  name: string;
+  data: Buffer;
+  crc32: number;
 }
 
 export function createSdkOfficeTools(): ToolDefinition[] {
@@ -120,6 +126,49 @@ export function createSdkOfficeTools(): ToolDefinition[] {
           truncated: allZipEntries.length > maxEntries
         };
       }
+    }),
+    createSdkJsonResultTool({
+      name: "office_pack",
+      description: "将解包后的 Office OOXML 目录重新打包为 docx/pptx/xlsx/zip。输出路径必须在输入目录外。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          inputDir: { type: "string", minLength: 1 },
+          outputPath: { type: "string", minLength: 1 },
+          maxEntries: { type: "number", minimum: 1, maximum: 1000 },
+          maxTotalBytes: { type: "number", minimum: 1 }
+        },
+        required: ["inputDir", "outputPath"]
+      },
+      async call(args, context) {
+        const inputDir = resolveInputPath(requiredString(args.inputDir, "inputDir"), context.cwd);
+        const outputPath = resolveInputPath(requiredString(args.outputPath, "outputPath"), context.cwd);
+        if (isPathInside(outputPath, inputDir)) {
+          throw new Error("office_pack outputPath must be outside inputDir");
+        }
+        if (!statSync(inputDir).isDirectory()) {
+          throw new Error("office_pack inputDir must be a directory");
+        }
+
+        const maxEntries = clampNumber(args.maxEntries, 1000, 1, 1000);
+        const maxTotalBytes = clampNumber(args.maxTotalBytes, 50 * 1024 * 1024, 1, 250 * 1024 * 1024);
+        const entries = collectZipPackEntries(inputDir, maxEntries, maxTotalBytes);
+        if (entries.length === 0) {
+          throw new Error("office_pack inputDir contains no files");
+        }
+
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, buildZipArchive(entries));
+
+        return {
+          ok: true,
+          inputDir,
+          outputPath,
+          kind: detectOfficeKind(outputPath),
+          entryCount: entries.length,
+          entries: entries.map((entry) => entry.name)
+        };
+      }
     })
   ];
 }
@@ -169,6 +218,130 @@ function buildWarnings(kind: OfficeKind, entries: ZipEntrySummary[]): string[] {
     warnings.push("发现非 store/deflate 压缩方式的条目，当前工具只列目录不解压内容。");
   }
   return warnings;
+}
+
+function collectZipPackEntries(inputDir: string, maxEntries: number, maxTotalBytes: number): ZipPackEntry[] {
+  const filePaths: string[] = [];
+  let totalBytes = 0;
+
+  function walk(dir: string): void {
+    const dirents = readdirSync(dir, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
+    for (const dirent of dirents) {
+      const filePath = resolve(dir, dirent.name);
+      if (dirent.isDirectory()) {
+        walk(filePath);
+        continue;
+      }
+      if (!dirent.isFile()) continue;
+
+      const stats = statSync(filePath);
+      totalBytes += stats.size;
+      if (filePaths.length >= maxEntries) {
+        throw new Error("office_pack aborted: entry count limit exceeded");
+      }
+      if (totalBytes > maxTotalBytes) {
+        throw new Error("office_pack aborted: total size limit exceeded");
+      }
+      filePaths.push(filePath);
+    }
+  }
+
+  walk(inputDir);
+  return filePaths
+    .map((filePath) => {
+      const name = toZipEntryName(inputDir, filePath);
+      const data = readFileSync(filePath);
+      return { name, data, crc32: crc32(data) };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function toZipEntryName(inputDir: string, filePath: string): string {
+  const relativePath = relative(inputDir, filePath).split(sep).join("/");
+  const safePath = normalizeZipEntryPath(relativePath);
+  if (!safePath) {
+    throw new Error(`office_pack found unsafe file path: ${relativePath}`);
+  }
+  return safePath;
+}
+
+function buildZipArchive(entries: ZipPackEntry[]): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBytes = Buffer.from(entry.name);
+    const local = Buffer.alloc(30 + nameBytes.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(entry.crc32, 14);
+    local.writeUInt32LE(entry.data.length, 18);
+    local.writeUInt32LE(entry.data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    local.writeUInt16LE(0, 28);
+    nameBytes.copy(local, 30);
+    localParts.push(local, entry.data);
+
+    const central = Buffer.alloc(46 + nameBytes.length);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(entry.crc32, 16);
+    central.writeUInt32LE(entry.data.length, 20);
+    central.writeUInt32LE(entry.data.length, 24);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    nameBytes.copy(central, 46);
+    centralParts.push(central);
+
+    offset += local.length + entry.data.length;
+  }
+
+  const centralOffset = offset;
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  end.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, ...centralParts, end]);
+}
+
+function crc32(buffer: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = (crc >>> 8) ^ (CRC32_TABLE[(crc ^ byte) & 0xff] ?? 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const CRC32_TABLE = new Uint32Array(256);
+for (let index = 0; index < CRC32_TABLE.length; index += 1) {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+  }
+  CRC32_TABLE[index] = value >>> 0;
 }
 
 function parseZipEntries(buffer: Buffer): ZipEntrySummary[] {

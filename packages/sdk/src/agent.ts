@@ -436,6 +436,7 @@ export class Agent {
   private async registerFilesystemSkills(input: {
     cwd: string
     roots?: string[]
+    shouldLoadSkill?: AgentOptions['shouldLoadFilesystemSkill']
   }): Promise<void> {
     this.unregisterFileSkills()
     const skills = await loadFilesystemSkills(input)
@@ -653,6 +654,7 @@ export class Agent {
     await this.registerFilesystemSkills({
       cwd,
       roots: this.cfg.skillsDirectories,
+      shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
     })
     this.registerExplicitSkills()
     this.loadedCommands = [
@@ -1453,6 +1455,7 @@ export class Agent {
     await this.registerFilesystemSkills({
       cwd: this.cfg.cwd || process.cwd(),
       roots: this.cfg.skillsDirectories,
+      shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
     })
     this.registerExplicitSkills()
     this.loadedCommands = [
@@ -1507,6 +1510,8 @@ export class Agent {
   }
 
   async close(): Promise<void> {
+    await this.setupDone.catch(() => undefined)
+
     if (this.cfg.persistSession !== false && this.history.length > 0) {
       try {
         await saveSession(this.sid, this.history, {
@@ -1521,8 +1526,14 @@ export class Agent {
       }
     }
 
-    await closeAllConnections(this.mcpLinks)
-    this.mcpLinks = []
+    try {
+      await closeAllConnections(this.mcpLinks)
+    } finally {
+      this.mcpLinks = []
+      this.unregisterFileSkills()
+      this.unregisterExplicitSkills()
+      this.unregisterPluginSkills()
+    }
   }
 }
 

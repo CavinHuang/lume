@@ -126,7 +126,7 @@ export const SYSTEM_TOOL_GROUPS: SystemToolGroup[] = [
   {
     id: 'office',
     label: 'Office 文档',
-    description: 'Office/PDF 文档结构校验与解包',
+    description: 'Office/PDF 文档结构校验、解包与打包',
     count: toolCount('office', 1),
     locked: false,
     policyEntry: 'group:office',

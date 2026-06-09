@@ -49,6 +49,7 @@ argument_hint: "请告诉我要分析的文件路径"  # 可选，提示用户�
 - `lume_generate_share_card` — 为 Reading 笔记生成本地分享卡
 - `office_validate` — 只读校验 docx/pptx/xlsx 的 OOXML 包结构
 - `office_unpack` — 安全解包 docx/pptx/xlsx 到本地目录
+- `office_pack` — 将解包后的 OOXML 目录重新打包为 docx/pptx/xlsx
 - `agent` — 启动子 Agent
 
 ## Skill 评测 Schema 参考

@@ -66,7 +66,7 @@ export const SkillTool: ToolDefinition = {
 
   async call(input: any, context: ToolContext): Promise<ToolResult> {
     const skillName: string = input.skill
-    const args: string = input.args || ''
+    const args: string = typeof input.args === 'string' ? input.args.trim() : ''
 
     if (!skillName) {
       return {
@@ -96,6 +96,15 @@ export const SkillTool: ToolDefinition = {
         type: 'tool_result',
         tool_use_id: '',
         content: `Error: Skill "${skillName}" is currently disabled`,
+        is_error: true,
+      }
+    }
+
+    if (!args && skill.argumentHint) {
+      return {
+        type: 'tool_result',
+        tool_use_id: '',
+        content: `Skill "${skill.name}" requires arguments. Ask the user: ${skill.argumentHint}`,
         is_error: true,
       }
     }

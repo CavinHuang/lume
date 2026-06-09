@@ -141,6 +141,34 @@ describe("Agent compact command", () => {
 })
 
 describe("Agent skill slash commands", () => {
+  test("close unregisters filesystem skills owned by that agent", async () => {
+    const rootA = mkdtempSync(join(tmpdir(), "sdk-agent-file-skill-a-"))
+    const rootB = mkdtempSync(join(tmpdir(), "sdk-agent-file-skill-b-"))
+    tempDirs.push(rootA, rootB)
+    mkdirSync(join(rootA, "leaky-skill"), { recursive: true })
+    writeFileSync(
+      join(rootA, "leaky-skill", "SKILL.md"),
+      "---\nname: Leaky Skill\ndescription: first agent only\n---\nOnly A.",
+      "utf-8",
+    )
+
+    const agentA = createAgent({
+      persistSession: false,
+      tools: [],
+      skillsDirectories: [rootA],
+    })
+    expect((await agentA.getInitializationResult()).skills).toContain("leaky-skill")
+    await agentA.close()
+
+    const agentB = createAgent({
+      persistSession: false,
+      tools: [],
+      skillsDirectories: [rootB],
+    })
+    expect((await agentB.getInitializationResult()).skills).not.toContain("leaky-skill")
+    await agentB.close()
+  })
+
   test("preserves skill argument hints in initialization commands", async () => {
     const agent = createAgent({
       persistSession: false,

@@ -1223,6 +1223,12 @@ export interface AgentOptions {
   skills?: import('./skills/types.js').SkillDefinition[]
   /** Explicit filesystem roots to scan for skills */
   skillsDirectories?: string[]
+  /** Optional host filter for filesystem skills, called with the source root and skill directory name */
+  shouldLoadFilesystemSkill?: (input: {
+    root: string
+    skillName: string
+    skillFile: string
+  }) => boolean
   /** Maximum number of agentic turns per query */
   maxTurns?: number
   /** Maximum USD budget per query */

@@ -72,6 +72,25 @@ test("SkillTool stays enabled when only manual skills are registered", () => {
   expect(SkillTool.isEnabled?.()).toBe(true);
 });
 
+test("SkillTool asks for argumentHint instead of executing when args are missing", async () => {
+  let promptCalled = false;
+  registerSkill({
+    name: "code-review",
+    description: "Review code quality",
+    argumentHint: "请告诉我要审查的文件路径",
+    getPrompt: async () => {
+      promptCalled = true;
+      return [{ type: "text", text: "review" }];
+    }
+  });
+
+  const result = await SkillTool.call({ skill: "code-review" }, { cwd: process.cwd() } as any);
+
+  expect(result.is_error).toBe(true);
+  expect(String(result.content)).toContain("请告诉我要审查的文件路径");
+  expect(promptCalled).toBe(false);
+});
+
 test("SkillTool records filesystem skill usage with the active session id", async () => {
   const root = join(tmpdir(), `sdk-skill-tool-usage-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const skillDir = join(root, "demo");

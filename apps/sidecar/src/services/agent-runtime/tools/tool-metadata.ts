@@ -400,6 +400,14 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
+  name: "office_pack",
+  category: "write",
+  riskLevel: "medium",
+  description: "将解包目录重新打包为 Office OOXML 文档",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
   name: "weread_generate_note",
   category: "write",
   riskLevel: "medium",

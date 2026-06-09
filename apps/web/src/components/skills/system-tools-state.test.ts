@@ -40,8 +40,8 @@ describe('system-tools-state', () => {
     })
     expect(rows.find((row) => row.id === 'office')).toMatchObject({
       label: 'Office 文档',
-      description: 'Office/PDF 文档结构校验与解包',
-      count: 2,
+      description: 'Office/PDF 文档结构校验、解包与打包',
+      count: 3,
       enabled: false,
       locked: false,
       policyEntry: 'group:office',

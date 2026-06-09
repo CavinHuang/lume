@@ -47,7 +47,8 @@ const READING_TOOL_NAMES = [
 
 const OFFICE_TOOL_NAMES = [
   "office_validate",
-  "office_unpack"
+  "office_unpack",
+  "office_pack"
 ] as const;
 
 const TOOL_GROUPS: Record<string, string[]> = {
