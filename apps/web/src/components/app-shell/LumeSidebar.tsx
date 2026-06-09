@@ -1,39 +1,27 @@
-import { useEffect, useRef, useState } from 'react'
 import {
   Box,
-  Check,
   ChevronLeft,
   ChevronRight,
   Clock3,
   Folder,
-  Home,
   Maximize2,
   Minimize2,
-  MoreHorizontal,
-  Pencil,
-  Pin,
-  PinOff,
   Search,
   Settings,
-  Sparkles,
   SquarePen,
   Plus,
   Trash2,
-  Archive,
   BookOpen,
   Bot,
-  X,
 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type {
   LumeSidebarFooterActionId,
-  LumeSidebarThreadItem,
   LumeSidebarTopActionId,
   LumeSidebarViewModel,
-  LumeSidebarWorkspaceItem,
-  LumeSidebarWorkspaceRow,
 } from './lume-sidebar-view-model'
+import { WorkspaceGroupItem } from './WorkspaceGroupItem'
 
 interface LumeSidebarProps {
   collapsed: boolean
@@ -270,17 +258,24 @@ export function LumeSidebar({
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-4 pb-4">
           {model.workspaces.map((workspace) => (
-            <WorkspaceTree
+            <WorkspaceGroupItem
               key={workspace.id}
-              workspace={workspace}
-              onToggleWorkspace={onToggleWorkspace}
+              id={workspace.id}
+              name={workspace.name}
+              isCurrent={workspace.isCurrent}
+              isExpanded={workspace.isExpanded}
+              pinned={workspace.pinned}
+              syntheticRow={workspace.syntheticRow}
+              threads={workspace.threads}
+              onSelectWorkspace={onSelectWorkspace}
               onOpenThread={onOpenThread}
               onToggleThreadPin={onToggleThreadPin}
-              onDeleteThread={onDeleteThread}
+              onArchiveThread={onDeleteThread}
               onRenameThread={onRenameThread}
               onToggleWorkspacePin={onToggleWorkspacePin}
               onRenameWorkspace={onRenameWorkspace}
               onDeleteWorkspace={onDeleteWorkspace}
+              onNewThread={(wsId) => onOpenThread('__welcome__', wsId)}
             />
           ))}
         </div>
@@ -343,477 +338,6 @@ export function LumeSidebar({
         </div>
       </div>
     </aside>
-  )
-}
-
-function WorkspaceTree({
-  workspace,
-  onToggleWorkspace,
-  onOpenThread,
-  onToggleThreadPin,
-  onDeleteThread,
-  onRenameThread,
-  onToggleWorkspacePin,
-  onRenameWorkspace,
-  onDeleteWorkspace,
-}: {
-  workspace: LumeSidebarWorkspaceItem
-  onToggleWorkspace: (workspaceId: string) => void
-  onOpenThread: (threadId: string, workspaceId?: string) => void
-  onToggleThreadPin: (threadId: string) => void
-  onDeleteThread: (threadId: string) => void
-  onRenameThread: (threadId: string, title: string) => void
-  onToggleWorkspacePin: (workspaceId: string) => void
-  onRenameWorkspace: (workspaceId: string, name: string) => void
-  onDeleteWorkspace: (workspaceId: string) => void
-}) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(workspace.name)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (!menuOpen) return
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (shouldCloseThreadMenuForTarget(menuRef.current, triggerRef.current, event.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    return () => document.removeEventListener('mousedown', handlePointerDown)
-  }, [menuOpen])
-
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.select()
-    }
-  }, [editing])
-
-  const submitRename = () => {
-    const next = draft.trim()
-    if (next && next !== workspace.name) {
-      onRenameWorkspace(workspace.id, next)
-    }
-    setEditing(false)
-  }
-
-  const renderHeader = () => {
-    if (editing) {
-      return (
-        <div className="flex h-7 items-center gap-1 rounded-md border border-[color:color-mix(in_oklab,var(--brand)_22%,transparent)] bg-[var(--surface-2)] px-2">
-          <ChevronRight size={13} className="ml-0.5 shrink-0 text-[var(--text-3)]" />
-          <WorkspaceIcon workspace={workspace} />
-          <input
-            ref={inputRef}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') submitRename()
-              if (event.key === 'Escape') {
-                setDraft(workspace.name)
-                setEditing(false)
-              }
-            }}
-            className="flex-1 bg-transparent text-[13px] font-semibold text-[var(--text-1)] outline-none"
-          />
-          <button
-            type="button"
-            onClick={submitRename}
-            className="flex size-5 items-center justify-center rounded-full text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)]"
-          >
-            <Check size={12} />
-          </button>
-          <button
-            type="button"
-            onClick={() => { setDraft(workspace.name); setEditing(false) }}
-            className="flex size-5 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-1)]"
-          >
-            <X size={12} />
-          </button>
-        </div>
-      )
-    }
-
-    return (
-      <>
-        <div className="group/ws relative">
-          <button
-            type="button"
-            onClick={() => onToggleWorkspace(workspace.id)}
-            className={cn(
-              'flex h-7 w-full items-center gap-2 rounded-md px-0 text-left transition-colors',
-              workspace.isCurrent
-                ? 'text-[var(--text-1)]'
-                : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-            )}
-          >
-            <ChevronRight
-              size={13}
-              className={cn(
-                'ml-0.5 shrink-0 text-[var(--text-3)] transition-transform duration-150',
-                workspace.isExpanded && 'rotate-90',
-              )}
-            />
-            <WorkspaceIcon workspace={workspace} />
-            <span className="flex-1 truncate text-[13px] font-semibold">{workspace.name}</span>
-            <span
-              className={cn(
-                'shrink-0 pr-2 text-[12px] font-medium leading-none text-[var(--text-3)]',
-                'group-hover/ws:opacity-0',
-                menuOpen && 'opacity-0',
-              )}
-            >
-              {workspace.count}
-            </span>
-          </button>
-
-          <button
-            ref={triggerRef}
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              setMenuOpen((current) => !current)
-            }}
-            className={cn(
-              'absolute right-0 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center text-[var(--text-3)] transition-all hover:text-[var(--text-1)]',
-              'opacity-0 group-hover/ws:opacity-100',
-              menuOpen && 'opacity-100',
-            )}
-          >
-            <MoreHorizontal size={14} />
-          </button>
-
-          {menuOpen && (
-            <div
-              ref={menuRef}
-              className="absolute right-1 top-full z-50 mt-1 min-w-[148px] rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)]"
-            >
-              <ThreadMenuItem
-                icon={workspace.pinned ? <PinOff size={13} /> : <Pin size={13} />}
-                onClick={() => {
-                  onToggleWorkspacePin(workspace.id)
-                  setMenuOpen(false)
-                }}
-              >
-                {workspace.pinned ? '取消置顶' : '置顶'}
-              </ThreadMenuItem>
-              <ThreadMenuItem
-                icon={<Pencil size={13} />}
-                onClick={() => {
-                  setEditing(true)
-                  setMenuOpen(false)
-                }}
-              >
-                重命名
-              </ThreadMenuItem>
-              <ThreadMenuItem
-                icon={<Trash2 size={13} />}
-                destructive
-                onClick={() => {
-                  onDeleteWorkspace(workspace.id)
-                  setMenuOpen(false)
-                }}
-              >
-                删除
-              </ThreadMenuItem>
-            </div>
-          )}
-        </div>
-      </>
-    )
-  }
-
-  return (
-    <section className="relative mb-2.5">
-      {renderHeader()}
-
-      {workspace.isExpanded && (
-        <div className="mt-1 pl-4">
-          {workspace.rows.map((row) => (
-            <WorkspaceRowRenderer
-              key={row.type === 'thread-group' ? row.id : row.id}
-              row={row}
-              onOpenThread={onOpenThread}
-              onToggleThreadPin={onToggleThreadPin}
-              onDeleteThread={onDeleteThread}
-              onRenameThread={onRenameThread}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function WorkspaceIcon({ workspace }: { workspace: LumeSidebarWorkspaceItem }) {
-  const isPersonal = workspace.name.toLowerCase() === 'personal'
-  const className = cn('shrink-0', workspace.isCurrent ? 'text-[var(--brand)]' : 'text-[var(--text-3)]')
-
-  return isPersonal
-    ? <Home size={14} strokeWidth={2} className={className} />
-    : <Box size={14} strokeWidth={2} className={className} />
-}
-
-function WorkspaceRowRenderer({
-  row,
-  onOpenThread,
-  onToggleThreadPin,
-  onDeleteThread,
-  onRenameThread,
-}: {
-  row: LumeSidebarWorkspaceRow
-  onOpenThread: (threadId: string, workspaceId?: string) => void
-  onToggleThreadPin: (threadId: string) => void
-  onDeleteThread: (threadId: string) => void
-  onRenameThread: (threadId: string, title: string) => void
-}) {
-  if (row.type === 'synthetic-thread') {
-    return (
-      <button
-        type="button"
-        onClick={() => onOpenThread(row.id, row.workspaceId)}
-        className={cn(
-          'mb-1 flex h-7 w-full items-center gap-2 rounded-md px-3 text-left text-[13px] transition-colors',
-          row.active
-            ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]'
-            : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-        )}
-      >
-        <Sparkles size={13} strokeWidth={2.1} className={cn(row.active ? 'text-[var(--brand)]' : 'text-[var(--text-3)]')} />
-        <span className="font-medium">{row.label}</span>
-      </button>
-    )
-  }
-
-  return (
-    <div className="pb-2">
-      <div className="flex h-7 items-center gap-2 px-0 text-[12px] font-semibold text-[var(--text-3)]">
-        <ChevronRight size={12} className="rotate-90 text-[var(--text-3)]" />
-        <span className="flex-1">{row.label}</span>
-        <span className="pr-3 text-[12px] font-semibold">{row.items.length}</span>
-      </div>
-      <div className="ml-3 space-y-1 border-l border-[color:color-mix(in_oklab,var(--border-strong)_20%,transparent)] pl-1">
-        {row.items.map((thread) => (
-          <ThreadRow
-            key={thread.id}
-            thread={thread}
-            onOpenThread={onOpenThread}
-            onToggleThreadPin={onToggleThreadPin}
-            onDeleteThread={onDeleteThread}
-            onRenameThread={onRenameThread}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function ThreadRow({
-  thread,
-  onOpenThread,
-  onToggleThreadPin,
-  onDeleteThread,
-  onRenameThread,
-}: {
-  thread: LumeSidebarThreadItem
-  onOpenThread: (threadId: string) => void
-  onToggleThreadPin: (threadId: string) => void
-  onDeleteThread: (threadId: string) => void
-  onRenameThread: (threadId: string, title: string) => void
-}) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(thread.title)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    setDraft(thread.title)
-  }, [thread.title])
-
-  useEffect(() => {
-    if (!menuOpen) return
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (shouldCloseThreadMenuForTarget(menuRef.current, triggerRef.current, event.target as Node | null)) {
-        setMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    return () => document.removeEventListener('mousedown', handlePointerDown)
-  }, [menuOpen])
-
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.select()
-    }
-  }, [editing])
-
-  const submitRename = () => {
-    const nextTitle = draft.trim()
-    onRenameThread(thread.id, nextTitle)
-    setEditing(false)
-  }
-
-  if (editing) {
-    return (
-      <div className="flex h-9 items-center gap-1 rounded-[0.9rem] border border-[color:color-mix(in_oklab,var(--brand)_22%,transparent)] bg-[var(--surface-2)] px-2.5">
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') submitRename()
-            if (event.key === 'Escape') {
-              setDraft(thread.title)
-              setEditing(false)
-            }
-          }}
-          className="flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none"
-        />
-        <button
-          type="button"
-          onClick={submitRename}
-          className="flex size-6 items-center justify-center rounded-full text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)]"
-        >
-          <Check size={13} />
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(thread.title)
-            setEditing(false)
-          }}
-          className="flex size-6 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-1)]"
-        >
-          <X size={13} />
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="group relative">
-      <button
-        type="button"
-        onClick={() => onOpenThread(thread.id)}
-        className={cn(
-          'relative flex h-7 w-full items-center gap-3 overflow-hidden rounded-md px-3 pr-9 text-left text-[13px] transition-colors',
-          thread.active
-            ? 'bg-[color:color-mix(in_oklab,var(--brand)_11%,var(--surface-2))] text-[var(--text-1)]'
-            : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-        )}
-      >
-                {thread.isStreaming ? (
-          <span className="relative flex size-2 shrink-0 translate-y-px">
-            <span className="absolute inset-0 animate-ping rounded-full bg-[var(--brand)] opacity-45" />
-            <span className="relative block size-2 rounded-full bg-[var(--brand)]" />
-          </span>
-        ) : thread.pinned ? (
-          <Pin size={12} className="shrink-0 text-[var(--text-3)]" />
-        ) : (
-          <span className="size-2 shrink-0 translate-y-px rounded-full bg-[color:color-mix(in_oklab,var(--text-3)_24%,transparent)]" />
-        )}
-        <span className="truncate font-medium">{thread.title}</span>
-      </button>
-
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation()
-          setMenuOpen((current) => !current)
-        }}
-        className={cn(
-          'absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--text-3)] transition-all hover:bg-[var(--surface-3)] hover:text-[var(--text-1)]',
-          'opacity-0 group-hover:opacity-100',
-          menuOpen && 'opacity-100',
-        )}
-      >
-        <MoreHorizontal size={14} />
-      </button>
-
-      {menuOpen && (
-        <div
-          ref={menuRef}
-          className="absolute right-1 top-full z-50 mt-1 min-w-[148px] rounded-2xl border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)]"
-        >
-          <ThreadMenuItem
-            icon={thread.pinned ? <PinOff size={13} /> : <Pin size={13} />}
-            onClick={() => {
-              onToggleThreadPin(thread.id)
-              setMenuOpen(false)
-            }}
-          >
-            {thread.pinned ? '取消置顶' : '置顶'}
-          </ThreadMenuItem>
-          <ThreadMenuItem
-            icon={<Pencil size={13} />}
-            onClick={() => {
-              setEditing(true)
-              setMenuOpen(false)
-            }}
-          >
-            重命名
-          </ThreadMenuItem>
-          <ThreadMenuItem
-            icon={<Archive size={13} />}
-            onClick={() => {
-              onDeleteThread(thread.id)
-              setMenuOpen(false)
-            }}
-          >
-            归档
-          </ThreadMenuItem>
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function shouldCloseThreadMenuForTarget(
-  menuElement: Pick<Node, 'contains'> | null,
-  triggerElement: Pick<Node, 'contains'> | null,
-  target: Node | null,
-) {
-  if (!target) {
-    return true
-  }
-
-  return !menuElement?.contains(target) && !triggerElement?.contains(target)
-}
-
-function ThreadMenuItem({
-  children,
-  icon,
-  destructive,
-  onClick,
-}: {
-  children: React.ReactNode
-  icon: React.ReactNode
-  destructive?: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[12px] transition-colors',
-        destructive
-          ? 'text-red-500 hover:bg-red-500/10'
-          : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-      )}
-    >
-      {icon}
-      <span>{children}</span>
-    </button>
   )
 }
 
