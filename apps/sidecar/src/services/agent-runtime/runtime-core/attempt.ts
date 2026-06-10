@@ -1,4 +1,4 @@
-import { type CanUseToolFn } from "@lume/agent-sdk";
+import { type CanUseToolFn, type ToolDefinition } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import { buildRuntimeAttemptLogData } from "../../agent/agent-log-summary";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
@@ -41,6 +41,9 @@ import {
 } from "../../workflow-hooks/hook-effects";
 import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 import { runGuidanceStore, type ConsumedRunGuidance } from "../guidance/run-guidance-store";
+import { createPluginPermissionInterceptor } from "../plugins/permission-interceptor.js";
+import type { InterceptorInput, InterceptorResult } from "../plugins/index.js";
+import { SidecarPluginManager } from "../plugins/plugin-manager.js";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -135,7 +138,8 @@ export function createCanUseToolHandler(
   emit: AgentRuntimeEmitter,
   askUserSignal: AbortSignal,
   runId?: string,
-  workflowHooks?: LumeWorkflowHookRuntimeLike
+  workflowHooks?: LumeWorkflowHookRuntimeLike,
+  pluginInterceptorContexts?: Array<{ pluginName: string; pluginRoot: string; permissions: Record<string, unknown> }>
 ): CanUseToolFn {
   const config = getEffectiveLumeConfig(prepared.workspaceSlug);
   const permissionRules = resolveConfiguredPermissionRules(config.permissions);
@@ -144,8 +148,40 @@ export function createCanUseToolHandler(
     workspaceSlug: prepared.workspaceSlug,
     configuredRoots: config.permissions?.privateWriteRoots
   });
+
+  // Build plugin interceptors once per handler creation
+  const pluginInterceptors = (pluginInterceptorContexts ?? []).map(ctx =>
+    createPluginPermissionInterceptor(ctx)
+  );
+
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
+
+    // Plugin permission interceptor: run before global PermissionEngine
+    for (const interceptor of pluginInterceptors) {
+      const pluginResult = await interceptor({
+        toolName,
+        input,
+        context: {
+          cwd: prepared.agentCwd,
+          threadId: params.runtime.sessionId,
+        },
+      } as InterceptorInput);
+      if (pluginResult?.behavior === "deny") {
+        return {
+          behavior: "deny" as const,
+          message: pluginResult.reason ?? `Plugin denied tool: ${toolName}`,
+          updatedInput: pluginResult.updatedInput,
+        };
+      }
+      if (pluginResult?.behavior === "allow") {
+        return {
+          behavior: "allow" as const,
+          updatedInput: pluginResult.updatedInput,
+        };
+      }
+      // "ask" or undefined: continue to global permission engine
+    }
     const approvalThreadId = params.runtime.deliveryThreadId ?? params.runtime.sessionId;
     const originThreadId = params.runtime.deliveryThreadId
       ? params.runtime.sessionId
@@ -575,12 +611,18 @@ export async function runRuntimeCoreAttempt(
     cwd: prepared.agentCwd
   }));
 
+  const pluginManager = new SidecarPluginManager();
+  const pluginInterceptorContexts = pluginManager.buildInterceptorContexts({
+    enabled: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.enabled ?? [],
+    directories: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.directories ?? [],
+  });
+
   return runner.runPreparedRuntimeCoreAttempt({
     params,
     prepared,
     options,
     createCanUseTool: (askUserSignal, workflowHooks) =>
-      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId(), workflowHooks)
+      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId(), workflowHooks, pluginInterceptorContexts)
   });
 }
 
