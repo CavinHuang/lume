@@ -33,7 +33,10 @@ describe("core workflow hooks", () => {
       observability: false
     });
 
-    expect(contributions.map((item) => item.id)).toEqual(["core.security.permission"]);
+    expect(contributions.map((item) => item.id)).toEqual([
+      "core.plugin.skill-activation",
+      "core.security.permission",
+    ]);
   });
 
   test("memory context handler returns appendContext with recall items", async () => {

@@ -416,3 +416,49 @@ export const __internal = {
   normalizeSkillSlug,
   writeSkillFileAtomically
 };
+
+export function resolvePluginSkillPath(pluginName: string, skillSlug: string): string {
+  const pluginsRoot = join(homedir(), ".lume", "plugins");
+  const pluginDir = resolve(pluginsRoot, pluginName);
+  const pluginRelative = relative(pluginsRoot, pluginDir);
+
+  if (
+    !pluginRelative ||
+    pluginRelative.startsWith("..") ||
+    pluginRelative.includes(`${sep}..`) ||
+    resolve(pluginRelative) === pluginRelative
+  ) {
+    throw new Error("非法 Skill 路径");
+  }
+
+  const skillsRoot = resolve(pluginDir, "skills");
+  const skillDir = resolve(skillsRoot, normalizeSkillSlug(skillSlug));
+  const skillRelative = relative(skillsRoot, skillDir);
+
+  if (
+    !skillRelative ||
+    skillRelative.startsWith("..") ||
+    skillRelative.includes(`${sep}..`) ||
+    resolve(skillRelative) === skillRelative
+  ) {
+    throw new Error("非法 Skill 路径");
+  }
+
+  return join(skillDir, "SKILL.md");
+}
+
+export function readPluginSkillContent(pluginName: string, skillSlug: string): string | null {
+  const skillPath = resolvePluginSkillPath(pluginName, skillSlug);
+  if (!existsSync(skillPath)) return null;
+  return readFileSync(skillPath, "utf-8");
+}
+
+export function listPluginSkillDirs(pluginName: string): string[] {
+  const pluginsRoot = join(homedir(), ".lume", "plugins");
+  const pluginDir = join(pluginsRoot, pluginName);
+  const skillsDir = join(pluginDir, "skills");
+  if (!existsSync(skillsDir)) return [];
+  return readdirSync(skillsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(skillsDir, entry.name, "SKILL.md")))
+    .map((entry) => entry.name);
+}
