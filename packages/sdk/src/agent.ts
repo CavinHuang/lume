@@ -390,6 +390,12 @@ export class Agent {
 
     for (const plugin of this.loadedPlugins) {
       if (!plugin.hooks) continue
+      const eventCount = Object.keys(plugin.hooks).length
+      const hookCount = Object.values(plugin.hooks).reduce((sum, defs) => sum + defs.length, 0)
+      console.debug(`[plugin:agent] registering hooks for "${plugin.name}"`, {
+        events: Object.keys(plugin.hooks),
+        totalHooks: hookCount,
+      });
       this.hookRegistry.registerFromConfig(plugin.hooks)
     }
   }
@@ -404,7 +410,13 @@ export class Agent {
   private registerPluginSkills(): void {
     this.unregisterPluginSkills()
     for (const plugin of this.loadedPlugins) {
-      for (const skill of plugin.skills || []) {
+      if (plugin.lume?.hooksOnly) continue
+      const skills = plugin.skills || []
+      console.debug(`[plugin:agent] registering skills for "${plugin.name}"`, {
+        count: skills.length,
+        names: skills.map((s) => s.name),
+      });
+      for (const skill of skills) {
         registerSkill(skill)
         this.pluginSkillNames.add(skill.name)
       }
@@ -455,16 +467,23 @@ export class Agent {
   }
 
   private getPluginTools(): ToolDefinition[] {
-    return this.loadedPlugins.flatMap((plugin) => plugin.tools || [])
+    return this.loadedPlugins.flatMap((plugin) => {
+      if (plugin.lume?.hooksOnly) return []
+      return plugin.tools || []
+    })
   }
 
   private getPluginCommands(): CommandDefinition[] {
-    return this.loadedPlugins.flatMap((plugin) => plugin.commands || [])
+    return this.loadedPlugins.flatMap((plugin) => {
+      if (plugin.lume?.hooksOnly) return []
+      return plugin.commands || []
+    })
   }
 
   private getPluginMcpServers(): Record<string, McpServerConfig | any> {
     const merged: Record<string, McpServerConfig | any> = {}
     for (const plugin of this.loadedPlugins) {
+      if (plugin.lume?.hooksOnly) continue
       Object.assign(merged, plugin.mcpServers || {})
     }
     return merged
@@ -650,6 +669,11 @@ export class Agent {
 
     this.refreshResolvedConfig()
     this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins)
+    console.debug(`[plugin:agent] plugins loaded`, {
+      count: this.loadedPlugins.length,
+      names: this.loadedPlugins.map((p) => p.name),
+      hooksOnly: this.loadedPlugins.filter((p) => p.lume?.hooksOnly).map((p) => p.name),
+    });
     this.registerPluginSkills()
     await this.registerFilesystemSkills({
       cwd,

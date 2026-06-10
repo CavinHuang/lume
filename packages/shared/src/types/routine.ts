@@ -52,6 +52,7 @@ export interface DailyRoutine {
 
 export const ROUTINE_IPC_CHANNELS = {
   GET_TODAY: "routine:get-today",
+  GET_BY_DATE: "routine:get-by-date",
   TRIGGER_ENTRY: "routine:trigger-entry",
   REGENERATE: "routine:regenerate",
 } as const

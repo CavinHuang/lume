@@ -233,7 +233,10 @@ describe("workspace-skill-editor-service", () => {
     writeFileSync(join(userSkillDir, "SKILL.md"), "---\nname: Global Planner\n---\n\nGlobal.", "utf-8");
     writeFileSync(join(workspaceSkillDir, "SKILL.md"), "---\nname: Local Review\n---\n\nLocal.", "utf-8");
 
-    expect(listEditableSkills({ workspaceSlug: "demo" })).toEqual([
+    const skills = listEditableSkills({ workspaceSlug: "demo" });
+    // Filter out plugin skills (from ~/.lume/plugins/) to focus on user/workspace skills
+    const nonPluginSkills = skills.filter(s => s.storageScope !== "plugin");
+    expect(nonPluginSkills).toEqual([
       {
         storageScope: "user",
         managementSurface: "settings",

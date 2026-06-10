@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { filterTools, type AgentDefinition, type AgentOptions, type ToolDefinition } from "@lume/agent-sdk";
 import type { AgentSendInput } from "@lume/shared";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
+import { SidecarPluginManager } from "../plugins/plugin-manager.js";
 import { ToolRegistry } from "./tool-registry";
 import { ToolResolver } from "./tool-resolver";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { getRuntimeFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
+import { createLogger } from "../../infra/logger";
 import {
   setRuntimeToolDescriptors
 } from "./tool-descriptor-session";
@@ -53,6 +55,8 @@ export interface ResolveCommandPluginSpecsResult {
   specs: NonNullable<AgentOptions["plugins"]>;
   diagnostics: ToolRuntimeDiagnostic[];
 }
+
+const log = createLogger("plugin-tool-runtime");
 
 export class ToolRuntime {
   static build(input: ToolRuntimeBuildInput): ToolRuntimeBuildResult {
@@ -105,34 +109,42 @@ export class ToolRuntime {
     workspaceSlug?: string;
   }): ResolveCommandPluginSpecsResult {
     const config = getEffectiveLumeConfig(input.workspaceSlug).plugins;
-    const enabled = new Set(config?.enabled ?? []);
-    const roots = [
-      join(homedir(), ".lume", "plugins"),
-      join(input.cwd, ".lume", "plugins"),
-      ...(config?.directories ?? [])
-    ];
+    const enabledList = config?.enabled ?? [];
+    const directories = config?.directories ?? [];
+
+    // Build plugin roots: global + cwd-local + configured extra dirs
+    const globalRoot = join(homedir(), ".lume", "plugins");
+    const cwdRoot = join(input.cwd, ".lume", "plugins");
+    const allRoots = [globalRoot, cwdRoot, ...directories];
+
+    // If user has configured enabled list, use it; otherwise scan all
+    const effectiveEnabled = enabledList.length > 0 ? enabledList : undefined;
+
+    const manager = new SidecarPluginManager();
+    const resolved = manager.resolveEnabled({
+      enabled: effectiveEnabled ?? [],
+      directories: allRoots.slice(1), // pass non-default roots as extra directories
+    });
+
     const specs: NonNullable<AgentOptions["plugins"]> = [];
     const diagnostics: ToolRuntimeDiagnostic[] = [];
-    const seen = new Set<string>();
 
-    for (const root of roots) {
-      if (!existsSync(root)) continue;
-      for (const entry of readdirSync(root, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        if (enabled.size > 0 && !enabled.has(entry.name)) continue;
-        const path = join(root, entry.name);
-        if (seen.has(path)) continue;
-        seen.add(path);
-
-        const manifest = validateCommandPluginManifest(path, entry.name);
-        diagnostics.push(...manifest.diagnostics);
-        if (!manifest.ok) {
-          continue;
-        }
-
-        specs.push({ name: entry.name, path, kind: "command" });
-      }
+    for (const plugin of resolved) {
+      log.info("Plugin registered as command spec", {
+        name: plugin.name,
+        version: plugin.version,
+        root: plugin.root,
+        hooksOnly: plugin.manifest.lume?.hooksOnly ?? false,
+      });
+      specs.push({ name: plugin.name, path: plugin.root, kind: "command" });
     }
+
+    log.info("Command plugin specs resolved", {
+      cwd: input.cwd,
+      workspaceSlug: input.workspaceSlug,
+      totalSpecs: specs.length,
+      names: specs.map((s) => s.name),
+    });
 
     return { specs, diagnostics };
   }

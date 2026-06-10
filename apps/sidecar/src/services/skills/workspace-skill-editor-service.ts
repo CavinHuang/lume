@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { copyFile, mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
 import type {
   EditableSkillDetailResult,
   EditableSkillMeta,
@@ -212,6 +213,38 @@ function readProjectEditableSkills(cwd: string): EditableSkillMeta[] {
   return Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
 }
 
+function readPluginEditableSkills(): EditableSkillMeta[] {
+  const pluginsRoot = join(homedir(), ".lume", "plugins");
+  if (!existsSync(pluginsRoot)) return [];
+
+  const bySlug = new Map<string, EditableSkillMeta>();
+  for (const entry of readdirSync(pluginsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const pluginDir = join(pluginsRoot, entry.name);
+    const skillsDir = join(pluginDir, "skills");
+    if (!existsSync(skillsDir)) continue;
+
+    for (const skill of readEditableSkillsFromDir(skillsDir, "plugin")) {
+      // Namespace the slug with plugin name using ":" separator for explicit invocation
+      const namespacedSlug = `${entry.name}:${skill.slug}`;
+      bySlug.set(namespacedSlug, {
+        ...skill,
+        slug: namespacedSlug,
+        name: `${entry.name}: ${skill.name}`,
+        managementSurface: "plugin" as const,
+        sourceType: "plugin" as const,
+      });
+    }
+  }
+
+  const result = Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  console.debug(`[plugin:skills] discovered ${result.length} plugin skills`, {
+    root: pluginsRoot,
+    names: result.map((s) => s.slug),
+  });
+  return result;
+}
+
 function trimOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -334,13 +367,16 @@ export function listEditableSkills(input: ListEditableSkillsInput): EditableSkil
   const installedSources = getInstalledSkillSourceMetadata(input.workspaceSlug);
   const builtInSkillSlugs = readBuiltInSkillSlugs();
 
+  const pluginSkills = readPluginEditableSkills();
+
   return [
     ...readUserEditableSkills(),
     ...(input.cwd ? readProjectEditableSkills(input.cwd) : []),
     ...readEditableSkillsFromDir(getWorkspaceSkillsDir(input.workspaceSlug), "workspace", {
       installedSources,
       builtInSkillSlugs
-    })
+    }),
+    ...pluginSkills
   ];
 }
 
@@ -380,3 +416,49 @@ export const __internal = {
   normalizeSkillSlug,
   writeSkillFileAtomically
 };
+
+export function resolvePluginSkillPath(pluginName: string, skillSlug: string): string {
+  const pluginsRoot = join(homedir(), ".lume", "plugins");
+  const pluginDir = resolve(pluginsRoot, pluginName);
+  const pluginRelative = relative(pluginsRoot, pluginDir);
+
+  if (
+    !pluginRelative ||
+    pluginRelative.startsWith("..") ||
+    pluginRelative.includes(`${sep}..`) ||
+    resolve(pluginRelative) === pluginRelative
+  ) {
+    throw new Error("非法 Skill 路径");
+  }
+
+  const skillsRoot = resolve(pluginDir, "skills");
+  const skillDir = resolve(skillsRoot, normalizeSkillSlug(skillSlug));
+  const skillRelative = relative(skillsRoot, skillDir);
+
+  if (
+    !skillRelative ||
+    skillRelative.startsWith("..") ||
+    skillRelative.includes(`${sep}..`) ||
+    resolve(skillRelative) === skillRelative
+  ) {
+    throw new Error("非法 Skill 路径");
+  }
+
+  return join(skillDir, "SKILL.md");
+}
+
+export function readPluginSkillContent(pluginName: string, skillSlug: string): string | null {
+  const skillPath = resolvePluginSkillPath(pluginName, skillSlug);
+  if (!existsSync(skillPath)) return null;
+  return readFileSync(skillPath, "utf-8");
+}
+
+export function listPluginSkillDirs(pluginName: string): string[] {
+  const pluginsRoot = join(homedir(), ".lume", "plugins");
+  const pluginDir = join(pluginsRoot, pluginName);
+  const skillsDir = join(pluginDir, "skills");
+  if (!existsSync(skillsDir)) return [];
+  return readdirSync(skillsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(skillsDir, entry.name, "SKILL.md")))
+    .map((entry) => entry.name);
+}

@@ -45,6 +45,9 @@ export function registerSkill(definition: SkillDefinition): void {
     if (previousName !== definition.name) {
       skills.delete(previousName)
     }
+    if (previous.name !== definition.name) {
+      console.warn(`[SkillRegistry] Overwriting skill "${previous.name}" with "${definition.name}"`)
+    }
   }
 
   skills.set(definition.name, definition)

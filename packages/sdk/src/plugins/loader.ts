@@ -8,7 +8,7 @@ import type {
   McpServerConfig,
   ToolDefinition,
 } from '../types.js'
-import type { HookConfig } from '../hooks.js'
+import type { HookConfig, HookDefinition } from '../hooks.js'
 import type { SkillDefinition } from '../skills/types.js'
 import type { CommandDefinition } from '../commands/types.js'
 
@@ -23,6 +23,7 @@ export interface LoadedPlugin {
   skills?: SkillDefinition[]
   commands?: CommandDefinition[]
   config?: Record<string, unknown>
+  lume?: { hooksOnly?: boolean }
 }
 
 type PluginModule =
@@ -138,6 +139,47 @@ async function loadPluginModule(path: string): Promise<LoadedPlugin | null> {
   return plugin
 }
 
+async function resolveHooksConfig(
+  hooksField: unknown,
+  pluginPath: string,
+): Promise<HookConfig | undefined> {
+  if (!hooksField) return undefined
+  if (typeof hooksField === 'object') {
+    console.debug(`[plugin:loader] hooks already an object for ${pluginPath}`);
+    return hooksField as HookConfig
+  }
+
+  // String path — read and parse the hooks file
+  const hooksPath = resolve(pluginPath, hooksField as string)
+  try {
+    const raw = JSON.parse(await readFile(hooksPath, 'utf-8')) as Record<string, unknown>
+    // Codex format: { "hooks": { "EventName": [...] } }
+    const config = raw.hooks && typeof raw.hooks === 'object' ? raw.hooks as HookConfig : raw as HookConfig
+    // Strip Codex-specific "type" field from each hook definition
+    const cleaned: HookConfig = {}
+    for (const [event, definitions] of Object.entries(config)) {
+      if (!Array.isArray(definitions)) continue
+      cleaned[event] = definitions.map((def) => {
+        if (!def || typeof def !== 'object') return def
+        const { type: _type, ...rest } = def as Record<string, unknown>
+        return rest as HookDefinition
+      })
+    }
+    console.debug(`[plugin:loader] resolved hooks from ${hooksPath}`, {
+      pluginPath,
+      events: Object.keys(cleaned),
+      totalHooks: Object.values(cleaned).reduce((sum, defs) => sum + defs.length, 0),
+    });
+    return cleaned
+  } catch (error) {
+    console.warn(`[plugin:loader] failed to resolve hooks for ${pluginPath}`, {
+      hooksPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined
+  }
+}
+
 export async function loadPlugins(
   cwd: string,
   pluginSpecs: AgentOptions['plugins'] = [],
@@ -170,11 +212,12 @@ export async function loadPlugins(
           source: manifest.source,
           tools: normalizeManifestTools(manifest.tools, pluginPath, { commandOnly }),
           agents: manifest.agents,
-          hooks: manifest.hooks,
+          hooks: await resolveHooksConfig(manifest.hooks, pluginPath),
           mcpServers: manifest.mcpServers,
           skills: manifest.skills,
           commands: manifest.commands,
           config: spec.config,
+          lume: manifest.lume,
         }
         if (!commandOnly && manifest.entry) {
           const modulePlugin = await loadPluginModule(resolve(pluginPath, manifest.entry))
@@ -212,10 +255,31 @@ export async function loadPlugins(
       }
     }
 
+    if (plugin && typeof plugin.hooks === 'string') {
+      plugin.hooks = await resolveHooksConfig(plugin.hooks, plugin.path)
+    }
+
     if (plugin) {
+      console.debug(`[plugin:loader] plugin loaded`, {
+        name: plugin.name,
+        path: plugin.path,
+        hasHooks: !!plugin.hooks,
+        hooksEvents: plugin.hooks ? Object.keys(plugin.hooks) : [],
+        hooksCount: plugin.hooks ? Object.values(plugin.hooks).reduce((sum, defs) => sum + defs.length, 0) : 0,
+        hasMcpServers: !!plugin.mcpServers,
+        hasSkills: !!(plugin.skills?.length),
+        hasTools: !!(plugin.tools?.length),
+        hasCommands: !!(plugin.commands?.length),
+        hooksOnly: plugin.lume?.hooksOnly ?? false,
+      });
       loaded.push(plugin)
     }
   }
 
+  console.debug(`[plugin:loader] loadPlugins complete`, {
+    totalLoaded: loaded.length,
+    names: loaded.map((p) => p.name),
+    hooksOnlyCount: loaded.filter((p) => p.lume?.hooksOnly).length,
+  });
   return loaded
 }

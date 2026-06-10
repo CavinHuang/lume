@@ -75,7 +75,9 @@ export function formatSkillSuggestionMeta(skill: SuggestionSkill) {
     ? '用户全局'
     : skill.storageScope === 'project'
       ? '当前项目'
-      : 'Lume 工作区'
+      : skill.storageScope === 'plugin'
+        ? '插件'
+        : 'Lume 工作区'
   return skill.version ? `${scopeLabel} · ${skill.version}` : scopeLabel
 }
 
