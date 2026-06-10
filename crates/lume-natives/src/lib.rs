@@ -12,6 +12,6 @@ pub mod utils;
 pub mod task;
 pub mod fs_cache;
 pub mod glob_util;
-// pub mod grep;
+pub mod grep;
 // pub mod glob;
 // pub mod fd;
