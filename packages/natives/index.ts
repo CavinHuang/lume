@@ -272,3 +272,48 @@ export async function nativeFuzzyFind(
     return null;
   }
 }
+
+// ── Summarize (AST) ───────────────────────────────────
+
+export interface NativeSummarizeOptions {
+  code: string;
+  lang?: string;
+  path?: string;
+  min_body_lines?: number;
+  min_comment_lines?: number;
+  unfold_until_lines?: number;
+  unfold_limit_lines?: number;
+}
+
+export interface NativeSummarySegment {
+  kind: "kept" | "elided";
+  startLine: number;
+  endLine: number;
+  text?: string;
+}
+
+export interface NativeSummaryResult {
+  language: string | null;
+  parsed: boolean;
+  elided: boolean;
+  totalLines: number;
+  segments: NativeSummarySegment[];
+}
+
+/**
+ * Produce a structural summary of source code using tree-sitter.
+ * Returns kept/elided segments showing signatures with bodies elided.
+ * Returns null if native module unavailable.
+ */
+export function nativeSummarize(
+  options: NativeSummarizeOptions,
+): NativeSummaryResult | null {
+  const native = loadNative();
+  if (!native) return null;
+
+  try {
+    return (native as any).summarize(options);
+  } catch {
+    return null;
+  }
+}
