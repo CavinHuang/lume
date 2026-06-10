@@ -24,6 +24,7 @@ grep-searcher = "0.1"
 memmap2 = "0.9"
 smallvec = "1"
 regex = "1"
+lume-ast = { path = "../lume-ast" }
 
 [build-dependencies]
 napi-build = "2"
