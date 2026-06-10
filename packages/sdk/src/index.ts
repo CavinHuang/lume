@@ -184,6 +184,32 @@ export type { CommandDefinition } from './commands/types.js'
 export { loadFilesystemSkills } from './skills/fs-loader.js'
 
 // --------------------------------------------------------------------------
+// Plugin System
+// --------------------------------------------------------------------------
+
+export {
+  parseManifest,
+  validateManifest,
+  inferDefaults,
+  validatePluginPath,
+  validatePluginName,
+  validateSemver,
+  type LumePluginManifest,
+  type PluginPermissions,
+} from './plugins/manifest.js'
+export {
+  adaptCodexPlugin,
+  CODEX_EVENT_MAP,
+} from './plugins/codex-adapter.js'
+export {
+  checkToolPermission,
+  checkFilesystemPermission,
+  checkNetworkPermission,
+  matchPathGlob,
+  type PermissionDecision,
+} from './plugins/permissions.js'
+
+// --------------------------------------------------------------------------
 // Skill System
 // --------------------------------------------------------------------------
 
