@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { copyFile, mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
 import type {
   EditableSkillDetailResult,
   EditableSkillMeta,
@@ -212,6 +213,33 @@ function readProjectEditableSkills(cwd: string): EditableSkillMeta[] {
   return Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
 }
 
+function readPluginEditableSkills(): EditableSkillMeta[] {
+  const pluginsRoot = join(homedir(), ".lume", "plugins");
+  if (!existsSync(pluginsRoot)) return [];
+
+  const bySlug = new Map<string, EditableSkillMeta>();
+  for (const entry of readdirSync(pluginsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const pluginDir = join(pluginsRoot, entry.name);
+    const skillsDir = join(pluginDir, "skills");
+    if (!existsSync(skillsDir)) continue;
+
+    for (const skill of readEditableSkillsFromDir(skillsDir, "plugin")) {
+      // Namespace the slug with plugin name using ":" separator for explicit invocation
+      const namespacedSlug = `${entry.name}:${skill.slug}`;
+      bySlug.set(namespacedSlug, {
+        ...skill,
+        slug: namespacedSlug,
+        name: `${entry.name}: ${skill.name}`,
+        managementSurface: "plugin" as const,
+        sourceType: "plugin" as const,
+      });
+    }
+  }
+
+  return Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+}
+
 function trimOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -334,13 +362,16 @@ export function listEditableSkills(input: ListEditableSkillsInput): EditableSkil
   const installedSources = getInstalledSkillSourceMetadata(input.workspaceSlug);
   const builtInSkillSlugs = readBuiltInSkillSlugs();
 
+  const pluginSkills = readPluginEditableSkills();
+
   return [
     ...readUserEditableSkills(),
     ...(input.cwd ? readProjectEditableSkills(input.cwd) : []),
     ...readEditableSkillsFromDir(getWorkspaceSkillsDir(input.workspaceSlug), "workspace", {
       installedSources,
       builtInSkillSlugs
-    })
+    }),
+    ...pluginSkills
   ];
 }
 

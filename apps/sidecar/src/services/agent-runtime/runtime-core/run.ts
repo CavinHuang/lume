@@ -12,6 +12,8 @@ import {
   LSPTool,
   NotebookEditTool,
   registerAgents,
+  registerSkill,
+  unregisterSkill,
   type SDKMessage,
   type Agent,
   type AgentDefinition,
@@ -890,6 +892,32 @@ export async function createRuntimeCoreSession(
     cwd: input.cwd,
     workspaceSlug: input.workspaceSlug
   });
+
+  // Register plugin skills in the global skill registry with plugin namespace
+  const registeredPluginSkillNames = new Set<string>();
+  for (const spec of pluginResolution.specs) {
+    if (spec.kind !== "command") continue;
+    try {
+      const { loadFilesystemSkills } = await import("@lume/agent-sdk");
+      const pluginName = spec.name;
+      const skills = await loadFilesystemSkills({
+        roots: [join(spec.path, "skills")],
+        cwd: spec.path,
+      });
+      for (const skill of skills) {
+        // Namespace the skill name with plugin name for explicit invocation: "plugin-name:skill-name"
+        const namespacedSkill = {
+          ...skill,
+          name: `${pluginName}:${skill.name}`,
+          slug: `${pluginName}/${skill.slug ?? skill.name}`,
+        };
+        registerSkill(namespacedSkill);
+        registeredPluginSkillNames.add(namespacedSkill.name);
+      }
+    } catch {
+      // skip plugins with invalid skills
+    }
+  }
   const workspaceMcpRuntime = input.workspaceSlug
     ? await getWorkspaceMcpManager().createRuntimeTools(input.workspaceSlug).catch((error) => ({
       tools: [],
@@ -1052,6 +1080,9 @@ export async function createRuntimeCoreSession(
       await agent.close();
       clearRuntimeToolDescriptors(input.lumeSessionId);
       clearRuntimeFileAccessLedger(input.lumeSessionId);
+      for (const name of registeredPluginSkillNames) {
+        unregisterSkill(name);
+      }
     }
   };
 

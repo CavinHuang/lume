@@ -109,5 +109,6 @@ export function buildSkillImprovementSuggestionToast(
 function formatSkillSuggestionScopeLabel(scope: SkillStorageScope): string {
   if (scope === 'user') return '用户全局'
   if (scope === 'project') return '当前项目'
+  if (scope === 'plugin') return '插件'
   return '工作区级'
 }

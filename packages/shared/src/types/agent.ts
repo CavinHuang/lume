@@ -337,9 +337,9 @@ export interface GlobalImportResult {
   reason?: string
 }
 
-export type SkillSourceType = 'built-in' | 'local' | 'github' | 'subscribed-market'
+export type SkillSourceType = 'built-in' | 'local' | 'github' | 'subscribed-market' | 'plugin';
 
-export type SkillManagementSurface = 'settings' | 'market'
+export type SkillManagementSurface = 'settings' | 'market' | 'plugin';
 
 export type SkillTrustLevel = 'trusted' | 'review-required' | 'blocked-by-default'
 
