@@ -18,62 +18,7 @@ export class SidecarPluginManager {
       pluginRoot ?? join(process.env.HOME ?? "~", ".lume", "plugins");
   }
 
-  async resolveEnabled(config: {
-    enabled: string[];
-    directories: string[];
-  }): Promise<ResolvedPlugin[]> {
-    const roots = [this.pluginRoot, ...config.directories.map((d) => resolve(d))];
-    const seen = new Set<string>();
-    const results: ResolvedPlugin[] = [];
-
-    for (const root of roots) {
-      if (!existsSync(root)) continue;
-      for (const entry of readdirSync(root, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        if (config.enabled.length > 0 && !config.enabled.includes(entry.name)) continue;
-        const pluginDir = join(root, entry.name);
-        if (seen.has(pluginDir)) continue;
-        seen.add(pluginDir);
-
-        const manifestPath = join(pluginDir, "lume-plugin.json");
-        if (!existsSync(manifestPath)) continue;
-
-        try {
-          const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
-          const manifest = parseManifest(raw);
-          // Skip hooks-only plugins at this layer (handled by hook system)
-          if (manifest.lume?.hooksOnly) continue;
-
-          const version = resolveVersion(pluginDir);
-
-          results.push({
-            name: manifest.name,
-            version,
-            root: pluginDir,
-            manifest,
-          });
-        } catch {
-          // skip invalid manifests
-        }
-      }
-    }
-
-    return results;
-  }
-
-  buildInterceptorContexts(config: {
-    enabled: string[];
-    directories: string[];
-  }): Array<{ pluginName: string; pluginRoot: string; permissions: Record<string, unknown> }> {
-    const plugins = this.resolveEnabledSync(config);
-    return plugins.map((p) => ({
-      pluginName: p.name,
-      pluginRoot: p.root,
-      permissions: p.manifest.permissions ?? {},
-    }));
-  }
-
-  private resolveEnabledSync(config: {
+  resolveEnabled(config: {
     enabled: string[];
     directories: string[];
   }): ResolvedPlugin[] {
@@ -90,23 +35,87 @@ export class SidecarPluginManager {
         if (seen.has(pluginDir)) continue;
         seen.add(pluginDir);
 
-        const manifestPath = join(pluginDir, "lume-plugin.json");
-        if (!existsSync(manifestPath)) continue;
+        const loaded = loadPluginFromDir(pluginDir);
+        if (!loaded) continue;
 
-        try {
-          const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
-          const manifest = parseManifest(raw);
-          if (manifest.lume?.hooksOnly) continue;
+        if (loaded.manifest.lume?.hooksOnly) continue;
 
-          const version = resolveVersion(pluginDir);
-          results.push({ name: manifest.name, version, root: pluginDir, manifest });
-        } catch {
-          // skip
-        }
+        const version = resolveVersion(pluginDir);
+        results.push({
+          name: loaded.manifest.name,
+          version,
+          root: pluginDir,
+          manifest: loaded.manifest,
+        });
       }
     }
+
     return results;
   }
+
+  buildInterceptorContexts(config: {
+    enabled: string[];
+    directories: string[];
+  }): Array<{ pluginName: string; pluginRoot: string; permissions: Record<string, unknown> }> {
+    const plugins = this.resolveEnabled(config);
+    return plugins.map((p) => ({
+      pluginName: p.name,
+      pluginRoot: p.root,
+      permissions: p.manifest.permissions ?? {},
+    }));
+  }
+}
+
+function loadPluginFromDir(pluginDir: string): { manifest: LumePluginManifest } | null {
+  const lumePath = join(pluginDir, "lume-plugin.json");
+  if (existsSync(lumePath)) {
+    try {
+      const raw = JSON.parse(readFileSync(lumePath, "utf-8"));
+      return { manifest: parseManifest(raw) };
+    } catch {
+      return null;
+    }
+  }
+
+  // Fallback: plugin.json (legacy v1 command-only format)
+  const legacyPath = join(pluginDir, "plugin.json");
+  if (existsSync(legacyPath)) {
+    try {
+      const raw = JSON.parse(readFileSync(legacyPath, "utf-8"));
+      // Must have at least one command tool (same rule as validateCommandPluginManifest)
+      const tools = Array.isArray(raw.tools) ? raw.tools : [];
+      const hasCommandTool = tools.some(
+        (t: Record<string, unknown>) =>
+          typeof t.name === "string" && typeof t.command === "string",
+      );
+      if (!hasCommandTool) return null;
+
+      const name = (raw.name as string) ?? pluginDir.split("/").pop() ?? "unknown";
+      const synthetic = {
+        schema: "lume-plugin/v1" as const,
+        name,
+        version: "local",
+        description: raw.description as string | undefined,
+        skills: raw.skills ? [raw.skills] : undefined,
+        hooks: raw.hooks as string | undefined,
+        mcpServers: raw.mcpServers as string | undefined,
+        permissions: {
+          mcpServers: { register: true },
+          shell: { allow: true },
+          tools: {
+            allow: ["FileRead", "Glob", "Grep", "WebFetch", "WebSearch", "TaskList", "TaskGet", "AskUserQuestion", "Config"],
+            deny: ["Bash", "FileWrite", "FileEdit", "NotebookEdit", "EnterWorktree", "ExitWorktree", "AgentTool", "SendMessage"],
+          },
+        },
+        lume: { hooksOnly: false },
+      };
+      return { manifest: synthetic as LumePluginManifest };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function resolveVersion(pluginDir: string): string {

@@ -20,7 +20,7 @@ describe("SidecarPluginManager", () => {
 
     const manager = new SidecarPluginManager(root);
     const config = { enabled: ["alpha"], directories: [] };
-    const plugins = await manager.resolveEnabled(config);
+    const plugins = manager.resolveEnabled(config);
     expect(plugins.map((p) => p.name)).toContain("alpha");
   });
 
@@ -39,7 +39,7 @@ describe("SidecarPluginManager", () => {
     // alpha was installed in the first test, beta is new
     // enabled list only includes "alpha", so beta should be skipped
     const config = { enabled: ["alpha"], directories: [] };
-    const plugins = await manager.resolveEnabled(config);
+    const plugins = manager.resolveEnabled(config);
     expect(plugins.map((p) => p.name)).not.toContain("beta");
   });
 
@@ -57,7 +57,7 @@ describe("SidecarPluginManager", () => {
 
     const manager = new SidecarPluginManager(root);
     const config = { enabled: [], directories: [extra] };
-    const plugins = await manager.resolveEnabled(config);
+    const plugins = manager.resolveEnabled(config);
     expect(plugins.map((p) => p.name)).toContain("gamma");
   });
 
@@ -78,7 +78,7 @@ describe("SidecarPluginManager", () => {
 
     const manager = new SidecarPluginManager(root);
     const config = { enabled: ["delta"], directories: [] };
-    const contexts = await manager.buildInterceptorContexts(config);
+    const contexts = manager.buildInterceptorContexts(config);
     expect(contexts).toHaveLength(1);
     expect(contexts[0]!.pluginName).toBe("delta");
     expect(contexts[0]!.permissions.tools.deny).toContain("Bash");
@@ -98,7 +98,7 @@ describe("SidecarPluginManager", () => {
 
     const manager = new SidecarPluginManager(root);
     // Request a plugin that doesn't exist
-    const contexts = await manager.buildInterceptorContexts({
+    const contexts = manager.buildInterceptorContexts({
       enabled: ["nonexistent"],
       directories: [],
     });
