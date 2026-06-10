@@ -1,0 +1,23 @@
+[package]
+name = "lume-natives"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+napi = { version = "3", features = ["napi9", "error_anyhow"] }
+napi-derive = "3"
+tiktoken-rs = "0.6"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = true
