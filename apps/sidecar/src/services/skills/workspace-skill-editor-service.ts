@@ -237,7 +237,12 @@ function readPluginEditableSkills(): EditableSkillMeta[] {
     }
   }
 
-  return Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  const result = Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  console.debug(`[plugin:skills] discovered ${result.length} plugin skills`, {
+    root: pluginsRoot,
+    names: result.map((s) => s.slug),
+  });
+  return result;
 }
 
 function trimOptional(value: string | undefined): string | undefined {

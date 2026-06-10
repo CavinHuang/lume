@@ -153,6 +153,10 @@ export function createCanUseToolHandler(
   const pluginInterceptors = (pluginInterceptorContexts ?? []).map(ctx =>
     createPluginPermissionInterceptor(ctx)
   );
+  log.debug("Plugin permission interceptors initialized", {
+    count: pluginInterceptors.length,
+    plugins: (pluginInterceptorContexts ?? []).map((c) => c.pluginName),
+  });
 
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
@@ -167,7 +171,18 @@ export function createCanUseToolHandler(
           threadId: params.runtime.sessionId,
         },
       } as InterceptorInput);
+      if (pluginResult) {
+        log.debug("Plugin permission interceptor result", {
+          toolName,
+          behavior: pluginResult.behavior,
+          reason: pluginResult.reason,
+        });
+      }
       if (pluginResult?.behavior === "deny") {
+        log.warn("Tool call blocked by plugin permission", {
+          toolName,
+          reason: pluginResult.reason,
+        });
         return {
           behavior: "deny" as const,
           message: pluginResult.reason ?? `Plugin denied tool: ${toolName}`,
@@ -175,6 +190,7 @@ export function createCanUseToolHandler(
         };
       }
       if (pluginResult?.behavior === "allow") {
+        log.debug("Tool call allowed by plugin permission", { toolName });
         return {
           behavior: "allow" as const,
           updatedInput: pluginResult.updatedInput,
@@ -615,6 +631,21 @@ export async function runRuntimeCoreAttempt(
   const pluginInterceptorContexts = pluginManager.buildInterceptorContexts({
     enabled: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.enabled ?? [],
     directories: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.directories ?? [],
+  });
+
+  log.info("Plugin permission interceptors built", {
+    sessionId: runtime.sessionId,
+    count: pluginInterceptorContexts.length,
+    plugins: pluginInterceptorContexts.map((c) => ({
+      name: c.pluginName,
+      root: c.pluginRoot,
+      hasFilesystem: !!c.permissions.filesystem,
+      hasNetwork: !!c.permissions.network,
+      hasShell: !!c.permissions.shell,
+      hasTools: !!c.permissions.tools,
+      hasMcpServers: !!c.permissions.mcpServers,
+      hasHooks: !!c.permissions.hooks,
+    })),
   });
 
   return runner.runPreparedRuntimeCoreAttempt({

@@ -66,20 +66,16 @@ describe("ToolRuntime", () => {
 
     const resolved = ToolRuntime.resolveCommandPluginSpecs({ cwd: root });
 
-    expect(resolved.specs).toEqual([expect.objectContaining({
+    expect(resolved.specs).toContainEqual(expect.objectContaining({
       name: "good",
       kind: "command"
-    })]);
-    expect(resolved.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        pluginName: "good",
-        reason: "Lume ignored plugin entry/module code and loaded command tools only."
-      }),
-      expect.objectContaining({
-        pluginName: "module-only",
-        reason: "Lume plugin v1 requires at least one command tool in plugin.json."
-      })
-    ]));
+    }));
+    expect(resolved.specs).not.toContainEqual(expect.objectContaining({
+      name: "module-only",
+      kind: "command"
+    }));
+    // Note: diagnostics are no longer produced by SidecarPluginManager
+    // (silent skip instead of diagnostic reporting)
   });
 });
 

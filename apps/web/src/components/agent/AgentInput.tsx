@@ -2,7 +2,7 @@ import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
-import { Bot, Send, Square, FileText, Image, Plus } from 'lucide-react'
+import { Bot, Send, Square, FileText, Image, Plus, Puzzle } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -214,6 +214,8 @@ export function AgentInput({
   const [historyMessages, setHistoryMessages] = useState<AgentMessage[]>([])
   const mentionSuggestionOpenRef = useRef(false)
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
+  const [pluginsPopoverOpen, setPluginsPopoverOpen] = useState(false)
+  const [installedPlugins, setInstalledPlugins] = useState<Array<{ name: string; version: string; description?: string }>>([])
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
@@ -635,6 +637,17 @@ export function AgentInput({
     }
   }
 
+  const handleOpenPlugins = async () => {
+    setAttachMenuOpen(false)
+    try {
+      const plugins = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
+      setInstalledPlugins(plugins as Array<{ name: string; version: string; description?: string }>)
+      setPluginsPopoverOpen(true)
+    } catch {
+      toast.error('获取插件列表失败')
+    }
+  }
+
   return (
     <div className="px-3 pb-4 pt-2">
       <div className="w-full px-14">
@@ -710,6 +723,49 @@ export function AgentInput({
                           <Image size={15} className="text-[var(--text-3)]" />
                           图片
                         </button>
+                        <button
+                          type="button"
+                          onClick={handleOpenPlugins}
+                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                        >
+                          <Puzzle size={15} className="text-[var(--text-3)]" />
+                          插件
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {pluginsPopoverOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setPluginsPopoverOpen(false)} />
+                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[260px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
+                        <div className="px-3 py-2 text-[11px] font-medium text-[var(--text-3)]">
+                          已安装插件
+                        </div>
+                        {installedPlugins.length === 0 ? (
+                          <div className="px-3 py-3 text-[13px] text-[var(--text-3)]">
+                            暂无已安装的插件
+                          </div>
+                        ) : (
+                          <div className="max-h-[200px] overflow-y-auto">
+                            {installedPlugins.map((plugin) => (
+                              <div
+                                key={plugin.name}
+                                className="flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                              >
+                                <Puzzle size={14} className="shrink-0 text-[var(--text-3)]" />
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-[13px] text-[var(--text-1)]">
+                                    {plugin.name}
+                                  </div>
+                                  <div className="truncate text-[11px] text-[var(--text-3)]">
+                                    v{plugin.version}
+                                    {plugin.description ? ` · ${plugin.description}` : ''}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </>
                   )}

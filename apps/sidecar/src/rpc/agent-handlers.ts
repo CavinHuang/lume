@@ -122,6 +122,7 @@ import {
   listEditableSkills,
   saveWorkspaceSkill
 } from "../services/skills/workspace-skill-editor-service";
+import { SidecarPluginManager } from "../services/agent-runtime/plugins/plugin-manager.js";
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
@@ -953,6 +954,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.APPLY_SKILL_IMPROVEMENT
       );
       return applyWorkspaceSkillImprovement(input);
+    },
+    [AGENT_IPC_CHANNELS.LIST_PLUGINS]: async () => {
+      const manager = new SidecarPluginManager();
+      const plugins = manager.resolveEnabled({ enabled: [], directories: [] });
+      log.info("LIST_PLUGINS request", { count: plugins.length, names: plugins.map((p) => p.name) });
+      return plugins.map((p) => ({
+        name: p.name,
+        version: p.version,
+        root: p.root,
+        description: p.manifest.description,
+        hooks: p.manifest.hooks,
+        mcpServers: p.manifest.mcpServers,
+        skills: p.manifest.skills?.length ?? 0,
+      }));
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(

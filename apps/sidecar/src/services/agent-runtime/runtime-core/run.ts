@@ -14,6 +14,8 @@ import {
   registerAgents,
   registerSkill,
   unregisterSkill,
+  getSkill,
+  hasSkill,
   type SDKMessage,
   type Agent,
   type AgentDefinition,
@@ -904,6 +906,12 @@ export async function createRuntimeCoreSession(
         roots: [join(spec.path, "skills")],
         cwd: spec.path,
       });
+      log.debug("Plugin skills loaded from disk", {
+        pluginName,
+        path: join(spec.path, "skills"),
+        skillCount: skills.length,
+        skillNames: skills.map((s) => s.name),
+      });
       for (const skill of skills) {
         // Namespace the skill name with plugin name for explicit invocation: "plugin-name:skill-name"
         const namespacedSkill = {
@@ -911,6 +919,15 @@ export async function createRuntimeCoreSession(
           name: `${pluginName}:${skill.name}`,
           slug: `${pluginName}/${skill.slug ?? skill.name}`,
         };
+        if (hasSkill(namespacedSkill.name)) {
+          log.warn(`[plugin] skill "${namespacedSkill.name}" already registered, skipping duplicate from "${pluginName}"`);
+          continue;
+        }
+        log.debug("Registering plugin skill", {
+          pluginName,
+          originalName: skill.name,
+          namespacedName: namespacedSkill.name,
+        });
         registerSkill(namespacedSkill);
         registeredPluginSkillNames.add(namespacedSkill.name);
       }
@@ -918,6 +935,11 @@ export async function createRuntimeCoreSession(
       // skip plugins with invalid skills
     }
   }
+  log.info("Plugin skill registration complete", {
+    sessionId: input.lumeSessionId,
+    totalRegistered: registeredPluginSkillNames.size,
+    skills: Array.from(registeredPluginSkillNames),
+  });
   const workspaceMcpRuntime = input.workspaceSlug
     ? await getWorkspaceMcpManager().createRuntimeTools(input.workspaceSlug).catch((error) => ({
       tools: [],

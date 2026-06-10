@@ -2,6 +2,9 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { parseManifest, type LumePluginManifest } from "@lume/agent-sdk/plugins/manifest.js";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("plugin-manager");
 
 export interface ResolvedPlugin {
   name: string;
@@ -26,30 +29,58 @@ export class SidecarPluginManager {
     const seen = new Set<string>();
     const results: ResolvedPlugin[] = [];
 
+    log.debug("Resolving plugins", {
+      pluginRoot: this.pluginRoot,
+      extraDirectories: config.directories,
+      enabledFilter: config.enabled,
+      roots: roots.filter((r) => existsSync(r)),
+    });
+
     for (const root of roots) {
-      if (!existsSync(root)) continue;
-      for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!existsSync(root)) {
+        log.debug("Plugin root does not exist, skipping", { root });
+        continue;
+      }
+      const entries = readdirSync(root, { withFileTypes: true });
+      log.debug("Scanning plugin root", { root, entryCount: entries.length });
+
+      for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        if (config.enabled.length > 0 && !config.enabled.includes(entry.name)) continue;
+        if (config.enabled.length > 0 && !config.enabled.includes(entry.name)) {
+          log.debug("Plugin not in enabled list, skipping", { root, name: entry.name });
+          continue;
+        }
         const pluginDir = join(root, entry.name);
         if (seen.has(pluginDir)) continue;
         seen.add(pluginDir);
 
         const loaded = loadPluginFromDir(pluginDir);
-        if (!loaded) continue;
-
-        if (loaded.manifest.lume?.hooksOnly) continue;
+        if (!loaded) {
+          log.debug("No valid plugin manifest found, skipping", { dir: pluginDir });
+          continue;
+        }
 
         const version = resolveVersion(pluginDir);
-        results.push({
-          name: loaded.manifest.name,
+        const manifest = loaded.manifest;
+        log.info("Plugin resolved", {
+          name: manifest.name,
           version,
           root: pluginDir,
-          manifest: loaded.manifest,
+          hooksOnly: manifest.lume?.hooksOnly ?? false,
+          skills: manifest.skills?.length ?? 0,
+          hooks: typeof manifest.hooks === 'string' ? manifest.hooks : !!manifest.hooks,
+          mcpServers: typeof manifest.mcpServers === 'string' ? manifest.mcpServers : !!manifest.mcpServers,
+        });
+        results.push({
+          name: manifest.name,
+          version,
+          root: pluginDir,
+          manifest,
         });
       }
     }
 
+    log.info("Plugin resolution complete", { totalResolved: results.length, names: results.map((r) => r.name) });
     return results;
   }
 
@@ -71,8 +102,11 @@ function loadPluginFromDir(pluginDir: string): { manifest: LumePluginManifest } 
   if (existsSync(lumePath)) {
     try {
       const raw = JSON.parse(readFileSync(lumePath, "utf-8"));
-      return { manifest: parseManifest(raw) };
-    } catch {
+      const manifest = parseManifest(raw);
+      log.debug("Loaded lume-plugin.json manifest", { dir: pluginDir, name: manifest.name });
+      return { manifest };
+    } catch (error) {
+      log.warn("Failed to parse lume-plugin.json", { dir: pluginDir, error: error instanceof Error ? error.message : String(error) });
       return null;
     }
   }
@@ -88,9 +122,13 @@ function loadPluginFromDir(pluginDir: string): { manifest: LumePluginManifest } 
         (t: Record<string, unknown>) =>
           typeof t.name === "string" && typeof t.command === "string",
       );
-      if (!hasCommandTool) return null;
+      if (!hasCommandTool) {
+        log.debug("Legacy plugin.json has no command tools, skipping", { dir: pluginDir });
+        return null;
+      }
 
       const name = (raw.name as string) ?? pluginDir.split("/").pop() ?? "unknown";
+      log.debug("Loaded legacy plugin.json manifest", { dir: pluginDir, name });
       const synthetic = {
         schema: "lume-plugin/v1" as const,
         name,
@@ -110,7 +148,8 @@ function loadPluginFromDir(pluginDir: string): { manifest: LumePluginManifest } 
         lume: { hooksOnly: false },
       };
       return { manifest: synthetic as LumePluginManifest };
-    } catch {
+    } catch (error) {
+      log.warn("Failed to parse legacy plugin.json", { dir: pluginDir, error: error instanceof Error ? error.message : String(error) });
       return null;
     }
   }

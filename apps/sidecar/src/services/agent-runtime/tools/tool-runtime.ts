@@ -10,6 +10,7 @@ import { ToolResolver } from "./tool-resolver";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { getRuntimeFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
+import { createLogger } from "../../infra/logger";
 import {
   setRuntimeToolDescriptors
 } from "./tool-descriptor-session";
@@ -54,6 +55,8 @@ export interface ResolveCommandPluginSpecsResult {
   specs: NonNullable<AgentOptions["plugins"]>;
   diagnostics: ToolRuntimeDiagnostic[];
 }
+
+const log = createLogger("plugin-tool-runtime");
 
 export class ToolRuntime {
   static build(input: ToolRuntimeBuildInput): ToolRuntimeBuildResult {
@@ -127,9 +130,21 @@ export class ToolRuntime {
     const diagnostics: ToolRuntimeDiagnostic[] = [];
 
     for (const plugin of resolved) {
-      if (plugin.manifest.lume?.hooksOnly) continue;
+      log.info("Plugin registered as command spec", {
+        name: plugin.name,
+        version: plugin.version,
+        root: plugin.root,
+        hooksOnly: plugin.manifest.lume?.hooksOnly ?? false,
+      });
       specs.push({ name: plugin.name, path: plugin.root, kind: "command" });
     }
+
+    log.info("Command plugin specs resolved", {
+      cwd: input.cwd,
+      workspaceSlug: input.workspaceSlug,
+      totalSpecs: specs.length,
+      names: specs.map((s) => s.name),
+    });
 
     return { specs, diagnostics };
   }

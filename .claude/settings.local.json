@@ -21,7 +21,12 @@
       "Bash(find /Applications/Alice.app/Contents/Resources/app/out/renderer -name *.js -type f)",
       "Bash(find /Applications/Alice.app/Contents/Resources/app/out/renderer/assets -name *.js -type f)",
       "Bash(find /Applications/Alice.app/Contents/Resources/app/out/renderer/assets -name page-settings* -o -name page-setting* -o -name *setting*)",
-      "Bash(rtk grep:*)"
+      "Bash(rtk grep:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:developers.openai.com)",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

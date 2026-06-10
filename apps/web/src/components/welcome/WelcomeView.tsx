@@ -303,6 +303,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     }
   }
 
+  const handlePluginSelect = useCallback((pluginName: string) => {
+    if (!editor) return
+    editor.commands.insertContent(`$${pluginName} `)
+    editor.commands.focus('end')
+  }, [editor])
+
   const handleSelectWorkspace = (wsId: string) => {
     setSelectedWorkspaceId(wsId)
     setCurrentWorkspaceId(wsId)
@@ -424,6 +430,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         hasText={Boolean(hasText)}
         onSend={handleSend}
         onAttach={handleAttach}
+        onPluginSelect={handlePluginSelect}
         onRemovePendingFile={(index) =>
           setPendingFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
         }
