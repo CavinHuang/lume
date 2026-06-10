@@ -3,7 +3,7 @@ import { createAutomationJob } from "../automation/automation-manager"
 import { listAutomationJobs } from "../automation/automation-manager"
 import { startAutomationRunner, refreshAutomationRunnerJobs } from "../automation/automation-runner-service"
 import { getActivityExecutor } from "./routine-activities"
-import { readRoutine, writeRoutine, appendRoutineRun } from "./routine-store"
+import { readRoutine, writeRoutine, appendRoutineRun, listAutomationRunsForJob, getLatestAssistantResponse } from "./routine-store"
 import { createLogger } from "../infra/logger"
 
 const log = createLogger("routine")
@@ -78,6 +78,10 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
 
   log.info("手动触发条目", { date, entryId, activity: entry.activity })
 
+  // Reset status so syncRoutineStatus can track the new job
+  entry.status = "pending"
+  routine.status = "running"
+
   // Try predefined executor first
   const executor = getActivityExecutor(entry.activity)
   if (executor) {
@@ -105,21 +109,46 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
 export function syncRoutineStatus(): void {
   const date = today()
   const routine = readRoutine(date)
-  if (!routine || routine.status === "completed") return
+  if (!routine) return
 
   const jobs = listAutomationJobs()
   let changed = 0
 
   for (const entry of routine.entries) {
-    if (!entry.automationJobId || entry.status === "completed" || entry.status === "failed") continue
+    if (!entry.automationJobId) continue
 
     const job = jobs.find((j) => j.id === entry.automationJobId)
     if (!job) continue
 
+    // Backfill result for completed entries that are missing it
+    if (entry.status === "completed" && !entry.result) {
+      const runs = listAutomationRunsForJob(entry.automationJobId, 1)
+      const latestRun = runs[0]
+      if (latestRun) {
+        const llmReply = latestRun.threadId
+          ? getLatestAssistantResponse(latestRun.threadId)
+          : undefined
+        entry.result = { summary: llmReply ?? latestRun.message }
+        changed++
+      }
+      continue
+    }
+
+    if (entry.status === "completed") continue
+
     if (!job.enabled && job.lastRunAt) {
       entry.status = "completed"
+      // Get the LLM's reply from the agent thread, fall back to run log message
+      const runs = listAutomationRunsForJob(entry.automationJobId, 1)
+      const latestRun = runs[0]
+      if (latestRun) {
+        const llmReply = latestRun.threadId
+          ? getLatestAssistantResponse(latestRun.threadId)
+          : undefined
+        entry.result = { summary: llmReply ?? latestRun.message }
+      }
       changed++
-      log.info("条目执行完成", { date, entryId: entry.id, activity: entry.activity })
+      log.info("条目执行完成", { date, entryId: entry.id, activity: entry.activity, runStatus: latestRun?.status })
       appendRoutineRun({
         entryId: entry.id,
         activity: entry.activity,

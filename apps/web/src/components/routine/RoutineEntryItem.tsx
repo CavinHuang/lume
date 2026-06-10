@@ -43,9 +43,10 @@ const STATUS_CONFIG: Record<RoutineEntryStatus, { label: string; dotClass: strin
 interface RoutineEntryItemProps {
   entry: RoutineEntry
   onTrigger?: (entryId: string) => void
+  onViewResult?: (entry: RoutineEntry) => void
 }
 
-export function RoutineEntryItem({ entry, onTrigger }: RoutineEntryItemProps) {
+export function RoutineEntryItem({ entry, onTrigger, onViewResult }: RoutineEntryItemProps) {
   const [expanded, setExpanded] = useState(false)
   const time = new Date(entry.scheduledAt).toLocaleTimeString("zh-CN", {
     hour: "2-digit",
@@ -57,7 +58,7 @@ export function RoutineEntryItem({ entry, onTrigger }: RoutineEntryItemProps) {
   const iconColor = config?.color ?? "#9a7444"
   const tooltipText = config?.tooltip
   const statusConfig = STATUS_CONFIG[entry.status]
-  const isClickable = entry.status === "pending" || entry.status === "failed"
+  const isClickable = entry.status === "failed" || (entry.status === "completed" && entry.result?.summary)
   const hasResult = entry.result?.summary
 
   return (
@@ -101,7 +102,12 @@ export function RoutineEntryItem({ entry, onTrigger }: RoutineEntryItemProps) {
           isClickable && "cursor-pointer hover:border-[var(--reading-accent)]/40 hover:shadow-[0_2px_12px_-4px_rgba(154,116,68,0.12)]",
         )}
         onClick={() => {
-          if (isClickable) onTrigger?.(entry.id)
+          if (!isClickable) return
+          if (entry.status === "completed" && entry.result?.summary) {
+            onViewResult?.(entry)
+          } else {
+            onTrigger?.(entry.id)
+          }
         }}
       >
         {/* Header row */}
@@ -138,6 +144,9 @@ export function RoutineEntryItem({ entry, onTrigger }: RoutineEntryItemProps) {
           )}
           {entry.status === "failed" && (
             <span className="ml-auto rounded-full bg-red-400/10 px-2 py-0.5 text-[10px] font-medium text-red-400">点击重试</span>
+          )}
+          {entry.status === "completed" && entry.result?.summary && (
+            <span className="ml-auto rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-500">查看结果</span>
           )}
         </div>
 

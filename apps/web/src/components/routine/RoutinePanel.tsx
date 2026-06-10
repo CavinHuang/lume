@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import type { DailyRoutine } from "@lume/shared"
+import type { DailyRoutine, RoutineEntry } from "@lume/shared"
 import {
   CalendarDays,
   RefreshCw,
@@ -7,17 +7,43 @@ import {
   ListTodo,
   Brain,
   Clock,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react"
-import { getRoutineToday, triggerRoutineEntry, regenerateRoutine } from "../../lib/desktop-api/routine"
+import { getRoutineByDate, triggerRoutineEntry, regenerateRoutine } from "../../lib/desktop-api/routine"
 import { RoutineEntryItem } from "./RoutineEntryItem"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog"
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function shiftDate(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00")
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
 
 export function RoutinePanel() {
+  const [currentDate, setCurrentDate] = useState(today())
   const [routine, setRoutine] = useState<DailyRoutine | null>(null)
   const [loading, setLoading] = useState(true)
+  const [resultEntry, setResultEntry] = useState<RoutineEntry | null>(null)
+  const [resultOpen, setResultOpen] = useState(false)
+  const [hasPrev, setHasPrev] = useState(false)
+  const [hasNext, setHasNext] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (date: string) => {
+    setLoading(true)
     try {
-      const result = await getRoutineToday()
+      const result = await getRoutineByDate(date)
       setRoutine(result)
     } catch (error) {
       console.error("[RoutinePanel] 加载失败:", error)
@@ -27,10 +53,36 @@ export function RoutinePanel() {
   }, [])
 
   useEffect(() => {
-    void load()
-    const timer = setInterval(() => void load(), 30_000)
-    return () => clearInterval(timer)
-  }, [load])
+    void load(currentDate)
+  }, [currentDate, load])
+
+  useEffect(() => {
+    let cancelled = false
+    const check = async () => {
+      const [prevData, nextData] = await Promise.all([
+        getRoutineByDate(shiftDate(currentDate, -1)),
+        getRoutineByDate(shiftDate(currentDate, 1)),
+      ])
+      if (!cancelled) {
+        setHasPrev(!!prevData)
+        setHasNext(!!nextData)
+      }
+    }
+    void check()
+    return () => { cancelled = true }
+  }, [currentDate, routine])
+
+  const handlePrevDay = useCallback(async () => {
+    const prev = shiftDate(currentDate, -1)
+    const data = await getRoutineByDate(prev)
+    if (data) setCurrentDate(prev)
+  }, [currentDate])
+
+  const handleNextDay = useCallback(async () => {
+    const next = shiftDate(currentDate, 1)
+    const data = await getRoutineByDate(next)
+    if (data) setCurrentDate(next)
+  }, [currentDate])
 
   const handleTrigger = useCallback(async (entryId: string) => {
     try {
@@ -46,11 +98,17 @@ export function RoutinePanel() {
     try {
       const result = await regenerateRoutine()
       setRoutine(result)
+      setCurrentDate(result.date)
     } catch (error) {
       console.error("[RoutinePanel] 重新生成失败:", error)
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  const handleViewResult = useCallback((entry: RoutineEntry) => {
+    setResultEntry(entry)
+    setResultOpen(true)
   }, [])
 
   const { pending, done, completedCount, totalCount, progressPercent } = useMemo(() => {
@@ -78,19 +136,36 @@ export function RoutinePanel() {
     )
   }
 
-  const dateLabel = formatDateLabel(routine.date)
-  const dayLabel = formatDayLabel(routine.date)
-
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <CalendarDays size={18} className="text-[var(--reading-accent)]" />
-            <h2 className="text-[18px] font-semibold text-[var(--text-1)]">今日日程</h2>
+        <div className="flex items-center gap-3">
+          <CalendarDays size={18} className="text-[var(--reading-accent)]" />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handlePrevDay}
+              disabled={!hasPrev}
+              className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)] disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronLeft size={16} className="text-[var(--text-3)]" />
+            </button>
+            <div>
+              <h2 className="text-[18px] font-semibold text-[var(--text-1)]">
+                {currentDate === today() ? "今日日程" : "日程"}
+              </h2>
+              <p className="mt-0.5 text-[13px] text-[var(--text-3)]">{formatDateLabel(currentDate)} {formatDayLabel(currentDate)}</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleNextDay}
+              disabled={!hasNext}
+              className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)] disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronRight size={16} className="text-[var(--text-3)]" />
+            </button>
           </div>
-          <p className="mt-1 text-[13px] text-[var(--text-3)]">{dateLabel} {dayLabel}</p>
         </div>
 
         {/* Progress ring */}
@@ -131,7 +206,7 @@ export function RoutinePanel() {
             待执行 · {pending.length} 项
           </div>
           {pending.map((entry) => (
-            <RoutineEntryItem key={entry.id} entry={entry} onTrigger={handleTrigger} />
+            <RoutineEntryItem key={entry.id} entry={entry} onTrigger={handleTrigger} onViewResult={handleViewResult} />
           ))}
         </section>
       )}
@@ -142,7 +217,7 @@ export function RoutinePanel() {
             已完成 · {completedCount} 项
           </div>
           {done.map((entry) => (
-            <RoutineEntryItem key={entry.id} entry={entry} onTrigger={handleTrigger} />
+            <RoutineEntryItem key={entry.id} entry={entry} onTrigger={handleTrigger} onViewResult={handleViewResult} />
           ))}
         </section>
       )}
@@ -162,6 +237,24 @@ export function RoutinePanel() {
           重新生成
         </button>
       </div>
+      {resultEntry && (
+        <Dialog open={resultOpen} onOpenChange={setResultOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-emerald-500" />
+                执行结果
+              </DialogTitle>
+              <DialogDescription>
+                {resultEntry.customName ?? resultEntry.activity}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="rounded-xl border bg-[var(--reading-panel)] px-4 py-3 text-[13px] leading-6 text-[var(--text-2)] whitespace-pre-wrap">
+              {resultEntry.result?.summary}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

@@ -18,6 +18,13 @@ export function createRoutineHandlers(): Record<string, RpcHandler> {
       return readRoutine(today())
     },
 
+    [ROUTINE_IPC_CHANNELS.GET_BY_DATE]: async (params) => {
+      const { date } = params as { date: string }
+      if (!date) throw new Error("date 不能为空")
+      syncRoutineStatus()
+      return readRoutine(date)
+    },
+
     [ROUTINE_IPC_CHANNELS.TRIGGER_ENTRY]: async (params) => {
       const { entryId } = params as { entryId: string }
       if (!entryId) throw new Error("entryId 不能为空")

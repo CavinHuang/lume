@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs"
-import type { DailyRoutine, RoutineEntryStatus, RoutineStatus } from "@lume/shared"
-import { getRoutineSchedulePath, getRoutineRunsPath } from "../infra/config-paths"
+import type { DailyRoutine, RoutineEntryStatus, RoutineStatus, AutomationRun, AgentMessage } from "@lume/shared"
+import { getRoutineSchedulePath, getRoutineRunsPath, getAutomationRunsPath } from "../infra/config-paths"
+import { getAgentThreadMessages } from "../agent/agent-thread-manager"
 import { createLogger } from "../infra/logger"
 
 const log = createLogger("routine")
@@ -52,6 +53,45 @@ export function updateRoutineStatus(date: string, status: RoutineStatus): DailyR
   routine.status = status
   writeRoutine(routine)
   return routine
+}
+
+function parseRunLine(line: string): AutomationRun | null {
+  if (!line.trim()) return null
+  try {
+    return JSON.parse(line) as AutomationRun
+  } catch {
+    return null
+  }
+}
+
+export function listAutomationRunsForJob(jobId: string, limit = 5): AutomationRun[] {
+  const path = getAutomationRunsPath()
+  if (!existsSync(path)) return []
+  const lines = readFileSync(path, "utf-8").split("\n")
+  const runs: AutomationRun[] = []
+  for (const line of lines) {
+    const run = parseRunLine(line)
+    if (!run || run.jobId !== jobId) continue
+    runs.push(run)
+  }
+  return runs.sort((a, b) => b.startedAt - a.startedAt).slice(0, limit)
+}
+
+export function getLatestAssistantResponse(threadId: string): string | undefined {
+  try {
+    const messages = getAgentThreadMessages(threadId)
+    // Walk backwards to find the last assistant message with text content
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (!msg || msg.role !== "assistant") continue
+      if (msg.content?.trim()) {
+        return msg.content.trim()
+      }
+    }
+  } catch {
+    // Thread may not be accessible; fall back to undefined
+  }
+  return undefined
 }
 
 export function appendRoutineRun(record: { entryId: string; activity: string; status: string; completedAt: number }): void {
