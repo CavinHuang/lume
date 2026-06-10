@@ -3,6 +3,9 @@
  *
  * Loads the platform-specific .node binary and exposes typed APIs.
  * Falls back gracefully when native binary is unavailable.
+ *
+ * Sourced from oh-my-pi (pi-natives) with adaptations.
+ * License: MIT — © 2025 Mario Zechner, © 2025-2026 Can Bölük
  */
 
 import path from "node:path";
@@ -19,10 +22,116 @@ export interface TokenCountResult {
   count: number;
 }
 
+export interface NativeGrepOptions {
+  pattern: string;
+  path: string;
+  glob?: string;
+  type?: string;
+  ignore_case?: boolean;
+  multiline?: boolean;
+  hidden?: boolean;
+  gitignore?: boolean;
+  cache?: boolean;
+  max_count?: number;
+  offset?: number;
+  context_before?: number;
+  context_after?: number;
+  context?: number;
+  max_columns?: number;
+  mode?: "content" | "count" | "filesWithMatches";
+  max_count_per_file?: number;
+  timeout_ms?: number;
+}
+
+export interface NativeGrepMatch {
+  path: string;
+  line_number: number;
+  line: string;
+  context_before?: Array<{ line_number: number; line: string }>;
+  context_after?: Array<{ line_number: number; line: string }>;
+  truncated?: boolean;
+  match_count?: number;
+}
+
+export interface NativeGrepResult {
+  matches: NativeGrepMatch[];
+  total_matches: number;
+  files_with_matches: number;
+  files_searched?: number;
+  limit_reached?: boolean;
+  skipped_oversized?: number;
+  error?: string;
+}
+
+export interface NativeGlobOptions {
+  pattern: string;
+  path: string;
+  file_type?: "file" | "dir" | "symlink";
+  recursive?: boolean;
+  hidden?: boolean;
+  max_results?: number;
+  gitignore?: boolean;
+  cache?: boolean;
+  sort_by_mtime?: boolean;
+  include_node_modules?: boolean;
+  timeout_ms?: number;
+}
+
+export interface NativeGlobMatch {
+  path: string;
+  file_type: "file" | "dir" | "symlink";
+  mtime: number | null;
+  size: number | null;
+}
+
+export interface NativeGlobResult {
+  matches: NativeGlobMatch[];
+  total_matches: number;
+}
+
 // ── Native loader ──────────────────────────────────────
 
 type NativeModule = {
   countTokens(input: TokenCountInput): TokenCountResult;
+  grep(options: NativeGrepOptions): Promise<NativeGrepResult>;
+  search(
+    content: string,
+    options: {
+      pattern: string;
+      ignore_case?: boolean;
+      multiline?: boolean;
+      max_count?: number;
+      offset?: number;
+      context_before?: number;
+      context_after?: number;
+      context?: number;
+      max_columns?: number;
+    },
+  ): { matches: NativeGrepMatch[]; total: number; error?: string };
+  hasMatch(
+    content: string,
+    pattern: string,
+    ignore_case?: boolean,
+    multiline?: boolean,
+  ): boolean;
+  glob(options: NativeGlobOptions): Promise<NativeGlobResult>;
+  fuzzyFind(options: {
+    query: string;
+    path: string;
+    hidden?: boolean;
+    gitignore?: boolean;
+    cache?: boolean;
+    max_results?: number;
+    timeout_ms?: number;
+  }): Promise<{
+    matches: Array<{
+      path: string;
+      is_directory: boolean;
+      score: number;
+    }>;
+    total_matches: number;
+  }>;
+  invalidateFsScanCache(): void;
 };
 
 let _native: NativeModule | null = null;
@@ -65,21 +174,101 @@ export function isNativeAvailable(): boolean {
 
 // ── Tokens ─────────────────────────────────────────────
 
-/**
- * Count BPE tokens. Uses O200kBase (GPT-4o) by default.
- * Returns null if native module unavailable.
- */
 export function countTokens(input: TokenCountInput): TokenCountResult | null {
   const native = loadNative();
   if (!native) return null;
   return native.countTokens(input);
 }
 
-/**
- * Count tokens for a single string. Convenience wrapper.
- * Returns 0 if native module unavailable.
- */
 export function countStringTokens(text: string, model?: string): number {
   const result = countTokens({ text, model });
   return result?.count ?? 0;
+}
+
+// ── Grep ───────────────────────────────────────────────
+
+/**
+ * Native ripgrep search over files. Returns null if native unavailable.
+ * This is an async operation (returns Promise).
+ */
+export async function nativeGrep(
+  options: NativeGrepOptions,
+): Promise<NativeGrepResult | null> {
+  const native = loadNative();
+  if (!native) return null;
+
+  try {
+    return await native.grep(options);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Search content string for a pattern (synchronous, in-memory).
+ */
+export function nativeSearch(
+  content: string,
+  pattern: string,
+  options?: { ignore_case?: boolean; context?: number; max_count?: number },
+): NativeGrepMatch[] | null {
+  const native = loadNative();
+  if (!native) return null;
+
+  try {
+    const result = native.search(content, {
+      pattern,
+      ignore_case: options?.ignore_case,
+      context: options?.context,
+      max_count: options?.max_count,
+    });
+    return result.matches;
+  } catch {
+    return null;
+  }
+}
+
+// ── Glob ───────────────────────────────────────────────
+
+/**
+ * Native glob file discovery. Returns null if native unavailable.
+ * This is an async operation (returns Promise).
+ */
+export async function nativeGlob(
+  options: NativeGlobOptions,
+): Promise<NativeGlobResult | null> {
+  const native = loadNative();
+  if (!native) return null;
+
+  try {
+    return await native.glob(options);
+  } catch {
+    return null;
+  }
+}
+
+// ── Fuzzy Find (fd) ────────────────────────────────────
+
+/**
+ * Native fuzzy file find. Returns null if native unavailable.
+ * This is an async operation (returns Promise).
+ */
+export async function nativeFuzzyFind(
+  query: string,
+  searchPath: string,
+  maxResults?: number,
+): Promise<Array<{ path: string; is_directory: boolean; score: number }> | null> {
+  const native = loadNative();
+  if (!native) return null;
+
+  try {
+    const result = await native.fuzzyFind({
+      query,
+      path: searchPath,
+      max_results: maxResults ?? 100,
+    });
+    return result.matches;
+  } catch {
+    return null;
+  }
 }

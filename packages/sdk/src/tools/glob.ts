@@ -2,8 +2,10 @@
  * GlobTool - File pattern matching
  */
 
+import { spawn } from 'child_process'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
+import { isNativeAvailable, nativeGlob } from '@lume/natives'
 
 export const GlobTool = defineTool({
   name: 'Glob',
@@ -39,8 +41,33 @@ export const GlobTool = defineTool({
       return { data: sandboxError, is_error: true }
     }
 
+    // ── Try native glob first ────────────────────────
+    if (isNativeAvailable()) {
+      const result = await nativeGlob({
+        pattern,
+        path: searchDir,
+        file_type: "file",
+        hidden: false,
+        max_results: 500,
+        gitignore: true,
+        cache: true,
+        sort_by_mtime: true,
+      })
+
+      if (result !== null) {
+        const matches = result.matches.map((m) => m.path)
+        return {
+          data: {
+            pattern,
+            path: searchDir,
+            matches,
+          },
+        }
+      }
+    }
+
+    // ── Fallback: Node.js glob or bash ───────────────
     try {
-      // Use Node.js glob (available in Node 22+) or fall back to bash find
       const { glob } = await import('fs/promises')
 
       // @ts-ignore - glob is available in Node 22+
@@ -64,9 +91,7 @@ export const GlobTool = defineTool({
     }
 
     // Fallback: use bash find/glob
-    const { spawn } = await import('child_process')
     return new Promise<string>((resolvePromise) => {
-      // Use bash glob expansion or find
       const cmd = `shopt -s globstar nullglob 2>/dev/null; cd ${JSON.stringify(searchDir)} && ls -1d ${pattern} 2>/dev/null | head -500`
       const proc = spawn('bash', ['-c', cmd], {
         cwd: searchDir,

@@ -163,7 +163,10 @@ fn resolve_symlink_target_type(root: &Path, relative_path: &str) -> Option<FileT
 }
 
 fn apply_file_type_filter(entry: &GlobMatch, config: &GlobConfig) -> Option<FileType> {
-	let filter = config.file_type_filter?;
+	let filter = match config.file_type_filter {
+		Some(f) => f,
+		None => return Some(entry.file_type), // No filter → accept all
+	};
 	if entry.file_type == filter {
 		return Some(entry.file_type);
 	}
@@ -414,4 +417,39 @@ pub fn glob(
 			ct,
 		)
 	})
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn glob_matches_known_files() {
+		let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+		let ct = crate::task::CancelToken::new(None, None);
+		let glob_set = crate::glob_util::compile_glob("**/*.rs", true).unwrap();
+		let entries = crate::fs_cache::force_rescan(
+			&root,
+			crate::fs_cache::ScanOptions {
+				include_hidden: false,
+				use_gitignore: true,
+				skip_node_modules: true,
+				follow_links: false,
+				detail: crate::fs_cache::ScanDetail::Minimal,
+			},
+			false,
+			&ct,
+		)
+		.unwrap();
+
+		eprintln!("scanned {} entries from {:?}", entries.len(), root);
+		for entry in entries.iter().take(10) {
+			let matches = glob_set.is_match(&entry.path);
+			eprintln!("  {} (ft={:?}) → match={}", entry.path, entry.file_type, matches);
+		}
+
+		let matching: Vec<_> = entries.iter().filter(|e| glob_set.is_match(&e.path)).collect();
+		eprintln!("glob **/*.rs matched {} of {} entries", matching.len(), entries.len());
+		assert!(!matching.is_empty(), "glob should match at least one .rs file");
+	}
 }
