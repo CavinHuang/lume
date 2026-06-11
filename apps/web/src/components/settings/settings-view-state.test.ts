@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { SETTINGS_NAV_ITEMS } from './settings-view-state'
+import { SETTINGS_NAV_ITEMS, SETTINGS_PAGE_TITLES, SETTINGS_PAGE_SUBTITLES } from './settings-view-state'
 
 describe('settings view state', () => {
   test('places Agents after model settings', () => {
@@ -34,5 +34,20 @@ describe('settings view state', () => {
     const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
     expect(ids).toContain('logs')
     expect(ids.indexOf('logs')).toBe(ids.indexOf('updates') + 1)
+  })
+
+  test('places skills between agents and workspaces', () => {
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
+    expect(ids).toContain('skills')
+    expect(ids.indexOf('skills')).toBe(ids.indexOf('agents') + 1)
+    expect(ids.indexOf('skills')).toBeLessThan(ids.indexOf('workspaces'))
+  })
+
+  test('skills page title is 技能管理', () => {
+    expect(SETTINGS_PAGE_TITLES.skills).toBe('技能管理')
+  })
+
+  test('skills page subtitle is 管理自定义技能、触发条件与工具权限', () => {
+    expect(SETTINGS_PAGE_SUBTITLES.skills).toBe('管理自定义技能、触发条件与工具权限')
   })
 })
