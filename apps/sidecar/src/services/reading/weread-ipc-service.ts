@@ -4,6 +4,7 @@ import {
   WEREAD_KEY_PAGE_URL,
   type ReadingBook,
   type ReadingRunTaskInput,
+  type ReadingSourceRef,
   type ReadingTaskResult,
   type WereadExportProgress
 } from "@lume/shared";
@@ -11,7 +12,6 @@ import { getReadingExportsDir } from "../infra/config-paths";
 import {
   addReadingBook,
   getReadingWereadApiKey,
-  listReadingBooks,
   listReadingNotes
 } from "./reading-store";
 import { runReadingTaskAsync } from "./reading-task-runner";
@@ -36,6 +36,7 @@ export interface WereadGenerateNoteInput {
   text: string;
   source?: string;
   authorName?: string;
+  bookId?: string;
 }
 
 export interface WereadExportAllNotesResult {
@@ -105,7 +106,8 @@ export async function generateWereadReadingNote(input: WereadGenerateNoteInput):
     title: bookTitle,
     author: input.authorName,
     excerpt: text,
-    source: input.source
+    source: input.source,
+    bookId: input.bookId
   });
   const taskInput: ReadingRunTaskInput = {
     trigger: "manual",
@@ -188,23 +190,22 @@ function findOrAddWereadBook(input: {
   author?: string;
   excerpt: string;
   source?: string;
+  bookId?: string;
 }): ReadingBook {
-  const existing = listReadingBooks().find((book) =>
-    book.title === input.title && book.source.kind === "weread"
-  ) ?? listReadingBooks().find((book) => book.title === input.title);
-  if (existing) return existing;
+  const source: Partial<ReadingSourceRef> = {
+    kind: "weread",
+    title: input.title,
+    ...(input.author ? { author: input.author } : {}),
+    ...(input.bookId ? { externalId: input.bookId } : {}),
+    location: input.source,
+    excerpt: input.excerpt
+  };
 
   return addReadingBook({
     title: input.title,
     author: input.author,
     track: "co_read",
     status: "reading",
-    source: {
-      kind: "weread",
-      title: input.title,
-      author: input.author,
-      location: input.source,
-      excerpt: input.excerpt
-    }
+    source
   });
 }
