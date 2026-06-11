@@ -27,6 +27,7 @@
       "WebFetch(domain:developers.openai.com)",
       "WebFetch(domain:platform.openai.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(CLAUDE_CODE_TMPDIR=/tmp rtk tsc --noEmit --project apps/sidecar/tsconfig.json)",
       "Bash(rtk find *)"
     ]
   }

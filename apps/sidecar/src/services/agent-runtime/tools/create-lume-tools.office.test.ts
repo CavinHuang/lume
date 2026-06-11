@@ -44,7 +44,7 @@ describe("createLumeRuntimeTools office_validate", () => {
   });
 
   test("exposes a read-only Office validator for basic OOXML packages", async () => {
-    writeFileSync(join(tempDir, "minimal.docx"), buildZip({
+    writeFileSync(join(tempDir, "minimal.docx"), buildValidZip({
       "[Content_Types].xml": "<Types/>",
       "_rels/.rels": "<Relationships/>",
       "word/document.xml": "<w:document/>"
@@ -67,7 +67,7 @@ describe("createLumeRuntimeTools office_validate", () => {
   });
 
   test("reports missing OOXML required parts without writing files", async () => {
-    writeFileSync(join(tempDir, "broken.pptx"), buildZip({
+    writeFileSync(join(tempDir, "broken.pptx"), buildValidZip({
       "[Content_Types].xml": "<Types/>",
       "_rels/.rels": "<Relationships/>"
     }));
@@ -98,7 +98,7 @@ describe("createLumeRuntimeTools office_unpack", () => {
   });
 
   test("unpacks a basic OOXML package into a selected output directory", async () => {
-    writeFileSync(join(tempDir, "minimal.docx"), buildZip({
+    writeFileSync(join(tempDir, "minimal.docx"), buildValidZip({
       "[Content_Types].xml": "<Types/>",
       "_rels/.rels": "<Relationships/>",
       "word/document.xml": "<w:document/>"
@@ -120,7 +120,7 @@ describe("createLumeRuntimeTools office_unpack", () => {
   });
 
   test("skips unsafe zip entry paths while unpacking", async () => {
-    writeFileSync(join(tempDir, "unsafe.docx"), buildZip({
+    writeFileSync(join(tempDir, "unsafe.docx"), buildValidZip({
       "[Content_Types].xml": "<Types/>",
       "_rels/.rels": "<Relationships/>",
       "word/document.xml": "<w:document/>",
@@ -206,62 +206,37 @@ describe("createLumeRuntimeTools office_pack", () => {
   });
 });
 
-function buildZip(entries: Record<string, string>): Buffer {
-  const localParts: Buffer[] = [];
-  const centralParts: Buffer[] = [];
-  let offset = 0;
-
-  for (const [name, content] of Object.entries(entries)) {
-    const nameBytes = Buffer.from(name);
-    const data = Buffer.from(content);
-    const local = Buffer.alloc(30 + nameBytes.length);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0, 6);
-    local.writeUInt16LE(0, 8);
-    local.writeUInt32LE(0, 10);
-    local.writeUInt32LE(0, 14);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(nameBytes.length, 26);
-    local.writeUInt16LE(0, 28);
-    nameBytes.copy(local, 30);
-    localParts.push(local, data);
-
-    const central = Buffer.alloc(46 + nameBytes.length);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0, 8);
-    central.writeUInt16LE(0, 10);
-    central.writeUInt32LE(0, 12);
-    central.writeUInt32LE(0, 16);
-    central.writeUInt32LE(data.length, 20);
-    central.writeUInt32LE(data.length, 24);
-    central.writeUInt16LE(nameBytes.length, 28);
-    central.writeUInt16LE(0, 30);
-    central.writeUInt16LE(0, 32);
-    central.writeUInt16LE(0, 34);
-    central.writeUInt16LE(0, 36);
-    central.writeUInt32LE(0, 38);
-    central.writeUInt32LE(offset, 42);
-    nameBytes.copy(central, 46);
-    centralParts.push(central);
-
-    offset += local.length + data.length;
+function crc32(buf: Buffer): number {
+  let crc = -1;
+  const table = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) {
+        if (c & 1) c = 0xedb88320 ^ (c >>> 1);
+        else c = c >>> 1;
+      }
+      t[n] = c;
+    }
+    return t;
+  })();
+  for (let i = 0; i < buf.length; i++) {
+    crc = table[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
   }
+  return (crc ^ -1) >>> 0;
+}
 
-  const centralOffset = offset;
-  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(0, 4);
-  end.writeUInt16LE(0, 6);
-  end.writeUInt16LE(centralParts.length, 8);
-  end.writeUInt16LE(centralParts.length, 10);
-  end.writeUInt32LE(centralSize, 12);
-  end.writeUInt32LE(centralOffset, 16);
-  end.writeUInt16LE(0, 20);
+function buildValidZip(entries: Record<string, string>): Buffer {
+  const { execSync } = require("child_process");
+  const { join } = require("path");
+  const { mkdtempSync, writeFileSync } = require("fs");
+  const { tmpdir } = require("os");
 
-  return Buffer.concat([...localParts, ...centralParts, end]);
+  const dir = mkdtempSync(join(tmpdir(), "lume-ooxml-"));
+  for (const [name, content] of Object.entries(entries)) {
+    writeFileSync(join(dir, name), content, "utf-8");
+  }
+  const out = join(tmpdir(), `lume-ooxml-${Date.now()}.zip`);
+  execSync(`zip -r -q ${JSON.stringify(out)} .`, { cwd: dir });
+  return require("fs").readFileSync(out);
 }
