@@ -394,19 +394,31 @@ fn node_line_count(node: Node<'_>) -> u32 {
 
 fn is_comment_kind(language: SupportLang, kind: &str) -> bool {
     match language {
-        SupportLang::TypeScript | SupportLang::JavaScript => kind == "comment",
+        #[cfg(feature = "lang-typescript")]
+        SupportLang::TypeScript => kind == "comment",
+        #[cfg(feature = "lang-javascript")]
+        SupportLang::JavaScript => kind == "comment",
+        #[cfg(feature = "lang-rust")]
         SupportLang::Rust => kind == "block_comment",
+        #[cfg(feature = "lang-python")]
         SupportLang::Python => kind == "comment",
+        #[cfg(feature = "lang-go")]
         SupportLang::Go => kind == "comment",
+        #[cfg(feature = "lang-java")]
         SupportLang::Java => kind == "block_comment",
-        SupportLang::C | SupportLang::Cpp => kind == "comment",
+        #[cfg(feature = "lang-c")]
+        SupportLang::C => kind == "comment",
+        #[cfg(feature = "lang-cpp")]
+        SupportLang::Cpp => kind == "comment",
+        #[allow(unreachable_patterns)]
         _ => false,
     }
 }
 
 fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
     match language {
-        SupportLang::TypeScript | SupportLang::JavaScript => matches!(
+        #[cfg(feature = "lang-typescript")]
+        SupportLang::TypeScript => matches!(
             kind,
             "statement_block"
                 | "function_body"
@@ -421,6 +433,23 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "jsx_element"
                 | "jsx_self_closing_element"
         ),
+        #[cfg(feature = "lang-javascript")]
+        SupportLang::JavaScript => matches!(
+            kind,
+            "statement_block"
+                | "function_body"
+                | "object"
+                | "array"
+                | "template_string"
+                | "class_body"
+                | "interface_body"
+                | "enum_body"
+                | "object_type"
+                | "switch_body"
+                | "jsx_element"
+                | "jsx_self_closing_element"
+        ),
+        #[cfg(feature = "lang-rust")]
         SupportLang::Rust => matches!(
             kind,
             "block"
@@ -438,6 +467,7 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "macro_definition"
                 | "token_tree"
         ),
+        #[cfg(feature = "lang-python")]
         SupportLang::Python => matches!(
             kind,
             "block"
@@ -455,6 +485,7 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "import_from_statement"
                 | "subscript"
         ),
+        #[cfg(feature = "lang-go")]
         SupportLang::Go => matches!(
             kind,
             "block"
@@ -470,6 +501,7 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "type_switch_statement"
                 | "select_statement"
         ),
+        #[cfg(feature = "lang-java")]
         SupportLang::Java => matches!(
             kind,
             "block"
@@ -482,6 +514,7 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "switch_block"
                 | "string_literal"
         ),
+        #[cfg(feature = "lang-c")]
         SupportLang::C => matches!(
             kind,
             "compound_statement"
@@ -491,6 +524,7 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "enumerator_list"
                 | "concatenated_string"
         ),
+        #[cfg(feature = "lang-cpp")]
         SupportLang::Cpp => matches!(
             kind,
             "compound_statement"
@@ -503,6 +537,7 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "raw_string_literal"
                 | "requires_clause"
         ),
+        #[cfg(feature = "lang-bash")]
         SupportLang::Bash => matches!(
             kind,
             "compound_statement"
@@ -513,26 +548,46 @@ fn is_elidable_kind(language: SupportLang, kind: &str) -> bool {
                 | "array"
                 | "heredoc_body"
         ),
+        #[cfg(feature = "lang-html")]
         SupportLang::Html => matches!(kind, "element" | "script_element" | "style_element"),
+        #[cfg(feature = "lang-css")]
         SupportLang::Css => matches!(kind, "block" | "keyframe_block_list"),
+        #[cfg(feature = "lang-json")]
         SupportLang::Json => matches!(kind, "object" | "array"),
+        #[cfg(feature = "lang-markdown")]
         SupportLang::Markdown => matches!(kind, "fenced_code_block" | "pipe_table" | "list"),
         // Skip: data formats with no closing-token anchor (Yaml mappings,
         // Toml tables). Eliding these deletes the only content worth reading.
-        SupportLang::Yaml | SupportLang::Toml => false,
+        #[cfg(feature = "lang-yaml")]
+        SupportLang::Yaml => false,
+        #[cfg(feature = "lang-toml")]
+        SupportLang::Toml => false,
+        #[allow(unreachable_patterns)]
+        _ => false,
     }
 }
 
 fn is_groupable_kind(language: SupportLang, kind: &str) -> bool {
     match language {
-        SupportLang::TypeScript | SupportLang::JavaScript => kind == "import_statement",
+        #[cfg(feature = "lang-typescript")]
+        SupportLang::TypeScript => kind == "import_statement",
+        #[cfg(feature = "lang-javascript")]
+        SupportLang::JavaScript => kind == "import_statement",
+        #[cfg(feature = "lang-rust")]
         SupportLang::Rust => matches!(kind, "use_declaration" | "extern_crate_declaration"),
+        #[cfg(feature = "lang-python")]
         SupportLang::Python => {
             matches!(kind, "import_statement" | "import_from_statement" | "future_import_statement")
         }
+        #[cfg(feature = "lang-go")]
         SupportLang::Go => kind == "import_declaration",
+        #[cfg(feature = "lang-java")]
         SupportLang::Java => kind == "import_declaration",
-        SupportLang::C | SupportLang::Cpp => kind == "preproc_include",
+        #[cfg(feature = "lang-c")]
+        SupportLang::C => kind == "preproc_include",
+        #[cfg(feature = "lang-cpp")]
+        SupportLang::Cpp => kind == "preproc_include",
+        #[allow(unreachable_patterns)]
         _ => false,
     }
 }
