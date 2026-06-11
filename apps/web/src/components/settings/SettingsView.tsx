@@ -20,6 +20,7 @@ import { VersionUpdateSettings } from './VersionUpdateSettings'
 import { LogSettings } from './LogSettings'
 import { WebSearchSettings } from './WebSearchSettings'
 import { ArchiveSettings } from './ArchiveSettings'
+import { SkillsSettings } from './SkillsSettings'
 import {
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
@@ -95,6 +96,7 @@ export function SettingsView() {
           )}
           {tab === 'models' && <AgentSettings />}
           {tab === 'agents' && <AgentsSettings />}
+          {tab === 'skills' && <SkillsSettings />}
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
           {tab === 'reading' && <ReadingSettings />}
