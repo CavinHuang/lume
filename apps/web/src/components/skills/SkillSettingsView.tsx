@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronRight,
   History,
   Loader2,
@@ -14,6 +15,13 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { pendingSkillImprovementSuggestionsAtom } from '@/atoms'
 import {
   analyzeSkillImprovement,
@@ -31,6 +39,7 @@ import {
 } from '@/lib/desktop-api/lume-config'
 import { cn } from '@/lib/utils'
 import type {
+  AgentWorkspace,
   EditableSkillMeta,
   LumeEffectiveConfig,
   SkillImprovementAnalysisResult,
@@ -68,10 +77,14 @@ export function SkillSettingsView({
   workspaceSlug,
   cwd,
   onOpenMarket,
+  availableWorkspaces,
+  onWorkspaceChange,
 }: {
   workspaceSlug: string | null
   cwd?: string | null
   onOpenMarket: () => void
+  availableWorkspaces?: AgentWorkspace[]
+  onWorkspaceChange?: (slug: string) => void
 }) {
   const [skills, setSkills] = useState<EditableSkillMeta[]>([])
   const [activeStorageScope, setActiveStorageScope] = useState<SkillStorageScope>(
@@ -343,24 +356,52 @@ export function SkillSettingsView({
     <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
-          {storageScopes.map((scope) => (
-            <button
-              key={scope.value}
-              type="button"
-              onClick={() => {
-                setScopeTouched(true)
-                setActiveStorageScope(scope.value)
-              }}
-              className={cn(
-                'h-8 rounded-[6px] px-3 text-[13px] font-semibold transition-colors',
-                activeStorageScope === scope.value
-                  ? 'bg-white text-[#20232d] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]'
-                  : 'text-[#687196] hover:text-[#20232d]',
-              )}
-            >
-              {scope.label}
-            </button>
-          ))}
+          {storageScopes.map((scope) => {
+            const isWorkspaceTab = scope.value === 'workspace'
+            const showWorkspacePicker = isWorkspaceTab && activeStorageScope === scope.value
+              && availableWorkspaces && availableWorkspaces.length > 1
+
+            return (
+              <button
+                key={scope.value}
+                type="button"
+                onClick={() => {
+                  setScopeTouched(true)
+                  setActiveStorageScope(scope.value)
+                }}
+                className={cn(
+                  'h-8 rounded-[6px] px-3 text-[13px] font-semibold transition-colors',
+                  activeStorageScope === scope.value
+                    ? 'bg-white text-[#20232d] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]'
+                    : 'text-[#687196] hover:text-[#20232d]',
+                )}
+              >
+                {showWorkspacePicker ? (
+                  <Select
+                    value={workspaceSlug ?? availableWorkspaces?.[0]?.slug ?? ''}
+                    onValueChange={(val) => onWorkspaceChange?.(val)}
+                  >
+                    <SelectTrigger
+                      className="h-auto border-0 bg-transparent p-0 text-[13px] font-semibold shadow-none hover:bg-transparent"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <SelectValue placeholder="选择工作区" />
+                      <ChevronDown size={12} className="ml-1 text-[#687196]" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableWorkspaces?.map((w) => (
+                        <SelectItem key={w.id} value={w.slug}>
+                          {w.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  scope.label
+                )}
+              </button>
+            )
+          })}
         </div>
         <label className="flex h-10 min-w-[280px] flex-1 items-center gap-3 rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[#687196] shadow-[0_8px_20px_-18px_rgba(48,58,110,0.32)]">
           <Search size={18} />
