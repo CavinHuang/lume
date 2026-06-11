@@ -49,6 +49,8 @@ import {
   normalizeAllowedToolDraft,
   toggleAllowedToolDraft,
   type SkillSettingsDraft,
+  SKILL_STORAGE_SCOPE_LABELS,
+  SKILL_STORAGE_SCOPE_EMPTY_LABELS,
 } from './skill-settings-state'
 import type { SkillSystemToolGroupId } from './skill-tool-definitions'
 import {
@@ -61,12 +63,6 @@ import {
   skillImprovementSuggestionKey,
   type PendingSkillImprovementSuggestion,
 } from '@/hooks/skill-listeners-state'
-
-const STORAGE_SCOPES: Array<{ value: SkillStorageScope; label: string; emptyLabel: string }> = [
-  { value: 'project', label: '当前项目 (.alice/skills/)', emptyLabel: '当前项目没有匹配的自有技能。' },
-  { value: 'workspace', label: 'Lume 工作区', emptyLabel: '当前 Lume 工作区没有匹配的自有技能。' },
-  { value: 'user', label: '用户全局', emptyLabel: '当前用户全局没有匹配的自有技能。' },
-]
 
 export function SkillSettingsView({
   workspaceSlug,
@@ -98,7 +94,11 @@ export function SkillSettingsView({
   const setPendingSkillImprovementSuggestions = useSetAtom(pendingSkillImprovementSuggestionsAtom)
   const projectCwd = cwd?.trim() || undefined
   const storageScopes = useMemo(
-    () => STORAGE_SCOPES.filter((scope) => scope.value !== 'project' || projectCwd),
+    () => [
+      { value: 'workspace' as SkillStorageScope, label: SKILL_STORAGE_SCOPE_LABELS.workspace, emptyLabel: SKILL_STORAGE_SCOPE_EMPTY_LABELS.workspace },
+      { value: 'user' as SkillStorageScope, label: SKILL_STORAGE_SCOPE_LABELS.user, emptyLabel: SKILL_STORAGE_SCOPE_EMPTY_LABELS.user },
+      ...(projectCwd ? [{ value: 'project' as SkillStorageScope, label: SKILL_STORAGE_SCOPE_LABELS.project, emptyLabel: SKILL_STORAGE_SCOPE_EMPTY_LABELS.project }] : []),
+    ],
     [projectCwd],
   )
 
@@ -506,7 +506,7 @@ function SkillEditor({
   saving: boolean
   error: string | null
   disabledSystemGroupIds: SkillSystemToolGroupId[]
-  storageScopes: typeof STORAGE_SCOPES
+  storageScopes: Array<{ value: SkillStorageScope; label: string; emptyLabel: string }>
   projectCwd?: string
   pendingSuggestion: PendingSkillImprovementSuggestion | null
   onDraftChange: (draft: SkillSettingsDraft) => void
@@ -1063,9 +1063,7 @@ function SystemToolsPanel({
 }
 
 function formatSkillStorageScopeLabel(scope: SkillStorageScope): string {
-  if (scope === 'user') return '用户全局'
-  if (scope === 'project') return '当前项目'
-  return 'Lume 工作区'
+  return SKILL_STORAGE_SCOPE_LABELS[scope] ?? scope
 }
 
 function SystemToolRowItem({
