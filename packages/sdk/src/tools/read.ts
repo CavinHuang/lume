@@ -11,8 +11,8 @@ import { isNativeAvailable, nativeSummarize } from '@lume/natives'
 /** File extensions that have tree-sitter grammar support for summarization. */
 const SUMMARIZABLE_EXTENSIONS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.rs', '.py', '.go', '.java',
-  '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.hh',
+  '.rs', '.py', '.go',
+  '.c', '.h',
   '.html', '.htm', '.css', '.scss',
   '.json', '.yaml', '.yml', '.toml',
   '.sh', '.bash', '.md',

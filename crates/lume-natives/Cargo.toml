@@ -24,7 +24,11 @@ grep-searcher = "0.1"
 memmap2 = "0.9"
 smallvec = "1"
 regex = "1"
-lume-ast = { path = "../lume-ast" }
+lume-ast = { path = "../lume-ast", default-features = false, features = [
+  "lang-typescript", "lang-javascript", "lang-rust", "lang-python",
+  "lang-go", "lang-json", "lang-markdown", "lang-html", "lang-css",
+  "lang-yaml", "lang-toml", "lang-bash", "lang-c",
+] }
 
 [build-dependencies]
 napi-build = "2"
@@ -32,3 +36,6 @@ napi-build = "2"
 [profile.release]
 lto = true
 strip = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
