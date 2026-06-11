@@ -26,7 +26,8 @@
       "WebSearch",
       "WebFetch(domain:developers.openai.com)",
       "WebFetch(domain:platform.openai.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(rtk find *)"
     ]
   }
 }
