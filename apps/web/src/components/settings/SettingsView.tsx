@@ -21,7 +21,6 @@ import { LogSettings } from './LogSettings'
 import { WebSearchSettings } from './WebSearchSettings'
 import { ArchiveSettings } from './ArchiveSettings'
 import { SkillsSettings } from './SkillsSettings'
-import { ToolsSettings } from './ToolsSettings'
 import {
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
@@ -98,7 +97,6 @@ export function SettingsView() {
           {tab === 'models' && <AgentSettings />}
           {tab === 'agents' && <AgentsSettings />}
           {tab === 'skills' && <SkillsSettings />}
-          {tab === 'tools' && <ToolsSettings />}
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
           {tab === 'reading' && <ReadingSettings />}

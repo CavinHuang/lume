@@ -18,6 +18,7 @@ import {
   findSystemToolGroup,
   type SystemToolGroup,
   type SystemToolRow,
+  isToolInGroup,
 } from '@/components/skills/system-tools-state'
 import { TOOL_METADATA, getToolMeta, RISK_LEVEL_CONFIG, CATEGORY_CONFIG } from './tool-metadata'
 
@@ -33,7 +34,7 @@ interface ToolRow {
   groupLabel: string
 }
 
-export function ToolsSettingsView() {
+export function ToolsSettings() {
   const [config, setConfig] = useState<{
     permissions?: { toolPolicy?: { deny?: string[] } }
   } | null>(null)
@@ -405,65 +406,6 @@ function ToolRowItem({
       </div>
     </div>
   )
-}
-
-/**
- * 判断工具是否属于指定的工具组
- */
-function isToolInGroup(toolName: string, groupId: string): boolean {
-  switch (groupId) {
-    case 'shell':
-      return toolName === 'bash'
-    case 'file-read':
-      return ['read', 'find', 'grep', 'ls'].includes(toolName)
-    case 'file-write':
-      return ['write', 'edit', 'notebook_edit'].includes(toolName)
-    case 'search':
-      return ['find', 'grep', 'ls'].includes(toolName)
-    case 'code-intelligence':
-      return toolName === 'lsp'
-    case 'web':
-      return ['web_search', 'web_fetch', 'guanlan_search', 'guanlan_read', 'guanlan_hotnews', 'guanlan_research'].includes(toolName)
-    case 'data':
-      return ['guanlan_search', 'guanlan_read', 'guanlan_hotnews', 'guanlan_research'].includes(toolName)
-    case 'memory':
-      return ['memory_search', 'memory_read', 'memory_remember'].includes(toolName)
-    case 'agent':
-      return ['agent_spawn', 'send_message', 'team_create', 'team_delete', 'skill'].includes(toolName)
-    case 'task':
-      return ['task_create', 'task_list', 'task_update', 'task_get', 'task_stop', 'task_output'].includes(toolName)
-    case 'automation':
-      return ['cron_set', 'automation_set'].includes(toolName)
-    case 'user-interaction':
-      return ['ask_user_question', 'todo_write'].includes(toolName)
-    case 'channel':
-      return toolName === 'send_im_message'
-    case 'evolution':
-      return toolName === 'personalize_ui'
-    case 'office':
-      return ['office_validate', 'office_unpack', 'office_pack'].includes(toolName)
-    case 'reading':
-      return [
-        'lume_reading_snapshot',
-        'lume_add_book',
-        'lume_write_reading_note',
-        'lume_hide_reading_note',
-        'lume_revise_reading_note',
-        'lume_generate_share_card',
-        'weread_generate_note',
-        'weread_export_all_notes',
-        'weread_shelf',
-        'weread_notebooks',
-        'weread_bookmarks',
-        'weread_best_bookmarks',
-        'weread_reviews',
-        'weread_public_reviews',
-        'weread_readdata',
-        'weread_search',
-      ].includes(toolName)
-    default:
-      return false
-  }
 }
 
 /**

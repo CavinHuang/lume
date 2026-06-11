@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  ShieldCheck,
   Sparkles,
   Trash2,
 } from 'lucide-react'
@@ -20,9 +21,10 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { pendingSkillImprovementSuggestionsAtom } from '@/atoms'
+import { TOOL_METADATA } from '@/components/settings/tool-metadata'
 import {
   analyzeSkillImprovement,
   applySkillImprovement,
@@ -65,6 +67,7 @@ import type { SkillSystemToolGroupId } from './skill-tool-definitions'
 import {
   buildSystemToolPermissionsSection,
   buildSystemToolRows,
+  isToolInGroup,
   type SystemToolGroup,
   type SystemToolRow,
 } from './system-tools-state'
@@ -356,12 +359,7 @@ export function SkillSettingsView({
     <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
-          {storageScopes.map((scope) => {
-            const isWorkspaceTab = scope.value === 'workspace'
-            const showWorkspacePicker = isWorkspaceTab && activeStorageScope === scope.value
-              && availableWorkspaces && availableWorkspaces.length > 1
-
-            return (
+          {storageScopes.map((scope) => (
               <button
                 key={scope.value}
                 type="button"
@@ -376,32 +374,9 @@ export function SkillSettingsView({
                     : 'text-[#687196] hover:text-[#20232d]',
                 )}
               >
-                {showWorkspacePicker ? (
-                  <Select
-                    value={workspaceSlug ?? availableWorkspaces?.[0]?.slug ?? ''}
-                    onValueChange={(val) => onWorkspaceChange?.(val)}
-                  >
-                    <SelectTrigger
-                      className="h-auto border-0 bg-transparent p-0 text-[13px] font-semibold shadow-none hover:bg-transparent"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <SelectValue placeholder="选择工作区" />
-                      <ChevronDown size={12} className="ml-1 text-[#687196]" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableWorkspaces?.map((w) => (
-                        <SelectItem key={w.id} value={w.slug}>
-                          {w.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  scope.label
-                )}
+                {scope.label}
               </button>
-            )
-          })}
+            ))}
         </div>
         <label className="flex h-10 min-w-[280px] flex-1 items-center gap-3 rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[#687196] shadow-[0_8px_20px_-18px_rgba(48,58,110,0.32)]">
           <Search size={18} />
@@ -433,6 +408,26 @@ export function SkillSettingsView({
         </div>
       ) : (
         <div className="mt-5 min-h-0 overflow-y-auto pr-2">
+          {activeStorageScope === 'workspace' && availableWorkspaces && availableWorkspaces.length > 0 && onWorkspaceChange && (
+            <div className="mb-4 flex items-center gap-2">
+              <span className="text-[12px] font-medium text-[#687196]">当前工作区</span>
+              <Select
+                value={workspaceSlug ?? ''}
+                onValueChange={(val) => onWorkspaceChange?.(val)}
+              >
+                <SelectTrigger className="h-8 flex-1 max-w-[280px] border border-[#e4e7f1] bg-white px-3 text-[13px] font-medium text-[#20232d] shadow-none hover:border-[#cfd5e8]">
+                  {availableWorkspaces.find((w) => w.slug === workspaceSlug)?.name ?? '选择工作区'}
+                </SelectTrigger>
+                <SelectContent>
+                  {availableWorkspaces.map((w) => (
+                    <SelectItem key={w.id} value={w.slug}>
+                      {w.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="mb-3 text-[13px] font-medium text-[#687196]">{activeScopeMeta.label}技能</div>
           <div className="grid gap-3">
             {visibleSkills.map((skill) => (
@@ -1041,14 +1036,42 @@ function SystemToolsPanel({
   onToggle: (group: SystemToolGroup, enabled: boolean) => void
 }) {
   const [query, setQuery] = useState('')
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  const toolsByGroup = useMemo(() => {
+    const map = new Map<string, Array<{ name: string; label: string; description: string }>>()
+    for (const row of rows) {
+      map.set(row.id, [])
+    }
+    for (const meta of Object.values(TOOL_METADATA)) {
+      for (const row of rows) {
+        if (isToolInGroup(meta.name, row.id)) {
+          map.get(row.id)?.push({ name: meta.name, label: meta.label, description: meta.description })
+          break
+        }
+      }
+    }
+    return map
+  }, [rows])
+
   const visibleRows = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     if (!keyword) return rows
     return rows.filter((row) => {
-      const haystack = `${row.label} ${row.description} ${row.policyEntry ?? ''}`.toLowerCase()
+      const tools = toolsByGroup.get(row.id) ?? []
+      const haystack = `${row.label} ${row.description} ${tools.map((t) => `${t.label} ${t.name} ${t.description}`).join(' ')}`.toLowerCase()
       return haystack.includes(keyword)
     })
-  }, [query, rows])
+  }, [query, rows, toolsByGroup])
+
+  const toggleExpand = (groupId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
+  }
 
   return (
     <section className="mt-10 border-t border-[#edf0f6] pt-8">
@@ -1080,14 +1103,72 @@ function SystemToolsPanel({
         </div>
       ) : (
         <div className="grid gap-2">
-          {visibleRows.map((row) => (
-            <SystemToolRowItem
-              key={row.id}
-              row={row}
-              saving={savingToolId === row.id}
-              onToggle={() => onToggle(row, !row.enabled)}
-            />
-          ))}
+          {visibleRows.map((row) => {
+            const isExpanded = expandedGroups.has(row.id)
+            const tools = toolsByGroup.get(row.id) ?? []
+            const isSaving = savingToolId === row.id
+            return (
+              <div
+                key={row.id}
+                className={cn(
+                  'rounded-[8px] border transition-colors',
+                  row.enabled ? 'border-[#edf0f6] bg-[#fbfbfa]' : 'border-[#f0d0d0] bg-[#fef8f8]',
+                )}
+              >
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(row.id)}
+                    className="flex size-6 items-center justify-center rounded-[4px] text-[#687196] hover:bg-[#edf0f6]"
+                  >
+                    {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-[14px] font-semibold text-[#20232d]">{row.label}</h3>
+                      <span className="text-[12px] text-[#687196]">{tools.length} 个工具</span>
+                      {row.locked && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[#f0f0f0] px-2 py-0.5 text-[11px] font-medium text-[#6b7280]">
+                          <ShieldCheck size={11} />
+                          锁定
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-[12px] text-[#8a91a8]">{row.description}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {isSaving && <Loader2 size={14} className="animate-spin text-[#687196]" />}
+                    {!row.locked && (
+                      <Switch
+                        checked={row.enabled}
+                        onCheckedChange={() => onToggle(row, !row.enabled)}
+                        disabled={isSaving}
+                      />
+                    )}
+                  </div>
+                </div>
+                {isExpanded && tools.length > 0 && (
+                  <div className="border-t border-[#edf0f6]">
+                    {tools.map((tool) => (
+                      <div
+                        key={tool.name}
+                        className="grid min-h-[44px] grid-cols-[24px_minmax(0,1fr)] items-center gap-3 px-4 py-2"
+                      >
+                        <div className="size-3 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-[13px] font-medium text-[#20232d]">{tool.label}</span>
+                            <span className="font-mono text-[11px] text-[#8a91a8]">{tool.name}</span>
+                          </div>
+                          <p className="mt-0.5 text-[12px] text-[#8a91a8]">{tool.description}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
           {visibleRows.length === 0 && (
             <div className="rounded-[8px] border border-dashed border-[#d8ddec] p-6 text-center text-[13px] leading-6 text-[#687196]">
               没有匹配的系统工具。
@@ -1105,57 +1186,6 @@ function SystemToolsPanel({
 
 function formatSkillStorageScopeLabel(scope: SkillStorageScope): string {
   return SKILL_STORAGE_SCOPE_LABELS[scope] ?? scope
-}
-
-function SystemToolRowItem({
-  row,
-  saving,
-  onToggle,
-}: {
-  row: SystemToolRow
-  saving: boolean
-  onToggle: () => void
-}) {
-  return (
-    <article className="grid min-h-[58px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] bg-[#fbfbfa] px-4 py-3">
-      <ChevronRight size={16} className="text-[#20232d]" />
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-          <h3 className="text-[14px] font-semibold text-[#20232d]">{row.label}</h3>
-          <span className="text-[12px] text-[#687196]">{row.description}</span>
-        </div>
-      </div>
-      <div className="flex min-w-[96px] items-center justify-end gap-3">
-        <span className="text-[12px] font-medium text-[#20232d]">
-          {row.locked ? '全部锁定' : `${row.count} 个`}
-        </span>
-        {row.locked ? null : (
-          <button
-            type="button"
-            aria-label={`${row.enabled ? '禁用' : '启用'}${row.label}`}
-            aria-pressed={row.enabled}
-            disabled={saving}
-            onClick={onToggle}
-            className={cn(
-              'relative h-7 w-12 rounded-full transition-colors disabled:cursor-wait disabled:opacity-65',
-              row.enabled ? 'bg-[#2f2f31]' : 'bg-[#e6e8ee]',
-            )}
-          >
-            {saving ? (
-              <Loader2 size={14} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-white" />
-            ) : (
-              <span
-                className={cn(
-                  'absolute top-1 size-5 rounded-full bg-white shadow transition-transform',
-                  row.enabled ? 'translate-x-6' : 'translate-x-1',
-                )}
-              />
-            )}
-          </button>
-        )}
-      </div>
-    </article>
-  )
 }
 
 function skillSettingsKey(skill: EditableSkillMeta): string {
