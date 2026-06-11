@@ -34,6 +34,9 @@ export function canonicalizeAgentToolName(toolName: string): string {
     case "guanlanresearch":
     case "guanlan_research":
       return "guanlan_research";
+    case "agent":
+    case "agent_spawn":
+      return "agent_spawn";
     default:
       return normalized;
   }

@@ -18,7 +18,9 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
   guanlansearch: "guanlan_search",
   guanlanread: "guanlan_read",
   guanlanhotnews: "guanlan_hotnews",
-  guanlanresearch: "guanlan_research"
+  guanlanresearch: "guanlan_research",
+  Agent: "agent_spawn",
+  AskUserQuestion: "askuserquestion",
 };
 
 const AUTOMATION_TOOL_NAMES = [

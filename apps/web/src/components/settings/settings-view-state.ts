@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   ScrollText,
   Users,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -23,6 +24,7 @@ export type SettingsViewTab =
   | 'models'
   | 'agents'
   | 'skills'
+  | 'tools'
   | 'workspaces'
   | 'memory'
   | 'reading'
@@ -45,6 +47,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'models', label: '模型', icon: Box },
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'skills', label: '技能管理', icon: Puzzle },
+  { id: 'tools', label: '工具管理', icon: Wrench },
   { id: 'workspaces', label: '工作区', icon: Users },
   { id: 'memory', label: '记忆', icon: Database },
   { id: 'reading', label: '读书', icon: BookOpen },
@@ -64,6 +67,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   models: '模型与供应商',
   agents: 'Agents 团队',
   skills: '技能管理',
+  tools: '工具管理',
   workspaces: '工作区设置',
   memory: '记忆',
   reading: '读书',
@@ -83,6 +87,7 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   models: '管理默认模型、供应商连接与可用模型配置',
   agents: '管理内置角色、推荐关键词与子代理运行时身份',
   skills: '管理自定义技能、触发条件与工具权限',
+  tools: '查看和控制系统工具的启用状态与权限范围',
   workspaces: '管理多个本地工作区的基本信息、目录和默认行为',
   memory: '查看、搜索、蒸馏和确认工作区与全局记忆',
   reading: '管理 Lume 的阅读节奏、微信读书连接和读书模型',
