@@ -132,6 +132,40 @@ type NativeModule = {
     total_matches: number;
   }>;
   invalidateFsScanCache(): void;
+
+  // ── Logger NAPI (merged from lume-logger-napi) ────────
+  initLogger(config?: {
+    level?: string;
+    file_enabled?: boolean;
+    console_enabled?: boolean;
+    retention_days?: number;
+    max_file_size_mb?: number;
+    redact_keys?: string[];
+  }): void;
+  emitLog(input: {
+    level: string;
+    source?: string;
+    context: string;
+    message: string;
+    data?: string;
+  }): void;
+  flushLogger(): void;
+  listLogFiles(): Array<{
+    name: string;
+    size_bytes: number;
+    modified_at: string;
+  }>;
+  readLogFile(query?: {
+    file_name?: string;
+    levels?: string[];
+    keyword?: string;
+    max_lines?: number;
+  }): Array<{
+    line_number: number;
+    level: string;
+    text: string;
+    raw_json?: string;
+  }>;
 };
 
 let _native: NativeModule | null = null;
@@ -316,4 +350,83 @@ export function nativeSummarize(
   } catch {
     return null;
   }
+}
+
+// ── Logger (merged from @lume/native-logger) ─────────────
+
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
+export interface LoggerConfig {
+  level?: LogLevel;
+  file_enabled?: boolean;
+  console_enabled?: boolean;
+  retention_days?: number;
+  max_file_size_mb?: number;
+  redact_keys?: string[];
+}
+
+export interface LogInput {
+  level: LogLevel;
+  source?: string;
+  context: string;
+  message: string;
+  data?: string;
+}
+
+export interface LogFileSummary {
+  name: string;
+  size_bytes: number;
+  modified_at: string;
+}
+
+export interface LogLineEntry {
+  line_number: number;
+  level: string;
+  text: string;
+  raw_json?: string;
+}
+
+export interface LogQuery {
+  file_name?: string;
+  levels?: LogLevel[];
+  keyword?: string;
+  max_lines?: number;
+}
+
+/** Initialize the native logger. No-op if native unavailable. */
+export function initLogger(config?: LoggerConfig): void {
+  loadNative()?.initLogger(config);
+}
+
+/** Emit a structured log event. Falls back to stderr if native unavailable. */
+export function emitLog(input: LogInput): void {
+  const n = loadNative();
+  if (n) {
+    n.emitLog(input);
+  } else {
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      level: input.level,
+      source: input.source ?? "sidecar",
+      context: input.context,
+      message: input.message,
+      ...(input.data ? { data: JSON.parse(input.data) } : {}),
+    });
+    process.stderr.write(`${line}\n`);
+  }
+}
+
+/** Flush pending log writes to disk. */
+export function flushLogger(): void {
+  loadNative()?.flushLogger();
+}
+
+/** List log files. Returns empty array if native unavailable. */
+export function listLogFiles(): LogFileSummary[] {
+  return loadNative()?.listLogFiles() ?? [];
+}
+
+/** Read log file with optional filtering. Returns empty array if native unavailable. */
+export function readLogFile(query?: LogQuery): LogLineEntry[] {
+  return loadNative()?.readLogFile(query) ?? [];
 }
