@@ -206,7 +206,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
       </div>
 
       {isExpanded && (
-        <div className="ml-4 mt-px">
+        <div className="mt-px">
           {syntheticRow && (
             <button
               type="button"

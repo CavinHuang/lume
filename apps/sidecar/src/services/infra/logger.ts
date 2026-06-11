@@ -1,7 +1,7 @@
 /**
  * 统一日志服务
  *
- * 通过 @lume/native-logger (napi) 调用 Rust lume-logger 核心，
+ * 通过 @lume/natives (napi) 调用 Rust lume-logger 核心，
  * 所有日志统一写入 ~/.lume/logs/lume-YYYY-MM-DD.ndjson。
  *
  * native 不可用时 fallback 到 stderr，
@@ -18,7 +18,7 @@ import {
   isNativeAvailable,
   type LogLevel,
   type LogInput,
-} from "@lume/native-logger";
+} from "@lume/natives";
 import { formatStructuredLogLine } from "./log-format";
 
 // ── 日志目录 ───────────────────────────────────────────────
