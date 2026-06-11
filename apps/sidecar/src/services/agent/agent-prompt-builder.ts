@@ -17,6 +17,7 @@ import {
 } from "./prompt/sections/static-policy-sections";
 import {
   buildBrowserFirstSection,
+  buildOfficeToolsSection,
   buildPlanModeSection,
   buildUncertaintySection
 } from "./prompt/sections/interaction-policy-sections";
@@ -362,6 +363,11 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
   const browserFirstSection = buildBrowserFirstSection(availableTools);
   if (browserFirstSection) {
     sections.push(browserFirstSection);
+  }
+
+  const officeToolsSection = buildOfficeToolsSection(availableTools);
+  if (officeToolsSection) {
+    sections.push(officeToolsSection);
   }
 
   sections.push(...buildMemorySections({

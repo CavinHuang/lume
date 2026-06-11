@@ -66,3 +66,52 @@ export function buildBrowserFirstSection(availableTools: Set<string>): string | 
    - 已确认 browser/relay 当前不可用，且重试后仍失败
 4. 回退到 WebSearch 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器线程不可用）。`;
 }
+
+export function buildOfficeToolsSection(availableTools: Set<string>): string | null {
+  const hasOfficeTools = availableTools.has("xlsx_create")
+    || availableTools.has("office_unpack")
+    || availableTools.has("office_convert")
+    || availableTools.has("info_extract");
+
+  if (!hasOfficeTools) return null;
+
+  return `## Office 文档处理策略（强制）
+
+当用户上传或提及 Office 文档（xlsx、docx、pptx、pdf）时，必须优先使用内置的 Office 工具，不要通过 bash 执行 Python 代码来处理文档。
+
+**工具选择指南：**
+
+- **读取/分析 xlsx 数据** → 使用 xlsx_create 工具，code 参数传入 openpyxl Python 代码，无需 output_path，用 print() 输出结果
+- **修改 xlsx 文件** → 使用 xlsx_create 工具，提供 output_path 保存修改后的文件
+- **创建新 xlsx 文件** → 使用 xlsx_create 工具，提供 output_path 指定输出路径
+- **读取/分析 docx 内容** → 使用 office_unpack 解包后读取 XML，或用 info_extract 提取结构化信息
+- **创建 docx 文档** → 使用 docx_create 工具
+- **创建 pptx 演示文稿** → 使用 pptx_create 工具
+- **创建 PDF 文档** → 使用 pdf_create 工具
+- **格式转换**（xlsx→pdf、docx→pdf 等）→ 使用 office_convert 工具
+- **提取文档关键信息**（合同、简历、报告等）→ 使用 info_extract 工具
+- **校验文档结构** → 使用 office_validate 工具
+- **底层 XML 操作**（高级）→ office_unpack → 编辑 XML → office_pack
+
+**xlsx_create 读取数据示例（无需 output_path）：**
+\`\`\`python
+import openpyxl
+wb = openpyxl.load_workbook("已有文件.xlsx")
+ws = wb.active
+for row in ws.iter_rows(values_only=True):
+    print(row)  # print() 输出会作为工具返回结果
+\`\`\`
+
+**xlsx_create 创建/修改文件示例（需要 output_path）：**
+\`\`\`python
+import openpyxl
+wb = openpyxl.load_workbook("已有文件.xlsx")
+ws = wb.active
+ws["A1"] = "新值"
+wb.save(output_path)  # output_path 由工具自动注入
+\`\`\`
+
+仅在以下情况才回退到 bash + Python：
+- Office 工具明确不可用（被工具策略禁用）
+- 需要使用 openpyxl/docx 不支持的特殊库（如 pandas 复杂数据分析）`;
+}
