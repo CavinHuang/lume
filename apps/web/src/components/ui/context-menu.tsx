@@ -1,12 +1,13 @@
+import { ContextMenu } from "@base-ui/react/context-menu"
 import { Menu } from "@base-ui/react/menu"
 import { cn } from "@/lib/utils"
 
-function ContextMenu({ ...props }: Menu.Root.Props) {
-  return <Menu.Root data-slot="context-menu" {...props} />
+function ContextMenuRoot({ ...props }: ContextMenu.Root.Props) {
+  return <ContextMenu.Root data-slot="context-menu" {...props} />
 }
 
-function ContextMenuTrigger({ ...props }: Menu.Trigger.Props) {
-  return <Menu.Trigger data-slot="context-menu-trigger" {...props} />
+function ContextMenuTrigger({ ...props }: ContextMenu.Trigger.Props) {
+  return <ContextMenu.Trigger data-slot="context-menu-trigger" {...props} />
 }
 
 function ContextMenuContent({
@@ -15,9 +16,9 @@ function ContextMenuContent({
   ...props
 }: Menu.Popup.Props & { className?: string }) {
   return (
-    <Menu.Portal>
-      <Menu.Positioner sideOffset={4} className="z-[9999]">
-        <Menu.Popup
+    <ContextMenu.Portal>
+      <ContextMenu.Positioner sideOffset={4} className="z-[9999]">
+        <ContextMenu.Popup
           data-slot="context-menu-content"
           className={cn(
             "min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95",
@@ -26,9 +27,9 @@ function ContextMenuContent({
           {...props}
         >
           {children}
-        </Menu.Popup>
-      </Menu.Positioner>
-    </Menu.Portal>
+        </ContextMenu.Popup>
+      </ContextMenu.Positioner>
+    </ContextMenu.Portal>
   )
 }
 
@@ -38,7 +39,7 @@ function ContextMenuItem({
   ...props
 }: Menu.Item.Props & { className?: string; destructive?: boolean }) {
   return (
-    <Menu.Item
+    <ContextMenu.Item
       data-slot="context-menu-item"
       className={cn(
         "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] transition-colors cursor-default",
@@ -61,4 +62,4 @@ function ContextMenuSeparator({ className }: { className?: string }) {
   )
 }
 
-export { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator }
+export { ContextMenuRoot as ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator }

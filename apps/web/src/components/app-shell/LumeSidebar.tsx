@@ -157,7 +157,7 @@ export function LumeSidebar({
           'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 82%, white) 0%, color-mix(in oklab, var(--surface-1) 74%, var(--surface-2)) 100%)',
       }}
     >
-      <div className="flex flex-col gap-1 px-4 pb-4 pt-4">
+      <div className="flex flex-col gap-1 px-3 pb-4 pt-4">
         {model.topActions.map((action) => {
           if (action.id === 'new-chat') {
             return (
@@ -229,7 +229,7 @@ export function LumeSidebar({
         })}
       </div>
 
-      <div className="flex items-center justify-between px-4 pb-3 pt-2">
+      <div className="flex items-center justify-between px-3 pb-3 pt-2">
         <div className="flex items-center gap-2">
           <span className="text-[12px] font-semibold leading-none text-[var(--text-3)]">
             工作区
@@ -256,7 +256,7 @@ export function LumeSidebar({
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="px-4 pb-4">
+        <div className="px-2 pb-4">
           {model.workspaces.map((workspace) => (
             <WorkspaceGroupItem
               key={workspace.id}
