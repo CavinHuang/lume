@@ -1,0 +1,41 @@
+[package]
+name = "lume-natives"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+napi = { version = "3", features = ["napi9", "error_anyhow", "tokio_rt"] }
+napi-derive = "3"
+tiktoken-rs = "0.6"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.45", features = ["rt-multi-thread", "sync", "time", "macros"] }
+globset = "0.4"
+ignore = "0.4"
+dashmap = "6"
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+memmap2 = "0.9"
+smallvec = "1"
+regex = "1"
+lume-ast = { path = "../lume-ast", default-features = false, features = [
+  "lang-typescript", "lang-javascript", "lang-rust", "lang-python",
+  "lang-go", "lang-json", "lang-markdown", "lang-html", "lang-css",
+  "lang-yaml", "lang-toml", "lang-bash", "lang-c",
+] }
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"

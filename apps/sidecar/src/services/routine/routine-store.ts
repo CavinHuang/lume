@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs"
-import type { DailyRoutine, RoutineEntryStatus, RoutineStatus, AutomationRun, AgentMessage } from "@lume/shared"
-import { getRoutineSchedulePath, getRoutineRunsPath, getAutomationRunsPath } from "../infra/config-paths"
-import { getAgentThreadMessages } from "../agent/agent-thread-manager"
+import type { DailyRoutine, RoutineEntryStatus, RoutineStatus, AutomationRun, AgentMessage, SDKMessage } from "@lume/shared"
+import { getRoutineSchedulePath, getRoutineRunsPath, getAutomationRunsPath, getAgentThreadMessagesPath } from "../infra/config-paths"
+import { getAgentThreadMessages, getAgentThreadSDKMessages } from "../agent/agent-thread-manager"
 import { createLogger } from "../infra/logger"
 
 const log = createLogger("routine")
@@ -87,9 +87,46 @@ export function getLatestAssistantResponse(threadId: string): string | undefined
       if (msg.content?.trim()) {
         return msg.content.trim()
       }
+      // Also check sdkMessages for text content (tool-use turns may have no plain text)
+      const sdkText = extractTextFromSdkMessages(msg.sdkMessages)
+      if (sdkText) {
+        return sdkText
+      }
+    }
+
+    // Fallback: read raw SDK messages from the session jsonl file
+    // This handles cases where the version store hasn't captured the assistant turn yet
+    const sdkMessages = getAgentThreadSDKMessages(threadId)
+    const sdkText = extractTextFromSdkMessages(sdkMessages)
+    if (sdkText) {
+      return sdkText
     }
   } catch {
     // Thread may not be accessible; fall back to undefined
+  }
+  return undefined
+}
+
+function extractTextFromSdkMessages(sdkMessages: SDKMessage[] | undefined): string | undefined {
+  if (!Array.isArray(sdkMessages) || sdkMessages.length === 0) return undefined
+  // Walk backwards through SDK messages, find last assistant message with text
+  for (let i = sdkMessages.length - 1; i >= 0; i--) {
+    const msg = sdkMessages[i]!
+    if (msg.type !== "assistant") continue
+    const content = (msg as { message?: { content?: unknown[] } }).message?.content
+    if (!Array.isArray(content)) continue
+    const textParts: string[] = []
+    for (const part of content) {
+      if (part && typeof part === "object" && (part as Record<string, unknown>).type === "text") {
+        const text = (part as Record<string, string>).text
+        if (typeof text === "string" && text.trim()) {
+          textParts.push(text.trim())
+        }
+      }
+    }
+    if (textParts.length > 0) {
+      return textParts.join("\n")
+    }
   }
   return undefined
 }

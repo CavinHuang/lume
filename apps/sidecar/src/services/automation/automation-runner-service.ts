@@ -6,8 +6,7 @@ import type {
   AutomationRun,
   AutomationRunNowInput
 } from "@lume/shared";
-import { createAgentThreadWithModelRef } from "../agent/agent-thread-manager";
-import { getAgentThreadMeta } from "../agent/agent-thread-manager";
+import { createAgentThreadWithModelRef, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
 import { sendAgentMessage } from "../agent/agent-service";
 import { listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from "./automation-manager";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
@@ -138,7 +137,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
           waitingForApproval = true;
         }
       },
-      { appendUserMessage: true }
+      { appendUserMessage: false }
     );
 
     if (runtimeError) {
@@ -156,6 +155,10 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     runMessage = error instanceof Error ? error.message : String(error);
   } finally {
     runningJobs.delete(job.id);
+    // Archive the automation thread so it does not appear in the sidebar
+    if (threadId) {
+      try { updateAgentThreadMeta(threadId, { status: "archived" }); } catch { /* ignore */ }
+    }
   }
 
   let latestJob = job;

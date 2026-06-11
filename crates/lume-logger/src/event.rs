@@ -14,7 +14,7 @@ pub struct LumeLogEvent {
     /// Log level.
     pub level: LumeLogLevel,
     /// Origin: "desktop", "sidecar", "sidecar.stderr", "webview"
-    pub source: &'static str,
+    pub source: String,
     /// Dot-separated context, e.g. "desktop.sidecar.rpc"
     pub context: String,
     /// Human-readable message.
@@ -33,7 +33,7 @@ mod tests {
         let event = LumeLogEvent {
             ts: "2026-06-09T08:00:00.000Z".into(),
             level: LumeLogLevel::Info,
-            source: "desktop",
+            source: "desktop".into(),
             context: "desktop.app.boot".into(),
             message: "desktop started".into(),
             data: None,
@@ -49,7 +49,7 @@ mod tests {
         let event = LumeLogEvent {
             ts: "2026-06-09T08:00:00.000Z".into(),
             level: LumeLogLevel::Debug,
-            source: "desktop",
+            source: "desktop".into(),
             context: "desktop.sidecar.rpc".into(),
             message: "request started".into(),
             data: Some(serde_json::json!({

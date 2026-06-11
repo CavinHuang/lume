@@ -248,7 +248,8 @@ export const wereadGenerateNoteInputSchema = z.object({
   bookTitle: z.string().trim().min(1),
   text: z.string().trim().min(1),
   source: z.string().trim().optional(),
-  authorName: z.string().trim().optional()
+  authorName: z.string().trim().optional(),
+  bookId: z.string().trim().optional()
 }).strict();
 
 export const wereadSearchBooksInputSchema = z.object({

@@ -105,7 +105,8 @@ const SYSTEM_PROMPT = `你是用户的个人日程规划助手。根据用户当
 
 ## 规则
 - 时间范围 8:00-21:00，合理安排间隔
-- 通常安排 3-7 个活动
+- 通常安排 5-12 个活动
+- 读书相关活动（reading_progress、reading_note）可以根据在读书籍数量安排多次，分散在不同时间段
 - daily_summary 必须安排在最后一个（建议 20-21 点）
 - 周日（dayOfWeek=0）应包含 weekly_summary
 - 根据上下文判断哪些活动相关，不必全部包含

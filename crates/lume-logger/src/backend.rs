@@ -70,6 +70,13 @@ impl LumeLogBackend {
     pub fn is_console_enabled(&self) -> bool {
         self.config.console_enabled
     }
+
+    /// Flush pending file writes to disk.
+    pub fn flush(&self) {
+        if let Ok(mut writer) = self.writer.lock() {
+            writer.flush();
+        }
+    }
 }
 
 impl log::Log for LumeLogBackend {
@@ -86,7 +93,7 @@ impl log::Log for LumeLogBackend {
         let event = LumeLogEvent {
             ts: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             level: record.level().into(),
-            source: "desktop",
+            source: "desktop".into(),
             context: record.target().to_string(),
             message: format!("{}", record.args()),
             data: None,

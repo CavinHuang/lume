@@ -17,6 +17,7 @@ import type {
 } from "@lume/shared";
 import { getLogsDir } from "./logger";
 
+/** @deprecated Pino format — kept for reading historical log files only */
 const LEVEL_BY_PINO_VALUE: Record<number, LogViewerLevel> = {
   10: "trace",
   20: "debug",

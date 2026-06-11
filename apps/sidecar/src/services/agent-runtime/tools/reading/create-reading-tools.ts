@@ -2,6 +2,8 @@ import type { ToolDefinition } from "@lume/agent-sdk";
 import type { ReadingSourceKind, ReadingTaskResult } from "@lume/shared";
 import {
   addReadingBook,
+  autoAdvanceProgress,
+  autoPickNextBook,
   createReadingNote,
   getReadingSnapshot,
   getReadingWereadApiKey,
@@ -48,6 +50,30 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
       isConcurrencySafe: true,
       async call() {
         return getReadingSnapshot();
+      }
+    }),
+    createSdkJsonResultTool({
+      name: "lume_reading_advance_progress",
+      description: "推进所有在读书籍的阅读进度。每本在读书自动增加约 7.14%（相当于 14 天读完一本书）。进度达到 100% 的书籍自动标记为 finished。",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      },
+      async call() {
+        const results = autoAdvanceProgress();
+        return { ok: true, advanced: results.length, results };
+      }
+    }),
+    createSdkJsonResultTool({
+      name: "lume_reading_pick_next",
+      description: "在所有在读书籍都完成后，自动从 queued 状态的书中挑选下一本开始阅读，进度归零。如果没有合适的书可读则返回 null。",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      },
+      async call() {
+        const next = autoPickNextBook();
+        return { ok: true, picked: next ? { id: next.id, title: next.title } : null };
       }
     }),
     createSdkJsonResultTool({
@@ -217,7 +243,8 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
           bookTitle: { type: "string", minLength: 1 },
           text: { type: "string", minLength: 1 },
           source: { type: "string" },
-          authorName: { type: "string" }
+          authorName: { type: "string" },
+          bookId: { type: "string" }
         },
         required: ["bookTitle", "text"]
       },
@@ -227,7 +254,8 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
           bookTitle: requiredString(args.bookTitle, "bookTitle"),
           text: requiredString(args.text, "text"),
           ...(optionalString(args.source) ? { source: optionalString(args.source) } : {}),
-          ...(optionalString(args.authorName) ? { authorName: optionalString(args.authorName) } : {})
+          ...(optionalString(args.authorName) ? { authorName: optionalString(args.authorName) } : {}),
+          ...(optionalString(args.bookId) ? { bookId: optionalString(args.bookId) } : {})
         });
         return { result };
       }

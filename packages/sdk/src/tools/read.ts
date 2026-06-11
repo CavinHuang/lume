@@ -3,12 +3,26 @@
  */
 
 import { readFile, stat } from 'fs/promises'
+import { extname } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
+import { isNativeAvailable, nativeSummarize } from '@lume/natives'
+
+/** File extensions that have tree-sitter grammar support for summarization. */
+const SUMMARIZABLE_EXTENSIONS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+  '.rs', '.py', '.go',
+  '.c', '.h',
+  '.html', '.htm', '.css', '.scss',
+  '.json', '.yaml', '.yml', '.toml',
+  '.sh', '.bash', '.md',
+])
+
+const SUMMARIZE_THRESHOLD_LINES = 500
 
 export const FileReadTool = defineTool({
   name: 'Read',
-  description: 'Read a text file from the filesystem and return content with line numbers. Image files return metadata only.',
+  description: 'Read a text file from the filesystem and return content with line numbers. Large files (>500 lines) are automatically summarized to save context. Image files return metadata only.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -67,6 +81,54 @@ export const FileReadTool = defineTool({
       const content = await readFile(filePath, 'utf-8')
       const lines = content.split('\n')
 
+      // If user specified offset/limit, always return raw content (explicit read)
+      const hasExplicitRange = input.offset !== undefined || input.limit !== undefined
+
+      // Auto-summarize large files with native tree-sitter
+      if (
+        !hasExplicitRange
+        && lines.length > SUMMARIZE_THRESHOLD_LINES
+        && isNativeAvailable()
+      ) {
+        const ext = extname(filePath).toLowerCase()
+        if (SUMMARIZABLE_EXTENSIONS.has(ext)) {
+          const summary = nativeSummarize({
+            code: content,
+            path: filePath,
+            min_body_lines: 4,
+            min_comment_lines: 6,
+            unfold_until_lines: 200,
+          })
+
+          if (summary && summary.parsed && summary.segments.length > 0) {
+            const keptSegments: string[] = []
+            let keptLines = 0
+            for (const seg of summary.segments) {
+              if (seg.kind === 'kept' && seg.text) {
+                const segLines = seg.text.split('\n').length
+                keptSegments.push(seg.text)
+                keptLines += segLines
+              } else if (seg.kind === 'elided') {
+                const lineCount = seg.endLine - seg.startLine + 1
+                keptSegments.push(`/* ... ${lineCount} lines elided (lines ${seg.startLine}-${seg.endLine}) ... */`)
+              }
+            }
+
+            return {
+              data: {
+                filePath,
+                content: keptSegments.join('\n'),
+                totalLines: lines.length,
+                summarized: true,
+                keptLines,
+                language: summary.language,
+              },
+            }
+          }
+        }
+      }
+
+      // Default: return raw content with line numbers
       const offset = input.offset || 0
       const limit = input.limit || 2000
       const selectedLines = lines.slice(offset, offset + limit)

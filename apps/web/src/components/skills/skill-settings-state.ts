@@ -139,3 +139,15 @@ export function getSkillDraftValidationError(draft: SkillSettingsDraft): string 
   }
   return null
 }
+
+export const SKILL_STORAGE_SCOPE_LABELS: Record<SkillStorageScope, string> = {
+  workspace: 'Lume 工作区',
+  project: '当前项目 (.alice/skills/)',
+  user: '用户全局',
+}
+
+export const SKILL_STORAGE_SCOPE_EMPTY_LABELS: Record<SkillStorageScope, string> = {
+  workspace: '当前 Lume 工作区没有匹配的自有技能。',
+  project: '当前项目没有匹配的自有技能。',
+  user: '当前用户全局没有匹配的自有技能。',
+}

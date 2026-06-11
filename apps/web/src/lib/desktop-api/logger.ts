@@ -1,0 +1,25 @@
+/**
+ * Webview logger client.
+ *
+ * Writes logs to the unified lume-logger via Tauri IPC.
+ * Fire-and-forget by design — log failures are swallowed since
+ * this is diagnostic-only.
+ */
+
+import { invoke } from "@tauri-apps/api/core";
+
+type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
+export function writeWebLog(
+  level: LogLevel,
+  context: string,
+  message: string,
+  data?: Record<string, unknown>,
+): void {
+  invoke("write_web_log", {
+    level,
+    context,
+    message,
+    data: data ?? null,
+  }).catch(() => {});
+}

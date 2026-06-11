@@ -5,10 +5,11 @@
 import { spawn } from 'child_process'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
+import { isNativeAvailable, nativeGrep } from '@lume/natives'
 
 export const GrepTool = defineTool({
   name: 'Grep',
-  description: 'Search file contents using regex patterns. Uses ripgrep (rg) if available, falls back to grep. Supports file type filtering and context lines.',
+  description: 'Search file contents using regex patterns. Uses native ripgrep engine if available, falls back to rg/grep. Supports file type filtering and context lines.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -67,10 +68,85 @@ export const GrepTool = defineTool({
       return { data: sandboxError, is_error: true }
     }
 
-    // Build rg command (fall back to grep if rg unavailable)
-    const args: string[] = []
+    // ── Try native ripgrep first ──────────────────────
+    if (isNativeAvailable()) {
+      const ctx = input['-C'] ?? input.context
+      const mode = outputMode === 'files_with_matches'
+        ? 'filesWithMatches' as const
+        : outputMode === 'count'
+          ? 'count' as const
+          : 'content' as const
 
-    // Try ripgrep first
+      const result = await nativeGrep({
+        pattern: input.pattern,
+        path: searchPath,
+        glob: input.glob,
+        type: input.type,
+        ignore_case: input['-i'] ?? false,
+        context: ctx,
+        context_before: input['-B'],
+        context_after: input['-A'],
+        max_count: headLimit,
+        mode,
+        cache: true,
+        gitignore: true,
+        timeout_ms: 30_000,
+      })
+
+      if (result !== null) {
+        if (result.matches.length === 0) {
+          return `No matches found for pattern "${input.pattern}"`
+        }
+
+        // Format output to match existing shape
+        if (mode === 'filesWithMatches') {
+          const files = [...new Set(result.matches.map((m) => m.path))]
+          return JSON.stringify({
+            pattern: input.pattern,
+            path: searchPath,
+            output_mode: outputMode,
+            matches: files.slice(0, headLimit),
+            total_matches: result.total_matches,
+            files_with_matches: result.files_with_matches,
+          }, null, 2)
+        }
+
+        if (mode === 'count') {
+          const lines = result.matches.map(
+            (m) => `${m.path}:${m.match_count ?? 0}`,
+          )
+          return JSON.stringify({
+            pattern: input.pattern,
+            path: searchPath,
+            output_mode: outputMode,
+            matches: lines.slice(0, headLimit),
+          }, null, 2)
+        }
+
+        // content mode
+        const lines = result.matches.map((m) => {
+          const parts: string[] = []
+          if (m.context_before) {
+            parts.push(...m.context_before.map((c) => `${m.path}-${c.line_number}-${c.line}`))
+          }
+          parts.push(`${m.path}:${m.line_number}:${m.line}`)
+          if (m.context_after) {
+            parts.push(...m.context_after.map((c) => `${m.path}-${c.line_number}-${c.line}`))
+          }
+          return parts.join('\n')
+        })
+        return JSON.stringify({
+          pattern: input.pattern,
+          path: searchPath,
+          output_mode: outputMode,
+          matches: lines.slice(0, headLimit),
+          total_matches: result.total_matches,
+        }, null, 2)
+      }
+    }
+
+    // ── Fallback: shell out to rg / grep ──────────────
+    const args: string[] = []
     let cmd = 'rg'
 
     if (outputMode === 'files_with_matches') {
@@ -78,7 +154,6 @@ export const GrepTool = defineTool({
     } else if (outputMode === 'count') {
       args.push('--count')
     } else {
-      // content mode
       if (input['-n'] !== false) args.push('--line-number')
     }
 
@@ -128,7 +203,6 @@ export const GrepTool = defineTool({
             if (!grepResult) {
               resolvePromise(`No matches found for pattern "${input.pattern}"`)
             } else {
-              // Apply head limit
               const lines = grepResult.split('\n')
               if (headLimit > 0 && lines.length > headLimit) {
                 resolvePromise(lines.slice(0, headLimit).join('\n') + `\n... (${lines.length - headLimit} more)`)
@@ -153,7 +227,6 @@ export const GrepTool = defineTool({
           return
         }
 
-        // Apply head limit
         const lines = result.split('\n')
         if (headLimit > 0 && lines.length > headLimit) {
           result = lines.slice(0, headLimit).join('\n') + `\n... (${lines.length - headLimit} more)`
@@ -168,7 +241,6 @@ export const GrepTool = defineTool({
       })
 
       proc.on('error', () => {
-        // rg not found, try grep directly
         const grepArgs = ['-r', '-n', '--', input.pattern, searchPath]
         const grepProc = spawn('grep', grepArgs, {
           cwd: context.cwd,

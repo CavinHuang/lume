@@ -101,6 +101,9 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
     return null
   }
 
+  // Reset status so syncRoutineStatus picks up the new job
+  entry.status = "pending"
+
   await refreshAutomationRunnerJobs()
   writeRoutine(routine)
   return routine
@@ -134,7 +137,21 @@ export function syncRoutineStatus(): void {
       continue
     }
 
-    if (entry.status === "completed") continue
+    if (entry.status === "completed") {
+      // Try to upgrade fallback results to actual LLM responses
+      if (entry.result?.summary?.startsWith("任务执行完成，线程:")) {
+        const runs = listAutomationRunsForJob(entry.automationJobId, 1)
+        const latestRun = runs[0]
+        if (latestRun?.threadId) {
+          const llmReply = getLatestAssistantResponse(latestRun.threadId)
+          if (llmReply) {
+            entry.result = { summary: llmReply }
+            changed++
+          }
+        }
+      }
+      continue
+    }
 
     if (!job.enabled && job.lastRunAt) {
       entry.status = "completed"

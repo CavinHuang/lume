@@ -95,10 +95,15 @@ export const openLogsDir = () =>
   sidecarCall<{ ok: boolean }>(GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR, {})
 
 export const listLogFiles = () =>
-  sidecarCall<LogFileListResult>(GENERAL_SETTINGS_IPC_CHANNELS.LIST_LOG_FILES, {})
+  desktopCall<LogFileListResult>('desktop_list_log_files')
 
 export const readLogFile = (input: ReadLogFileInput) =>
-  sidecarCall<ReadLogFileResult>(GENERAL_SETTINGS_IPC_CHANNELS.READ_LOG_FILE, input)
+  desktopCall<ReadLogFileResult>('desktop_read_log_file', {
+    fileName: input.fileName,
+    levels: input.levels,
+    keyword: input.query,
+    maxLines: input.maxLines,
+  })
 
 export const exportLogs = () =>
   sidecarCall<ExportLogsResult>(GENERAL_SETTINGS_IPC_CHANNELS.EXPORT_LOGS, {})

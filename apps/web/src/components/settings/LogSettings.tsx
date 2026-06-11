@@ -1,5 +1,7 @@
 import * as React from 'react'
 import {
+  ChevronDown,
+  Copy,
   Download,
   FolderOpen,
   Loader2,
@@ -10,7 +12,6 @@ import { toast } from 'sonner'
 import type {
   LogFileListResult,
   LogFileSummary,
-  LogLineEntry,
   LogViewerLevel,
   ReadLogFileResult,
 } from '@lume/shared'
@@ -28,10 +29,28 @@ const LEVEL_OPTIONS: Array<{ value: 'all' | LogViewerLevel; label: string }> = [
   { value: 'fatal', label: 'Fatal' },
 ]
 
+const PAGE_SIZE = 300
+
+const SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'all', label: '全部来源' },
+  { value: 'desktop', label: 'Desktop' },
+  { value: 'sidecar', label: 'Sidecar' },
+  { value: 'webview', label: 'Webview' },
+]
+
+/** Extended log line that may include raw_json from Desktop direct read */
+interface LogLineEntryExt {
+  lineNumber: number
+  level: LogViewerLevel
+  text: string
+  raw_json?: string
+}
+
 export function LogSettings() {
   const [snapshot, setSnapshot] = React.useState<LogFileListResult | null>(null)
   const [selectedFileName, setSelectedFileName] = React.useState('')
   const [level, setLevel] = React.useState<'all' | LogViewerLevel>('all')
+  const [source, setSource] = React.useState('all')
   const [query, setQuery] = React.useState('')
   const [content, setContent] = React.useState<ReadLogFileResult | null>(null)
   const [loadingFiles, setLoadingFiles] = React.useState(true)
@@ -39,6 +58,8 @@ export function LogSettings() {
   const [exporting, setExporting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [contentRefreshKey, setContentRefreshKey] = React.useState(0)
+  const [showRawJson, setShowRawJson] = React.useState(false)
+  const [loadedLimit, setLoadedLimit] = React.useState(PAGE_SIZE)
 
   const selectedFile = React.useMemo(
     () => snapshot?.files.find((file) => file.name === selectedFileName) ?? null,
@@ -69,6 +90,19 @@ export function LogSettings() {
     void refreshFiles()
   }, [refreshFiles])
 
+  // Build keyword from source filter + user query
+  const effectiveKeyword = React.useMemo(() => {
+    const parts: string[] = []
+    if (source !== 'all') parts.push(`"source":"${source}"`)
+    if (query.trim()) parts.push(query.trim())
+    return parts.join(' ') || undefined
+  }, [source, query])
+
+  // Reset limit when file/filter changes
+  React.useEffect(() => {
+    setLoadedLimit(PAGE_SIZE)
+  }, [selectedFileName, level, effectiveKeyword])
+
   React.useEffect(() => {
     if (!selectedFileName) {
       setContent(null)
@@ -81,8 +115,8 @@ export function LogSettings() {
     readLogFile({
       fileName: selectedFileName,
       levels: level === 'all' ? undefined : [level],
-      query: query.trim() || undefined,
-      maxLines: 5000,
+      query: effectiveKeyword,
+      maxLines: loadedLimit,
     })
       .then((result) => {
         if (!cancelled) {
@@ -104,7 +138,7 @@ export function LogSettings() {
     return () => {
       cancelled = true
     }
-  }, [contentRefreshKey, level, query, selectedFileName])
+  }, [contentRefreshKey, level, effectiveKeyword, selectedFileName, loadedLimit])
 
   const handleOpenDir = async () => {
     try {
@@ -127,6 +161,10 @@ export function LogSettings() {
       setExporting(false)
     }
   }
+
+  // Cast lines to extended type — Desktop direct read includes raw_json
+  const lines = (content?.lines ?? []) as unknown as LogLineEntryExt[]
+  const hasMore = content ? content.matchedLines > lines.length : false
 
   return (
     <div className="space-y-5">
@@ -183,6 +221,18 @@ export function LogSettings() {
           </select>
         </SelectShell>
 
+        <SelectShell className="w-[140px]">
+          <select
+            value={source}
+            onChange={(event) => setSource(event.target.value)}
+            className="h-full w-full appearance-none bg-transparent px-4 pr-9 text-[14px] font-medium text-[var(--text-1)] outline-none"
+          >
+            {SOURCE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </SelectShell>
+
         <div className="flex h-[46px] min-w-[260px] flex-1 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-4">
           <Search size={16} className="shrink-0 text-[var(--text-3)]" />
           <input
@@ -192,12 +242,22 @@ export function LogSettings() {
             className="min-w-0 flex-1 bg-transparent text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
           />
         </div>
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={cn('text-[13px]', showRawJson && 'text-[var(--primary)]')}
+          onClick={() => setShowRawJson((v) => !v)}
+        >
+          {showRawJson ? '{ } JSON' : '{ } JSON'}
+        </Button>
       </div>
 
       <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface-2)]">
         <div className="flex h-[48px] items-center justify-between border-b border-[var(--border)] px-5 text-[13px] text-[var(--text-2)]">
           <span>
-            {content ? `显示 ${content.matchedLines} / ${content.totalLines} 行` : loadingFiles ? '加载日志文件...' : '未选择日志文件'}
+            {content ? `已加载 ${lines.length} / ${content.matchedLines} 条匹配（共 ${content.totalLines} 行）` : loadingFiles ? '加载日志文件...' : '未选择日志文件'}
           </span>
           {selectedFile && <span>{formatLogFileMeta(selectedFile)}</span>}
         </div>
@@ -209,8 +269,26 @@ export function LogSettings() {
             </div>
           ) : error ? (
             <div className="flex h-full items-center justify-center text-[var(--danger)]">{error}</div>
-          ) : content?.lines.length ? (
-            content.lines.slice().reverse().map((line) => <LogLine key={`${line.lineNumber}:${line.text}`} line={line} />)
+          ) : lines.length ? (
+            <>
+              {lines.slice().reverse().map((line) => (
+                <LogLine key={`${line.lineNumber}:${line.text}`} line={line} showRawJson={showRawJson} />
+              ))}
+              {hasMore && (
+                <div className="flex justify-center py-4">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-[13px] text-[var(--text-3)]"
+                    onClick={() => setLoadedLimit((n) => n + PAGE_SIZE)}
+                  >
+                    <ChevronDown size={14} />
+                    加载更多（剩余 {content!.matchedLines - lines.length} 条）
+                  </Button>
+                </div>
+              )}
+            </>
           ) : (
             <div className="flex h-full items-center justify-center text-[var(--text-3)]">
               {selectedFileName ? '没有匹配的日志内容' : '暂无日志文件'}
@@ -222,20 +300,40 @@ export function LogSettings() {
   )
 }
 
-function LogLine({ line }: { line: LogLineEntry }) {
+function LogLine({ line, showRawJson }: { line: LogLineEntryExt; showRawJson: boolean }) {
+  const [copied, setCopied] = React.useState(false)
+
+  const handleCopy = () => {
+    const text = showRawJson && line.raw_json ? line.raw_json : line.text
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }).catch(() => {})
+  }
+
+  const displayText = showRawJson && line.raw_json ? line.raw_json : line.text
+
   return (
-    <div className="mb-2">
+    <div className="group relative mb-2">
       <div
         className={cn(
-          'whitespace-pre-wrap break-words',
+          'whitespace-pre-wrap break-words pr-8',
           line.level === 'warn' && 'text-amber-600',
           (line.level === 'error' || line.level === 'fatal') && 'text-red-600',
           line.level === 'debug' && 'text-[var(--text-2)]',
           line.level === 'trace' && 'text-[var(--text-3)]'
         )}
       >
-        {line.text}
+        {displayText}
       </div>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="absolute right-0 top-0 hidden p-1 text-[var(--text-3)] opacity-0 transition-opacity hover:text-[var(--text-1)] group-hover:block group-hover:opacity-100"
+        title="复制此行"
+      >
+        {copied ? <span className="text-[11px] text-green-600">✓</span> : <Copy size={13} />}
+      </button>
     </div>
   )
 }

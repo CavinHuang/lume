@@ -79,18 +79,18 @@ export async function generateDailyRoutine(overrideDate?: string, force?: boolea
 
   // force 重新生成时，保留已完成/进行中的条目
   let preservedEntries: RoutineEntry[] = []
-  let preservedActivities = new Set<string>()
+  let preservedEntryIds = new Set<string>()
   if (force) {
     const existing = readRoutine(date)
     if (existing) {
       preservedEntries = existing.entries.filter(
         (e) => e.status === "completed" || e.status === "running",
       )
-      preservedActivities = new Set(preservedEntries.map((e) => e.activity))
+      preservedEntryIds = new Set(preservedEntries.map((e) => e.id))
       log.info("重新生成日程，保留已完成条目", {
         date,
         preservedCount: preservedEntries.length,
-        preservedActivities: [...preservedActivities],
+        preservedIds: [...preservedEntryIds],
       })
     }
   }
@@ -99,20 +99,18 @@ export async function generateDailyRoutine(overrideDate?: string, force?: boolea
   try {
     const llmPlan = await generateRoutinePlanWithLlm(context, date)
     if (llmPlan && llmPlan.entries.length > 0) {
-      // 过滤掉已保留的活动
-      llmPlan.entries = llmPlan.entries.filter((e) => !preservedActivities.has(e.activity))
-      if (llmPlan.entries.length > 0) {
-        const routine = buildRoutineFromLlmPlan(llmPlan, context, date, preservedEntries, force)
-        writeRoutine(routine)
-        return routine
-      }
+      // 不再按 activity 名称过滤，允许同一活动类型多次安排
+      // 保留的已完成/进行中条目会和新条目共存
+      const routine = buildRoutineFromLlmPlan(llmPlan, context, date, preservedEntries, force)
+      writeRoutine(routine)
+      return routine
     }
   } catch (error) {
     log.warn("LLM 生成失败，回退到规则引擎", { error: error instanceof Error ? error.message : String(error) })
   }
 
   // Fallback: rule-based generation
-  const routine = generateRuleBasedRoutine(context, date, preservedEntries, preservedActivities, force)
+  const routine = generateRuleBasedRoutine(context, date, preservedEntries, force)
   writeRoutine(routine)
   log.info("日程生成完成", {
     date,
@@ -164,20 +162,27 @@ function generateRuleBasedRoutine(
   context: RoutineContext,
   date: string,
   preservedEntries: RoutineEntry[] = [],
-  preservedActivities: Set<string> = new Set(),
   futureOnly = false,
 ): DailyRoutine {
   const applicable = getApplicableActivities(context)
-    .filter((e) => !preservedActivities.has(e.activity))
 
   const slots = buildTimeSlots(date, futureOnly)
 
-  let entries: RoutineEntry[] = applicable.map((executor, index) => ({
-    id: `entry-${executor.activity}-${index}`,
-    activity: executor.activity,
-    scheduledAt: 0,
-    status: "pending" as const,
-  }))
+  // 对 reading_progress 和 reading_note，按活跃书籍数复制条目，支持多次安排
+  let entries: RoutineEntry[] = []
+  applicable.forEach((executor, idx) => {
+    const count = (executor.activity === "reading_progress" || executor.activity === "reading_note")
+      ? Math.max(1, context.activeBooks)
+      : 1;
+    for (let i = 0; i < count; i++) {
+      entries.push({
+        id: `entry-${executor.activity}-${idx}-${i}`,
+        activity: executor.activity,
+        scheduledAt: 0,
+        status: "pending" as const,
+      })
+    }
+  })
 
   // 按优先级排序
   entries = [...entries].sort((a, b) => {
@@ -190,7 +195,6 @@ function generateRuleBasedRoutine(
 
   // 均匀分配到可用时间槽，覆盖全天
   if (slots.length === 0) {
-    // 没有可用时间槽时（已过 21:00），按当前时间依次延迟 1 分钟
     const now = Date.now()
     entries.forEach((entry, index) => {
       entry.scheduledAt = now + index * 60_000

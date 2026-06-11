@@ -239,7 +239,7 @@ export function ChannelForm({
           <Label>协议类型</Label>
           <Select
             value={`openai-${openaiApiMode}`}
-            onValueChange={(v) => setOpenaiApiMode(v.replace('openai-', '') as OpenAiApiMode)}
+            onValueChange={(v) => setOpenaiApiMode((v ?? '').replace('openai-', '') as OpenAiApiMode)}
             disabled={disabled}
           >
             <SelectTrigger><SelectValue /></SelectTrigger>

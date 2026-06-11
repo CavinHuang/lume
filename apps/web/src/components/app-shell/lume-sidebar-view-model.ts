@@ -4,13 +4,6 @@ export type LumeSidebarTopActionId = 'new-chat' | 'search' | 'lume' | 'skills' |
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
 const UNASSIGNED_THREADS_WORKSPACE_NAME = '未分配'
-const IM_PROVIDER_LABELS: Record<string, string> = {
-  weixin: '微信',
-  feishu: '飞书',
-  telegram: 'Telegram',
-  email: '邮件',
-}
-const IM_PROVIDER_ORDER = ['weixin', 'feishu', 'telegram', 'email']
 
 export interface BuildLumeSidebarViewModelInput {
   workspaces: AgentWorkspace[]
@@ -53,15 +46,6 @@ export interface LumeSidebarSyntheticThreadRow {
   active: boolean
 }
 
-export interface LumeSidebarThreadGroup {
-  type: 'thread-group'
-  id: string
-  label: string
-  items: LumeSidebarThreadItem[]
-}
-
-export type LumeSidebarWorkspaceRow = LumeSidebarSyntheticThreadRow | LumeSidebarThreadGroup
-
 export interface LumeSidebarWorkspaceItem {
   id: string
   name: string
@@ -69,7 +53,8 @@ export interface LumeSidebarWorkspaceItem {
   isCurrent: boolean
   isExpanded: boolean
   pinned: boolean
-  rows: LumeSidebarWorkspaceRow[]
+  syntheticRow: LumeSidebarSyntheticThreadRow | null
+  threads: LumeSidebarThreadItem[]
 }
 
 export interface LumeSidebarCollapsedItem {
@@ -88,11 +73,6 @@ export interface LumeSidebarViewModel {
   workspaces: LumeSidebarWorkspaceItem[]
   footerActions: LumeSidebarFooterAction[]
   collapsedItems: LumeSidebarCollapsedItem[]
-}
-
-interface ThreadGroup {
-  label: string
-  items: AgentThreadMeta[]
 }
 
 function buildWelcomeRow(workspaceId: string, active: boolean): LumeSidebarSyntheticThreadRow {
@@ -139,16 +119,13 @@ export function buildLumeSidebarViewModel({
     { id: 'settings', label: '设置', icon: 'settings', kind: 'button' },
   ]
 
-  const workspaceItems = workspaces.map((workspace) => {
+  const workspaceItems: LumeSidebarWorkspaceItem[] = workspaces.map((workspace) => {
     const workspaceThreads = sortThreadsByUpdatedAt(
       threads.filter((thread) => getThreadWorkspaceId(thread) === workspace.id),
     )
-    const threadGroups = buildThreadGroupRows(workspace.id, workspaceThreads, activeTabId, streamingStates)
-
-    const rows: LumeSidebarWorkspaceRow[] = [
-      buildWelcomeRow(workspace.id, workspace.id === selectedWorkspaceId && activeTabId === '__welcome__'),
-      ...threadGroups,
-    ]
+    const allThreads = workspaceThreads.map((thread) =>
+      buildThreadItem(thread, activeTabId, streamingStates),
+    )
 
     return {
       id: workspace.id,
@@ -157,7 +134,11 @@ export function buildLumeSidebarViewModel({
       isCurrent: workspace.id === selectedWorkspaceId,
       isExpanded: expandedSet.has(workspace.id),
       pinned: pinnedSet.has(workspace.id),
-      rows,
+      syntheticRow: buildWelcomeRow(
+        workspace.id,
+        workspace.id === selectedWorkspaceId && activeTabId === '__welcome__',
+      ),
+      threads: allThreads,
     }
   })
   const unassignedThreads = sortThreadsByUpdatedAt(
@@ -172,12 +153,8 @@ export function buildLumeSidebarViewModel({
       isCurrent: false,
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
       pinned: false,
-      rows: buildThreadGroupRows(
-        UNASSIGNED_THREADS_WORKSPACE_ID,
-        unassignedThreads,
-        activeTabId,
-        streamingStates,
-      ),
+      syntheticRow: null,
+      threads: unassignedThreads.map((thread) => buildThreadItem(thread, activeTabId, streamingStates)),
     })
   }
 
@@ -227,29 +204,6 @@ function sortThreadsByUpdatedAt(threads: AgentThreadMeta[]): AgentThreadMeta[] {
   return [...threads].sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
-function buildThreadGroupRows(
-  scopeId: string,
-  threads: AgentThreadMeta[],
-  activeTabId: string | null,
-  streamingStates: Record<string, AgentRuntimePhase | undefined>,
-): LumeSidebarThreadGroup[] {
-  const imGroups = groupThreadsByImProvider(threads).map<LumeSidebarThreadGroup>((group) => ({
-    type: 'thread-group',
-    id: `${scopeId}:im:${group.provider}`,
-    label: group.label,
-    items: group.items.map((thread) => buildThreadItem(thread, activeTabId, streamingStates)),
-  }))
-  const regularThreads = threads.filter((thread) => !getThreadImProvider(thread))
-  const dateGroups = groupThreadsByDate(regularThreads).map<LumeSidebarThreadGroup>((group) => ({
-    type: 'thread-group',
-    id: `${scopeId}:${group.label}`,
-    label: group.label,
-    items: group.items.map((thread) => buildThreadItem(thread, activeTabId, streamingStates)),
-  }))
-
-  return [...imGroups, ...dateGroups]
-}
-
 function buildThreadItem(
   thread: AgentThreadMeta,
   activeTabId: string | null,
@@ -263,69 +217,4 @@ function buildThreadItem(
     isStreaming: streamingStates[thread.id] === 'streaming',
     updatedAt: thread.updatedAt,
   }
-}
-
-function getThreadImProvider(thread: AgentThreadMeta): string | null {
-  const source = thread.source
-  return source?.type === 'im' && typeof source.provider === 'string' && source.provider.trim()
-    ? source.provider.trim()
-    : null
-}
-
-function groupThreadsByImProvider(threads: AgentThreadMeta[]): Array<ThreadGroup & { provider: string }> {
-  const byProvider = new Map<string, AgentThreadMeta[]>()
-  for (const thread of threads) {
-    const provider = getThreadImProvider(thread)
-    if (!provider) continue
-    byProvider.set(provider, [...(byProvider.get(provider) ?? []), thread])
-  }
-
-  return [...byProvider.entries()]
-    .sort(([left], [right]) => compareImProviders(left, right))
-    .map(([provider, items]) => ({
-      provider,
-      label: IM_PROVIDER_LABELS[provider] ?? provider,
-      items: sortThreadsByUpdatedAt(items),
-    }))
-}
-
-function compareImProviders(left: string, right: string): number {
-  const leftIndex = IM_PROVIDER_ORDER.indexOf(left)
-  const rightIndex = IM_PROVIDER_ORDER.indexOf(right)
-  if (leftIndex !== -1 || rightIndex !== -1) {
-    return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex)
-      - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex)
-  }
-  return left.localeCompare(right)
-}
-
-function groupThreadsByDate(threads: AgentThreadMeta[]): ThreadGroup[] {
-  const pinned = threads.filter((thread) => thread.pinned)
-  const unpinned = threads.filter((thread) => !thread.pinned)
-  const startOfToday = new Date().setHours(0, 0, 0, 0)
-  const startOfYesterday = startOfToday - 86_400_000
-  const today: AgentThreadMeta[] = []
-  const yesterday: AgentThreadMeta[] = []
-  const earlier: AgentThreadMeta[] = []
-
-  for (const thread of unpinned) {
-    if (thread.updatedAt >= startOfToday) {
-      today.push(thread)
-      continue
-    }
-
-    if (thread.updatedAt >= startOfYesterday) {
-      yesterday.push(thread)
-      continue
-    }
-
-    earlier.push(thread)
-  }
-
-  return [
-    ...(pinned.length > 0 ? [{ label: '置顶', items: pinned }] : []),
-    ...(today.length > 0 ? [{ label: '今天', items: today }] : []),
-    ...(yesterday.length > 0 ? [{ label: '昨天', items: yesterday }] : []),
-    ...(earlier.length > 0 ? [{ label: '更早', items: earlier }] : []),
-  ]
 }
