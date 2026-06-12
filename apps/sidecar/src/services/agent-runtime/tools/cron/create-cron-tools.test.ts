@@ -20,7 +20,8 @@ function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
 
 async function callTool(tool: ToolDefinition, input: Record<string, unknown>) {
   const result = await tool.call(input, { cwd: process.cwd(), abortSignal: new AbortController().signal });
-  return JSON.parse(String(result.content)) as Record<string, unknown>;
+  const parsed = JSON.parse(result.content) as Record<string, unknown>;
+  return (parsed.data ?? parsed) as Record<string, unknown>;
 }
 
 describe("create-cron-tools", () => {
