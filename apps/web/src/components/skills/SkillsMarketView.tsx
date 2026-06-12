@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useAtomValue } from 'jotai'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
 import {
   Check,
   ChevronDown,
@@ -35,7 +35,8 @@ import {
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import type { SkillCatalogItem, SkillFileTreeNode, SkillMarketDetailResult, SkillSourceType } from '@lume/shared'
-import { SkillSettingsView } from './SkillSettingsView'
+import { SkillSettingsView, type SkillSettingsViewHandle } from './SkillSettingsView'
+import { SkillAddSourceDialog } from './SkillAddSourceDialog'
 import {
   buildSkillActionLabel,
   buildSkillInstallRequest,
@@ -85,6 +86,7 @@ export function SkillsMarketView() {
   const currentThreadId = useAtomValue(currentThreadIdAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
+  const setCurrentWorkspaceId = useSetAtom(currentWorkspaceIdAtom)
   const [activeSection, setActiveSection] = useState<SkillMarketSection>('market')
   const [settingsCwd, setSettingsCwd] = useState<string | null>(null)
   const [items, setItems] = useState<SkillCatalogItem[]>([])
@@ -100,6 +102,8 @@ export function SkillsMarketView() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [skillDetail, setSkillDetail] = useState<SkillMarketDetailResult | null>(null)
+  const [addSourceDialogOpen, setAddSourceDialogOpen] = useState(false)
+  const skillSettingsViewRef = useRef<SkillSettingsViewHandle>(null)
 
   const loadCatalog = useCallback(async () => {
     if (!workspaceSlug) {
@@ -313,7 +317,21 @@ export function SkillsMarketView() {
             />
           </div>
         ) : (
-          <SkillSettingsView workspaceSlug={workspaceSlug} cwd={settingsCwd} onOpenMarket={() => setActiveSection('market')} />
+          <SkillSettingsView
+            ref={skillSettingsViewRef}
+            workspaceSlug={workspaceSlug}
+            cwd={settingsCwd}
+            onOpenMarket={() => setActiveSection('market')}
+            onCreateNew={() => {
+              setAddSourceDialogOpen(false)
+              setActiveSection('settings')
+            }}
+            availableWorkspaces={workspaces}
+            onWorkspaceChange={(slug) => {
+              const target = workspaces.find((w) => w.slug === slug)
+              if (target) setCurrentWorkspaceId(target.id)
+            }}
+          />
         )}
       </div>
 
@@ -321,6 +339,23 @@ export function SkillsMarketView() {
         open={sourceDialogOpen}
         onOpenChange={setSourceDialogOpen}
         onSubmit={handleAddSource}
+      />
+      <SkillAddSourceDialog
+        open={addSourceDialogOpen}
+        onOpenChange={setAddSourceDialogOpen}
+        workspaceSlug={workspaceSlug}
+        onCreateNew={() => {
+          setAddSourceDialogOpen(false)
+          setActiveSection('settings')
+          // 延迟一帧等 SkillSettingsView 挂载后再打开编辑器
+          requestAnimationFrame(() => {
+            skillSettingsViewRef.current?.createNewSkill('workspace')
+          })
+        }}
+        onOpenMarket={() => {
+          setAddSourceDialogOpen(false)
+          setActiveSection('market')
+        }}
       />
       <SkillDetailDialog
         open={detailOpen}

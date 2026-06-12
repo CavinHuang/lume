@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -76,19 +76,25 @@ import {
   type PendingSkillImprovementSuggestion,
 } from '@/hooks/skill-listeners-state'
 
-export function SkillSettingsView({
-  workspaceSlug,
-  cwd,
-  onOpenMarket,
-  availableWorkspaces,
-  onWorkspaceChange,
-}: {
+export interface SkillSettingsViewHandle {
+  createNewSkill: (storageScope: SkillStorageScope) => void
+}
+
+export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
   workspaceSlug: string | null
   cwd?: string | null
   onOpenMarket: () => void
   availableWorkspaces?: AgentWorkspace[]
   onWorkspaceChange?: (slug: string) => void
-}) {
+  onCreateNew?: (storageScope: SkillStorageScope) => void
+}>(function SkillSettingsView({
+  workspaceSlug,
+  cwd,
+  onOpenMarket,
+  availableWorkspaces,
+  onWorkspaceChange,
+  onCreateNew,
+}, ref) {
   const [skills, setSkills] = useState<EditableSkillMeta[]>([])
   const [activeStorageScope, setActiveStorageScope] = useState<SkillStorageScope>(
     () => (cwd?.trim() ? 'project' : 'workspace'),
@@ -108,6 +114,14 @@ export function SkillSettingsView({
   const [savingToolId, setSavingToolId] = useState<string | null>(null)
   const pendingSkillImprovementSuggestions = useAtomValue(pendingSkillImprovementSuggestionsAtom)
   const setPendingSkillImprovementSuggestions = useSetAtom(pendingSkillImprovementSuggestionsAtom)
+
+  useImperativeHandle(ref, () => ({
+    createNewSkill: (scope: SkillStorageScope) => {
+      setEditorError(null)
+      setDraft(createEmptySkillDraft(scope))
+    },
+  }))
+
   const projectCwd = cwd?.trim() || undefined
   const storageScopes = useMemo(
     () => [
@@ -199,7 +213,11 @@ export function SkillSettingsView({
 
   const handleCreate = () => {
     setEditorError(null)
-    setDraft(createEmptySkillDraft(activeStorageScope))
+    if (onCreateNew) {
+      onCreateNew(activeStorageScope)
+    } else {
+      setDraft(createEmptySkillDraft(activeStorageScope))
+    }
   }
 
   const handleEdit = async (skill: EditableSkillMeta) => {
@@ -460,9 +478,10 @@ export function SkillSettingsView({
       )}
     </section>
   )
-}
+})
 
-function SkillSettingsRow({
+
+const SkillSettingsRow = ({
   skill,
   editing,
   deleting,
@@ -474,7 +493,7 @@ function SkillSettingsRow({
   deleting: boolean
   onEdit: () => void
   onDelete: () => void
-}) {
+}) => {
   return (
     <article className="grid min-h-[108px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[#edf0f6] bg-[#fbfbfa] px-4 py-3">
       <div className="min-w-0">
@@ -522,7 +541,7 @@ function SkillSettingsRow({
   )
 }
 
-function SkillEditor({
+const SkillEditor = ({
   workspaceSlug,
   draft,
   saving,
@@ -550,7 +569,7 @@ function SkillEditor({
   onPendingSuggestionConsumed: () => void
   onCancel: () => void
   onSave: () => void
-}) {
+}) => {
   const allowedTools = normalizeAllowedToolDraft(draft.allowedToolsText)
   const canSave = !getSkillDraftValidationError(draft) && !saving
   const canChangeScope = draft.mode === 'create'
@@ -769,15 +788,15 @@ function SkillEditor({
       </div>
     </section>
   )
-}
+};
 
-function SkillEditorField({
+const SkillEditorField = ({
   label,
   children,
 }: {
   label: string
   children: ReactNode
-}) {
+}) => {
   return (
     <label className="block">
       <span className="mb-2 block text-[13px] font-semibold text-[#6b7286]">{label}</span>
@@ -786,7 +805,7 @@ function SkillEditorField({
   )
 }
 
-function SkillEvolutionPanel({
+const SkillEvolutionPanel = ({
   workspaceSlug,
   cwd,
   draft,
@@ -800,7 +819,7 @@ function SkillEvolutionPanel({
   pendingSuggestion: PendingSkillImprovementSuggestion | null
   onSkillContentChanged: () => Promise<void>
   onPendingSuggestionConsumed: () => void
-}) {
+}) => {
   const [versions, setVersions] = useState<SkillVersionInfo[]>([])
   const [versionsLoading, setVersionsLoading] = useState(true)
   const [analysis, setAnalysis] = useState<SkillImprovementAnalysisResult | null>(null)
@@ -1019,10 +1038,10 @@ function SkillEvolutionPanel({
         </div>
       )}
     </section>
-  )
-}
+  );
+};
 
-function SystemToolsPanel({
+const SystemToolsPanel = ({
   rows,
   loading,
   error,
@@ -1034,7 +1053,7 @@ function SystemToolsPanel({
   error: string | null
   savingToolId: string | null
   onToggle: (group: SystemToolGroup, enabled: boolean) => void
-}) {
+}) => {
   const [query, setQuery] = useState('')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
@@ -1184,6 +1203,7 @@ function SystemToolsPanel({
   )
 }
 
+
 function formatSkillStorageScopeLabel(scope: SkillStorageScope): string {
   return SKILL_STORAGE_SCOPE_LABELS[scope] ?? scope
 }
@@ -1191,3 +1211,5 @@ function formatSkillStorageScopeLabel(scope: SkillStorageScope): string {
 function skillSettingsKey(skill: EditableSkillMeta): string {
   return `${skill.storageScope}:${skill.slug}`
 }
+
+

@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
-import { SkillSettingsView } from '@/components/skills/SkillSettingsView'
+import { SkillSettingsView, type SkillSettingsViewHandle } from '@/components/skills/SkillSettingsView'
+import { SkillAddSourceDialog } from '@/components/skills/SkillAddSourceDialog'
 
 export function SkillsSettings() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const skillSettingsViewRef = useRef<SkillSettingsViewHandle>(null)
 
   const currentWorkspace = useMemo(
     () => workspaces.find((w) => w.id === currentWorkspaceId) ?? workspaces[0] ?? null,
@@ -13,6 +15,7 @@ export function SkillsSettings() {
   )
 
   const [selectedSlug, setSelectedSlug] = useState(currentWorkspace?.slug ?? '')
+  const [addSourceDialogOpen, setAddSourceDialogOpen] = useState(false)
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((w) => w.slug === selectedSlug) ?? currentWorkspace,
@@ -20,13 +23,32 @@ export function SkillsSettings() {
   )
 
   return (
-    <SkillSettingsView
-      workspaceSlug={selectedWorkspace?.slug ?? null}
-      availableWorkspaces={workspaces}
-      onWorkspaceChange={setSelectedSlug}
-      // 不传 cwd，SkillSettingsView 内部会自动过滤掉 project scope
-      // 只展示 workspace 和 user 两个 scope
-      key={selectedWorkspace?.slug ?? 'default'}
-    />
+    <>
+      <SkillSettingsView
+        ref={skillSettingsViewRef}
+        workspaceSlug={selectedWorkspace?.slug ?? null}
+        availableWorkspaces={workspaces}
+        onWorkspaceChange={setSelectedSlug}
+        onOpenMarket={() => {}}
+        onCreateNew={(scope) => {
+          skillSettingsViewRef.current?.createNewSkill(scope)
+        }}
+        // 不传 cwd，SkillSettingsView 内部会自动过滤掉 project scope
+        // 只展示 workspace 和 user 两个 scope
+        key={selectedWorkspace?.slug ?? 'default'}
+      />
+      <SkillAddSourceDialog
+        open={addSourceDialogOpen}
+        onOpenChange={setAddSourceDialogOpen}
+        workspaceSlug={selectedWorkspace?.slug ?? null}
+        onCreateNew={() => {
+          setAddSourceDialogOpen(false)
+          requestAnimationFrame(() => {
+            skillSettingsViewRef.current?.createNewSkill('workspace')
+          })
+        }}
+        onOpenMarket={() => setAddSourceDialogOpen(false)}
+      />
+    </>
   )
 }
