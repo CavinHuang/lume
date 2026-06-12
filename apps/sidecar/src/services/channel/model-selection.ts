@@ -102,6 +102,8 @@ function coerceKnownProvider(provider: string): ProviderType {
     "volcengine-coding-plan",
     "minimax-token-plan",
     "xiaomi-token-plan",
+    "stepfun",
+    "stepfun-coding-plan",
   ] as const).includes(provider as ProviderType)
     ? (provider as ProviderType)
     : "custom";
