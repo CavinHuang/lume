@@ -353,6 +353,37 @@ const MODEL_META_REGISTRY: ModelMeta[] = [
     capabilities: { vision: false, toolUse: true, reasoning: false },
   },
 
+  // ── 阶跃星辰 Stepfun ──
+  {
+    id: 'step-3.7-flash',
+    displayName: 'Step 3.7 Flash',
+    contextWindow: 131_072,
+    capabilities: { vision: true, toolUse: true, reasoning: true },
+    description: '阶跃星辰旗舰多模态推理模型，支持三档推理强度',
+  },
+  {
+    id: 'step-3.5-flash-2603',
+    aliases: ['step-3.5-flash-2603'],
+    displayName: 'Step 3.5 Flash 2603',
+    contextWindow: 131_072,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+    description: '针对高频 Agent 场景优化，Token 效率提升、推理速度更快',
+  },
+  {
+    id: 'step-3.5-flash',
+    displayName: 'Step 3.5 Flash',
+    contextWindow: 131_072,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+    description: '196B MoE 架构，高速推理，专为智能体和代码任务优化',
+  },
+  {
+    id: 'step-router-v1',
+    displayName: 'Step Router V1',
+    contextWindow: 131_072,
+    capabilities: { vision: false, toolUse: true, reasoning: true },
+    description: '智能路由模型，自动在 deepseek-v4-pro 与 step-3.5-flash 之间切换',
+  },
+
   // ── MiniMax ──
   {
     id: 'minimax-text-01',
