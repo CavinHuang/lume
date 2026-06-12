@@ -108,6 +108,8 @@ const PROVIDER_TONES: Partial<Record<ProviderType, string>> = {
   'volcengine-coding-plan': 'bg-[#3370ff]/10 text-[#3370ff]',
   'minimax-token-plan': 'bg-[#3d5afe]/10 text-[#3d5afe]',
   'xiaomi-token-plan': 'bg-[#ff6900]/10 text-[#ff6900]',
+  stepfun: 'bg-[#6c5ce7]/10 text-[#6c5ce7]',
+  'stepfun-coding-plan': 'bg-[#6c5ce7]/10 text-[#6c5ce7]',
 }
 
 export function buildModelProviderRows(channels: Channel[]): ModelProviderRow[] {
