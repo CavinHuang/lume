@@ -17,6 +17,7 @@ import {
   OpenRouter,
   Qwen,
   SiliconCloud,
+  Stepfun,
   Volcengine,
   XiaomiMiMo,
   ZAI,
@@ -50,6 +51,8 @@ const PROVIDER_ICON_MAP: Partial<Record<ProviderType, BrandIcon>> = {
   // 补充其他缺失的
   jina: Jina as BrandIcon,
   siliconflow: SiliconCloud as BrandIcon,
+  stepfun: Stepfun as BrandIcon,
+  'stepfun-coding-plan': Stepfun as BrandIcon,
 }
 
 interface ChannelProviderIconProps {
