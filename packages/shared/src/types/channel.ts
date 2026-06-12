@@ -35,6 +35,8 @@ export type ProviderType =
   | 'volcengine-coding-plan'
   | 'minimax-token-plan'
   | 'xiaomi-token-plan'
+  | 'stepfun'
+  | 'stepfun-coding-plan'
 
 /** Provider 协议家族（决定请求格式） */
 export type ProviderApiFamily = 'anthropic' | 'openai' | 'google'
@@ -53,8 +55,8 @@ export interface ProviderGroupInfo {
 
 export const PROVIDER_GROUPS: ProviderGroupInfo[] = [
   { key: 'all', label: '全部', providers: [] },
-  { key: 'coding-plan', label: '编程套餐', providers: ['kimi-coding', 'zai-coding-plan', 'aliyun-coding-plan', 'volcengine-coding-plan', 'minimax-token-plan', 'xiaomi-token-plan'] },
-  { key: 'domestic', label: '国内平台', providers: ['deepseek', 'moonshot', 'minimax', 'minimax-cn', 'doubao', 'qwen', 'qwen-portal', 'zai'] },
+  { key: 'coding-plan', label: '编程套餐', providers: ['kimi-coding', 'zai-coding-plan', 'aliyun-coding-plan', 'volcengine-coding-plan', 'minimax-token-plan', 'xiaomi-token-plan', 'stepfun-coding-plan'] },
+  { key: 'domestic', label: '国内平台', providers: ['deepseek', 'moonshot', 'minimax', 'minimax-cn', 'doubao', 'qwen', 'qwen-portal', 'zai', 'stepfun'] },
   { key: 'overseas', label: '海外平台', providers: ['anthropic', 'anthropic-compatible', 'openai', 'google', 'jina'] },
   { key: 'transit', label: '中转/聚合', providers: ['openrouter', 'siliconflow', 'opencode'] },
   { key: 'local', label: '本地/其他', providers: ['ollama', 'lmstudio'] },
@@ -95,6 +97,8 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   'volcengine-coding-plan': 'https://ark.cn-beijing.volces.com/api/coding/v3',
   'minimax-token-plan': 'https://api.minimaxi.com/anthropic/v1',
   'xiaomi-token-plan': 'https://token-plan-cn.xiaomimimo.com/v1',
+  stepfun: 'https://api.stepfun.com/v1',
+  'stepfun-coding-plan': 'https://api.stepfun.com/step_plan/v1',
 }
 
 /**
@@ -126,6 +130,8 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   'volcengine-coding-plan': '火山方舟 Coding Plan',
   'minimax-token-plan': 'MiniMax Token Plan',
   'xiaomi-token-plan': '小米 MiMo Token Plan',
+  stepfun: '阶跃星辰',
+  'stepfun-coding-plan': '阶跃星辰 Step Plan',
 }
 
 /** Provider 对应协议家族 */
@@ -155,6 +161,8 @@ export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   'volcengine-coding-plan': 'openai',
   'minimax-token-plan': 'anthropic',
   'xiaomi-token-plan': 'openai',
+  stepfun: 'openai',
+  'stepfun-coding-plan': 'openai',
 }
 
 /** 协议家族显示名 */
