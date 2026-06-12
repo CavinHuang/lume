@@ -43,9 +43,9 @@ export function SkillsSettings() {
         workspaceSlug={selectedWorkspace?.slug ?? null}
         onCreateNew={() => {
           setAddSourceDialogOpen(false)
-          requestAnimationFrame(() => {
+          setTimeout(() => {
             skillSettingsViewRef.current?.createNewSkill('workspace')
-          })
+          }, 50)
         }}
         onOpenMarket={() => setAddSourceDialogOpen(false)}
       />

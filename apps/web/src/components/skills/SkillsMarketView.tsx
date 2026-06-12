@@ -347,10 +347,10 @@ export function SkillsMarketView() {
         onCreateNew={() => {
           setAddSourceDialogOpen(false)
           setActiveSection('settings')
-          // 延迟一帧等 SkillSettingsView 挂载后再打开编辑器
-          requestAnimationFrame(() => {
+          // 等 SkillSettingsView 挂载后再调用 createNewSkill
+          setTimeout(() => {
             skillSettingsViewRef.current?.createNewSkill('workspace')
-          })
+          }, 50)
         }}
         onOpenMarket={() => {
           setAddSourceDialogOpen(false)
