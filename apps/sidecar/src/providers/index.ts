@@ -49,6 +49,8 @@ const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
   ['volcengine-coding-plan', new OpenAIAdapter()],
   ['minimax-token-plan', new AnthropicAdapter()],
   ['xiaomi-token-plan', new OpenAIAdapter()],
+  ['stepfun', new OpenAIAdapter()],
+  ['stepfun-coding-plan', new OpenAIAdapter()],
 ])
 
 /** OpenAI Responses API 适配器实例（按需使用） */
