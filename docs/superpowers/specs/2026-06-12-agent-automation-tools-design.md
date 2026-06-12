@@ -20,7 +20,7 @@ Agent 面对如此多决策点，很难独立创建出合理的自动化任务�
 - 前端已有的 12 个模板能力无法被 Agent 利用
 - 搜索/筛选任务的能力缺失
 
-**目标**：通过模板化 + 搜索 + Routine 层工具，让 Agent 能自主管理自动化任务。
+**目标**：提供两条创建路径（模板快捷创建 + 自由创建）+ 搜索能力 + Routine 层工具，让 Agent 能根据场景自主选择最优方式管理自动化任务。
 
 ---
 
@@ -43,7 +43,18 @@ Agent 面对如此多决策点，很难独立创建出合理的自动化任务�
 
 ## 3. Automation 层增强
 
-### 3.1 `automation_list`（新增）
+### 3.1 两条创建路径
+
+Agent 创建自动化任务时，有两种方式可选：
+
+| 路径 | 工具 | 适用场景 |
+|------|------|----------|
+| **模板快捷创建** | `automation_template { action: "create", templateId: "..." }` | 常见场景（每日 bug 扫描、站会摘要等），只需传模板 ID，可选覆盖名称/prompt/调度 |
+| **自由创建** | `automation_set { action: "create", ... }` | 非常规需求，agent 自行决策所有字段（schedule type、cron 表达式、prompt 等） |
+
+两种路径并存，互不替代。`automation_set` 的 `create` action 行为完全不变。
+
+### 3.2 `automation_list`（新增）
 
 替代 `automation_read` 的列表能力，增加搜索和筛选。
 
@@ -75,7 +86,7 @@ Agent 面对如此多决策点，很难独立创建出合理的自动化任务�
 - `hasRecentRun` 为 true 时只返回 `lastRunAt` 在 7 天内的任务
 - 始终受 `workspaceId` 过滤（同 `automation_read` 逻辑）
 
-### 3.2 `automation_template`（新增）
+### 3.3 `automation_template`（新增）
 
 **子 action：list**
 
@@ -160,7 +171,7 @@ automation_template {
 - 创建后自动刷新 runner
 - 返回创建结果（同 `automation_set` 的 create 返回格式）
 
-### 3.3 现有工具行为不变
+### 3.4 现有工具行为不变
 
 | 工具 | 改动 |
 |------|------|
