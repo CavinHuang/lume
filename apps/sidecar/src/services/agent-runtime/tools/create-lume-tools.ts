@@ -4,11 +4,14 @@ import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
 import { createSdkCronTools } from "./cron/create-cron-tools";
+import { createAutomationListTools } from "./cron/automation-list-tools";
+import { createAutomationTemplateTools } from "./cron/automation-template-tools";
 import { createSdkImTools } from "./im/create-im-tools";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";
 import { createSdkReadingTools } from "./reading/create-reading-tools";
 import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
 import { createSdkOfficeTools } from "./office/create-office-tools";
+import { createRoutineTools } from "./routine/create-routine-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -52,13 +55,32 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     workspaceId: input.workspaceId,
     sessionId: input.threadId
   });
+  const automationListTools = createAutomationListTools({
+    workspaceId: input.workspaceId,
+  });
+  const automationTemplateTools = createAutomationTemplateTools({
+    workspaceId: input.workspaceId,
+  });
   const imTools = createSdkImTools({
     threadId: input.threadId
   });
   const readingTools = createSdkReadingTools();
   const uiTools = [createPersonalizeUiTool({ threadId: input.threadId })];
   const officeTools = createSdkOfficeTools();
-  const customTools = [...memoryTools, ...cronTools, ...imTools, ...readingTools, ...uiTools, ...officeTools];
+  const routineTools = createRoutineTools({
+    workspaceId: input.workspaceId,
+  });
+  const customTools = [
+    ...memoryTools,
+    ...cronTools,
+    ...automationListTools,
+    ...automationTemplateTools,
+    ...imTools,
+    ...readingTools,
+    ...uiTools,
+    ...officeTools,
+    ...routineTools,
+  ];
   const customToolNames = customTools.map((tool) => tool.name);
 
   return {
