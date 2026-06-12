@@ -171,19 +171,69 @@ automation_template {
 - 创建后自动刷新 runner
 - 返回创建结果（同 `automation_set` 的 create 返回格式）
 
-### 3.4 现有工具行为不变
+### 3.4 `automation_set` 能力参考
 
-| 工具 | 改动 |
-|------|------|
-| `automation_read` | 不变，仍用于读取单个任务详情 |
-| `automation_set` | 不变，6 个 action 保持现状 |
-| `automation_query` | 不变，查询运行记录 |
+`automation_set` 是通用配置工具，保留不动，agent 在需要细粒度控制时使用。
+
+**整体结构**
+
+```ts
+automation_set {
+  action: "create" | "update" | "delete" | "enable" | "disable" | "run_now",
+  // ... 各 action 对应不同字段
+}
+```
+
+**各 action 详细说明**
+
+| action | 必填字段 | 可选字段 | 说明 |
+|--------|----------|----------|------|
+| `create` | `name`, `prompt` | `schedule`, `preset`, `enabled`, `workspaceId`, `sessionId` | 创建新任务。`schedule` 或 `preset` 至少传一个 |
+| `update` | `id` | `name`, `prompt`, `schedule`, `enabled`, `workspaceId`, `sessionId` | 按 ID 更新字段，不传的字段保持不变 |
+| `delete` | `id` | — | 删除任务 |
+| `enable` | `id` | — | 启用任务 |
+| `disable` | `id` | — | 禁用任务 |
+| `run_now` | `id` | — | 立即触发一次执行（异步，不阻塞） |
+
+**schedule 字段说明**
+
+`schedule` 是对象类型，根据 `type` 有不同的子字段：
+
+```ts
+schedule: {
+  type: "cron",        // 必填：cron | once | interval | manual
+  cronExpr?: string,   // type=cron 时必填，标准 5 字段 cron
+  timezone?: string,   // type=cron 时可选，如 "Asia/Shanghai"
+  runAt?: number,      // type=once 时必填，毫秒时间戳
+  intervalMs?: number, // type=interval 时必填，间隔毫秒数
+}
+```
+
+**preset 快捷字段**
+
+`create` action 可以用 `preset` 替代 `schedule`，自动填充 cron 表达式：
+
+| preset | 等价 cron | 含义 |
+|--------|-----------|------|
+| `hourly` | `0 * * * *` | 每小时 |
+| `daily` | `0 9 * * *` | 每天 9:00 |
+| `weekly` | `0 9 * * 1` | 每周一 9:00 |
+| `monthly` | `0 9 1 * *` | 每月 1 号 9:00 |
+
+**何时用 automation_set vs automation_template**
+
+| 场景 | 推荐工具 |
+|------|----------|
+| 创建常见任务（每日扫描、每周报告等） | `automation_template` — 无需决策 cron |
+| 创建非常规任务（自定义间隔、一次性任务等） | `automation_set` — 自由填写所有字段 |
+| 修改任务名称 / prompt / 启用状态 | `automation_set` → `update` |
+| 删除 / 启停 / 立即执行 | `automation_set` → 对应 action |
 
 ---
 
-## 4. Routine 层工具
+## 5. Routine 层工具
 
-### 4.1 `routine_read`
+### 5.1 `routine_read`
 
 **输入**
 
@@ -212,7 +262,7 @@ automation_template {
   - `result`（执行结果，已完成条目才有）
   - `description`、`customName`、`customPrompt`（如果有）
 
-### 4.2 `routine_trigger`
+### 5.2 `routine_trigger`
 
 **输入**
 
@@ -242,7 +292,7 @@ automation_template {
 - 条目不存在 → 报错
 - 无预定义 executor 且无 customPrompt → 报错
 
-### 4.3 `routine_update`
+### 5.3 `routine_update`
 
 **输入**
 
@@ -271,7 +321,7 @@ automation_template {
 - `scheduledAt` 变更后同步更新底层 `automationJobId` 对应任务的 schedule
 - 写回日程文件
 
-### 4.4 `routine_regenerate`
+### 5.4 `routine_regenerate`
 
 **输入**
 
@@ -297,7 +347,7 @@ automation_template {
 
 ---
 
-## 5. 文件变更清单
+## 6. 文件变更清单
 
 ### 新增文件
 | 文件 | 说明 |
@@ -321,7 +371,7 @@ automation_template {
 
 ---
 
-## 6. 工具注册流程
+## 7. 工具注册流程
 
 ```
 createLumeRuntimeTools()
@@ -340,7 +390,7 @@ createLumeRuntimeTools()
 
 ---
 
-## 7. 实现顺序
+## 8. 实现顺序
 
 1. **automation_list** — 最简单，纯读取 + 过滤，不涉及写入
 2. **automation_template** — 引入模板定义 + create 逻辑
@@ -353,7 +403,7 @@ createLumeRuntimeTools()
 
 ---
 
-## 8. 自审检查
+## 9. 自审检查
 
 - [x] **Placeholder**：无 TBD/TODO
 - [x] **一致性**：模板 ID 与实际前端 ID 对齐；schedule 字段行为与 `automation_set` 一致
