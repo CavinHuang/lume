@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Plus } from 'lucide-react'
 import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily, OpenAiApiMode } from '@lume/shared'
-import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS } from '@lume/shared'
+import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS, normalizeChannelModel } from '@lume/shared'
 import { fetchChannelModels } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -90,6 +90,10 @@ export function ChannelForm({
   )
   const [providerId, setProviderId] = useState(initialValue?.providerId ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
+  const [showAddModel, setShowAddModel] = useState(false)
+  const [newModelId, setNewModelId] = useState('')
+  const [newModelName, setNewModelName] = useState('')
+  const [addError, setAddError] = useState('')
 
   useEffect(() => {
     if (!initialValue) {
@@ -103,6 +107,10 @@ export function ChannelForm({
       setApiFamily('openai')
     setOpenaiApiMode('chat-completions')
     setProviderId('')
+      setShowAddModel(false)
+      setNewModelId('')
+      setNewModelName('')
+      setAddError('')
       return
     }
 
@@ -116,6 +124,10 @@ export function ChannelForm({
     setApiFamily(initialValue.apiFamily ?? 'openai')
     setOpenaiApiMode(initialValue.openaiApiMode ?? 'chat-completions')
     setProviderId(initialValue.providerId ?? '')
+    setShowAddModel(false)
+    setNewModelId('')
+    setNewModelName('')
+    setAddError('')
   }, [initialValue])
 
   const handleProviderChange = (p: ProviderType) => {
@@ -144,6 +156,25 @@ export function ChannelForm({
     } finally {
       setFetching(false)
     }
+  }
+
+  const handleAddModel = () => {
+    const id = newModelId.trim()
+    if (!id) {
+      setAddError('请输入模型 ID')
+      return
+    }
+    if (models.some((model) => model.id === id)) {
+      setAddError('该模型已存在')
+      return
+    }
+    const name = newModelName.trim() || id
+    const normalized = normalizeChannelModel({ id, name, enabled: true, provider })
+    setModels((prev) => [...prev, normalized])
+    setNewModelId('')
+    setNewModelName('')
+    setAddError('')
+    setShowAddModel(false)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -292,11 +323,60 @@ export function ChannelForm({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <Label>模型</Label>
-          <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || (apiKeyRequired && !apiKey)}>
-            {fetching && <Loader2 size={11} className="animate-spin mr-1" />}
-            拉取模型列表
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => { setShowAddModel((v) => !v); setAddError('') }}
+              disabled={disabled}
+            >
+              <Plus size={11} className="mr-1" />
+              手动添加
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || (apiKeyRequired && !apiKey)}>
+              {fetching && <Loader2 size={11} className="animate-spin mr-1" />}
+              拉取模型列表
+            </Button>
+          </div>
         </div>
+        {showAddModel && (
+          <div className="space-y-2 rounded-lg border p-3">
+            <div className="space-y-1">
+              <Label className="text-[11px]">模型 ID</Label>
+              <Input
+                value={newModelId}
+                onChange={(e) => { setNewModelId(e.target.value); setAddError('') }}
+                placeholder="claude-sonnet-4-5"
+                className="font-mono text-[12px] h-8"
+                disabled={disabled}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px]">显示名（可选）</Label>
+              <Input
+                value={newModelName}
+                onChange={(e) => setNewModelName(e.target.value)}
+                placeholder={newModelId.trim() || '默认使用模型 ID'}
+                className="text-[12px] h-8"
+                disabled={disabled}
+              />
+            </div>
+            {addError && <p className="text-[11px] text-red-500">{addError}</p>}
+            <div className="flex items-center gap-2">
+              <Button type="button" size="sm" onClick={handleAddModel} disabled={disabled}>添加</Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => { setShowAddModel(false); setNewModelId(''); setNewModelName(''); setAddError('') }}
+              >
+                取消
+              </Button>
+            </div>
+          </div>
+        )}
         {fetchMsg && <p className="text-[11px] text-muted-foreground">{fetchMsg}</p>}
         {models.length > 0 && (
           <div className="space-y-2">
