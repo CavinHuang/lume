@@ -219,7 +219,9 @@ export async function resolveMediaContents(
 }
 ```
 
-For images, the resolver downloads the CDN-referenced image and returns an `ImImageContent` with a directly accessible URL. If download fails, the content is replaced with a text placeholder `[图片: 下载失败]`.
+For images, the resolver downloads the CDN-referenced image and returns an `ImImageContent` with a directly accessible URL. The downloaded image is stored in a temp directory and the `url` field points to the local file path (e.g. `file:///tmp/lume-media/xxx.jpg`). If download fails, the content is replaced with a text placeholder `[图片: 下载失败]`.
+
+> **Note:** OpenClaw inbound images may reference CDN resources via `encrypt_query_param` + `aes_key` (encrypted) or `full_url` (direct download). The resolver first tries `full_url`; if absent, it uses `encrypt_query_param` with the account's CDN base URL. Decryption is not needed for inbound display — the `full_url` or CDN URL provides the raw image directly.
 
 ### Agent Input Formatting
 
@@ -240,7 +242,7 @@ New module `openclaw-weixin-cdn.ts` implements the full upload pipeline:
 2. **Generate keys**: random `filekey` (16 bytes hex) and `aeskey` (16 bytes)
 3. **Get upload URL**: `POST /ilink/bot/getuploadurl` with filekey, media_type, to_user_id, rawsize, rawfilemd5, filesize, aeskey
 4. **Encrypt**: AES-128-ECB with PKCS7 padding using `node:crypto`
-5. **Upload to CDN**: POST encrypted data to `upload_full_url` (preferred) or CDN base URL with `upload_param`
+5. **Upload to CDN**: POST encrypted data to `upload_full_url` (preferred). If `upload_full_url` is empty, fall back to the account's `baseUrl` as CDN base with `upload_param` as query string
 6. **Return**: `downloadEncryptedQueryParam` from CDN response
 
 ```ts
