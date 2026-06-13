@@ -489,4 +489,149 @@ describe("openclaw-weixin-api", () => {
       expect(isOpenClawWeixinAuthError(error)).toBe(true);
     });
   });
+
+  test("sendImage posts image_item with CDN parameters", async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com",
+      token: "token-1",
+    }, async (url, init) => {
+      calls.push({ url: String(url), body: String(init?.body ?? "") });
+      return Response.json({ ok: true });
+    });
+
+    await api.sendImage!({
+      peerId: "user-1",
+      peerKind: "dm",
+      uploaded: {
+        filekey: "fk-1",
+        downloadEncryptedQueryParam: "download-param-1",
+        aeskey: "0".repeat(32),
+        fileSize: 1024,
+        fileSizeCiphertext: 1040,
+      },
+      contextToken: "ctx-1",
+    });
+
+    expect(calls.length).toBe(1);
+    const body = JSON.parse(calls[0]!.body);
+    expect(body.msg.item_list).toEqual([{
+      type: 2,
+      image_item: {
+        media: {
+          encrypt_query_param: "download-param-1",
+          aes_key: expect.any(String),
+          encrypt_type: 1,
+        },
+        mid_size: 1040,
+      },
+    }]);
+    expect(body.msg.context_token).toBe("ctx-1");
+  });
+
+  test("sendImage with caption sends text then image", async () => {
+    const calls: Array<{ body: string }> = [];
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com",
+      token: "token-1",
+    }, async (_url, init) => {
+      calls.push({ body: String(init?.body ?? "") });
+      return Response.json({ ok: true });
+    });
+
+    await api.sendImage!({
+      peerId: "user-1",
+      peerKind: "dm",
+      uploaded: {
+        filekey: "fk-2",
+        downloadEncryptedQueryParam: "dp-2",
+        aeskey: "1".repeat(32),
+        fileSize: 2048,
+        fileSizeCiphertext: 2064,
+      },
+      caption: "看这张图",
+      contextToken: "ctx-1",
+    });
+
+    expect(calls.length).toBe(2);
+    const textBody = JSON.parse(calls[0]!.body);
+    expect(textBody.msg.item_list).toEqual([{ type: 1, text_item: { text: "看这张图" } }]);
+    const imageBody = JSON.parse(calls[1]!.body);
+    expect(imageBody.msg.item_list[0].type).toBe(2);
+  });
+
+  test("sendFile posts file_item with fileName and len", async () => {
+    const calls: Array<{ body: string }> = [];
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com",
+      token: "token-1",
+    }, async (_url, init) => {
+      calls.push({ body: String(init?.body ?? "") });
+      return Response.json({ ok: true });
+    });
+
+    await api.sendFile!({
+      peerId: "user-1",
+      peerKind: "dm",
+      uploaded: {
+        filekey: "fk-3",
+        downloadEncryptedQueryParam: "dp-3",
+        aeskey: "2".repeat(32),
+        fileSize: 512000,
+        fileSizeCiphertext: 512016,
+      },
+      fileName: "report.pdf",
+      contextToken: "ctx-1",
+    });
+
+    const body = JSON.parse(calls[0]!.body);
+    expect(body.msg.item_list).toEqual([{
+      type: 4,
+      file_item: {
+        media: {
+          encrypt_query_param: "dp-3",
+          aes_key: expect.any(String),
+          encrypt_type: 1,
+        },
+        file_name: "report.pdf",
+        len: "512000",
+      },
+    }]);
+  });
+
+  test("sendVideo posts video_item with CDN parameters", async () => {
+    const calls: Array<{ body: string }> = [];
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com",
+      token: "token-1",
+    }, async (_url, init) => {
+      calls.push({ body: String(init?.body ?? "") });
+      return Response.json({ ok: true });
+    });
+
+    await api.sendVideo!({
+      peerId: "user-1",
+      peerKind: "dm",
+      uploaded: {
+        filekey: "fk-4",
+        downloadEncryptedQueryParam: "dp-4",
+        aeskey: "3".repeat(32),
+        fileSize: 5242880,
+        fileSizeCiphertext: 5242896,
+      },
+      contextToken: "ctx-1",
+    });
+
+    const body = JSON.parse(calls[0]!.body);
+    expect(body.msg.item_list[0]).toMatchObject({
+      type: 5,
+      video_item: {
+        media: {
+          encrypt_query_param: "dp-4",
+          encrypt_type: 1,
+        },
+        video_size: 5242896,
+      },
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import type { ImPeerKind, ImMessageContent } from "@lume/shared";
+import type { WeixinUploadedMedia } from "./openclaw-weixin-media-types";
 
 export interface OpenClawWeixinAccountAuth {
   baseUrl: string;
@@ -32,6 +33,28 @@ export interface OpenClawWeixinApi {
   }): Promise<unknown>;
   notifyStart(): Promise<unknown>;
   notifyStop(): Promise<unknown>;
+  sendImage?(input: {
+    peerId: string;
+    peerKind: ImPeerKind;
+    uploaded: WeixinUploadedMedia;
+    caption?: string;
+    contextToken?: string;
+  }): Promise<unknown>;
+  sendVideo?(input: {
+    peerId: string;
+    peerKind: ImPeerKind;
+    uploaded: WeixinUploadedMedia;
+    caption?: string;
+    contextToken?: string;
+  }): Promise<unknown>;
+  sendFile?(input: {
+    peerId: string;
+    peerKind: ImPeerKind;
+    uploaded: WeixinUploadedMedia;
+    fileName: string;
+    caption?: string;
+    contextToken?: string;
+  }): Promise<unknown>;
 }
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -289,6 +312,44 @@ export function createOpenClawWeixinApi(
     };
   }
 
+  function buildCdnMediaRef(uploaded: WeixinUploadedMedia): Record<string, unknown> {
+    return {
+      encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+      aes_key: Buffer.from(uploaded.aeskey, "hex").toString("base64"),
+      encrypt_type: 1,
+    };
+  }
+
+  async function sendMediaItems(params: {
+    peerId: string;
+    mediaItem: Record<string, unknown>;
+    caption?: string;
+    contextToken?: string;
+  }): Promise<unknown> {
+    const items: Record<string, unknown>[] = [];
+    if (params.caption) {
+      items.push({ type: 1, text_item: { text: params.caption } });
+    }
+    items.push(params.mediaItem);
+
+    let lastResult: unknown;
+    for (const item of items) {
+      lastResult = await postJson("/ilink/bot/sendmessage", {
+        msg: {
+          from_user_id: "",
+          to_user_id: params.peerId,
+          client_id: `lume-im-weixin-${crypto.randomUUID()}`,
+          message_type: 2,
+          message_state: 2,
+          context_token: params.contextToken ?? undefined,
+          item_list: [item],
+        },
+        base_info: baseInfo(),
+      });
+    }
+    return lastResult;
+  }
+
   return {
     async getUpdates(input = {}) {
       try {
@@ -330,6 +391,52 @@ export function createOpenClawWeixinApi(
           }]
         },
         base_info: baseInfo()
+      });
+    },
+
+    async sendImage(input) {
+      return sendMediaItems({
+        peerId: input.peerId,
+        caption: input.caption,
+        contextToken: input.contextToken,
+        mediaItem: {
+          type: 2,
+          image_item: {
+            media: buildCdnMediaRef(input.uploaded),
+            mid_size: input.uploaded.fileSizeCiphertext,
+          },
+        },
+      });
+    },
+
+    async sendVideo(input) {
+      return sendMediaItems({
+        peerId: input.peerId,
+        caption: input.caption,
+        contextToken: input.contextToken,
+        mediaItem: {
+          type: 5,
+          video_item: {
+            media: buildCdnMediaRef(input.uploaded),
+            video_size: input.uploaded.fileSizeCiphertext,
+          },
+        },
+      });
+    },
+
+    async sendFile(input) {
+      return sendMediaItems({
+        peerId: input.peerId,
+        caption: input.caption,
+        contextToken: input.contextToken,
+        mediaItem: {
+          type: 4,
+          file_item: {
+            media: buildCdnMediaRef(input.uploaded),
+            file_name: input.fileName,
+            len: String(input.uploaded.fileSize),
+          },
+        },
       });
     },
 
