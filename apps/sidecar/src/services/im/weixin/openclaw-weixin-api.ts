@@ -1,4 +1,4 @@
-import type { ImPeerKind } from "@lume/shared";
+import type { ImPeerKind, ImMessageContent } from "@lume/shared";
 
 export interface OpenClawWeixinAccountAuth {
   baseUrl: string;
@@ -11,6 +11,7 @@ export interface OpenClawWeixinInboundMessage {
   peerKind: ImPeerKind;
   senderId?: string;
   text: string;
+  contents: ImMessageContent[];
   peerName?: string;
   contextToken?: string;
   messageId?: string;
@@ -127,15 +128,90 @@ function extractText(update: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function extractUnsupportedNotice(update: Record<string, unknown>): string | undefined {
-  const itemList = Array.isArray(update.item_list) ? update.item_list : [];
-  const items = Array.isArray(update.items) ? update.items : [];
-  const types = [...itemList, ...items]
-    .map((item) => asRecord(item).type)
-    .map((type) => typeof type === "number" || typeof type === "string" ? String(type) : undefined)
-    .filter((type): type is string => Boolean(type));
-  if (types.length === 0) return undefined;
-  return `收到一条暂不支持的微信消息（类型: ${Array.from(new Set(types)).join(", ")}）。当前仅支持文本消息。`;
+function extractTextContent(record: Record<string, unknown>): ImMessageContent {
+  const textItem = asRecord(record.text_item);
+  const text = asString(textItem.text) ?? asString(record.text) ?? asString(record.content) ?? "";
+  return { type: "text", text };
+}
+
+function extractImageContent(record: Record<string, unknown>): ImMessageContent {
+  const item = asRecord(record.image_item);
+  const media = asRecord(item.media);
+  return {
+    type: "image",
+    url: asString(media.full_url) ?? asString(item.url) ?? "",
+    thumbnailUrl: asString(asRecord(item.thumb_media).full_url),
+    width: asNumber(item.thumb_width),
+    height: asNumber(item.thumb_height),
+  };
+}
+
+function extractVoiceContent(record: Record<string, unknown>): ImMessageContent {
+  const item = asRecord(record.voice_item);
+  return {
+    type: "voice",
+    text: asString(item.text),
+    playtime: asNumber(item.playtime),
+  };
+}
+
+function extractFileContent(record: Record<string, unknown>): ImMessageContent {
+  const item = asRecord(record.file_item);
+  const len = typeof item.len === "string" ? Number(item.len) : (asNumber(item.len) ?? 0);
+  return {
+    type: "file",
+    fileName: asString(item.file_name) ?? "unknown",
+    fileSize: Number.isFinite(len) ? len : 0,
+    md5: asString(item.md5),
+  };
+}
+
+function extractVideoContent(record: Record<string, unknown>): ImMessageContent {
+  const item = asRecord(record.video_item);
+  return {
+    type: "video",
+    thumbnailUrl: asString(asRecord(item.thumb_media).full_url),
+    playLength: asNumber(item.play_length),
+    fileSize: asNumber(item.video_size),
+  };
+}
+
+function extractContents(update: Record<string, unknown>): ImMessageContent[] {
+  const items = [
+    ...(Array.isArray(update.item_list) ? update.item_list : []),
+    ...(Array.isArray(update.items) ? update.items : []),
+  ];
+
+  if (items.length === 0) {
+    const directText = extractText(update);
+    return directText ? [{ type: "text", text: directText }] : [];
+  }
+
+  return items.map(item => {
+    const record = asRecord(item);
+    switch (record.type) {
+      case 1: return extractTextContent(record);
+      case 2: return extractImageContent(record);
+      case 3: return extractVoiceContent(record);
+      case 4: return extractFileContent(record);
+      case 5: return extractVideoContent(record);
+      default: return { type: "text" as const, text: `[不支持的消息类型: ${record.type}]` };
+    }
+  });
+}
+
+function textSummaryForContents(contents: ImMessageContent[]): string {
+  if (contents.length === 0) return "";
+  if (contents.length === 1 && contents[0]?.type === "text") return contents[0].text;
+  return contents.map(c => {
+    switch (c.type) {
+      case "text": return c.text;
+      case "image": return "[图片]";
+      case "voice": return c.text ? `[语音: ${c.text}]` : "[语音]";
+      case "file": return `[文件: ${c.fileName}]`;
+      case "video": return "[视频]";
+    }
+  }).join(" ");
 }
 
 function parseInboundMessage(raw: unknown): OpenClawWeixinInboundMessage | null {
@@ -151,14 +227,18 @@ function parseInboundMessage(raw: unknown): OpenClawWeixinInboundMessage | null 
     ?? senderId
     ?? asString(update.user_name)
     ?? asString(update.to_user_name);
-  const text = extractText(update) ?? extractUnsupportedNotice(update);
-  if (!peerId || !text) return null;
+  if (!peerId) return null;
+
+  const contents = extractContents(update);
+  if (contents.length === 0) return null;
+  const text = textSummaryForContents(contents);
 
   return {
     peerId,
     peerKind: update.group_id ? "group" : normalizePeerKind(update.peer_kind ?? update.peerKind ?? update.chat_type),
     senderId,
     text,
+    contents,
     peerName: asString(update.peer_name) ?? asString(update.peerName) ?? asString(update.nickname),
     contextToken: asString(update.context_token) ?? asString(update.contextToken),
     messageId: asString(update.message_id) ?? asString(update.messageId) ?? (
