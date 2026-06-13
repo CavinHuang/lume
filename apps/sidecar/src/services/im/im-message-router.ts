@@ -2,12 +2,15 @@ import {
   AGENT_IPC_CHANNELS,
   type AgentAskUserQuestionRequest,
   type AgentMessageAppendedEvent,
+  type AgentMessageAttachmentInput,
   type AgentSendInput,
   type AgentThreadMeta,
   type AgentThreadSource,
   type AgentToolPermissionDecision,
   type AgentToolPermissionRequest,
   type AgentToolPermissionResponseInput,
+  type ImImageContent,
+  type ImMessageContent,
   type ImThreadBinding,
   type ImPeerKind,
   type ImProvider,
@@ -25,6 +28,7 @@ import {
   upsertImThreadBinding
 } from "./im-thread-binding-store";
 import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-send-service";
+import { resolveMediaContents } from "./im-media-resolver";
 
 export interface InboundImRouteMessage {
   provider: ImProvider;
@@ -36,6 +40,7 @@ export interface InboundImRouteMessage {
   peerName?: string;
   senderId?: string;
   text: string;
+  contents?: ImMessageContent[];
   contextToken?: string;
   messageId?: string;
 }
@@ -503,9 +508,28 @@ export async function routeInboundImMessage(
   }
 
   const sendMessage = deps.sendMessage ?? defaultSendMessage;
+
+  // Resolve media contents (download images, etc.)
+  const messageContents = message.contents ?? [];
+  const resolvedContents = messageContents.length > 0
+    ? await resolveMediaContents(messageContents)
+    : [];
+
+  // Build image attachments for multimodal model input
+  const mediaAttachments: AgentMessageAttachmentInput[] = resolvedContents
+    .filter((c): c is ImImageContent => c.type === "image" && !!c.url)
+    .map((c, index) => ({
+      id: `im-media-${message.messageId ?? Date.now()}-${index}`,
+      filename: `im-image-${index}.jpg`,
+      mediaType: "image/jpeg",
+      size: 0,
+      threadPath: c.url,
+    }));
+
   await sendMessage({
     threadId: binding.threadId,
     userMessage: userMessageForMessage(message),
+    messageAttachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
     workspaceId: message.workspaceId,
     chatType: message.peerKind === "group" ? "group" : "direct",
     threadType: message.peerKind === "group" ? "group" : "main",

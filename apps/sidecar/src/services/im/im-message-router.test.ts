@@ -612,4 +612,73 @@ describe("im-message-router", () => {
       })
     ]);
   });
+
+  test("routes message with image content and passes to agent", async () => {
+    const sent: AgentSendInput[] = [];
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "acct-1",
+      workspaceId: "workspace-1",
+      peerKind: "dm",
+      peerId: "user-img",
+      text: "[图片]",
+      contents: [{ type: "image", url: "https://cdn.example.com/img.jpg" }],
+      messageId: "msg-img-1",
+    }, {
+      createThread: (title) => ({ id: "thread-img" }),
+      sendMessage(input) {
+        sent.push(input);
+      },
+      sendBoundTextMessage: async () => ({ ok: true }),
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.userMessage).toContain("图片");
+    expect(sent[0]!.messageMetadata?.im).toMatchObject({
+      peerId: "user-img",
+      peerKind: "dm",
+    });
+  });
+
+  test("routes message with voice content using text field", async () => {
+    const sent: AgentSendInput[] = [];
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "acct-1",
+      peerKind: "dm",
+      peerId: "user-voice",
+      text: "[语音: 你好]",
+      contents: [{ type: "voice", text: "你好", playtime: 2000 }],
+      messageId: "msg-voice-1",
+    }, {
+      createThread: (title) => ({ id: "thread-voice" }),
+      sendMessage(input) {
+        sent.push(input);
+      },
+      sendBoundTextMessage: async () => ({ ok: true }),
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.userMessage).toContain("你好");
+  });
+
+  test("routes message without contents (backward compat)", async () => {
+    const sent: AgentSendInput[] = [];
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "acct-1",
+      peerKind: "dm",
+      peerId: "user-text",
+      text: "plain text message",
+    }, {
+      createThread: (title) => ({ id: "thread-text" }),
+      sendMessage(input) {
+        sent.push(input);
+      },
+      sendBoundTextMessage: async () => ({ ok: true }),
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.userMessage).toBe("plain text message");
+  });
 });
