@@ -35,20 +35,50 @@ export function createSdkImTools(input: CreateImToolsInput): ToolDefinition[] {
   return [
     createSdkJsonResultTool({
       name: "send_im_message",
-      description: `Send a message to the IM conversation bound to this Lume thread. Supports text, images (via URL), and file attachments (via local path). The destination is fixed by the current thread binding and cannot be overridden.
-
-Parameters:
-- text: Send a text message (or use as caption alongside media)
-- image_url: Send an image from a URL
-- file_path: Send a file from a local path
-
-At least one parameter must be provided.`,
+      description: "Send a text reply to the IM conversation bound to this Lume thread. The destination is fixed by the current thread binding and cannot be overridden.",
       inputSchema: {
         type: "object",
         properties: {
-          text: { type: "string", description: "Text message or caption for media." },
-          image_url: { type: "string", description: "URL of an image to send via WeChat." },
+          text: { type: "string", description: "Text message to send.", minLength: 1 }
+        },
+        required: ["text"]
+      },
+      async call(args) {
+        const binding = getImThreadBindingByThreadId(input.threadId);
+        if (!binding) {
+          throw new Error("当前线程未绑定 IM 会话，无法发送。");
+        }
+        const text = typeof args.text === "string" && args.text.trim() ? args.text.trim() : "";
+        if (!text) {
+          throw new Error("text 必填");
+        }
+        const sendTextMessage = input.sendTextMessage ?? sendBoundImTextMessage;
+        await sendTextMessage({ binding, text });
+        return {
+          ok: true,
+          provider: binding.provider,
+          accountId: binding.accountId,
+          peerKind: binding.peerKind,
+          peerId: binding.peerId,
+          warning: "已发送到绑定的 IM 会话；请勿在当前线程中声称已发送给其他联系人。",
+        };
+      },
+    }),
+    createSdkJsonResultTool({
+      name: "send_im_media",
+      description: `Send an image or file to the IM conversation bound to this Lume thread. Use this when you need to share a generated image, chart, diagram, or file with the user on the other end. The destination is fixed by the current thread binding.
+
+Supports:
+- image_url: Download an image from a URL and send it
+- file_path: Read a local file and send it as an attachment
+
+Provide exactly one of image_url or file_path. You may optionally include a caption.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          image_url: { type: "string", description: "URL of an image to download and send via WeChat." },
           file_path: { type: "string", description: "Local file path to send as attachment." },
+          caption: { type: "string", description: "Optional caption text to send before the media." },
         },
       },
       async call(args) {
@@ -57,12 +87,12 @@ At least one parameter must be provided.`,
           throw new Error("当前线程未绑定 IM 会话，无法发送。");
         }
 
-        const text = typeof args.text === "string" && args.text.trim() ? args.text.trim() : undefined;
         const imageUrl = typeof args.image_url === "string" && args.image_url.trim() ? args.image_url.trim() : undefined;
         const filePath = typeof args.file_path === "string" && args.file_path.trim() ? args.file_path.trim() : undefined;
+        const caption = typeof args.caption === "string" && args.caption.trim() ? args.caption.trim() : undefined;
 
-        if (!text && !imageUrl && !filePath) {
-          throw new Error("必须提供 text、image_url 或 file_path 之一。");
+        if (!imageUrl && !filePath) {
+          throw new Error("必须提供 image_url 或 file_path 之一。");
         }
 
         const sendMediaMessage = input.sendMediaMessage ?? sendBoundImMediaMessage;
@@ -79,7 +109,7 @@ At least one parameter must be provided.`,
             mediaType: "image",
             fileData,
             fileName: extractFileName(imageUrl, "image.jpg"),
-            caption: text,
+            caption,
           });
           return {
             ok: true,
@@ -87,7 +117,6 @@ At least one parameter must be provided.`,
             provider: binding.provider,
             accountId: binding.accountId,
             peerId: binding.peerId,
-            warning: "已发送图片到绑定的 IM 会话。",
           };
         }
 
@@ -99,7 +128,7 @@ At least one parameter must be provided.`,
             mediaType: "file",
             fileData,
             fileName: basename(filePath),
-            caption: text,
+            caption,
           });
           return {
             ok: true,
@@ -107,21 +136,10 @@ At least one parameter must be provided.`,
             provider: binding.provider,
             accountId: binding.accountId,
             peerId: binding.peerId,
-            warning: "已发送文件到绑定的 IM 会话。",
           };
         }
 
-        // Text only (backward compatible)
-        const sendTextMessage = input.sendTextMessage ?? sendBoundImTextMessage;
-        await sendTextMessage({ binding, text: text! });
-        return {
-          ok: true,
-          provider: binding.provider,
-          accountId: binding.accountId,
-          peerKind: binding.peerKind,
-          peerId: binding.peerId,
-          warning: "已发送到绑定的 IM 会话；请勿在当前线程中声称已发送给其他联系人。",
-        };
+        throw new Error("未提供有效的媒体参数。");
       },
     })
   ];

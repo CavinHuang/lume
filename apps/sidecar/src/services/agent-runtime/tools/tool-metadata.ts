@@ -451,6 +451,14 @@ registerToolMetadata({
   allowedInPlanMode: false
 });
 
+registerToolMetadata({
+  name: "send_im_media",
+  category: "execute",
+  riskLevel: "medium",
+  description: "向当前线程绑定的 IM 会话发送图片或文件",
+  allowedInPlanMode: false
+});
+
 // UI 个性化工具
 registerToolMetadata({
   name: "personalize_ui",

@@ -28,11 +28,12 @@ describe("create-im-tools", () => {
     }
   });
 
-  test("rejects unbound threads", async () => {
-    const [tool] = createSdkImTools({
+  test("send_im_message rejects unbound threads", async () => {
+    const tools = createSdkImTools({
       threadId: "thread-unbound",
       sendTextMessage: async () => ({ ok: true })
     });
+    const tool = tools.find(t => t.name === "send_im_message");
     if (!tool) throw new Error("send_im_message tool missing");
 
     const result = await tool.call({ text: "hello" }, { cwd: "/tmp" } as never);
@@ -44,7 +45,7 @@ describe("create-im-tools", () => {
     expect(String(result.content)).toContain("未绑定 IM 会话");
   });
 
-  test("sends only to the bound peer and returns a delivered warning", async () => {
+  test("send_im_message sends only to the bound peer", async () => {
     upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-1",
@@ -54,13 +55,14 @@ describe("create-im-tools", () => {
       contextToken: "ctx-1"
     });
     const sent: Array<{ peerId: string; text: string }> = [];
-    const [tool] = createSdkImTools({
+    const tools = createSdkImTools({
       threadId: "thread-1",
       sendTextMessage: async ({ binding, text }) => {
         sent.push({ peerId: binding.peerId, text });
         return { ok: true };
       }
     });
+    const tool = tools.find(t => t.name === "send_im_message");
     if (!tool) throw new Error("send_im_message tool missing");
 
     const result = await tool.call({
@@ -75,15 +77,20 @@ describe("create-im-tools", () => {
     });
   });
 
-  test("registers send_im_message as an execution tool outside plan mode", () => {
+  test("registers both send_im_message and send_im_media as execute tools", () => {
     expect(getToolMetadata("send_im_message")).toMatchObject({
+      category: "execute",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    expect(getToolMetadata("send_im_media")).toMatchObject({
       category: "execute",
       riskLevel: "medium",
       allowedInPlanMode: false
     });
   });
 
-  test("sends image via URL when image_url is provided", async () => {
+  test("send_im_media sends image via URL", async () => {
     upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-img",
@@ -94,16 +101,16 @@ describe("create-im-tools", () => {
     });
 
     const mediaSent: Array<{ mediaType: string; fileName: string }> = [];
-    const [tool] = createSdkImTools({
+    const tools = createSdkImTools({
       threadId: "thread-img-tool",
       sendMediaMessage: async (input) => {
         mediaSent.push({ mediaType: input.mediaType, fileName: input.fileName });
         return { ok: true };
       },
     });
-    if (!tool) throw new Error("tool missing");
+    const tool = tools.find(t => t.name === "send_im_media");
+    if (!tool) throw new Error("send_im_media tool missing");
 
-    // Mock fetch to return fake image data
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () =>
       new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200, statusText: "OK" });
@@ -124,7 +131,7 @@ describe("create-im-tools", () => {
     }
   });
 
-  test("sends file via local path when file_path is provided", async () => {
+  test("send_im_media sends file via local path", async () => {
     upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-file",
@@ -137,14 +144,15 @@ describe("create-im-tools", () => {
     writeFileSync(tempFile, "test file content");
 
     const mediaSent: Array<{ mediaType: string; fileName: string }> = [];
-    const [tool] = createSdkImTools({
+    const tools = createSdkImTools({
       threadId: "thread-file-tool",
       sendMediaMessage: async (input) => {
         mediaSent.push({ mediaType: input.mediaType, fileName: input.fileName });
         return { ok: true };
       },
     });
-    if (!tool) throw new Error("tool missing");
+    const tool = tools.find(t => t.name === "send_im_media");
+    if (!tool) throw new Error("send_im_media tool missing");
 
     const result = await tool.call({
       file_path: tempFile,
@@ -157,31 +165,7 @@ describe("create-im-tools", () => {
     expect(mediaSent[0]?.fileName).toBe("test-file.txt");
   });
 
-  test("text still works as before when only text is provided", async () => {
-    upsertImThreadBinding({
-      provider: "weixin",
-      accountId: "account-text",
-      peerKind: "dm",
-      peerId: "user-text",
-      threadId: "thread-text-tool",
-    });
-
-    const textSent: string[] = [];
-    const [tool] = createSdkImTools({
-      threadId: "thread-text-tool",
-      sendTextMessage: async ({ text }) => {
-        textSent.push(text);
-        return { ok: true };
-      },
-    });
-    if (!tool) throw new Error("tool missing");
-
-    await tool.call({ text: "hello" }, { cwd: "/tmp" } as never);
-
-    expect(textSent).toEqual(["hello"]);
-  });
-
-  test("rejects when no text, image_url, or file_path is provided", async () => {
+  test("send_im_media rejects when no image_url or file_path", async () => {
     upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-empty",
@@ -190,13 +174,38 @@ describe("create-im-tools", () => {
       threadId: "thread-empty-tool",
     });
 
-    const [tool] = createSdkImTools({
+    const tools = createSdkImTools({
       threadId: "thread-empty-tool",
       sendTextMessage: async () => ({ ok: true }),
     });
-    if (!tool) throw new Error("tool missing");
+    const tool = tools.find(t => t.name === "send_im_media");
+    if (!tool) throw new Error("send_im_media tool missing");
 
     const result = await tool.call({}, { cwd: "/tmp" } as never);
     expect(result).toMatchObject({ type: "tool_result", is_error: true });
+  });
+
+  test("send_im_media rejects unbound threads", async () => {
+    const tools = createSdkImTools({
+      threadId: "thread-unbound-media",
+      sendMediaMessage: async () => ({ ok: true }),
+    });
+    const tool = tools.find(t => t.name === "send_im_media");
+    if (!tool) throw new Error("send_im_media tool missing");
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200 });
+
+    try {
+      const result = await tool.call({
+        image_url: "https://example.com/img.png",
+      }, { cwd: "/tmp" } as never);
+
+      expect(result).toMatchObject({ type: "tool_result", is_error: true });
+      expect(String(result.content)).toContain("未绑定 IM 会话");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
