@@ -134,3 +134,49 @@ export function normalizeImAccountLabel(input: {
   const uin = input.uin?.trim();
   return uin ? `${providerLabel} ${uin}` : providerLabel;
 }
+
+// ─── Multimedia Content Types ───
+
+export type ImMessageContent =
+  | ImTextContent
+  | ImImageContent
+  | ImVoiceContent
+  | ImFileContent
+  | ImVideoContent;
+
+export interface ImTextContent {
+  type: "text";
+  text: string;
+}
+
+export interface ImImageContent {
+  type: "image";
+  /** Directly accessible image URL (downloaded from CDN or direct link) */
+  url: string;
+  thumbnailUrl?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface ImVoiceContent {
+  type: "voice";
+  /** Speech-to-text result from WeChat */
+  text?: string;
+  /** Duration in milliseconds */
+  playtime?: number;
+}
+
+export interface ImFileContent {
+  type: "file";
+  fileName: string;
+  fileSize: number;
+  md5?: string;
+  downloadUrl?: string;
+}
+
+export interface ImVideoContent {
+  type: "video";
+  thumbnailUrl?: string;
+  playLength?: number;
+  fileSize?: number;
+}
