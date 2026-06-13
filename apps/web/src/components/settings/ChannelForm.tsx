@@ -31,6 +31,12 @@ function normalizeModelSearch(value: string): string {
   return value.trim().toLowerCase()
 }
 
+export function mergeChannelModels(existing: ChannelModel[], fetched: ChannelModel[]): ChannelModel[] {
+  const fetchedIds = new Set(fetched.map((m) => m.id))
+  const preserved = existing.filter((m) => !fetchedIds.has(m.id))
+  return [...fetched, ...preserved]
+}
+
 export function filterChannelModels(models: ChannelModel[], query: string): ChannelModel[] {
   const normalizedQuery = normalizeModelSearch(query)
   if (!normalizedQuery) return models
