@@ -134,7 +134,7 @@ export function ChannelForm({
     try {
       const r = await fetchChannelModels({ provider, baseUrl, apiKey })
       if (r.success) {
-        setModels(r.models)
+        setModels((prev) => mergeChannelModels(prev, r.models))
         setFetchMsg(`获取到 ${r.models.length} 个模型`)
       } else {
         setFetchMsg(r.message)
