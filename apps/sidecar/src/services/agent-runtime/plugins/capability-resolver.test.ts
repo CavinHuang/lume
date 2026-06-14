@@ -193,3 +193,91 @@ describe("resolvePluginCapabilities — hooks", () => {
     }
   });
 });
+
+describe("resolvePluginCapabilities — mcp", () => {
+  test("parses MCP servers and binds pluginId", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "acme");
+      await writeJson(join(pluginRoot, "mcp.json"), {
+        mcpServers: {
+          "acme-api": { command: "node", args: ["server.js"], env: { KEY: "v" } },
+        },
+      });
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          mcpServersConfigPath: "./mcp.json",
+          commandTools: [],
+        },
+        permissions: { mcpServers: { register: true } },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.mcpServers).toEqual([
+        {
+          pluginId: "acme",
+          serverId: "acme-api",
+          entry: expect.objectContaining({
+            enabled: true,
+            transport: "stdio",
+            command: "node",
+            args: ["server.js"],
+          }),
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("skips MCP entirely when permissions.mcpServers.register is false", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "no-register");
+      await writeJson(join(pluginRoot, "mcp.json"), {
+        mcpServers: { "acme-api": { command: "node" } },
+      });
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          mcpServersConfigPath: "./mcp.json",
+          commandTools: [],
+        },
+        permissions: { mcpServers: { register: false } },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.mcpServers).toEqual([]);
+      expect(result.diagnostics.map((d) => d.code)).toContain("capability_filtered");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("emits invalid_manifest when the MCP config cannot be parsed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "broken");
+      await mkdir(pluginRoot, { recursive: true });
+      await writeFile(join(pluginRoot, "mcp.json"), "{ broken", "utf-8");
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          mcpServersConfigPath: "./mcp.json",
+          commandTools: [],
+        },
+        permissions: { mcpServers: { register: true } },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.mcpServers).toEqual([]);
+      expect(result.diagnostics.map((d) => d.code)).toContain("invalid_manifest");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

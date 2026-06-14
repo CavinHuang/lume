@@ -8,7 +8,7 @@ import {
   type PluginDiagnostic,
   type SkillDefinition,
 } from "@lume/agent-sdk";
-import type { McpServerEntry } from "@lume/shared";
+import { parseMcpImportPayload, type McpServerEntry } from "@lume/shared";
 import type { RegisteredPlugin } from "./plugin-registry.js";
 
 export interface ResolvedSkill {
@@ -171,10 +171,45 @@ async function resolveHooks(
 }
 
 async function resolveMcpServers(
-  _plugin: RegisteredPlugin,
-  _diagnostics: PluginDiagnostic[],
+  plugin: RegisteredPlugin,
+  diagnostics: PluginDiagnostic[],
 ): Promise<ResolvedMcpServer[]> {
-  return [];
+  if (!plugin.capabilities.mcpServersConfigPath) return [];
+
+  if (plugin.permissions.mcpServers?.register === false) {
+    diagnostics.push({
+      pluginId: plugin.pluginId,
+      version: plugin.version,
+      severity: "info",
+      code: "capability_filtered",
+      message: "MCP servers skipped because permissions.mcpServers.register is false.",
+      path: plugin.capabilities.mcpServersConfigPath,
+    });
+    return [];
+  }
+
+  const mcpFile = resolve(plugin.root, plugin.capabilities.mcpServersConfigPath);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(mcpFile, "utf-8"));
+  } catch (error) {
+    diagnostics.push({
+      pluginId: plugin.pluginId,
+      version: plugin.version,
+      severity: "warning",
+      code: "invalid_manifest",
+      message: `Failed to read MCP config ${plugin.capabilities.mcpServersConfigPath}: ${error instanceof Error ? error.message : String(error)}`,
+      path: plugin.capabilities.mcpServersConfigPath,
+    });
+    return [];
+  }
+
+  const config = parseMcpImportPayload(raw);
+  return Object.entries(config.servers).map(([serverId, entry]) => ({
+    pluginId: plugin.pluginId,
+    serverId,
+    entry,
+  }));
 }
 
 function resolveCommandTools(_plugin: RegisteredPlugin): ResolvedCommandTool[] {
