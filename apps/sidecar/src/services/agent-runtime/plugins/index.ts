@@ -3,6 +3,14 @@ export { PluginRegistry } from "./plugin-registry.js";
 export { PluginPermissionRuntime } from "./permission-runtime.js";
 export type { PluginPermissionRuntimeInput, SensitiveCheckResult, RuntimeStateResult } from "./permission-runtime.js";
 export { FilePluginStateStore } from "./plugin-state-store.js";
+export { resolvePluginCapabilities } from "./capability-resolver.js";
+export type {
+  ResolvedPluginCapability,
+  ResolvedPluginCapabilitiesResult,
+  ResolvedSkill,
+  ResolvedMcpServer,
+  ResolvedCommandTool,
+} from "./capability-resolver.js";
 
 export interface PluginPermissionContext {
   pluginName: string;
