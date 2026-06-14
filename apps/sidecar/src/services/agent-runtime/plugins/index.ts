@@ -3,6 +3,8 @@ export { PluginRegistry } from "./plugin-registry.js";
 export { PluginPermissionRuntime } from "./permission-runtime.js";
 export type { PluginPermissionRuntimeInput, SensitiveCheckResult, RuntimeStateResult } from "./permission-runtime.js";
 export { FilePluginStateStore } from "./plugin-state-store.js";
+export { assemblePluginRuntime } from "./runtime-bridge.js";
+export type { PluginRuntimeAssembly } from "./runtime-bridge.js";
 export { resolvePluginCapabilities } from "./capability-resolver.js";
 export type {
   ResolvedPluginCapability,
