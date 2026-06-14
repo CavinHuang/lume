@@ -39,7 +39,7 @@ mock.module("sonner", () => ({
   },
 }))
 
-const { resolveAbsolutePath, resolveFileLinkActions } = await import("./file-link-actions")
+const { resolveAbsolutePath, resolveFileLinkActions, buildSaveAsFilter } = await import("./file-link-actions")
 
 const sidecarCalls = () => calls.filter((c) => c.fn === "sidecarCall")
 
@@ -164,5 +164,31 @@ describe("resolveFileLinkActions", () => {
     await resolveFileLinkActions({ source: "thread", relPath: "a.md" }).openInSystem()
     expect(toasts[0]).toMatchObject({ kind: "error" })
     expect(calls.some((c) => c.fn === "openInSystem")).toBe(false)
+  })
+})
+
+describe("buildSaveAsFilter", () => {
+  test("normal extension derives filter (basenames absolute path)", () => {
+    expect(buildSaveAsFilter("/data/threads/t1/plans/research.md")).toEqual([
+      { name: "md", extensions: ["md"] },
+    ])
+  })
+
+  test("no extension returns empty filter", () => {
+    expect(buildSaveAsFilter("/data/threads/t1/NOTES")).toEqual([])
+  })
+
+  test("leading-dot dotfile returns empty filter", () => {
+    expect(buildSaveAsFilter("/data/threads/t1/.gitignore")).toEqual([])
+  })
+
+  test("trailing dot returns empty filter", () => {
+    expect(buildSaveAsFilter("/data/threads/t1/file.")).toEqual([])
+  })
+
+  test("extension is lowercased", () => {
+    expect(buildSaveAsFilter("/data/threads/t1/REPORT.PDF")).toEqual([
+      { name: "pdf", extensions: ["pdf"] },
+    ])
   })
 })
