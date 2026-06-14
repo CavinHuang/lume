@@ -11,6 +11,8 @@ import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
+import { useThreadFileEnv } from './thread-file-env'
+import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentThreadFileDataResult, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
@@ -955,11 +957,12 @@ export function MarkdownCode({
   onOpenThreadFile,
   ...rest
 }: MarkdownCodeProps & { onOpenThreadFile?: (path: string) => void }) {
+  const env = useThreadFileEnv()
   const text = flattenText(children)
   const filePath = !block ? normalizeThreadFilePathCandidate(text) : null
 
   if (filePath && onOpenThreadFile) {
-    return (
+    const button = (
       <button
         type="button"
         data-thread-file-link="true"
@@ -982,6 +985,14 @@ export function MarkdownCode({
         </span>
         <span className="truncate">{children}</span>
       </button>
+    )
+    return (
+      <FileLinkContextMenu
+        context={{ source: "thread", relPath: filePath, threadId: env.threadId, workspaceSlug: env.workspaceSlug }}
+        onPreview={() => onOpenThreadFile(filePath)}
+      >
+        {button}
+      </FileLinkContextMenu>
     )
   }
 

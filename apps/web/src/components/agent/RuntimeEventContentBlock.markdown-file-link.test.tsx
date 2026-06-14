@@ -17,7 +17,10 @@ mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
   openInSystem: async () => undefined,
+  revealPathInSystem: async () => undefined,
   saveTextFileDialog: async () => undefined,
+  saveFilePathDialog: async () => undefined,
+  copyFile: async () => undefined,
   sidecarCall: async () => undefined,
 }))
 
