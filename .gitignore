@@ -11,6 +11,7 @@ apps/desktop/src-tauri/binaries/
 apps/desktop/src-tauri/resources/
 .cursor
 .omx/
+.superpowers/
 .codex/*
 !.codex/agents/
 !.codex/agents/**
@@ -19,3 +20,4 @@ apps/desktop/src-tauri/resources/
 .codex/skills/.system/**
 !.codex/prompts/
 !.codex/prompts/**
+__pycache__
