@@ -46,6 +46,8 @@ export const openInSystem = (path: string) =>
   invoke<void>('open_in_system', { path })
 export const revealPathInSystem = (path: string) =>
   invoke<void>('reveal_path_in_system', { path })
+export const writeClipboardText = (text: string) =>
+  invoke<void>('write_clipboard_text', { text })
 export const localFilePreviewUrl = (path: string) => convertFileSrc(path)
 
 let pendingDesktopUpdate: Update | null = null
