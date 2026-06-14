@@ -1,7 +1,17 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
+import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment, type AgentAttachmentGridItem } from './AgentAttachmentGrid'
+import { ThreadFileEnvProvider } from './thread-file-env'
+
+mock.module("@/lib/desktop-api", () => ({
+  sidecarCall: async () => "/dir",
+  openInSystem: async () => undefined,
+  revealPathInSystem: async () => undefined,
+  saveFilePathDialog: async () => ({ path: null }),
+  copyFile: async () => undefined,
+}))
+mock.module("sonner", () => ({ toast: { success: () => undefined, error: () => undefined } }))
 
 describe('AgentAttachmentGrid', () => {
   test('classifies image attachments by media type and common image extension', () => {
@@ -37,5 +47,29 @@ describe('AgentAttachmentGrid', () => {
     expect(markup).toContain('data-agent-attachment-kind="file"')
     expect(markup).toContain('brief.xlsx')
     expect(markup).toContain('XLSX')
+  })
+})
+
+describe('AgentAttachmentGrid context menu', () => {
+  test('wraps attachment with threadPath in FileLinkContextMenu', () => {
+    const items: AgentAttachmentGridItem[] = [
+      { id: '1', filename: 'report.pdf', mediaType: 'application/pdf', size: 10, threadPath: 'files/report.pdf' },
+    ]
+    const markup = renderToStaticMarkup(
+      <ThreadFileEnvProvider value={{ threadId: 't1', workspaceSlug: 'ws' }}>
+        <AgentAttachmentGrid attachments={items} onOpenFile={() => undefined} />
+      </ThreadFileEnvProvider>,
+    )
+    expect(markup).toContain('data-slot="context-menu-trigger"')
+  })
+
+  test('does not wrap attachment without threadPath (pending/local)', () => {
+    const items: AgentAttachmentGridItem[] = [
+      { id: '1', filename: 'pending.png', mediaType: 'image/png', size: 10 },
+    ]
+    const markup = renderToStaticMarkup(
+      <AgentAttachmentGrid attachments={items} onOpenImage={() => undefined} />,
+    )
+    expect(markup).not.toContain('data-slot="context-menu-trigger"')
   })
 })

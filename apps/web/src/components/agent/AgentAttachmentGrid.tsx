@@ -1,5 +1,7 @@
 import { FileText, X } from 'lucide-react'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
+import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
+import { useThreadFileEnv } from './thread-file-env'
 import { cn } from '@/lib/utils'
 
 export interface AgentAttachmentGridItem {
@@ -44,6 +46,7 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
   onOpenFile,
   onOpenImage,
 }: AgentAttachmentGridProps<T>) {
+  const env = useThreadFileEnv()
   if (attachments.length === 0) return null
 
   return (
@@ -57,7 +60,7 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
       {attachments.map((attachment) => {
         const image = isImageAttachment(attachment)
         const previewUrl = imageSrcById[attachment.id] ?? attachment.previewUrl
-        return (
+        const attachNode = (
           <div
             key={attachment.id}
             data-agent-attachment-kind={image ? 'image' : 'file'}
@@ -117,6 +120,17 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
             )}
           </div>
         )
+
+        const canMenu = Boolean(attachment.threadPath) && Boolean(env.threadId)
+        return canMenu ? (
+          <FileLinkContextMenu
+            key={attachment.id}
+            context={{ source: 'thread', relPath: attachment.threadPath!, threadId: env.threadId, workspaceSlug: env.workspaceSlug }}
+            onPreview={() => (image ? onOpenImage?.(attachment) : onOpenFile?.(attachment))}
+          >
+            {attachNode}
+          </FileLinkContextMenu>
+        ) : attachNode
       })}
     </div>
   )
