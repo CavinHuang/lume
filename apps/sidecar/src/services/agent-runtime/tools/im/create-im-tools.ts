@@ -5,6 +5,9 @@ import { basename } from "node:path";
 import { getImThreadBindingByThreadId } from "../../../im/im-thread-binding-store";
 import { sendBoundImTextMessage, sendBoundImMediaMessage } from "../../../im/im-send-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
+import { createLogger } from "../../../infra/logger";
+
+const log = createLogger("im-tool");
 
 export interface CreateImToolsInput {
   threadId: string;
@@ -46,12 +49,14 @@ export function createSdkImTools(input: CreateImToolsInput): ToolDefinition[] {
       async call(args) {
         const binding = getImThreadBindingByThreadId(input.threadId);
         if (!binding) {
+          log.warn("发送文本失败：线程未绑定 IM 会话", { threadId: input.threadId });
           throw new Error("当前线程未绑定 IM 会话，无法发送。");
         }
         const text = typeof args.text === "string" && args.text.trim() ? args.text.trim() : "";
         if (!text) {
           throw new Error("text 必填");
         }
+        log.info("工具调用 send_im_message", { threadId: input.threadId, peerId: binding.peerId, textLength: text.length });
         const sendTextMessage = input.sendTextMessage ?? sendBoundImTextMessage;
         await sendTextMessage({ binding, text });
         return {
@@ -84,6 +89,7 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
       async call(args) {
         const binding = getImThreadBindingByThreadId(input.threadId);
         if (!binding) {
+          log.warn("发送媒体失败：线程未绑定 IM 会话", { threadId: input.threadId });
           throw new Error("当前线程未绑定 IM 会话，无法发送。");
         }
 
@@ -94,6 +100,8 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
         if (!imageUrl && !filePath) {
           throw new Error("必须提供 image_url 或 file_path 之一。");
         }
+
+        log.info("工具调用 send_im_media", { threadId: input.threadId, peerId: binding.peerId, hasImageUrl: !!imageUrl, hasFilePath: !!filePath, hasCaption: !!caption });
 
         const sendMediaMessage = input.sendMediaMessage ?? sendBoundImMediaMessage;
 
@@ -120,19 +128,24 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
           };
         }
 
-        // File via local path
+        // File via local path — infer media type from extension
         if (filePath) {
           const fileData = readFileSync(filePath);
+          const ext = basename(filePath).split(".").pop()?.toLowerCase() ?? "";
+          const mediaType: "image" | "file" =
+            ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext)
+              ? "image"
+              : "file";
           await sendMediaMessage({
             binding,
-            mediaType: "file",
+            mediaType,
             fileData,
             fileName: basename(filePath),
             caption,
           });
           return {
             ok: true,
-            type: "file",
+            type: mediaType,
             provider: binding.provider,
             accountId: binding.accountId,
             peerId: binding.peerId,

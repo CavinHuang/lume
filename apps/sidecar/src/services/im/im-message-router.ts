@@ -9,7 +9,6 @@ import {
   type AgentToolPermissionDecision,
   type AgentToolPermissionRequest,
   type AgentToolPermissionResponseInput,
-  type ImImageContent,
   type ImMessageContent,
   type ImThreadBinding,
   type ImPeerKind,
@@ -20,7 +19,9 @@ import { emitAgentNotification } from "../agent/agent-notification-service";
 import { createAgentThread, updateAgentThreadMeta } from "../agent/agent-thread-manager";
 import { appendAgentMessage, submitAgentToolPermission } from "../agent/agent-service";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
+import { saveFilesToAgentSession } from "../agent/agent-files-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { createLogger } from "../infra/logger";
 import { getImAccount } from "./im-config-manager";
 import {
   getImThreadBindingByPeer,
@@ -29,6 +30,8 @@ import {
 } from "./im-thread-binding-store";
 import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-send-service";
 import { resolveMediaContents } from "./im-media-resolver";
+
+const log = createLogger("im-router");
 
 export interface InboundImRouteMessage {
   provider: ImProvider;
@@ -174,9 +177,11 @@ async function deliverAssistantReplyToIm(
   }
   const binding = getImThreadBindingByThreadId(threadId);
   if (!binding) {
+    log.warn("自动回复失败：线程未绑定 IM 会话", { threadId });
     emitImDeliveryRuntimeEvent(threadId, event, undefined, "failed", emitNotification, "当前线程未绑定 IM 会话。");
     return;
   }
+  log.info("投递助手回复到 IM", { threadId, peerId: binding.peerId, textLength: text.length });
   emitImDeliveryRuntimeEvent(threadId, event, binding, "pending", emitNotification);
   await sendBoundTextMessage({
     binding,
@@ -434,7 +439,7 @@ export function createImAgentStreamEmitter(
         void deliverAssistantReplyToIm(threadId, event, emitNotification, sendBoundTextMessage)
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
-            console.error("[IM] 微信回复发送失败:", error);
+            log.error("微信回复发送失败", { threadId, error: message });
             const binding = getImThreadBindingByThreadId(threadId) ?? undefined;
             emitImDeliveryRuntimeEvent(threadId, event, binding, "failed", emitNotification, message);
           });
@@ -442,7 +447,7 @@ export function createImAgentStreamEmitter(
     },
     onComplete: () => undefined,
     onError: (error) => {
-      console.error("[IM] Agent 消息发送失败:", error);
+      log.error("Agent 消息处理失败", { threadId, error });
       emitRuntimeError(threadId, error, emitNotification);
     },
     onTitleUpdated: (title) => {
@@ -458,7 +463,7 @@ export function createImAgentStreamEmitter(
       emitNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
       void deliverToolPermissionRequestToIm(request, sendBoundTextMessage)
         .catch((error) => {
-          console.error("[IM] 微信权限审批提示发送失败:", error);
+          log.error("微信权限审批提示发送失败", { threadId, requestId: request.requestId, error: error instanceof Error ? error.message : String(error) });
         });
     }
   };
@@ -472,9 +477,11 @@ export async function routeInboundImMessage(
   message: InboundImRouteMessage,
   deps: ImMessageRouterDeps = {}
 ): Promise<{ threadId: string }> {
+  log.info("收到入站消息", { provider: message.provider, accountId: message.accountId, peerId: message.peerId, peerKind: message.peerKind, peerName: message.peerName, textLength: message.text.length });
   const existing = getImThreadBindingByPeer(message);
   const approvalCommand = parseImApprovalCommand(message.text);
   if (existing && approvalCommand.type !== "none") {
+    log.info("处理审批命令", { peerId: message.peerId, requestId: approvalCommand.type === "command" ? approvalCommand.requestId : undefined });
     return routeImApprovalCommand(existing, approvalCommand, deps);
   }
   const thread = existing
@@ -509,22 +516,18 @@ export async function routeInboundImMessage(
 
   const sendMessage = deps.sendMessage ?? defaultSendMessage;
 
-  // Resolve media contents (download images, etc.)
+  // Resolve media contents: download images/files into the thread attachment
+  // directory so the agent can read them via file tools (and images become
+  // multimodal input). Falls back gracefully when the workspace is unavailable.
   const messageContents = message.contents ?? [];
+  const workspaceSlug = message.workspaceId ? getAgentWorkspace(message.workspaceId)?.slug : undefined;
+  const cdnBaseUrl = getImAccount(message.accountId)?.baseUrl;
+  const saveMedia = buildImSaveMedia(workspaceSlug, binding.threadId);
   const resolvedContents = messageContents.length > 0
-    ? await resolveMediaContents(messageContents)
+    ? await resolveMediaContents(messageContents, { saveMedia, cdnBaseUrl })
     : [];
 
-  // Build image attachments for multimodal model input
-  const mediaAttachments: AgentMessageAttachmentInput[] = resolvedContents
-    .filter((c): c is ImImageContent => c.type === "image" && !!c.url)
-    .map((c, index) => ({
-      id: `im-media-${message.messageId ?? Date.now()}-${index}`,
-      filename: `im-image-${index}.jpg`,
-      mediaType: "image/jpeg",
-      size: 0,
-      threadPath: c.url,
-    }));
+  const mediaAttachments = buildImMediaAttachments(resolvedContents, message.messageId);
 
   await sendMessage({
     threadId: binding.threadId,
@@ -553,4 +556,82 @@ export async function routeInboundImMessage(
   });
 
   return { threadId: binding.threadId };
+}
+
+/** Build a saveMedia callback that persists downloaded IM media into the thread attachment directory. */
+function buildImSaveMedia(
+  workspaceSlug: string | undefined,
+  threadId: string
+): ((input: { filename: string; data: Buffer; mediaType: string }) => Promise<string | undefined>) | undefined {
+  if (!workspaceSlug) return undefined;
+  return async (input) => {
+    try {
+      const [saved] = saveFilesToAgentSession({
+        workspaceSlug,
+        threadId,
+        files: [{ filename: input.filename, data: input.data.toString("base64") }],
+      });
+      return saved?.threadPath;
+    } catch (error) {
+      log.warn("保存 IM 媒体失败", {
+        threadId,
+        filename: input.filename,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  };
+}
+
+/** Convert resolved image/file contents into agent message attachments. */
+function buildImMediaAttachments(
+  contents: ImMessageContent[],
+  messageId?: string
+): AgentMessageAttachmentInput[] {
+  const baseId = messageId ?? Date.now();
+  const attachments: AgentMessageAttachmentInput[] = [];
+  let imgIdx = 0;
+  let fileIdx = 0;
+  for (const content of contents) {
+    if (content.type === "image" && content.url) {
+      attachments.push({
+        id: `im-media-${baseId}-img-${imgIdx}`,
+        filename: basenameFromPath(content.url) || `im-image-${imgIdx}.jpg`,
+        mediaType: inferImMediaType(content.url),
+        size: 0,
+        threadPath: content.url,
+      });
+      imgIdx += 1;
+    } else if (content.type === "file" && content.downloadUrl) {
+      attachments.push({
+        id: `im-media-${baseId}-file-${fileIdx}`,
+        filename: content.fileName,
+        mediaType: inferImMediaType(content.fileName),
+        size: content.fileSize,
+        threadPath: content.downloadUrl,
+      });
+      fileIdx += 1;
+    }
+  }
+  return attachments;
+}
+
+function basenameFromPath(path: string): string {
+  const cleaned = path.split("?")[0]?.split("#")[0] ?? "";
+  const last = cleaned.split("/").pop();
+  return last && last.length > 0 ? last : "";
+}
+
+const IM_IMAGE_EXT_MEDIA_TYPE: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+};
+
+function inferImMediaType(filename: string): string {
+  const ext = filename.split("?")[0]?.split(".").pop()?.toLowerCase() ?? "";
+  return IM_IMAGE_EXT_MEDIA_TYPE[ext] ?? "application/octet-stream";
 }

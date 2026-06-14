@@ -681,4 +681,32 @@ describe("im-message-router", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.userMessage).toBe("plain text message");
   });
+
+  test("routes message with file content as agent attachment", async () => {
+    const sent: AgentSendInput[] = [];
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "acct-1",
+      peerKind: "dm",
+      peerId: "user-file",
+      text: "[文件: report.pdf]",
+      contents: [{ type: "file", fileName: "report.pdf", fileSize: 1024, downloadUrl: "https://cdn.example.com/report.pdf" }],
+      messageId: "msg-file-1",
+    }, {
+      createThread: () => ({ id: "thread-file" }),
+      sendMessage(input) { sent.push(input); },
+      sendBoundTextMessage: async () => ({ ok: true }),
+    });
+
+    expect(sent).toHaveLength(1);
+    // workspaceSlug 不可用 → saveMedia 未注入 → resolver 对 file 原样返回（不下载）
+    // → buildImMediaAttachments 仍生成附件，供 agent 用文件读取工具访问
+    expect(sent[0]!.messageAttachments).toEqual([
+      expect.objectContaining({
+        filename: "report.pdf",
+        mediaType: "application/octet-stream",
+        size: 1024,
+      }),
+    ]);
+  });
 });

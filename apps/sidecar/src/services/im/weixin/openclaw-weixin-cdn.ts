@@ -1,6 +1,9 @@
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import type { OpenClawWeixinAccountAuth } from "./openclaw-weixin-api";
 import type { WeixinUploadedMedia, WeixinUploadMediaTypeValue } from "./openclaw-weixin-media-types";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("im-cdn");
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -43,6 +46,13 @@ function buildHeaders(account: OpenClawWeixinAccountAuth): Record<string, string
   };
 }
 
+const MEDIA_TYPE_LABELS: Record<number, string> = {
+  1: "image",
+  2: "video",
+  3: "file",
+  4: "voice",
+};
+
 export async function uploadMediaToWeixinCdn(input: {
   fileData: Buffer;
   mediaType: WeixinUploadMediaTypeValue;
@@ -58,9 +68,13 @@ export async function uploadMediaToWeixinCdn(input: {
   const filesize = aesEcbPaddedSize(rawsize);
   const filekey = randomBytes(16).toString("hex");
   const aeskey = randomBytes(16);
+  const label = MEDIA_TYPE_LABELS[mediaType] ?? String(mediaType);
+
+  log.info("开始上传媒体", { mediaType: label, toUserId, rawSize: rawsize, encSize: filesize, filekeyPrefix: filekey.slice(0, 8) });
 
   // 1. Get upload URL
   const baseUrl = account.baseUrl.replace(/\/+$/, "");
+  log.debug("请求上传地址", { baseUrl });
   const uploadUrlResp = await fetchFn(`${baseUrl}/ilink/bot/getuploadurl`, {
     method: "POST",
     headers: buildHeaders(account),
@@ -80,26 +94,40 @@ export async function uploadMediaToWeixinCdn(input: {
   const uploadParam = asString(uploadUrlPayload.upload_param);
 
   if (!uploadFullUrl && !uploadParam) {
+    log.error("获取上传地址失败", { status: uploadUrlResp.status, body: uploadUrlPayload });
     throw new Error("getuploadurl returned no upload URL");
   }
+  log.info("获取上传地址成功", { hasUploadFullUrl: !!uploadFullUrl, hasUploadParam: !!uploadParam });
 
   // 2. Encrypt file
   const encrypted = aesEcbEncrypt(fileData, aeskey);
+  log.debug("AES 加密完成", { encryptedSize: encrypted.length });
 
-  // 3. Upload to CDN
+  // 3. Upload to CDN — POST raw ciphertext as application/octet-stream.
+  // CDN returns the download param via the `x-encrypted-param` response header
+  // (not a JSON body). Matches upstream Tencent openclaw-weixin protocol.
   const cdnTargetUrl = uploadFullUrl ?? `${baseUrl}/upload?${uploadParam}`;
-  const formData = new FormData();
-  formData.append("filekey", filekey);
-  formData.append("filedata", new Blob([encrypted]));
+  log.debug("上传到 CDN", { targetPrefix: cdnTargetUrl.slice(0, 60) });
 
   const cdnResponse = await fetchFn(cdnTargetUrl, {
     method: "POST",
-    body: formData,
+    headers: { "Content-Type": "application/octet-stream" },
+    body: new Uint8Array(encrypted),
   });
-  const cdnResult = await readPayload(cdnResponse);
-  const downloadParam = asString(cdnResult.downloadParam)
-    ?? asString(cdnResult.encrypt_query_param)
-    ?? "";
+
+  if (cdnResponse.status !== 200) {
+    const errMsg = cdnResponse.headers.get("x-error-message") ?? `status ${cdnResponse.status}`;
+    log.error("CDN 上传失败", { status: cdnResponse.status, errMsg });
+    throw new Error(`CDN upload failed (${cdnResponse.status}): ${errMsg}`);
+  }
+
+  const downloadParam = cdnResponse.headers.get("x-encrypted-param");
+  if (!downloadParam) {
+    log.error("CDN 响应缺少下载参数 header", { status: cdnResponse.status });
+    throw new Error("CDN upload response missing x-encrypted-param header");
+  }
+
+  log.info("CDN 上传完成", { status: cdnResponse.status });
 
   return {
     filekey,

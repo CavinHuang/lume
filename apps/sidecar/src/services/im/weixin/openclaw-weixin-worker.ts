@@ -10,6 +10,9 @@ import {
 } from "./openclaw-weixin-api";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("im-worker");
 
 export interface OpenClawWeixinWorker {
   start(): void;
@@ -80,6 +83,7 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
     });
     for (const update of batch.updates) {
       if (hasSeenMessage(update.messageId)) continue;
+      log.info("处理新消息", { accountId: input.account.id, peerId: update.peerId, peerKind: update.peerKind, messageId: update.messageId });
       await routeMessage({
         provider: "weixin",
         accountId: input.account.id,
@@ -112,6 +116,7 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
       } catch (error) {
         if (!isAbortError(error)) {
           if (isOpenClawWeixinAuthError(error)) {
+            log.error("认证失败，停止轮询", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
             running = false;
             await updateAccount(input.account.id, {
               status: "auth_required",
@@ -119,6 +124,7 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
             });
             continue;
           }
+          log.error("轮询处理出错", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
           await updateAccount(input.account.id, {
             status: "error",
             lastError: error instanceof Error ? error.message : String(error)
@@ -136,8 +142,9 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
       if (running) return;
       running = true;
       abortController = new AbortController();
+      log.info("Worker 启动", { accountId: input.account.id });
       void api.notifyStart().catch((error) => {
-        console.warn("[IM] 微信 start 通知失败:", error);
+        log.warn("微信 start 通知失败", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
       });
       void loop();
     },
@@ -145,8 +152,9 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
       running = false;
       abortController?.abort();
       abortController = null;
+      log.info("Worker 停止", { accountId: input.account.id });
       void api.notifyStop().catch((error) => {
-        console.warn("[IM] 微信 stop 通知失败:", error);
+        log.warn("微信 stop 通知失败", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
       });
     },
     processOnce,

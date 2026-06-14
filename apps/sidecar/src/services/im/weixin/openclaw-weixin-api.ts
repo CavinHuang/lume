@@ -1,5 +1,8 @@
 import type { ImPeerKind, ImMessageContent } from "@lume/shared";
 import type { WeixinUploadedMedia } from "./openclaw-weixin-media-types";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("im-api");
 
 export interface OpenClawWeixinAccountAuth {
   baseUrl: string;
@@ -162,7 +165,8 @@ function extractImageContent(record: Record<string, unknown>): ImMessageContent 
   const media = asRecord(item.media);
   return {
     type: "image",
-    url: asString(media.full_url) ?? asString(item.url) ?? "",
+    // 优先 full_url（可直接下载）；其次 encrypt_query_param（由 resolver 拼 CDN URL）；最后兜底 url 字段
+    url: asString(media.full_url) ?? asString(media.encrypt_query_param) ?? asString(item.url) ?? "",
     thumbnailUrl: asString(asRecord(item.thumb_media).full_url),
     width: asNumber(item.thumb_width),
     height: asNumber(item.thumb_height),
@@ -180,12 +184,15 @@ function extractVoiceContent(record: Record<string, unknown>): ImMessageContent 
 
 function extractFileContent(record: Record<string, unknown>): ImMessageContent {
   const item = asRecord(record.file_item);
+  const media = asRecord(item.media);
   const len = typeof item.len === "string" ? Number(item.len) : (asNumber(item.len) ?? 0);
   return {
     type: "file",
     fileName: asString(item.file_name) ?? "unknown",
     fileSize: Number.isFinite(len) ? len : 0,
     md5: asString(item.md5),
+    // 优先 full_url（可直接下载）；否则用 encrypt_query_param（由 resolver 拼 CDN URL）
+    downloadUrl: asString(media.full_url) ?? asString(media.encrypt_query_param),
   };
 }
 
@@ -285,20 +292,31 @@ export function createOpenClawWeixinApi(
   const baseUrl = normalizeBaseUrl(account.baseUrl);
 
   async function postJson(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    const response = await fetchImpl(`${baseUrl}${path}`, {
-      method: "POST",
-      headers: buildHeaders(account),
-      body: JSON.stringify(body),
-      signal
-    });
+    const msg = asRecord(body.msg);
+    log.debug("发送请求", { path, toUserId: asString(msg.to_user_id ?? body.to_user_id) });
+    let response: Response;
+    try {
+      response = await fetchImpl(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: buildHeaders(account),
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (error) {
+      log.error("请求网络错误", { path, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
     const payload = await readPayload(response);
     if (!response.ok) {
       if (isAuthLikePayload(response.status, payload)) {
+        log.warn("认证失败", { path, status: response.status });
         throw new OpenClawWeixinAuthError(`OpenClaw Weixin auth required (${response.status})`);
       }
+      log.error("请求失败", { path, status: response.status, errcode: payload.errcode ?? payload.ret ?? payload.code });
       throw new Error(`OpenClaw Weixin request failed (${response.status})`);
     }
     if (isAuthLikePayload(response.status, payload)) {
+      log.warn("响应指示认证问题", { path, status: response.status });
       throw new OpenClawWeixinAuthError(
         asString(payload.errmsg) ?? asString(payload.message) ?? "OpenClaw Weixin auth required"
       );
@@ -315,7 +333,9 @@ export function createOpenClawWeixinApi(
   function buildCdnMediaRef(uploaded: WeixinUploadedMedia): Record<string, unknown> {
     return {
       encrypt_query_param: uploaded.downloadEncryptedQueryParam,
-      aes_key: Buffer.from(uploaded.aeskey, "hex").toString("base64"),
+      // 对齐 Tencent openclaw-weixin 协议：aes_key 是 hex 字符串本身的 base64（默认 utf8 编码），
+      // 不是解码后的 16 字节真实 key。误用 Buffer.from(aeskey, "hex") 会导致微信解密失败（灰底图）。
+      aes_key: Buffer.from(uploaded.aeskey).toString("base64"),
       encrypt_type: 1,
     };
   }
@@ -332,6 +352,8 @@ export function createOpenClawWeixinApi(
     }
     items.push(params.mediaItem);
 
+    log.info("发送媒体消息", { peerId: params.peerId, mediaType: params.mediaItem.type, itemCount: items.length, hasCaption: !!params.caption });
+
     let lastResult: unknown;
     for (const item of items) {
       lastResult = await postJson("/ilink/bot/sendmessage", {
@@ -347,6 +369,7 @@ export function createOpenClawWeixinApi(
         base_info: baseInfo(),
       });
     }
+    log.info("媒体消息发送成功", { peerId: params.peerId, mediaType: params.mediaItem.type });
     return lastResult;
   }
 
@@ -357,11 +380,15 @@ export function createOpenClawWeixinApi(
           get_updates_buf: input.cursor ?? "",
           base_info: baseInfo()
         }, input.signal);
+        const updates = extractUpdateList(payload)
+          .map(parseInboundMessage)
+          .filter((item): item is OpenClawWeixinInboundMessage => item !== null);
+        if (updates.length > 0) {
+          log.debug("收到新消息", { count: updates.length, peers: updates.map(u => u.peerId) });
+        }
         return {
           cursor: extractCursor(payload),
-          updates: extractUpdateList(payload)
-            .map(parseInboundMessage)
-            .filter((item): item is OpenClawWeixinInboundMessage => item !== null)
+          updates,
         };
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -370,28 +397,37 @@ export function createOpenClawWeixinApi(
         if (error instanceof Error && error.name === "AbortError") {
           return { updates: [] };
         }
+        log.error("轮询消息失败", { error: error instanceof Error ? error.message : String(error) });
         throw error;
       }
     },
 
     async sendText(input) {
-      return postJson("/ilink/bot/sendmessage", {
-        msg: {
-          from_user_id: "",
-          to_user_id: input.peerId,
-          client_id: `lume-im-weixin-${crypto.randomUUID()}`,
-          message_type: 2,
-          message_state: 2,
-          ...(input.contextToken ? { context_token: input.contextToken } : {}),
-          item_list: [{
-            type: 1,
-            text_item: {
-              text: input.text
-            }
-          }]
-        },
-        base_info: baseInfo()
-      });
+      log.info("发送文本消息", { peerId: input.peerId, peerKind: input.peerKind, textLength: input.text.length });
+      try {
+        const result = await postJson("/ilink/bot/sendmessage", {
+          msg: {
+            from_user_id: "",
+            to_user_id: input.peerId,
+            client_id: `lume-im-weixin-${crypto.randomUUID()}`,
+            message_type: 2,
+            message_state: 2,
+            ...(input.contextToken ? { context_token: input.contextToken } : {}),
+            item_list: [{
+              type: 1,
+              text_item: {
+                text: input.text
+              }
+            }]
+          },
+          base_info: baseInfo()
+        });
+        log.info("文本消息发送成功", { peerId: input.peerId });
+        return result;
+      } catch (error) {
+        log.error("文本消息发送失败", { peerId: input.peerId, error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
     },
 
     async sendImage(input) {

@@ -45,19 +45,30 @@ describe("openclaw-weixin-cdn", () => {
       token: "test-token",
     };
 
-    test("calls getuploadurl and uploads encrypted data to CDN", async () => {
-      const calls: Array<{ url: string; body?: string }> = [];
+    test("uploads encrypted bytes as application/octet-stream and reads x-encrypted-param header", async () => {
+      const calls: Array<{ url: string; contentType?: string; bodyKind?: string; bodyLength?: number }> = [];
       const downloadParam = "cdn-download-param-abc";
 
       const fetchImpl = async (url: string, init?: RequestInit) => {
-        calls.push({ url: String(url), body: typeof init?.body === "string" ? init.body : undefined });
+        const headers = init?.headers as Record<string, string> | undefined;
+        const body = init?.body;
+        calls.push({
+          url: String(url),
+          contentType: headers?.["Content-Type"] ?? headers?.["content-type"],
+          bodyKind: body instanceof Uint8Array ? "uint8array" : undefined,
+          bodyLength: body instanceof Uint8Array ? body.byteLength : undefined,
+        });
         if (String(url).includes("getuploadurl")) {
           return Response.json({
             upload_full_url: "https://cdn.example.com/upload",
             upload_param: "enc-param",
           });
         }
-        return Response.json({ downloadParam });
+        // CDN returns the download param via response header, not JSON body
+        return new Response(null, {
+          status: 200,
+          headers: { "x-encrypted-param": downloadParam },
+        });
       };
 
       const result = await uploadMediaToWeixinCdn({
@@ -70,11 +81,56 @@ describe("openclaw-weixin-cdn", () => {
 
       expect(calls.length).toBe(2);
       expect(calls[0]?.url).toContain("getuploadurl");
+      // CDN POST must be raw octet-stream bytes, not multipart/form-data
       expect(calls[1]?.url).toBe("https://cdn.example.com/upload");
+      expect(calls[1]?.contentType).toBe("application/octet-stream");
+      expect(calls[1]?.bodyKind).toBe("uint8array");
+      expect(calls[1]?.bodyLength).toBe(16); // AES-128-ECB padded size of 15 bytes
       expect(result.downloadEncryptedQueryParam).toBe(downloadParam);
       expect(result.fileSize).toBe(15);
       expect(result.aeskey).toBeTruthy();
       expect(result.filekey).toBeTruthy();
+    });
+
+    test("throws on CDN server error (non-200)", async () => {
+      const fetchImpl = async (url: string) => {
+        if (String(url).includes("getuploadurl")) {
+          return Response.json({ upload_full_url: "https://cdn.example.com/upload" });
+        }
+        return new Response(null, {
+          status: 500,
+          headers: { "x-error-message": "decrypt failed" },
+        });
+      };
+
+      await expect(
+        uploadMediaToWeixinCdn({
+          fileData: Buffer.from("test image data"),
+          mediaType: 1,
+          toUserId: "user-1",
+          account,
+          fetchImpl,
+        })
+      ).rejects.toThrow(/CDN upload failed \(500\): decrypt failed/);
+    });
+
+    test("throws when CDN response missing x-encrypted-param header", async () => {
+      const fetchImpl = async (url: string) => {
+        if (String(url).includes("getuploadurl")) {
+          return Response.json({ upload_full_url: "https://cdn.example.com/upload" });
+        }
+        return new Response(null, { status: 200 });
+      };
+
+      await expect(
+        uploadMediaToWeixinCdn({
+          fileData: Buffer.from("test image data"),
+          mediaType: 1,
+          toUserId: "user-1",
+          account,
+          fetchImpl,
+        })
+      ).rejects.toThrow(/missing x-encrypted-param header/);
     });
 
     test("throws when getuploadurl returns no upload URL", async () => {

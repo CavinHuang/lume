@@ -520,7 +520,8 @@ describe("openclaw-weixin-api", () => {
       image_item: {
         media: {
           encrypt_query_param: "download-param-1",
-          aes_key: expect.any(String),
+          // 对齐官方协议：aes_key 是 hex 字符串的 utf8 base64（非 hex 解码）
+          aes_key: Buffer.from("0".repeat(32)).toString("base64"),
           encrypt_type: 1,
         },
         mid_size: 1040,
@@ -590,7 +591,7 @@ describe("openclaw-weixin-api", () => {
       file_item: {
         media: {
           encrypt_query_param: "dp-3",
-          aes_key: expect.any(String),
+          aes_key: Buffer.from("2".repeat(32)).toString("base64"),
           encrypt_type: 1,
         },
         file_name: "report.pdf",
