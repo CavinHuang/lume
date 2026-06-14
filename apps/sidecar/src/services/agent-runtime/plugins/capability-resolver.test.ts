@@ -320,3 +320,39 @@ describe("resolvePluginCapabilities — commandTools", () => {
     }
   });
 });
+
+describe("resolvePluginCapabilities — hooksOnly", () => {
+  test("skips skills, MCP, and command tools when lume.hooksOnly is true", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "hook-only");
+      await writeSkill(pluginRoot, "./skills", "greet");
+      await writeJson(join(pluginRoot, "hooks.json"), {
+        Stop: [{ command: "echo stop" }],
+      });
+      await writeJson(join(pluginRoot, "mcp.json"), {
+        mcpServers: { "acme-api": { command: "node" } },
+      });
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [{ pluginId: "hook-only", version: "1.0.0", root: "./skills" }],
+          hooksConfigPath: "./hooks.json",
+          mcpServersConfigPath: "./mcp.json",
+          commandTools: [{ name: "ct", command: "echo" }],
+        },
+        permissions: { hooks: { events: ["Stop"] }, mcpServers: { register: true } },
+        lume: { hooksOnly: true },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+      const cap = result.capabilities[0];
+
+      expect(cap?.skills).toEqual([]);
+      expect(cap?.mcpServers).toEqual([]);
+      expect(cap?.commandTools).toEqual([]);
+      expect(cap?.hooks).toEqual({ Stop: [{ command: "echo stop" }] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

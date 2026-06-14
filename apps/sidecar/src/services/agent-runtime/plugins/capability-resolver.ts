@@ -73,10 +73,12 @@ export async function resolvePluginCapabilities(
 
 async function resolveOne(plugin: RegisteredPlugin): Promise<ResolvedPluginCapability> {
   const diagnostics: PluginDiagnostic[] = [];
-  const skills = await resolveSkills(plugin, diagnostics);
+  const hooksOnly = plugin.lume?.hooksOnly === true;
+  // hooksOnly (spec §16.3): the plugin contributes only hooks.
+  const skills = hooksOnly ? [] : await resolveSkills(plugin, diagnostics);
+  const mcpServers = hooksOnly ? [] : await resolveMcpServers(plugin, diagnostics);
+  const commandTools = hooksOnly ? [] : resolveCommandTools(plugin);
   const hooks = await resolveHooks(plugin, diagnostics);
-  const mcpServers = await resolveMcpServers(plugin, diagnostics);
-  const commandTools = resolveCommandTools(plugin);
   return { pluginId: plugin.pluginId, skills, hooks, mcpServers, commandTools, diagnostics };
 }
 
