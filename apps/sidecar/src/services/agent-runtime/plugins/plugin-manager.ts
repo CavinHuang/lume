@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LumePluginManifest } from "@lume/agent-sdk";
 import { FilePluginStateStore } from "./plugin-state-store.js";
-import { PluginRegistry } from "./plugin-registry.js";
+import { PluginRegistry, type RegisteredPlugin } from "./plugin-registry.js";
 
 export interface ResolvedPlugin {
   name: string;
@@ -54,6 +54,28 @@ export class SidecarPluginManager {
       },
       diagnostics: plugin.diagnostics,
     }));
+  }
+
+  /**
+   * Return the full RegisteredPlugin[] (with Phase 2 permissionState + capabilities),
+   * WITHOUT the downgrade mapping that resolveEnabled applies. Used by the Phase 3b
+   * PluginRuntimeBridge → PluginCapabilityResolver pipeline.
+   */
+  async listRegistered(config: {
+    enabled: string[];
+    directories: string[];
+  }): Promise<RegisteredPlugin[]> {
+    const registry = new PluginRegistry({
+      installedRoot: this.pluginRoot,
+      legacyGlobalRoot: this.pluginRoot,
+      stateStore: new FilePluginStateStore(this.statePath),
+    });
+    const result = await registry.list({
+      enabled: config.enabled,
+      disabled: [],
+      directories: config.directories,
+    });
+    return result.plugins;
   }
 
   async buildInterceptorContexts(config: {
