@@ -990,6 +990,7 @@ export function MarkdownCode({
       <FileLinkContextMenu
         context={{ source: "thread", relPath: filePath, threadId: env.threadId, workspaceSlug: env.workspaceSlug }}
         onPreview={() => onOpenThreadFile(filePath)}
+        inline
       >
         {button}
       </FileLinkContextMenu>

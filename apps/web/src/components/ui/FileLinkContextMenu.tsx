@@ -48,10 +48,12 @@ function isContextUsable(ctx: FileLinkContext): boolean {
 interface FileLinkContextMenuProps {
   context: FileLinkContext
   onPreview?: () => void
+  /** 内联场景（markdown 行内胶囊）用 span 作 trigger 外壳，避免 div 破坏行内流；块级场景默认 div。 */
+  inline?: boolean
   children: ReactElement
 }
 
-export function FileLinkContextMenu({ context, onPreview, children }: FileLinkContextMenuProps) {
+export function FileLinkContextMenu({ context, onPreview, inline = false, children }: FileLinkContextMenuProps) {
   if (!isContextUsable(context)) return <>{children}</>
 
   const items = buildFileLinkMenuItems(context, {
@@ -61,7 +63,7 @@ export function FileLinkContextMenu({ context, onPreview, children }: FileLinkCo
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger render={children} />
+      <ContextMenuTrigger render={inline ? <span /> : <div />}>{children}</ContextMenuTrigger>
       <ContextMenuContent>
         {items.map((item) =>
           item.kind === "separator" ? (
