@@ -40,6 +40,8 @@ export const saveFilePathDialog = (filename: string, filters?: SaveFilePathFilte
   invoke<{ path: string | null }>('save_file_path_dialog', { filename, filters })
 export const writeBinaryFile = (path: string, base64Content: string) =>
   invoke<{ path: string }>('write_binary_file', { path, base64Content })
+export const copyFile = (source: string, target: string) =>
+  invoke<void>('copy_file', { source, target })
 export const openInSystem = (path: string) =>
   invoke<void>('open_in_system', { path })
 export const revealPathInSystem = (path: string) =>

@@ -824,6 +824,16 @@ fn reveal_path_in_system(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn copy_file(source: String, target: String) -> Result<(), String> {
+    let src = Path::new(&source);
+    if !src.exists() {
+        return Err(format!("源文件不存在: {source}"));
+    }
+    std::fs::copy(&source, &target).map_err(|e| format!("复制失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn read_text_file(path: String) -> Result<serde_json::Value, String> {
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("read selected file failed ({}): {e}", path))?;
@@ -1686,7 +1696,8 @@ fn main() {
             save_file_path_dialog,
             write_binary_file,
             open_in_system,
-            reveal_path_in_system
+            reveal_path_in_system,
+            copy_file
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
