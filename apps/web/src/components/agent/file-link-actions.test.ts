@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test"
+import { beforeAll, describe, expect, mock, test } from "bun:test"
 
 mock.module("@lume/shared", () => ({
   AGENT_IPC_CHANNELS: {
@@ -7,51 +7,80 @@ mock.module("@lume/shared", () => ({
   },
 }))
 
-const sidecarCalls: Array<{ method: string; params: unknown }> = []
+const calls: Array<{ fn: string; args: unknown[] }> = []
+let saveDialogResult: string | null = "/target/copied.md"
+
 mock.module("@/lib/desktop-api", () => ({
   sidecarCall: async (method: string, params: unknown) => {
-    sidecarCalls.push({ method, params })
+    calls.push({ fn: "sidecarCall", args: [method, params] })
     if (method === "agent:get-thread-path") return "/data/threads/t1"
     if (method === "agent:get-workspace-resources-path") return "/data/ws/resources"
-    throw new Error(`unexpected method ${method}`)
+    throw new Error(`unexpected ${method}`)
+  },
+  openInSystem: async (path: string) => { calls.push({ fn: "openInSystem", args: [path] }) },
+  revealPathInSystem: async (path: string) => { calls.push({ fn: "revealPathInSystem", args: [path] }) },
+  saveFilePathDialog: async (filename: string) => {
+    calls.push({ fn: "saveFilePathDialog", args: [filename] })
+    return { path: saveDialogResult }
+  },
+  copyFile: async (source: string, target: string) => {
+    calls.push({ fn: "copyFile", args: [source, target] })
   },
 }))
 
-mock.module("sonner", () => ({ toast: { success: () => undefined, error: () => undefined } }))
+const toasts: Array<{ kind: string; text: string }> = []
+mock.module("sonner", () => ({
+  toast: {
+    success: (text: string) => { toasts.push({ kind: "success", text }) },
+    error: (text: string) => { toasts.push({ kind: "error", text }) },
+  },
+}))
 
-const { resolveAbsolutePath } = await import("./file-link-actions")
+let clipboardText = ""
+beforeAll(() => {
+  Object.defineProperty(globalThis, "navigator", {
+    value: { clipboard: { writeText: async (t: string) => { clipboardText = t } } },
+    configurable: true,
+  })
+})
+
+const { resolveAbsolutePath, resolveFileLinkActions } = await import("./file-link-actions")
+
+const sidecarCalls = () => calls.filter((c) => c.fn === "sidecarCall")
+
+function threadCtx() {
+  return { source: "thread" as const, relPath: "plans/research.md", threadId: "t1", workspaceSlug: "ws-1" }
+}
 
 describe("resolveAbsolutePath", () => {
   test("local source returns relPath as-is", async () => {
+    calls.length = 0
     const abs = await resolveAbsolutePath({ source: "local", relPath: "/abs/path/file.md" })
     expect(abs).toBe("/abs/path/file.md")
-    expect(sidecarCalls).toHaveLength(0)
+    expect(sidecarCalls()).toHaveLength(0)
   })
 
   test("thread source resolves via GET_THREAD_PATH and joins relPath", async () => {
-    const abs = await resolveAbsolutePath({
-      source: "thread",
-      relPath: "plans/research.md",
-      threadId: "t1",
-      workspaceSlug: "ws-1",
-    })
+    calls.length = 0
+    const abs = await resolveAbsolutePath(threadCtx())
     expect(abs).toBe("/data/threads/t1/plans/research.md")
-    expect(sidecarCalls.at(-1)).toEqual({
-      method: "agent:get-thread-path",
-      params: { threadId: "t1", workspaceSlug: "ws-1" },
+    expect(sidecarCalls().at(-1)).toEqual({
+      fn: "sidecarCall",
+      args: ["agent:get-thread-path", { threadId: "t1", workspaceSlug: "ws-1" }],
     })
   })
 
   test("workspace source resolves via GET_WORKSPACE_RESOURCES_PATH", async () => {
+    calls.length = 0
     const abs = await resolveAbsolutePath({
       source: "workspace",
       relPath: "shared/notes.md",
       workspaceSlug: "ws-1",
     })
     expect(abs).toBe("/data/ws/resources/shared/notes.md")
-    expect(sidecarCalls.at(-1)).toEqual({
-      method: "agent:get-workspace-resources-path",
-      params: { workspaceSlug: "ws-1" },
+    expect(sidecarCalls().at(-1)).toEqual({
+      fn: "sidecarCall",
+      args: ["agent:get-workspace-resources-path", { workspaceSlug: "ws-1" }],
     })
   })
 
@@ -59,5 +88,61 @@ describe("resolveAbsolutePath", () => {
     await expect(
       resolveAbsolutePath({ source: "thread", relPath: "a.md", workspaceSlug: "ws-1" }),
     ).rejects.toThrow("threadId")
+  })
+})
+
+describe("resolveFileLinkActions", () => {
+  test("openInSystem resolves abs path then calls native", async () => {
+    calls.length = 0
+    await resolveFileLinkActions(threadCtx()).openInSystem()
+    expect(calls.map((c) => c.fn)).toEqual(["sidecarCall", "openInSystem"])
+    expect(calls[1]!.args).toEqual(["/data/threads/t1/plans/research.md"])
+  })
+
+  test("revealInFolder calls revealPathInSystem with abs path", async () => {
+    calls.length = 0
+    await resolveFileLinkActions(threadCtx()).revealInFolder()
+    expect(calls.map((c) => c.fn)).toEqual(["sidecarCall", "revealPathInSystem"])
+  })
+
+  test("copyRelativePath writes relPath to clipboard", async () => {
+    clipboardText = ""
+    toasts.length = 0
+    await resolveFileLinkActions(threadCtx()).copyRelativePath()
+    expect(clipboardText).toBe("plans/research.md")
+    expect(toasts[0]).toMatchObject({ kind: "success" })
+  })
+
+  test("copyAbsolutePath writes abs path to clipboard", async () => {
+    clipboardText = ""
+    await resolveFileLinkActions(threadCtx()).copyAbsolutePath()
+    expect(clipboardText).toBe("/data/threads/t1/plans/research.md")
+  })
+
+  test("saveAs happy path: resolve -> dialog -> copyFile -> success toast", async () => {
+    calls.length = 0
+    toasts.length = 0
+    saveDialogResult = "/target/copied.md"
+    await resolveFileLinkActions(threadCtx()).saveAs()
+    expect(calls.map((c) => c.fn)).toEqual(["sidecarCall", "saveFilePathDialog", "copyFile"])
+    expect(calls[2]!.args).toEqual(["/data/threads/t1/plans/research.md", "/target/copied.md"])
+    expect(toasts[0]).toMatchObject({ kind: "success" })
+  })
+
+  test("saveAs silent when user cancels dialog", async () => {
+    calls.length = 0
+    toasts.length = 0
+    saveDialogResult = null
+    await resolveFileLinkActions(threadCtx()).saveAs()
+    expect(calls.some((c) => c.fn === "copyFile")).toBe(false)
+    expect(toasts).toHaveLength(0)
+  })
+
+  test("openInSystem toasts error when resolve fails (missing threadId)", async () => {
+    calls.length = 0
+    toasts.length = 0
+    await resolveFileLinkActions({ source: "thread", relPath: "a.md" }).openInSystem()
+    expect(toasts[0]).toMatchObject({ kind: "error" })
+    expect(calls.some((c) => c.fn === "openInSystem")).toBe(false)
   })
 })
