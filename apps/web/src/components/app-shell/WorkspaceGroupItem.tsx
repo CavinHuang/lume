@@ -214,16 +214,27 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
               className={cn(
                 'group relative w-full flex items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1.5 transition-colors duration-100 text-left',
                 syntheticRow.active
-                  ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]'
-                  : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+                  ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))]'
+                  : 'hover:bg-[var(--surface-2)]',
               )}
             >
-              <span className="truncate text-[13px] font-medium">✨ {syntheticRow.label}</span>
+              {syntheticRow.active && (
+                <span
+                  className="absolute inset-y-0 left-0 w-[3px] rounded-l-md pointer-events-none bg-[var(--brand)]"
+                  aria-hidden="true"
+                />
+              )}
+              <span className={cn(
+                'truncate text-[13px] leading-[18px] flex items-center gap-1.5',
+                syntheticRow.active ? 'text-[var(--text-1)] font-medium' : 'text-[var(--text-2)]',
+              )}>
+                ✨ {syntheticRow.label}
+              </span>
             </button>
           )}
 
           {threads.length > 0 ? (
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-1">
               {visibleThreads.map((thread) => (
                 <ThreadItem
                   key={thread.id}

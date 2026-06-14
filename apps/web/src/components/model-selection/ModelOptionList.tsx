@@ -83,7 +83,7 @@ export function ModelOptionList({ groups, onSelect, renderBadge }: ModelOptionLi
                     option.active ? 'opacity-100 text-primary' : 'opacity-0'
                   )}
                 />
-                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                <div className="flex flex-col gap-1 min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="min-w-0 flex-1 truncate">{option.label}</span>
                     {badge}
