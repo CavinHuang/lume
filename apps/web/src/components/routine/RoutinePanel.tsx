@@ -249,7 +249,7 @@ export function RoutinePanel() {
                 {resultEntry.customName ?? resultEntry.activity}
               </DialogDescription>
             </DialogHeader>
-            <div className="rounded-xl border bg-[var(--reading-panel)] px-4 py-3 text-[13px] leading-6 text-[var(--text-2)] whitespace-pre-wrap">
+            <div className="max-h-[60vh] overflow-y-auto rounded-xl border bg-[var(--reading-panel)] px-4 py-3 text-[13px] leading-6 text-[var(--text-2)] whitespace-pre-wrap">
               {resultEntry.result?.summary}
             </div>
           </DialogContent>

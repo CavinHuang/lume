@@ -167,7 +167,7 @@ export function RoutineEntryItem({ entry, onTrigger, onViewResult }: RoutineEntr
               {expanded ? "收起结果" : "查看结果"}
             </button>
             {expanded && (
-              <div className="mt-2 rounded-[6px] bg-[var(--reading-panel)] px-3 py-2 text-[12px] leading-5 text-[var(--text-2)]">
+              <div className="mt-2 max-h-[200px] overflow-y-auto whitespace-pre-wrap rounded-xl border bg-[var(--reading-panel)] px-4 py-3 text-[13px] leading-6 text-[var(--text-2)]">
                 {entry.result!.summary}
               </div>
             )}
