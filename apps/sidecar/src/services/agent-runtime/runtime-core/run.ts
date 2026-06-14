@@ -611,6 +611,8 @@ function buildRuntimeCoreTools(input: {
   pluginDiagnostics?: ToolRuntimeDiagnostic[];
   mcpTools?: ToolDefinition[];
   mcpDiagnostics?: ToolRuntimeDiagnostic[];
+  /** Plugin command-tool ToolDefinitions built by PluginRuntimeBridge (Phase 3b). */
+  pluginCommandTools?: ToolDefinition[];
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
@@ -785,7 +787,10 @@ function buildRuntimeCoreTools(input: {
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
       { source: "task", tools: [taskReportTool, sidecarAgentTool] },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
-      ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : [])
+      ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : []),
+      ...(input.pluginCommandTools?.length
+        ? [{ source: "plugin" as const, tools: input.pluginCommandTools }]
+        : [])
     ]
   });
 }
