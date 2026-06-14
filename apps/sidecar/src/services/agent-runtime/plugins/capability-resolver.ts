@@ -82,7 +82,6 @@ async function resolveOne(plugin: RegisteredPlugin): Promise<ResolvedPluginCapab
   return { pluginId: plugin.pluginId, skills, hooks, mcpServers, commandTools, diagnostics };
 }
 
-// Stubs — filled in by later tasks (skills, hooks, MCP, commandTools).
 async function resolveSkills(
   plugin: RegisteredPlugin,
   diagnostics: PluginDiagnostic[],
@@ -191,9 +190,14 @@ async function resolveMcpServers(
   }
 
   const mcpFile = resolve(plugin.root, plugin.capabilities.mcpServersConfigPath);
-  let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(mcpFile, "utf-8"));
+    const raw: unknown = JSON.parse(await readFile(mcpFile, "utf-8"));
+    const config = parseMcpImportPayload(raw);
+    return Object.entries(config.servers).map(([serverId, entry]) => ({
+      pluginId: plugin.pluginId,
+      serverId,
+      entry,
+    }));
   } catch (error) {
     diagnostics.push({
       pluginId: plugin.pluginId,
@@ -205,13 +209,6 @@ async function resolveMcpServers(
     });
     return [];
   }
-
-  const config = parseMcpImportPayload(raw);
-  return Object.entries(config.servers).map(([serverId, entry]) => ({
-    pluginId: plugin.pluginId,
-    serverId,
-    entry,
-  }));
 }
 
 function resolveCommandTools(plugin: RegisteredPlugin): ResolvedCommandTool[] {
