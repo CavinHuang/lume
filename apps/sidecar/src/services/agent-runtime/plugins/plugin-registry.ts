@@ -253,6 +253,13 @@ async function attachPermissionState(
 ): Promise<void> {
   const runtime = new PluginPermissionRuntime({ stateStore });
   for (const plugin of plugins) {
+    // Legacy plugin.json command-only plugins have no install record by design
+    // (spec §14.3: "legacy command plugin 仍可运行"). Treat them as loaded so the
+    // capability resolver's only-loaded gate does not skip them.
+    if (plugin.manifestFormat === "legacy") {
+      plugin.permissionState = { state: "loaded", reason: "legacy-plugin" };
+      continue;
+    }
     const currentHash = computePermissionsHash(plugin);
     const result = await runtime.computeRuntimeState({
       pluginId: plugin.pluginId,

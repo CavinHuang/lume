@@ -18,7 +18,7 @@ function makePlugin(root: string, overrides: Partial<RegisteredPlugin> = {}): Re
 }
 
 describe("assemblePluginRuntime", () => {
-  test("builds namespaced command-tool ToolDefinitions from resolver output", async () => {
+  test("builds command-tool ToolDefinitions carrying pluginId in runtimeMetadata", async () => {
     const plugin = makePlugin("/plugins/acme", {
       capabilities: {
         skills: [],
@@ -30,10 +30,13 @@ describe("assemblePluginRuntime", () => {
 
     expect(assembly.commandToolDefinitions).toHaveLength(1);
     const def = assembly.commandToolDefinitions[0];
-    expect(def?.name).toBe("acme:echo");
+    expect(def?.name).toBe("echo");
     expect(def?.description).toBe("echo");
     expect(typeof def?.call).toBe("function");
-    expect((def as { runtimeMetadata?: { source?: string } }).runtimeMetadata?.source).toBe("plugin");
+    const runtimeMetadata = (def as { runtimeMetadata?: { source?: string; pluginId?: string } })
+      .runtimeMetadata;
+    expect(runtimeMetadata?.source).toBe("plugin");
+    expect(runtimeMetadata?.pluginId).toBe("acme");
   });
 
   test("collects namespaced skill definitions surfaced by the resolver", async () => {
@@ -64,7 +67,7 @@ describe("assemblePluginRuntime", () => {
 
     const assembly = await assemblePluginRuntime([loaded, needsReview]);
 
-    expect(assembly.commandToolDefinitions.map((d) => d.name)).toEqual(["loaded:ct"]);
+    expect(assembly.commandToolDefinitions.map((d) => d.name)).toEqual(["ct"]);
     expect(assembly.diagnostics).toEqual([]);
   });
 

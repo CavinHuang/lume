@@ -140,4 +140,35 @@ describe("PluginRegistry permission state", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("a legacy plugin.json command plugin is loaded by default with no install record (spec §14.3)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-reg-perm-"));
+    try {
+      // Legacy plugins ship a plugin.json (command-only), not a lume-plugin.json, and
+      // have no install/state record. They must still resolve (§14.3 "legacy command
+      // plugin 仍可运行").
+      const pluginRoot = join(root, "legacycmd");
+      await mkdir(pluginRoot, { recursive: true });
+      await writeFile(
+        join(pluginRoot, "plugin.json"),
+        JSON.stringify({
+          name: "legacycmd",
+          tools: [{ name: "legacy_echo", command: "node", args: ["-e", "process.stdout.write('')"] }],
+        }),
+      );
+
+      const registry = new PluginRegistry({
+        installedRoot: root,
+        legacyGlobalRoot: root,
+        stateStore: new FilePluginStateStore(join(root, "state.json")),
+      });
+      const result = await registry.list({ enabled: [], disabled: [], directories: [] });
+
+      const legacy = result.plugins.find((p) => p.pluginId === "legacycmd");
+      expect(legacy?.manifestFormat).toBe("legacy");
+      expect(legacy?.permissionState).toEqual({ state: "loaded", reason: "legacy-plugin" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

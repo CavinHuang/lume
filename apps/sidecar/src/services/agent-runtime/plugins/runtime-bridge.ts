@@ -8,7 +8,7 @@ import { resolvePluginCapabilities } from "./capability-resolver.js";
 import type { RegisteredPlugin } from "./plugin-registry.js";
 
 export interface PluginRuntimeAssembly {
-  /** Plugin command-tool ToolDefinitions, each name namespaced `${pluginId}:${name}`. */
+  /** Plugin command-tool ToolDefinitions; each carries `runtimeMetadata.pluginId` (name is unchanged). */
   commandToolDefinitions: ToolDefinition[];
   /** Namespaced skill definitions (resolver already rewrote skill.name). */
   skills: SkillDefinition[];
@@ -24,8 +24,9 @@ export interface PluginRuntimeAssembly {
  * already does. MCP servers and hooks are intentionally NOT wired here (MCP: §16.7
  * lifecycle, separate plan; hooks: Phase 3d).
  *
- * Sensitive-use gating is Phase 3c — the ToolDefinitions built here carry a
- * `${pluginId}:` namespaced name so 3c's canUseTool gate can recover the source.
+ * Sensitive-use gating is Phase 3c — the ToolDefinitions built here carry the source
+ * `pluginId` in `runtimeMetadata.pluginId` so 3c's canUseTool gate (which receives the
+ * full ToolDefinition) can recover the source without changing the tool's exposed name.
  */
 export async function assemblePluginRuntime(
   plugins: RegisteredPlugin[],
@@ -41,8 +42,13 @@ export async function assemblePluginRuntime(
     for (const tool of capability.commandTools) {
       if (!pluginRoot) continue;
       const definition = buildCommandToolDefinition(tool.contribution, pluginRoot);
-      // Namespace so Phase 3c can recover the source pluginId from the tool name.
-      definition.name = `${capability.pluginId}:${definition.name}`;
+      // Carry pluginId in runtimeMetadata so Phase 3c's canUseTool gate (which receives
+      // the full ToolDefinition) can recover the source pluginId without changing the
+      // tool's exposed name.
+      definition.runtimeMetadata = {
+        ...(definition.runtimeMetadata ?? {}),
+        pluginId: capability.pluginId,
+      };
       commandToolDefinitions.push(definition);
     }
     for (const skill of capability.skills) {
