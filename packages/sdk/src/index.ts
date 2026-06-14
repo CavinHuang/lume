@@ -210,6 +210,9 @@ export {
   type PluginSkillContribution,
 } from './plugins/normalized.js'
 export {
+  computePermissionsHash,
+} from './plugins/permissions-hash.js'
+export {
   checkToolPermission,
   checkFilesystemPermission,
   checkNetworkPermission,
