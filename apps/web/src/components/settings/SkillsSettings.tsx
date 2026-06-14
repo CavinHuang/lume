@@ -30,6 +30,7 @@ export function SkillsSettings() {
         availableWorkspaces={workspaces}
         onWorkspaceChange={setSelectedSlug}
         onOpenMarket={() => {}}
+        onAddSource={() => setAddSourceDialogOpen(true)}
         onCreateNew={(scope) => {
           skillSettingsViewRef.current?.createNewSkill(scope)
         }}

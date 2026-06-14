@@ -1,11 +1,11 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { CheckCircle2, Loader2, Plus } from "lucide-react"
+import { Loader2, Plus } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { SkillCatalogItem } from "@lume/shared"
-import { getSkillMarketCatalog, installSkillMarketItemToWorkspace } from "@/lib/desktop-api"
+import { getSkillMarketCatalog, installSkillMarketItemToWorkspace, deleteWorkspaceSkill } from "@/lib/desktop-api"
 
 export interface SkillAddSourceDialogProps {
   open: boolean
@@ -48,6 +48,7 @@ export function SkillAddSourceDialog({
   const [items, setItems] = useState<SkillCatalogItem[]>([])
   const [loading, setLoading] = useState(false)
   const [installingSlug, setInstallingSlug] = useState<string | null>(null)
+  const [removingSlug, setRemovingSlug] = useState<string | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
   const [installNotice, setInstallNotice] = useState<string | null>(null)
 
@@ -125,6 +126,35 @@ export function SkillAddSourceDialog({
     [workspaceSlug, activeTab],
   )
 
+  const handleRemove = useCallback(
+    async (item: SkillCatalogItem) => {
+      if (!workspaceSlug) return
+      setRemovingSlug(item.slug)
+      setInstallError(null)
+      setInstallNotice(null)
+      try {
+        await deleteWorkspaceSkill(workspaceSlug, item.slug)
+        setInstallNotice(`「${item.name}」已移除`)
+        // 刷新列表
+        const catalog = await getSkillMarketCatalog(workspaceSlug)
+        if (activeTab === "market") {
+          setItems(
+            catalog.items.filter((i) => i.sourceType === "subscribed-market"),
+          )
+        } else {
+          setItems(
+            catalog.items.filter((i) => i.sourceType === "built-in"),
+          )
+        }
+      } catch (err) {
+        setInstallError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setRemovingSlug(null)
+      }
+    },
+    [workspaceSlug, activeTab],
+  )
+
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab)
     setInstallError(null)
@@ -144,13 +174,19 @@ export function SkillAddSourceDialog({
 
   const renderActionButton = (item: SkillCatalogItem) => {
     const isInstalling = installingSlug === item.slug
+    const isRemoving = removingSlug === item.slug
 
     if (item.installState === "installed") {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-[#f0f4ec] px-2.5 py-1 text-[12px] font-medium text-[#4c7a41]">
-          <CheckCircle2 size={13} />
-          已安装
-        </span>
+        <button
+          type="button"
+          disabled={isRemoving || isInstalling}
+          onClick={() => void handleRemove(item)}
+          className="flex h-8 items-center gap-1.5 rounded-[6px] border border-[#d8ddec] bg-white px-3 text-[12px] font-semibold text-[#687196] hover:border-[#ba3636] hover:text-[#ba3636] disabled:cursor-wait disabled:opacity-60"
+        >
+          {isRemoving && <Loader2 size={13} className="animate-spin" />}
+          移除
+        </button>
       )
     }
 

@@ -30,6 +30,7 @@ import {
   applySkillImprovement,
   deleteWorkspaceSkill,
   getEditableSkill,
+  getSkillMarketCatalog,
   listSkillVersions,
   listEditableSkills,
   restoreSkillVersion,
@@ -38,6 +39,7 @@ import {
 import {
   getEffectiveLumeConfig,
   updatePermissionsSection,
+  updateSkillsConfig,
 } from '@/lib/desktop-api/lume-config'
 import { cn } from '@/lib/utils'
 import type {
@@ -86,6 +88,7 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
   onOpenMarket: () => void
   availableWorkspaces?: AgentWorkspace[]
   onWorkspaceChange?: (slug: string) => void
+  onAddSource?: () => void
   onCreateNew?: (storageScope: SkillStorageScope) => void
 }>(function SkillSettingsView({
   workspaceSlug,
@@ -93,6 +96,7 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
   onOpenMarket,
   availableWorkspaces,
   onWorkspaceChange,
+  onAddSource,
   onCreateNew,
 }, ref) {
   const [skills, setSkills] = useState<EditableSkillMeta[]>([])
@@ -112,6 +116,9 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
   const [toolLoading, setToolLoading] = useState(true)
   const [toolError, setToolError] = useState<string | null>(null)
   const [savingToolId, setSavingToolId] = useState<string | null>(null)
+  const [builtInSkills, setBuiltInSkills] = useState<EditableSkillMeta[]>([])
+  const [disabledSkills, setDisabledSkills] = useState<Set<string>>(new Set())
+  const [busySkillSlug, setBusySkillSlug] = useState<string | null>(null)
   const pendingSkillImprovementSuggestions = useAtomValue(pendingSkillImprovementSuggestionsAtom)
   const setPendingSkillImprovementSuggestions = useSetAtom(pendingSkillImprovementSuggestionsAtom)
 
@@ -182,6 +189,76 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
     void loadSystemTools()
   }, [loadSystemTools])
 
+  const loadBuiltInSkills = useCallback(async () => {
+    if (!workspaceSlug) {
+      setBuiltInSkills([])
+      return
+    }
+    try {
+      const catalog = await getSkillMarketCatalog(workspaceSlug)
+      const builtIn = catalog.items
+        .filter((item) => item.sourceType === 'built-in')
+        .map((item) => ({
+          slug: item.slug,
+          name: item.name,
+          description: item.description ?? '',
+          whenToUse: '',
+          storageScope: 'workspace' as SkillStorageScope,
+          managementSurface: 'market' as const,
+          sourceType: 'built-in' as const,
+          allowedTools: [],
+          argumentHint: '',
+          disableModelInvocation: false,
+          version: item.version ?? '',
+          icon: item.icon,
+          installState: item.installState,
+        }))
+      setBuiltInSkills(builtIn)
+    } catch {
+      setBuiltInSkills([])
+    }
+  }, [workspaceSlug])
+
+  useEffect(() => {
+    void loadBuiltInSkills()
+  }, [loadBuiltInSkills])
+
+  const loadDisabledSkills = useCallback(async () => {
+    if (!workspaceSlug) {
+      setDisabledSkills(new Set())
+      return
+    }
+    try {
+      const config = await getEffectiveLumeConfig(workspaceSlug)
+      setDisabledSkills(new Set(config.skills?.disabled ?? []))
+    } catch {
+      setDisabledSkills(new Set())
+    }
+  }, [workspaceSlug])
+
+  useEffect(() => {
+    void loadDisabledSkills()
+  }, [loadDisabledSkills])
+
+  const handleToggleSkill = async (skillSlug: string, enabled: boolean) => {
+    if (!workspaceSlug) return
+    setBusySkillSlug(skillSlug)
+    try {
+      const next = new Set(disabledSkills)
+      if (enabled) {
+        next.delete(skillSlug)
+      } else {
+        next.add(skillSlug)
+      }
+      await updateSkillsConfig({ disabled: Array.from(next).sort() }, workspaceSlug)
+      setDisabledSkills(next)
+    } catch (err) {
+      console.error('[SkillSettingsView] 切换技能启用状态失败:', err)
+    } finally {
+      setBusySkillSlug(null)
+    }
+  }
+
   const visibleSkills = useMemo(
     () => filterSkillSettingsItems(
       skills.filter((skill) => skill.storageScope === activeStorageScope && isSelfOwnedSkill(skill)),
@@ -213,7 +290,9 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
 
   const handleCreate = () => {
     setEditorError(null)
-    if (onCreateNew) {
+    if (onAddSource) {
+      onAddSource()
+    } else if (onCreateNew) {
       onCreateNew(activeStorageScope)
     } else {
       setDraft(createEmptySkillDraft(activeStorageScope))
@@ -454,12 +533,50 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
                 skill={skill}
                 editing={loadingEditorSlug === skillSettingsKey(skill)}
                 deleting={deletingSlug === skillSettingsKey(skill)}
+                disabled={disabledSkills.has(skill.slug)}
+                busy={busySkillSlug === skill.slug}
                 onEdit={() => void handleEdit(skill)}
                 onDelete={() => void handleDelete(skill)}
+                onToggle={(checked) => void handleToggleSkill(skill.slug, checked)}
               />
             ))}
           </div>
-          {visibleSkills.length === 0 && (
+          {builtInSkills.length > 0 && (
+            <>
+              <div className="mt-5 mb-3 text-[13px] font-medium text-[#687196]">系统内置技能</div>
+              <div className="grid gap-3">
+                {builtInSkills.map((skill) => (
+                  <article
+                    key={skill.slug}
+                    className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[#edf0f6] bg-[#f5f4ff] px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <h2 className="truncate text-[15px] font-semibold text-[#20232d]" title={skill.name}>{skill.name}</h2>
+                        <span className="font-mono text-[12px] text-[#4f566d]">/{skill.slug}</span>
+                        <span className="inline-flex items-center rounded-full bg-[#eae6ff] px-2 py-0.5 text-[11px] font-medium text-[#635bff]">
+                          系统内置 · 全局可用
+                        </span>
+                        {skill.version && <span className="text-[12px] text-[#8a91a8]">v{skill.version}</span>}
+                      </div>
+                      {skill.description && (
+                        <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[#687196]">{skill.description}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center">
+                      <Switch
+                        size="sm"
+                        checked={!disabledSkills.has(skill.slug)}
+                        disabled={busySkillSlug === skill.slug}
+                        onCheckedChange={(checked) => void handleToggleSkill(skill.slug, checked)}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+          {visibleSkills.length === 0 && builtInSkills.length === 0 && (
             <div className="rounded-[8px] border border-dashed border-[#d8ddec] p-8 text-center text-[13px] leading-6 text-[#687196]">
               {activeScopeMeta.emptyLabel}
               {activeStorageScope === 'workspace' && (
@@ -485,14 +602,20 @@ const SkillSettingsRow = ({
   skill,
   editing,
   deleting,
+  disabled,
+  busy,
   onEdit,
   onDelete,
+  onToggle,
 }: {
   skill: EditableSkillMeta
   editing: boolean
   deleting: boolean
+  disabled: boolean
+  busy: boolean
   onEdit: () => void
   onDelete: () => void
+  onToggle: (checked: boolean) => void
 }) => {
   return (
     <article className="grid min-h-[108px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[#edf0f6] bg-[#fbfbfa] px-4 py-3">
@@ -517,25 +640,33 @@ const SkillSettingsRow = ({
           </div>
         )}
       </div>
-      <div className="flex items-start gap-1">
-        <button
-          type="button"
-          title="编辑技能"
-          disabled={editing}
-          onClick={onEdit}
-          className="flex size-8 items-center justify-center rounded-[6px] text-[#656d83] hover:bg-white hover:text-[#20232d] disabled:cursor-wait disabled:opacity-60"
-        >
-          {editing ? <Loader2 size={16} className="animate-spin" /> : <Pencil size={16} />}
-        </button>
-        <button
-          type="button"
-          title="删除技能"
-          disabled={deleting}
-          onClick={onDelete}
-          className="flex size-8 items-center justify-center rounded-[6px] text-[#656d83] hover:bg-white hover:text-[#ba3636] disabled:cursor-wait disabled:opacity-60"
-        >
-          {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-        </button>
+      <div className="flex items-center gap-3">
+        <Switch
+          size="sm"
+          checked={!disabled}
+          disabled={busy}
+          onCheckedChange={onToggle}
+        />
+        <div className="flex items-start gap-1">
+          <button
+            type="button"
+            title="编辑技能"
+            disabled={editing}
+            onClick={onEdit}
+            className="flex size-8 items-center justify-center rounded-[6px] text-[#656d83] hover:bg-white hover:text-[#20232d] disabled:cursor-wait disabled:opacity-60"
+          >
+            {editing ? <Loader2 size={16} className="animate-spin" /> : <Pencil size={16} />}
+          </button>
+          <button
+            type="button"
+            title="删除技能"
+            disabled={deleting}
+            onClick={onDelete}
+            className="flex size-8 items-center justify-center rounded-[6px] text-[#656d83] hover:bg-white hover:text-[#ba3636] disabled:cursor-wait disabled:opacity-60"
+          >
+            {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+          </button>
+        </div>
       </div>
     </article>
   )
