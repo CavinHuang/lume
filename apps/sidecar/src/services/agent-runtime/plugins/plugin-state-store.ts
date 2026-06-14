@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { SensitiveApprovalRecord } from "@lume/agent-sdk";
 
 export interface PluginStateFile {
   plugins: Record<string, PluginInstallRecord>;
@@ -22,20 +23,20 @@ export interface PluginInstalledVersion {
   trustedAt?: string;
   permissionsAcceptedAt?: string;
   permissionsHash?: string;
-  sensitiveApprovals: Record<string, unknown>;
+  sensitiveApprovals: SensitiveApprovalRecord[];
 }
 
 export interface PluginExternalState {
   sourceKey: string;
   permissionsHash?: string;
   permissionsAcceptedAt?: string;
-  sensitiveApprovals: Record<string, unknown>;
+  sensitiveApprovals: SensitiveApprovalRecord[];
 }
 
 export interface PluginApprovalBundle {
   permissionsHash: string;
   permissionsAcceptedAt?: string;
-  sensitiveApprovals: Record<string, unknown>;
+  sensitiveApprovals: SensitiveApprovalRecord[];
 }
 
 export class FilePluginStateStore {

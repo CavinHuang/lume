@@ -1,5 +1,7 @@
 export { createPluginPermissionInterceptor } from "./permission-interceptor.js";
 export { PluginRegistry } from "./plugin-registry.js";
+export { PluginPermissionRuntime } from "./permission-runtime.js";
+export type { PluginPermissionRuntimeInput, SensitiveCheckResult, RuntimeStateResult } from "./permission-runtime.js";
 export { FilePluginStateStore } from "./plugin-state-store.js";
 
 export interface PluginPermissionContext {

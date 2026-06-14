@@ -4,6 +4,7 @@ import {
   normalizePluginManifests,
   type NormalizedPlugin,
   type PluginDiagnostic,
+  type SensitiveApprovalRecord,
 } from "@lume/agent-sdk";
 import type { FilePluginStateStore, PluginStateFile } from "./plugin-state-store.js";
 
@@ -23,7 +24,7 @@ export interface PluginRegistryListInput {
 export interface PluginRegistryState {
   permissionsHash?: string;
   permissionsAcceptedAt?: string;
-  sensitiveApprovals: Record<string, unknown>;
+  sensitiveApprovals: SensitiveApprovalRecord[];
 }
 
 export interface RegisteredPlugin extends NormalizedPlugin {
@@ -180,7 +181,7 @@ function attachState(plugin: NormalizedPlugin, state: PluginStateFile): Register
   const externalState = record.external?.[sourceKey("directory", plugin.root)];
   const permissionsHash = versionState?.permissionsHash ?? externalState?.permissionsHash;
   const permissionsAcceptedAt = versionState?.permissionsAcceptedAt ?? externalState?.permissionsAcceptedAt;
-  const sensitiveApprovals = versionState?.sensitiveApprovals ?? externalState?.sensitiveApprovals ?? {};
+  const sensitiveApprovals = versionState?.sensitiveApprovals ?? externalState?.sensitiveApprovals ?? [];
 
   return {
     ...plugin,
