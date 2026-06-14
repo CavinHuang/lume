@@ -552,6 +552,11 @@ fn read_clipboard_text() -> Result<String, String> {
     read_system_clipboard_text()
 }
 
+#[tauri::command]
+fn write_clipboard_text(text: String) -> Result<(), String> {
+    write_system_clipboard_text(&text)
+}
+
 // ── Logging commands ──────────────────────────────────────
 
 #[tauri::command]
@@ -704,6 +709,52 @@ fn command_output_text(program: &str, args: &[&str]) -> Result<String, String> {
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn write_system_clipboard_text(text: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        return command_write_stdin("pbcopy", &[], text);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return command_write_stdin(
+            "powershell",
+            &["-NoProfile", "-Command", "$input | Set-Clipboard"],
+            text,
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return command_write_stdin("wl-copy", &[], text)
+            .or_else(|_| command_write_stdin("xclip", &["-selection", "clipboard"], text))
+            .or_else(|_| command_write_stdin("xsel", &["--clipboard", "--input"], text));
+    }
+
+    #[allow(unreachable_code)]
+    Err("clipboard is not supported on this platform".to_string())
+}
+
+fn command_write_stdin(program: &str, args: &[&str], input: &str) -> Result<(), String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("write clipboard failed: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|e| format!("write clipboard failed: {e}"))?;
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("write clipboard failed: {e}"))?;
+    if !status.success() {
+        return Err("write clipboard failed".to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1688,6 +1739,7 @@ fn main() {
             open_external,
             open_weread_key_webview,
             read_clipboard_text,
+            write_clipboard_text,
             write_web_log,
             desktop_list_log_files,
             desktop_read_log_file,
