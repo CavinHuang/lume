@@ -3,6 +3,7 @@ import type {
   AgentPendingInteractiveState,
   AgentGenerateTitleInput,
   AgentListSubagentRunsInput,
+  AgentPluginDiagnostic,
   AgentProxySettings,
   ImportLocalSkillDirectoryToWorkspaceInput,
   InstallSkillMarketItemToWorkspaceInput,
@@ -957,17 +958,26 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.LIST_PLUGINS]: async () => {
       const manager = new SidecarPluginManager();
-      const plugins = manager.resolveEnabled({ enabled: [], directories: [] });
+      const plugins = await manager.resolveEnabled({ enabled: [], directories: [] });
       log.info("LIST_PLUGINS request", { count: plugins.length, names: plugins.map((p) => p.name) });
-      return plugins.map((p) => ({
+      const items = plugins.map((p) => ({
+        pluginId: p.name,
         name: p.name,
         version: p.version,
         root: p.root,
+        manifestFormat: p.manifestFormat,
         description: p.manifest.description,
+        displayName: p.manifest.displayName,
         hooks: p.manifest.hooks,
         mcpServers: p.manifest.mcpServers,
         skills: p.manifest.skills?.length ?? 0,
+        commandTools: p.manifest.commandTools?.length ?? 0,
+        diagnostics: (p.diagnostics ?? []) as AgentPluginDiagnostic[],
       }));
+      return {
+        plugins: items,
+        diagnostics: items.flatMap((item) => item.diagnostics),
+      };
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(

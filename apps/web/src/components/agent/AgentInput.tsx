@@ -22,8 +22,10 @@ import { agentMessageQueueAtom, agentPlanModePhaseAtom, agentRuntimeEventsAtom, 
 import {
   AGENT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
+  type AgentListPluginsResult,
   type AgentMessage,
   type AgentMessageAttachmentInput,
+  type AgentPluginListItem,
   type AgentSavedFile,
   type Channel,
   type LumeConfigAgentDefaultStrategy,
@@ -70,6 +72,13 @@ import {
   type AgentInputRoleRecommendation,
 } from './agent-input-role-recommendations'
 import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
+
+type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
+
+function normalizeListPluginsResult(result: unknown): InstalledPluginSummary[] {
+  if (Array.isArray(result)) return result as InstalledPluginSummary[]
+  return (result as Partial<AgentListPluginsResult>).plugins ?? []
+}
 
 interface AgentInputProps {
   threadId: string
@@ -215,7 +224,7 @@ export function AgentInput({
   const mentionSuggestionOpenRef = useRef(false)
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const [pluginsPopoverOpen, setPluginsPopoverOpen] = useState(false)
-  const [installedPlugins, setInstalledPlugins] = useState<Array<{ name: string; version: string; description?: string }>>([])
+  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginSummary[]>([])
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
@@ -640,8 +649,8 @@ export function AgentInput({
   const handleOpenPlugins = async () => {
     setAttachMenuOpen(false)
     try {
-      const plugins = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
-      setInstalledPlugins(plugins as Array<{ name: string; version: string; description?: string }>)
+      const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
+      setInstalledPlugins(normalizeListPluginsResult(result))
       setPluginsPopoverOpen(true)
     } catch {
       toast.error('获取插件列表失败')

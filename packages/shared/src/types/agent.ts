@@ -31,6 +31,35 @@ export type {
   WorkspaceMcpConfig
 } from "./mcp"
 
+export interface AgentPluginDiagnostic {
+  pluginId?: string
+  version?: string
+  severity: "info" | "warning" | "error"
+  code: string
+  message: string
+  path?: string
+}
+
+export interface AgentPluginListItem {
+  pluginId: string
+  name: string
+  version: string
+  root: string
+  manifestFormat: "lume" | "codex" | "legacy"
+  description?: string
+  displayName?: string
+  skills: number
+  hooks?: string
+  mcpServers?: string
+  commandTools: number
+  diagnostics: AgentPluginDiagnostic[]
+}
+
+export interface AgentListPluginsResult {
+  plugins: AgentPluginListItem[]
+  diagnostics: AgentPluginDiagnostic[]
+}
+
 // ===== Agent 工作区 =====
 
 /** Agent 工作区 */

@@ -4,7 +4,7 @@ import {
   normalizePluginManifests,
   type NormalizedPlugin,
   type PluginDiagnostic,
-} from "@lume/agent-sdk/plugins/normalized.js";
+} from "@lume/agent-sdk";
 import type { FilePluginStateStore, PluginStateFile } from "./plugin-state-store.js";
 
 export interface PluginRegistryConfig {

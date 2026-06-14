@@ -628,7 +628,7 @@ export async function runRuntimeCoreAttempt(
   }));
 
   const pluginManager = new SidecarPluginManager();
-  const pluginInterceptorContexts = pluginManager.buildInterceptorContexts({
+  const pluginInterceptorContexts = await pluginManager.buildInterceptorContexts({
     enabled: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.enabled ?? [],
     directories: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.directories ?? [],
   });

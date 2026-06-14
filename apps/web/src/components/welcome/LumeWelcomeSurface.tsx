@@ -8,8 +8,15 @@ import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import { AgentAttachmentGrid } from '@/components/agent/AgentAttachmentGrid'
 import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentListPluginsResult, type AgentPluginListItem } from '@lume/shared'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
+
+type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
+
+function normalizeListPluginsResult(result: unknown): InstalledPluginSummary[] {
+  if (Array.isArray(result)) return result as InstalledPluginSummary[]
+  return (result as Partial<AgentListPluginsResult>).plugins ?? []
+}
 
 interface PendingFile {
   id: string
@@ -57,13 +64,13 @@ export function LumeWelcomeSurface({
 }: LumeWelcomeSurfaceProps) {
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const [pluginsPopoverOpen, setPluginsPopoverOpen] = useState(false)
-  const [installedPlugins, setInstalledPlugins] = useState<Array<{ name: string; version: string; description?: string }>>([])
+  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginSummary[]>([])
 
   const handleOpenPlugins = async () => {
     setAttachMenuOpen(false)
     try {
-      const plugins = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
-      setInstalledPlugins(plugins as Array<{ name: string; version: string; description?: string }>)
+      const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
+      setInstalledPlugins(normalizeListPluginsResult(result))
       setPluginsPopoverOpen(true)
     } catch {
       // silent

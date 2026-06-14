@@ -104,10 +104,10 @@ export class ToolRuntime {
     });
   }
 
-  static resolveCommandPluginSpecs(input: {
+  static async resolveCommandPluginSpecs(input: {
     cwd: string;
     workspaceSlug?: string;
-  }): ResolveCommandPluginSpecsResult {
+  }): Promise<ResolveCommandPluginSpecsResult> {
     const config = getEffectiveLumeConfig(input.workspaceSlug).plugins;
     const enabledList = config?.enabled ?? [];
     const directories = config?.directories ?? [];
@@ -121,7 +121,7 @@ export class ToolRuntime {
     const effectiveEnabled = enabledList.length > 0 ? enabledList : undefined;
 
     const manager = new SidecarPluginManager();
-    const resolved = manager.resolveEnabled({
+    const resolved = await manager.resolveEnabled({
       enabled: effectiveEnabled ?? [],
       directories: allRoots.slice(1), // pass non-default roots as extra directories
     });

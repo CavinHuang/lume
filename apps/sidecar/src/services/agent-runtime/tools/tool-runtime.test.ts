@@ -64,7 +64,7 @@ describe("ToolRuntime", () => {
       "utf-8"
     );
 
-    const resolved = ToolRuntime.resolveCommandPluginSpecs({ cwd: root });
+    const resolved = await ToolRuntime.resolveCommandPluginSpecs({ cwd: root });
 
     expect(resolved.specs).toContainEqual(expect.objectContaining({
       name: "good",
@@ -78,4 +78,3 @@ describe("ToolRuntime", () => {
     // (silent skip instead of diagnostic reporting)
   });
 });
-
