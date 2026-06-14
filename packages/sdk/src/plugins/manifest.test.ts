@@ -104,4 +104,15 @@ describe("LumePluginManifest", () => {
     expect(result.permissions.tools.allow).toEqual(["Bash", "FileWrite"]);
     expect(result.permissions.tools.deny).toBeUndefined();
   });
+
+  test("parses raw command tool entries for the normalizer", () => {
+    const manifest = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "tools",
+      version: "1.0.0",
+      commandTools: [{ name: "echo", command: "echo" }],
+    });
+
+    expect(manifest.commandTools).toEqual([{ name: "echo", command: "echo" }]);
+  });
 });

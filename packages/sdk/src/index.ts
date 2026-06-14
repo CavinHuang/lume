@@ -202,6 +202,14 @@ export {
   CODEX_EVENT_MAP,
 } from './plugins/codex-adapter.js'
 export {
+  normalizePluginManifests,
+  type NormalizedPlugin,
+  type PluginManifestCapabilities,
+  type PluginDiagnostic,
+  type CommandToolContribution,
+  type PluginSkillContribution,
+} from './plugins/normalized.js'
+export {
   checkToolPermission,
   checkFilesystemPermission,
   checkNetworkPermission,
