@@ -36,8 +36,15 @@ function DropdownMenuItem({
   className,
   destructive,
   disabled,
+  onSelect,
+  onClick,
   ...props
-}: Menu.Item.Props & { className?: string; destructive?: boolean }) {
+}: Omit<Menu.Item.Props, "onSelect"> & {
+  className?: string
+  destructive?: boolean
+  /** 选择回调；base-ui MenuItem 不触发 onSelect，内部映射到 onClick。 */
+  onSelect?: () => void
+}) {
   return (
     <Menu.Item
       data-slot="dropdown-menu-item"
@@ -49,6 +56,7 @@ function DropdownMenuItem({
         disabled && "cursor-not-allowed opacity-45",
         className
       )}
+      onClick={onClick ?? onSelect}
       {...props}
     />
   )

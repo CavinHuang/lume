@@ -36,8 +36,15 @@ function ContextMenuContent({
 function ContextMenuItem({
   className,
   destructive,
+  onSelect,
+  onClick,
   ...props
-}: Menu.Item.Props & { className?: string; destructive?: boolean }) {
+}: Omit<Menu.Item.Props, "onSelect"> & {
+  className?: string
+  destructive?: boolean
+  /** 选择回调；base-ui MenuItem 不触发 onSelect，内部映射到 onClick。 */
+  onSelect?: () => void
+}) {
   return (
     <ContextMenu.Item
       data-slot="context-menu-item"
@@ -48,6 +55,7 @@ function ContextMenuItem({
           : "text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]",
         className
       )}
+      onClick={onClick ?? onSelect}
       {...props}
     />
   )
