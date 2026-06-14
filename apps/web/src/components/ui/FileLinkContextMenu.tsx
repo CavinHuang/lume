@@ -69,7 +69,7 @@ export function FileLinkContextMenu({ context, onPreview, inline = false, childr
           item.kind === "separator" ? (
             <ContextMenuSeparator key={item.key} />
           ) : (
-            <ContextMenuItem key={item.key} onSelect={item.onSelect}>
+            <ContextMenuItem key={item.key} onClick={item.onSelect}>
               {item.label}
             </ContextMenuItem>
           ),
