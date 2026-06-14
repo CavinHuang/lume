@@ -25,6 +25,8 @@ export interface ToolRuntimeDiagnostic {
   path?: string;
   severity: "info" | "warning" | "error";
   reason: string;
+  /** Optional structured code from the source diagnostic (e.g. capability_filtered, invalid_manifest). */
+  code?: string;
 }
 
 export interface ToolRuntimeBuildInput {
@@ -104,6 +106,11 @@ export class ToolRuntime {
     });
   }
 
+  /**
+   * @deprecated Phase 3b: createRuntimeCoreSession now uses SidecarPluginManager.listRegistered
+   *   → assemblePluginRuntime. This method is retained only for tool-runtime.test.ts; remove
+   *   it (and its test) in a Phase 3 cleanup once the test is migrated.
+   */
   static async resolveCommandPluginSpecs(input: {
     cwd: string;
     workspaceSlug?: string;

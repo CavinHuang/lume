@@ -958,6 +958,7 @@ export async function createRuntimeCoreSession(
       severity: d.severity,
       reason: d.message,
       ...(d.path ? { path: d.path } : {}),
+      ...(d.code ? { code: d.code } : {}),
     })),
     pluginCommandTools: pluginAssembly.commandToolDefinitions,
     mcpTools: workspaceMcpRuntime.tools,
