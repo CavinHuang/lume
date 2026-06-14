@@ -73,6 +73,8 @@ import { buildRuntimeUserMessageInput } from "./message-attachment-input";
 import { createTaskContractWriteTool } from "../plan/task-contract-write-tool";
 import { createTaskReportTool } from "../task-run/task-report-tool";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
+import { SidecarPluginManager } from "../plugins/plugin-manager.js";
+import { assemblePluginRuntime } from "../plugins/runtime-bridge.js";
 import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
@@ -895,51 +897,29 @@ export async function createRuntimeCoreSession(
   const sessionManager = createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
   const agents = { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) };
   const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
-  const pluginResolution = await ToolRuntime.resolveCommandPluginSpecs({
-    cwd: input.cwd,
-    workspaceSlug: input.workspaceSlug
+  // Phase 3b: registry → resolver → bridge. Command tools + skills come from the
+  // PluginRuntimeBridge now; the SDK's loadPlugins path is no longer used (no
+  // agentOptions.plugins). Plugin hooks are inert until Phase 3d.
+  const pluginConfig = getEffectiveLumeConfig(input.workspaceSlug).plugins;
+  const pluginManager = new SidecarPluginManager();
+  const registeredPlugins = await pluginManager.listRegistered({
+    enabled: pluginConfig?.enabled ?? [],
+    // Mirror tool-runtime.ts:116-127: cwd-local root + configured extras as
+    // directories; the global ~/.lume/plugins root is covered by SidecarPluginManager's
+    // default pluginRoot. (join is already imported at run.ts:41.)
+    directories: [join(input.cwd, ".lume", "plugins"), ...(pluginConfig?.directories ?? [])],
   });
+  const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
 
-  // Register plugin skills in the global skill registry with plugin namespace
+  // Register plugin skills (resolver already namespaced skill.name as `${pluginId}:${original}`).
   const registeredPluginSkillNames = new Set<string>();
-  for (const spec of pluginResolution.specs) {
-    if (spec.kind !== "command") continue;
-    if (!spec.path) continue;
-    try {
-      const { loadFilesystemSkills } = await import("@lume/agent-sdk");
-      const pluginName = spec.name;
-      const skills = await loadFilesystemSkills({
-        roots: [join(spec.path, "skills")],
-        cwd: spec.path,
-      });
-      log.debug("Plugin skills loaded from disk", {
-        pluginName,
-        path: join(spec.path, "skills"),
-        skillCount: skills.length,
-        skillNames: skills.map((s) => s.name),
-      });
-      for (const skill of skills) {
-        // Namespace the skill name with plugin name for explicit invocation: "plugin-name:skill-name"
-        const namespacedSkill = {
-          ...skill,
-          name: `${pluginName}:${skill.name}`,
-          slug: `${pluginName}/${skill.name}`,
-        };
-        if (hasSkill(namespacedSkill.name)) {
-          log.warn(`[plugin] skill "${namespacedSkill.name}" already registered, skipping duplicate from "${pluginName}"`);
-          continue;
-        }
-        log.debug("Registering plugin skill", {
-          pluginName,
-          originalName: skill.name,
-          namespacedName: namespacedSkill.name,
-        });
-        registerSkill(namespacedSkill);
-        registeredPluginSkillNames.add(namespacedSkill.name);
-      }
-    } catch {
-      // skip plugins with invalid skills
+  for (const skill of pluginAssembly.skills) {
+    if (hasSkill(skill.name)) {
+      log.warn(`[plugin] skill "${skill.name}" already registered, skipping duplicate`);
+      continue;
     }
+    registerSkill(skill);
+    registeredPluginSkillNames.add(skill.name);
   }
   log.info("Plugin skill registration complete", {
     sessionId: input.lumeSessionId,
@@ -973,7 +953,13 @@ export async function createRuntimeCoreSession(
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     runId: input.runId,
-    pluginDiagnostics: pluginResolution.diagnostics,
+    pluginDiagnostics: pluginAssembly.diagnostics.map((d) => ({
+      pluginName: d.pluginId,
+      severity: d.severity,
+      reason: d.message,
+      ...(d.path ? { path: d.path } : {}),
+    })),
+    pluginCommandTools: pluginAssembly.commandToolDefinitions,
     mcpTools: workspaceMcpRuntime.tools,
     mcpDiagnostics: workspaceMcpRuntime.diagnostics
   });
@@ -1050,7 +1036,6 @@ export async function createRuntimeCoreSession(
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
       ? { resume: input.lumeSessionId }
       : {}),
-    plugins: pluginResolution.specs,
     agents,
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
