@@ -107,3 +107,89 @@ describe("resolvePluginCapabilities — skills", () => {
     }
   });
 });
+
+async function writeJson(path: string, value: unknown) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(value), "utf-8");
+}
+
+describe("resolvePluginCapabilities — hooks", () => {
+  test("keeps events listed in permissions.hooks.events and strips Codex type", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "acme");
+      await writeJson(join(pluginRoot, "hooks", "hooks.json"), {
+        hooks: {
+          PreToolUse: [{ type: "command", command: "echo pre", matcher: "Bash" }],
+          PostToolUse: [{ type: "command", command: "echo post" }],
+        },
+      });
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          hooksConfigPath: "./hooks/hooks.json",
+          commandTools: [],
+        },
+        permissions: { hooks: { events: ["PreToolUse"] } },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.hooks).toEqual({
+        PreToolUse: [{ command: "echo pre", matcher: "Bash" }],
+      });
+      expect(result.diagnostics.map((d) => d.code)).toContain("capability_filtered");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("filters all hooks when permissions.hooks.events is unset", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "no-events");
+      await writeJson(join(pluginRoot, "hooks.json"), {
+        Stop: [{ command: "echo stop" }],
+      });
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          hooksConfigPath: "./hooks.json",
+          commandTools: [],
+        },
+        permissions: {}, // no hooks.events declared
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.hooks).toEqual({});
+      expect(result.diagnostics.filter((d) => d.code === "capability_filtered")).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("emits invalid_manifest when the hooks file cannot be parsed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "broken");
+      await mkdir(join(pluginRoot, "hooks"), { recursive: true });
+      await writeFile(join(pluginRoot, "hooks", "hooks.json"), "{ not json", "utf-8");
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          hooksConfigPath: "./hooks/hooks.json",
+          commandTools: [],
+        },
+        permissions: { hooks: { events: ["Stop"] } },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.hooks).toEqual({});
+      expect(result.diagnostics.map((d) => d.code)).toContain("invalid_manifest");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

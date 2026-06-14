@@ -1,8 +1,10 @@
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   loadFilesystemSkills,
   type CommandToolContribution,
   type HookConfig,
+  type HookDefinition,
   type PluginDiagnostic,
   type SkillDefinition,
 } from "@lume/agent-sdk";
@@ -115,10 +117,57 @@ async function resolveSkills(
 }
 
 async function resolveHooks(
-  _plugin: RegisteredPlugin,
-  _diagnostics: PluginDiagnostic[],
+  plugin: RegisteredPlugin,
+  diagnostics: PluginDiagnostic[],
 ): Promise<HookConfig> {
-  return {};
+  if (!plugin.capabilities.hooksConfigPath) return {};
+
+  const hooksFile = resolve(plugin.root, plugin.capabilities.hooksConfigPath);
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(await readFile(hooksFile, "utf-8")) as Record<string, unknown>;
+  } catch (error) {
+    diagnostics.push({
+      pluginId: plugin.pluginId,
+      version: plugin.version,
+      severity: "warning",
+      code: "invalid_manifest",
+      message: `Failed to read hooks config ${plugin.capabilities.hooksConfigPath}: ${error instanceof Error ? error.message : String(error)}`,
+      path: plugin.capabilities.hooksConfigPath,
+    });
+    return {};
+  }
+
+  // Codex wraps as { hooks: { Event: [...] } }; a flat object is also accepted.
+  const configRoot =
+    raw.hooks && typeof raw.hooks === "object" && !Array.isArray(raw.hooks)
+      ? (raw.hooks as Record<string, unknown>)
+      : raw;
+
+  const allowed = new Set(plugin.permissions.hooks?.events ?? []);
+  const result: HookConfig = {};
+  for (const [event, definitions] of Object.entries(configRoot)) {
+    if (!Array.isArray(definitions)) continue;
+    if (!allowed.has(event)) {
+      diagnostics.push({
+        pluginId: plugin.pluginId,
+        version: plugin.version,
+        severity: "info",
+        code: "capability_filtered",
+        message: `Hook event ${event} is not declared in permissions.hooks.events; filtered.`,
+        path: plugin.capabilities.hooksConfigPath,
+      });
+      continue;
+    }
+    result[event] = definitions.map((def) => {
+      if (!def || typeof def !== "object" || Array.isArray(def)) {
+        return def as HookDefinition;
+      }
+      const { type: _type, ...rest } = def as Record<string, unknown>;
+      return rest as HookDefinition;
+    });
+  }
+  return result;
 }
 
 async function resolveMcpServers(
