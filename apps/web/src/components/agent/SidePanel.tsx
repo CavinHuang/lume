@@ -9,7 +9,7 @@ import { TracePanel } from './TracePanel'
 import { SourceCodePreview } from './SourceCodePreview'
 import { cn } from '@/lib/utils'
 import { agentFileTreeOpenAtom, type SidePanelView } from '@/atoms'
-import { sidecarCall } from '@/lib/desktop-api'
+import { sidecarCall, writeClipboardText } from '@/lib/desktop-api'
 import { readMemory } from '@/lib/desktop-api/memory'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import type { Dispatch, PointerEvent as ReactPointerEvent, SetStateAction } from 'react'
@@ -210,7 +210,7 @@ export function SidePanel({
   const handleCopyPath = useCallback(async () => {
     if (!selectedPath) return
     try {
-      await navigator.clipboard.writeText(selectedPath)
+      await writeClipboardText(selectedPath)
       setCopied(true)
       if (copyResetRef.current !== null) {
         clearTimeout(copyResetRef.current)
