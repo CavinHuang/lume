@@ -11,6 +11,7 @@ import type {
 import type { HookConfig, HookDefinition } from '../hooks.js'
 import type { SkillDefinition } from '../skills/types.js'
 import type { CommandDefinition } from '../commands/types.js'
+import type { CommandToolContribution } from './normalized.js'
 
 export interface LoadedPlugin {
   name: string
@@ -75,6 +76,74 @@ function normalizeManifestTools(
     }
   }
   return normalized
+}
+
+/**
+ * Build a ToolDefinition for a plugin command tool (spec §6.3/§16.3).
+ *
+ * Extracted from the private commandToolFromManifest so the sidecar
+ * PluginRuntimeBridge can build command-tool definitions from normalized
+ * CommandToolContribution values without going through SDK loadPlugins.
+ * `pluginRoot` MUST be absolute (the resolver/normalizer resolve relative
+ * paths against the plugin root).
+ */
+export function buildCommandToolDefinition(
+  contribution: CommandToolContribution,
+  pluginRoot: string,
+): ToolDefinition {
+  return {
+    name: contribution.name,
+    description: contribution.description || contribution.name,
+    inputSchema: (contribution.inputSchema as unknown as ToolDefinition['inputSchema']) || { type: 'object', properties: {} },
+    isReadOnly: () => contribution.metadata?.isReadOnly === true,
+    isConcurrencySafe: () => contribution.metadata?.isConcurrencySafe === true,
+    async call(input, context) {
+      const payload = JSON.stringify(input ?? {})
+      const timeout = Math.max(1, contribution.timeoutMs ?? 30_000)
+      const cwd = contribution.cwd ? resolve(pluginRoot, contribution.cwd) : pluginRoot
+      const args = [...(contribution.args ?? []), payload]
+      return await new Promise((resolveResult) => {
+        const child = execFile(contribution.command, args, {
+          cwd,
+          timeout,
+          maxBuffer: 1024 * 1024,
+          env: {
+            ...process.env,
+            PLUGIN_INPUT: payload,
+            ...(contribution.env ?? {}),
+            ...(context.toolConfig?.env && typeof context.toolConfig.env === 'object'
+              ? (context.toolConfig.env as Record<string, string>)
+              : {}),
+          },
+        }, (error, stdout, stderr) => {
+          if (error) {
+            const output = [error.message, stderr && `stderr: ${stderr}`, stdout && `stdout: ${stdout}`]
+              .filter(Boolean)
+              .join('\n')
+            resolveResult({
+              type: 'tool_result',
+              tool_use_id: context.toolUseId ?? '',
+              content: output,
+              is_error: true,
+            })
+            return
+          }
+          resolveResult({
+            type: 'tool_result',
+            tool_use_id: context.toolUseId ?? '',
+            content: stdout || stderr || '(no output)',
+          })
+        })
+        if (context.abortSignal) {
+          context.abortSignal.addEventListener('abort', () => child.kill(), { once: true })
+        }
+      })
+    },
+    runtimeMetadata: {
+      ...(contribution.metadata ?? {}),
+      source: 'plugin',
+    },
+  }
 }
 
 function commandToolFromManifest(manifest: CommandToolManifest, pluginPath: string): ToolDefinition {

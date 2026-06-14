@@ -213,6 +213,9 @@ export {
   computePermissionsHash,
 } from './plugins/permissions-hash.js'
 export {
+  buildCommandToolDefinition,
+} from './plugins/loader.js'
+export {
   resolveSensitiveApproval,
   isHardDeniedTool,
   computeEffectiveRuntimeState,
