@@ -61,7 +61,7 @@ export function FileLinkContextMenu({ context, onPreview, children }: FileLinkCo
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger render={<span style={{ display: "contents" }} />}>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger render={children} />
       <ContextMenuContent>
         {items.map((item) =>
           item.kind === "separator" ? (
