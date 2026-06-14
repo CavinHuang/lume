@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Braces,
   ChevronRight,
-  Copy,
   ExternalLink,
   Folder,
   FolderOpen,
@@ -19,6 +18,8 @@ import { activeTabIdAtom, tabsAtom } from '@/atoms'
 import { sidecarCall, readTextFile } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
+import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
+import type { FileLinkContext, FileLinkSource } from '@/components/agent/file-link-types'
 import { AGENT_IPC_CHANNELS, type FileEntry } from '@lume/shared'
 import { normalizeDirectoryEntriesResponse } from '@/components/file-browser/FileBrowser'
 import { buildFileTab, upsertTab } from './file-tabs'
@@ -115,14 +116,6 @@ export function FilePreviewTabView({ tab }: FilePreviewTabViewProps) {
     return () => window.removeEventListener('pointerdown', handlePointerDown)
   }, [menuOpen])
 
-  const handleCopyPath = useCallback(async () => {
-    const value = tab.sourcePath ?? filePath
-    if (!value) return
-    await navigator.clipboard.writeText(value)
-    toast.success('已复制路径')
-    setMenuOpen(false)
-  }, [filePath, tab.sourcePath])
-
   const handleOpenExternal = useCallback(async () => {
     try {
       if (tab.fileSource === 'workspace') {
@@ -147,9 +140,16 @@ export function FilePreviewTabView({ tab }: FilePreviewTabViewProps) {
     }
   }, [filePath, tab.fileSource, tab.threadId, tab.workspaceSlug])
 
+  const fileCtx = useMemo<FileLinkContext>(() => {
+    const source: FileLinkSource = (tab.fileSource ?? 'workspace') as FileLinkSource
+    const relPath = source === 'local' ? (tab.sourcePath ?? filePath) : filePath
+    return { source, relPath, threadId: tab.threadId, workspaceSlug: tab.workspaceSlug }
+  }, [filePath, tab.fileSource, tab.sourcePath, tab.threadId, tab.workspaceSlug])
+
   return (
     <div className="flex min-h-0 flex-1 bg-[#171717] text-white">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <FileLinkContextMenu context={fileCtx}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex h-16 items-center justify-between border-b border-white/8 px-6">
           <div className="flex min-w-0 items-center gap-2 text-[15px] text-white/72">
             {breadcrumb.map((segment, index) => (
@@ -190,14 +190,6 @@ export function FilePreviewTabView({ tab }: FilePreviewTabViewProps) {
             </button>
             {menuOpen && (
               <div className="absolute right-0 top-[calc(100%+10px)] z-20 w-64 rounded-[22px] border border-white/8 bg-[#2a2a2a] p-2 shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
-                <button
-                  type="button"
-                  onClick={() => void handleCopyPath()}
-                  className="flex w-full items-center gap-3 rounded-[16px] px-4 py-3 text-left text-[16px] text-white/92 transition-colors hover:bg-white/6"
-                >
-                  <Copy size={20} className="text-white/72" />
-                  复制路径
-                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -256,7 +248,8 @@ export function FilePreviewTabView({ tab }: FilePreviewTabViewProps) {
             />
           )}
         </div>
-      </div>
+        </div>
+      </FileLinkContextMenu>
     </div>
   )
 }
