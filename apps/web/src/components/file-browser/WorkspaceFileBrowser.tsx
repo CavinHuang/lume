@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ChevronRight, Folder, RefreshCw } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { FileTypeIcon } from './FileTypeIcon'
+import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
 import { cn } from '@/lib/utils'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { FileEntry } from '@lume/shared'
@@ -161,27 +162,40 @@ function WorkspaceFileTreeItem({
     return null
   }
 
+  const rowButton = (
+    <button
+      onClick={toggle}
+      className={cn(
+        'w-full flex h-9 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-[var(--surface-2)]',
+        !largeRows && 'h-auto gap-1.5 rounded-lg py-1',
+        !entry.isDirectory && selectedPath === entry.path && 'bg-[color:color-mix(in_oklab,var(--brand)_26%,transparent)] text-[var(--brand-2)]',
+      )}
+      style={{ paddingLeft: `${8 + depth * (largeRows ? 16 : 12)}px` }}
+    >
+      {entry.isDirectory
+        ? <ChevronRight size={largeRows ? 16 : 12} className={cn('text-[var(--text-3)] transition-transform flex-shrink-0', open && 'rotate-90')} />
+        : <span className={cn('flex-shrink-0', largeRows ? 'w-4' : 'w-3')} />
+      }
+      {entry.isDirectory
+        ? <Folder size={largeRows ? 17 : 13} className="text-[var(--text-3)] flex-shrink-0" />
+        : <FileTypeIcon filename={entry.name} size={largeRows ? 16 : 13} />
+      }
+      <span className={cn('truncate text-[var(--text-2)]', largeRows ? 'text-[13px]' : 'text-[12px]', !entry.isDirectory && selectedPath === entry.path && 'text-[var(--brand-2)]')}>{entry.name}</span>
+    </button>
+  )
+
   return (
     <div>
-      <button
-        onClick={toggle}
-        className={cn(
-          'w-full flex h-9 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-[var(--surface-2)]',
-          !largeRows && 'h-auto gap-1.5 rounded-lg py-1',
-          !entry.isDirectory && selectedPath === entry.path && 'bg-[color:color-mix(in_oklab,var(--brand)_26%,transparent)] text-[var(--brand-2)]',
+      {entry.isDirectory
+        ? rowButton
+        : (
+          <FileLinkContextMenu
+            context={{ source: 'workspace', relPath: entry.path, workspaceSlug }}
+            onPreview={() => onOpenFile?.(entry.path)}
+          >
+            {rowButton}
+          </FileLinkContextMenu>
         )}
-        style={{ paddingLeft: `${8 + depth * (largeRows ? 16 : 12)}px` }}
-      >
-        {entry.isDirectory
-          ? <ChevronRight size={largeRows ? 16 : 12} className={cn('text-[var(--text-3)] transition-transform flex-shrink-0', open && 'rotate-90')} />
-          : <span className={cn('flex-shrink-0', largeRows ? 'w-4' : 'w-3')} />
-        }
-        {entry.isDirectory
-          ? <Folder size={largeRows ? 17 : 13} className="text-[var(--text-3)] flex-shrink-0" />
-          : <FileTypeIcon filename={entry.name} size={largeRows ? 16 : 13} />
-        }
-        <span className={cn('truncate text-[var(--text-2)]', largeRows ? 'text-[13px]' : 'text-[12px]', !entry.isDirectory && selectedPath === entry.path && 'text-[var(--brand-2)]')}>{entry.name}</span>
-      </button>
       {open && children.map((child) => (
         <WorkspaceFileTreeItem
           key={child.path}
