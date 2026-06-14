@@ -1,6 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared"
 import { toast } from "sonner"
-import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardText, sidecarCall } from "@/lib/desktop-api"
+import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardText, sidecarCall, type SaveFilePathFilter } from "@/lib/desktop-api"
 import type { FileLinkContext } from "./file-link-types"
 
 function joinPath(dir: string, rel: string): string {
@@ -29,6 +29,16 @@ export async function resolveAbsolutePath(ctx: FileLinkContext): Promise<string>
 
 function basename(p: string): string {
   return p.split("/").pop() ?? p
+}
+
+/** 按源文件扩展名构造保存对话框 filter；无扩展名返回空数组（Rust 端 Some([]) 不触发 SVG 默认过滤）。 */
+function buildSaveAsFilter(absPath: string): SaveFilePathFilter[] {
+  const base = basename(absPath)
+  const dot = base.lastIndexOf(".")
+  if (dot <= 0) return [] // 无点（"NOTES"）或以点开头（".gitignore"）→ 不限制
+  const ext = base.slice(dot + 1).toLowerCase()
+  if (!ext) return []
+  return [{ name: ext, extensions: [ext] }]
 }
 
 function errMsg(e: unknown): string {
@@ -79,7 +89,7 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
     async saveAs() {
       try {
         const abs = await resolveAbsolutePath(ctx)
-        const { path: target } = await saveFilePathDialog(basename(abs))
+        const { path: target } = await saveFilePathDialog(basename(abs), buildSaveAsFilter(abs))
         if (!target) return // 用户取消，静默
         await copyFile(abs, target)
         toast.success(`已保存到 ${target}`)

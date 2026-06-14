@@ -19,8 +19,8 @@ mock.module("@/lib/desktop-api", () => ({
   },
   openInSystem: async (path: string) => { calls.push({ fn: "openInSystem", args: [path] }) },
   revealPathInSystem: async (path: string) => { calls.push({ fn: "revealPathInSystem", args: [path] }) },
-  saveFilePathDialog: async (filename: string) => {
-    calls.push({ fn: "saveFilePathDialog", args: [filename] })
+  saveFilePathDialog: async (filename: string, filters?: unknown) => {
+    calls.push({ fn: "saveFilePathDialog", args: [filename, filters] })
     return { path: saveDialogResult }
   },
   copyFile: async (source: string, target: string) => {
@@ -137,6 +137,25 @@ describe("resolveFileLinkActions", () => {
     await resolveFileLinkActions(threadCtx()).saveAs()
     expect(calls.some((c) => c.fn === "copyFile")).toBe(false)
     expect(toasts).toHaveLength(0)
+  })
+
+  test("saveAs derives md filter from source extension", async () => {
+    calls.length = 0
+    toasts.length = 0
+    saveDialogResult = "/target/copied.md"
+    await resolveFileLinkActions(threadCtx()).saveAs()
+    const dialogCall = calls.find((c) => c.fn === "saveFilePathDialog")!
+    expect(dialogCall.args[0]).toBe("research.md")
+    expect(dialogCall.args[1]).toEqual([{ name: "md", extensions: ["md"] }])
+  })
+
+  test("saveAs passes empty filter (no restriction) for extensionless file", async () => {
+    calls.length = 0
+    toasts.length = 0
+    saveDialogResult = "/target/NOTES"
+    await resolveFileLinkActions({ source: "thread", relPath: "NOTES", threadId: "t1", workspaceSlug: "ws-1" }).saveAs()
+    const dialogCall = calls.find((c) => c.fn === "saveFilePathDialog")!
+    expect(dialogCall.args[1]).toEqual([])
   })
 
   test("openInSystem toasts error when resolve fails (missing threadId)", async () => {
