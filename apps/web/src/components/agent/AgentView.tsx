@@ -9,6 +9,7 @@ import { AskUserBanner } from './AskUserBanner'
 import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { SidePanel } from './SidePanel'
+import { ThreadFileEnvProvider } from './thread-file-env'
 import { Loader2, Upload, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -229,53 +230,55 @@ export function AgentView({ threadId }: AgentViewProps) {
   return (
     <div className="flex-1 flex min-h-0 relative">
       {/* 主列 */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <AgentHeader threadId={threadId} />
-        <AgentMessages
-          threadId={threadId}
-          streaming={streamingState === 'streaming'}
-          onOpenThreadFile={openThreadFilePreview}
-          onOpenThreadImage={openThreadImagePreview}
-          onOpenMemorySource={openMemoryFilePreview}
-        />
-        {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
-        <div className="relative">
-          <div
-            aria-hidden={hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible)}
-            className={cn(
-              hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible) && 'pointer-events-none select-none opacity-0',
-            )}
-          >
-            <AgentInput
-              threadId={threadId}
-              streaming={streamingState === 'streaming'}
-              pendingAttachments={pendingAttachments}
-              onAddPendingAttachments={addPendingAttachments}
-              onRemovePendingAttachment={removePendingAttachment}
-              onClearPendingAttachments={clearPendingAttachments}
-            />
-          </div>
-          {activeTaskApproval && (
-            <div className="absolute inset-x-0 bottom-0 z-30">
-              <PlanApprovalOverlay
+      <ThreadFileEnvProvider value={{ threadId, workspaceSlug }}>
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          <AgentHeader threadId={threadId} />
+          <AgentMessages
+            threadId={threadId}
+            streaming={streamingState === 'streaming'}
+            onOpenThreadFile={openThreadFilePreview}
+            onOpenThreadImage={openThreadImagePreview}
+            onOpenMemorySource={openMemoryFilePreview}
+          />
+          {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
+          <div className="relative">
+            <div
+              aria-hidden={hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible)}
+              className={cn(
+                hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible) && 'pointer-events-none select-none opacity-0',
+              )}
+            >
+              <AgentInput
                 threadId={threadId}
-                request={activeTaskApproval}
-                onVisibilityChange={setApprovalOverlayVisible}
+                streaming={streamingState === 'streaming'}
+                pendingAttachments={pendingAttachments}
+                onAddPendingAttachments={addPendingAttachments}
+                onRemovePendingAttachment={removePendingAttachment}
+                onClearPendingAttachments={clearPendingAttachments}
               />
             </div>
-          )}
-          {activeToolPermission && (
-            <div className="absolute inset-x-0 bottom-0 z-30">
-              <PermissionBanner threadId={threadId} request={activeToolPermission} />
-            </div>
-          )}
-          {activeAskUserQuestion && (
-            <div className="absolute inset-x-0 bottom-0 z-30">
-              <AskUserBanner threadId={threadId} request={activeAskUserQuestion} />
-            </div>
-          )}
+            {activeTaskApproval && (
+              <div className="absolute inset-x-0 bottom-0 z-30">
+                <PlanApprovalOverlay
+                  threadId={threadId}
+                  request={activeTaskApproval}
+                  onVisibilityChange={setApprovalOverlayVisible}
+                />
+              </div>
+            )}
+            {activeToolPermission && (
+              <div className="absolute inset-x-0 bottom-0 z-30">
+                <PermissionBanner threadId={threadId} request={activeToolPermission} />
+              </div>
+            )}
+            {activeAskUserQuestion && (
+              <div className="absolute inset-x-0 bottom-0 z-30">
+                <AskUserBanner threadId={threadId} request={activeAskUserQuestion} />
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      </ThreadFileEnvProvider>
 
       {/* 右侧面板 */}
       {renderedSidePanelView && (
