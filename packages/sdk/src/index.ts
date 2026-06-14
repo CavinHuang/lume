@@ -213,6 +213,16 @@ export {
   computePermissionsHash,
 } from './plugins/permissions-hash.js'
 export {
+  resolveSensitiveApproval,
+  isHardDeniedTool,
+  computeEffectiveRuntimeState,
+  type SensitiveCapabilityKey,
+  type SensitiveApprovalRecord,
+  type SensitiveDecision,
+  type EffectiveRuntimeState,
+  type EffectiveRuntimeStateInput,
+} from './plugins/permission-gate.js'
+export {
   checkToolPermission,
   checkFilesystemPermission,
   checkNetworkPermission,
