@@ -281,3 +281,42 @@ describe("resolvePluginCapabilities — mcp", () => {
     }
   });
 });
+
+describe("resolvePluginCapabilities — commandTools", () => {
+  test("passes validated command tools through tagged with pluginId", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const plugin = makePlugin(join(root, "acme"), {
+        capabilities: {
+          skills: [],
+          commandTools: [
+            {
+              name: "acme_echo",
+              command: "node",
+              args: ["./tools/echo.mjs"],
+              cwd: "./",
+              timeoutMs: 5000,
+            },
+          ],
+        },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.commandTools).toEqual([
+        {
+          pluginId: "acme",
+          contribution: {
+            name: "acme_echo",
+            command: "node",
+            args: ["./tools/echo.mjs"],
+            cwd: "./",
+            timeoutMs: 5000,
+          },
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

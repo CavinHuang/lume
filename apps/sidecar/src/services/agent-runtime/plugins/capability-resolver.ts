@@ -212,6 +212,12 @@ async function resolveMcpServers(
   }));
 }
 
-function resolveCommandTools(_plugin: RegisteredPlugin): ResolvedCommandTool[] {
-  return [];
+function resolveCommandTools(plugin: RegisteredPlugin): ResolvedCommandTool[] {
+  // Command tools were already validated by the Phase 1 normalizer, so the
+  // resolver only tags them with their source pluginId. The bridge (Plan 3b)
+  // converts each into a ToolDefinition with an execFile handler.
+  return plugin.capabilities.commandTools.map((contribution) => ({
+    pluginId: plugin.pluginId,
+    contribution,
+  }));
 }
