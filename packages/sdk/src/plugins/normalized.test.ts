@@ -162,4 +162,32 @@ describe("normalizePluginManifests", () => {
       path: "entry",
     }));
   });
+
+  test("carries lume.hooksOnly=true onto NormalizedPlugin", () => {
+    const result = normalizePluginManifests({
+      pluginRoot: "/plugins/hook-only",
+      lumeManifest: {
+        schema: "lume-plugin/v1",
+        name: "hook-only",
+        version: "1.0.0",
+        hooks: "./hooks/hooks.json",
+        lume: { hooksOnly: true },
+      },
+    });
+
+    expect(result.lume).toEqual({ hooksOnly: true });
+  });
+
+  test("omits lume when hooksOnly is not set", () => {
+    const result = normalizePluginManifests({
+      pluginRoot: "/plugins/acme",
+      lumeManifest: {
+        schema: "lume-plugin/v1",
+        name: "acme",
+        version: "1.0.0",
+      },
+    });
+
+    expect(result.lume).toBeUndefined();
+  });
 });

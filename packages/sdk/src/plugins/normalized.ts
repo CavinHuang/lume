@@ -65,6 +65,8 @@ export interface NormalizedPlugin {
   capabilities: PluginManifestCapabilities;
   permissions: PluginPermissions;
   diagnostics: PluginDiagnostic[];
+  /** Carries Lume-specific flags consumed by the capability resolver (spec §16.3). */
+  lume?: { hooksOnly?: boolean };
 }
 
 export interface NormalizePluginManifestsInput {
@@ -151,6 +153,7 @@ function normalizeLumeManifest(
     },
     permissions: manifest.permissions ?? {},
     diagnostics,
+    ...(manifest.lume?.hooksOnly ? { lume: { hooksOnly: true } } : {}),
   };
 }
 
