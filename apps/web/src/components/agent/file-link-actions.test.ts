@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { describe, expect, mock, test } from "bun:test"
 
 mock.module("@lume/shared", () => ({
   AGENT_IPC_CHANNELS: {
@@ -26,6 +26,9 @@ mock.module("@/lib/desktop-api", () => ({
   copyFile: async (source: string, target: string) => {
     calls.push({ fn: "copyFile", args: [source, target] })
   },
+  writeClipboardText: async (text: string) => {
+    calls.push({ fn: "writeClipboardText", args: [text] })
+  },
 }))
 
 const toasts: Array<{ kind: string; text: string }> = []
@@ -35,14 +38,6 @@ mock.module("sonner", () => ({
     error: (text: string) => { toasts.push({ kind: "error", text }) },
   },
 }))
-
-let clipboardText = ""
-beforeAll(() => {
-  Object.defineProperty(globalThis, "navigator", {
-    value: { clipboard: { writeText: async (t: string) => { clipboardText = t } } },
-    configurable: true,
-  })
-})
 
 const { resolveAbsolutePath, resolveFileLinkActions } = await import("./file-link-actions")
 
@@ -105,18 +100,24 @@ describe("resolveFileLinkActions", () => {
     expect(calls.map((c) => c.fn)).toEqual(["sidecarCall", "revealPathInSystem"])
   })
 
-  test("copyRelativePath writes relPath to clipboard", async () => {
-    clipboardText = ""
+  test("copyRelativePath writes relPath via Rust clipboard", async () => {
+    calls.length = 0
     toasts.length = 0
     await resolveFileLinkActions(threadCtx()).copyRelativePath()
-    expect(clipboardText).toBe("plans/research.md")
+    expect(
+      calls.some((c) => c.fn === "writeClipboardText" && c.args[0] === "plans/research.md"),
+    ).toBe(true)
     expect(toasts[0]).toMatchObject({ kind: "success" })
   })
 
-  test("copyAbsolutePath writes abs path to clipboard", async () => {
-    clipboardText = ""
+  test("copyAbsolutePath writes abs path via Rust clipboard", async () => {
+    calls.length = 0
     await resolveFileLinkActions(threadCtx()).copyAbsolutePath()
-    expect(clipboardText).toBe("/data/threads/t1/plans/research.md")
+    expect(
+      calls.some(
+        (c) => c.fn === "writeClipboardText" && c.args[0] === "/data/threads/t1/plans/research.md",
+      ),
+    ).toBe(true)
   })
 
   test("saveAs happy path: resolve -> dialog -> copyFile -> success toast", async () => {

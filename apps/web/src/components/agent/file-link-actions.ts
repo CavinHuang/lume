@@ -1,6 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared"
 import { toast } from "sonner"
-import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, sidecarCall } from "@/lib/desktop-api"
+import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardText, sidecarCall } from "@/lib/desktop-api"
 import type { FileLinkContext } from "./file-link-types"
 
 function joinPath(dir: string, rel: string): string {
@@ -61,7 +61,7 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
     },
     async copyRelativePath() {
       try {
-        await navigator.clipboard.writeText(ctx.relPath)
+        await writeClipboardText(ctx.relPath)
         toast.success("已复制相对路径")
       } catch (e) {
         toast.error(`复制失败：${errMsg(e)}`)
@@ -70,7 +70,7 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
     async copyAbsolutePath() {
       try {
         const abs = await resolveAbsolutePath(ctx)
-        await navigator.clipboard.writeText(abs)
+        await writeClipboardText(abs)
         toast.success("已复制绝对路径")
       } catch (e) {
         toast.error(`复制失败：${errMsg(e)}`)
