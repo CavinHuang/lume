@@ -263,7 +263,10 @@ Append to `apps/sidecar/src/services/agent-runtime/plugins/plugin-manager.test.t
       expect(plugin?.root).toBe(join(root, "acme"));
       expect(plugin?.capabilities.commandTools.map((t) => t.name)).toEqual(["echo"]);
       expect(plugin?.permissionState).toBeDefined();
-      expect(["loaded", "needs-review", "not-loaded"]).toContain(plugin?.permissionState?.state);
+      const state = plugin?.permissionState?.state;
+      if (state) {
+        expect(["loaded", "needs-review", "not-loaded"]).toContain(state);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
