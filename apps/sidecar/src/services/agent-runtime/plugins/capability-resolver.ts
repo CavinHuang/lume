@@ -1,9 +1,10 @@
 import { resolve } from "node:path";
-import type {
-  CommandToolContribution,
-  HookConfig,
-  PluginDiagnostic,
-  SkillDefinition,
+import {
+  loadFilesystemSkills,
+  type CommandToolContribution,
+  type HookConfig,
+  type PluginDiagnostic,
+  type SkillDefinition,
 } from "@lume/agent-sdk";
 import type { McpServerEntry } from "@lume/shared";
 import type { RegisteredPlugin } from "./plugin-registry.js";
@@ -79,10 +80,38 @@ async function resolveOne(plugin: RegisteredPlugin): Promise<ResolvedPluginCapab
 
 // Stubs — filled in by later tasks (skills, hooks, MCP, commandTools).
 async function resolveSkills(
-  _plugin: RegisteredPlugin,
-  _diagnostics: PluginDiagnostic[],
+  plugin: RegisteredPlugin,
+  diagnostics: PluginDiagnostic[],
 ): Promise<ResolvedSkill[]> {
-  return [];
+  const resolved: ResolvedSkill[] = [];
+  for (const contribution of plugin.capabilities.skills) {
+    const skillsRoot = resolve(plugin.root, contribution.root);
+    let skills: SkillDefinition[];
+    try {
+      skills = await loadFilesystemSkills({ roots: [skillsRoot], cwd: skillsRoot });
+    } catch (error) {
+      diagnostics.push({
+        pluginId: plugin.pluginId,
+        version: plugin.version,
+        severity: "warning",
+        code: "invalid_manifest",
+        message: `Failed to read skills from ${contribution.root}: ${error instanceof Error ? error.message : String(error)}`,
+        path: contribution.root,
+      });
+      continue;
+    }
+    for (const skill of skills) {
+      const namespaced = `${plugin.pluginId}:${skill.name}`;
+      resolved.push({
+        pluginId: plugin.pluginId,
+        name: namespaced,
+        originalName: skill.name,
+        sourcePath: skill.sourcePath ?? skillsRoot,
+        definition: { ...skill, name: namespaced },
+      });
+    }
+  }
+  return resolved;
 }
 
 async function resolveHooks(
