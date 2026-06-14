@@ -1,12 +1,14 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  computePermissionsHash,
   normalizePluginManifests,
   type NormalizedPlugin,
   type PluginDiagnostic,
   type SensitiveApprovalRecord,
 } from "@lume/agent-sdk";
 import type { FilePluginStateStore, PluginStateFile } from "./plugin-state-store.js";
+import { PluginPermissionRuntime } from "./permission-runtime.js";
 
 export interface PluginRegistryConfig {
   installedRoot: string;
@@ -29,6 +31,7 @@ export interface PluginRegistryState {
 
 export interface RegisteredPlugin extends NormalizedPlugin {
   state?: PluginRegistryState;
+  permissionState?: { state: "loaded" | "needs-review" | "not-loaded"; reason: string };
 }
 
 export interface PluginRegistryListResult {
@@ -91,6 +94,7 @@ export class PluginRegistry {
       if (enabled.size === 0) return true;
       return enabled.has(plugin.pluginId);
     });
+    await attachPermissionState(filtered, this.config.stateStore, diagnostics);
     return { plugins: filtered, diagnostics };
   }
 }
@@ -240,4 +244,31 @@ function compareVersionForSelection(a: string, b: string): number {
 
 function sourceKey(sourceType: "directory", pluginRoot: string): string {
   return `${sourceType}:${realpathSync.native(pluginRoot)}`;
+}
+
+async function attachPermissionState(
+  plugins: RegisteredPlugin[],
+  stateStore: FilePluginStateStore,
+  diagnostics: PluginDiagnostic[],
+): Promise<void> {
+  const runtime = new PluginPermissionRuntime({ stateStore });
+  for (const plugin of plugins) {
+    const currentHash = computePermissionsHash(plugin);
+    const result = await runtime.computeRuntimeState({
+      pluginId: plugin.pluginId,
+      enabled: true, // filtered plugins are enabled under the effective config
+      currentHash,
+    });
+    plugin.permissionState = result;
+    if (result.state !== "loaded") {
+      diagnostics.push({
+        pluginId: plugin.pluginId,
+        version: plugin.version,
+        severity: result.state === "needs-review" ? "warning" : "info",
+        code: result.state === "needs-review" ? "permission_review_required" : "capability_filtered",
+        message: `Plugin ${plugin.pluginId} is ${result.state} (${result.reason}); capabilities will not load until reviewed.`,
+        path: plugin.root,
+      });
+    }
+  }
 }
