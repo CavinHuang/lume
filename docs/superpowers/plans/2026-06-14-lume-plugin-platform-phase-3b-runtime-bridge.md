@@ -696,6 +696,28 @@ git add -A && git commit -m "✅ test(sidecar): Phase 3b bridge 回归与边界�
 
 ---
 
+## Execution Adjustments (made during implementation)
+
+The plan's original Task 3 namespaced command-tool `definition.name` as `${pluginId}:${name}`. During Task 5 this was **revised** (commit `35e770d5`) — two adjustments, both reviewed and approved by the final reviewer:
+
+1. **Dropped namespace → `runtimeMetadata.pluginId`.** `CanUseToolFn` receives the full `ToolDefinition` (`packages/sdk/src/types.ts:842`), so Phase 3c's gate reads `tool.runtimeMetadata.pluginId` directly. Namespacing was unnecessary AND broke tool-name stability (`demo_echo` → `demo:demo_echo` would break existing callers/models). `assemblePluginRuntime` now sets `definition.runtimeMetadata.pluginId` (the `source: "plugin"` set by `buildCommandToolDefinition` is preserved). Verified: `runtimeMetadata` survives tool wrapping (`apps/sidecar/src/services/agent-runtime/tools/tool-runtime-wrapper.ts:22-38` spreads it through). The runtime-bridge test asserts both `runtimeMetadata.source === "plugin"` and `runtimeMetadata.pluginId === "acme"`.
+
+2. **Legacy plugins default to `permissionState: loaded`.** Task 5 revealed legacy `plugin.json` plugins (no install record) compute `not-loaded` → the resolver's only-loaded gate skips them → they don't load, violating spec §14.3 ("legacy command plugin 仍可运行"). Fixed by fast-pathing `manifestFormat === "legacy"` in `attachPermissionState` (`plugin-registry.ts`) to `{ state: "loaded", reason: "legacy-plugin" }` (skipping `computeRuntimeState`). This is NOT a security regression — legacy plugins loaded unconditionally before 3b too; the fast-path preserves that status quo. Legacy plugins still hit the first-use sensitive gate in Phase 3c (§8.1). Test: `plugin-registry.permission-state.test.ts` "a legacy plugin.json command plugin is loaded by default with no install record (spec §14.3)".
+
+## Notes for Phase 3c (sensitive gate)
+
+Carry these into the Phase 3c plan (from the 3b final review):
+
+1. **Legacy first-use gate.** Legacy plugins bypass install-time permission review (the `loaded` fast-path above) but MUST still hit the first-use sensitive gate — §8.1 treats command tools / shell hooks / local MCP as "unmediated subprocess". 3c's `canUseTool` reads `tool.runtimeMetadata.pluginId` to key `checkSensitiveCapability`.
+
+2. **`/reload-plugins` path (Phase 3d).** SDK `Agent.reloadPlugins()` (`packages/sdk/src/agent.ts:1474`) reruns `loadPlugins` on `cfg.plugins` (now empty after 3b) then `rebuildToolPool()`. The `resolveRuntimeTools` callback → `ToolRuntime.resolveDynamicTools` rebuilds only the `"sdk"` group, so plugin command tools would vanish after `/reload-plugins`. 3d must own the reload path (re-inject via `resolveDynamicTools`, or a fully sidecar-governed reload).
+
+3. **Source-binding mechanism for the gate.** 3c recovers `pluginId` from `tool.runtimeMetadata.pluginId` (NOT a namespaced tool name). `buildCommandToolDefinition` sets `runtimeMetadata.source = "plugin"`; the bridge adds `pluginId`. Both survive `tool-runtime-wrapper`. Non-plugin tools have no `runtimeMetadata.pluginId` → the gate passes them through untouched (§8.2 source binding: builtin tools are unaffected by plugin permissions).
+
+4. **Cleanup opportunities (non-blocking).** `SidecarPluginManager.listRegistered` and `resolveEnabled` duplicate the `PluginRegistry` + `FilePluginStateStore` construction — consider a shared `_scan(config)` helper when 3c rewrites the interceptor path. `ToolRuntime.resolveCommandPluginSpecs` is `@deprecated` dead code (only `tool-runtime.test.ts` calls it) — migrate the test and remove in a Phase 3 cleanup.
+
+5. **`ToolRuntimeDiagnostic.code`** is populated end-to-end (resolver → bridge → run.ts map) but has no consumer yet — wire it into the Phase 4 diagnostics UI.
+
 ## Notes for the executing agent
 
 - **Run every command from the worktree root** `/Users/cavinhuang/.config/superpowers/worktrees/Lume/codex-plugin-platform-phase1`. Do not `cd` elsewhere.
