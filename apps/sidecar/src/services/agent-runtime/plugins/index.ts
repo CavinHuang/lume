@@ -17,6 +17,7 @@ export { evaluatePluginSensitiveGate } from "./sensitive-gate.js";
 export type { SensitiveGateInput, SensitiveGateResult } from "./sensitive-gate.js";
 export { buildPluginAgentHooks, defaultShellHookSpawner } from "./plugin-hooks-bridge.js";
 export type { PluginHookCapability, ShellHookSpawner, BuildPluginAgentHooksInput } from "./plugin-hooks-bridge.js";
+export { buildPluginMcpManager, PLUGIN_MCP_WORKSPACE_SLUG } from "./plugin-mcp-bridge.js";
 
 export interface PluginPermissionContext {
   pluginName: string;
