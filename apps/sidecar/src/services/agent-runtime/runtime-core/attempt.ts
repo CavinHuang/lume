@@ -42,8 +42,16 @@ import {
 import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 import { runGuidanceStore, type ConsumedRunGuidance } from "../guidance/run-guidance-store";
 import { createPluginPermissionInterceptor } from "../plugins/permission-interceptor.js";
-import type { InterceptorInput, InterceptorResult } from "../plugins/index.js";
+import {
+  type InterceptorInput,
+  type InterceptorResult,
+  PluginPermissionRuntime,
+  FilePluginStateStore,
+  evaluatePluginSensitiveGate,
+} from "../plugins/index.js";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -139,7 +147,8 @@ export function createCanUseToolHandler(
   askUserSignal: AbortSignal,
   runId?: string,
   workflowHooks?: LumeWorkflowHookRuntimeLike,
-  pluginInterceptorContexts?: Array<{ pluginName: string; pluginRoot: string; permissions: Record<string, unknown> }>
+  pluginInterceptorContexts?: Array<{ pluginName: string; pluginRoot: string; permissions: Record<string, unknown> }>,
+  pluginPermissionRuntime?: PluginPermissionRuntime,
 ): CanUseToolFn {
   const config = getEffectiveLumeConfig(prepared.workspaceSlug);
   const permissionRules = resolveConfiguredPermissionRules(config.permissions);
@@ -254,6 +263,37 @@ export function createCanUseToolHandler(
         behavior: "deny",
         message: `工具未注册到 Runtime descriptor: ${toolName}`
       };
+    }
+    // Phase 3c: plugin sensitive-capability gate (§8.1/§8.2). Source-bound: only
+    // affects tools whose descriptor carries runtimeMetadata.pluginId. Runs after
+    // descriptor lookup (needs pluginId from definition.runtimeMetadata) and before
+    // the global gateway. ask/deny both → block (Phase 2 ask→block; Phase 4 adds UI).
+    if (pluginPermissionRuntime) {
+      const gateResult = await evaluatePluginSensitiveGate({
+        descriptor,
+        runtime: pluginPermissionRuntime,
+        workspaceSlug: prepared.workspaceSlug,
+      });
+      if (gateResult.decision === "block") {
+        recordPermissionDenial({
+          threadId: params.runtime.sessionId,
+          descriptor,
+          toolName,
+          rawInput: input,
+          reasonCode: "permission_review_required",
+        });
+        log.debug("[Agent 工具] 完成", {
+          toolName,
+          threadId: params.runtime.sessionId.slice(0, 8),
+          durationMs: Date.now() - toolStartTime,
+          ok: false,
+          reason: "plugin_sensitive_blocked",
+        });
+        return {
+          behavior: "deny",
+          message: gateResult.reason ?? `Plugin tool ${toolName} blocked by sensitive-capability gate.`,
+        };
+      }
     }
     const authorization = await toolExecutionGateway.authorize({
       toolName,
@@ -633,6 +673,12 @@ export async function runRuntimeCoreAttempt(
     directories: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.directories ?? [],
   });
 
+  // Phase 3c: sensitive-capability gate runtime. Stateless (state lives in the
+  // FilePluginStateStore file); same state path SidecarPluginManager uses.
+  const pluginPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(join(homedir(), ".lume", "plugins-state.json")),
+  });
+
   log.info("Plugin permission interceptors built", {
     sessionId: runtime.sessionId,
     count: pluginInterceptorContexts.length,
@@ -653,7 +699,7 @@ export async function runRuntimeCoreAttempt(
     prepared,
     options,
     createCanUseTool: (askUserSignal, workflowHooks) =>
-      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId(), workflowHooks, pluginInterceptorContexts)
+      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId(), workflowHooks, pluginInterceptorContexts, pluginPermissionRuntime)
   });
 }
 
