@@ -40,6 +40,18 @@ impl Default for LumeLoggerConfig {
     }
 }
 
+/// Resolve the Lume config directory (`~/.lume`), honoring `LUME_CONFIG_DIR`.
+/// Mirrors `resolve_logs_dir` minus the `logs` join.
+pub fn resolve_config_dir() -> PathBuf {
+    if let Some(config_dir) = current_config_dir_from_env() {
+        return config_dir;
+    }
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".lume");
+    }
+    PathBuf::from(".lume")
+}
+
 /// Resolve the log directory.
 ///
 /// Priority: `LUME_CONFIG_DIR/logs` → `~/.lume/logs` → `.lume/logs`
@@ -83,5 +95,13 @@ mod tests {
         assert!(!config.console_enabled);
         assert_eq!(config.retention_days, 14);
         assert!(!config.redact_keys.is_empty());
+    }
+
+    #[test]
+    fn resolve_config_dir_uses_env() {
+        std::env::set_var("LUME_CONFIG_DIR", "/tmp/lume-config-dir-test");
+        let dir = resolve_config_dir();
+        assert_eq!(dir, PathBuf::from("/tmp/lume-config-dir-test"));
+        std::env::remove_var("LUME_CONFIG_DIR");
     }
 }
