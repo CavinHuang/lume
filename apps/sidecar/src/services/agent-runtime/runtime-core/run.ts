@@ -619,6 +619,8 @@ function buildRuntimeCoreTools(input: {
   mcpDiagnostics?: ToolRuntimeDiagnostic[];
   /** Plugin command-tool ToolDefinitions built by PluginRuntimeBridge (Phase 3b). */
   pluginCommandTools?: ToolDefinition[];
+  /** Plugin MCP tool definitions (Phase MCP Merge-A) from the plugin-scoped MCP manager. */
+  pluginMcpTools?: ToolDefinition[];
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
@@ -796,6 +798,9 @@ function buildRuntimeCoreTools(input: {
       ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : []),
       ...(input.pluginCommandTools?.length
         ? [{ source: "plugin" as const, tools: input.pluginCommandTools }]
+        : []),
+      ...(input.pluginMcpTools?.length
+        ? [{ source: "plugin" as const, tools: input.pluginMcpTools }]
         : [])
     ]
   });
