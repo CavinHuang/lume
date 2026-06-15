@@ -1529,6 +1529,7 @@ mod tests {
         parse_window_behavior_from_settings_str, resolve_runtime_window_action,
         resolve_settings_path, WindowAction, WindowBehavior, WindowBehaviorEvent,
     };
+    use std::path::PathBuf;
     use std::process::Command;
 
     #[test]
@@ -1556,10 +1557,11 @@ mod tests {
 
     #[test]
     fn sidecar_logging_env_overrides() {
+        let mut command = Command::new("lume-sidecar");
         apply_sidecar_logging_env(&mut command);
         let envs = command
             .get_envs()
-            .map(|(key, value)| {
+            .map(|(key, value): (&std::ffi::OsStr, Option<&std::ffi::OsStr>)| {
                 (
                     key.to_string_lossy().to_string(),
                     value.map(|item| item.to_string_lossy().to_string()),
