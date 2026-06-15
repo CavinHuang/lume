@@ -17,6 +17,7 @@ import { WorkspacesSettings } from './WorkspacesSettings'
 import { MemorySettings } from './MemorySettings'
 import { ReadingSettings } from './ReadingSettings'
 import { VersionUpdateSettings } from './VersionUpdateSettings'
+import { DataManagementSettings } from './DataManagementSettings'
 import { LogSettings } from './LogSettings'
 import { WebSearchSettings } from './WebSearchSettings'
 import { ArchiveSettings } from './ArchiveSettings'
@@ -111,6 +112,7 @@ export function SettingsView() {
           {tab === 'im-integrations' && <ImSettings />}
           {tab === 'web-search' && <WebSearchSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
+          {tab === 'data' && <DataManagementSettings />}
           {tab === 'logs' && <LogSettings />}
           {tab === 'archive' && <ArchiveSettings initialView={archiveInitialView ?? undefined} />}
         </main>

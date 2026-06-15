@@ -4,6 +4,7 @@ import {
   Box,
   Cog,
   Database,
+  HardDrive,
   Bot,
   Keyboard,
   MessageCircle,
@@ -32,6 +33,7 @@ export type SettingsViewTab =
   | 'im-integrations'
   | 'web-search'
   | 'updates'
+  | 'data'
   | 'logs'
   | 'archive'
 
@@ -54,6 +56,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'im-integrations', label: 'IM 集成', icon: MessageCircle },
   { id: 'web-search', label: '网络搜索', icon: Search },
   { id: 'updates', label: '版本与更新', icon: RefreshCw },
+  { id: 'data', label: '数据管理', icon: HardDrive },
   { id: 'logs', label: '应用日志', icon: ScrollText },
   { id: 'archive', label: '归档', icon: Archive },
 ]
@@ -73,6 +76,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   'im-integrations': 'IM 集成',
   'web-search': '网络搜索',
   updates: '版本与更新',
+  data: '数据管理',
   logs: '应用日志',
   archive: '归档与回收站',
 }
@@ -92,6 +96,7 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   'im-integrations': '管理微信、飞书等 IM 平台链接',
   'web-search': '配置网络搜索后端、API Key 和搜索策略',
   updates: '管理 Lume 的版本检查、下载与安装体验',
+  data: '查看存储用量、安全清理与全量数据导出',
   logs: '查看应用、Agent、工具调用、MCP 与 Skill 加载运行日志',
   archive: '查看已归档的会话，恢复或永久删除，管理回收站',
 }

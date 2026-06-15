@@ -33,7 +33,22 @@ describe('settings view state', () => {
   test('includes application logs after update settings', () => {
     const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
     expect(ids).toContain('logs')
-    expect(ids.indexOf('logs')).toBe(ids.indexOf('updates') + 1)
+    expect(ids.indexOf('logs')).toBe(ids.indexOf('updates') + 2)
+  })
+
+  test('places data management between updates and logs', () => {
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
+    expect(ids).toContain('data')
+    expect(ids.indexOf('data')).toBe(ids.indexOf('updates') + 1)
+    expect(ids.indexOf('logs')).toBe(ids.indexOf('data') + 1)
+  })
+
+  test('data page title is 数据管理', () => {
+    expect(SETTINGS_PAGE_TITLES.data).toBe('数据管理')
+  })
+
+  test('data page subtitle describes storage, cleanup and export', () => {
+    expect(SETTINGS_PAGE_SUBTITLES.data).toBe('查看存储用量、安全清理与全量数据导出')
   })
 
   test('places skills between agents and workspaces', () => {
