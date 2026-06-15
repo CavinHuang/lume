@@ -617,6 +617,26 @@ fn data_get_storage_stats(categories: Vec<DataCategoryInput>) -> Result<serde_js
 }
 
 #[tauri::command]
+fn data_export_zip(input: ExportZipInput) -> Result<serde_json::Value, String> {
+    let root = ll::config::resolve_config_dir();
+    let dest = Path::new(&input.dest_path);
+    let (bytes, file_count) = write_data_zip(&root, dest, !input.include_credentials)?;
+    info!(
+        "[desktop] data_export_zip -> {} ({} files, {} bytes, credentials_stripped={})",
+        dest.display(),
+        file_count,
+        bytes,
+        !input.include_credentials
+    );
+    Ok(serde_json::json!({
+        "path": dest.to_string_lossy(),
+        "bytes": bytes,
+        "fileCount": file_count,
+        "credentialsStripped": !input.include_credentials
+    }))
+}
+
+#[tauri::command]
 fn desktop_read_log_file(
     file_name: String,
     levels: Option<Vec<String>>,
@@ -1769,7 +1789,8 @@ fn main() {
             open_in_system,
             reveal_path_in_system,
             copy_file,
-            data_get_storage_stats
+            data_get_storage_stats,
+            data_export_zip
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -1954,5 +1975,92 @@ mod data_stats_tests {
         };
         // index(5) + logs(2) = 7
         assert_eq!(compute_category_bytes(&tmp, &derived), 7);
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportZipInput {
+    dest_path: String,
+    include_credentials: bool,
+}
+
+/// 对 JSON 字节做脱敏；非 JSON 原样返回。失败时返回原文（不阻断导出）。
+fn redact_json_bytes(bytes: &[u8]) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return bytes.to_vec();
+    };
+    let patterns = ll::redact::default_patterns();
+    ll::redact::redact_value(&mut value, &patterns);
+    serde_json::to_vec_pretty(&value).unwrap_or_else(|_| bytes.to_vec())
+}
+
+/// 把 src 目录打成 zip 写入 dest。对所有 .json 做脱敏（当 strip=true）。
+/// 返回 (字节数, 文件数)。
+fn write_data_zip(src: &Path, dest: &Path, strip_credentials: bool) -> Result<(u64, u64), String> {
+    let file = std::fs::File::create(dest).map_err(|e| format!("创建导出文件失败: {e}"))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default();
+
+    let mut count: u64 = 0;
+    for entry in walkdir::WalkDir::new(src).into_iter().filter_map(Result::ok) {
+        let path = entry.path();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = path.strip_prefix(src).map_err(|e| e.to_string())?;
+        let raw = std::fs::read(path).map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+        let data = if strip_credentials && rel.extension().and_then(|e| e.to_str()) == Some("json") {
+            redact_json_bytes(&raw)
+        } else {
+            raw
+        };
+        zip.start_file(rel.to_string_lossy(), opts)
+            .map_err(|e| format!("写入 zip 条目失败: {e}"))?;
+        use std::io::Write;
+        zip.write_all(&data).map_err(|e| format!("写入 zip 内容失败: {e}"))?;
+        count += 1;
+    }
+    zip.finish().map_err(|e| format!("完成 zip 失败: {e}"))?;
+    let bytes = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    Ok((bytes, count))
+}
+
+#[cfg(test)]
+mod export_zip_tests {
+    use super::*;
+    use std::fs::{create_dir_all, write};
+    use std::io::Read;
+
+    #[test]
+    fn redacts_json_credentials() {
+        let raw = br#"{"apiKey":"sk-secret","name":"ok"}"#;
+        let out = redact_json_bytes(raw);
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("[REDACTED]"));
+        assert!(!s.contains("sk-secret"));
+        assert!(s.contains("ok"));
+    }
+
+    #[test]
+    fn zip_strips_credentials_when_requested() {
+        let src = std::env::temp_dir().join("lume-export-src");
+        let dest = std::env::temp_dir().join("lume-export-dest.zip");
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_file(&dest);
+        create_dir_all(&src).unwrap();
+        write(src.join("settings.json"), br#"{"apiKey":"sk-leak"}"#).unwrap();
+
+        let (bytes, count) = write_data_zip(&src, &dest, true).unwrap();
+        assert!(bytes > 0);
+        assert_eq!(count, 1);
+
+        // 解 zip 校验内容脱敏
+        let f = std::fs::File::open(&dest).unwrap();
+        let mut archive = zip::ZipArchive::new(f).unwrap();
+        let mut s = String::new();
+        archive.by_index(0).unwrap().read_to_string(&mut s).unwrap();
+        assert!(s.contains("[REDACTED]"));
+        assert!(!s.contains("sk-leak"));
     }
 }
