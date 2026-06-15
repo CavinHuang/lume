@@ -21,6 +21,9 @@ import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
+import { evaluatePluginSensitiveGate } from "../plugins/sensitive-gate.js";
+import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
+import { FilePluginStateStore } from "../plugins/plugin-state-store.js";
 import {
   setWorkspaceMcpManagerForTesting,
   type WorkspaceMcpManager
@@ -1391,5 +1394,69 @@ describe("runtime-core run", () => {
       is_error: true
     });
     expect(result.result.content).toContain("timed out");
+  });
+
+  test("未审批的插件 command tool 被 sensitive gate 阻断（§8.1/§14.2 ask→block）", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-plugin-gate-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-plugin-gate-cwd-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    const pluginDir = join(cwd, ".lume", "plugins", "demo");
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, "plugin.json"),
+      JSON.stringify({
+        name: "demo",
+        tools: [{
+          name: "demo_echo",
+          description: "Echo demo payload",
+          command: "node",
+          args: ["-e", "process.stdout.write(process.env.PLUGIN_INPUT || '')"],
+          metadata: {
+            source: "plugin",
+            category: "read",
+            capability: "skill",
+            riskLevel: "low",
+            sideEffects: "external",
+            allowedInPlanMode: true,
+            isReadOnly: true,
+            isConcurrencySafe: true,
+            requiresApprovalByDefault: false
+          }
+        }]
+      }),
+      "utf-8",
+    );
+    updateLumeConfigSection({ source: "system", path: "plugins.enabled", value: ["demo"] });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "plugin-gate-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "plan",
+    });
+
+    // The demo plugin has no install record → checkSensitiveCapability returns "ask"
+    // → evaluatePluginSensitiveGate blocks (Phase 2 ask→block). Verify via the real
+    // runtime + the registered descriptor (the gate reads descriptor.definition.runtimeMetadata.pluginId).
+    const runtime = new PluginPermissionRuntime({
+      stateStore: new FilePluginStateStore(join(cwd, ".lume", "plugins-state.json")),
+    });
+    const descriptor = getRuntimeToolDescriptor("plugin-gate-session", "demo_echo");
+    expect(descriptor).toBeDefined();
+    const gate = await evaluatePluginSensitiveGate({
+      descriptor: descriptor!,
+      runtime,
+      workspaceSlug: undefined,
+    });
+    expect(gate.decision).toBe("block");
+    expect(gate.reason).toContain("commandTool:demo_echo");
+    expect(gate.reason).toContain("demo");
+
+    result.session.dispose();
   });
 });
