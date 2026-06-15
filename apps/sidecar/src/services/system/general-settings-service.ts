@@ -2,6 +2,7 @@ import {
   existsSync,
   lstatSync,
   readdirSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -103,6 +104,15 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
   };
 }
 
+/** Resolve a path following symlinks; fall back to lexical resolve if the path doesn't exist. */
+function safeRealpath(targetPath: string): string {
+  try {
+    return realpathSync(targetPath);
+  } catch {
+    return resolve(targetPath);
+  }
+}
+
 function resolveCacheTargetPaths(key: SidecarCacheCleanupKey): string[] {
   const configDir = getConfigDir();
   switch (key) {
@@ -138,8 +148,8 @@ function assertSafeCacheTarget(targetPath: string): void {
     join(configDir, "plugins", "data"),
     join(configDir, "agent-workspaces"),
     join(tmpdir(), "lume-logs")
-  ].map((value) => resolve(value));
-  const resolvedTarget = resolve(targetPath);
+  ].map((value) => safeRealpath(value));
+  const resolvedTarget = safeRealpath(targetPath);
   const isAllowed = allowedRoots.some((root) =>
     resolvedTarget === root || resolvedTarget.startsWith(`${root}${sep}`)
   );
@@ -153,7 +163,11 @@ function clearDirectoryContents(targetPath: string): boolean {
     return false;
   }
 
-  assertSafeCacheTarget(targetPath);
+  try {
+    assertSafeCacheTarget(targetPath);
+  } catch {
+    return false;
+  }
 
   const stat = lstatSync(targetPath);
   if (!stat.isDirectory()) {

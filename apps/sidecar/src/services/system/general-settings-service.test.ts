@@ -5,6 +5,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -279,6 +281,42 @@ describe("general-settings-service", () => {
     expect(result.cleared).toContain("pluginsCache");
     expect(existsSync(cacheFile)).toBeFalse();
     expect(existsSync(dataFile)).toBeFalse();
+  });
+
+  test("vectorIndex 清理每个工作区的 memory/index 且保留非索引文件", async () => {
+    const { clearGeneralSettingsCaches } = await import("./general-settings-service");
+    const root = process.env.LUME_CONFIG_DIR!;
+    mkdirSync(join(root, "agent-workspaces", "ws-a", "memory", "index"), { recursive: true });
+    writeFileSync(join(root, "agent-workspaces", "ws-a", "memory", "index", "vec.json"), "{}");
+    mkdirSync(join(root, "agent-workspaces", "ws-a", "memory", "entries"), { recursive: true });
+    writeFileSync(join(root, "agent-workspaces", "ws-a", "memory", "MEMORY.md"), "keep");
+    mkdirSync(join(root, "agent-workspaces", "ws-b", "memory", "index"), { recursive: true });
+    writeFileSync(join(root, "agent-workspaces", "ws-b", "memory", "index", "vec.json"), "{}");
+
+    const result = clearGeneralSettingsCaches({ vectorIndex: true });
+
+    expect(result.cleared).toContain("vectorIndex");
+    expect(() => statSync(join(root, "agent-workspaces", "ws-a", "memory", "index", "vec.json"))).toThrow();
+    expect(() => statSync(join(root, "agent-workspaces", "ws-b", "memory", "index", "vec.json"))).toThrow();
+    // 非索引文件必须保留
+    expect(statSync(join(root, "agent-workspaces", "ws-a", "memory", "MEMORY.md")).size).toBeGreaterThan(0);
+  });
+
+  test("vectorIndex 拒绝清理符号链接逃逸到 ~/.lume 外的目标", async () => {
+    const { clearGeneralSettingsCaches } = await import("./general-settings-service");
+    const root = process.env.LUME_CONFIG_DIR!;
+    // 在 ~/.lume 外造一个受害者目录，含 memory/index
+    const victim = mkdtempSync(join(tmpdir(), "lume-victim-"));
+    mkdirSync(join(victim, "memory", "index"), { recursive: true });
+    writeFileSync(join(victim, "memory", "index", "secret.json"), "leak");
+    // 在 agent-workspaces 下放一个符号链接指向受害者
+    mkdirSync(join(root, "agent-workspaces"), { recursive: true });
+    symlinkSync(victim, join(root, "agent-workspaces", "escape"));
+
+    // 不应抛出；受害者文件必须存活
+    const result = clearGeneralSettingsCaches({ vectorIndex: true });
+    expect(statSync(join(victim, "memory", "index", "secret.json")).size).toBeGreaterThan(0);
+    rmSync(victim, { recursive: true, force: true });
   });
 
   test("未选中的键不清理", () => {
