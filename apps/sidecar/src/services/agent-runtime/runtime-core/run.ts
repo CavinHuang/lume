@@ -80,6 +80,10 @@ import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
 import { FilePluginStateStore } from "../plugins/plugin-state-store.js";
 import { buildPluginAgentHooks } from "../plugins/plugin-hooks-bridge.js";
 import {
+  buildPluginMcpManager,
+  PLUGIN_MCP_WORKSPACE_SLUG,
+} from "../plugins/plugin-mcp-bridge.js";
+import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
@@ -946,6 +950,20 @@ export async function createRuntimeCoreSession(
     totalRegistered: registeredPluginSkillNames.size,
     skills: Array.from(registeredPluginSkillNames),
   });
+  // Phase MCP Merge-A: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
+  // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
+  // No §8.1 gate here (Merge-B). Server ids namespaced `${pluginId}:${serverId}`.
+  const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers);
+  const pluginMcpRuntime = await pluginMcpManager
+    .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG)
+    .catch((error) => ({
+      tools: [],
+      diagnostics: [{
+        pluginName: "PluginMCP",
+        severity: "warning" as const,
+        reason: error instanceof Error ? error.message : String(error),
+      }],
+    }));
   const workspaceMcpRuntime = input.workspaceSlug
     ? await getWorkspaceMcpManager().createRuntimeTools(input.workspaceSlug).catch((error) => ({
       tools: [],
@@ -981,8 +999,12 @@ export async function createRuntimeCoreSession(
       ...(d.code ? { code: d.code } : {}),
     })),
     pluginCommandTools: pluginAssembly.commandToolDefinitions,
+    pluginMcpTools: pluginMcpRuntime.tools,
     mcpTools: workspaceMcpRuntime.tools,
-    mcpDiagnostics: workspaceMcpRuntime.diagnostics
+    mcpDiagnostics: [
+      ...(workspaceMcpRuntime.diagnostics ?? []),
+      ...(pluginMcpRuntime.diagnostics ?? []),
+    ]
   });
   const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
   const runId = input.runId ?? input.lumeSessionId;
@@ -1113,6 +1135,7 @@ export async function createRuntimeCoreSession(
     },
     async dispose() {
       await agent.close();
+      await pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG);
       clearRuntimeToolDescriptors(input.lumeSessionId);
       clearRuntimeFileAccessLedger(input.lumeSessionId);
       for (const name of registeredPluginSkillNames) {
