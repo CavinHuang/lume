@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildPluginAgentHooks } from "./plugin-hooks-bridge.js";
+import { buildPluginAgentHooks, defaultShellHookSpawner } from "./plugin-hooks-bridge.js";
 import type { HookInput, HookOutput } from "@lume/agent-sdk";
 import type { PluginPermissionRuntime, SensitiveCheckResult } from "./permission-runtime.js";
 
@@ -110,5 +110,43 @@ describe("buildPluginAgentHooks", () => {
     });
     await result.Stop![0]!.hooks[0]!({ event: "Stop" }, "", { signal: new AbortController().signal });
     expect(observedKey).toBe("hook:Stop:*");
+  });
+});
+
+describe("buildPluginAgentHooks — real spawner integration", () => {
+  test("allow-ed shell hook spawns and returns parsed output", async () => {
+    const result = buildPluginAgentHooks({
+      capabilities: [
+        { pluginId: "acme", hooks: { Stop: [{ command: "echo '{\"message\":\"hook ran\"}'" }] } },
+      ],
+      runtime: fakeRuntime("allow"),
+      workspaceSlug: "ws",
+      spawner: defaultShellHookSpawner,
+    });
+
+    const out = await result.Stop![0]!.hooks[0]!(
+      { event: "Stop" },
+      "",
+      { signal: new AbortController().signal },
+    ) as HookOutput | undefined;
+    expect(out?.message).toBe("hook ran");
+  });
+
+  test("allow-ed shell hook with non-JSON output returns {message}", async () => {
+    const result = buildPluginAgentHooks({
+      capabilities: [
+        { pluginId: "acme", hooks: { Stop: [{ command: "echo plain text" }] } },
+      ],
+      runtime: fakeRuntime("allow"),
+      workspaceSlug: "ws",
+      spawner: defaultShellHookSpawner,
+    });
+
+    const out = await result.Stop![0]!.hooks[0]!(
+      { event: "Stop" },
+      "",
+      { signal: new AbortController().signal },
+    ) as HookOutput | undefined;
+    expect(out?.message).toBe("plain text");
   });
 });
