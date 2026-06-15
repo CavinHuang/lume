@@ -13,7 +13,13 @@ import {
   type ThemeMode,
   type UpdateGeneralSettingsInput
 } from "@lume/shared";
-import { getConfigDir } from "../infra/config-paths";
+import {
+  getConfigDir,
+  getPluginsCacheDir,
+  getPluginsDataDir,
+  getGlobalVectorIndexDir,
+  getAgentWorkspacesDir
+} from "../infra/config-paths";
 import {
   PersistedSettingsReadError,
   readPersistedSettings,
@@ -26,10 +32,12 @@ interface SidecarSettings extends SidecarSettingsStore {
   generalSettings?: GeneralSettings;
 }
 
-type SidecarCacheCleanupKey = "logs";
+type SidecarCacheCleanupKey = "logs" | "vectorIndex" | "pluginsCache";
 
 export interface SidecarClearCacheInput {
   logs?: boolean;
+  vectorIndex?: boolean;
+  pluginsCache?: boolean;
 }
 
 export interface SidecarClearCacheResult {
@@ -37,7 +45,7 @@ export interface SidecarClearCacheResult {
   skipped: SidecarCacheCleanupKey[];
 }
 
-const CACHE_KEYS: SidecarCacheCleanupKey[] = ["logs"];
+const CACHE_KEYS: SidecarCacheCleanupKey[] = ["logs", "vectorIndex", "pluginsCache"];
 
 function isThemeMode(value: unknown): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
@@ -103,6 +111,20 @@ function resolveCacheTargetPaths(key: SidecarCacheCleanupKey): string[] {
         join(configDir, "logs"),
         join(tmpdir(), "lume-logs")
       ]));
+    case "vectorIndex": {
+      const paths = [getGlobalVectorIndexDir()];
+      try {
+        const workspacesDir = getAgentWorkspacesDir();
+        for (const slug of readdirSync(workspacesDir)) {
+          paths.push(join(workspacesDir, slug, "memory", "index"));
+        }
+      } catch {
+        // 工作区目录不存在时忽略
+      }
+      return paths;
+    }
+    case "pluginsCache":
+      return [getPluginsCacheDir(), getPluginsDataDir()];
   }
 }
 
@@ -111,6 +133,10 @@ function assertSafeCacheTarget(targetPath: string): void {
   const allowedRoots = [
     join(configDir, "cache"),
     join(configDir, "logs"),
+    join(configDir, "memory", "index"),
+    join(configDir, "plugins", "cache"),
+    join(configDir, "plugins", "data"),
+    join(configDir, "agent-workspaces"),
     join(tmpdir(), "lume-logs")
   ].map((value) => resolve(value));
   const resolvedTarget = resolve(targetPath);

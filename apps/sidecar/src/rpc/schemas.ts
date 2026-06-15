@@ -1131,7 +1131,9 @@ export const updateGeneralSettingsInputSchema = z.object({
 });
 
 export const clearCacheInputSchema = z.object({
-  logs: z.boolean().optional()
+  logs: z.boolean().optional(),
+  vectorIndex: z.boolean().optional(),
+  pluginsCache: z.boolean().optional()
 }).strict();
 
 export const readLogFileInputSchema = z.object({

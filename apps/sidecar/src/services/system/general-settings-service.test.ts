@@ -259,6 +259,37 @@ describe("general-settings-service", () => {
     });
   });
 
+  test("vectorIndex 清理全局 memory/index", () => {
+    mkdirSync(join(tempConfigDir, "memory", "index"), { recursive: true });
+    const indexFile = join(tempConfigDir, "memory", "index", "vector-index.json");
+    writeFileSync(indexFile, "{}", "utf-8");
+
+    const result = clearGeneralSettingsCaches({ vectorIndex: true });
+
+    expect(result.cleared).toContain("vectorIndex");
+    expect(existsSync(indexFile)).toBeFalse();
+  });
+
+  test("pluginsCache 清理 plugins/cache 与 plugins/data", () => {
+    const cacheFile = writeConfigFile(["plugins", "cache", "p.json"], "{}");
+    const dataFile = writeConfigFile(["plugins", "data", "p.json"], "{}");
+
+    const result = clearGeneralSettingsCaches({ pluginsCache: true });
+
+    expect(result.cleared).toContain("pluginsCache");
+    expect(existsSync(cacheFile)).toBeFalse();
+    expect(existsSync(dataFile)).toBeFalse();
+  });
+
+  test("未选中的键不清理", () => {
+    const logsFile = writeConfigFile(["logs", "lume.ndjson"], "{}\n");
+
+    const result = clearGeneralSettingsCaches({});
+
+    expect(result.cleared).toEqual([]);
+    expect(existsSync(logsFile)).toBeTrue();
+  });
+
   function writeConfigFile(pathSegments: string[], content: string): string {
     const fullPath = join(tempConfigDir, ...pathSegments);
     mkdirSync(dirname(fullPath), { recursive: true });
