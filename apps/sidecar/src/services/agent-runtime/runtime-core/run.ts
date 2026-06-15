@@ -38,6 +38,7 @@ import type {
   AgentToolPermissionRequest
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   buildBuiltinAgents,
@@ -75,6 +76,9 @@ import { createTaskReportTool } from "../task-run/task-report-tool";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
 import { assemblePluginRuntime } from "../plugins/runtime-bridge.js";
+import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
+import { FilePluginStateStore } from "../plugins/plugin-state-store.js";
+import { buildPluginAgentHooks } from "../plugins/plugin-hooks-bridge.js";
 import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
@@ -899,7 +903,7 @@ export async function createRuntimeCoreSession(
   const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
   // Phase 3b: registry → resolver → bridge. Command tools + skills come from the
   // PluginRuntimeBridge now; the SDK's loadPlugins path is no longer used (no
-  // agentOptions.plugins). Plugin hooks are inert until Phase 3d.
+  // agentOptions.plugins). Plugin hooks are wired below (Phase 3d).
   const pluginConfig = getEffectiveLumeConfig(input.workspaceSlug).plugins;
   const pluginManager = new SidecarPluginManager();
   const registeredPlugins = await pluginManager.listRegistered({
@@ -910,6 +914,17 @@ export async function createRuntimeCoreSession(
     directories: [join(input.cwd, ".lume", "plugins"), ...(pluginConfig?.directories ?? [])],
   });
   const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
+
+  // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
+  // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
+  const hookPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(join(homedir(), ".lume", "plugins-state.json")),
+  });
+  const pluginAgentHooks = buildPluginAgentHooks({
+    capabilities: pluginAssembly.hooks,
+    runtime: hookPermissionRuntime,
+    workspaceSlug: input.workspaceSlug,
+  });
 
   // Register plugin skills (resolver already namespaced skill.name as `${pluginId}:${original}`).
   const registeredPluginSkillNames = new Set<string>();
@@ -1037,6 +1052,7 @@ export async function createRuntimeCoreSession(
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
       ? { resume: input.lumeSessionId }
       : {}),
+    ...(Object.keys(pluginAgentHooks).length > 0 ? { hooks: pluginAgentHooks } : {}),
     agents,
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
