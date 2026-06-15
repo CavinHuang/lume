@@ -13,6 +13,8 @@ export type {
   ResolvedMcpServer,
   ResolvedCommandTool,
 } from "./capability-resolver.js";
+export { evaluatePluginSensitiveGate } from "./sensitive-gate.js";
+export type { SensitiveGateInput, SensitiveGateResult } from "./sensitive-gate.js";
 
 export interface PluginPermissionContext {
   pluginName: string;
