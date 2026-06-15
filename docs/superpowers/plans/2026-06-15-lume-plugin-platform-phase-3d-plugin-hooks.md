@@ -229,13 +229,13 @@ describe("buildPluginAgentHooks", () => {
     });
 
     expect(Object.keys(result)).toEqual(["Stop"]);
-    expect(result.Stop).toHaveLength(1);
-    expect(result.Stop[0]?.matcher).toBe("Bash");
-    expect(result.Stop[0]?.hooks).toHaveLength(1);
+    expect(result.Stop!).toHaveLength(1);
+    expect(result.Stop![0]?.matcher).toBe("Bash");
+    expect(result.Stop![0]?.hooks).toHaveLength(1);
 
     // Fire the handler — allow → spawner called with the command + event.
     const hookInput: HookInput = { event: "Stop", sessionId: "s1" };
-    const out = await result.Stop[0]!.hooks[0]!(hookInput, "", { signal: new AbortController().signal });
+    const out = await result.Stop![0]!.hooks[0]!(hookInput, "", { signal: new AbortController().signal });
     expect(out).toEqual({ message: "spawned: echo stop" });
     expect(calls).toEqual([{ command: "echo stop", event: "Stop" }]);
   });
@@ -251,7 +251,7 @@ describe("buildPluginAgentHooks", () => {
       spawner: recordingSpawner(calls),
     });
 
-    const out = await result.PreToolUse[0]!.hooks[0]!(
+    const out = await result.PreToolUse![0]!.hooks[0]!(
       { event: "PreToolUse", toolName: "Bash" },
       "",
       { signal: new AbortController().signal },
@@ -271,7 +271,7 @@ describe("buildPluginAgentHooks", () => {
       spawner: recordingSpawner(calls),
     });
 
-    const out = await result.Stop[0]!.hooks[0]!(
+    const out = await result.Stop![0]!.hooks[0]!(
       { event: "Stop" },
       "",
       { signal: new AbortController().signal },
@@ -295,7 +295,7 @@ describe("buildPluginAgentHooks", () => {
       workspaceSlug: "ws",
       spawner: recordingSpawner(calls),
     });
-    await result.Stop[0]!.hooks[0]!({ event: "Stop" }, "", { signal: new AbortController().signal });
+    await result.Stop![0]!.hooks[0]!({ event: "Stop" }, "", { signal: new AbortController().signal });
     expect(observedKey).toBe("hook:Stop:*");
   });
 });
@@ -604,7 +604,7 @@ describe("buildPluginAgentHooks — real spawner integration", () => {
       spawner: defaultShellHookSpawner,
     });
 
-    const out = await result.Stop[0]!.hooks[0]!(
+    const out = await result.Stop![0]!.hooks[0]!(
       { event: "Stop" },
       "",
       { signal: new AbortController().signal },
@@ -622,7 +622,7 @@ describe("buildPluginAgentHooks — real spawner integration", () => {
       spawner: defaultShellHookSpawner,
     });
 
-    const out = await result.Stop[0]!.hooks[0]!(
+    const out = await result.Stop![0]!.hooks[0]!(
       { event: "Stop" },
       "",
       { signal: new AbortController().signal },
