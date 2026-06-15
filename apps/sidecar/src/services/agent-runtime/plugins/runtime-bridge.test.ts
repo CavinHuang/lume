@@ -109,4 +109,35 @@ describe("assemblePluginRuntime", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("carries resolved plugin mcpServers (with pluginId + entry) in assembly.mcpServers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bridge-mcp-"));
+    try {
+      const pluginRoot = join(root, "acme");
+      await mkdir(pluginRoot, { recursive: true });
+      await writeFile(
+        join(pluginRoot, "mcp.json"),
+        JSON.stringify({ mcpServers: { "acme-api": { command: "node", args: ["server.js"] } } }),
+        "utf-8",
+      );
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          commandTools: [],
+          mcpServersConfigPath: "./mcp.json",
+        },
+        permissions: { mcpServers: { register: true } },
+      });
+
+      const assembly = await assemblePluginRuntime([plugin]);
+
+      expect(assembly.mcpServers).toHaveLength(1);
+      expect(assembly.mcpServers[0]?.pluginId).toBe("acme");
+      expect(assembly.mcpServers[0]?.serverId).toBe("acme-api");
+      expect(assembly.mcpServers[0]?.entry.transport).toBe("stdio");
+      expect(assembly.mcpServers[0]?.entry.command).toBe("node");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

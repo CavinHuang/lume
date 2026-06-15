@@ -5,7 +5,7 @@ import {
   type SkillDefinition,
   type ToolDefinition,
 } from "@lume/agent-sdk";
-import { resolvePluginCapabilities } from "./capability-resolver.js";
+import { resolvePluginCapabilities, type ResolvedMcpServer } from "./capability-resolver.js";
 import type { RegisteredPlugin } from "./plugin-registry.js";
 
 export interface PluginRuntimeAssembly {
@@ -15,6 +15,8 @@ export interface PluginRuntimeAssembly {
   skills: SkillDefinition[];
   /** Per-plugin resolved hook configs (resolver already filtered to permissions.hooks.events). */
   hooks: Array<{ pluginId: string; hooks: HookConfig }>;
+  /** Plugin MCP servers (resolver already gated on permissions.mcpServers.register). */
+  mcpServers: ResolvedMcpServer[];
   /** Cross-plugin diagnostics from the resolver. */
   diagnostics: PluginDiagnostic[];
 }
@@ -40,6 +42,7 @@ export async function assemblePluginRuntime(
   const commandToolDefinitions: ToolDefinition[] = [];
   const skills: SkillDefinition[] = [];
   const hooks: Array<{ pluginId: string; hooks: HookConfig }> = [];
+  const mcpServers: ResolvedMcpServer[] = [];
 
   for (const capability of resolved.capabilities) {
     const pluginRoot = rootById.get(capability.pluginId);
@@ -59,7 +62,10 @@ export async function assemblePluginRuntime(
       skills.push(skill.definition);
     }
     hooks.push({ pluginId: capability.pluginId, hooks: capability.hooks });
+    for (const server of capability.mcpServers) {
+      mcpServers.push(server);
+    }
   }
 
-  return { commandToolDefinitions, skills, hooks, diagnostics: resolved.diagnostics };
+  return { commandToolDefinitions, skills, hooks, mcpServers, diagnostics: resolved.diagnostics };
 }
