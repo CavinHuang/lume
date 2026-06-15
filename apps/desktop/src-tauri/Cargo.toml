@@ -20,6 +20,7 @@ webbrowser = "1"
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
+walkdir = "2"
 lume-logger = { path = "../../../crates/lume-logger" }
 
 [[bin]]

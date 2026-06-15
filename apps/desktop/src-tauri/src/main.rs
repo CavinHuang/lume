@@ -600,6 +600,23 @@ fn desktop_list_log_files() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+fn data_get_storage_stats(categories: Vec<DataCategoryInput>) -> Result<serde_json::Value, String> {
+    let root = ll::config::resolve_config_dir();
+    let mut outs = Vec::<DataCategoryOutput>::new();
+    let mut total: u64 = 0;
+    for cat in &categories {
+        let bytes = compute_category_bytes(&root, cat);
+        total += bytes;
+        outs.push(DataCategoryOutput { key: cat.key.clone(), bytes });
+    }
+    Ok(serde_json::json!({
+        "total": total,
+        "configDir": root.to_string_lossy(),
+        "categories": outs
+    }))
+}
+
+#[tauri::command]
 fn desktop_read_log_file(
     file_name: String,
     levels: Option<Vec<String>>,
@@ -1749,7 +1766,8 @@ fn main() {
             write_binary_file,
             open_in_system,
             reveal_path_in_system,
-            copy_file
+            copy_file,
+            data_get_storage_stats
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -1821,4 +1839,118 @@ fn main() {
                 _ => {}
             }
         });
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DataCategoryInput {
+    key: String,
+    scan_paths: Vec<String>,
+    skip_subdirs: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct DataCategoryOutput {
+    key: String,
+    bytes: u64,
+}
+
+/// 把含 `*` 的相对路径展开为具体路径（只支持单段 `*`，用于 agent-workspaces/*）。
+fn expand_scan_path(root: &Path, rel: &str) -> Vec<PathBuf> {
+    let parts: Vec<&str> = rel.split('/').collect();
+    let star_idx = parts.iter().position(|p| *p == "*");
+    match star_idx {
+        None => vec![root.join(rel)],
+        Some(idx) => {
+            let parent = root.join(parts[..idx].join("/"));
+            let suffix: PathBuf = parts[idx + 1..].iter().collect();
+            let Ok(entries) = std::fs::read_dir(&parent) else {
+                return vec![];
+            };
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .map(|e| {
+                    let mut p = e.path();
+                    if !suffix.as_os_str().is_empty() {
+                        p.push(&suffix);
+                    }
+                    p
+                })
+                .collect()
+        }
+    }
+}
+
+/// 对单类别求体积：扫描 scan_paths，跳过 skip_subdirs（含 `*`）。
+fn compute_category_bytes(root: &Path, input: &DataCategoryInput) -> u64 {
+    let mut skip_prefixes: Vec<PathBuf> = Vec::new();
+    for s in &input.skip_subdirs {
+        for p in expand_scan_path(root, s) {
+            skip_prefixes.push(p);
+        }
+    }
+
+    let mut total: u64 = 0;
+    for rel in &input.scan_paths {
+        for target in expand_scan_path(root, rel) {
+            for entry in walkdir::WalkDir::new(&target).into_iter().filter_map(Result::ok) {
+                let path = entry.path();
+                if skip_prefixes.iter().any(|sp| path.starts_with(sp)) {
+                    continue;
+                }
+                if entry.file_type().is_file() {
+                    if let Ok(meta) = entry.metadata() {
+                        total += meta.len();
+                    }
+                }
+            }
+        }
+    }
+    total
+}
+
+#[cfg(test)]
+mod data_stats_tests {
+    use super::*;
+    use std::fs::{create_dir_all, write};
+
+    fn make_tree(root: &Path) {
+        create_dir_all(root.join("memory/index")).unwrap();
+        create_dir_all(root.join("memory/entries")).unwrap();
+        create_dir_all(root.join("logs")).unwrap();
+        write(root.join("memory/index/vec.json"), "xxxxx").unwrap(); // 5
+        write(root.join("memory/entries/e.md"), "yyy").unwrap(); // 3
+        write(root.join("logs/l.ndjson"), "zz").unwrap(); // 2
+    }
+
+    #[test]
+    fn core_excludes_index() {
+        let tmp = std::env::temp_dir().join("lume-stats-test-core");
+        let _ = std::fs::remove_dir_all(&tmp);
+        make_tree(&tmp);
+
+        let core = DataCategoryInput {
+            key: "core".into(),
+            scan_paths: vec!["memory".into()],
+            skip_subdirs: vec!["memory/index".into()],
+        };
+        // memory = entries(3) + index(5)；skip index 后应只剩 3
+        assert_eq!(compute_category_bytes(&tmp, &core), 3);
+    }
+
+    #[test]
+    fn derived_counts_index() {
+        let tmp = std::env::temp_dir().join("lume-stats-test-derived");
+        let _ = std::fs::remove_dir_all(&tmp);
+        make_tree(&tmp);
+
+        let derived = DataCategoryInput {
+            key: "derived".into(),
+            scan_paths: vec!["memory/index".into(), "logs".into()],
+            skip_subdirs: vec![],
+        };
+        // index(5) + logs(2) = 7
+        assert_eq!(compute_category_bytes(&tmp, &derived), 7);
+    }
 }
