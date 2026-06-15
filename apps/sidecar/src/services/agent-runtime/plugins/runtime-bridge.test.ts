@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { assemblePluginRuntime } from "./runtime-bridge.js";
 import type { RegisteredPlugin } from "./plugin-registry.js";
 
@@ -76,5 +79,34 @@ describe("assemblePluginRuntime", () => {
     expect(assembly.commandToolDefinitions).toEqual([]);
     expect(assembly.skills).toEqual([]);
     expect(assembly.diagnostics).toEqual([]);
+  });
+
+  test("carries resolved plugin hooks (with pluginId) in assembly.hooks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bridge-hooks-"));
+    try {
+      const pluginRoot = join(root, "acme");
+      await mkdir(pluginRoot, { recursive: true });
+      await writeFile(
+        join(pluginRoot, "hooks.json"),
+        JSON.stringify({ Stop: [{ command: "echo stop" }] }),
+        "utf-8",
+      );
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          commandTools: [],
+          hooksConfigPath: "./hooks.json",
+        },
+        permissions: { hooks: { events: ["Stop"] } },
+      });
+
+      const assembly = await assemblePluginRuntime([plugin]);
+
+      expect(assembly.hooks).toEqual([
+        { pluginId: "acme", hooks: { Stop: [{ command: "echo stop" }] } },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

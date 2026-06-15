@@ -1,5 +1,6 @@
 import {
   buildCommandToolDefinition,
+  type HookConfig,
   type PluginDiagnostic,
   type SkillDefinition,
   type ToolDefinition,
@@ -12,6 +13,8 @@ export interface PluginRuntimeAssembly {
   commandToolDefinitions: ToolDefinition[];
   /** Namespaced skill definitions (resolver already rewrote skill.name). */
   skills: SkillDefinition[];
+  /** Per-plugin resolved hook configs (resolver already filtered to permissions.hooks.events). */
+  hooks: Array<{ pluginId: string; hooks: HookConfig }>;
   /** Cross-plugin diagnostics from the resolver. */
   diagnostics: PluginDiagnostic[];
 }
@@ -36,6 +39,7 @@ export async function assemblePluginRuntime(
 
   const commandToolDefinitions: ToolDefinition[] = [];
   const skills: SkillDefinition[] = [];
+  const hooks: Array<{ pluginId: string; hooks: HookConfig }> = [];
 
   for (const capability of resolved.capabilities) {
     const pluginRoot = rootById.get(capability.pluginId);
@@ -54,7 +58,8 @@ export async function assemblePluginRuntime(
     for (const skill of capability.skills) {
       skills.push(skill.definition);
     }
+    hooks.push({ pluginId: capability.pluginId, hooks: capability.hooks });
   }
 
-  return { commandToolDefinitions, skills, diagnostics: resolved.diagnostics };
+  return { commandToolDefinitions, skills, hooks, diagnostics: resolved.diagnostics };
 }
