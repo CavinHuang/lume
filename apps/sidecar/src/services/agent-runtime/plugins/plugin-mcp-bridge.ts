@@ -1,6 +1,7 @@
 import type { McpServerEntry, WorkspaceMcpConfig } from "@lume/shared";
 import {
   WorkspaceMcpManager,
+  type McpGateDecision,
   type WorkspaceSdkMcpManager,
 } from "../../mcp/workspace-mcp-manager.js";
 import type { PluginPermissionRuntime } from "./permission-runtime.js";
@@ -43,7 +44,7 @@ export function buildPluginMcpManager(
 
   const { permissionRuntime, workspaceSlug, sdkManagerFactory } = options;
   const authorizeConnect = permissionRuntime
-    ? async (serverId: string): Promise<{ decision: "allow" | "block"; reason?: string }> => {
+    ? async (serverId: string): Promise<McpGateDecision> => {
         const pluginId = pluginIdByServerId.get(serverId);
         if (!pluginId) {
           return { decision: "allow" };

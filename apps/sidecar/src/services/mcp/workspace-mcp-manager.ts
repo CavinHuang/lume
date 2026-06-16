@@ -46,12 +46,18 @@ export interface WorkspaceSdkMcpManager {
   readResource(serverId: string, uri: string): Promise<McpReadResourceResult>;
 }
 
+/** Decision returned by an MCP pre-connect authorization gate (§8.1) or the sensitive-gate. */
+export interface McpGateDecision {
+  decision: "allow" | "block";
+  reason?: string;
+}
+
 export interface WorkspaceMcpManagerOptions {
   readConfig?: (workspaceSlug: string) => WorkspaceMcpConfig;
   sdkManagerFactory?: () => WorkspaceSdkMcpManager;
   logger?: Pick<Logger, "warn" | "error" | "info">;
   /** Optional pre-connect authorization (e.g. plugin §8.1 MCP start gate). Undefined = no gate (workspace singleton). */
-  authorizeConnect?: (serverId: string) => Promise<{ decision: "allow" | "block"; reason?: string }>;
+  authorizeConnect?: (serverId: string) => Promise<McpGateDecision>;
 }
 
 export interface WorkspaceMcpRuntimeTools {
@@ -259,7 +265,7 @@ export class WorkspaceMcpManager {
   private readonly readConfig: (workspaceSlug: string) => WorkspaceMcpConfig;
   private readonly sdkManagerFactory: () => WorkspaceSdkMcpManager;
   private readonly logger: Pick<Logger, "warn" | "error" | "info">;
-  private readonly authorizeConnect?: (serverId: string) => Promise<{ decision: "allow" | "block"; reason?: string }>;
+  private readonly authorizeConnect?: (serverId: string) => Promise<McpGateDecision>;
   private readonly workspaces = new Map<string, WorkspaceState>();
 
   constructor(options: WorkspaceMcpManagerOptions = {}) {
@@ -295,7 +301,7 @@ export class WorkspaceMcpManager {
     const connectionAttempts: Array<Promise<void>> = [];
     for (const serverId of currentEnabledIds) {
       if (this.authorizeConnect) {
-        let gate: { decision: "allow" | "block"; reason?: string };
+        let gate: McpGateDecision;
         try {
           gate = await this.authorizeConnect(serverId);
         } catch (error) {

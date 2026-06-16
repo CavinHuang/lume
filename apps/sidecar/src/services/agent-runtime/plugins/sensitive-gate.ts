@@ -1,6 +1,7 @@
 import type { LumeToolDescriptor } from "../tools/tool-types.js";
 import type { PluginPermissionRuntime } from "./permission-runtime.js";
 import type { SensitiveCapabilityKey } from "@lume/agent-sdk";
+import type { McpGateDecision } from "../../mcp/workspace-mcp-manager.js";
 
 export interface SensitiveGateInput {
   descriptor: LumeToolDescriptor;
@@ -8,10 +9,7 @@ export interface SensitiveGateInput {
   workspaceSlug?: string;
 }
 
-export interface SensitiveGateResult {
-  decision: "allow" | "block";
-  reason?: string;
-}
+export type SensitiveGateResult = McpGateDecision;
 
 /**
  * Phase 3c sensitive capability gate (design spec §8.1/§8.2/§14.2).
