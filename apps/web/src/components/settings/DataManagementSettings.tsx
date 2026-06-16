@@ -65,6 +65,9 @@ export function DataManagementSettings() {
     void refreshStats()
   }, [refreshStats])
 
+  const unlistenRef = React.useRef<null | (() => void)>(null)
+  React.useEffect(() => () => { unlistenRef.current?.(); unlistenRef.current = null }, [])
+
   const handleClear = async () => {
     setClearing(true)
     try {
@@ -116,6 +119,7 @@ export function DataManagementSettings() {
     const unlisten = await listen<{ done: number; total: number }>('data:migrate-progress', (e) => {
       setMigrateProgress(e.payload)
     })
+    unlistenRef.current = unlisten
     try {
       if (!migrateDest) return
       const result = await migrateToDir(migrateDest)
@@ -125,6 +129,7 @@ export function DataManagementSettings() {
       setMigrateError(error instanceof Error ? error.message : String(error))
     } finally {
       unlisten()
+      unlistenRef.current = null
       setMigrating(false)
     }
   }
@@ -258,7 +263,7 @@ export function DataManagementSettings() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => { setMigrateOpen(true); setMigrateResult(null); setMigrateError(null); setMigrateDest(null); setMigrateProgress(null) }}
+              onClick={() => { setMigrateOpen(true); setMigrateResult(null); setMigrateError(null); setMigrateDest(null); setMigrateProgress(null); setMigrating(false) }}
               className="h-8 gap-1.5 rounded-[8px] px-3 text-[12px]"
             >
               <FolderInput size={13} />
@@ -328,16 +333,22 @@ export function DataManagementSettings() {
               )}
               {migrateError && (
                 <div className="mb-3 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 py-2 text-[12px] text-[#ff4d57]">
-                  迁移失败：{migrateError}。可关闭后重启应用以恢复。
+                  迁移失败：{migrateError}。旧目录未改动，建议重启应用以恢复。
                 </div>
               )}
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setMigrateOpen(false)} disabled={migrating} className="h-8 rounded-[8px] px-3 text-[12px]">
                   取消
                 </Button>
-                <Button onClick={handleStartMigrate} disabled={!migrateDest || migrating} className="h-8 rounded-[8px] px-3 text-[12px]">
-                  {migrating ? '复制中…' : '开始迁移'}
-                </Button>
+                {migrateError ? (
+                  <Button onClick={() => void relaunch()} className="h-8 rounded-[8px] px-3 text-[12px]">
+                    重启恢复
+                  </Button>
+                ) : (
+                  <Button onClick={handleStartMigrate} disabled={!migrateDest || migrating} className="h-8 rounded-[8px] px-3 text-[12px]">
+                    {migrating ? '复制中…' : '开始迁移'}
+                  </Button>
+                )}
               </div>
             </>
           )}
