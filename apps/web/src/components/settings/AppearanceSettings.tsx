@@ -5,6 +5,7 @@ import type { AgentMessageDisplayMode } from '@lume/shared'
 import { updateGeneralSettings } from '@/lib/desktop-api'
 import { generalSettingsAtom } from '@/atoms'
 import { cn } from '@/lib/utils'
+import { mergeGeneralSettings } from './general-settings-state'
 
 const DISPLAY_MODE_OPTIONS: Array<{ value: AgentMessageDisplayMode; label: string; desc: string }> = [
   { value: 'minimal', label: '极简', desc: '只显示文字结论，过程收进可展开的一行' },
@@ -17,6 +18,8 @@ export function AppearanceSettings() {
 
   const handleChange = async (mode: AgentMessageDisplayMode) => {
     if (mode === settings.agentMessageDisplayMode || saving) return
+    const optimistic = mergeGeneralSettings(settings, { agentMessageDisplayMode: mode })
+    setSettings(optimistic)
     setSaving(true)
     try {
       const saved = await updateGeneralSettings({ agentMessageDisplayMode: mode })
@@ -24,6 +27,7 @@ export function AppearanceSettings() {
       toast.success('外观设置已保存')
     } catch (error) {
       console.error('[AppearanceSettings] 保存失败:', error)
+      setSettings(settings)
       toast.error('保存外观设置失败')
     } finally {
       setSaving(false)
