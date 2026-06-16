@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
+import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -593,21 +593,58 @@ function MinimalProcessGroup({
     : 0
   const totalDurationMs = completedDurationMs + runningElapsedMs
 
-  const parts: string[] = []
-  if (hasRunning && runningTool) {
-    parts.push(failedCount > 0 ? `⚠️ ● 正在执行 ${runningTool.toolName}` : `● 正在执行 ${runningTool.toolName}`)
-    parts.push(failedCount > 0 ? `已完成 ${completedCount} 步 · ${failedCount} 失败` : `已完成 ${completedCount} 步`)
-  } else {
-    parts.push(failedCount > 0 ? `⚠️ 🔧 ${nonAgentCount} 操作 · ${failedCount} 失败` : `🔧 ${nonAgentCount} 操作`)
-    if (subagentCount > 0) parts.push(`🤖 ${subagentCount} 子代理`)
-  }
-  if (totalDurationMs > 0) {
-    const seconds = totalDurationMs / 1000
-    const label = seconds < 60
-      ? `${seconds.toFixed(hasRunning ? 0 : 1)}s`
+  const durationLabel = totalDurationMs > 0
+    ? totalDurationMs / 1000 < 60
+      ? `${(totalDurationMs / 1000).toFixed(hasRunning ? 0 : 1)}s`
       : formatDurationLabel(totalDurationMs)
-    parts.push(`⏱ ${label}`)
+    : ''
+
+  // 折叠行摘要：图标 + 文本单元，用 · 分隔（不再使用 emoji）
+  const summaryUnits: ReactNode[] = []
+  if (hasRunning && runningTool) {
+    summaryUnits.push(
+      <span key="run" className="inline-flex items-center gap-1">
+        <span className="size-1.5 animate-pulse rounded-full bg-blue-500" />
+        正在执行 {runningTool.toolName}
+      </span>,
+    )
+    summaryUnits.push(
+      <span key="done">
+        已完成 {completedCount} 步{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
+      </span>,
+    )
+  } else {
+    summaryUnits.push(
+      <span key="ops" className="inline-flex items-center gap-1">
+        {failedCount > 0 ? <TriangleAlert size={12} /> : <Wrench size={12} />}
+        {nonAgentCount} 操作{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
+      </span>,
+    )
+    if (subagentCount > 0) {
+      summaryUnits.push(
+        <span key="sub" className="inline-flex items-center gap-1">
+          <Bot size={12} />
+          {subagentCount} 子代理
+        </span>,
+      )
+    }
   }
+  if (durationLabel) {
+    summaryUnits.push(
+      <span key="dur" className="inline-flex items-center gap-1 tabular-nums">
+        <Clock size={12} />
+        {durationLabel}
+      </span>,
+    )
+  }
+
+  const summaryNodes: ReactNode[] = []
+  summaryUnits.forEach((unit, index) => {
+    if (index > 0) {
+      summaryNodes.push(<span key={`sep-${index}`} className="text-foreground/25">·</span>)
+    }
+    summaryNodes.push(unit)
+  })
 
   return (
     <div>
@@ -617,29 +654,148 @@ function MinimalProcessGroup({
         onClick={() => setExpanded((value) => !value)}
         className="flex items-center gap-1.5 text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
       >
-        <ChevronDown size={12} className={cn('transition-transform', expanded && 'rotate-180')} />
-        <span className="tabular-nums">{parts.join(' · ')}</span>
+        <ChevronDown size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-180')} />
+        {summaryNodes}
       </button>
       {expanded && (
-        <div className="mt-2 space-y-2 pl-1">
+        <div className="mt-1.5 space-y-0.5 pl-1">
           {blocks.map((block) => {
             if (block.type === 'thinking') {
-              return <RuntimeEventThinkingBlock key={block.id} text={block.text} active={false} />
+              return <MinimalThinkingRow key={block.id} text={block.text} />
             }
             if (block.type === 'tool_call') {
-              return (
-                <RuntimeEventToolCallBlock
-                  key={block.id}
-                  toolCall={block.toolCall}
-                  threadId={threadId}
-                  onUserResizeStart={onUserResizeStart}
-                />
-              )
+              if (block.toolCall.toolName === 'Agent') {
+                return (
+                  <MinimalSubagentRow
+                    key={block.id}
+                    toolCall={block.toolCall}
+                    threadId={threadId}
+                    onUserResizeStart={onUserResizeStart}
+                  />
+                )
+              }
+              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} />
             }
             return null
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+function MinimalToolCallRow({ toolCall }: { toolCall: RuntimeToolCallView }) {
+  const [open, setOpen] = useState(false)
+  const input = asRecord(toolCall.input)
+  const isRunning = toolCall.status === 'running'
+  const resultOpen = !isRunning && open
+  const shouldRenderResult = useDeferredUnmount(resultOpen)
+
+  let resultData: unknown = toolCall.output
+  if (typeof toolCall.output === 'string') {
+    try {
+      resultData = JSON.parse(toolCall.output)
+    } catch {
+      resultData = toolCall.output
+    }
+  }
+
+  const Icon = toolCall.toolName === 'Bash' ? Terminal : Wrench
+
+  return (
+    <div>
+      <button
+        type="button"
+        disabled={isRunning}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60 disabled:hover:text-foreground/40"
+      >
+        <Icon size={12} className="shrink-0" />
+        <span className="shrink-0 font-mono font-medium">{toolCall.toolName}</span>
+        <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
+        {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
+        {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
+          <span className="shrink-0 tabular-nums">{formatDurationLabel(toolCall.durationMs)}</span>
+        )}
+        {isRunning ? (
+          <Loader2 size={11} className="shrink-0 animate-spin" />
+        ) : (
+          <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+        )}
+      </button>
+      {shouldRenderResult && (
+        <AnimatedCollapsiblePanel open={resultOpen}>
+          <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+          </div>
+        </AnimatedCollapsiblePanel>
+      )}
+    </div>
+  )
+}
+
+function MinimalThinkingRow({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
+      >
+        <Brain size={12} className="shrink-0" />
+        <span className="flex-1">思考过程</span>
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+      </button>
+      <AnimatedCollapsiblePanel open={open}>
+        <p className="mb-1 mt-1 whitespace-pre-wrap rounded-md bg-foreground/[0.03] p-2 text-[11.5px] leading-relaxed text-foreground/50">
+          {text}
+        </p>
+      </AnimatedCollapsiblePanel>
+    </div>
+  )
+}
+
+function MinimalSubagentRow({
+  toolCall,
+  threadId,
+  onUserResizeStart,
+}: {
+  toolCall: RuntimeToolCallView
+  threadId: string
+  onUserResizeStart?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const input = asRecord(toolCall.input)
+  const label = asString(input.description ?? input.prompt) ?? '子代理'
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
+      >
+        <Bot size={12} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
+          <span className="shrink-0 tabular-nums">{formatDurationLabel(toolCall.durationMs)}</span>
+        )}
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+      </button>
+      <AnimatedCollapsiblePanel open={open}>
+        <div className="mb-1 mt-1">
+          <SubagentInlinePanel
+            threadId={threadId}
+            toolUseId={toolCall.id}
+            runId={toolCall.subagentRunId}
+            status={toolCall.subagentStatus}
+            description={asString(input.description ?? input.prompt)}
+            agentType={asString(input.subagent_type)}
+            prompt={asString(input.prompt)}
+            onUserResizeStart={onUserResizeStart}
+          />
+        </div>
+      </AnimatedCollapsiblePanel>
     </div>
   )
 }
