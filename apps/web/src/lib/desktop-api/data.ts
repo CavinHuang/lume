@@ -4,6 +4,8 @@ import type {
   EmptyTrashResult,
   ExportZipInput,
   ExportZipResult,
+  MigrationApplyInput,
+  MigrationResult,
   StorageStats,
 } from '@lume/shared'
 import { sidecarCall } from './system'
@@ -17,3 +19,9 @@ export const exportZip = (input: ExportZipInput) =>
 
 export const emptyTrash = () =>
   sidecarCall<EmptyTrashResult>(AGENT_IPC_CHANNELS.EMPTY_TRASH, {})
+
+export const migrateToDir = (dest: string) =>
+  invoke<MigrationResult>('data_migrate_to_dir', { dest })
+
+export const applyMigration = (input: MigrationApplyInput) =>
+  invoke<{ ok: boolean }>('data_apply_migration', { ...input })
