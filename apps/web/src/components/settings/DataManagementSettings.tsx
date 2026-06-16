@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   Download,
+  FolderInput,
   FolderOpen,
   Loader2,
   RefreshCw,
@@ -8,14 +9,19 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { listen } from '@tauri-apps/api/event'
+import { relaunch } from '@tauri-apps/plugin-process'
 import { DATA_CATEGORY_META } from '@lume/shared'
 import type { StorageStats } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import {
+  applyMigration,
   clearCache,
   emptyTrash,
   exportZip,
   getStorageStats,
+  migrateToDir,
+  openFolderDialog,
   revealPathInSystem,
   saveFilePathDialog,
 } from '@/lib/desktop-api'
@@ -36,6 +42,12 @@ export function DataManagementSettings() {
   const [confirmEmptyOpen, setConfirmEmptyOpen] = React.useState(false)
   const [includeCreds, setIncludeCreds] = React.useState(false)
   const [exporting, setExporting] = React.useState(false)
+  const [migrateOpen, setMigrateOpen] = React.useState(false)
+  const [migrateDest, setMigrateDest] = React.useState<string | null>(null)
+  const [migrating, setMigrating] = React.useState(false)
+  const [migrateProgress, setMigrateProgress] = React.useState<{ done: number; total: number } | null>(null)
+  const [migrateResult, setMigrateResult] = React.useState<{ destPath: string } | null>(null)
+  const [migrateError, setMigrateError] = React.useState<string | null>(null)
 
   const refreshStats = React.useCallback(async () => {
     setLoadingStats(true)
@@ -95,6 +107,42 @@ export function DataManagementSettings() {
     } finally {
       setExporting(false)
     }
+  }
+
+  const handleStartMigrate = async () => {
+    setMigrating(true)
+    setMigrateError(null)
+    setMigrateProgress({ done: 0, total: 0 })
+    const unlisten = await listen<{ done: number; total: number }>('data:migrate-progress', (e) => {
+      setMigrateProgress(e.payload)
+    })
+    try {
+      if (!migrateDest) return
+      const result = await migrateToDir(migrateDest)
+      setMigrateResult({ destPath: result.destPath })
+    } catch (error) {
+      console.error('[DataManagement] migrate FAILED:', error)
+      setMigrateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      unlisten()
+      setMigrating(false)
+    }
+  }
+
+  const handleApplyMigrate = async (deleteOld: boolean) => {
+    if (!migrateResult) return
+    try {
+      await applyMigration({ destPath: migrateResult.destPath, deleteOld })
+      await relaunch()
+    } catch (error) {
+      console.error('[DataManagement] applyMigration FAILED:', error)
+      toast.error('应用迁移失败，请手动重启')
+    }
+  }
+
+  const pickMigrateDest = async () => {
+    const picked = await openFolderDialog()
+    if (picked.path) setMigrateDest(picked.path)
   }
 
   const totalBytes = stats?.total ?? 0
@@ -198,15 +246,25 @@ export function DataManagementSettings() {
           <div className="min-w-0 text-[13px] text-[var(--text-2)]">
             根目录 <code className="break-all rounded bg-[var(--surface-2)] px-1">{stats?.configDir ?? '~/.lume/'}</code>
           </div>
-          <Button
-            variant="outline"
-            disabled={!stats?.configDir}
-            onClick={() => stats?.configDir && revealPathInSystem(stats.configDir).catch(() => toast.error('打开目录失败'))}
-            className="h-8 shrink-0 gap-1.5 rounded-[8px] px-3 text-[12px]"
-          >
-            <FolderOpen size={13} />
-            打开目录
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              variant="outline"
+              disabled={!stats?.configDir}
+              onClick={() => stats?.configDir && revealPathInSystem(stats.configDir).catch(() => toast.error('打开目录失败'))}
+              className="h-8 gap-1.5 rounded-[8px] px-3 text-[12px]"
+            >
+              <FolderOpen size={13} />
+              打开目录
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => { setMigrateOpen(true); setMigrateResult(null); setMigrateError(null); setMigrateDest(null); setMigrateProgress(null) }}
+              className="h-8 gap-1.5 rounded-[8px] px-3 text-[12px]"
+            >
+              <FolderInput size={13} />
+              迁移目录
+            </Button>
+          </div>
         </div>
         <p className="mt-2 text-[11px] leading-4 text-[var(--text-3)]">
           所有数据均为本地文件：记忆是 Markdown、会话是 jsonl、向量索引是 JSON 缓存。配置类文件含凭证，导出时默认脱敏。
@@ -245,6 +303,62 @@ export function DataManagementSettings() {
           </div>
         )}
       </section>
+
+      {migrateOpen && (
+        <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4">
+          <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">迁移数据目录</h2>
+
+          {!migrateResult && (
+            <>
+              <p className="mb-3 text-[12px] leading-5 text-[var(--text-3)]">
+                将复制全部数据到新位置，完成后自动重启。旧目录可在完成后删除或保留。
+              </p>
+              <div className="mb-3 flex items-center gap-2">
+                <Button variant="outline" onClick={pickMigrateDest} disabled={migrating} className="h-8 rounded-[8px] px-3 text-[12px]">
+                  选择目标目录
+                </Button>
+                <code className="min-w-0 flex-1 truncate rounded bg-[var(--surface-2)] px-2 py-1 text-[11px] text-[var(--text-2)]">
+                  {migrateDest ?? '未选择'}
+                </code>
+              </div>
+              {migrateProgress && migrating && (
+                <div className="mb-3 text-[11px] text-[var(--text-3)]">
+                  正在复制 {migrateProgress.done}/{migrateProgress.total || '?'} …
+                </div>
+              )}
+              {migrateError && (
+                <div className="mb-3 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 py-2 text-[12px] text-[#ff4d57]">
+                  迁移失败：{migrateError}。可关闭后重启应用以恢复。
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setMigrateOpen(false)} disabled={migrating} className="h-8 rounded-[8px] px-3 text-[12px]">
+                  取消
+                </Button>
+                <Button onClick={handleStartMigrate} disabled={!migrateDest || migrating} className="h-8 rounded-[8px] px-3 text-[12px]">
+                  {migrating ? '复制中…' : '开始迁移'}
+                </Button>
+              </div>
+            </>
+          )}
+
+          {migrateResult && (
+            <>
+              <p className="mb-3 text-[12px] leading-5 text-[var(--text-3)]">
+                迁移完成。选择旧目录的处理方式后将自动重启。
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button onClick={() => void handleApplyMigrate(true)} className="h-8 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 text-[12px] text-[#ff4d57] hover:bg-[#ffe9eb]">
+                  删除旧目录
+                </Button>
+                <Button onClick={() => void handleApplyMigrate(false)} className="h-8 rounded-[8px] px-3 text-[12px]">
+                  保留作备份
+                </Button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
     </div>
   )
 }
