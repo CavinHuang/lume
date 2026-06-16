@@ -23,6 +23,7 @@ import { RightPanelLauncher } from './RightPanelLauncher'
 import { RightPanelTabBar } from './RightPanelTabBar'
 import { PlaceholderRightPanelTab } from './PlaceholderRightPanelTab'
 import { FilesRightPanelTab } from './FilesRightPanelTab'
+import { BrowserRightPanelTab } from './BrowserRightPanelTab'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
   review: '审查',
@@ -140,6 +141,23 @@ function RightPanelActiveTab({
             tabs: {
               ...workspace.tabs,
               files: nextTab,
+            },
+          })
+        }}
+      />
+    )
+  }
+
+  if (tabState?.type === 'browser') {
+    return (
+      <BrowserRightPanelTab
+        state={tabState}
+        onChange={(nextTab) => {
+          onChange({
+            activeTab: 'browser',
+            tabs: {
+              ...workspace.tabs,
+              browser: nextTab,
             },
           })
         }}

@@ -1,3 +1,4 @@
+export * from './BrowserRightPanelTab'
 export * from './PlaceholderRightPanelTab'
 export * from './FilesRightPanelTab'
 export * from './RightPanelLauncher'
