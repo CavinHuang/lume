@@ -584,24 +584,32 @@ function MinimalProcessGroup({
     return () => window.clearInterval(id)
   }, [hasRunning])
 
-  const completedDurationMs = toolCalls.reduce(
-    (sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0),
-    0,
-  )
+  const nonAgentDurationMs = toolCalls
+    .filter((tc) => tc.toolName !== 'Agent')
+    .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
+  const subagentDurationMs = toolCalls
+    .filter((tc) => tc.toolName === 'Agent')
+    .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
   const runningElapsedMs = hasRunning && runningTool?.startedAt
     ? Math.max(0, now - Date.parse(runningTool.startedAt))
     : 0
-  const totalDurationMs = completedDurationMs + runningElapsedMs
+  const runningOnSubagent = hasRunning && runningTool?.toolName === 'Agent'
+  const toolDurationMs = nonAgentDurationMs + (runningOnSubagent ? 0 : runningElapsedMs)
+  const subagentTotalMs = subagentDurationMs + (runningOnSubagent ? runningElapsedMs : 0)
+  const thinkingCount = blocks.filter((b) => b.type === 'thinking').length
 
-  const durationLabel = totalDurationMs > 0
-    ? totalDurationMs / 1000 < 60
-      ? `${(totalDurationMs / 1000).toFixed(hasRunning ? 0 : 1)}s`
-      : formatDurationLabel(totalDurationMs)
-    : ''
+  const fmtDuration = (ms: number) => (
+    ms <= 0
+      ? ''
+      : ms / 1000 < 60
+        ? `${(ms / 1000).toFixed(hasRunning ? 0 : 1)}s`
+        : formatDurationLabel(ms)
+  )
 
   // 折叠行摘要：图标 + 文本单元，用 · 分隔（不再使用 emoji）
   const summaryUnits: ReactNode[] = []
   if (hasRunning && runningTool) {
+    // 运行中：当前动作 + 已完成步数 + 总已用时
     summaryUnits.push(
       <span key="run" className="inline-flex items-center gap-1">
         <span className="size-1.5 animate-pulse rounded-full bg-blue-500" />
@@ -613,29 +621,51 @@ function MinimalProcessGroup({
         已完成 {completedCount} 步{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
       </span>,
     )
-  } else {
-    summaryUnits.push(
-      <span key="ops" className="inline-flex items-center gap-1">
-        {failedCount > 0 ? <TriangleAlert size={12} /> : <Wrench size={12} />}
-        {nonAgentCount} 操作{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
-      </span>,
-    )
-    if (subagentCount > 0) {
+    const elapsed = fmtDuration(runningElapsedMs + nonAgentDurationMs + subagentDurationMs)
+    if (elapsed) {
       summaryUnits.push(
-        <span key="sub" className="inline-flex items-center gap-1">
-          <Bot size={12} />
-          {subagentCount} 子代理
+        <span key="dur" className="inline-flex items-center gap-1 tabular-nums">
+          <Clock size={12} />
+          {elapsed}
         </span>,
       )
     }
-  }
-  if (durationLabel) {
-    summaryUnits.push(
-      <span key="dur" className="inline-flex items-center gap-1 tabular-nums">
-        <Clock size={12} />
-        {durationLabel}
-      </span>,
-    )
+  } else {
+    // 完成态：按分类（思考次数 / 工具调用数+时长 / 子代理数+时长 / 失败），按需省略
+    if (thinkingCount > 0) {
+      summaryUnits.push(
+        <span key="think" className="inline-flex items-center gap-1">
+          <Brain size={12} />
+          思考 {thinkingCount} 次
+        </span>,
+      )
+    }
+    if (nonAgentCount > 0) {
+      const d = fmtDuration(toolDurationMs)
+      summaryUnits.push(
+        <span key="ops" className="inline-flex items-center gap-1 tabular-nums">
+          <Wrench size={12} />
+          {nonAgentCount} 个工具调用{d ? ` ${d}` : ''}
+        </span>,
+      )
+    }
+    if (subagentCount > 0) {
+      const d = fmtDuration(subagentTotalMs)
+      summaryUnits.push(
+        <span key="sub" className="inline-flex items-center gap-1 tabular-nums">
+          <Bot size={12} />
+          {subagentCount} 子代理{d ? ` ${d}` : ''}
+        </span>,
+      )
+    }
+    if (failedCount > 0) {
+      summaryUnits.push(
+        <span key="fail" className="inline-flex items-center gap-1 text-destructive/70">
+          <TriangleAlert size={12} />
+          {failedCount} 失败
+        </span>,
+      )
+    }
   }
 
   const summaryNodes: ReactNode[] = []

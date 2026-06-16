@@ -106,7 +106,7 @@ describe('MinimalAssistantContent', () => {
     expect(markup).toContain('后面的话')
 
     // Process line summary present, collapsed (no tool result markers rendered).
-    expect(markup).toContain('2 操作')
+    expect(markup).toContain('2 个工具调用')
     expect(markup).not.toContain('data-tool-result-renderer="true"')
   })
 
