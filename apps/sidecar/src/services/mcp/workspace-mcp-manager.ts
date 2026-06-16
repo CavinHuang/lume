@@ -59,6 +59,13 @@ export interface WorkspaceMcpRuntimeTools {
   diagnostics: ToolRuntimeDiagnostic[];
 }
 
+export interface CreateRuntimeToolsOptions {
+  /** Include the fixed-name management tools (McpConfigTool/ListMcpResourcesTool/ReadMcpResourceTool). Default true (workspace). Plugin pool sets false to avoid collision. */
+  includeManagementTools?: boolean;
+  /** Optional per-server runtime metadata stamp (e.g. pluginId). Keyed by serverId. */
+  toolMetadataProvider?: (serverId: string) => Record<string, unknown> | undefined;
+}
+
 interface WorkspaceState {
   sdk: WorkspaceSdkMcpManager;
   knownServerIds: Set<string>;
@@ -463,7 +470,10 @@ export class WorkspaceMcpManager {
     }
   }
 
-  async createRuntimeTools(workspaceSlug: string): Promise<WorkspaceMcpRuntimeTools> {
+  async createRuntimeTools(
+    workspaceSlug: string,
+    options: CreateRuntimeToolsOptions = {},
+  ): Promise<WorkspaceMcpRuntimeTools> {
     await this.syncWorkspace(workspaceSlug, { waitForConnections: true });
     const config = this.readConfig(workspaceSlug);
     const statuses = this.getStatus(workspaceSlug);
@@ -479,27 +489,36 @@ export class WorkspaceMcpManager {
         reason: status.error?.message ?? `MCP server ${status.serverId} is not connected.`
       }));
 
+    const includeManagement = options.includeManagementTools ?? true;
+
     return {
       tools: [
         ...createWorkspaceMcpToolDefinitions({
           workspaceSlug,
           tools: connectedTools,
-          callTool: (targetWorkspaceSlug, serverId, originalToolName, args, options) =>
-            this.callRuntimeTool(targetWorkspaceSlug, serverId, originalToolName, args, options),
+          callTool: (targetWorkspaceSlug, serverId, originalToolName, args, opts) =>
+            this.callRuntimeTool(targetWorkspaceSlug, serverId, originalToolName, args, opts),
           isToolEnabled: (targetWorkspaceSlug, tool) =>
-            isMcpToolEnabled(tool, this.readConfig(targetWorkspaceSlug).servers[tool.serverId])
+            isMcpToolEnabled(tool, this.readConfig(targetWorkspaceSlug).servers[tool.serverId]),
+          ...(options.toolMetadataProvider
+            ? { runtimeMetadata: (tool) => options.toolMetadataProvider!(tool.serverId) }
+            : {})
         }),
-        createWorkspaceMcpConfigTool({
-          workspaceSlug,
-          getStatus: (targetWorkspaceSlug) => this.getStatus(targetWorkspaceSlug)
-        }),
-        ...createWorkspaceMcpResourceTools({
-          workspaceSlug,
-          listResources: (targetWorkspaceSlug, serverId) =>
-            this.listResources({ workspaceSlug: targetWorkspaceSlug, serverId }),
-          readResource: (targetWorkspaceSlug, serverId, uri) =>
-            this.readResource({ workspaceSlug: targetWorkspaceSlug, serverId, uri })
-        })
+        ...(includeManagement
+          ? [
+              createWorkspaceMcpConfigTool({
+                workspaceSlug,
+                getStatus: (targetWorkspaceSlug) => this.getStatus(targetWorkspaceSlug)
+              }),
+              ...createWorkspaceMcpResourceTools({
+                workspaceSlug,
+                listResources: (targetWorkspaceSlug, serverId) =>
+                  this.listResources({ workspaceSlug: targetWorkspaceSlug, serverId }),
+                readResource: (targetWorkspaceSlug, serverId, uri) =>
+                  this.readResource({ workspaceSlug: targetWorkspaceSlug, serverId, uri })
+              })
+            ]
+          : [])
       ],
       diagnostics
     };

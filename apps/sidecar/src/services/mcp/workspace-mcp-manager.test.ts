@@ -401,6 +401,52 @@ describe("WorkspaceMcpManager", () => {
     expect(result.tools.map((tool) => tool.name)).not.toContain("mcp__github__create_issue");
   });
 
+  test("createRuntimeTools includeManagementTools:false drops fixed-name tools + stamps provider metadata", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      "acme:api": {
+        serverId: "acme:api",
+        name: "acme-api",
+        transport: "stdio",
+        enabled: true,
+        status: "connected",
+        tools: [],
+        toolDetails: [{
+          name: "mcp__acme:api__search",
+          originalName: "search",
+          wrapperName: "mcp__acme:api__search",
+          description: "s",
+          inputSchema: { type: "object", properties: {} },
+          serverId: "acme:api",
+          serverName: "acme-api"
+        }]
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        "acme:api": { enabled: true, transport: "stdio", command: "node", args: ["x.js"] }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const { tools } = await manager.createRuntimeTools("ws", {
+      includeManagementTools: false,
+      toolMetadataProvider: (serverId) => ({ source: "plugin", pluginId: "acme", capability: "mcp" })
+    });
+
+    const names = tools.map((tool) => tool.name);
+    expect(names).toEqual(["mcp__acme:api__search"]);
+    expect(names).not.toContain("McpConfigTool");
+    expect(names).not.toContain("ListMcpResourcesTool");
+    expect(names).not.toContain("ReadMcpResourceTool");
+    expect(tools[0]?.runtimeMetadata).toMatchObject({
+      source: "plugin",
+      pluginId: "acme",
+      capability: "mcp",
+      mcpServerId: "acme:api"
+    });
+  });
+
   test("authorizeConnect block skips connect for that server", async () => {
     const fake = createFakeSdkManager();
     const manager = new WorkspaceMcpManager({
