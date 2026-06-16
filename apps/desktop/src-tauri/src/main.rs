@@ -2239,7 +2239,12 @@ fn dir_stats(path: &Path) -> (u64, u64) {
 }
 
 /// 递归复制 src 到 dest，逐文件通过 app.emit 报进度。返回（文件数, 字节数）。
-fn copy_dir_recursive(src: &Path, dest: &Path, app: &tauri::AppHandle) -> Result<(u64, u64), String> {
+/// 递归复制 src 到 dest，逐文件通过 progress 回调报进度。返回（文件数, 字节数）。
+fn copy_dir_recursive_inner(
+    src: &Path,
+    dest: &Path,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<(u64, u64), String> {
     let entries: Vec<walkdir::DirEntry> = walkdir::WalkDir::new(src)
         .into_iter()
         .collect::<Result<_, _>>()
@@ -2262,10 +2267,18 @@ fn copy_dir_recursive(src: &Path, dest: &Path, app: &tauri::AppHandle) -> Result
                 .map_err(|e| format!("复制 {} 失败: {e}", path.display()))?;
             bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
             done += 1;
-            let _ = app.emit("data:migrate-progress", serde_json::json!({ "done": done, "total": total }));
+            progress(done, total);
         }
+        // 符号链接 / 特殊文件：walkdir 默认不跟随，is_dir/is_file 均为 false，故跳过。
     }
     Ok((done, bytes))
+}
+
+/// 迁移用包装：通过 app.emit 报进度。
+fn copy_dir_recursive(src: &Path, dest: &Path, app: &tauri::AppHandle) -> Result<(u64, u64), String> {
+    copy_dir_recursive_inner(src, dest, |done, total| {
+        let _ = app.emit("data:migrate-progress", serde_json::json!({ "done": done, "total": total }));
+    })
 }
 
 #[cfg(test)]
@@ -2311,5 +2324,27 @@ mod migration_copy_tests {
         assert_eq!(files, 2);
         assert_eq!(bytes, 7);
         let _ = std::fs::remove_dir_all(&src);
+    }
+
+    #[test]
+    fn copy_dir_roundtrips_contents_and_counts() {
+        let src = std::env::temp_dir().join("lume-copy-src");
+        let dest = std::env::temp_dir().join("lume-copy-dest");
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
+        make_src(&src);
+
+        let (files, bytes) = copy_dir_recursive_inner(&src, &dest, |_, _| ()).unwrap();
+        assert_eq!(files, 2);
+        assert_eq!(bytes, 7);
+
+        // 逐文件内容一致
+        assert_eq!(std::fs::read_to_string(dest.join("a/b/x.txt")).unwrap(), "hello");
+        assert_eq!(std::fs::read_to_string(dest.join("a/y.json")).unwrap(), "{}");
+        // dest 统计应与复制返回值一致
+        assert_eq!(dir_stats(&dest), (2, 7));
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
     }
 }
