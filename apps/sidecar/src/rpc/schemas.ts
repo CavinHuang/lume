@@ -1127,7 +1127,8 @@ export const updateGeneralSettingsInputSchema = z.object({
     notifyAfterDownload: z.boolean().optional(),
     installOnlyWhenIdle: z.boolean().optional(),
     lastUpdateCheckAt: z.string().nullable().optional()
-  }).optional()
+  }).optional(),
+  agentMessageDisplayMode: z.enum(["minimal", "verbose"]).optional()
 });
 
 export const clearCacheInputSchema = z.object({

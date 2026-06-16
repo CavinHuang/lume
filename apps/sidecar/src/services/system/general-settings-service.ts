@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import {
   GENERAL_SETTINGS_DEFAULTS,
+  type AgentMessageDisplayMode,
   type GeneralSettings,
   type PersistedUiState,
   type ThemeMode,
@@ -52,6 +53,10 @@ function isThemeMode(value: unknown): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
 }
 
+function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplayMode {
+  return value === "minimal" || value === "verbose";
+}
+
 function sanitizeGeneralSettings(input: unknown): GeneralSettings {
   if (typeof input !== "object" || input === null) {
     return {
@@ -73,6 +78,9 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
 
   return {
     themeMode: isThemeMode(value.themeMode) ? value.themeMode : GENERAL_SETTINGS_DEFAULTS.themeMode,
+    agentMessageDisplayMode: isAgentMessageDisplayMode(value.agentMessageDisplayMode)
+      ? value.agentMessageDisplayMode
+      : GENERAL_SETTINGS_DEFAULTS.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray:
         typeof windowBehavior?.minimizeToTray === "boolean"
@@ -203,6 +211,7 @@ export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput
   const current = sanitizeGeneralSettings(settings.generalSettings);
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
+    agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
       closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray
