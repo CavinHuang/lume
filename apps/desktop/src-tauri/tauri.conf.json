@@ -52,7 +52,7 @@
     "updater": {
       "pubkey": "__LUME_UPDATER_PUBLIC_KEY__",
       "endpoints": [
-        "https://github.com/CavinHUang/Lume/releases/latest/download/latest.json"
+        "https://github.com/CavinHuang/lume/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
