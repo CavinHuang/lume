@@ -2099,7 +2099,14 @@ fn effective_config_dir_with(launcher_path: Option<&Path>) -> PathBuf {
     if let Ok(v) = std::env::var("LUME_CONFIG_DIR") {
         let t = v.trim();
         if !t.is_empty() {
-            return PathBuf::from(t);
+            let p = PathBuf::from(t);
+            return if p.is_absolute() {
+                p
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(p)
+            };
         }
     }
     if let Some(path) = launcher_path {
@@ -2144,6 +2151,17 @@ mod migration_launcher_tests {
         assert_eq!(effective_config_dir_with(Some(&path)), PathBuf::from("/from/env"));
         std::env::remove_var("LUME_CONFIG_DIR");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn env_relative_resolved_against_cwd() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        std::env::set_var("LUME_CONFIG_DIR", "relative-lume-dir");
+        let dir = effective_config_dir_with(None);
+        // 相对路径应被解析为 <cwd>/relative-lume-dir，而非裸 "relative-lume-dir"
+        assert!(dir.is_absolute(), "relative LUME_CONFIG_DIR should resolve to absolute");
+        assert_eq!(dir.file_name().unwrap(), "relative-lume-dir");
+        std::env::remove_var("LUME_CONFIG_DIR");
     }
 
     #[test]
