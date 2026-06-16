@@ -420,6 +420,21 @@ describe("WorkspaceMcpManager", () => {
     expect(fake.connectCalls).toEqual(["ok-server"]);
   });
 
+  test("authorizeConnect throw fails closed as block", async () => {
+    const fake = createFakeSdkManager();
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        local: { enabled: true, transport: "stdio", command: "node" }
+      }),
+      sdkManagerFactory: () => fake,
+      authorizeConnect: async () => { throw new Error("boom"); }
+    });
+
+    await manager.syncWorkspace("ws", { waitForConnections: true });
+
+    expect(fake.connectCalls).toEqual([]);
+  });
+
   test("createRuntimeTools returns diagnostics for failed servers without throwing", async () => {
     const fake = createFakeSdkManager();
     fake.status = {
