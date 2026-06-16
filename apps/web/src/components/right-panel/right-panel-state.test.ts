@@ -99,4 +99,13 @@ describe('right-panel-state', () => {
     expect(workspace.activeTab).toBe('files')
     expect(workspace.tabs.files).toMatchObject({ type: 'files', treeVisible: false })
   })
+
+  test('available function list is empty when all functions are open', () => {
+    let workspace = createEmptyRightPanelWorkspace()
+    for (const type of RIGHT_PANEL_FUNCTION_ORDER) {
+      workspace = openRightPanelTab(workspace, type)
+    }
+
+    expect(getAvailableRightPanelFunctions(workspace)).toEqual([])
+  })
 })
