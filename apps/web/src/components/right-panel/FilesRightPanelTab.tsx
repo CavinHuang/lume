@@ -17,6 +17,7 @@ import { FileBrowser } from '@/components/file-browser/FileBrowser'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
 import { sidecarCall, writeClipboardText } from '@/lib/desktop-api'
+import { openMemorySource, readMemory } from '@/lib/desktop-api/memory'
 import { cn } from '@/lib/utils'
 import type { FilesTabState } from './right-panel-state'
 
@@ -47,7 +48,8 @@ export function FilesRightPanelTab({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selectedPath = state.selectedPath
-  const source: FilesSource = state.source === 'workspace' && workspaceSlug ? 'workspace' : 'thread'
+  const source: FilesSource = state.source === 'workspace' && !workspaceSlug ? 'thread' : state.source
+  const canShowTree = source !== 'memory'
   const isMarkdown = /\.(md|mdx|markdown)$/i.test(selectedPath ?? '')
 
   const update = useCallback((patch: Partial<FilesTabState>) => {
@@ -65,12 +67,18 @@ export function FilesRightPanelTab({
     setLoading(true)
     setError(null)
     try {
-      const result = source === 'workspace'
-        ? await sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE, {
+      const result = source === 'memory'
+        ? await (async () => {
+          if (!workspaceSlug) throw new Error('工作区信息缺失')
+          const memory = await readMemory({ workspaceSlug, path: selectedPath })
+          return { content: memory.text, truncated: false }
+        })()
+        : source === 'workspace'
+          ? await sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE, {
           workspaceSlug,
           path: selectedPath,
         })
-        : await sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_FILE, {
+          : await sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_FILE, {
           ...(workspaceSlug ? { workspaceSlug } : {}),
           threadId,
           path: selectedPath,
@@ -110,6 +118,9 @@ export function FilesRightPanelTab({
       if (source === 'workspace') {
         if (!workspaceSlug) return
         await sidecarCall(AGENT_IPC_CHANNELS.OPEN_WORKSPACE_FILE, { workspaceSlug, path: selectedPath })
+      } else if (source === 'memory') {
+        if (!workspaceSlug) return
+        await openMemorySource({ workspaceSlug, path: selectedPath })
       } else {
         await sidecarCall(AGENT_IPC_CHANNELS.OPEN_FILE, {
           ...(workspaceSlug ? { workspaceSlug } : {}),
@@ -158,8 +169,9 @@ export function FilesRightPanelTab({
         <div className="relative flex shrink-0 items-center gap-1.5" ref={menuRef}>
           <button
             type="button"
+            disabled={!canShowTree}
             onClick={() => update({ treeVisible: !state.treeVisible })}
-            className="flex size-8 items-center justify-center rounded-[8px] text-foreground/55 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+            className="flex size-8 items-center justify-center rounded-[8px] text-foreground/55 transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             title={state.treeVisible ? '收起文件树' : '展开文件树'}
           >
             {state.treeVisible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
@@ -241,7 +253,7 @@ export function FilesRightPanelTab({
           )}
         </div>
 
-        {state.treeVisible && (
+        {state.treeVisible && canShowTree && (
           <aside className="flex w-[320px] shrink-0 flex-col border-l border-border/60 bg-background">
             <div className="border-b border-border/60 px-3 py-3">
               {workspaceSlug && (

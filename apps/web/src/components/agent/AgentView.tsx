@@ -1,6 +1,14 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
-import { useAtomValue } from 'jotai'
-import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { useAtomValue, useSetAtom } from 'jotai'
+import {
+  agentStreamingStatesAtom,
+  agentPendingInteractiveAtom,
+  agentThreadsAtom,
+  agentWorkspacesAtom,
+  currentWorkspaceIdAtom,
+  rightPanelLayoutAtom,
+  rightPanelWorkspacesAtom,
+} from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput, type PendingMessageAttachment } from './AgentInput'
@@ -19,6 +27,11 @@ import {
   isFileDragPayload,
   type DragDropPayload,
 } from './agent-file-drop'
+import {
+  createEmptyRightPanelWorkspace,
+  openFileInRightPanel,
+  sanitizeRightPanelWorkspace,
+} from '@/components/right-panel'
 
 interface AgentViewProps {
   threadId: string
@@ -39,6 +52,8 @@ export function AgentView({ threadId }: AgentViewProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWsId = useAtomValue(currentWorkspaceIdAtom)
+  const setRightPanelWorkspaces = useSetAtom(rightPanelWorkspacesAtom)
+  const setRightPanelLayout = useSetAtom(rightPanelLayoutAtom)
   const workspaceSlug = useMemo(() => {
     const thread = threads.find((t) => t.id === threadId)
     const targetId = thread?.workspaceId ?? currentWsId
@@ -68,9 +83,36 @@ export function AgentView({ threadId }: AgentViewProps) {
     setPendingAttachments([])
   }, [])
 
-  const openThreadFilePreview = useCallback((_path: string) => undefined, [])
+  const reopenRightPanel = useCallback(() => {
+    setRightPanelLayout((prev) => ({
+      open: true,
+      mode: prev.open && prev.mode === 'expanded' ? 'expanded' : 'normal',
+    }))
+  }, [setRightPanelLayout])
 
-  const openMemoryFilePreview = useCallback((_path: string) => undefined, [])
+  const openThreadFilePreview = useCallback((path: string) => {
+    setRightPanelWorkspaces((prev) => ({
+      ...prev,
+      [threadId]: openFileInRightPanel(
+        sanitizeRightPanelWorkspace(prev[threadId] ?? createEmptyRightPanelWorkspace()),
+        path,
+        'thread',
+      ),
+    }))
+    reopenRightPanel()
+  }, [reopenRightPanel, setRightPanelWorkspaces, threadId])
+
+  const openMemoryFilePreview = useCallback((path: string) => {
+    setRightPanelWorkspaces((prev) => ({
+      ...prev,
+      [threadId]: openFileInRightPanel(
+        sanitizeRightPanelWorkspace(prev[threadId] ?? createEmptyRightPanelWorkspace()),
+        path,
+        'memory',
+      ),
+    }))
+    reopenRightPanel()
+  }, [reopenRightPanel, setRightPanelWorkspaces, threadId])
 
   const openThreadImagePreview = useCallback((attachment: AgentMessageAttachmentInput) => {
     setImagePreview({ attachment, loading: true })

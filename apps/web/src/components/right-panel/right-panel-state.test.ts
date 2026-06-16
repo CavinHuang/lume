@@ -7,6 +7,7 @@ import {
   firstOpenRightPanelTab,
   getAvailableRightPanelFunctions,
   migrateLegacyRightPanelHints,
+  openFileInRightPanel,
   openRightPanelTab,
   sanitizeRightPanelWorkspace,
 } from './right-panel-state'
@@ -107,5 +108,75 @@ describe('right-panel-state', () => {
     }
 
     expect(getAvailableRightPanelFunctions(workspace)).toEqual([])
+  })
+
+  test('opening a file creates or reuses the files tab and selects the path', () => {
+    const workspace = openFileInRightPanel(createEmptyRightPanelWorkspace(), 'README.md')
+
+    expect(workspace.activeTab).toBe('files')
+    expect(workspace.tabs.files).toMatchObject({
+      type: 'files',
+      source: 'thread',
+      selectedPath: 'README.md',
+    })
+
+    const next = openFileInRightPanel(workspace, 'package.json')
+    expect(Object.keys(next.tabs)).toEqual(['files'])
+    expect(next.tabs.files).toMatchObject({ selectedPath: 'package.json' })
+  })
+
+  test('opening a file preserves files-tab view settings', () => {
+    let workspace = openFileInRightPanel(createEmptyRightPanelWorkspace(), 'README.md')
+    workspace = {
+      ...workspace,
+      tabs: {
+        files: {
+          type: 'files',
+          source: 'thread',
+          selectedPath: 'README.md',
+          treeVisible: false,
+          searchQuery: 'src',
+          enhancedView: false,
+        },
+      },
+    }
+
+    const next = openFileInRightPanel(workspace, 'package.json')
+
+    expect(next.tabs.files).toMatchObject({
+      source: 'thread',
+      selectedPath: 'package.json',
+      treeVisible: false,
+      searchQuery: 'src',
+      enhancedView: false,
+    })
+  })
+
+  test('opening a memory file uses the files tab memory source', () => {
+    const workspace = openFileInRightPanel(createEmptyRightPanelWorkspace(), 'memories/profile.md', 'memory')
+
+    expect(workspace.activeTab).toBe('files')
+    expect(workspace.tabs.files).toMatchObject({
+      type: 'files',
+      source: 'memory',
+      selectedPath: 'memories/profile.md',
+    })
+  })
+
+  test('sanitize defaults missing files source to thread', () => {
+    const workspace = sanitizeRightPanelWorkspace({
+      activeTab: 'files',
+      tabs: {
+        files: {
+          type: 'files',
+          selectedPath: 'README.md',
+          treeVisible: true,
+          searchQuery: '',
+          enhancedView: true,
+        },
+      },
+    })
+
+    expect(workspace.tabs.files).toMatchObject({ source: 'thread' })
   })
 })

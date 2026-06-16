@@ -9,6 +9,8 @@ import {
   agentThreadsAtom,
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
+  rightPanelLayoutAtom,
+  rightPanelWorkspacesAtom,
   tabsAtom,
 } from '@/atoms'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
@@ -24,6 +26,7 @@ let latestAgentMessagesProps: {
     size: number
     threadPath: string
   }) => void
+  onOpenMemorySource?: (path: string) => void
 } | null = null
 
 const sidecarCallMock = mock(async (channel: string, payload?: Record<string, unknown>) => {
@@ -57,6 +60,7 @@ mock.module('@/lib/desktop-api', () => ({
     ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
   agentSend: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopAgentSend?.(...args) ?? Promise.resolve(undefined),
+  clearCache: () => Promise.resolve({ cleared: [], skipped: [] }),
   copyFile: () => Promise.resolve(undefined),
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
@@ -386,6 +390,8 @@ describe('AgentView plan approval tab behavior', () => {
     ])
     store.set(currentWorkspaceIdAtom, 'workspace-1')
     store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
+    store.set(rightPanelWorkspacesAtom, {})
+    store.set(rightPanelLayoutAtom, { open: false, mode: 'compact' })
     store.set(agentPendingInteractiveAtom, {
       'thread-1': {
         threadId: 'thread-1',
@@ -433,11 +439,40 @@ describe('AgentView plan approval tab behavior', () => {
       })
 
       expect(store.get(activeTabIdAtom)).toBe('thread-1')
+      expect(store.get(rightPanelLayoutAtom)).toEqual({ open: true, mode: 'normal' })
+      expect(store.get(rightPanelWorkspacesAtom)['thread-1']).toMatchObject({
+        activeTab: 'files',
+        tabs: {
+          files: {
+            type: 'files',
+            source: 'thread',
+            selectedPath: 'files/research-notes.md',
+          },
+        },
+      })
       expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
         channel === AGENT_IPC_CHANNELS.READ_FILE &&
         (payload as Record<string, unknown>).threadId === 'thread-1' &&
         (payload as Record<string, unknown>).path === 'files/research-notes.md'
       ))).toBe(false)
+
+      store.set(rightPanelLayoutAtom, { open: true, mode: 'expanded' })
+      await act(async () => {
+        latestAgentMessagesProps?.onOpenMemorySource?.('memories/profile.md')
+        await flush()
+      })
+
+      expect(store.get(rightPanelLayoutAtom)).toEqual({ open: true, mode: 'expanded' })
+      expect(store.get(rightPanelWorkspacesAtom)['thread-1']).toMatchObject({
+        activeTab: 'files',
+        tabs: {
+          files: {
+            type: 'files',
+            source: 'memory',
+            selectedPath: 'memories/profile.md',
+          },
+        },
+      })
     } finally {
       await act(async () => {
         root?.unmount()
@@ -481,6 +516,7 @@ describe('AgentView plan approval tab behavior', () => {
     ])
     store.set(currentWorkspaceIdAtom, 'workspace-1')
     store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
+    store.set(rightPanelWorkspacesAtom, {})
     store.set(agentPendingInteractiveAtom, {})
 
     let root: Root | null = createRoot(container as never)

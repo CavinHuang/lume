@@ -23,7 +23,7 @@ export interface BrowserTabState {
 
 export interface FilesTabState {
   type: 'files'
-  source: 'thread' | 'workspace'
+  source: 'thread' | 'workspace' | 'memory'
   selectedPath: string | null
   treeVisible: boolean
   searchQuery: string
@@ -112,6 +112,30 @@ export function sanitizeRightPanelWorkspace(value: unknown): ThreadRightPanelWor
   return { activeTab, tabs }
 }
 
+export function openFileInRightPanel(
+  workspace: ThreadRightPanelWorkspace,
+  path: string,
+  source: 'thread' | 'memory' = 'thread',
+): ThreadRightPanelWorkspace {
+  const nextWorkspace = openRightPanelTab(workspace, 'files')
+  const files = nextWorkspace.tabs.files
+  if (!files || files.type !== 'files') {
+    return nextWorkspace
+  }
+
+  return {
+    activeTab: 'files',
+    tabs: {
+      ...nextWorkspace.tabs,
+      files: {
+        ...files,
+        source,
+        selectedPath: path,
+      },
+    },
+  }
+}
+
 export function migrateLegacyRightPanelHints(input: {
   sidePanelView?: unknown
   fileTreeOpen?: unknown
@@ -163,7 +187,7 @@ function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightP
   if (type === 'files') {
     return {
       type,
-      source: value.source === 'workspace' ? 'workspace' : 'thread',
+      source: value.source === 'workspace' || value.source === 'memory' ? value.source : 'thread',
       selectedPath: value.selectedPath === null || typeof value.selectedPath === 'string'
         ? value.selectedPath
         : null,
