@@ -65,6 +65,7 @@ export function mergeGeneralSettings(
 
   return {
     themeMode: updates.themeMode ?? base.themeMode,
+    agentMessageDisplayMode: updates.agentMessageDisplayMode ?? base.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray: updates.windowBehavior?.minimizeToTray ?? base.windowBehavior.minimizeToTray,
       closeToTray: updates.windowBehavior?.closeToTray ?? base.windowBehavior.closeToTray,
