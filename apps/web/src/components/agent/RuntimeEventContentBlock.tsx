@@ -4,9 +4,10 @@ import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
-import { useSetAtom } from 'jotai'
-import { activeTabIdAtom, agentThreadsAtom, tabsAtom } from '@/atoms'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { activeTabIdAtom, agentThreadsAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import { groupAssistantBlocksForMinimal } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
@@ -97,6 +98,7 @@ export function RuntimeEventContentBlock({
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
   const contentBlocks = message.blocks.filter((block) => block.type !== 'task_progress')
+  const useMinimalMode = useAtomValue(generalSettingsAtom).agentMessageDisplayMode === 'minimal'
   const activeStreamingTextBlockId = streaming === true && message.status === 'streaming'
     ? findActiveStreamingTextBlockId(message.blocks)
     : null
@@ -120,22 +122,32 @@ export function RuntimeEventContentBlock({
         <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
       </div>
       <div className="min-w-0 flex-1 space-y-4 pt-2">
-        {contentBlocks
-          .filter(block => block.type !== 'memory_context_used')
-          .map((block, index) => (
-            <RuntimeEventAssistantBlockItem
-              key={block.id}
-              block={block}
-              threadId={threadId}
-              onOpenThreadFile={onOpenThreadFile}
-              onUserResizeStart={onUserResizeStart}
-              isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
-              isActiveThinking={block.type === 'thinking'
-                && streaming === true
-                && message.status === 'streaming'
-                && index === contentBlocks.length - 1}
-            />
-          ))}
+        {useMinimalMode ? (
+          <MinimalAssistantContent
+            blocks={contentBlocks.filter((b) => b.type !== 'memory_context_used')}
+            threadId={threadId}
+            isStreamingMessage={streaming === true && message.status === 'streaming'}
+            onOpenThreadFile={onOpenThreadFile}
+            onUserResizeStart={onUserResizeStart}
+          />
+        ) : (
+          contentBlocks
+            .filter((block) => block.type !== 'memory_context_used')
+            .map((block, index) => (
+              <RuntimeEventAssistantBlockItem
+                key={block.id}
+                block={block}
+                threadId={threadId}
+                onOpenThreadFile={onOpenThreadFile}
+                onUserResizeStart={onUserResizeStart}
+                isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
+                isActiveThinking={block.type === 'thinking'
+                  && streaming === true
+                  && message.status === 'streaming'
+                  && index === contentBlocks.length - 1}
+              />
+            ))
+        )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
         )}
@@ -538,6 +550,144 @@ function RuntimeEventAssistantBlockItem({
       threadId={threadId}
       onUserResizeStart={onUserResizeStart}
     />
+  )
+}
+
+function MinimalProcessGroup({
+  blocks,
+  threadId,
+  isStreamingMessage,
+  onUserResizeStart,
+}: {
+  blocks: RuntimeAssistantBlock[]
+  threadId: string
+  isStreamingMessage: boolean
+  onUserResizeStart?: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+
+  const toolCalls = blocks
+    .filter((b): b is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => b.type === 'tool_call')
+    .map((b) => b.toolCall)
+  const subagentCount = toolCalls.filter((tc) => tc.toolName === 'Agent').length
+  const nonAgentCount = toolCalls.length - subagentCount
+  const failedCount = toolCalls.filter((tc) => tc.status === 'failed').length
+  const completedCount = toolCalls.filter((tc) => tc.status !== 'running').length
+  const runningTool = toolCalls.find((tc) => tc.status === 'running')
+  const hasRunning = isStreamingMessage && Boolean(runningTool)
+
+  useEffect(() => {
+    if (!hasRunning) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [hasRunning])
+
+  const completedDurationMs = toolCalls.reduce(
+    (sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0),
+    0,
+  )
+  const runningElapsedMs = hasRunning && runningTool?.startedAt
+    ? Math.max(0, now - Date.parse(runningTool.startedAt))
+    : 0
+  const totalDurationMs = completedDurationMs + runningElapsedMs
+
+  const parts: string[] = []
+  if (hasRunning && runningTool) {
+    parts.push(`● 正在执行 ${runningTool.toolName}`)
+    parts.push(`已完成 ${completedCount} 步`)
+  } else {
+    parts.push(failedCount > 0 ? `⚠️ 🔧 ${nonAgentCount} 操作 · ${failedCount} 失败` : `🔧 ${nonAgentCount} 操作`)
+    if (subagentCount > 0) parts.push(`🤖 ${subagentCount} 子代理`)
+  }
+  if (totalDurationMs > 0) {
+    const seconds = totalDurationMs / 1000
+    const label = seconds < 60
+      ? `${seconds.toFixed(hasRunning ? 0 : 1)}s`
+      : formatDurationLabel(totalDurationMs)
+    parts.push(`⏱ ${label}`)
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex items-center gap-1.5 text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
+      >
+        <ChevronDown size={12} className={cn('transition-transform', expanded && 'rotate-180')} />
+        <span className="tabular-nums">{parts.join(' · ')}</span>
+      </button>
+      {expanded && (
+        <div className="mt-2 space-y-2 pl-1">
+          {blocks.map((block) => {
+            if (block.type === 'thinking') {
+              return <RuntimeEventThinkingBlock key={block.id} text={block.text} active={false} />
+            }
+            if (block.type === 'tool_call') {
+              return (
+                <RuntimeEventToolCallBlock
+                  key={block.id}
+                  toolCall={block.toolCall}
+                  threadId={threadId}
+                  onUserResizeStart={onUserResizeStart}
+                />
+              )
+            }
+            return null
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MinimalAssistantContent({
+  blocks,
+  threadId,
+  isStreamingMessage,
+  onOpenThreadFile,
+  onUserResizeStart,
+}: {
+  blocks: RuntimeAssistantBlock[]
+  threadId: string
+  isStreamingMessage: boolean
+  onOpenThreadFile?: (path: string) => void
+  onUserResizeStart?: () => void
+}) {
+  const segments = useMemo(() => groupAssistantBlocksForMinimal(blocks), [blocks])
+
+  return (
+    <>
+      {segments.map((segment) => {
+        if (segment.kind === 'inline') {
+          const block = segment.block
+          if (block.type === 'text') {
+            return (
+              <SmoothText
+                key={block.id}
+                text={block.text}
+                isStreaming={isStreamingMessage}
+                onOpenThreadFile={onOpenThreadFile}
+              />
+            )
+          }
+          if (block.type === 'plan_preview') {
+            return <PlanPreviewCard key={block.id} preview={block.preview} onOpenThreadFile={onOpenThreadFile} />
+          }
+          return null
+        }
+        return (
+          <MinimalProcessGroup
+            key={`process:${segment.blocks[0]?.id ?? 'empty'}`}
+            blocks={segment.blocks}
+            threadId={threadId}
+            isStreamingMessage={isStreamingMessage}
+            onUserResizeStart={onUserResizeStart}
+          />
+        )
+      })}
+    </>
   )
 }
 
@@ -1128,6 +1278,11 @@ function RuntimeEventToolCallBlock({
         )}>
           {isRunning ? '执行中' : toolCall.status === 'failed' ? '失败' : '已完成'}
         </span>
+        {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
+          <span className="tabular-nums text-[11px] font-medium text-[#9aa0a6]">
+            {formatDurationLabel(toolCall.durationMs)}
+          </span>
+        )}
         <span className="min-w-0 flex-1 truncate text-[#68718a]">{summarizeInput(input)}</span>
         {isRunning && <Loader2 size={13} className="shrink-0 animate-spin text-[#7567ff]" />}
         {!isRunning && (
@@ -1622,6 +1777,17 @@ function CopyMessageButton({
       {displayLabel && <span>{displayLabel}</span>}
     </button>
   )
+}
+
+function formatDurationLabel(ms: number): string {
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(1)}s`
+  const totalSec = Math.floor(s)
+  const mm = Math.floor(totalSec / 60)
+  const ss = totalSec % 60
+  if (s < 3600) return `${mm}:${String(ss).padStart(2, '0')}`
+  const hh = Math.floor(mm / 60)
+  return `${hh}:${String(mm % 60).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
 function summarizeInput(input: unknown): string {
