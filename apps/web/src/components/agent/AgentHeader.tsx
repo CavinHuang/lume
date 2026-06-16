@@ -1,17 +1,11 @@
-import { useAtom, useAtomValue } from 'jotai'
-import { FolderOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
-import { agentRuntimeEventsAtom, agentSidePanelViewAtom, agentThreadsAtom, agentRuntimeStatusAtom, agentFileTreeOpenAtom } from '@/atoms'
+import { agentRuntimeEventsAtom, agentThreadsAtom, agentRuntimeStatusAtom } from '@/atoms'
 import { WorkspacePicker } from './WorkspacePicker'
 import type { AgentRuntimePhase } from '@lume/shared'
 
 interface AgentHeaderProps {
   threadId: string
-}
-
-interface AgentSidePanelToolbarProps {
-  threadId: string
-  className?: string
 }
 
 const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text: string }> = {
@@ -22,62 +16,6 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
   compacting: { label: '压缩中', dot: 'bg-purple-500 animate-pulse', text: 'text-purple-600 dark:text-purple-400' },
   completed: { label: '已完成', dot: 'bg-green-500', text: 'text-green-600 dark:text-green-400' },
   errored: { label: '出错', dot: 'bg-destructive', text: 'text-destructive' },
-}
-
-export function AgentSidePanelToolbar({ threadId, className }: AgentSidePanelToolbarProps) {
-  const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
-  const [fileTreeOpenByThread, setFileTreeOpenByThread] = useAtom(agentFileTreeOpenAtom)
-  const currentView = sidePanelViews[threadId] ?? null
-  const panelOpen = currentView !== null
-  const fileTreeOpen = fileTreeOpenByThread[threadId] ?? false
-
-  const toggleSidePanel = () => {
-    setSidePanelViews((prev) => {
-      const next = { ...prev }
-      const keys = Object.keys(next)
-      if (keys.length > 50) delete next[keys[0]]
-      next[threadId] = panelOpen ? null : 'files'
-      return next
-    })
-    if (!panelOpen) {
-      setFileTreeOpenByThread((prev) => ({ ...prev, [threadId]: false }))
-    }
-  }
-
-  return (
-    <div className={cn('flex items-center gap-1 flex-shrink-0', className)}>
-      {panelOpen && (
-        <button
-          type="button"
-          onClick={() => {
-            setSidePanelViews((prev) => ({ ...prev, [threadId]: 'files' }))
-            setFileTreeOpenByThread((prev) => ({ ...prev, [threadId]: !fileTreeOpen }))
-          }}
-          className={cn(
-            'flex h-7 items-center gap-1.5 rounded-lg px-2 text-[12px] font-medium transition-colors',
-            currentView === 'files' && fileTreeOpen
-              ? 'bg-foreground/10 text-foreground'
-              : 'text-foreground/50 hover:bg-foreground/[0.04] hover:text-foreground/70',
-          )}
-          title={fileTreeOpen ? '收起文件树' : '展开文件树'}
-        >
-          <FolderOpen size={15} />
-        </button>
-      )}
-      <button
-        onClick={toggleSidePanel}
-        className={cn(
-          'p-1.5 rounded-lg transition-colors',
-          panelOpen
-            ? 'bg-foreground/10 text-foreground'
-            : 'text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.04]'
-        )}
-        title={panelOpen ? '收起侧栏' : '展开侧栏'}
-      >
-        {panelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-      </button>
-    </div>
-  )
 }
 
 export function AgentHeader({ threadId }: AgentHeaderProps) {

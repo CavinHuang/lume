@@ -1,6 +1,7 @@
 import { LeftSidebar } from './LeftSidebar'
 import { TitleBar } from './TitleBar'
 import { MainArea } from '@/components/tabs/MainArea'
+import { RightPanelWorkspace } from '@/components/right-panel'
 import { CommandPalette } from '@/components/command-palette/CommandPalette'
 import { useSetAtom } from 'jotai'
 import { commandPaletteOpenAtom } from '@/atoms'
@@ -29,6 +30,7 @@ export function AppShell() {
       <div className="flex-1 min-w-0 pb-2 pl-2 pr-2 pt-5 relative z-[60]">
         <MainArea />
       </div>
+      <RightPanelWorkspace />
       <CommandPalette />
     </div>
   )

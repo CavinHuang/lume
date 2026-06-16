@@ -5,7 +5,6 @@ import { Provider, createStore } from 'jotai'
 import {
   activeTabIdAtom,
   agentPendingInteractiveAtom,
-  agentSidePanelViewAtom,
   agentStreamingStatesAtom,
   agentThreadsAtom,
   agentWorkspacesAtom,
@@ -58,11 +57,15 @@ mock.module('@/lib/desktop-api', () => ({
     ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
   agentSend: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopAgentSend?.(...args) ?? Promise.resolve(undefined),
+  copyFile: () => Promise.resolve(undefined),
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
   localFilePreviewUrl: (path: string) => `asset://${path}`,
   openInSystem: () => Promise.resolve(undefined),
+  revealPathInSystem: () => Promise.resolve(undefined),
+  saveFilePathDialog: () => Promise.resolve({ path: '/tmp/lume.txt' }),
   saveTextFileDialog: () => Promise.resolve({ path: '/tmp/lume.txt' }),
+  writeClipboardText: () => Promise.resolve(undefined),
   statFilePaths: () =>
     (globalThis as any).__lumeDesktopStatFilePaths?.() ?? Promise.resolve({ files: [] }),
   openExternal: () => Promise.resolve(undefined),
@@ -383,7 +386,6 @@ describe('AgentView plan approval tab behavior', () => {
     ])
     store.set(currentWorkspaceIdAtom, 'workspace-1')
     store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
-    store.set(agentSidePanelViewAtom, {})
     store.set(agentPendingInteractiveAtom, {
       'thread-1': {
         threadId: 'thread-1',
@@ -416,7 +418,6 @@ describe('AgentView plan approval tab behavior', () => {
 
       expect(store.get(activeTabIdAtom)).toBe('thread-1')
       expect(store.get(tabsAtom)).toHaveLength(1)
-      expect(store.get(agentSidePanelViewAtom)['thread-1']).toBeUndefined()
       expect(container.textContent).toContain('实施此计划?')
       expect(container.textContent).toContain('是，实施此计划')
       expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
@@ -432,13 +433,11 @@ describe('AgentView plan approval tab behavior', () => {
       })
 
       expect(store.get(activeTabIdAtom)).toBe('thread-1')
-      expect(store.get(agentSidePanelViewAtom)['thread-1']).toBe('files')
-      expect(container.textContent).toContain('research-notes.md')
       expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
         channel === AGENT_IPC_CHANNELS.READ_FILE &&
         (payload as Record<string, unknown>).threadId === 'thread-1' &&
         (payload as Record<string, unknown>).path === 'files/research-notes.md'
-      ))).toBe(true)
+      ))).toBe(false)
     } finally {
       await act(async () => {
         root?.unmount()
@@ -482,7 +481,6 @@ describe('AgentView plan approval tab behavior', () => {
     ])
     store.set(currentWorkspaceIdAtom, 'workspace-1')
     store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
-    store.set(agentSidePanelViewAtom, {})
     store.set(agentPendingInteractiveAtom, {})
 
     let root: Root | null = createRoot(container as never)

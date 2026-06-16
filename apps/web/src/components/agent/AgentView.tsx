@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { useAtom, useAtomValue } from 'jotai'
-import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentSidePanelViewAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, type SidePanelView } from '@/atoms'
+import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useAtomValue } from 'jotai'
+import { agentStreamingStatesAtom, agentPendingInteractiveAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
 import { AgentInput, type PendingMessageAttachment } from './AgentInput'
@@ -8,7 +8,6 @@ import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
 import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
-import { SidePanel } from './SidePanel'
 import { ThreadFileEnvProvider } from './thread-file-env'
 import { Loader2, Upload, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -25,8 +24,6 @@ interface AgentViewProps {
   threadId: string
 }
 
-const SIDE_PANEL_ANIMATION_MS = 220
-
 export function AgentView({ threadId }: AgentViewProps) {
   const streamingState = useAtomValue(agentStreamingStatesAtom)[threadId] ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
@@ -38,13 +35,6 @@ export function AgentView({ threadId }: AgentViewProps) {
   const activeAskUserQuestion = activeTaskApproval || activeToolPermission ? undefined : pendingAskUserQuestions[0]
   const hasComposerOverlay = Boolean(activeTaskApproval || activeToolPermission || activeAskUserQuestion)
   const [approvalOverlayVisible, setApprovalOverlayVisible] = useState(Boolean(activeTaskApproval))
-
-  const [sidePanelViews, setSidePanelViews] = useAtom(agentSidePanelViewAtom)
-  const sidePanelView = sidePanelViews[threadId] ?? null
-  const [renderedSidePanelView, setRenderedSidePanelView] = useState<SidePanelView>(sidePanelView)
-  const [sidePanelVisible, setSidePanelVisible] = useState(Boolean(sidePanelView))
-  const sidePanelCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sidePanelOpenTimerRef = useRef<number | null>(null)
 
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -58,18 +48,12 @@ export function AgentView({ threadId }: AgentViewProps) {
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([])
-  const [threadFilePreview, setThreadFilePreview] = useState<{ path: string; key: number } | null>(null)
-  const [memoryFilePreview, setMemoryFilePreview] = useState<{ path: string; key: number } | null>(null)
   const [imagePreview, setImagePreview] = useState<{
     attachment: AgentMessageAttachmentInput
     src?: string
     loading: boolean
     error?: string
   } | null>(null)
-  const threadFilePathToPreview = threadFilePreview?.path
-  const threadFilePreviewKey = threadFilePreview?.key ?? 0
-  const memoryFilePathToPreview = memoryFilePreview?.path
-  const memoryFilePreviewKey = memoryFilePreview?.key ?? 0
 
   const addPendingAttachments = useCallback((attachments: PendingMessageAttachment[]) => {
     if (attachments.length === 0) return
@@ -84,31 +68,9 @@ export function AgentView({ threadId }: AgentViewProps) {
     setPendingAttachments([])
   }, [])
 
-  const openThreadFilePreview = useCallback((path: string) => {
-    setMemoryFilePreview(null)
-    setThreadFilePreview((prev) => ({
-      path,
-      key: (prev?.key ?? 0) + 1,
-    }))
-    setSidePanelViews((prev) => (
-      prev[threadId] === 'files'
-        ? prev
-        : { ...prev, [threadId]: 'files' }
-    ))
-  }, [setSidePanelViews, threadId])
+  const openThreadFilePreview = useCallback((_path: string) => undefined, [])
 
-  const openMemoryFilePreview = useCallback((path: string) => {
-    setThreadFilePreview(null)
-    setMemoryFilePreview((prev) => ({
-      path,
-      key: (prev?.key ?? 0) + 1,
-    }))
-    setSidePanelViews((prev) => (
-      prev[threadId] === 'files'
-        ? prev
-        : { ...prev, [threadId]: 'files' }
-    ))
-  }, [setSidePanelViews, threadId])
+  const openMemoryFilePreview = useCallback((_path: string) => undefined, [])
 
   const openThreadImagePreview = useCallback((attachment: AgentMessageAttachmentInput) => {
     setImagePreview({ attachment, loading: true })
@@ -142,8 +104,6 @@ export function AgentView({ threadId }: AgentViewProps) {
   }, [threadId])
 
   useEffect(() => {
-    setThreadFilePreview(null)
-    setMemoryFilePreview(null)
     setImagePreview(null)
     setPendingAttachments([])
   }, [threadId])
@@ -188,44 +148,6 @@ export function AgentView({ threadId }: AgentViewProps) {
   useEffect(() => {
     setApprovalOverlayVisible(Boolean(activeTaskApproval))
   }, [activeTaskApproval?.contractId, threadId])
-
-  useEffect(() => {
-    if (sidePanelCloseTimerRef.current !== null) {
-      clearTimeout(sidePanelCloseTimerRef.current)
-      sidePanelCloseTimerRef.current = null
-    }
-    if (sidePanelOpenTimerRef.current !== null) {
-      cancelAnimationFrame(sidePanelOpenTimerRef.current)
-      sidePanelOpenTimerRef.current = null
-    }
-
-    if (sidePanelView) {
-      setRenderedSidePanelView(sidePanelView)
-      setSidePanelVisible(false)
-      sidePanelOpenTimerRef.current = requestAnimationFrame(() => {
-        sidePanelOpenTimerRef.current = requestAnimationFrame(() => {
-          setSidePanelVisible(true)
-          sidePanelOpenTimerRef.current = null
-        })
-      })
-      return
-    }
-
-    setSidePanelVisible(false)
-    sidePanelCloseTimerRef.current = setTimeout(() => {
-      setRenderedSidePanelView(null)
-      sidePanelCloseTimerRef.current = null
-    }, SIDE_PANEL_ANIMATION_MS)
-  }, [sidePanelView])
-
-  useEffect(() => () => {
-    if (sidePanelCloseTimerRef.current !== null) {
-      clearTimeout(sidePanelCloseTimerRef.current)
-    }
-    if (sidePanelOpenTimerRef.current !== null) {
-      cancelAnimationFrame(sidePanelOpenTimerRef.current)
-    }
-  }, [])
 
   return (
     <div className="flex-1 flex min-h-0 relative">
@@ -279,22 +201,6 @@ export function AgentView({ threadId }: AgentViewProps) {
           </div>
         </div>
       </ThreadFileEnvProvider>
-
-      {/* 右侧面板 */}
-      {renderedSidePanelView && (
-        <div className="flex min-h-0 shrink-0">
-          <SidePanel
-            threadId={threadId}
-            view={renderedSidePanelView}
-            open={sidePanelVisible}
-            workspaceSlug={workspaceSlug}
-            threadFilePathToPreview={threadFilePathToPreview}
-            threadFilePreviewKey={threadFilePreviewKey}
-            memoryFilePathToPreview={memoryFilePathToPreview}
-            memoryFilePreviewKey={memoryFilePreviewKey}
-          />
-        </div>
-      )}
 
       {/* 拖拽覆盖层 */}
       {isDragOver && (

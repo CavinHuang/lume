@@ -1,5 +1,7 @@
 import { useAtom, useAtomValue } from 'jotai'
-import { activeTabIdAtom, rightPanelWorkspacesAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, rightPanelLayoutAtom, rightPanelWorkspacesAtom, tabsAtom } from '@/atoms'
+import { PanelRightOpen } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import {
   closeRightPanelTab,
   createEmptyRightPanelWorkspace,
@@ -24,10 +26,11 @@ export function RightPanelWorkspace() {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
   const [workspaces, setWorkspaces] = useAtom(rightPanelWorkspacesAtom)
+  const layout = useAtomValue(rightPanelLayoutAtom)
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
   const threadId = activeTab?.type === 'agent' ? activeTab.threadId : undefined
 
-  if (!threadId) {
+  if (!threadId || !layout.open) {
     return null
   }
 
@@ -54,10 +57,21 @@ export function RightPanelWorkspace() {
     updateWorkspace(closeRightPanelTab(workspace, type))
   }
 
+  const compact = layout.mode === 'compact'
+
   return (
-    <aside className="relative z-[60] flex h-full w-[520px] shrink-0 flex-col border-l border-border/70 bg-background pb-2 pr-2 pt-5">
+    <aside className={cn(
+      'relative z-[60] flex h-full shrink-0 flex-col border-l border-border/70 bg-background pb-2 pr-2 pt-5 transition-[width] duration-200',
+      layout.mode === 'expanded' && 'w-[760px]',
+      layout.mode === 'normal' && 'w-[520px]',
+      compact && 'w-[72px]',
+    )}>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-border/60 bg-background">
-        {hasOpenTabs ? (
+        {compact ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center text-foreground/38">
+            <PanelRightOpen size={18} />
+          </div>
+        ) : hasOpenTabs ? (
           <>
             <RightPanelTabBar
               workspace={workspace}
