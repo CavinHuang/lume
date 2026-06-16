@@ -449,6 +449,23 @@ export function AgentInput({
     const rawText = applyAgentRoleMentions(editor.getText()).trim()
     if (!rawText && pendingAttachments.length === 0) return
 
+    // 3d-reload: intercept the /reload-plugins slash command. Re-scan plugins on the
+    // sidecar, refresh the local list, and consume the command (do NOT send to the agent).
+    // The next agent attempt picks up the fresh disk state automatically.
+    if (rawText === '/reload-plugins') {
+      editor.commands.clearContent()
+      setEditorText('')
+      try {
+        const result = await sidecarCall(AGENT_IPC_CHANNELS.RELOAD_PLUGINS, {})
+        setInstalledPlugins(normalizeListPluginsResult(result))
+        toast.success('插件已重新加载')
+      } catch (error) {
+        console.error('[AgentInput] 重载插件失败:', error)
+        toast.error('重载插件失败')
+      }
+      return
+    }
+
     setLocalSending(true)
     const text = rawText || '请解读这些附件。'
     let messageAttachments: AgentMessageAttachmentInput[] = []
