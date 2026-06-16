@@ -1705,6 +1705,9 @@ mod tests {
 }
 
 fn main() {
+    // 最早期：按 launcher.json 注入 LUME_CONFIG_DIR（必须在 ll::init 写日志之前）
+    apply_launcher_config_env();
+
     // 初始化统一日志系统
     ll::init(ll::LumeLoggerConfig {
         level: ll::LumeLogLevel::Debug,
@@ -2117,6 +2120,38 @@ fn effective_config_dir_with(launcher_path: Option<&Path>) -> PathBuf {
         }
     }
     ll::config::resolve_config_dir()
+}
+
+/// main() 最早期调用：按优先级把 config 目录写入 LUME_CONFIG_DIR（若外部未设），
+/// 并清理 launcher.json 中的 pendingDeleteOld（删除旧目录）。
+fn apply_launcher_config_env() {
+    // 外部 env 已设 → 不覆盖（保留 dev/CLI 覆盖语义）
+    if let Ok(v) = std::env::var("LUME_CONFIG_DIR") {
+        if !v.trim().is_empty() {
+            return;
+        }
+    }
+    let Some(path) = resolve_launcher_path() else { return };
+    let Some(cfg) = read_launcher_config_from(&path) else { return };
+
+    if let Some(cd) = cfg.config_dir.clone() {
+        let _ = std::env::set_var("LUME_CONFIG_DIR", &cd);
+    }
+
+    // 清理 pendingDeleteOld：仅当存在且不等于生效目录时删除旧目录，然后清除该字段
+    if cfg.pending_delete_old.is_some() {
+        let effective = effective_config_dir_with(Some(path.as_path()));
+        if let Some(old) = cfg.pending_delete_old.as_ref() {
+            if old != &effective && old.exists() {
+                let _ = std::fs::remove_dir_all(old);
+            }
+        }
+        let cleared = LauncherConfig {
+            config_dir: cfg.config_dir.clone(),
+            pending_delete_old: None,
+        };
+        let _ = write_launcher_config_at(&path, &cleared);
+    }
 }
 
 #[cfg(test)]
