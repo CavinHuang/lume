@@ -1793,7 +1793,9 @@ fn main() {
             reveal_path_in_system,
             copy_file,
             data_get_storage_stats,
-            data_export_zip
+            data_export_zip,
+            data_migrate_to_dir,
+            data_apply_migration
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -2314,6 +2316,71 @@ fn copy_dir_recursive(src: &Path, dest: &Path, app: &tauri::AppHandle) -> Result
     copy_dir_recursive_inner(src, dest, |done, total| {
         let _ = app.emit("data:migrate-progress", serde_json::json!({ "done": done, "total": total }));
     })
+}
+
+#[tauri::command]
+fn data_migrate_to_dir(
+    dest: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SidecarProcess>,
+) -> Result<serde_json::Value, String> {
+    let src = ll::config::resolve_config_dir();
+    let dest_path = PathBuf::from(&dest);
+
+    // 1. 校验目标（在 kill sidecar 之前）
+    validate_migration_target(&src, &dest_path)?;
+
+    // 2. kill sidecar（关闭 SQLite 等打开句柄）
+    if let Ok(mut slot) = state.child.lock() {
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    // 3. 复制 + 进度
+    let src_stats = dir_stats(&src);
+    let (copied_files, copied_bytes) = copy_dir_recursive(&src, &dest_path, &app)?;
+
+    // 4. 校验：dest 统计须与 src 一致
+    let dest_stats = dir_stats(&dest_path);
+    if dest_stats != src_stats {
+        // 校验失败 → 清理 dest 半成品
+        let _ = std::fs::remove_dir_all(&dest_path);
+        return Err(format!(
+            "校验失败：源 {} 文件/{} 字节 vs 目标 {} 文件/{} 字节",
+            src_stats.0, src_stats.1, dest_stats.0, dest_stats.1
+        ));
+    }
+
+    Ok(serde_json::json!({
+        "destPath": dest,
+        "fileCount": copied_files,
+        "bytesCopied": copied_bytes,
+        "verified": true
+    }))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyMigrationInput {
+    dest_path: String,
+    delete_old: bool,
+}
+
+#[tauri::command]
+fn data_apply_migration(input: ApplyMigrationInput) -> Result<serde_json::Value, String> {
+    let old = ll::config::resolve_config_dir();
+    let new = PathBuf::from(&input.dest_path);
+    let cfg = LauncherConfig {
+        config_dir: Some(new),
+        pending_delete_old: if input.delete_old { Some(old) } else { None },
+    };
+    let path = resolve_launcher_path()
+        .ok_or_else(|| "无法解析 launcher.json 路径".to_string())?;
+    write_launcher_config_at(&path, &cfg)?;
+    info!("[desktop] data_apply_migration: launcher.json 已写，等待前端 relaunch");
+    Ok(serde_json::json!({ "ok": true }))
 }
 
 #[cfg(test)]
