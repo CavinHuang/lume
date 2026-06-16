@@ -23,6 +23,7 @@ export interface BrowserTabState {
 
 export interface FilesTabState {
   type: 'files'
+  source: 'thread' | 'workspace'
   selectedPath: string | null
   treeVisible: boolean
   searchQuery: string
@@ -39,7 +40,7 @@ export function createDefaultRightPanelTab(type: RightPanelFunction): RightPanel
   }
 
   if (type === 'files') {
-    return { type, selectedPath: null, treeVisible: true, searchQuery: '', enhancedView: true }
+    return { type, source: 'thread', selectedPath: null, treeVisible: true, searchQuery: '', enhancedView: true }
   }
 
   return { type }
@@ -162,6 +163,7 @@ function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightP
   if (type === 'files') {
     return {
       type,
+      source: value.source === 'workspace' ? 'workspace' : 'thread',
       selectedPath: value.selectedPath === null || typeof value.selectedPath === 'string'
         ? value.selectedPath
         : null,

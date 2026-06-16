@@ -1,5 +1,13 @@
 import { useAtom, useAtomValue } from 'jotai'
-import { activeTabIdAtom, rightPanelLayoutAtom, rightPanelWorkspacesAtom, tabsAtom } from '@/atoms'
+import {
+  activeTabIdAtom,
+  agentThreadsAtom,
+  agentWorkspacesAtom,
+  currentWorkspaceIdAtom,
+  rightPanelLayoutAtom,
+  rightPanelWorkspacesAtom,
+  tabsAtom,
+} from '@/atoms'
 import { PanelRightOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -14,6 +22,7 @@ import {
 import { RightPanelLauncher } from './RightPanelLauncher'
 import { RightPanelTabBar } from './RightPanelTabBar'
 import { PlaceholderRightPanelTab } from './PlaceholderRightPanelTab'
+import { FilesRightPanelTab } from './FilesRightPanelTab'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
   review: '审查',
@@ -27,8 +36,16 @@ export function RightPanelWorkspace() {
   const activeTabId = useAtomValue(activeTabIdAtom)
   const [workspaces, setWorkspaces] = useAtom(rightPanelWorkspacesAtom)
   const layout = useAtomValue(rightPanelLayoutAtom)
+  const threads = useAtomValue(agentThreadsAtom)
+  const agentWorkspaces = useAtomValue(agentWorkspacesAtom)
+  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
   const threadId = activeTab?.type === 'agent' ? activeTab.threadId : undefined
+  const workspaceSlug = (() => {
+    const thread = threads.find((item) => item.id === threadId)
+    const workspaceId = thread?.workspaceId ?? currentWorkspaceId
+    return agentWorkspaces.find((item) => item.id === workspaceId)?.slug
+  })()
 
   if (!threadId || !layout.open) {
     return null
@@ -79,7 +96,12 @@ export function RightPanelWorkspace() {
               onClose={closeFunction}
               onOpen={openFunction}
             />
-            <RightPanelActiveTab workspace={workspace} />
+            <RightPanelActiveTab
+              workspace={workspace}
+              threadId={threadId}
+              workspaceSlug={workspaceSlug}
+              onChange={updateWorkspace}
+            />
           </>
         ) : (
           <RightPanelLauncher onOpen={openFunction} />
@@ -89,10 +111,40 @@ export function RightPanelWorkspace() {
   )
 }
 
-function RightPanelActiveTab({ workspace }: { workspace: ThreadRightPanelWorkspace }) {
+function RightPanelActiveTab({
+  onChange,
+  threadId,
+  workspace,
+  workspaceSlug,
+}: {
+  onChange: (next: ThreadRightPanelWorkspace) => void
+  threadId: string
+  workspace: ThreadRightPanelWorkspace
+  workspaceSlug?: string
+}) {
   const activeTab = workspace.activeTab
   if (!activeTab || !workspace.tabs[activeTab]) {
     return <PlaceholderRightPanelTab label="" />
+  }
+
+  const tabState = workspace.tabs[activeTab]
+  if (tabState?.type === 'files') {
+    return (
+      <FilesRightPanelTab
+        state={tabState}
+        threadId={threadId}
+        workspaceSlug={workspaceSlug}
+        onChange={(nextTab) => {
+          onChange({
+            activeTab: 'files',
+            tabs: {
+              ...workspace.tabs,
+              files: nextTab,
+            },
+          })
+        }}
+      />
+    )
   }
 
   return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[activeTab]} />

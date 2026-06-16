@@ -1,4 +1,5 @@
 export * from './PlaceholderRightPanelTab'
+export * from './FilesRightPanelTab'
 export * from './RightPanelLauncher'
 export * from './RightPanelTabBar'
 export * from './RightPanelWorkspace'
