@@ -2063,3 +2063,118 @@ mod export_zip_tests {
         assert!(!s.contains("sk-leak"));
     }
 }
+
+const LUME_APP_IDENTIFIER: &str = "com.lume.desktop";
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LauncherConfig {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    config_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pending_delete_old: Option<PathBuf>,
+}
+
+/// launcher.json 的 OS 标准路径（<config_dir>/<identifier>/launcher.json）。
+fn resolve_launcher_path() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join(LUME_APP_IDENTIFIER).join("launcher.json"))
+}
+
+fn read_launcher_config_from(path: &Path) -> Option<LauncherConfig> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<LauncherConfig>(&text).ok()
+}
+
+fn write_launcher_config_at(path: &Path, cfg: &LauncherConfig) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建 launcher 目录失败: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化 launcher.json 失败: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("写 launcher.json 失败: {e}"))
+}
+
+/// 计算生效的 config 目录，优先级：外部 env > launcher.json > 默认。
+/// `launcher_path: None` 表示不读 launcher.json（测试用）。
+fn effective_config_dir_with(launcher_path: Option<&Path>) -> PathBuf {
+    if let Ok(v) = std::env::var("LUME_CONFIG_DIR") {
+        let t = v.trim();
+        if !t.is_empty() {
+            return PathBuf::from(t);
+        }
+    }
+    if let Some(path) = launcher_path {
+        if let Some(cfg) = read_launcher_config_from(path) {
+            if let Some(cd) = cfg.config_dir {
+                return cd;
+            }
+        }
+    }
+    ll::config::resolve_config_dir()
+}
+
+#[cfg(test)]
+mod migration_launcher_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
+
+    // LUME_CONFIG_DIR 是进程级全局 env，多个测试并发读写会互相污染。
+    // 用一把模块级 Mutex 把触碰 env 的测试串行化（不影响其它并行测试）。
+    static ENV_GUARD: Mutex<()> = Mutex::new(());
+    // 每次写临时 launcher.json 用独立目录，避免并发测试复用同一路径互相覆盖。
+    static UNIQUE: AtomicU64 = AtomicU64::new(0);
+
+    fn write_tmp_launcher(cfg: &LauncherConfig) -> PathBuf {
+        let n = UNIQUE.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("lume-launcher-test-{}-{}", std::process::id(), n));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("launcher.json");
+        write_launcher_config_at(&path, cfg).unwrap();
+        path
+    }
+
+    #[test]
+    fn env_takes_precedence_over_launcher() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        let path = write_tmp_launcher(&LauncherConfig {
+            config_dir: Some(PathBuf::from("/from/launcher")),
+            pending_delete_old: None,
+        });
+        std::env::set_var("LUME_CONFIG_DIR", "/from/env");
+        assert_eq!(effective_config_dir_with(Some(&path)), PathBuf::from("/from/env"));
+        std::env::remove_var("LUME_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn launcher_used_when_env_absent() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        std::env::remove_var("LUME_CONFIG_DIR");
+        let path = write_tmp_launcher(&LauncherConfig {
+            config_dir: Some(PathBuf::from("/from/launcher")),
+            pending_delete_old: None,
+        });
+        assert_eq!(effective_config_dir_with(Some(&path)), PathBuf::from("/from/launcher"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn default_when_no_env_no_launcher() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        std::env::remove_var("LUME_CONFIG_DIR");
+        let dir = effective_config_dir_with(None);
+        assert!(dir.ends_with(".lume"));
+    }
+
+    #[test]
+    fn roundtrip_launcher_config() {
+        let path = write_tmp_launcher(&LauncherConfig {
+            config_dir: Some(PathBuf::from("/new/lume")),
+            pending_delete_old: Some(PathBuf::from("/old/lume")),
+        });
+        let read = read_launcher_config_from(&path).unwrap();
+        assert_eq!(read.config_dir.as_deref(), Some(std::path::Path::new("/new/lume")));
+        assert_eq!(read.pending_delete_old.as_deref(), Some(std::path::Path::new("/old/lume")));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+}
