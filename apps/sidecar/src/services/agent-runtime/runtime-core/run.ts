@@ -950,12 +950,31 @@ export async function createRuntimeCoreSession(
     totalRegistered: registeredPluginSkillNames.size,
     skills: Array.from(registeredPluginSkillNames),
   });
-  // Phase MCP Merge-A: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
+  // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
   // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
-  // No §8.1 gate here (Merge-B). Server ids namespaced `${pluginId}:${serverId}`.
-  const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers);
+  // Merge-B: §8.1 start gate (authorizeConnect → checkSensitiveCapability, mcpServer key) +
+  // drop fixed-name management tools (includeManagementTools:false, avoids workspace collision) +
+  // stamp pluginId/capability/mcpServerId so the call gate (sensitive-gate.ts) source-binds.
+  // Stateless runtime, same state path as attempt.ts → shares approval records.
+  const pluginMcpPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(join(homedir(), ".lume", "plugins-state.json")),
+  });
+  const pluginMcpServerIndex = new Map(
+    pluginAssembly.mcpServers.map((server) => [`${server.pluginId}:${server.serverId}`, server.pluginId]),
+  );
+  const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
+    permissionRuntime: pluginMcpPermissionRuntime,
+    workspaceSlug: input.workspaceSlug,
+  });
   const pluginMcpRuntime = await pluginMcpManager
-    .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG)
+    .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
+      includeManagementTools: false,
+      toolMetadataProvider: (serverId) => {
+        const pluginId = pluginMcpServerIndex.get(serverId);
+        if (!pluginId) return undefined;
+        return { source: "plugin", pluginId, capability: "mcp" };
+      },
+    })
     .catch((error) => ({
       tools: [],
       diagnostics: [{
@@ -1135,7 +1154,17 @@ export async function createRuntimeCoreSession(
     },
     async dispose() {
       await agent.close();
-      await pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG);
+      try {
+        await pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG);
+      } catch (error) {
+        // M-2: a dispose failure (e.g. child-process kill error) must not skip the
+        // descriptor/ledger/skill cleanup below — those are required to avoid leaking
+        // state into the next session. Log and continue.
+        log.warn("Plugin MCP disposeWorkspace failed during session dispose", {
+          sessionId: input.lumeSessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       clearRuntimeToolDescriptors(input.lumeSessionId);
       clearRuntimeFileAccessLedger(input.lumeSessionId);
       for (const name of registeredPluginSkillNames) {
