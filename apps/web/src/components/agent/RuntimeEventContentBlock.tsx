@@ -684,8 +684,8 @@ function MinimalProcessGroup({
         onClick={() => setExpanded((value) => !value)}
         className="flex items-center gap-1.5 text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
       >
-        <ChevronDown size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-180')} />
         {summaryNodes}
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-90')} />
       </button>
       {expanded && (
         <div className="mt-1.5 space-y-0.5 pl-1">
