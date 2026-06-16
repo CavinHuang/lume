@@ -401,6 +401,25 @@ describe("WorkspaceMcpManager", () => {
     expect(result.tools.map((tool) => tool.name)).not.toContain("mcp__github__create_issue");
   });
 
+  test("authorizeConnect block skips connect for that server", async () => {
+    const fake = createFakeSdkManager();
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        "blocked-server": { enabled: true, transport: "stdio", command: "node", args: ["x.js"] },
+        "ok-server": { enabled: true, transport: "stdio", command: "node", args: ["y.js"] }
+      }),
+      sdkManagerFactory: () => fake,
+      authorizeConnect: async (serverId) =>
+        serverId === "blocked-server"
+          ? { decision: "block", reason: "not approved" }
+          : { decision: "allow" }
+    });
+
+    await manager.syncWorkspace("ws", { waitForConnections: true });
+
+    expect(fake.connectCalls).toEqual(["ok-server"]);
+  });
+
   test("createRuntimeTools returns diagnostics for failed servers without throwing", async () => {
     const fake = createFakeSdkManager();
     fake.status = {

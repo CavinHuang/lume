@@ -50,6 +50,8 @@ export interface WorkspaceMcpManagerOptions {
   readConfig?: (workspaceSlug: string) => WorkspaceMcpConfig;
   sdkManagerFactory?: () => WorkspaceSdkMcpManager;
   logger?: Pick<Logger, "warn" | "error" | "info">;
+  /** Optional pre-connect authorization (e.g. plugin §8.1 MCP start gate). Undefined = no gate (workspace singleton). */
+  authorizeConnect?: (serverId: string) => Promise<{ decision: "allow" | "block"; reason?: string }>;
 }
 
 export interface WorkspaceMcpRuntimeTools {
@@ -250,12 +252,14 @@ export class WorkspaceMcpManager {
   private readonly readConfig: (workspaceSlug: string) => WorkspaceMcpConfig;
   private readonly sdkManagerFactory: () => WorkspaceSdkMcpManager;
   private readonly logger: Pick<Logger, "warn" | "error" | "info">;
+  private readonly authorizeConnect?: (serverId: string) => Promise<{ decision: "allow" | "block"; reason?: string }>;
   private readonly workspaces = new Map<string, WorkspaceState>();
 
   constructor(options: WorkspaceMcpManagerOptions = {}) {
     this.readConfig = options.readConfig ?? getWorkspaceMcpConfig;
     this.sdkManagerFactory = options.sdkManagerFactory ?? (() => new McpClientManager());
     this.logger = options.logger ?? singletonLogger;
+    this.authorizeConnect = options.authorizeConnect;
   }
 
   async syncWorkspace(workspaceSlug: string, options: SyncWorkspaceOptions = {}): Promise<void> {
@@ -283,6 +287,25 @@ export class WorkspaceMcpManager {
 
     const connectionAttempts: Array<Promise<void>> = [];
     for (const serverId of currentEnabledIds) {
+      if (this.authorizeConnect) {
+        let gate: { decision: "allow" | "block"; reason?: string };
+        try {
+          gate = await this.authorizeConnect(serverId);
+        } catch (error) {
+          gate = {
+            decision: "block",
+            reason: `authorizeConnect threw: ${error instanceof Error ? error.message : String(error)}`
+          };
+        }
+        if (gate.decision === "block") {
+          this.logger.warn("MCP server connection blocked by gate", {
+            workspaceSlug,
+            serverId,
+            reason: gate.reason
+          });
+          continue;
+        }
+      }
       const connect = state.sdk.ensureConnected ?? state.sdk.connect;
       if (!connect) {
         continue;
