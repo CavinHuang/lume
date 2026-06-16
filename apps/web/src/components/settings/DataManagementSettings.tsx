@@ -15,6 +15,13 @@ import { DATA_CATEGORY_META } from '@lume/shared'
 import type { StorageStats } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   applyMigration,
   clearCache,
   emptyTrash,
@@ -309,17 +316,25 @@ export function DataManagementSettings() {
         )}
       </section>
 
-      {migrateOpen && (
-        <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4">
-          <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">迁移数据目录</h2>
+      <Dialog
+        open={migrateOpen}
+        onOpenChange={(open) => {
+          // 仅 idle 态（未在复制、未到成功选择）允许关闭；迁移中与成功态强制保留（sidecar 已 kill，必须走到重启）
+          if (!open && !migrateResult && !migrating) setMigrateOpen(false)
+        }}
+      >
+        <DialogContent showCloseButton={false} className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>迁移数据目录</DialogTitle>
+          </DialogHeader>
 
-          {!migrateResult && (
-            <>
-              <p className="mb-3 text-[12px] leading-5 text-[var(--text-3)]">
+          {!migrateResult ? (
+            <div className="space-y-3">
+              <DialogDescription>
                 将复制全部数据到新位置，完成后自动重启。旧目录可在完成后删除或保留。
-              </p>
-              <div className="mb-3 flex items-center gap-2">
-                <Button variant="outline" onClick={pickMigrateDest} disabled={migrating} className="h-8 rounded-[8px] px-3 text-[12px]">
+              </DialogDescription>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={pickMigrateDest} disabled={migrating} className="h-8 shrink-0 rounded-[8px] px-3 text-[12px]">
                   选择目标目录
                 </Button>
                 <code className="min-w-0 flex-1 truncate rounded bg-[var(--surface-2)] px-2 py-1 text-[11px] text-[var(--text-2)]">
@@ -327,12 +342,12 @@ export function DataManagementSettings() {
                 </code>
               </div>
               {migrateProgress && migrating && (
-                <div className="mb-3 text-[11px] text-[var(--text-3)]">
+                <div className="text-[11px] text-[var(--text-3)]">
                   正在复制 {migrateProgress.done}/{migrateProgress.total || '?'} …
                 </div>
               )}
               {migrateError && (
-                <div className="mb-3 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 py-2 text-[12px] text-[#ff4d57]">
+                <div className="rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 py-2 text-[12px] text-[#ff4d57]">
                   迁移失败：{migrateError}。旧目录未改动，建议重启应用以恢复。
                 </div>
               )}
@@ -350,14 +365,12 @@ export function DataManagementSettings() {
                   </Button>
                 )}
               </div>
-            </>
-          )}
-
-          {migrateResult && (
-            <>
-              <p className="mb-3 text-[12px] leading-5 text-[var(--text-3)]">
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <DialogDescription>
                 迁移完成。选择旧目录的处理方式后将自动重启。
-              </p>
+              </DialogDescription>
               <div className="flex justify-end gap-2">
                 <Button onClick={() => void handleApplyMigrate(true)} className="h-8 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 text-[12px] text-[#ff4d57] hover:bg-[#ffe9eb]">
                   删除旧目录
@@ -366,10 +379,10 @@ export function DataManagementSettings() {
                   保留作备份
                 </Button>
               </div>
-            </>
+            </div>
           )}
-        </section>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
