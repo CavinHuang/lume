@@ -111,6 +111,31 @@ export function sanitizeRightPanelWorkspace(value: unknown): ThreadRightPanelWor
   return { activeTab, tabs }
 }
 
+export function migrateLegacyRightPanelHints(input: {
+  sidePanelView?: unknown
+  fileTreeOpen?: unknown
+}): ThreadRightPanelWorkspace {
+  if (input.sidePanelView !== 'files') {
+    return createEmptyRightPanelWorkspace()
+  }
+
+  const workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'files')
+  const files = workspace.tabs.files
+  if (!files || files.type !== 'files') {
+    return workspace
+  }
+
+  return {
+    activeTab: 'files',
+    tabs: {
+      files: {
+        ...files,
+        treeVisible: typeof input.fileTreeOpen === 'boolean' ? input.fileTreeOpen : files.treeVisible,
+      },
+    },
+  }
+}
+
 function isRightPanelFunction(value: unknown): value is RightPanelFunction {
   return typeof value === 'string' && RIGHT_PANEL_FUNCTION_ORDER.includes(value as RightPanelFunction)
 }

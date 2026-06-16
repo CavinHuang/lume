@@ -6,6 +6,7 @@ import {
   createEmptyRightPanelWorkspace,
   firstOpenRightPanelTab,
   getAvailableRightPanelFunctions,
+  migrateLegacyRightPanelHints,
   openRightPanelTab,
   sanitizeRightPanelWorkspace,
 } from './right-panel-state'
@@ -87,5 +88,15 @@ describe('right-panel-state', () => {
       files: createDefaultRightPanelTab('files'),
       browser: createDefaultRightPanelTab('browser'),
     })).toBe('browser')
+  })
+
+  test('legacy file side-panel hints can create an initial files tab', () => {
+    const workspace = migrateLegacyRightPanelHints({
+      sidePanelView: 'files',
+      fileTreeOpen: false,
+    })
+
+    expect(workspace.activeTab).toBe('files')
+    expect(workspace.tabs.files).toMatchObject({ type: 'files', treeVisible: false })
   })
 })
