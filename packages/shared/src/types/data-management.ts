@@ -155,3 +155,19 @@ export const DATA_CATEGORY_SCAN_SPEC: DataCategoryScanSpec[] = [
     skipSubdirs: [],
   },
 ];
+
+/** data_migrate_to_dir 命令返回 */
+export interface MigrationResult {
+  destPath: string;
+  fileCount: number;
+  bytesCopied: number;
+  verified: boolean;
+}
+
+/** data_apply_migration 命令入参 */
+export interface MigrationApplyInput {
+  /** 迁移目标绝对路径（由 migrate 步骤返回） */
+  destPath: string;
+  /** true=重启后删除旧目录；false=保留旧目录作备份 */
+  deleteOld: boolean;
+}
