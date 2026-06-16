@@ -10,7 +10,6 @@ interface RightPanelWindowControlsProps {
 export function RightPanelWindowControls({ className }: RightPanelWindowControlsProps) {
   const [layout, setLayout] = useAtom(rightPanelLayoutAtom)
   const expanded = layout.mode === 'expanded'
-  const compact = layout.mode === 'compact'
 
   return (
     <div className={cn('flex items-center gap-2', className)}>
@@ -33,28 +32,6 @@ export function RightPanelWindowControls({ className }: RightPanelWindowControls
       >
         {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
       </button>
-
-      {!expanded && (
-        <button
-          type="button"
-          disabled={!layout.open}
-          onClick={() => {
-            setLayout((current) => ({
-              open: true,
-              mode: current.mode === 'compact' ? 'normal' : 'compact',
-            }))
-          }}
-          className={cn(
-            'flex size-8 items-center justify-center rounded-[8px] text-foreground/55 transition-colors',
-            layout.open
-              ? 'hover:bg-foreground/[0.06] hover:text-foreground'
-              : 'cursor-not-allowed opacity-35',
-          )}
-          title={compact ? '恢复右侧面板' : '收起为窄栏'}
-        >
-          <Minimize2 size={16} />
-        </button>
-      )}
 
       <button
         type="button"

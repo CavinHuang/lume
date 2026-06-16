@@ -1,5 +1,5 @@
 import { ClipboardCheck, FolderOpen, Globe, Plus, Terminal, X, type LucideIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import {
   RIGHT_PANEL_FUNCTION_ORDER,
@@ -33,6 +33,7 @@ export function RightPanelTabBar({
   onOpen,
 }: RightPanelTabBarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const availableFunctions = getAvailableRightPanelFunctions(workspace)
   const openedFunctions = RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])
 
@@ -40,6 +41,18 @@ export function RightPanelTabBar({
     onOpen(type)
     setMenuOpen(false)
   }
+
+  useEffect(() => {
+    if (!menuOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!shouldCloseRightPanelFunctionMenuForTarget(menuRef.current, event.target as Node)) return
+      setMenuOpen(false)
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    return () => window.removeEventListener('pointerdown', handlePointerDown)
+  }, [menuOpen])
 
   return (
     <div className="relative flex h-11 shrink-0 items-center gap-1 border-b border-border/60 px-3">
@@ -79,7 +92,7 @@ export function RightPanelTabBar({
           )
         })}
 
-        <div className="relative shrink-0">
+        <div className="relative shrink-0" ref={menuRef}>
           <button
             type="button"
             disabled={availableFunctions.length === 0}
@@ -118,4 +131,11 @@ export function RightPanelTabBar({
       </div>
     </div>
   )
+}
+
+export function shouldCloseRightPanelFunctionMenuForTarget(
+  menu: Pick<Node, 'contains'> | null,
+  target: Node,
+): boolean {
+  return !menu?.contains(target)
 }

@@ -1,4 +1,5 @@
 import { useAtom, useAtomValue } from 'jotai'
+import { useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   activeTabIdAtom,
   agentThreadsAtom,
@@ -19,6 +20,7 @@ import {
   type RightPanelFunction,
   type ThreadRightPanelWorkspace,
 } from './right-panel-state'
+import { RIGHT_PANEL_DEFAULT_WIDTH, getRightPanelDragWidth } from './right-panel-layout'
 import { RightPanelLauncher } from './RightPanelLauncher'
 import { RightPanelTabBar } from './RightPanelTabBar'
 import { PlaceholderRightPanelTab } from './PlaceholderRightPanelTab'
@@ -36,7 +38,8 @@ export function RightPanelWorkspace() {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
   const [workspaces, setWorkspaces] = useAtom(rightPanelWorkspacesAtom)
-  const layout = useAtomValue(rightPanelLayoutAtom)
+  const [layout, setLayout] = useAtom(rightPanelLayoutAtom)
+  const [resizing, setResizing] = useState(false)
   const threads = useAtomValue(agentThreadsAtom)
   const agentWorkspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -76,14 +79,64 @@ export function RightPanelWorkspace() {
   }
 
   const compact = layout.mode === 'compact'
+  const width = compact
+    ? '72px'
+    : layout.mode === 'expanded'
+      ? 'min(900px, 70vw)'
+      : `clamp(360px, ${layout.width ?? RIGHT_PANEL_DEFAULT_WIDTH}px, min(900px, 70vw))`
+
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || compact) return
+    event.preventDefault()
+
+    const setWidthFromPointer = (clientX: number) => {
+      setLayout((current) => ({
+        ...current,
+        open: true,
+        mode: 'normal',
+        width: getRightPanelDragWidth({ clientX, viewportWidth: window.innerWidth }),
+      }))
+    }
+
+    const handlePointerMove = (nextEvent: PointerEvent) => {
+      setWidthFromPointer(nextEvent.clientX)
+    }
+
+    const stopResize = () => {
+      setResizing(false)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopResize)
+      window.removeEventListener('pointercancel', stopResize)
+    }
+
+    setResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    setWidthFromPointer(event.clientX)
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopResize)
+    window.addEventListener('pointercancel', stopResize)
+  }
 
   return (
     <aside className={cn(
       'relative z-[60] flex h-full shrink-0 flex-col border-l border-border/70 bg-background pb-2 pr-2 pt-5 transition-[width] duration-200',
-      layout.mode === 'expanded' && 'w-[760px]',
-      layout.mode === 'normal' && 'w-[520px]',
-      compact && 'w-[72px]',
-    )}>
+      resizing && 'transition-none',
+    )}
+      style={{ width }}
+    >
+      {!compact && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整右侧面板宽度"
+          title="拖动调整右侧面板宽度"
+          onPointerDown={startResize}
+          className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 cursor-col-resize touch-none transition-colors hover:bg-foreground/10"
+        />
+      )}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-border/60 bg-background">
         {compact ? (
           <div className="flex min-h-0 flex-1 items-center justify-center text-foreground/38">

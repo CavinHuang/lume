@@ -6,6 +6,7 @@ export type RightPanelDisplayMode = 'normal' | 'expanded' | 'compact'
 export interface RightPanelLayoutState {
   open: boolean
   mode: RightPanelDisplayMode
+  width?: number
 }
 
 export const rightPanelWorkspacesAtom = atomWithStorage<Record<string, ThreadRightPanelWorkspace>>(
