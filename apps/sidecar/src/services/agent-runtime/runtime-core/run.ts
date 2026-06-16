@@ -81,6 +81,7 @@ import { FilePluginStateStore } from "../plugins/plugin-state-store.js";
 import { buildPluginAgentHooks } from "../plugins/plugin-hooks-bridge.js";
 import {
   buildPluginMcpManager,
+  buildPluginIdIndex,
   PLUGIN_MCP_WORKSPACE_SLUG,
 } from "../plugins/plugin-mcp-bridge.js";
 import {
@@ -958,9 +959,7 @@ export async function createRuntimeCoreSession(
   const pluginMcpPermissionRuntime = new PluginPermissionRuntime({
     stateStore: new FilePluginStateStore(join(homedir(), ".lume", "plugins-state.json")),
   });
-  const pluginMcpServerIndex = new Map(
-    pluginAssembly.mcpServers.map((server) => [`${server.pluginId}:${server.serverId}`, server.pluginId]),
-  );
+  const pluginMcpServerIndex = buildPluginIdIndex(pluginAssembly.mcpServers);
   const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
     permissionRuntime: pluginMcpPermissionRuntime,
     workspaceSlug: input.workspaceSlug,

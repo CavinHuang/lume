@@ -18,6 +18,11 @@ export interface BuildPluginMcpManagerOptions {
   sdkManagerFactory?: () => WorkspaceSdkMcpManager;
 }
 
+/** Build a `${pluginId}:${serverId}` → pluginId index (shared by the start gate + tool stamping). */
+export function buildPluginIdIndex(servers: ResolvedMcpServer[]): Map<string, string> {
+  return new Map(servers.map((server) => [`${server.pluginId}:${server.serverId}`, server.pluginId]));
+}
+
 /**
  * Build a TRANSIENT WorkspaceMcpManager for plugin-declared MCP servers (spec §6.4/§16.7/§8.1).
  *
@@ -34,12 +39,11 @@ export function buildPluginMcpManager(
   servers: ResolvedMcpServer[],
   options: BuildPluginMcpManagerOptions = {},
 ): WorkspaceMcpManager {
-  const pluginIdByServerId = new Map<string, string>();
+  const pluginIdByServerId = buildPluginIdIndex(servers);
   const namespaced: WorkspaceMcpConfig = { servers: {} };
   for (const server of servers) {
     const id = `${server.pluginId}:${server.serverId}`;
     namespaced.servers[id] = server.entry as McpServerEntry;
-    pluginIdByServerId.set(id, server.pluginId);
   }
 
   const { permissionRuntime, workspaceSlug, sdkManagerFactory } = options;
