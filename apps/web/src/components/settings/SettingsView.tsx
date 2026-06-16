@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { settingsInitialTabAtom, archiveInitialViewAtom } from '@/atoms'
 import { GeneralSettings } from './GeneralSettings'
+import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { McpSettings } from './McpSettings'
@@ -89,12 +90,7 @@ export function SettingsView() {
             <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">{subtitle}</p>
           </div>
           {tab === 'general' && <GeneralSettings />}
-          {tab === 'appearance' && (
-            <SettingsPlaceholder
-              title="外观"
-              desc="外观配置仍沿用现有主题系统，后续可以在这里承载深浅色与显示密度。"
-            />
-          )}
+          {tab === 'appearance' && <AppearanceSettings />}
           {tab === 'models' && <AgentSettings />}
           {tab === 'agents' && <AgentsSettings />}
           {tab === 'skills' && <SkillsSettings />}
