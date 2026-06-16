@@ -2196,3 +2196,120 @@ mod migration_launcher_tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
+
+/// 校验迁移目标：绝对路径、不与 src 重叠、不存在或为空。
+fn validate_migration_target(src: &Path, dest: &Path) -> Result<(), String> {
+    if !dest.is_absolute() {
+        return Err("目标必须是绝对路径".into());
+    }
+    if dest == src {
+        return Err("目标不能与当前数据目录相同".into());
+    }
+    if dest.starts_with(src) {
+        return Err("目标不能在当前数据目录内".into());
+    }
+    if src.starts_with(dest) {
+        return Err("目标不能包含当前数据目录".into());
+    }
+    if dest.exists() {
+        if !dest.is_dir() {
+            return Err("目标已存在且不是目录".into());
+        }
+        let not_empty = std::fs::read_dir(dest)
+            .map(|mut it| it.next().is_some())
+            .unwrap_or(false);
+        if not_empty {
+            return Err("目标目录必须为空".into());
+        }
+    }
+    Ok(())
+}
+
+/// 递归统计目录的文件数与总字节数（不含目录本身与符号链接）。
+fn dir_stats(path: &Path) -> (u64, u64) {
+    let mut files: u64 = 0;
+    let mut bytes: u64 = 0;
+    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(Result::ok) {
+        if entry.file_type().is_file() {
+            files += 1;
+            bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    (files, bytes)
+}
+
+/// 递归复制 src 到 dest，逐文件通过 app.emit 报进度。返回（文件数, 字节数）。
+fn copy_dir_recursive(src: &Path, dest: &Path, app: &tauri::AppHandle) -> Result<(u64, u64), String> {
+    let entries: Vec<walkdir::DirEntry> = walkdir::WalkDir::new(src)
+        .into_iter()
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("遍历源目录失败: {e}"))?;
+    let total = entries.iter().filter(|e| e.file_type().is_file()).count() as u64;
+    let mut done: u64 = 0;
+    let mut bytes: u64 = 0;
+    for entry in &entries {
+        let path = entry.path();
+        let rel = path.strip_prefix(src).map_err(|e| e.to_string())?;
+        let target = dest.join(rel);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)
+                .map_err(|e| format!("创建目录 {} 失败: {e}", target.display()))?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(path, &target)
+                .map_err(|e| format!("复制 {} 失败: {e}", path.display()))?;
+            bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            done += 1;
+            let _ = app.emit("data:migrate-progress", serde_json::json!({ "done": done, "total": total }));
+        }
+    }
+    Ok((done, bytes))
+}
+
+#[cfg(test)]
+mod migration_copy_tests {
+    use super::*;
+    use std::fs::{create_dir_all, write};
+
+    fn make_src(root: &Path) {
+        create_dir_all(root.join("a/b")).unwrap();
+        write(root.join("a/b/x.txt"), "hello").unwrap(); // 5
+        write(root.join("a/y.json"), "{}").unwrap(); // 2
+        create_dir_all(root.join("empty")).unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_overlap_and_nonempty() {
+        let src = Path::new("/tmp/lume/src");
+        assert!(validate_migration_target(src, Path::new("rel")).is_err()); // 相对
+        assert!(validate_migration_target(src, src).is_err()); // 相同
+        assert!(validate_migration_target(src, Path::new("/tmp/lume/src/sub")).is_err()); // dest 在 src 内
+        assert!(validate_migration_target(src, Path::new("/tmp/lume")).is_err()); // src 在 dest 内
+    }
+
+    #[test]
+    fn validate_accepts_empty_or_missing() {
+        let src = Path::new("/tmp/lume/src");
+        assert!(validate_migration_target(src, Path::new("/tmp/lume/dest-missing")).is_ok()); // 不存在
+        let empty = std::env::temp_dir().join("lume-empty-target");
+        let _ = std::fs::remove_dir_all(&empty);
+        create_dir_all(&empty).unwrap();
+        assert!(validate_migration_target(src, &empty).is_ok()); // 空目录
+        write(empty.join("z"), "x").unwrap();
+        assert!(validate_migration_target(src, &empty).is_err()); // 非空
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn dir_stats_counts_files_and_bytes() {
+        let src = std::env::temp_dir().join("lume-stats-src");
+        let _ = std::fs::remove_dir_all(&src);
+        make_src(&src);
+        let (files, bytes) = dir_stats(&src);
+        assert_eq!(files, 2);
+        assert_eq!(bytes, 7);
+        let _ = std::fs::remove_dir_all(&src);
+    }
+}
