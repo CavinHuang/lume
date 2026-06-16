@@ -2331,16 +2331,30 @@ fn data_migrate_to_dir(
     validate_migration_target(&src, &dest_path)?;
 
     // 2. kill sidecar（关闭 SQLite 等打开句柄）
-    if let Ok(mut slot) = state.child.lock() {
-        if let Some(mut child) = slot.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+    let kill_ok = match state.child.lock() {
+        Ok(mut slot) => {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            true
         }
-    }
+        Err(_) => {
+            warn!("[desktop] data_migrate_to_dir: sidecar 锁中毒，跳过 kill");
+            false
+        }
+    };
+    let _ = kill_ok;
 
-    // 3. 复制 + 进度
+    // 3. 复制 + 进度（失败时清理 dest 半成品，保持「dest 不留痕」契约）
     let src_stats = dir_stats(&src);
-    let (copied_files, copied_bytes) = copy_dir_recursive(&src, &dest_path, &app)?;
+    let (copied_files, copied_bytes) = match copy_dir_recursive(&src, &dest_path, &app) {
+        Ok(stats) => stats,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dest_path);
+            return Err(e);
+        }
+    };
 
     // 4. 校验：dest 统计须与 src 一致
     let dest_stats = dir_stats(&dest_path);
