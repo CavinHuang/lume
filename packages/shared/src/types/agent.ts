@@ -1346,6 +1346,8 @@ export const AGENT_IPC_CHANNELS = {
   APPLY_SKILL_IMPROVEMENT: 'agent:apply-skill-improvement',
   /** 列出已安装的插件 */
   LIST_PLUGINS: 'agent:list-plugins',
+  /** Re-scan plugin directories and refresh capability list (sidecar → emits CAPABILITIES_CHANGED). */
+  RELOAD_PLUGINS: 'agent:reload-plugins',
   /** 工作区 Skill 有可确认的改进建议 */
   SKILL_IMPROVEMENT_SUGGESTED: 'agent:skill-improvement-suggested',
   /** 获取 GitHub 技能安装前审查摘要 */
