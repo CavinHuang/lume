@@ -912,14 +912,13 @@ export async function createRuntimeCoreSession(
   const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
   // Phase 3b: registry → resolver → bridge. Command tools + skills come from the
   // PluginRuntimeBridge now; the SDK's loadPlugins path is no longer used (no
-  // agentOptions.plugins). Plugin hooks are wired below (Phase 3d).
+  // agentOptions.plugins). Plugin hooks are wired below (Phase 3d, buildPluginAgentHooks).
   const pluginConfig = getEffectiveLumeConfig(input.workspaceSlug).plugins;
   const pluginManager = new SidecarPluginManager();
   const registeredPlugins = await pluginManager.listRegistered({
     enabled: pluginConfig?.enabled ?? [],
-    // Mirror tool-runtime.ts:116-127: cwd-local root + configured extras as
-    // directories; the global ~/.lume/plugins root is covered by SidecarPluginManager's
-    // default pluginRoot. (join is already imported at run.ts:41.)
+    // cwd-local root + configured extras as directories; the global ~/.lume/plugins
+    // root is covered by SidecarPluginManager's default pluginRoot.
     directories: [join(input.cwd, ".lume", "plugins"), ...(pluginConfig?.directories ?? [])],
   });
   const pluginAssembly = await assemblePluginRuntime(registeredPlugins);

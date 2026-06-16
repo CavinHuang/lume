@@ -26,8 +26,10 @@ export interface PluginRuntimeAssembly {
  * runtime-ready command-tool ToolDefinitions + skills, via the Phase 3a resolver.
  *
  * Pure function of `plugins` — no registry, no filesystem beyond what the resolver
- * already does. MCP servers and hooks are intentionally NOT wired here (MCP: §16.7
- * lifecycle, separate plan; hooks: Phase 3d).
+ * already does. Emits four capability buckets: commandToolDefinitions, skills, hooks,
+ * mcpServers. Wiring of each is the caller's job (run.ts): MCP via buildPluginMcpManager
+ * (§16.7 lifecycle + §8.1 authorizeConnect start gate), hooks via buildPluginAgentHooks
+ * (Phase 3d).
  *
  * Sensitive-use gating is Phase 3c — the ToolDefinitions built here carry the source
  * `pluginId` in `runtimeMetadata.pluginId` so 3c's canUseTool gate (which receives the

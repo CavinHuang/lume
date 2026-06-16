@@ -26,8 +26,8 @@ export interface SensitiveGateResult {
  * Covers command tools (commandTool:${name}) and plugin-MCP tools (mcpServer:${serverId},
  * §8.1) — both source-bound via runtimeMetadata.pluginId. The mcpServer key matches the
  * start gate (buildPluginMcpManager), so a server approved at start is approved at call time.
- * hooks (`hook:`), network, and filesystem-write keys remain deferred (hooks: Phase 3d gate;
- * fs/net: later extension).
+ * Plugin hooks are gated by plugin-hooks-bridge.ts (hook:${event}:${matcher} key). network
+ * and filesystem-write keys remain a later extension.
  */
 export async function evaluatePluginSensitiveGate(
   input: SensitiveGateInput,
