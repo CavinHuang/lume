@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
 import { projectRuntimeEventMessages } from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
+import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
   collectRuntimeMessageIds,
@@ -34,6 +35,7 @@ interface AgentMessagesProps {
 }
 
 export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThreadImage, onOpenMemorySource }: AgentMessagesProps) {
+  useBootstrapGeneralSettings()
   const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
