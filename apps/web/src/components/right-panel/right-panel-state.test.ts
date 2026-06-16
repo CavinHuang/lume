@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   RIGHT_PANEL_FUNCTION_ORDER,
   closeRightPanelTab,
+  createDefaultRightPanelTab,
   createEmptyRightPanelWorkspace,
   firstOpenRightPanelTab,
   getAvailableRightPanelFunctions,
@@ -52,10 +53,10 @@ describe('right-panel-state', () => {
 
     expect(next.activeTab).toBe('files')
     expect(next.tabs.review).toBeUndefined()
-    expect(firstOpenRightPanelTab(next)).toBe('files')
+    expect(firstOpenRightPanelTab(next.tabs)).toBe('files')
   })
 
-  test('sanitize drops malformed tabs and repairs activeTab', () => {
+  test('sanitize repairs malformed fields and repairs activeTab', () => {
     const workspace = sanitizeRightPanelWorkspace({
       activeTab: 'unknown',
       tabs: {
@@ -67,7 +68,24 @@ describe('right-panel-state', () => {
 
     expect(workspace.activeTab).toBe('review')
     expect(workspace.tabs.files).toBeUndefined()
-    expect(workspace.tabs.browser).toBeUndefined()
+    expect(workspace.tabs.browser).toMatchObject({ type: 'browser', url: '', zoom: 1 })
     expect(workspace.tabs.review).toEqual({ type: 'review' })
+  })
+
+  test('closing a tab makes it available and closing the last tab returns to launcher state', () => {
+    let workspace = createEmptyRightPanelWorkspace()
+    workspace = openRightPanelTab(workspace, 'files')
+
+    const closed = closeRightPanelTab(workspace, 'files')
+
+    expect(closed.activeTab).toBeNull()
+    expect(getAvailableRightPanelFunctions(closed)).toContain('files')
+  })
+
+  test('firstOpenRightPanelTab follows fixed function order', () => {
+    expect(firstOpenRightPanelTab({
+      files: createDefaultRightPanelTab('files'),
+      browser: createDefaultRightPanelTab('browser'),
+    })).toBe('browser')
   })
 })

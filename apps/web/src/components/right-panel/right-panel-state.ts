@@ -62,8 +62,10 @@ export function getAvailableRightPanelFunctions(workspace: ThreadRightPanelWorks
   return RIGHT_PANEL_FUNCTION_ORDER.filter((type) => !workspace.tabs[type])
 }
 
-export function firstOpenRightPanelTab(workspace: ThreadRightPanelWorkspace): RightPanelFunction | null {
-  return RIGHT_PANEL_FUNCTION_ORDER.find((type) => workspace.tabs[type]) ?? null
+export function firstOpenRightPanelTab(
+  tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>,
+): RightPanelFunction | null {
+  return RIGHT_PANEL_FUNCTION_ORDER.find((type) => tabs[type]) ?? null
 }
 
 export function closeRightPanelTab(
@@ -75,7 +77,7 @@ export function closeRightPanelTab(
 
   if (workspace.activeTab !== type) {
     return {
-      activeTab: workspace.activeTab && tabs[workspace.activeTab] ? workspace.activeTab : firstOpenRightPanelTab({ activeTab: null, tabs }),
+      activeTab: workspace.activeTab && tabs[workspace.activeTab] ? workspace.activeTab : firstOpenRightPanelTab(tabs),
       tabs,
     }
   }
@@ -96,15 +98,15 @@ export function sanitizeRightPanelWorkspace(value: unknown): ThreadRightPanelWor
   const tabs: ThreadRightPanelWorkspace['tabs'] = {}
 
   for (const type of RIGHT_PANEL_FUNCTION_ORDER) {
-    const tab = rawTabs[type]
-    if (isRightPanelTabState(type, tab)) {
+    const tab = sanitizeRightPanelTab(type, rawTabs[type])
+    if (tab) {
       tabs[type] = tab
     }
   }
 
   const activeTab = isRightPanelFunction(value.activeTab) && tabs[value.activeTab]
     ? value.activeTab
-    : firstOpenRightPanelTab({ activeTab: null, tabs })
+    : firstOpenRightPanelTab(tabs)
 
   return { activeTab, tabs }
 }
@@ -113,30 +115,38 @@ function isRightPanelFunction(value: unknown): value is RightPanelFunction {
   return typeof value === 'string' && RIGHT_PANEL_FUNCTION_ORDER.includes(value as RightPanelFunction)
 }
 
-function isRightPanelTabState(type: RightPanelFunction, value: unknown): value is RightPanelTabState {
+function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightPanelTabState | null {
   if (!isRecord(value) || value.type !== type) {
-    return false
+    return null
   }
 
   if (type === 'browser') {
-    return (
-      typeof value.url === 'string' &&
-      typeof value.addressInput === 'string' &&
-      typeof value.zoom === 'number' &&
-      typeof value.deviceToolbarVisible === 'boolean'
-    )
+    return {
+      type,
+      url: typeof value.url === 'string' ? value.url : '',
+      addressInput: typeof value.addressInput === 'string' ? value.addressInput : '',
+      zoom: typeof value.zoom === 'number' && Number.isFinite(value.zoom) && value.zoom >= 0.25 && value.zoom <= 3
+        ? value.zoom
+        : 1,
+      deviceToolbarVisible: typeof value.deviceToolbarVisible === 'boolean'
+        ? value.deviceToolbarVisible
+        : false,
+    }
   }
 
   if (type === 'files') {
-    return (
-      (value.selectedPath === null || typeof value.selectedPath === 'string') &&
-      typeof value.treeVisible === 'boolean' &&
-      typeof value.searchQuery === 'string' &&
-      typeof value.enhancedView === 'boolean'
-    )
+    return {
+      type,
+      selectedPath: value.selectedPath === null || typeof value.selectedPath === 'string'
+        ? value.selectedPath
+        : null,
+      treeVisible: typeof value.treeVisible === 'boolean' ? value.treeVisible : true,
+      searchQuery: typeof value.searchQuery === 'string' ? value.searchQuery : '',
+      enhancedView: typeof value.enhancedView === 'boolean' ? value.enhancedView : true,
+    }
   }
 
-  return true
+  return { type }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
