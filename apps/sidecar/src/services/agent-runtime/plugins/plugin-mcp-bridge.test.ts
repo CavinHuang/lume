@@ -32,17 +32,22 @@ const fakeServers: ResolvedMcpServer[] = [
   { pluginId: "acme", serverId: "api", entry: { enabled: true, transport: "stdio", command: "node", args: ["s.js"] } },
 ];
 
-function makeRuntime(decision: "allow" | "deny" | "ask"): PluginPermissionRuntime {
-  return {
-    async checkSensitiveCapability() {
+function makeRuntime(
+  decision: "allow" | "deny" | "ask",
+): { runtime: PluginPermissionRuntime; calls: Array<{ pluginId: string; key: string }> } {
+  const calls: Array<{ pluginId: string; key: string }> = [];
+  const runtime: PluginPermissionRuntime = {
+    async checkSensitiveCapability(params: { pluginId: string; key: string }) {
+      calls.push({ pluginId: params.pluginId, key: params.key });
       return { decision, reason: `fake ${decision}` };
     },
   } as unknown as PluginPermissionRuntime;
+  return { runtime, calls };
 }
 
 describe("buildPluginMcpManager §8.1 start gate", () => {
   test("allow decision connects the server", async () => {
-    const runtime = makeRuntime("allow");
+    const { runtime, calls } = makeRuntime("allow");
     let connected = false;
     const manager = buildPluginMcpManager(fakeServers, {
       permissionRuntime: runtime,
@@ -71,10 +76,12 @@ describe("buildPluginMcpManager §8.1 start gate", () => {
     });
     await manager.createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG);
     expect(connected).toBe(true);
+    // §8.1 start gate key 守护（与调用侧 sensitive-gate 对称）：固化 key 为 `mcpServer:${namespacedServerId}`。
+    expect(calls).toContainEqual({ pluginId: "acme", key: "mcpServer:acme:api" });
   });
 
   test("deny/ask decision blocks connect (server never connects)", async () => {
-    const runtime = makeRuntime("ask");
+    const { runtime, calls } = makeRuntime("ask");
     let connected = false;
     const manager = buildPluginMcpManager(fakeServers, {
       permissionRuntime: runtime,
@@ -103,5 +110,7 @@ describe("buildPluginMcpManager §8.1 start gate", () => {
     });
     await manager.createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG);
     expect(connected).toBe(false);
+    // §8.1 start gate key 守护（与调用侧 symmetric）：即便 block 路径，启动 gate 仍以同一 key 触发审批。
+    expect(calls).toContainEqual({ pluginId: "acme", key: "mcpServer:acme:api" });
   });
 });
