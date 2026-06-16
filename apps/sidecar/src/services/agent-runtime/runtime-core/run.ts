@@ -38,7 +38,6 @@ import type {
   AgentToolPermissionRequest
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   buildBuiltinAgents,
@@ -77,7 +76,7 @@ import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
 import { assemblePluginRuntime } from "../plugins/runtime-bridge.js";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
-import { FilePluginStateStore } from "../plugins/plugin-state-store.js";
+import { DEFAULT_PLUGIN_STATE_PATH, FilePluginStateStore } from "../plugins/plugin-state-store.js";
 import { buildPluginAgentHooks } from "../plugins/plugin-hooks-bridge.js";
 import {
   buildPluginMcpManager,
@@ -927,7 +926,7 @@ export async function createRuntimeCoreSession(
   // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
   // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
   const hookPermissionRuntime = new PluginPermissionRuntime({
-    stateStore: new FilePluginStateStore(join(homedir(), ".lume", "plugins-state.json")),
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
   });
   const pluginAgentHooks = buildPluginAgentHooks({
     capabilities: pluginAssembly.hooks,
@@ -957,7 +956,7 @@ export async function createRuntimeCoreSession(
   // stamp pluginId/capability/mcpServerId so the call gate (sensitive-gate.ts) source-binds.
   // Stateless runtime, same state path as attempt.ts → shares approval records.
   const pluginMcpPermissionRuntime = new PluginPermissionRuntime({
-    stateStore: new FilePluginStateStore(join(homedir(), ".lume", "plugins-state.json")),
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
   });
   const pluginMcpServerIndex = buildPluginIdIndex(pluginAssembly.mcpServers);
   const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {

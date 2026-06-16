@@ -50,8 +50,7 @@ import {
   evaluatePluginSensitiveGate,
 } from "../plugins/index.js";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { DEFAULT_PLUGIN_STATE_PATH } from "../plugins/plugin-state-store.js";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -676,7 +675,7 @@ export async function runRuntimeCoreAttempt(
   // Phase 3c: sensitive-capability gate runtime. Stateless (state lives in the
   // FilePluginStateStore file); same state path SidecarPluginManager uses.
   const pluginPermissionRuntime = new PluginPermissionRuntime({
-    stateStore: new FilePluginStateStore(join(homedir(), ".lume", "plugins-state.json")),
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
   });
 
   log.info("Plugin permission interceptors built", {

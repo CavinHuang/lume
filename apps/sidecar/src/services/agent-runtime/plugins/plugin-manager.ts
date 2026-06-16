@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LumePluginManifest } from "@lume/agent-sdk";
-import { FilePluginStateStore } from "./plugin-state-store.js";
+import { DEFAULT_PLUGIN_STATE_PATH, FilePluginStateStore } from "./plugin-state-store.js";
 import { PluginRegistry, type RegisteredPlugin } from "./plugin-registry.js";
 
 export interface ResolvedPlugin {
@@ -16,7 +16,7 @@ export interface ResolvedPlugin {
 export class SidecarPluginManager {
   constructor(
     private readonly pluginRoot = join(homedir(), ".lume", "plugins"),
-    private readonly statePath = join(homedir(), ".lume", "plugins-state.json"),
+    private readonly statePath = DEFAULT_PLUGIN_STATE_PATH,
   ) {}
 
   async resolveEnabled(config: {

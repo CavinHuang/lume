@@ -1,6 +1,10 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { SensitiveApprovalRecord } from "@lume/agent-sdk";
+
+/** Shared plugin sensitive-approval state file (read by the start gate, call gate, hook gate). */
+export const DEFAULT_PLUGIN_STATE_PATH = join(homedir(), ".lume", "plugins-state.json");
 
 export interface PluginStateFile {
   plugins: Record<string, PluginInstallRecord>;
