@@ -89,7 +89,7 @@ export function RightPanelWorkspace() {
           <div className="flex min-h-0 flex-1 items-center justify-center text-foreground/38">
             <PanelRightOpen size={18} />
           </div>
-        ) : hasOpenTabs ? (
+        ) : (
           <>
             <RightPanelTabBar
               workspace={workspace}
@@ -97,15 +97,17 @@ export function RightPanelWorkspace() {
               onClose={closeFunction}
               onOpen={openFunction}
             />
-            <RightPanelActiveTab
-              workspace={workspace}
-              threadId={threadId}
-              workspaceSlug={workspaceSlug}
-              onChange={updateWorkspace}
-            />
+            {hasOpenTabs ? (
+              <RightPanelActiveTab
+                workspace={workspace}
+                threadId={threadId}
+                workspaceSlug={workspaceSlug}
+                onChange={updateWorkspace}
+              />
+            ) : (
+              <RightPanelLauncher onOpen={openFunction} />
+            )}
           </>
-        ) : (
-          <RightPanelLauncher onOpen={openFunction} />
         )}
       </div>
     </aside>
