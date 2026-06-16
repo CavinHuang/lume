@@ -573,7 +573,8 @@ function MinimalProcessGroup({
   const subagentCount = toolCalls.filter((tc) => tc.toolName === 'Agent').length
   const nonAgentCount = toolCalls.length - subagentCount
   const failedCount = toolCalls.filter((tc) => tc.status === 'failed').length
-  const completedCount = toolCalls.filter((tc) => tc.status !== 'running').length
+  const completedCount = toolCalls.filter((tc) => tc.status === 'completed').length
+  // 仅展示第一个运行中的工具：agent 绝大多数情况顺序执行工具；并发多工具时其余的进度不单独展示。
   const runningTool = toolCalls.find((tc) => tc.status === 'running')
   const hasRunning = isStreamingMessage && Boolean(runningTool)
 
@@ -594,8 +595,8 @@ function MinimalProcessGroup({
 
   const parts: string[] = []
   if (hasRunning && runningTool) {
-    parts.push(`● 正在执行 ${runningTool.toolName}`)
-    parts.push(`已完成 ${completedCount} 步`)
+    parts.push(failedCount > 0 ? `⚠️ ● 正在执行 ${runningTool.toolName}` : `● 正在执行 ${runningTool.toolName}`)
+    parts.push(failedCount > 0 ? `已完成 ${completedCount} 步 · ${failedCount} 失败` : `已完成 ${completedCount} 步`)
   } else {
     parts.push(failedCount > 0 ? `⚠️ 🔧 ${nonAgentCount} 操作 · ${failedCount} 失败` : `🔧 ${nonAgentCount} 操作`)
     if (subagentCount > 0) parts.push(`🤖 ${subagentCount} 子代理`)
@@ -612,6 +613,7 @@ function MinimalProcessGroup({
     <div>
       <button
         type="button"
+        aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
         className="flex items-center gap-1.5 text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
       >
