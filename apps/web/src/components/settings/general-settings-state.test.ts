@@ -27,6 +27,7 @@ describe('general settings state', () => {
   test('general settings defaults stay app-wide and conservative', () => {
     expect(GENERAL_SETTINGS_DEFAULTS).toEqual({
       themeMode: 'system',
+      agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false,
@@ -47,6 +48,7 @@ describe('general settings state', () => {
       },
     })).toEqual({
       themeMode: 'system',
+      agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: true,
