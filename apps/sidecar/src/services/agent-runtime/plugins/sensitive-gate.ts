@@ -23,23 +23,37 @@ export interface SensitiveGateResult {
  * pass through untouched (§8.2 source binding: built-in tools are unaffected by plugin
  * permissions).
  *
- * 3c covers command tools only. MCP (`mcpServer:`), hooks (`hook:`), network, and
- * filesystem-write keys are deferred (MCP: §16.7 plan; hooks: Phase 3d; fs/net:
- * later extension).
+ * Covers command tools (commandTool:${name}) and plugin-MCP tools (mcpServer:${serverId},
+ * §8.1) — both source-bound via runtimeMetadata.pluginId. The mcpServer key matches the
+ * start gate (buildPluginMcpManager), so a server approved at start is approved at call time.
+ * hooks (`hook:`), network, and filesystem-write keys remain deferred (hooks: Phase 3d gate;
+ * fs/net: later extension).
  */
 export async function evaluatePluginSensitiveGate(
   input: SensitiveGateInput,
 ): Promise<SensitiveGateResult> {
   const definition = input.descriptor.definition as {
     name: string;
-    runtimeMetadata?: { pluginId?: string };
+    runtimeMetadata?: {
+      pluginId?: string;
+      capability?: string;
+      mcpServerId?: string;
+    };
   };
   const pluginId = definition.runtimeMetadata?.pluginId;
   if (!pluginId) {
     return { decision: "allow" };
   }
 
-  const key: SensitiveCapabilityKey = `commandTool:${definition.name}`;
+  // §8.1: plugin-MCP tools (capability "mcp" + mcpServerId) use the mcpServer:${serverId} key —
+  // the SAME key the start gate (buildPluginMcpManager) uses, so a server approved at start is
+  // approved at call time. Command tools keep commandTool:${name} (Phase 3c, unchanged).
+  const mcpServerId = definition.runtimeMetadata?.mcpServerId;
+  const isMcpTool = definition.runtimeMetadata?.capability === "mcp" && typeof mcpServerId === "string";
+  const key: SensitiveCapabilityKey = isMcpTool
+    ? `mcpServer:${mcpServerId}`
+    : `commandTool:${definition.name}`;
+
   const result = await input.runtime.checkSensitiveCapability({
     pluginId,
     key,
