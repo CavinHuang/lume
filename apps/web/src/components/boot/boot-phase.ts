@@ -9,10 +9,15 @@ export interface BootPhaseCopy {
 /**
  * 启动序列时长（ms）。唤醒、整理为定时过渡；记忆为等待后端的「resting」循环态。
  * 就绪停留/淡出由 useBootScreen 按 ready 触发。
+ *
+ * 节奏贴近「真实就绪」窗口：healthcheck 现在等待 sidecar 真正就绪（dev 约 2–4s），
+ * 因此唤醒/整理需在此前播完——唤醒 1s、整理 1s，约 2s 进入记忆循环。快速启动会
+ * 干净地走完 唤醒→整理→就绪；较慢的启动才进入记忆「resting」，避免唤醒独占、
+ * 后续阶段被 ready 截断。
  */
 export const BOOT_TIMINGS = {
-  awakenMs: 1800,
-  organizeMs: 3000,
+  awakenMs: 1000,
+  organizeMs: 1000,
   readyHoldMs: 500,
   fadeMs: 300,
   hintThresholdMs: 5000,

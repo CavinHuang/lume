@@ -72,7 +72,10 @@ export function LumeBootScreen({ logoSrc, ready, scene, onExited }: LumeBootScre
           <img className="lume-boot-logo" src={logoSrc} alt="Lume logo" />
         </div>
 
-        <div className="lume-boot-copy" key={phase}>
+        {/* 不用 key={phase} 重挂载：避免「旧文案瞬间消失 + 新文案从 0 淡入」的闪烁。
+            文案保持挂载、随阶段切换即时换字；阶段间的视觉过渡由场景层（860ms）与光晕
+            （980ms）的 cross-fade 承担，整体更平滑。 */}
+        <div className="lume-boot-copy">
           <div className="lume-boot-title">{copy.title}</div>
           <div className="lume-boot-subtitle">{copy.subtitle}</div>
           <div className="lume-boot-dots" aria-hidden="true">
