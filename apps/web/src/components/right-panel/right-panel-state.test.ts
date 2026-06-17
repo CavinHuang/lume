@@ -179,4 +179,36 @@ describe('right-panel-state', () => {
 
     expect(workspace.tabs.files).toMatchObject({ source: 'thread' })
   })
+
+  test('sanitize keeps valid file tree width and drops malformed width', () => {
+    expect(sanitizeRightPanelWorkspace({
+      activeTab: 'files',
+      tabs: {
+        files: {
+          type: 'files',
+          source: 'thread',
+          selectedPath: null,
+          treeVisible: true,
+          searchQuery: '',
+          enhancedView: true,
+          treeWidth: 420,
+        },
+      },
+    }).tabs.files).toMatchObject({ type: 'files', treeWidth: 420 })
+
+    expect(sanitizeRightPanelWorkspace({
+      activeTab: 'files',
+      tabs: {
+        files: {
+          type: 'files',
+          source: 'thread',
+          selectedPath: null,
+          treeVisible: true,
+          searchQuery: '',
+          enhancedView: true,
+          treeWidth: 'wide',
+        },
+      },
+    }).tabs.files).not.toHaveProperty('treeWidth')
+  })
 })

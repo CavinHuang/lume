@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import {
   Braces,
@@ -19,6 +19,7 @@ import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBro
 import { sidecarCall, writeClipboardText } from '@/lib/desktop-api'
 import { openMemorySource, readMemory } from '@/lib/desktop-api/memory'
 import { cn } from '@/lib/utils'
+import { FILE_TREE_DEFAULT_WIDTH, getRightPanelFileTreeDragWidth } from './right-panel-layout'
 import type { FilesTabState } from './right-panel-state'
 
 interface FilesRightPanelTabProps {
@@ -46,7 +47,9 @@ export function FilesRightPanelTab({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [treeResizing, setTreeResizing] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const selectedPath = state.selectedPath
   const source: FilesSource = state.source === 'workspace' && !workspaceSlug ? 'thread' : state.source
   const canShowTree = source !== 'memory'
@@ -151,6 +154,45 @@ export function FilesRightPanelTab({
     return selectedPath.split('/').filter(Boolean)
   }, [selectedPath])
 
+  const startTreeResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !state.treeVisible || !canShowTree) return
+    event.preventDefault()
+
+    const setWidthFromPointer = (clientX: number) => {
+      const rect = bodyRef.current?.getBoundingClientRect()
+      if (!rect) return
+
+      update({
+        treeWidth: getRightPanelFileTreeDragWidth({
+          clientX,
+          containerRight: rect.right,
+          containerWidth: rect.width,
+        }),
+      })
+    }
+
+    const handlePointerMove = (nextEvent: PointerEvent) => {
+      setWidthFromPointer(nextEvent.clientX)
+    }
+
+    const stopResize = () => {
+      setTreeResizing(false)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopResize)
+      window.removeEventListener('pointercancel', stopResize)
+    }
+
+    setTreeResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    setWidthFromPointer(event.clientX)
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopResize)
+    window.addEventListener('pointercancel', stopResize)
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4">
@@ -215,7 +257,10 @@ export function FilesRightPanelTab({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div
+        className={cn('flex min-h-0 flex-1', treeResizing && 'cursor-col-resize select-none')}
+        ref={bodyRef}
+      >
         <div className="min-w-0 flex-1 overflow-auto px-7 py-6">
           {!selectedPath ? (
             <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-2 text-center text-foreground/45">
@@ -254,49 +299,65 @@ export function FilesRightPanelTab({
         </div>
 
         {state.treeVisible && canShowTree && (
-          <aside className="flex w-[320px] shrink-0 flex-col border-l border-border/60 bg-background">
-            <div className="border-b border-border/60 px-3 py-3">
-              {workspaceSlug && (
-                <div className="mb-2 grid grid-cols-2 rounded-[8px] bg-foreground/[0.04] p-1">
-                  <SourceButton active={source === 'thread'} onClick={() => update({ source: 'thread', selectedPath: null })}>
-                    线程文件
-                  </SourceButton>
-                  <SourceButton active={source === 'workspace'} onClick={() => update({ source: 'workspace', selectedPath: null })}>
-                    工作区文件
-                  </SourceButton>
-                </div>
+          <>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整文件树宽度"
+              title="拖动调整文件树宽度"
+              onPointerDown={startTreeResize}
+              className={cn(
+                'w-2 shrink-0 cursor-col-resize touch-none border-l border-border/60 bg-background transition-colors hover:bg-foreground/10',
+                treeResizing && 'bg-foreground/10',
               )}
-              <label className="flex h-9 items-center gap-2 rounded-[8px] border border-border/70 bg-background px-3 text-foreground/52">
-                <Search size={15} />
-                <input
-                  value={state.searchQuery}
-                  onChange={(event) => update({ searchQuery: event.target.value })}
-                  placeholder="筛选文件..."
-                  className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-foreground/38"
-                />
-              </label>
-            </div>
-            <div className="min-h-0 flex-1">
-              {source === 'workspace' ? (
-                <WorkspaceFileBrowser
-                  workspaceSlug={workspaceSlug}
-                  selectedPath={selectedPath ?? undefined}
-                  onOpenFile={(path) => update({ selectedPath: path })}
-                  showHeader={false}
-                  searchQuery={state.searchQuery}
-                />
-              ) : (
-                <FileBrowser
-                  threadId={threadId}
-                  workspaceSlug={workspaceSlug}
-                  selectedPath={selectedPath ?? undefined}
-                  onOpenFile={(path) => update({ selectedPath: path })}
-                  showHeader={false}
-                  searchQuery={state.searchQuery}
-                />
-              )}
-            </div>
-          </aside>
+            />
+            <aside
+              className="flex shrink-0 flex-col bg-background"
+              style={{ width: `clamp(240px, ${state.treeWidth ?? FILE_TREE_DEFAULT_WIDTH}px, min(520px, 55%))` }}
+            >
+              <div className="border-b border-border/60 px-3 py-3">
+                {workspaceSlug && (
+                  <div className="mb-2 grid grid-cols-2 rounded-[8px] bg-foreground/[0.04] p-1">
+                    <SourceButton active={source === 'thread'} onClick={() => update({ source: 'thread', selectedPath: null })}>
+                      线程文件
+                    </SourceButton>
+                    <SourceButton active={source === 'workspace'} onClick={() => update({ source: 'workspace', selectedPath: null })}>
+                      工作区文件
+                    </SourceButton>
+                  </div>
+                )}
+                <label className="flex h-9 items-center gap-2 rounded-[8px] border border-border/70 bg-background px-3 text-foreground/52">
+                  <Search size={15} />
+                  <input
+                    value={state.searchQuery}
+                    onChange={(event) => update({ searchQuery: event.target.value })}
+                    placeholder="筛选文件..."
+                    className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-foreground/38"
+                  />
+                </label>
+              </div>
+              <div className="min-h-0 flex-1">
+                {source === 'workspace' ? (
+                  <WorkspaceFileBrowser
+                    workspaceSlug={workspaceSlug}
+                    selectedPath={selectedPath ?? undefined}
+                    onOpenFile={(path) => update({ selectedPath: path })}
+                    showHeader={false}
+                    searchQuery={state.searchQuery}
+                  />
+                ) : (
+                  <FileBrowser
+                    threadId={threadId}
+                    workspaceSlug={workspaceSlug}
+                    selectedPath={selectedPath ?? undefined}
+                    onOpenFile={(path) => update({ selectedPath: path })}
+                    showHeader={false}
+                    searchQuery={state.searchQuery}
+                  />
+                )}
+              </div>
+            </aside>
+          </>
         )}
       </div>
     </div>

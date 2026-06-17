@@ -26,6 +26,7 @@ export interface FilesTabState {
   source: 'thread' | 'workspace' | 'memory'
   selectedPath: string | null
   treeVisible: boolean
+  treeWidth?: number
   searchQuery: string
   enhancedView: boolean
 }
@@ -192,6 +193,9 @@ function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightP
         ? value.selectedPath
         : null,
       treeVisible: typeof value.treeVisible === 'boolean' ? value.treeVisible : true,
+      ...(typeof value.treeWidth === 'number' && Number.isFinite(value.treeWidth)
+        ? { treeWidth: Math.min(520, Math.max(240, Math.round(value.treeWidth))) }
+        : {}),
       searchQuery: typeof value.searchQuery === 'string' ? value.searchQuery : '',
       enhancedView: typeof value.enhancedView === 'boolean' ? value.enhancedView : true,
     }
