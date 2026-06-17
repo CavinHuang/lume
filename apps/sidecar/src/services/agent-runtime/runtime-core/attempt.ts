@@ -1,4 +1,7 @@
 import { type CanUseToolFn, type ToolDefinition } from "@lume/agent-sdk";
+import { randomUUID } from "node:crypto";
+import type { AgentToolPermissionRequest } from "@lume/shared";
+import type { SensitiveCapabilityKey } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import { buildRuntimeAttemptLogData } from "../../agent/agent-log-summary";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
@@ -263,10 +266,11 @@ export function createCanUseToolHandler(
         message: `工具未注册到 Runtime descriptor: ${toolName}`
       };
     }
-    // Phase 3c: plugin sensitive-capability gate (§8.1/§8.2). Source-bound: only
-    // affects tools whose descriptor carries runtimeMetadata.pluginId. Runs after
-    // descriptor lookup (needs pluginId from definition.runtimeMetadata) and before
-    // the global gateway. ask/deny both → block (Phase 2 ask→block; Phase 4 adds UI).
+    // Phase 4A: plugin sensitive-capability gate (§8.1/§8.2). Source-bound: only affects
+    // tools whose descriptor carries runtimeMetadata.pluginId. Runs after descriptor lookup
+    // and before the global gateway. `allow` → pass; `ask` (no prior approval) → interactive
+    // prompt via waitForToolPermissionDecision (allow_always persists approval); `deny`
+    // (prior deny) → hard block.
     if (pluginPermissionRuntime) {
       const gateResult = await evaluatePluginSensitiveGate({
         descriptor,
@@ -291,6 +295,95 @@ export function createCanUseToolHandler(
         return {
           behavior: "deny",
           message: gateResult.reason ?? `Plugin tool ${toolName} blocked by sensitive-capability gate.`,
+        };
+      }
+      if (gateResult.decision === "ask" && gateResult.pluginId && gateResult.capabilityKey) {
+        // Phase 4A: interactive plugin sensitive approval via the existing tool-permission pipeline.
+        const pluginRequest: AgentToolPermissionRequest = {
+          threadId: approvalThreadId,
+          ...(requestRunId ? { runId: requestRunId } : {}),
+          requestId: `${params.runtime.sessionId}:${toolName}:${randomUUID()}`,
+          toolUseId: `plugin-sensitive:${toolName}`,
+          toolName,
+          risk: "high",
+          reason: gateResult.reason ?? `插件 ${gateResult.pluginId} 请求敏感能力 ${gateResult.capabilityKey}`,
+          reasonCode: "plugin_sensitive_review",
+          input: sanitizeToolInput(input),
+          pluginSensitive: { pluginId: gateResult.pluginId, capabilityKey: gateResult.capabilityKey },
+        };
+        let pluginTimedOut = false;
+        const pluginDecision = await waitForToolPermissionDecision(
+          pluginRequest,
+          askUserSignal,
+          (permissionRequest) => {
+            if (approvalThreadId !== permissionRequest.threadId) {
+              setToolPermissionApprovalSession(permissionRequest.requestId, approvalThreadId);
+            }
+            emit.onToolPermissionRequest(permissionRequest);
+          },
+          { onTimeout: () => { pluginTimedOut = true; } },
+        );
+        if (pluginDecision === "allow_always") {
+          // Persist workspace-scoped approval so the next attempt's checkSensitiveCapability returns allow.
+          // resolveSensitiveApproval matches only key+scope+workspaceSlug+decision (not permissionsHash),
+          // so an empty hash is functionally safe; the real acceptedHash is private to PluginPermissionRuntime.
+          try {
+            await pluginPermissionRuntime.appendSensitiveApproval({
+              pluginId: gateResult.pluginId,
+              record: {
+                key: gateResult.capabilityKey as SensitiveCapabilityKey,
+                scope: "workspace",
+                ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+                decision: "allow",
+                createdAt: new Date().toISOString(),
+                permissionsHash: "",
+              },
+            });
+          } catch (error) {
+            log.warn("Plugin sensitive approval persist failed; allowing once only", {
+              pluginId: gateResult.pluginId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          log.debug("[Agent 工具] 完成", {
+            toolName,
+            threadId: params.runtime.sessionId.slice(0, 8),
+            durationMs: Date.now() - toolStartTime,
+            ok: true,
+            reason: "plugin_sensitive_allow_always",
+          });
+          return { behavior: "allow" };
+        }
+        if (pluginDecision === "allow_once") {
+          log.debug("[Agent 工具] 完成", {
+            toolName,
+            threadId: params.runtime.sessionId.slice(0, 8),
+            durationMs: Date.now() - toolStartTime,
+            ok: true,
+            reason: "plugin_sensitive_allow_once",
+          });
+          return { behavior: "allow" };
+        }
+        // deny / timeout / null (aborted)
+        recordPermissionDenial({
+          threadId: params.runtime.sessionId,
+          descriptor,
+          toolName,
+          rawInput: input,
+          reasonCode: pluginTimedOut ? "approval_timeout" : "user_denied",
+        });
+        log.debug("[Agent 工具] 完成", {
+          toolName,
+          threadId: params.runtime.sessionId.slice(0, 8),
+          durationMs: Date.now() - toolStartTime,
+          ok: false,
+          reason: pluginTimedOut ? "plugin_sensitive_timeout" : "plugin_sensitive_denied",
+        });
+        return {
+          behavior: "deny",
+          message: pluginTimedOut
+            ? `插件权限确认超时: ${toolName}`
+            : `用户拒绝执行插件工具: ${toolName}`,
         };
       }
     }
