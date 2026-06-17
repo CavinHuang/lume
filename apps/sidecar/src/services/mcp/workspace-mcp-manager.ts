@@ -46,15 +46,30 @@ export interface WorkspaceSdkMcpManager {
   readResource(serverId: string, uri: string): Promise<McpReadResourceResult>;
 }
 
+/** Decision returned by an MCP pre-connect authorization gate (§8.1) or the sensitive-gate. */
+export interface McpGateDecision {
+  decision: "allow" | "block";
+  reason?: string;
+}
+
 export interface WorkspaceMcpManagerOptions {
   readConfig?: (workspaceSlug: string) => WorkspaceMcpConfig;
   sdkManagerFactory?: () => WorkspaceSdkMcpManager;
   logger?: Pick<Logger, "warn" | "error" | "info">;
+  /** Optional pre-connect authorization (e.g. plugin §8.1 MCP start gate). Undefined = no gate (workspace singleton). */
+  authorizeConnect?: (serverId: string) => Promise<McpGateDecision>;
 }
 
 export interface WorkspaceMcpRuntimeTools {
   tools: ToolDefinition[];
   diagnostics: ToolRuntimeDiagnostic[];
+}
+
+export interface CreateRuntimeToolsOptions {
+  /** Include the fixed-name management tools (McpConfigTool/ListMcpResourcesTool/ReadMcpResourceTool). Default true (workspace). Plugin pool sets false to avoid collision. */
+  includeManagementTools?: boolean;
+  /** Optional per-server runtime metadata stamp (e.g. pluginId). Keyed by serverId. */
+  toolMetadataProvider?: (serverId: string) => Record<string, unknown> | undefined;
 }
 
 interface WorkspaceState {
@@ -250,12 +265,14 @@ export class WorkspaceMcpManager {
   private readonly readConfig: (workspaceSlug: string) => WorkspaceMcpConfig;
   private readonly sdkManagerFactory: () => WorkspaceSdkMcpManager;
   private readonly logger: Pick<Logger, "warn" | "error" | "info">;
+  private readonly authorizeConnect?: (serverId: string) => Promise<McpGateDecision>;
   private readonly workspaces = new Map<string, WorkspaceState>();
 
   constructor(options: WorkspaceMcpManagerOptions = {}) {
     this.readConfig = options.readConfig ?? getWorkspaceMcpConfig;
     this.sdkManagerFactory = options.sdkManagerFactory ?? (() => new McpClientManager());
     this.logger = options.logger ?? singletonLogger;
+    this.authorizeConnect = options.authorizeConnect;
   }
 
   async syncWorkspace(workspaceSlug: string, options: SyncWorkspaceOptions = {}): Promise<void> {
@@ -283,6 +300,25 @@ export class WorkspaceMcpManager {
 
     const connectionAttempts: Array<Promise<void>> = [];
     for (const serverId of currentEnabledIds) {
+      if (this.authorizeConnect) {
+        let gate: McpGateDecision;
+        try {
+          gate = await this.authorizeConnect(serverId);
+        } catch (error) {
+          gate = {
+            decision: "block",
+            reason: `authorizeConnect threw: ${error instanceof Error ? error.message : String(error)}`
+          };
+        }
+        if (gate.decision === "block") {
+          this.logger.warn("MCP server connection blocked by gate", {
+            workspaceSlug,
+            serverId,
+            reason: gate.reason
+          });
+          continue;
+        }
+      }
       const connect = state.sdk.ensureConnected ?? state.sdk.connect;
       if (!connect) {
         continue;
@@ -440,7 +476,10 @@ export class WorkspaceMcpManager {
     }
   }
 
-  async createRuntimeTools(workspaceSlug: string): Promise<WorkspaceMcpRuntimeTools> {
+  async createRuntimeTools(
+    workspaceSlug: string,
+    options: CreateRuntimeToolsOptions = {},
+  ): Promise<WorkspaceMcpRuntimeTools> {
     await this.syncWorkspace(workspaceSlug, { waitForConnections: true });
     const config = this.readConfig(workspaceSlug);
     const statuses = this.getStatus(workspaceSlug);
@@ -456,27 +495,36 @@ export class WorkspaceMcpManager {
         reason: status.error?.message ?? `MCP server ${status.serverId} is not connected.`
       }));
 
+    const includeManagement = options.includeManagementTools ?? true;
+
     return {
       tools: [
         ...createWorkspaceMcpToolDefinitions({
           workspaceSlug,
           tools: connectedTools,
-          callTool: (targetWorkspaceSlug, serverId, originalToolName, args, options) =>
-            this.callRuntimeTool(targetWorkspaceSlug, serverId, originalToolName, args, options),
+          callTool: (targetWorkspaceSlug, serverId, originalToolName, args, opts) =>
+            this.callRuntimeTool(targetWorkspaceSlug, serverId, originalToolName, args, opts),
           isToolEnabled: (targetWorkspaceSlug, tool) =>
-            isMcpToolEnabled(tool, this.readConfig(targetWorkspaceSlug).servers[tool.serverId])
+            isMcpToolEnabled(tool, this.readConfig(targetWorkspaceSlug).servers[tool.serverId]),
+          ...(options.toolMetadataProvider
+            ? { runtimeMetadata: (tool) => options.toolMetadataProvider!(tool.serverId) }
+            : {})
         }),
-        createWorkspaceMcpConfigTool({
-          workspaceSlug,
-          getStatus: (targetWorkspaceSlug) => this.getStatus(targetWorkspaceSlug)
-        }),
-        ...createWorkspaceMcpResourceTools({
-          workspaceSlug,
-          listResources: (targetWorkspaceSlug, serverId) =>
-            this.listResources({ workspaceSlug: targetWorkspaceSlug, serverId }),
-          readResource: (targetWorkspaceSlug, serverId, uri) =>
-            this.readResource({ workspaceSlug: targetWorkspaceSlug, serverId, uri })
-        })
+        ...(includeManagement
+          ? [
+              createWorkspaceMcpConfigTool({
+                workspaceSlug,
+                getStatus: (targetWorkspaceSlug) => this.getStatus(targetWorkspaceSlug)
+              }),
+              ...createWorkspaceMcpResourceTools({
+                workspaceSlug,
+                listResources: (targetWorkspaceSlug, serverId) =>
+                  this.listResources({ workspaceSlug: targetWorkspaceSlug, serverId }),
+                readResource: (targetWorkspaceSlug, serverId, uri) =>
+                  this.readResource({ workspaceSlug: targetWorkspaceSlug, serverId, uri })
+              })
+            ]
+          : [])
       ],
       diagnostics
     };

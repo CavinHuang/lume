@@ -31,6 +31,35 @@ export type {
   WorkspaceMcpConfig
 } from "./mcp"
 
+export interface AgentPluginDiagnostic {
+  pluginId?: string
+  version?: string
+  severity: "info" | "warning" | "error"
+  code: string
+  message: string
+  path?: string
+}
+
+export interface AgentPluginListItem {
+  pluginId: string
+  name: string
+  version: string
+  root: string
+  manifestFormat: "lume" | "codex" | "legacy"
+  description?: string
+  displayName?: string
+  skills: number
+  hooks?: string
+  mcpServers?: string
+  commandTools: number
+  diagnostics: AgentPluginDiagnostic[]
+}
+
+export interface AgentListPluginsResult {
+  plugins: AgentPluginListItem[]
+  diagnostics: AgentPluginDiagnostic[]
+}
+
 // ===== Agent 工作区 =====
 
 /** Agent 工作区 */
@@ -705,6 +734,15 @@ export interface AgentToolPermissionRequest {
   automationJobId?: string
   /** 自动化触发来源（仅 automation_approval 使用）。 */
   automationTrigger?: string
+  /** Plugin sensitive-capability context (Phase 4A interactive approval). Undefined = built-in tool approval. */
+  pluginSensitive?: AgentPluginSensitiveRequest
+}
+
+/** Plugin sensitive-capability dimension on a tool permission request (Phase 4A). */
+export interface AgentPluginSensitiveRequest {
+  pluginId: string
+  /** The SensitiveCapabilityKey being confirmed, e.g. commandTool:${name} / mcpServer:${id}. */
+  capabilityKey: string
 }
 
 export interface AgentToolPermissionResponseInput {
@@ -1319,6 +1357,10 @@ export const AGENT_IPC_CHANNELS = {
   APPLY_SKILL_IMPROVEMENT: 'agent:apply-skill-improvement',
   /** 列出已安装的插件 */
   LIST_PLUGINS: 'agent:list-plugins',
+  /** Re-scan plugin directories and refresh capability list (sidecar → emits CAPABILITIES_CHANGED). */
+  RELOAD_PLUGINS: 'agent:reload-plugins',
+  /** 查询插件审计日志（Phase 4B） */
+  GET_PLUGIN_AUDIT_LOG: 'agent:get-plugin-audit-log',
   /** 工作区 Skill 有可确认的改进建议 */
   SKILL_IMPROVEMENT_SUGGESTED: 'agent:skill-improvement-suggested',
   /** 获取 GitHub 技能安装前审查摘要 */

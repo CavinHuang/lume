@@ -106,6 +106,32 @@ describe("createWorkspaceMcpToolDefinitions", () => {
 
     expect(tools[0]?.isEnabled?.()).toBe(false);
   });
+
+  test("stamps per-tool runtimeMetadata (including mcpServerId) when resolver provided", () => {
+    const tools = createWorkspaceMcpToolDefinitions({
+      workspaceSlug: "demo",
+      tools: [toolDetail],
+      callTool: async () => ({ text: "ok" }),
+      runtimeMetadata: () => ({ source: "plugin", pluginId: "acme", capability: "mcp" })
+    });
+
+    expect(tools[0]?.runtimeMetadata).toMatchObject({
+      source: "plugin",
+      pluginId: "acme",
+      capability: "mcp",
+      mcpServerId: "github"
+    });
+  });
+
+  test("omits runtimeMetadata entirely when no resolver provided", () => {
+    const tools = createWorkspaceMcpToolDefinitions({
+      workspaceSlug: "demo",
+      tools: [toolDetail],
+      callTool: async () => ({ text: "ok" })
+    });
+
+    expect(tools[0]?.runtimeMetadata).toBeUndefined();
+  });
 });
 
 describe("createWorkspaceMcpResourceTools", () => {

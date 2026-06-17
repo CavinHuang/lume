@@ -202,6 +202,30 @@ export {
   CODEX_EVENT_MAP,
 } from './plugins/codex-adapter.js'
 export {
+  normalizePluginManifests,
+  type NormalizedPlugin,
+  type PluginManifestCapabilities,
+  type PluginDiagnostic,
+  type CommandToolContribution,
+  type PluginSkillContribution,
+} from './plugins/normalized.js'
+export {
+  computePermissionsHash,
+} from './plugins/permissions-hash.js'
+export {
+  buildCommandToolDefinition,
+} from './plugins/loader.js'
+export {
+  resolveSensitiveApproval,
+  isHardDeniedTool,
+  computeEffectiveRuntimeState,
+  type SensitiveCapabilityKey,
+  type SensitiveApprovalRecord,
+  type SensitiveDecision,
+  type EffectiveRuntimeState,
+  type EffectiveRuntimeStateInput,
+} from './plugins/permission-gate.js'
+export {
   checkToolPermission,
   checkFilesystemPermission,
   checkNetworkPermission,

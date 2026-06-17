@@ -2,7 +2,8 @@ import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { describe, expect, test } from "bun:test";
-import { loadPlugins } from "./loader.js";
+import { buildCommandToolDefinition, loadPlugins } from "./loader.js";
+import type { CommandToolContribution } from "./normalized.js";
 
 describe("loadPlugins command manifests", () => {
   test("converts command tools from plugin.json into ToolDefinitions", async () => {
@@ -71,5 +72,35 @@ describe("loadPlugins command manifests", () => {
     const plugins = await loadPlugins(root, [{ name: "demo", kind: "command" }]);
 
     expect(plugins[0]?.tools?.map((tool) => tool.name)).toEqual(["echo_payload"]);
+  });
+});
+
+const contribution: CommandToolContribution = {
+  name: "echo",
+  command: "node",
+  args: ["./tools/echo.mjs"],
+  cwd: "./",
+  timeoutMs: 5000,
+  env: { ECHO_MODE: "plain" },
+  inputSchema: { type: "object", properties: { msg: { type: "string" } } },
+};
+
+describe("buildCommandToolDefinition", () => {
+  test("builds a ToolDefinition with name, schema, and flags", () => {
+    const def = buildCommandToolDefinition(contribution, "/plugins/acme");
+    expect(def.name).toBe("echo");
+    expect(def.description).toBe("echo");
+    expect(def.inputSchema).toEqual(contribution.inputSchema);
+    expect(def.isReadOnly?.()).toBe(false);
+    expect(def.isConcurrencySafe?.()).toBe(false);
+    expect(typeof def.call).toBe("function");
+  });
+
+  test("uses a default object schema when inputSchema is absent", () => {
+    const def = buildCommandToolDefinition(
+      { name: "ct", command: "echo" },
+      "/plugins/acme",
+    );
+    expect(def.inputSchema).toEqual({ type: "object", properties: {} });
   });
 });

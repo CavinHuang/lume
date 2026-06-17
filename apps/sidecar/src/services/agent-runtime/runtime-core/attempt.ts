@@ -1,4 +1,7 @@
 import { type CanUseToolFn, type ToolDefinition } from "@lume/agent-sdk";
+import { randomUUID } from "node:crypto";
+import type { AgentToolPermissionRequest } from "@lume/shared";
+import type { SensitiveCapabilityKey } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import { buildRuntimeAttemptLogData } from "../../agent/agent-log-summary";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
@@ -42,8 +45,16 @@ import {
 import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 import { runGuidanceStore, type ConsumedRunGuidance } from "../guidance/run-guidance-store";
 import { createPluginPermissionInterceptor } from "../plugins/permission-interceptor.js";
-import type { InterceptorInput, InterceptorResult } from "../plugins/index.js";
+import { appendPluginAuditEntry } from "../plugins/plugin-audit-store.js";
+import {
+  type InterceptorInput,
+  type InterceptorResult,
+  PluginPermissionRuntime,
+  FilePluginStateStore,
+  evaluatePluginSensitiveGate,
+} from "../plugins/index.js";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
+import { DEFAULT_PLUGIN_STATE_PATH } from "../plugins/plugin-state-store.js";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;
@@ -139,7 +150,8 @@ export function createCanUseToolHandler(
   askUserSignal: AbortSignal,
   runId?: string,
   workflowHooks?: LumeWorkflowHookRuntimeLike,
-  pluginInterceptorContexts?: Array<{ pluginName: string; pluginRoot: string; permissions: Record<string, unknown> }>
+  pluginInterceptorContexts?: Array<{ pluginName: string; pluginRoot: string; permissions: Record<string, unknown> }>,
+  pluginPermissionRuntime?: PluginPermissionRuntime,
 ): CanUseToolFn {
   const config = getEffectiveLumeConfig(prepared.workspaceSlug);
   const permissionRules = resolveConfiguredPermissionRules(config.permissions);
@@ -254,6 +266,170 @@ export function createCanUseToolHandler(
         behavior: "deny",
         message: `工具未注册到 Runtime descriptor: ${toolName}`
       };
+    }
+    // Phase 4A: plugin sensitive-capability gate (§8.1/§8.2). Source-bound: only affects
+    // tools whose descriptor carries runtimeMetadata.pluginId. Runs after descriptor lookup
+    // and before the global gateway. `allow` → pass; `ask` (no prior approval) → interactive
+    // prompt via waitForToolPermissionDecision (allow_always persists approval); `deny`
+    // (prior deny) → hard block.
+    if (pluginPermissionRuntime) {
+      const gateResult = await evaluatePluginSensitiveGate({
+        descriptor,
+        runtime: pluginPermissionRuntime,
+        workspaceSlug: prepared.workspaceSlug,
+      });
+      if (gateResult.decision === "block") {
+        recordPermissionDenial({
+          threadId: params.runtime.sessionId,
+          descriptor,
+          toolName,
+          rawInput: input,
+          reasonCode: "permission_review_required",
+        });
+        // Phase 4B: capability_blocked audit hook. The block branch's gateResult carries
+        // no pluginId (only ask does, per sensitive-gate.ts); source it from the descriptor.
+        const blockPluginId = (descriptor.definition as { runtimeMetadata?: { pluginId?: string } }).runtimeMetadata?.pluginId ?? toolName;
+        void appendPluginAuditEntry(undefined, {
+          pluginId: blockPluginId,
+          type: "capability_blocked",
+          summary: `Plugin tool ${toolName} blocked (prior deny)`,
+          ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+          metadata: { toolName, reason: gateResult.reason },
+        });
+        log.debug("[Agent 工具] 完成", {
+          toolName,
+          threadId: params.runtime.sessionId.slice(0, 8),
+          durationMs: Date.now() - toolStartTime,
+          ok: false,
+          reason: "plugin_sensitive_blocked",
+        });
+        return {
+          behavior: "deny",
+          message: gateResult.reason ?? `Plugin tool ${toolName} blocked by sensitive-capability gate.`,
+        };
+      }
+      if (gateResult.decision === "ask" && gateResult.pluginId && gateResult.capabilityKey) {
+        // Phase 4A: interactive plugin sensitive approval via the existing tool-permission pipeline.
+        const pluginRequest: AgentToolPermissionRequest = {
+          threadId: approvalThreadId,
+          ...(requestRunId ? { runId: requestRunId } : {}),
+          requestId: `${params.runtime.sessionId}:${toolName}:${randomUUID()}`,
+          toolUseId: `plugin-sensitive:${toolName}`,
+          toolName,
+          risk: "high",
+          reason: gateResult.reason ?? `插件 ${gateResult.pluginId} 请求敏感能力 ${gateResult.capabilityKey}`,
+          reasonCode: "plugin_sensitive_review",
+          input: sanitizeToolInput(input),
+          pluginSensitive: { pluginId: gateResult.pluginId, capabilityKey: gateResult.capabilityKey },
+        };
+        let pluginTimedOut = false;
+        const pluginDecision = await waitForToolPermissionDecision(
+          pluginRequest,
+          askUserSignal,
+          (permissionRequest) => {
+            if (approvalThreadId !== permissionRequest.threadId) {
+              setToolPermissionApprovalSession(permissionRequest.requestId, approvalThreadId);
+            }
+            emit.onToolPermissionRequest(permissionRequest);
+          },
+          {
+            onTimeout: (permissionRequest) => {
+              pluginTimedOut = true;
+              emit.onRuntimeEvent?.({
+                id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:tool.permission_timeout`,
+                type: "tool.permission_timeout",
+                threadId: approvalThreadId,
+                runId: requestRunId ?? permissionRequest.runId ?? params.runtime.sessionId,
+                createdAt: new Date().toISOString(),
+                toolCallId: permissionRequest.toolUseId,
+                requestId: permissionRequest.requestId,
+                toolName,
+                message: `插件权限确认超时: ${toolName}`,
+              });
+            },
+          },
+        );
+        if (pluginDecision === "allow_always") {
+          // Persist workspace-scoped approval so the next attempt's checkSensitiveCapability returns allow.
+          // resolveSensitiveApproval matches only key+scope+workspaceSlug+decision (not permissionsHash),
+          // so an empty hash is functionally safe; the real acceptedHash is private to PluginPermissionRuntime.
+          try {
+            await pluginPermissionRuntime.appendSensitiveApproval({
+              pluginId: gateResult.pluginId,
+              record: {
+                key: gateResult.capabilityKey as SensitiveCapabilityKey,
+                scope: "workspace",
+                ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+                decision: "allow",
+                createdAt: new Date().toISOString(),
+                permissionsHash: "",
+              },
+            });
+          } catch (error) {
+            log.warn("Plugin sensitive approval persist failed; allowing once only", {
+              pluginId: gateResult.pluginId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          // Phase 4B: sensitive_approval audit hook (workspace-scoped allow_always).
+          void appendPluginAuditEntry(undefined, {
+            pluginId: gateResult.pluginId,
+            type: "sensitive_approval",
+            summary: `Plugin ${gateResult.pluginId} sensitive capability approved (always, workspace)`,
+            ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+            metadata: { capabilityKey: gateResult.capabilityKey, toolName, scope: "workspace" },
+          });
+          log.debug("[Agent 工具] 完成", {
+            toolName,
+            threadId: params.runtime.sessionId.slice(0, 8),
+            durationMs: Date.now() - toolStartTime,
+            ok: true,
+            reason: "plugin_sensitive_allow_always",
+          });
+          return { behavior: "allow" };
+        }
+        if (pluginDecision === "allow_once") {
+          log.debug("[Agent 工具] 完成", {
+            toolName,
+            threadId: params.runtime.sessionId.slice(0, 8),
+            durationMs: Date.now() - toolStartTime,
+            ok: true,
+            reason: "plugin_sensitive_allow_once",
+          });
+          return { behavior: "allow" };
+        }
+        // deny / timeout / null (aborted)
+        recordPermissionDenial({
+          threadId: params.runtime.sessionId,
+          descriptor,
+          toolName,
+          rawInput: input,
+          reasonCode: pluginTimedOut ? "approval_timeout" : "user_denied",
+        });
+        // Phase 4B: sensitive_denial audit hook (user denied or approval timed out).
+        void appendPluginAuditEntry(undefined, {
+          pluginId: gateResult.pluginId,
+          type: "sensitive_denial",
+          summary: pluginTimedOut
+            ? `Plugin ${gateResult.pluginId} sensitive approval timed out`
+            : `Plugin ${gateResult.pluginId} sensitive capability denied`,
+          ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+          metadata: { capabilityKey: gateResult.capabilityKey, toolName, reason: pluginTimedOut ? "timeout" : "user_denied" },
+        });
+        log.debug("[Agent 工具] 完成", {
+          toolName,
+          threadId: params.runtime.sessionId.slice(0, 8),
+          durationMs: Date.now() - toolStartTime,
+          ok: false,
+          reason: pluginTimedOut ? "plugin_sensitive_timeout" : "plugin_sensitive_denied",
+        });
+        return {
+          behavior: "deny",
+          message: pluginTimedOut
+            ? `插件权限确认超时: ${toolName}`
+            : `用户拒绝执行插件工具: ${toolName}`,
+        };
+      }
     }
     const authorization = await toolExecutionGateway.authorize({
       toolName,
@@ -628,9 +804,15 @@ export async function runRuntimeCoreAttempt(
   }));
 
   const pluginManager = new SidecarPluginManager();
-  const pluginInterceptorContexts = pluginManager.buildInterceptorContexts({
+  const pluginInterceptorContexts = await pluginManager.buildInterceptorContexts({
     enabled: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.enabled ?? [],
     directories: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.directories ?? [],
+  });
+
+  // Phase 3c: sensitive-capability gate runtime. Stateless (state lives in the
+  // FilePluginStateStore file); same state path SidecarPluginManager uses.
+  const pluginPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
   });
 
   log.info("Plugin permission interceptors built", {
@@ -653,7 +835,7 @@ export async function runRuntimeCoreAttempt(
     prepared,
     options,
     createCanUseTool: (askUserSignal, workflowHooks) =>
-      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId(), workflowHooks, pluginInterceptorContexts)
+      createCanUseToolHandler(params, prepared, runner.emit, askUserSignal, runner.getRunId(), workflowHooks, pluginInterceptorContexts, pluginPermissionRuntime)
   });
 }
 

@@ -109,6 +109,12 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
             {subagentDisplayLabel && <span className="truncate text-[12px] text-[#8a8f98]">{subagentDisplayLabel}</span>}
           </div>
           <p className="mt-0.5 text-[12px] leading-5 text-[#8a8f98]">{request.reason}</p>
+          {request.pluginSensitive && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-[#8a8f98]">
+              <span className="rounded-full bg-[#f0f1f3] px-1.5 py-0.5 font-mono text-[#5c626d]">{request.pluginSensitive.pluginId}</span>
+              <span className="font-mono">{request.pluginSensitive.capabilityKey}</span>
+            </div>
+          )}
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-[#8a8f98]">
             {request.reasonCode && <span>{request.reasonCode}</span>}
             {classification?.reasonCode && classification.reasonCode !== request.reasonCode && <span>{classification.reasonCode}</span>}

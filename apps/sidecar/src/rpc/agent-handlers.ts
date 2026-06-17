@@ -3,6 +3,8 @@ import type {
   AgentPendingInteractiveState,
   AgentGenerateTitleInput,
   AgentListSubagentRunsInput,
+  AgentPluginDiagnostic,
+  AgentPluginListItem,
   AgentProxySettings,
   ImportLocalSkillDirectoryToWorkspaceInput,
   InstallSkillMarketItemToWorkspaceInput,
@@ -124,8 +126,9 @@ import {
   saveWorkspaceSkill
 } from "../services/skills/workspace-skill-editor-service";
 import { SidecarPluginManager } from "../services/agent-runtime/plugins/plugin-manager.js";
+import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin-audit-store.js";
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
-import { getAgentWorkspacePath } from "../services/infra/config-paths";
+import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
@@ -171,6 +174,7 @@ import {
   agentUpdateThreadModelSelectionInputSchema,
   applySkillImprovementInputSchema,
   executeTaskContractInputSchema,
+  getPluginAuditLogInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
@@ -227,6 +231,33 @@ import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, asString, validateInput } from "./validation";
 
 const log = createLogger("agent-handlers");
+
+/** Re-scan plugin directories and normalize into the LIST_PLUGINS/RELOAD_PLUGINS result shape. */
+async function buildAgentPluginList(): Promise<{
+  plugins: AgentPluginListItem[];
+  diagnostics: AgentPluginDiagnostic[];
+}> {
+  const manager = new SidecarPluginManager();
+  const plugins = await manager.resolveEnabled({ enabled: [], directories: [] });
+  const items: AgentPluginListItem[] = plugins.map((p) => ({
+    pluginId: p.name,
+    name: p.name,
+    version: p.version,
+    root: p.root,
+    manifestFormat: p.manifestFormat,
+    description: p.manifest.description,
+    displayName: p.manifest.displayName,
+    hooks: p.manifest.hooks,
+    mcpServers: p.manifest.mcpServers,
+    skills: p.manifest.skills?.length ?? 0,
+    commandTools: p.manifest.commandTools?.length ?? 0,
+    diagnostics: (p.diagnostics ?? []) as AgentPluginDiagnostic[],
+  }));
+  return {
+    plugins: items,
+    diagnostics: items.flatMap((item) => item.diagnostics),
+  };
+}
 
 interface AgentHandlersContext {
   writeNotification: NotificationWriter;
@@ -962,18 +993,34 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return applyWorkspaceSkillImprovement(input);
     },
     [AGENT_IPC_CHANNELS.LIST_PLUGINS]: async () => {
-      const manager = new SidecarPluginManager();
-      const plugins = manager.resolveEnabled({ enabled: [], directories: [] });
-      log.info("LIST_PLUGINS request", { count: plugins.length, names: plugins.map((p) => p.name) });
-      return plugins.map((p) => ({
-        name: p.name,
-        version: p.version,
-        root: p.root,
-        description: p.manifest.description,
-        hooks: p.manifest.hooks,
-        mcpServers: p.manifest.mcpServers,
-        skills: p.manifest.skills?.length ?? 0,
-      }));
+      const result = await buildAgentPluginList();
+      log.info("LIST_PLUGINS request", { count: result.plugins.length, names: result.plugins.map((p) => p.name) });
+      return result;
+    },
+    [AGENT_IPC_CHANNELS.RELOAD_PLUGINS]: async () => {
+      const result = await buildAgentPluginList();
+      log.info("RELOAD_PLUGINS request", { count: result.plugins.length, names: result.plugins.map((p) => p.name) });
+      // 通知 client 刷新能力 UI。下一次 agent attempt 自动读到新磁盘状态（无状态、按尝试加载）。
+      context.writeNotification(AGENT_IPC_CHANNELS.CAPABILITIES_CHANGED, {});
+      return result;
+    },
+    [AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG]: async (params) => {
+      const input = validateInput(
+        getPluginAuditLogInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG
+      );
+      const events = await readPluginAuditEntries(getPluginAuditPath(), {
+        pluginId: input.pluginId,
+        ...(input.workspaceSlug ? { workspaceSlug: input.workspaceSlug } : {}),
+        ...(input.limit ? { limit: input.limit } : {}),
+      });
+      log.info("GET_PLUGIN_AUDIT_LOG request", {
+        pluginId: input.pluginId,
+        workspaceSlug: input.workspaceSlug,
+        count: events.length,
+      });
+      return { events };
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(

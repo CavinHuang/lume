@@ -23,3 +23,4 @@ export * from "./system-config";
 export * from "./routine";
 export * from "./info-extract";
 export * from "./data-management";
+export * from "./plugin-audit";

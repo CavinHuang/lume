@@ -61,6 +61,7 @@ export interface LumePluginManifest {
   skills?: string[];
   hooks?: string;
   mcpServers?: string;
+  commandTools?: Array<Record<string, unknown>>;
   permissions?: PluginPermissions;
   lume?: {
     hooksOnly?: boolean;
@@ -118,6 +119,12 @@ export function parseManifest(raw: Record<string, unknown>): LumePluginManifest 
         : undefined,
     hooks: raw.hooks as string | undefined,
     mcpServers: raw.mcpServers as string | undefined,
+    commandTools: Array.isArray(raw.commandTools)
+      ? raw.commandTools.filter(
+          (tool): tool is Record<string, unknown> =>
+            Boolean(tool) && typeof tool === "object" && !Array.isArray(tool),
+        )
+      : undefined,
   };
 
   if (raw.permissions && typeof raw.permissions === "object") {

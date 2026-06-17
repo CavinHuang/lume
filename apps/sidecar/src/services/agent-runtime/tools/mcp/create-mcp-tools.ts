@@ -41,33 +41,39 @@ export function createWorkspaceMcpToolDefinitions(input: {
     options?: { signal?: AbortSignal }
   ) => Promise<McpCallResult>;
   isToolEnabled?: (workspaceSlug: string, tool: McpToolDetail) => boolean;
+  /** Optional per-tool runtime metadata (e.g. pluginId for plugin-sourced tools). */
+  runtimeMetadata?: (tool: McpToolDetail) => Record<string, unknown> | undefined;
 }): ToolDefinition[] {
-  return input.tools.map((tool) => ({
-    name: tool.wrapperName,
-    description: tool.description ?? `MCP tool: ${tool.originalName} from ${tool.serverName}`,
-    inputSchema: (tool.inputSchema as ToolDefinition["inputSchema"] | undefined) ?? { type: "object", properties: {} },
-    isReadOnly: () => false,
-    isConcurrencySafe: () => false,
-    isEnabled: () => input.isToolEnabled?.(input.workspaceSlug, tool) ?? true,
-    async call(args: Record<string, unknown>, context) {
-      try {
-        const result = await input.callTool(
-          input.workspaceSlug,
-          tool.serverId,
-          tool.originalName,
-          args,
-          { signal: context.abortSignal }
-        );
-        return toolResult(renderMcpCallResult(result), context.toolUseId, result.isError);
-      } catch (error) {
-        return toolResult(
-          `MCP tool error: ${error instanceof Error ? error.message : String(error)}`,
-          context.toolUseId,
-          true
-        );
+  return input.tools.map((tool) => {
+    const extra = input.runtimeMetadata?.(tool);
+    return {
+      name: tool.wrapperName,
+      description: tool.description ?? `MCP tool: ${tool.originalName} from ${tool.serverName}`,
+      inputSchema: (tool.inputSchema as ToolDefinition["inputSchema"] | undefined) ?? { type: "object", properties: {} },
+      isReadOnly: () => false,
+      isConcurrencySafe: () => false,
+      isEnabled: () => input.isToolEnabled?.(input.workspaceSlug, tool) ?? true,
+      ...(extra ? { runtimeMetadata: { ...extra, mcpServerId: tool.serverId } } : {}),
+      async call(args: Record<string, unknown>, context) {
+        try {
+          const result = await input.callTool(
+            input.workspaceSlug,
+            tool.serverId,
+            tool.originalName,
+            args,
+            { signal: context.abortSignal }
+          );
+          return toolResult(renderMcpCallResult(result), context.toolUseId, result.isError);
+        } catch (error) {
+          return toolResult(
+            `MCP tool error: ${error instanceof Error ? error.message : String(error)}`,
+            context.toolUseId,
+            true
+          );
+        }
       }
-    }
-  }));
+    };
+  });
 }
 
 function listToolDetails(status: McpServerStatus): Array<{
