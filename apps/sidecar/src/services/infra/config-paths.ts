@@ -106,6 +106,14 @@ export function getLumeConfigAuditPath(): string {
   return join(getConfigDir(), "lume.audit.jsonl");
 }
 
+/**
+ * 插件审计日志 jsonl 路径（Phase 4B）。与 lume.yaml 的 config audit 分离：
+ * 独立 schema（PluginAuditEvent）+ 独立文件，便于按 pluginId 单独查询。
+ */
+export function getPluginAuditPath(): string {
+  return join(getConfigDir(), "plugins-audit.jsonl");
+}
+
 export function getLumeJsonPath(): string {
   return join(getConfigDir(), "lume.json");
 }
