@@ -1396,7 +1396,7 @@ describe("runtime-core run", () => {
     expect(result.result.content).toContain("timed out");
   });
 
-  test("未审批的插件 command tool 被 sensitive gate 阻断（§8.1/§14.2 ask→block）", async () => {
+  test("未审批的插件 command tool 触发 sensitive gate ask（§8.1/§14.2 Phase 4A ask→ask）", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-plugin-gate-config-"));
     process.env.LUME_CONFIG_DIR = configDir;
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-plugin-gate-cwd-"));
@@ -1441,8 +1441,10 @@ describe("runtime-core run", () => {
     });
 
     // The demo plugin has no install record → checkSensitiveCapability returns "ask"
-    // → evaluatePluginSensitiveGate blocks (Phase 2 ask→block). Verify via the real
-    // runtime + the registered descriptor (the gate reads descriptor.definition.runtimeMetadata.pluginId).
+    // → evaluatePluginSensitiveGate surfaces "ask" (Phase 4A: no longer folded into block;
+    // attempt.ts threads it through the interactive permission pipeline in Task 4). Verify
+    // via the real runtime + the registered descriptor (gate reads
+    // descriptor.definition.runtimeMetadata.pluginId).
     const runtime = new PluginPermissionRuntime({
       stateStore: new FilePluginStateStore(join(cwd, ".lume", "plugins-state.json")),
     });
@@ -1453,9 +1455,9 @@ describe("runtime-core run", () => {
       runtime,
       workspaceSlug: undefined,
     });
-    expect(gate.decision).toBe("block");
-    expect(gate.reason).toContain("commandTool:demo_echo");
-    expect(gate.reason).toContain("demo");
+    expect(gate.decision).toBe("ask");
+    expect(gate.pluginId).toBe("demo");
+    expect(gate.capabilityKey).toBe("commandTool:demo_echo");
 
     result.session.dispose();
   });

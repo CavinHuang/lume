@@ -95,14 +95,26 @@ describe("evaluatePluginSensitiveGate", () => {
     expect(result.reason).toContain("commandTool:echo");
   });
 
-  test("blocks a plugin tool when checkSensitiveCapability returns ask (Phase 2 ask→block)", async () => {
+  test("ask decision (no prior approval) returns ask with pluginId + capabilityKey (Phase 4A)", async () => {
     const result = await evaluatePluginSensitiveGate({
       descriptor: descriptor("echo", "acme"),
       runtime: fakeRuntime("ask"),
       workspaceSlug: "ws",
     });
-    expect(result.decision).toBe("block");
-    expect(result.reason).toContain("acme");
+    expect(result.decision).toBe("ask");
+    expect(result.pluginId).toBe("acme");
+    expect(result.capabilityKey).toBe("commandTool:echo");
+  });
+
+  test("ask decision for a plugin-MCP tool carries mcpServer capabilityKey", async () => {
+    const result = await evaluatePluginSensitiveGate({
+      descriptor: mcpDescriptor("mcp__acme:api__search", "acme", "acme:api"),
+      runtime: fakeRuntime("ask"),
+      workspaceSlug: "ws",
+    });
+    expect(result.decision).toBe("ask");
+    expect(result.pluginId).toBe("acme");
+    expect(result.capabilityKey).toBe("mcpServer:acme:api");
   });
 
   test("plugin MCP tool uses mcpServer:${mcpServerId} key (§8.1 call gate)", async () => {

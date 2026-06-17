@@ -1,7 +1,6 @@
 import type { LumeToolDescriptor } from "../tools/tool-types.js";
 import type { PluginPermissionRuntime } from "./permission-runtime.js";
 import type { SensitiveCapabilityKey } from "@lume/agent-sdk";
-import type { McpGateDecision } from "../../mcp/workspace-mcp-manager.js";
 
 export interface SensitiveGateInput {
   descriptor: LumeToolDescriptor;
@@ -9,17 +8,23 @@ export interface SensitiveGateInput {
   workspaceSlug?: string;
 }
 
-export type SensitiveGateResult = McpGateDecision;
+export interface SensitiveGateResult {
+  decision: "allow" | "ask" | "block";
+  reason?: string;
+  /** Present when decision is "ask": the plugin + capability to confirm interactively. */
+  pluginId?: string;
+  capabilityKey?: string;
+}
 
 /**
- * Phase 3c sensitive capability gate (design spec §8.1/§8.2/§14.2).
+ * Phase 4A sensitive capability gate (design spec §8.1/§8.2/§14.2).
  *
  * For a plugin-sourced tool (descriptor.definition.runtimeMetadata.pluginId present),
  * check PluginPermissionRuntime.checkSensitiveCapability with a `commandTool:${name}`
- * key. `allow` → pass; `deny` OR `ask` → block (Phase 2's ask→block convention; Phase 4
- * replaces block-on-ask with an interactive prompt). Non-plugin tools (no pluginId)
- * pass through untouched (§8.2 source binding: built-in tools are unaffected by plugin
- * permissions).
+ * key. `allow` → pass; `ask` (no prior approval) → interactive prompt (Phase 4A,
+ * attempt.ts threads it through waitForToolPermissionDecision); `deny` (prior deny
+ * record) → hard block. Non-plugin tools (no pluginId) pass through untouched (§8.2
+ * source binding: built-in tools are unaffected by plugin permissions).
  *
  * Covers command tools (commandTool:${name}) and plugin-MCP tools (mcpServer:${serverId},
  * §8.1) — both source-bound via runtimeMetadata.pluginId. The mcpServer key matches the
@@ -60,6 +65,9 @@ export async function evaluatePluginSensitiveGate(
 
   if (result.decision === "allow") {
     return { decision: "allow" };
+  }
+  if (result.decision === "ask") {
+    return { decision: "ask", pluginId, capabilityKey: key, reason: result.reason };
   }
 
   return {
