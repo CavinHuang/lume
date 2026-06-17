@@ -64,4 +64,40 @@ export class FilePluginStateStore {
     await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
     await rename(tmp, this.path);
   }
+
+  /**
+   * Append a single sensitive-approval record to a plugin's install record (read-modify-write).
+   * Targets the same source `collectSensitiveApprovals` (permission-runtime.ts) reads from so the
+   * next `checkSensitiveCapability` observes the record: activeVersion's version → else first
+   * external entry → else approvalsByHash[record.permissionsHash || "default"]. Atomic via write.
+   */
+  async appendSensitiveApproval(input: {
+    pluginId: string;
+    record: SensitiveApprovalRecord;
+  }): Promise<void> {
+    const state = await this.read();
+    const rec = state.plugins[input.pluginId];
+    if (!rec) {
+      throw new Error(`appendSensitiveApproval: plugin not found: ${input.pluginId}`);
+    }
+    let target: { sensitiveApprovals: SensitiveApprovalRecord[] } | undefined;
+    if (rec.activeVersion && rec.versions[rec.activeVersion]) {
+      target = rec.versions[rec.activeVersion];
+    } else {
+      const external = Object.values(rec.external ?? {})[0];
+      if (external) {
+        target = external;
+      }
+    }
+    if (!target) {
+      const hash = input.record.permissionsHash || "default";
+      rec.approvalsByHash[hash] ??= {
+        permissionsHash: input.record.permissionsHash,
+        sensitiveApprovals: [],
+      };
+      target = rec.approvalsByHash[hash];
+    }
+    target.sensitiveApprovals.push(input.record);
+    await this.write(state);
+  }
 }

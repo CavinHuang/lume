@@ -73,6 +73,18 @@ export class PluginPermissionRuntime {
     return { state: result.state, reason: result.reason };
   }
 
+  /**
+   * Persist a sensitive-capability approval/denial decision (Phase 4A interactive approval).
+   * Delegates to FilePluginStateStore.appendSensitiveApproval, which writes to the same source
+   * collectSensitiveApprovals reads so the next checkSensitiveCapability observes the record.
+   */
+  async appendSensitiveApproval(input: {
+    pluginId: string;
+    record: SensitiveApprovalRecord;
+  }): Promise<void> {
+    await this.input.stateStore.appendSensitiveApproval(input);
+  }
+
   private async loadRecord(pluginId: string): Promise<PluginInstallRecord | undefined> {
     const state = await this.input.stateStore.read();
     return state.plugins[pluginId];

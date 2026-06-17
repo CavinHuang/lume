@@ -36,4 +36,102 @@ describe("FilePluginStateStore", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("appendSensitiveApproval persists a record readable on next read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-state-append-"));
+    try {
+      const store = new FilePluginStateStore(join(root, "plugins-state.json"));
+      await store.write({
+        plugins: {
+          demo: {
+            pluginId: "demo",
+            activeVersion: "1.0.0",
+            versions: {
+              "1.0.0": {
+                pluginId: "demo",
+                version: "1.0.0",
+                source: { type: "local", path: root },
+                installedRoot: root,
+                installedAt: "t",
+                sensitiveApprovals: [],
+                permissionsHash: "h1",
+              },
+            },
+            approvalsByHash: {},
+          },
+        },
+      });
+      await store.appendSensitiveApproval({
+        pluginId: "demo",
+        record: {
+          key: "commandTool:demo_echo",
+          scope: "workspace",
+          workspaceSlug: "ws",
+          decision: "allow",
+          createdAt: "now",
+          permissionsHash: "h1",
+        },
+      });
+      const state = await store.read();
+      const approvals = state.plugins.demo?.versions["1.0.0"]?.sensitiveApprovals ?? [];
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]?.key).toBe("commandTool:demo_echo");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("appendSensitiveApproval throws when plugin is unknown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-state-append-"));
+    try {
+      const store = new FilePluginStateStore(join(root, "plugins-state.json"));
+      await store.write({ plugins: {} });
+      await expect(
+        store.appendSensitiveApproval({
+          pluginId: "ghost",
+          record: {
+            key: "commandTool:echo",
+            scope: "global",
+            decision: "allow",
+            createdAt: "now",
+            permissionsHash: "h",
+          },
+        }),
+      ).rejects.toThrow(/plugin not found/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("appendSensitiveApproval falls back to approvalsByHash when no activeVersion/external", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-state-append-"));
+    try {
+      const store = new FilePluginStateStore(join(root, "plugins-state.json"));
+      await store.write({
+        plugins: {
+          bare: {
+            pluginId: "bare",
+            versions: {},
+            approvalsByHash: {},
+          },
+        },
+      });
+      await store.appendSensitiveApproval({
+        pluginId: "bare",
+        record: {
+          key: "commandTool:echo",
+          scope: "global",
+          decision: "allow",
+          createdAt: "now",
+          permissionsHash: "h9",
+        },
+      });
+      const state = await store.read();
+      const bundle = state.plugins.bare?.approvalsByHash["h9"];
+      expect(bundle?.sensitiveApprovals).toHaveLength(1);
+      expect(bundle?.sensitiveApprovals[0]?.key).toBe("commandTool:echo");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

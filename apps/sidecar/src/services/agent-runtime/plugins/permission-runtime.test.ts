@@ -75,6 +75,54 @@ describe("PluginPermissionRuntime.checkSensitiveCapability", () => {
   });
 });
 
+describe("PluginPermissionRuntime.appendSensitiveApproval", () => {
+  test("appended allow record flips a follow-up check from ask to allow", async () => {
+    await withRuntime(async (runtime, store) => {
+      await store.write(
+        stateWith("acme", {
+          activeVersion: "1.0.0",
+          versions: {
+            "1.0.0": {
+              pluginId: "acme",
+              version: "1.0.0",
+              source: { type: "local", path: "/p" },
+              installedRoot: "/p",
+              installedAt: "2026-01-01T00:00:00Z",
+              permissionsHash: "h",
+              sensitiveApprovals: [],
+            },
+          },
+        }),
+      );
+      // Before append: no prior approval → ask.
+      const before = await runtime.checkSensitiveCapability({
+        pluginId: "acme",
+        key: "commandTool:echo",
+      });
+      expect(before.decision).toBe("ask");
+
+      // Append an allow record via the runtime wrapper.
+      await runtime.appendSensitiveApproval({
+        pluginId: "acme",
+        record: {
+          key: "commandTool:echo",
+          scope: "global",
+          decision: "allow",
+          createdAt: "2026-06-17T00:00:00Z",
+          permissionsHash: "h",
+        },
+      });
+
+      // After append: same source collectSensitiveApprovals reads → allow.
+      const after = await runtime.checkSensitiveCapability({
+        pluginId: "acme",
+        key: "commandTool:echo",
+      });
+      expect(after.decision).toBe("allow");
+    });
+  });
+});
+
 describe("PluginPermissionRuntime.computeRuntimeState", () => {
   test("not-loaded when no review state exists", async () => {
     await withRuntime(async (runtime) => {
