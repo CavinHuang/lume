@@ -899,6 +899,7 @@ export async function createRuntimeCoreSession(
   const registeredPluginSkillNames = new Set<string>();
   for (const spec of pluginResolution.specs) {
     if (spec.kind !== "command") continue;
+    if (!spec.path) continue;
     try {
       const { loadFilesystemSkills } = await import("@lume/agent-sdk");
       const pluginName = spec.name;
@@ -917,7 +918,7 @@ export async function createRuntimeCoreSession(
         const namespacedSkill = {
           ...skill,
           name: `${pluginName}:${skill.name}`,
-          slug: `${pluginName}/${skill.slug ?? skill.name}`,
+          slug: `${pluginName}/${skill.name}`,
         };
         if (hasSkill(namespacedSkill.name)) {
           log.warn(`[plugin] skill "${namespacedSkill.name}" already registered, skipping duplicate from "${pluginName}"`);

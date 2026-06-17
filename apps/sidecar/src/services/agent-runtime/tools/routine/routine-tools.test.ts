@@ -149,7 +149,7 @@ describe("routine tools", () => {
       const result = await callTool(updateTool, {
         entryId: "entry-update-test",
         description: "新描述",
-      }) as { ok: boolean; routine: { entries: Array<{ description?: string }> } };
+      }) as { ok: boolean; routine: { entries: Array<{ id?: string; description?: string }> } };
       expect(result.ok).toBeTrue();
       const updated = result.routine.entries.find((e) => e.id === "entry-update-test");
       expect(updated?.description).toBe("新描述");

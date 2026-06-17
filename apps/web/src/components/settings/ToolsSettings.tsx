@@ -5,7 +5,6 @@ import {
   Loader2,
   Search,
   ShieldCheck,
-  ShieldOff,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -20,7 +19,7 @@ import {
   type SystemToolRow,
   isToolInGroup,
 } from '@/components/skills/system-tools-state'
-import { TOOL_METADATA, getToolMeta, RISK_LEVEL_CONFIG, CATEGORY_CONFIG } from './tool-metadata'
+import { TOOL_METADATA, RISK_LEVEL_CONFIG, CATEGORY_CONFIG } from './tool-metadata'
 
 interface ToolRow {
   name: string
@@ -81,7 +80,7 @@ export function ToolsSettings() {
       const groupEnabled = groupRow?.enabled ?? !group.locked
       const groupLocked = group.locked
 
-      return TOOL_METADATA
+      return Object.values(TOOL_METADATA)
         .filter((tool) => {
           // Map tools to groups based on category and known group mappings
           return isToolInGroup(tool.name, group.id)

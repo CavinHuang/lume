@@ -81,7 +81,7 @@ describe("SidecarPluginManager", () => {
     const contexts = manager.buildInterceptorContexts(config);
     expect(contexts).toHaveLength(1);
     expect(contexts[0]!.pluginName).toBe("delta");
-    expect(contexts[0]!.permissions.tools.deny).toContain("Bash");
+    expect((contexts[0]!.permissions as { tools?: { deny?: string[] } }).tools?.deny).toContain("Bash");
   });
 
   test("returns empty contexts when no plugins match enabled list", async () => {

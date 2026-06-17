@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { parseManifest, type LumePluginManifest } from "@lume/agent-sdk/plugins/manifest.js";
+import { parseManifest, type LumePluginManifest } from "@lume/agent-sdk/plugins/manifest";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("plugin-manager");
@@ -92,7 +92,9 @@ export class SidecarPluginManager {
     return plugins.map((p) => ({
       pluginName: p.name,
       pluginRoot: p.root,
-      permissions: p.manifest.permissions ?? {},
+      // SDK permission checks (checkToolPermission, ...) accept a loose Record;
+      // widen the manifest's structured PluginPermissions to match that contract.
+      permissions: (p.manifest.permissions ?? {}) as unknown as Record<string, unknown>,
     }));
   }
 }

@@ -106,14 +106,15 @@ ${code}
     return { ...result, ok: true };
   }
 
-  async runSoffice(args: string[], options: { timeoutMs: number; outputEncoding: BufferEncoding } = { timeoutMs: 20 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
+  async runSoffice(args: string[], options: { timeoutMs: number; outputEncoding?: BufferEncoding } = { timeoutMs: 20 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
+    const env = await this.getSofficeEnv();
     return this.runCommand(this.resolveSoffice(), args, {
       ...options,
-      env: this.getSofficeEnv()
+      env
     });
   }
 
-  async runPython(args: string[], options: { timeoutMs: number; outputEncoding: BufferEncoding } = { timeoutMs: 20 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
+  async runPython(args: string[], options: { timeoutMs: number; outputEncoding?: BufferEncoding } = { timeoutMs: 20 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
     const commands = ["python3", "python3.11", "python"];
     for (const command of commands) {
       try {
@@ -125,12 +126,13 @@ ${code}
         // try next python candidate
       }
     }
-    return this.runCommand(commands[commands.length - 1], args, options);
+    return this.runCommand(commands[commands.length - 1] ?? "python", args, options);
   }
 
-  async runCommand(command: string, args: string[], options: { timeoutMs: number; outputEncoding: BufferEncoding } = { timeoutMs: 10 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
+  async runCommand(command: string, args: string[], options: { timeoutMs: number; outputEncoding?: BufferEncoding; env?: Record<string, string | undefined> } = { timeoutMs: 10 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
+    const outputEncoding = options.outputEncoding ?? "utf-8";
     return new Promise((resolve, reject) => {
-      const child = spawn(command, args, { cwd: this.workdir });
+      const child = spawn(command, args, { cwd: this.workdir, env: options.env ? { ...process.env, ...options.env } : undefined });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       let stdout = "";
@@ -155,8 +157,8 @@ ${code}
 
       child.on("close", (exitCode) => {
         clearTimeout(timer);
-        stdout = Buffer.concat(stdoutChunks).toString(options.outputEncoding);
-        stderr = Buffer.concat(stderrChunks).toString(options.outputEncoding);
+        stdout = Buffer.concat(stdoutChunks).toString(outputEncoding);
+        stderr = Buffer.concat(stderrChunks).toString(outputEncoding);
         resolve({
           ok: (exitCode ?? 1) === 0,
           stdout,
@@ -182,10 +184,10 @@ ${code}
     return "soffice";
   }
 
-  private getSofficeEnv(): Record<string, string | undefined> {
+  private async getSofficeEnv(): Promise<Record<string, string | undefined>> {
     const env: Record<string, string | undefined> = { SAL_USE_VCLPLUGIN: "svp" };
     if (this.sofficeNeedsShim()) {
-      env.LD_PRELOAD = this.ensureSofficeShim();
+      env.LD_PRELOAD = await this.ensureSofficeShim();
     }
     return env;
   }
@@ -201,7 +203,7 @@ ${code}
     }
   }
 
-  private ensureSofficeShim(): string {
+  private async ensureSofficeShim(): Promise<string> {
     const shimPath = resolve(tmpdir(), "lo_socket_shim.so");
     if (existsSync(shimPath)) {
       return shimPath;
@@ -209,7 +211,7 @@ ${code}
 
     const sourcePath = resolve(tmpdir(), "lo_socket_shim.c");
     writeFileSync(sourcePath, SOFFICE_SHIM_SOURCE, "utf-8");
-    const compileResult = this.runCommand("gcc", [
+    const compileResult = await this.runCommand("gcc", [
       "-shared",
       "-fPIC",
       "-o", shimPath,

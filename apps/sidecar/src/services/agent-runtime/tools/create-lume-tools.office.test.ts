@@ -221,7 +221,7 @@ function crc32(buf: Buffer): number {
     return t;
   })();
   for (let i = 0; i < buf.length; i++) {
-    crc = table[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+    crc = table[(crc ^ buf[i]!) & 0xff]! ^ (crc >>> 8);
   }
   return (crc ^ -1) >>> 0;
 }

@@ -28,6 +28,7 @@ describe("openclaw-weixin-worker", () => {
             peerKind: "dm",
             peerName: "Alice",
             text: "hello",
+            contents: [],
             contextToken: "ctx-1"
           }]
         }),
@@ -114,6 +115,7 @@ describe("openclaw-weixin-worker", () => {
             peerId: "user-1",
             peerKind: "dm",
             text: "hello",
+            contents: [],
             messageId: "msg-1"
           }]
         }),

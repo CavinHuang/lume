@@ -345,7 +345,7 @@ export type SkillTrustLevel = 'trusted' | 'review-required' | 'blocked-by-defaul
 
 export type SkillInstallState = 'not-installed' | 'installed' | 'update-available'
 
-export type SkillStorageScope = 'workspace' | 'project' | 'user'
+export type SkillStorageScope = 'workspace' | 'project' | 'user' | 'plugin'
 
 export interface SkillCatalogItem {
   id: string

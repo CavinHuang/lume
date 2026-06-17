@@ -23,7 +23,7 @@ async function callTool(tool: ToolDefinition, input: Record<string, unknown>) {
     return (parsed.data ?? parsed) as Record<string, unknown>;
   }
   // Fallback: result.content is undefined, try result directly
-  return result as Record<string, unknown>;
+  return result as unknown as Record<string, unknown>;
 }
 
 describe("automation-list-tools", () => {

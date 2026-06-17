@@ -54,6 +54,7 @@ impl LumeLogBackend {
         if self.config.file_enabled {
             if let Ok(mut writer) = self.writer.lock() {
                 writer.write_line(&line);
+                writer.flush();
             }
         }
 

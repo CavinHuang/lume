@@ -193,7 +193,13 @@ function loadNative(): NativeModule | null {
       return null;
     }
 
-    const binaryPath = path.join(__dirname, "dist", binaryName);
+    // Desktop bundle: the shell sets LUME_NATIVES_PATH to the bundled .node file.
+    // Fallback: look relative to this file's location in the package tree (dev mode).
+    const envPath = process.env.LUME_NATIVES_PATH?.trim();
+    const binaryPath =
+      envPath && envPath.length > 0
+        ? envPath
+        : path.join(__dirname, "dist", binaryName);
     _native = require(binaryPath) as unknown as NativeModule;
     return _native;
   } catch (err) {

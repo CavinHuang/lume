@@ -108,6 +108,7 @@ describe("general-settings-service", () => {
       proxy?: { enabled?: boolean };
       generalSettings?: {
         themeMode?: string;
+        agentMessageDisplayMode?: string;
         windowBehavior?: {
           minimizeToTray?: boolean;
           closeToTray?: boolean;

@@ -23,7 +23,8 @@ const SOURCE_PRIORITY: Record<SkillCatalogItem["sourceType"], number> = {
   "built-in": 0,
   local: 1,
   github: 2,
-  "subscribed-market": 3
+  "subscribed-market": 3,
+  plugin: 4
 };
 
 const TRUST_PRIORITY: Record<SkillCatalogItem["trustLevel"], number> = {

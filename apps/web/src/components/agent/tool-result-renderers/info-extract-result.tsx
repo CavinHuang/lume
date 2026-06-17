@@ -171,7 +171,7 @@ function StepItem({
   step: InfoExtractStep
   isLast: boolean
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [, setExpanded] = useState(false)
 
   const statusStyles: Record<string, {
     circleBg: string
@@ -298,7 +298,7 @@ interface InfoExtractResultProps {
   result: unknown
 }
 
-export function InfoExtractResult({ input, result }: InfoExtractResultProps) {
+export function InfoExtractResult({ result }: InfoExtractResultProps) {
   const data = parseInfoExtractResult(result)
   const [expanded, setExpanded] = useState(false)
 

@@ -112,8 +112,8 @@ describe("create-im-tools", () => {
     if (!tool) throw new Error("send_im_media tool missing");
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200, statusText: "OK" });
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200, statusText: "OK" })) as unknown as typeof fetch;
 
     try {
       const result = await tool.call({
@@ -194,8 +194,8 @@ describe("create-im-tools", () => {
     if (!tool) throw new Error("send_im_media tool missing");
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200 });
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200 })) as unknown as typeof fetch;
 
     try {
       const result = await tool.call({

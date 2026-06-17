@@ -2,7 +2,7 @@ import {
   checkToolPermission,
   checkFilesystemPermission,
   checkNetworkPermission,
-} from "@lume/agent-sdk/plugins/permissions.js";
+} from "@lume/agent-sdk/plugins/permissions";
 import type {
   InterceptorInput,
   InterceptorResult,

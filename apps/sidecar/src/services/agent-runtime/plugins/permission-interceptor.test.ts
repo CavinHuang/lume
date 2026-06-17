@@ -17,8 +17,8 @@ describe("createPluginPermissionInterceptor", () => {
       context: { cwd: "/project", threadId: "t1" },
     });
 
-    expect(result.behavior).toBe("deny");
-    expect(result.reason).toContain("demo");
+    expect(result!.behavior).toBe("deny");
+    expect(result!.reason).toContain("demo");
   });
 
   test("allows tool when plugin tools.allow matches", async () => {
@@ -36,7 +36,7 @@ describe("createPluginPermissionInterceptor", () => {
       context: { cwd: "/project", threadId: "t1" },
     });
 
-    expect(result.behavior).toBe("allow");
+    expect(result!.behavior).toBe("allow");
   });
 
   test("passes through unlisted tool to global engine", async () => {
@@ -73,7 +73,7 @@ describe("createPluginPermissionInterceptor", () => {
       context: { cwd: "/project", threadId: "t1" },
     });
 
-    expect(result.behavior).toBe("ask");
+    expect(result!.behavior).toBe("ask");
   });
 
   test("allows path within filesystem.read pattern", async () => {
@@ -91,7 +91,7 @@ describe("createPluginPermissionInterceptor", () => {
       context: { cwd: "/project", threadId: "t1" },
     });
 
-    expect(result.behavior).toBe("allow");
+    expect(result!.behavior).toBe("allow");
   });
 
   test("asks for network host not in outbound list", async () => {
@@ -109,7 +109,7 @@ describe("createPluginPermissionInterceptor", () => {
       context: { cwd: "/project", threadId: "t1" },
     });
 
-    expect(result.behavior).toBe("ask");
+    expect(result!.behavior).toBe("ask");
   });
 
   test("passes through when no permissions defined", async () => {

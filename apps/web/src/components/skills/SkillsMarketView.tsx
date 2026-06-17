@@ -78,6 +78,7 @@ const SOURCE_LABELS: Record<SkillSourceType, string> = {
   local: '本地发现',
   github: '外部市场源',
   'subscribed-market': '外部市场源',
+  plugin: '插件',
 }
 
 export function SkillsMarketView() {

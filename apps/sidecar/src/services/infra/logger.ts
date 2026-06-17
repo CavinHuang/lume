@@ -67,8 +67,8 @@ let nativeReady = false;
 try {
   nativeInit({
     level: MIN_LEVEL,
-    fileEnabled: true,
-    consoleEnabled: false,
+    file_enabled: true,
+    console_enabled: false,
   });
   nativeReady = isNativeAvailable();
 } catch {

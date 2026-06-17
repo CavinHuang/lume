@@ -510,7 +510,7 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
               <span className="text-[12px] font-medium text-[#687196]">当前工作区</span>
               <Select
                 value={workspaceSlug ?? ''}
-                onValueChange={(val) => onWorkspaceChange?.(val)}
+                onValueChange={(val) => { if (val) onWorkspaceChange?.(val) }}
               >
                 <SelectTrigger className="h-8 flex-1 max-w-[280px] border border-[#e4e7f1] bg-white px-3 text-[13px] font-medium text-[#20232d] shadow-none hover:border-[#cfd5e8]">
                   {availableWorkspaces.find((w) => w.slug === workspaceSlug)?.name ?? '选择工作区'}

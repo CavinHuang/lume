@@ -390,7 +390,6 @@ export class Agent {
 
     for (const plugin of this.loadedPlugins) {
       if (!plugin.hooks) continue
-      const eventCount = Object.keys(plugin.hooks).length
       const hookCount = Object.values(plugin.hooks).reduce((sum, defs) => sum + defs.length, 0)
       console.debug(`[plugin:agent] registering hooks for "${plugin.name}"`, {
         events: Object.keys(plugin.hooks),
