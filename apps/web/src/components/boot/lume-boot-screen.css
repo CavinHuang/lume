@@ -1,0 +1,634 @@
+/*
+ * Lume 启动页样式 —— 基于参考实现改紫（sage → --brand/--brand-2），跟随应用 .dark。
+ * 颜色全部经应用 token 解析；结构/动画沿用参考 examples/lume_bootscreen_impl。
+ */
+.lume-boot-root {
+  --lb-ease-main: cubic-bezier(0.22, 1, 0.36, 1);
+  --lb-ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
+  --lb-fade: 300ms;
+  --lb-shadow: 0 18px 60px hsl(var(--shadow-panel) / 0.3);
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+  isolation: isolate;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Helvetica Neue',
+    sans-serif;
+  color: var(--text-1);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--surface-1) 88%, var(--background)) 0%,
+    var(--background) 30%,
+    color-mix(in oklab, var(--surface-2) 54%, var(--background)) 100%
+  );
+  transition: opacity var(--lb-fade) var(--lb-ease-soft);
+}
+
+.lume-boot-root.is-fading {
+  opacity: 0;
+}
+
+.lume-boot-screen {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* ── 顶部状态标签 ── */
+.lume-boot-status-chip {
+  position: absolute;
+  top: 28px;
+  left: 50%;
+  z-index: 12;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+
+/* ── 品牌光晕（紫→品红，低透明度） ── */
+.lume-boot-soft-halo {
+  position: absolute;
+  width: 450px;
+  height: 450px;
+  border-radius: 50%;
+  filter: blur(18px);
+  z-index: 1;
+  opacity: 0.84;
+  transform: scale(0.96);
+  background: radial-gradient(
+    circle at center,
+    color-mix(in oklab, var(--brand) 18%, transparent),
+    color-mix(in oklab, var(--brand-2) 6%, transparent) 42%,
+    transparent 76%
+  );
+  transition: opacity 980ms var(--lb-ease-soft), transform 980ms var(--lb-ease-soft);
+}
+
+/* ── 场景层（organize / memory / ready） ── */
+.lume-boot-scene-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transform: scale(0.988) translateY(8px);
+  transition: opacity 860ms var(--lb-ease-main), transform 860ms var(--lb-ease-main);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.lume-boot-scene-layer.active {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+/* ── 中心 logo ── */
+.lume-boot-center-shell {
+  position: relative;
+  z-index: 6;
+  width: 250px;
+  height: 250px;
+  display: grid;
+  place-items: center;
+}
+
+.lume-boot-logo {
+  width: 210px;
+  height: auto;
+  display: block;
+  transform-origin: center bottom;
+  filter: drop-shadow(0 18px 32px hsl(var(--shadow-panel) / 0.22));
+  user-select: none;
+  -webkit-user-drag: none;
+  animation: lume-boot-mascot-breathe 2.8s ease-in-out infinite;
+}
+
+/* ── 文案 ── */
+.lume-boot-copy {
+  position: absolute;
+  top: calc(50% + 148px);
+  left: 50%;
+  z-index: 8;
+  transform: translateX(-50%);
+  width: min(620px, 86vw);
+  text-align: center;
+  animation: lume-boot-copy-in 420ms var(--lb-ease-main) both;
+}
+
+.lume-boot-title {
+  font-size: 30px;
+  line-height: 1.28;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-bottom: 12px;
+  color: var(--text-1);
+}
+
+.lume-boot-subtitle {
+  min-height: 26px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-2);
+}
+
+.lume-boot-dots {
+  margin-top: 22px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.lume-boot-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--brand) 72%, transparent);
+  animation: lume-boot-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.lume-boot-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.lume-boot-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.lume-boot-footer-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 82px;
+  z-index: 9;
+  transform: translateX(-50%);
+  width: min(580px, 86vw);
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.lume-boot-stage-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 36px;
+  z-index: 10;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lume-boot-stage-indicator span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--brand) 18%, transparent);
+  transition: all 360ms var(--lb-ease-main);
+}
+
+.lume-boot-stage-indicator span.active {
+  width: 22px;
+  background: color-mix(in oklab, var(--brand) 72%, transparent);
+}
+
+/* ── organize 场景：流动卡片 ── */
+.lume-boot-card-node {
+  position: absolute;
+  width: 96px;
+  height: 64px;
+  border-radius: 18px;
+  opacity: 0;
+  border: 1px solid var(--border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--foreground) 7%, transparent),
+    color-mix(in oklab, var(--foreground) 4%, transparent)
+  );
+  backdrop-filter: blur(10px);
+  box-shadow: var(--lb-shadow);
+}
+
+.lume-boot-card-node::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  width: 42px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--brand) 38%, transparent);
+}
+
+.lume-boot-card-node::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 30px;
+  width: 58px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 18%, transparent);
+}
+
+.lume-boot-card-a {
+  left: calc(50% - 272px);
+  top: calc(50% - 110px);
+}
+.lume-boot-card-b {
+  left: calc(50% + 176px);
+  top: calc(50% - 116px);
+}
+.lume-boot-card-c {
+  left: calc(50% - 232px);
+  top: calc(50% + 90px);
+}
+.lume-boot-card-d {
+  left: calc(50% + 184px);
+  top: calc(50% + 94px);
+}
+
+.lume-boot-scene-organize.active .lume-boot-card-a {
+  animation: lume-boot-card-flow-a 3.6s var(--lb-ease-soft) infinite;
+}
+.lume-boot-scene-organize.active .lume-boot-card-b {
+  animation: lume-boot-card-flow-b 3.6s var(--lb-ease-soft) infinite 0.22s;
+}
+.lume-boot-scene-organize.active .lume-boot-card-c {
+  animation: lume-boot-card-flow-c 3.6s var(--lb-ease-soft) infinite 0.48s;
+}
+.lume-boot-scene-organize.active .lume-boot-card-d {
+  animation: lume-boot-card-flow-d 3.6s var(--lb-ease-soft) infinite 0.72s;
+}
+
+/* ── memory 场景：记忆环 + 漂浮光点 ── */
+.lume-boot-memory-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--brand) 22%, transparent);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+}
+
+.lume-boot-memory-ring.r1 {
+  width: 260px;
+  height: 260px;
+}
+.lume-boot-memory-ring.r2 {
+  width: 324px;
+  height: 324px;
+}
+.lume-boot-memory-ring.r3 {
+  width: 390px;
+  height: 390px;
+}
+
+.lume-boot-memory-orb {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  opacity: 0;
+  background: radial-gradient(circle at 35% 35%, #fff, var(--brand));
+  box-shadow: 0 0 18px color-mix(in oklab, var(--brand) 45%, transparent);
+}
+
+.lume-boot-orb-1 {
+  left: calc(50% - 178px);
+  top: calc(50% - 86px);
+}
+.lume-boot-orb-2 {
+  left: calc(50% + 164px);
+  top: calc(50% - 78px);
+}
+.lume-boot-orb-3 {
+  left: calc(50% - 136px);
+  top: calc(50% + 152px);
+}
+.lume-boot-orb-4 {
+  left: calc(50% + 132px);
+  top: calc(50% + 148px);
+}
+
+.lume-boot-scene-memory.active .lume-boot-memory-ring.r1 {
+  animation: lume-boot-ring-pulse 3s var(--lb-ease-soft) infinite;
+}
+.lume-boot-scene-memory.active .lume-boot-memory-ring.r2 {
+  animation: lume-boot-ring-pulse 3s var(--lb-ease-soft) infinite 0.3s;
+}
+.lume-boot-scene-memory.active .lume-boot-memory-ring.r3 {
+  animation: lume-boot-ring-pulse 3s var(--lb-ease-soft) infinite 0.6s;
+}
+.lume-boot-scene-memory.active .lume-boot-orb-1 {
+  animation: lume-boot-orb-move-1 3.5s var(--lb-ease-soft) infinite;
+}
+.lume-boot-scene-memory.active .lume-boot-orb-2 {
+  animation: lume-boot-orb-move-2 3.5s var(--lb-ease-soft) infinite 0.3s;
+}
+.lume-boot-scene-memory.active .lume-boot-orb-3 {
+  animation: lume-boot-orb-move-3 3.5s var(--lb-ease-soft) infinite 0.6s;
+}
+.lume-boot-scene-memory.active .lume-boot-orb-4 {
+  animation: lume-boot-orb-move-4 3.5s var(--lb-ease-soft) infinite 0.9s;
+}
+
+/* ── ready 场景：就绪环 ── */
+.lume-boot-ready-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--brand) 38%, transparent);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+}
+
+.lume-boot-ready-ring.r1 {
+  width: 236px;
+  height: 236px;
+}
+.lume-boot-ready-ring.r2 {
+  width: 288px;
+  height: 288px;
+}
+.lume-boot-ready-ring.r3 {
+  width: 340px;
+  height: 340px;
+}
+
+.lume-boot-scene-ready.active .lume-boot-ready-ring.r1 {
+  animation: lume-boot-ready-pulse 2.6s var(--lb-ease-soft) infinite;
+}
+.lume-boot-scene-ready.active .lume-boot-ready-ring.r2 {
+  animation: lume-boot-ready-pulse 2.6s var(--lb-ease-soft) infinite 0.28s;
+}
+.lume-boot-scene-ready.active .lume-boot-ready-ring.r3 {
+  animation: lume-boot-ready-pulse 2.6s var(--lb-ease-soft) infinite 0.56s;
+}
+
+/* ── 阶段驱动的光晕/中心微调 ── */
+.lume-boot-root[data-phase='awaken'] .lume-boot-soft-halo {
+  opacity: 0.82;
+  transform: scale(0.96);
+}
+.lume-boot-root[data-phase='organize'] .lume-boot-soft-halo {
+  opacity: 0.92;
+  transform: scale(1.03);
+}
+.lume-boot-root[data-phase='memory'] .lume-boot-soft-halo {
+  opacity: 0.96;
+  transform: scale(1.08);
+}
+.lume-boot-root[data-phase='ready'] .lume-boot-soft-halo {
+  opacity: 1;
+  transform: scale(1.12);
+}
+
+/* ── keyframes ── */
+@keyframes lume-boot-mascot-breathe {
+  0%,
+  100% {
+    transform: scale(0.988);
+  }
+  50% {
+    transform: scale(1);
+  }
+}
+@keyframes lume-boot-copy-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes lume-boot-dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.34;
+    transform: scale(0.82);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes lume-boot-card-flow-a {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.82);
+  }
+  18% {
+    opacity: 0.85;
+  }
+  62% {
+    opacity: 0.94;
+    transform: translate(156px, 76px) scale(0.99);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(184px, 90px) scale(0.92);
+  }
+}
+@keyframes lume-boot-card-flow-b {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.82);
+  }
+  18% {
+    opacity: 0.85;
+  }
+  62% {
+    opacity: 0.94;
+    transform: translate(-156px, 82px) scale(0.99);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-184px, 94px) scale(0.92);
+  }
+}
+@keyframes lume-boot-card-flow-c {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.82);
+  }
+  18% {
+    opacity: 0.85;
+  }
+  62% {
+    opacity: 0.94;
+    transform: translate(116px, -72px) scale(0.99);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(138px, -86px) scale(0.92);
+  }
+}
+@keyframes lume-boot-card-flow-d {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.82);
+  }
+  18% {
+    opacity: 0.85;
+  }
+  62% {
+    opacity: 0.94;
+    transform: translate(-116px, -78px) scale(0.99);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-138px, -90px) scale(0.92);
+  }
+}
+@keyframes lume-boot-ring-pulse {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  30% {
+    opacity: 0.18;
+  }
+  60% {
+    opacity: 0.26;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+}
+@keyframes lume-boot-orb-move-1 {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.55);
+  }
+  18% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 1;
+    transform: translate(120px, 70px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(138px, 84px) scale(0.72);
+  }
+}
+@keyframes lume-boot-orb-move-2 {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.55);
+  }
+  18% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 1;
+    transform: translate(-120px, 72px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-138px, 86px) scale(0.72);
+  }
+}
+@keyframes lume-boot-orb-move-3 {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.55);
+  }
+  18% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 1;
+    transform: translate(86px, -112px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(102px, -126px) scale(0.72);
+  }
+}
+@keyframes lume-boot-orb-move-4 {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.55);
+  }
+  18% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 1;
+    transform: translate(-90px, -108px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-106px, -124px) scale(0.72);
+  }
+}
+@keyframes lume-boot-ready-pulse {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.84);
+  }
+  34% {
+    opacity: 0.22;
+  }
+  66% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.16);
+  }
+}
+
+@media (max-width: 860px) {
+  .lume-boot-status-chip {
+    top: 20px;
+  }
+  .lume-boot-center-shell {
+    width: 220px;
+    height: 220px;
+  }
+  .lume-boot-logo {
+    width: 188px;
+  }
+  .lume-boot-copy {
+    top: calc(50% + 132px);
+    width: 86vw;
+  }
+  .lume-boot-title {
+    font-size: 26px;
+  }
+  .lume-boot-footer-hint {
+    width: 86vw;
+    bottom: 78px;
+  }
+  .lume-boot-card-a {
+    left: 10vw;
+    top: calc(50% - 120px);
+  }
+  .lume-boot-card-b {
+    left: auto;
+    right: 10vw;
+    top: calc(50% - 118px);
+  }
+  .lume-boot-card-c {
+    left: 14vw;
+    top: calc(50% + 82px);
+  }
+  .lume-boot-card-d {
+    left: auto;
+    right: 14vw;
+    top: calc(50% + 86px);
+  }
+}

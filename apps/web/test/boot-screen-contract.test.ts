@@ -33,3 +33,29 @@ describe('boot logo asset', () => {
     expect(existsSync(join(webRoot, 'public', 'boot-logo.png'))).toBe(true)
   })
 })
+
+describe('boot React CSS (lume-boot-screen.css)', () => {
+  const css = readWebFile('src', 'components', 'boot', 'lume-boot-screen.css')
+
+  test('uses app brand tokens, not the example sage palette', () => {
+    expect(css).not.toContain('147,167,123')
+    expect(css).toContain('var(--brand)')
+    expect(css).toContain('var(--brand-2)')
+  })
+
+  test('derives background from app surface/background tokens', () => {
+    expect(css).toContain('var(--surface-1)')
+    expect(css).toContain('var(--background)')
+  })
+
+  test('keeps the four scene layers and keyframes', () => {
+    expect(css).toContain('lume-boot-scene-organize')
+    expect(css).toContain('lume-boot-scene-memory')
+    expect(css).toContain('lume-boot-scene-ready')
+    expect(css).toContain('@keyframes')
+  })
+
+  test('supports the fade-out class', () => {
+    expect(css).toContain('.lume-boot-root.is-fading')
+  })
+})
