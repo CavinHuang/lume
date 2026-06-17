@@ -125,8 +125,9 @@ import {
   saveWorkspaceSkill
 } from "../services/skills/workspace-skill-editor-service";
 import { SidecarPluginManager } from "../services/agent-runtime/plugins/plugin-manager.js";
+import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin-audit-store.js";
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
-import { getAgentWorkspacePath } from "../services/infra/config-paths";
+import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
@@ -995,6 +996,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       // 通知 client 刷新能力 UI。下一次 agent attempt 自动读到新磁盘状态（无状态、按尝试加载）。
       context.writeNotification(AGENT_IPC_CHANNELS.CAPABILITIES_CHANGED, {});
       return result;
+    },
+    [AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG]: async (params) => {
+      const obj = asObject(params);
+      const pluginId = asString(obj.pluginId);
+      if (!pluginId) {
+        throw new Error(`${AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG} 参数非法: pluginId - 必填`);
+      }
+      const rawLimit = typeof obj.limit === "number" ? obj.limit : undefined;
+      const events = await readPluginAuditEntries(getPluginAuditPath(), {
+        pluginId,
+        ...(rawLimit && rawLimit > 0 ? { limit: rawLimit } : {}),
+      });
+      log.info("GET_PLUGIN_AUDIT_LOG request", { pluginId, count: events.length });
+      return { events };
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(
